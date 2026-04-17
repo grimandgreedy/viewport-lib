@@ -160,6 +160,8 @@ impl SceneRenderer {
             view_proj: self.camera.view_proj_matrix().to_cols_array_2d(),
             eye_pos: self.camera.eye_position().into(),
             _pad: 0.0,
+            forward: [0.0, 0.0, -1.0],
+            _pad1: 0.0,
         };
 
         let frame_data = {

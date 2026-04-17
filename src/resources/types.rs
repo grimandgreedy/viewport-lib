@@ -191,6 +191,10 @@ pub struct CameraUniform {
     pub eye_pos: [f32; 3],
     /// Padding to align `eye_pos` to 16 bytes.
     pub _pad: f32,
+    /// Camera forward direction in world space (used for view-depth tests).
+    pub forward: [f32; 3],
+    /// Padding to align `forward` to 16 bytes.
+    pub _pad1: f32,
 }
 
 /// GPU-side per-light uniform (one entry in the `LightsUniform` array).

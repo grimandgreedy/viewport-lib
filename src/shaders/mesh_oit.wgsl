@@ -15,6 +15,8 @@ struct Camera {
     view_proj: mat4x4<f32>,
     eye_pos: vec3<f32>,
     _pad: f32,
+    forward: vec3<f32>,
+    _pad1: f32,
 };
 
 struct SingleLight {
@@ -215,7 +217,7 @@ const POISSON_DISK: array<vec2<f32>, 32> = array<vec2<f32>, 32>(
 );
 
 fn sample_shadow_csm(world_pos: vec3<f32>, eye_pos: vec3<f32>, surface_normal: vec3<f32>) -> f32 {
-    let dist = distance(eye_pos, world_pos);
+    let dist = dot(world_pos - eye_pos, camera.forward);
     var cascade_idx = 0u;
     for (var i = 0u; i < shadow_atlas.cascade_count; i++) {
         if dist > shadow_atlas.cascade_splits[i] {

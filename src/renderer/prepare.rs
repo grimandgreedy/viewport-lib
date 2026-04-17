@@ -222,16 +222,6 @@ impl ViewportRenderer {
             && frame.camera_view != glam::Mat4::IDENTITY;
 
         if use_csm {
-            // Scale factor converting Z-depth splits to 3D-distance thresholds.
-            // For any in-frustum fragment with view Z = z, its 3D dist ≤ z * k_scale.
-            // Multiplying splits by k_scale ensures the cascade selection in the fragment
-            // shader (which uses distance()) never assigns a fragment to a cascade whose
-            // matrix doesn't cover it (eliminates the view-angle-dependent gap bands).
-            let tan_hfov = (frame.camera_fov * 0.5).tan();
-            let k_scale = (1.0f32
-                + tan_hfov * tan_hfov * (1.0 + frame.camera_aspect * frame.camera_aspect))
-                .sqrt();
-
             for i in 0..cascade_count {
                 let split_near = if i == 0 {
                     frame.camera_near.max(0.01)
@@ -248,7 +238,7 @@ impl ViewportRenderer {
                     split_far,
                     tile_size as f32,
                 );
-                cascade_split_distances[i] = split_far * k_scale;
+                cascade_split_distances[i] = split_far;
             }
         } else {
             // Fallback: single shadow map covering the whole scene (legacy behavior).
@@ -345,11 +335,18 @@ impl ViewportRenderer {
             );
         }
 
-        // Upload camera uniform (view-proj + eye position only).
+        // Upload camera uniform.
+        let camera_forward = frame
+            .camera_view
+            .inverse()
+            .transform_vector3(-glam::Vec3::Z)
+            .normalize_or_zero();
         let camera_uniform = CameraUniform {
             view_proj: frame.camera_uniform.view_proj,
             eye_pos: frame.eye_pos,
             _pad: 0.0,
+            forward: camera_forward.to_array(),
+            _pad1: 0.0,
         };
         // Write to the shared buffer for single-viewport / legacy callers.
         queue.write_buffer(

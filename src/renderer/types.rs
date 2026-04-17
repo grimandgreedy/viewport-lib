@@ -903,6 +903,8 @@ impl Default for FrameData {
                 view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
                 eye_pos: [0.0, 0.0, 5.0],
                 _pad: 0.0,
+                forward: [0.0, 0.0, -1.0],
+                _pad1: 0.0,
             },
             lighting: LightingSettings::default(),
             eye_pos: [0.0, 0.0, 5.0],

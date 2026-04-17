@@ -211,6 +211,8 @@ impl shader::Primitive for ViewportPrimitive {
                 view_proj: self.camera_snapshot.view_proj,
                 eye_pos: self.camera_snapshot.eye_pos,
                 _pad: 0.0,
+                forward: [0.0, 0.0, -1.0],
+                _pad1: 0.0,
             };
             fd.lighting = LightingSettings::default();
             fd.eye_pos = self.camera_snapshot.eye_pos;
@@ -251,6 +253,8 @@ impl shader::Primitive for ViewportPrimitive {
                 view_proj: self.camera_snapshot.view_proj,
                 eye_pos: self.camera_snapshot.eye_pos,
                 _pad: 0.0,
+                forward: [0.0, 0.0, -1.0],
+                _pad1: 0.0,
             };
             fd.lighting = LightingSettings::default();
             fd.eye_pos = self.camera_snapshot.eye_pos;

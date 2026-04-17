@@ -111,6 +111,13 @@ impl ViewportRenderer {
             view_proj: (frame.camera_proj * frame.camera_view).to_cols_array_2d(),
             eye_pos: frame.camera_uniform.eye_pos,
             _pad: 0.0,
+            forward: frame
+                .camera_view
+                .inverse()
+                .transform_vector3(-glam::Vec3::Z)
+                .normalize_or_zero()
+                .to_array(),
+            _pad1: 0.0,
         };
         let camera_bytes = bytemuck::bytes_of(&camera_uniform);
         let pick_camera_buf = device.create_buffer(&wgpu::BufferDescriptor {

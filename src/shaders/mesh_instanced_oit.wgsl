@@ -12,6 +12,8 @@ struct Camera {
     view_proj: mat4x4<f32>,
     eye_pos: vec3<f32>,
     _pad: f32,
+    forward: vec3<f32>,
+    _pad1: f32,
 };
 
 struct SingleLight {

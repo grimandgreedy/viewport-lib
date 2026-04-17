@@ -157,6 +157,8 @@ fn prepare_empty_scene_no_panic() {
         view_proj: cam.view_proj_matrix().to_cols_array_2d(),
         eye_pos: cam.eye_position().to_array(),
         _pad: 0.0,
+        forward: [0.0, 0.0, -1.0],
+        _pad1: 0.0,
     };
     frame.lighting = LightingSettings::default();
     frame.eye_pos = cam.eye_position().to_array();
@@ -259,6 +261,8 @@ fn render_offscreen_produces_rgba_pixels() {
         view_proj: cam.view_proj_matrix().to_cols_array_2d(),
         eye_pos: cam.eye_position().to_array(),
         _pad: 0.0,
+        forward: [0.0, 0.0, -1.0],
+        _pad1: 0.0,
     };
     frame.eye_pos = cam.eye_position().to_array();
     frame.camera_orientation = cam.orientation;
