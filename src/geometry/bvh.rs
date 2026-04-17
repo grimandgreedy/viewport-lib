@@ -7,10 +7,10 @@
 
 use std::collections::HashMap;
 
-use crate::scene::aabb::Aabb;
-use crate::resources::mesh_store::MeshId;
-use crate::scene::scene::Scene;
 use crate::interaction::selection::NodeId;
+use crate::resources::mesh_store::MeshId;
+use crate::scene::aabb::Aabb;
+use crate::scene::scene::Scene;
 
 use parry3d::math::Vector;
 use parry3d::query::{Ray, RayCast};
@@ -387,8 +387,8 @@ pub fn pick_scene_accelerated(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scene::material::Material;
     use crate::resources::mesh_store::MeshId;
+    use crate::scene::material::Material;
 
     fn unit_cube_mesh() -> (Vec<[f32; 3]>, Vec<u32>) {
         let positions = vec![

@@ -7,8 +7,7 @@
 use std::sync::Arc;
 
 use viewport_lib::{
-    Camera, CameraUniform, FrameData, LightingSettings, MeshData,
-    SceneRenderItem, ViewportRenderer,
+    Camera, CameraUniform, FrameData, LightingSettings, MeshData, SceneRenderItem, ViewportRenderer,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;

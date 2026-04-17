@@ -881,7 +881,9 @@ impl ViewportGpuResources {
         if self.oit_composite_pipeline.is_none() {
             let comp_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("oit_composite_shader"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/oit_composite.wgsl").into()),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("../shaders/oit_composite.wgsl").into(),
+                ),
             });
             let bgl = self
                 .oit_composite_bgl

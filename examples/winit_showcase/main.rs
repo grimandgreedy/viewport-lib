@@ -24,7 +24,6 @@
 //!
 //! ## Showcase 3 - Phase 4 Performance
 //!   - 300 boxes (10x10x3 grid) sharing a single mesh - triggers GPU instancing
-//!   - Frustum culling: orbit/zoom and watch culled count change in title bar
 //!   - BVH-accelerated picking: click to select objects
 //!   - Live `FrameStats` in title bar: objects, visible, culled, draws, batches, triangles
 //!
@@ -1432,8 +1431,7 @@ impl ApplicationHandler for App {
                     // All nodes use the same box geometry but different mesh slot indices.
                     let mut mesh_lookup = std::collections::HashMap::new();
                     for node in state.scene.nodes() {
-                        if let Some(mid) = viewport_lib::traits::ViewportObject::mesh_id(node)
-                        {
+                        if let Some(mid) = viewport_lib::traits::ViewportObject::mesh_id(node) {
                             mesh_lookup.entry(mid).or_insert_with(|| {
                                 (
                                     state.box_mesh_data.positions.clone(),
@@ -1570,11 +1568,8 @@ impl ApplicationHandler for App {
                     let vp_inv = state.camera.view_proj_matrix().inverse();
                     let cursor =
                         glam::Vec2::new(state.last_cursor.x as f32, state.last_cursor.y as f32);
-                    let (ray_origin, ray_dir) = viewport_lib::picking::screen_to_ray(
-                        cursor,
-                        glam::Vec2::new(w, h),
-                        vp_inv,
-                    );
+                    let (ray_origin, ray_dir) =
+                        viewport_lib::picking::screen_to_ray(cursor, glam::Vec2::new(w, h), vp_inv);
 
                     // Build mesh lookup - all perf-scene nodes share the same box geometry.
                     let mut mesh_lookup = std::collections::HashMap::new();
@@ -1623,16 +1618,12 @@ impl ApplicationHandler for App {
                     let vp_inv = state.camera.view_proj_matrix().inverse();
                     let cursor =
                         glam::Vec2::new(state.last_cursor.x as f32, state.last_cursor.y as f32);
-                    let (ray_origin, ray_dir) = viewport_lib::picking::screen_to_ray(
-                        cursor,
-                        glam::Vec2::new(w, h),
-                        vp_inv,
-                    );
+                    let (ray_origin, ray_dir) =
+                        viewport_lib::picking::screen_to_ray(cursor, glam::Vec2::new(w, h), vp_inv);
 
                     let mut mesh_lookup = std::collections::HashMap::new();
                     for node in state.adv_scene.nodes() {
-                        if let Some(mid) = viewport_lib::traits::ViewportObject::mesh_id(node)
-                        {
+                        if let Some(mid) = viewport_lib::traits::ViewportObject::mesh_id(node) {
                             mesh_lookup.entry(mid).or_insert_with(|| {
                                 (
                                     state.box_mesh_data.positions.clone(),
@@ -2149,12 +2140,8 @@ impl ApplicationHandler for App {
                     }
                 };
 
-                let clear_color = bg_color.unwrap_or([
-                    65.0 / 255.0,
-                    65.0 / 255.0,
-                    65.0 / 255.0,
-                    1.0,
-                ]);
+                let clear_color =
+                    bg_color.unwrap_or([65.0 / 255.0, 65.0 / 255.0, 65.0 / 255.0, 1.0]);
 
                 // Compute gizmo model matrix for Interaction mode.
                 let (gizmo_model, gizmo_mode, gizmo_space_orient) =

@@ -6,10 +6,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::scene::material::Material;
-use crate::resources::mesh_store::MeshId;
-use crate::renderer::SceneRenderItem;
 use crate::interaction::selection::{NodeId, Selection};
+use crate::renderer::SceneRenderItem;
+use crate::resources::mesh_store::MeshId;
+use crate::scene::material::Material;
 use crate::scene::traits::ViewportObject;
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 # viewport-lib
 
-`viewport-lib` is a gpu-accelerated 3D viewport library for rust. The library gives you a renderer, camera, picking-tools, gizmos, overlays, and scene primitives.
+`viewport-lib` is a gpu-accelerated 3D viewport library for rust. The library gives you a renderer, camera, picking-tools, light sources, gizmos and scene primitives.
 
 <table>
   <tr>
@@ -43,5 +43,5 @@ Other examples:
 
 Run examples with:
 ```
-cargo run --example winit-viewport
+cargo run --release --example winit-viewport
 ```

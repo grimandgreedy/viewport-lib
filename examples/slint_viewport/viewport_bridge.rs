@@ -8,8 +8,7 @@
 use std::collections::HashMap;
 
 use viewport_lib::{
-    Camera, CameraUniform, FrameData, LightingSettings, MeshData,
-    SceneRenderItem, ViewportRenderer,
+    Camera, CameraUniform, FrameData, LightingSettings, MeshData, SceneRenderItem, ViewportRenderer,
 };
 use wgpu;
 

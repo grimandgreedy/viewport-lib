@@ -4,14 +4,10 @@
 //! resource APIs. Requires a GPU adapter (software or hardware).
 
 use viewport_lib::{
-    Camera,
+    Camera, Material, MeshId, Scene, Selection,
     error::ViewportError,
-    Material,
-    MeshId,
     renderer::{FrameData, LightingSettings, SceneRenderItem, ViewportRenderer},
     resources::{CameraUniform, MeshData},
-    Scene,
-    Selection,
 };
 
 /// Create a headless wgpu device + queue for testing.

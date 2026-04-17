@@ -5,11 +5,11 @@
 
 mod viewport_callback;
 
-use viewport_lib::{
-    Action, ActionState, FrameInput, InputSystem, KeyCode, MeshData, Modifiers,
-    MouseButton, ViewportRenderer,
-};
 use eframe::egui;
+use viewport_lib::{
+    Action, ActionState, FrameInput, InputSystem, KeyCode, MeshData, Modifiers, MouseButton,
+    ViewportRenderer,
+};
 
 fn main() -> eframe::Result {
     eframe::run_native(

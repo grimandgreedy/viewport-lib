@@ -5,13 +5,12 @@
 
 use std::collections::HashMap;
 
-use viewport_lib::{
-    Camera, CameraUniform, FrameData, LightingSettings, MeshData,
-    SceneRenderItem, ViewportRenderer,
-};
 use iced::event::Event;
 use iced::widget::shader;
 use iced::{Element, Fill, Point, Rectangle, mouse};
+use viewport_lib::{
+    Camera, CameraUniform, FrameData, LightingSettings, MeshData, SceneRenderItem, ViewportRenderer,
+};
 
 use crate::Message;
 

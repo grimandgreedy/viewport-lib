@@ -5,9 +5,9 @@
 //! `CallbackTrait` impl in the application crate) delegate to these methods.
 
 use crate::interaction::gizmo::{GizmoAxis, GizmoMode};
-use crate::scene::material::Material;
-use crate::resources::{CameraUniform, ColormapId};
 use crate::interaction::snap::ConstraintOverlay;
+use crate::resources::{CameraUniform, ColormapId};
+use crate::scene::material::Material;
 
 /// Minimum scene item count to activate the instanced draw path.
 /// Use instancing for any scene with more than 1 object. The per-object path

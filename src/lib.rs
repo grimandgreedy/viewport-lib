@@ -17,18 +17,18 @@ pub mod error;
 
 /// Arcball camera, frustum, view presets, and animator.
 pub mod camera;
-/// Scene graph, material, traits, and AABB.
-pub mod scene;
 /// BVH picking, marching cubes, isolines, and cap geometry.
 pub mod geometry;
 /// Gizmo, snap, selection, annotation, picking, and input.
 pub mod interaction;
-/// Axes orientation indicator.
-pub mod widgets;
 /// Main viewport renderer wrapping all GPU resources.
 pub mod renderer;
 /// GPU resource container (pipelines, buffers, bind groups).
 pub mod resources;
+/// Scene graph, material, traits, and AABB.
+pub mod scene;
+/// Axes orientation indicator.
+pub mod widgets;
 
 // ---------------------------------------------------------------------------
 // Module re-exports — preserve old `viewport_lib::foo::Bar` paths.
@@ -52,8 +52,8 @@ pub use widgets::axes_indicator;
 
 pub use error::{ViewportError, ViewportResult};
 
-pub use camera::camera::{Camera, Projection};
 pub use camera::animator::{CameraAnimator, CameraDamping, Easing};
+pub use camera::camera::{Camera, Projection};
 pub use camera::frustum::{CullStats, Frustum};
 pub use camera::view_preset::ViewPreset;
 
@@ -70,7 +70,9 @@ pub use interaction::annotation::AnnotationLabel;
 #[cfg(feature = "egui")]
 pub use interaction::annotation::draw_annotation_labels;
 pub use interaction::annotation::{world_to_screen, world_to_screen_from_frame};
-pub use interaction::gizmo::{Gizmo, GizmoAxis, GizmoMode, GizmoSpace, PivotMode, gizmo_center_for_pivot};
+pub use interaction::gizmo::{
+    Gizmo, GizmoAxis, GizmoMode, GizmoSpace, PivotMode, gizmo_center_for_pivot,
+};
 pub use interaction::input::{
     Action, ActionState, Binding, FrameInput, InputMode, InputSystem, KeyCode, Modifiers,
     MouseButton,
@@ -84,6 +86,8 @@ pub use interaction::snap::{ConstraintOverlay, SnapConfig};
 
 pub use widgets::axes_indicator::AxisView;
 
+pub use renderer::shader_hashes::ShaderValidation;
+pub use renderer::stats::FrameStats;
 pub use renderer::{
     ClipPlane, ClipVolume, ComputeFilterItem, ComputeFilterKind, FilterMode, FrameData, GlyphItem,
     GlyphType, LightKind, LightSource, LightingSettings, OverlayQuad, PointCloudItem,
@@ -91,15 +95,13 @@ pub use renderer::{
     StreamtubeItem, ToneMapping, ViewportRenderer, VolumeItem,
 };
 pub use renderer::{ScalarBar, ScalarBarAnchor, ScalarBarOrientation};
-pub use renderer::stats::FrameStats;
-pub use renderer::shader_hashes::ShaderValidation;
 
+pub use resources::colormap_data::{
+    export_paraview_xml_colormap, lerp_colormap_lut, parse_paraview_xml_colormap,
+};
+pub use resources::mesh_store::MeshId;
 pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColormap, CameraUniform, ClipVolumeUniform,
     ColormapId, ComputeFilterResult, LightUniform, LightsUniform, MeshData, SingleLightUniform,
     ViewportGpuResources, VolumeId, lerp_attributes,
 };
-pub use resources::colormap_data::{
-    export_paraview_xml_colormap, lerp_colormap_lut, parse_paraview_xml_colormap,
-};
-pub use resources::mesh_store::MeshId;
