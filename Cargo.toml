@@ -11,7 +11,7 @@ documentation = "https://docs.rs/viewport-lib"
 keywords = ["3d", "viewport", "wgpu", "rendering", "visualization"]
 categories = ["graphics", "rendering", "visualization"]
 rust-version = "1.85"
-publish = false  # keep disabled until the first public release is intentionally cut
+publish = true
 
 [dependencies]
 wgpu = { version = "27.0", features = ["metal", "vulkan"] }
