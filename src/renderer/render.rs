@@ -207,14 +207,23 @@ impl ViewportRenderer {
                 };
                 let view = frame.camera_view;
                 let light_dir_view = view.transform_vector3(light_dir_world).normalize();
+                let world_up_view = view.transform_vector3(glam::Vec3::Y).normalize();
                 let cs_uniform = crate::resources::ContactShadowUniform {
                     inv_proj: inv_proj.to_cols_array_2d(),
                     proj: proj.to_cols_array_2d(),
-                    light_dir_view: light_dir_view.to_array(),
-                    max_distance: pp.contact_shadow_max_distance,
-                    steps: pp.contact_shadow_steps,
-                    thickness: pp.contact_shadow_thickness,
-                    _pad: [0.0; 2],
+                    light_dir_view: [
+                        light_dir_view.x,
+                        light_dir_view.y,
+                        light_dir_view.z,
+                        0.0,
+                    ],
+                    world_up_view: [world_up_view.x, world_up_view.y, world_up_view.z, 0.0],
+                    params: [
+                        pp.contact_shadow_max_distance,
+                        pp.contact_shadow_steps as f32,
+                        pp.contact_shadow_thickness,
+                        0.0,
+                    ],
                 };
                 queue.write_buffer(buf, 0, bytemuck::cast_slice(&[cs_uniform]));
             }

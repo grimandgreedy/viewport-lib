@@ -188,7 +188,12 @@ const POISSON_DISK: array<vec2<f32>, 32> = array<vec2<f32>, 32>(
     vec2<f32>(-0.57774330,  0.80459740), vec2<f32>( 0.18238670, -0.37596540),
 );
 
-fn sample_shadow_csm(world_pos: vec3<f32>, eye_pos: vec3<f32>, surface_normal: vec3<f32>) -> f32 {
+fn sample_shadow_csm(
+    world_pos: vec3<f32>,
+    eye_pos: vec3<f32>,
+    surface_normal: vec3<f32>,
+    light_dir: vec3<f32>,
+) -> f32 {
     let dist = dot(world_pos - eye_pos, camera.forward);
     var cascade_idx = 0u;
     for (var i = 0u; i < shadow_atlas.cascade_count; i++) {
@@ -218,9 +223,13 @@ fn sample_shadow_csm(world_pos: vec3<f32>, eye_pos: vec3<f32>, surface_normal: v
 
     let texel_size = 1.0 / shadow_atlas.atlas_size;
 
-    // Normal-offset depth bias: project offset position into shadow space and
-    // use its Z for comparison only (UV stays at world_pos above).
-    let offset_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(world_pos + surface_normal * 0.002, 1.0);
+    // Normal-offset depth bias: move the comparison point toward the light and
+    // increase the offset at grazing angles to suppress sphere terminator acne.
+    let n_dot_l = dot(surface_normal, light_dir);
+    let offset_sign = select(-1.0, 1.0, n_dot_l >= 0.0);
+    let normal_bias = mix(0.006, 0.0015, clamp(abs(n_dot_l), 0.0, 1.0));
+    let offset_world = world_pos + surface_normal * (offset_sign * normal_bias);
+    let offset_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(offset_world, 1.0);
     let biased_depth = (offset_clip.xyz / offset_clip.w).z - lights_uniform.shadow_bias;
 
     let noise = fract(52.9829189 * fract(dot(world_pos.xz, vec2<f32>(0.06711056, 0.00583715))));
@@ -351,6 +360,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     var ao_factor = 1.0;
     if inst.has_ao_map != 0u { ao_factor = textureSample(ao_map, obj_sampler, in.uv).r; }
 
+    // Use the geometric fragment normal for shadowing so the receiver test
+    // matches the faceted mesh that was rasterized into the shadow atlas.
+    var shadow_normal = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
+    if dot(shadow_normal, N) < 0.0 {
+        shadow_normal = -shadow_normal;
+    }
+
     let V = normalize(camera.eye_pos - in.world_pos);
     let tint = vec4<f32>(1.0, 1.0, 1.0, 1.0);
     var final_rgb: vec3<f32>;
@@ -382,8 +398,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
             }
             var shadow_factor = 1.0;
             if i == 0u && lights_uniform.shadows_enabled != 0u {
-                shadow_factor = sample_shadow_csm(in.world_pos, camera.eye_pos, N);
-                let terminator = smoothstep(0.0, 0.5, dot(N, L));
+                shadow_factor = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L);
+                let terminator = smoothstep(0.0, 0.75, dot(shadow_normal, L));
                 shadow_factor = mix(1.0, shadow_factor, terminator);
             }
             radiance *= shadow_factor;
@@ -418,8 +434,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
             }
             var shadow = 1.0;
             if i == 0u && lights_uniform.shadows_enabled != 0u {
-                shadow = sample_shadow_csm(in.world_pos, camera.eye_pos, N);
-                let terminator = smoothstep(0.0, 0.5, dot(N, light_dir));
+                shadow = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, light_dir);
+                let terminator = smoothstep(0.0, 0.75, dot(shadow_normal, light_dir));
                 shadow = mix(1.0, shadow, terminator);
             }
             let H = normalize(light_dir + V);

@@ -7,6 +7,7 @@ pub fn make_uv_sphere(lon_segs: usize, lat_segs: usize, radius: f32) -> MeshData
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut uvs: Vec<[f32; 2]> = Vec::new();
+    let mut tangents: Vec<[f32; 4]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
     for lat in 0..=lat_segs {
@@ -23,6 +24,10 @@ pub fn make_uv_sphere(lon_segs: usize, lat_segs: usize, radius: f32) -> MeshData
             positions.push([x * radius, y * radius, z * radius]);
             normals.push([x, y, z]);
             uvs.push([lon as f32 / lon_segs as f32, lat as f32 / lat_segs as f32]);
+            // Analytic tangent for increasing longitude (U direction).
+            // This is stable across the sphere seam and avoids the drift artifacts
+            // that can show up when auto-generated tangents are averaged there.
+            tangents.push([-sin_p, 0.0, cos_p, 1.0]);
         }
     }
 
@@ -34,11 +39,12 @@ pub fn make_uv_sphere(lon_segs: usize, lat_segs: usize, radius: f32) -> MeshData
             let c = ((lat + 1) * stride + lon + 1) as u32;
             let d = (lat * stride + lon + 1) as u32;
             // Two triangles per quad (skip degenerate triangles at poles).
+            // Winding is CCW when viewed from outside the sphere.
             if lat > 0 {
-                indices.extend_from_slice(&[a, b, d]);
+                indices.extend_from_slice(&[a, d, b]);
             }
             if lat < lat_segs - 1 {
-                indices.extend_from_slice(&[b, c, d]);
+                indices.extend_from_slice(&[b, d, c]);
             }
         }
     }
@@ -48,6 +54,7 @@ pub fn make_uv_sphere(lon_segs: usize, lat_segs: usize, radius: f32) -> MeshData
     mesh.normals = normals;
     mesh.indices = indices;
     mesh.uvs = Some(uvs);
+    mesh.tangents = Some(tangents);
     mesh
 }
 

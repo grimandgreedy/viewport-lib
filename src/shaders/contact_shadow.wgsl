@@ -7,11 +7,9 @@
 struct ContactShadowUniform {
     inv_proj:       mat4x4<f32>,   // NDC → view
     proj:           mat4x4<f32>,   // view → clip
-    light_dir_view: vec3<f32>,     // light direction in view space
-    max_distance:   f32,
-    steps:          u32,
-    thickness:      f32,
-    _pad:           vec2<f32>,
+    light_dir_view: vec4<f32>,     // xyz = light direction in view space
+    world_up_view:  vec4<f32>,     // xyz = world up transformed into view space
+    params:         vec4<f32>,     // x=max_distance, y=steps, z=thickness
 };
 
 @group(0) @binding(0) var depth_texture: texture_depth_2d;
@@ -43,11 +41,6 @@ fn view_pos_from_depth(uv: vec2<f32>, depth: f32) -> vec3<f32> {
     return view_h.xyz / view_h.w;
 }
 
-// Low-discrepancy hash for per-pixel dither — breaks up step-aliasing rings.
-fn interleaved_gradient_noise(coord: vec2<f32>) -> f32 {
-    return fract(52.9829189 * fract(dot(coord, vec2<f32>(0.06711056, 0.00583715))));
-}
-
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let frag_depth = textureSample(depth_texture, depth_sampler, in.uv);
@@ -58,18 +51,37 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     let view_pos = view_pos_from_depth(in.uv, frag_depth);
+    var view_normal = normalize(cross(dpdx(view_pos), dpdy(view_pos)));
+    let view_to_camera = normalize(-view_pos);
+    if dot(view_normal, view_to_camera) < 0.0 {
+        view_normal = -view_normal;
+    }
 
     // Ray march from fragment toward light in view space.
-    let ray_dir = normalize(params.light_dir_view);
-    let step_size = params.max_distance / f32(params.steps);
+    let ray_dir = normalize(params.light_dir_view.xyz);
+    let step_size = params.params.x / params.params.y;
+    let n_dot_l = dot(view_normal, ray_dir);
+    let up_alignment = dot(view_normal, normalize(params.world_up_view.xyz));
 
-    // Bias: skip 1.5 steps to avoid self-intersection with the fragment's own surface.
-    // Dither: randomise the sub-step offset per pixel to break up concentric banding rings.
-    let noise = interleaved_gradient_noise(in.pos.xy);
-    let bias = 1.5 + noise;  // start between step 1.5 and 2.5
+    // Restrict contact shadows to ground-like upward-facing receivers.
+    // This avoids the inset bands on object side faces in the showcase.
+    let receiver_weight = smoothstep(0.75, 0.92, up_alignment);
+    if receiver_weight <= 0.001 {
+        return vec4<f32>(1.0);
+    }
 
-    for (var i = 1u; i <= params.steps; i++) {
-        let march_pos = view_pos + ray_dir * ((f32(i) + bias) * step_size);
+    // Offset the ray origin slightly toward the light along the receiver normal
+    // so the first few steps do not immediately re-hit the same visible surface.
+    let origin_sign = select(-1.0, 1.0, n_dot_l >= 0.0);
+    let origin = view_pos + view_normal * (origin_sign * step_size * 1.5);
+
+    // Use a stable starting offset instead of per-pixel jitter. The previous
+    // dither removed banding, but in this showcase it read as sandpaper-like
+    // surface noise because the contact shadow buffer is applied directly.
+    let bias = 2.0;
+
+    for (var i = 1u; i <= u32(params.params.y); i++) {
+        let march_pos = origin + ray_dir * ((f32(i) + bias) * step_size);
 
         // Project march position back to screen space.
         let clip = params.proj * vec4<f32>(march_pos, 1.0);
@@ -92,7 +104,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // exists.  Requiring the sample to be > 0.05 m shallower than view_pos
         // rejects same-surface hits while keeping valid contact shadows (where
         // the caster is a genuinely different, closer object).
-        if sample_view_pos.z - view_pos.z < 0.05 {
+        if sample_view_pos.z - view_pos.z < 0.10 {
             continue;
         }
 
@@ -102,12 +114,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // is greater (less negative) than the march Z → depth_diff > 0 when occluded.
         // Require a minimum depth penetration (half a step) to reject grazing self-hits.
         let depth_diff = sample_view_pos.z - march_pos.z;
-        let min_depth = step_size * 0.5;
-        if depth_diff > min_depth && depth_diff < params.thickness {
+        let min_depth = max(step_size * 1.0, 0.015);
+        if depth_diff > min_depth && depth_diff < params.params.z {
             // Occluded — shadowed.
-            // Fade based on step distance to avoid hard cutoff.
-            let fade = 1.0 - (f32(i) / f32(params.steps));
-            return vec4<f32>(1.0 - fade * 0.8);
+            // Fade based on step distance and penetration depth to avoid hard
+            // binary hits turning into visible grain on gently curved surfaces.
+            let fade = 1.0 - (f32(i) / params.params.y);
+            let penetration = clamp(
+                (depth_diff - min_depth) / max(params.params.z - min_depth, 0.0001),
+                0.0,
+                1.0,
+            );
+            let shadow = 1.0 - fade * penetration * 0.6;
+            return vec4<f32>(mix(1.0, shadow, receiver_weight));
         }
     }
 

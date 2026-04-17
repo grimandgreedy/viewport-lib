@@ -216,7 +216,12 @@ const POISSON_DISK: array<vec2<f32>, 32> = array<vec2<f32>, 32>(
     vec2<f32>(-0.57774330,  0.80459740), vec2<f32>( 0.18238670, -0.37596540),
 );
 
-fn sample_shadow_csm(world_pos: vec3<f32>, eye_pos: vec3<f32>, surface_normal: vec3<f32>) -> f32 {
+fn sample_shadow_csm(
+    world_pos: vec3<f32>,
+    eye_pos: vec3<f32>,
+    surface_normal: vec3<f32>,
+    light_dir: vec3<f32>,
+) -> f32 {
     let dist = dot(world_pos - eye_pos, camera.forward);
     var cascade_idx = 0u;
     for (var i = 0u; i < shadow_atlas.cascade_count; i++) {
@@ -238,7 +243,11 @@ fn sample_shadow_csm(world_pos: vec3<f32>, eye_pos: vec3<f32>, surface_normal: v
         mix(rect.y, rect.w, tile_uv.y),
     );
     let texel_size = 1.0 / shadow_atlas.atlas_size;
-    let offset_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(world_pos + surface_normal * 0.002, 1.0);
+    let n_dot_l = dot(surface_normal, light_dir);
+    let offset_sign = select(-1.0, 1.0, n_dot_l >= 0.0);
+    let normal_bias = mix(0.006, 0.0015, clamp(abs(n_dot_l), 0.0, 1.0));
+    let offset_world = world_pos + surface_normal * (offset_sign * normal_bias);
+    let offset_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(offset_world, 1.0);
     let biased_depth = (offset_clip.xyz / offset_clip.w).z - lights_uniform.shadow_bias;
     let noise = fract(52.9829189 * fract(dot(world_pos.xz, vec2<f32>(0.06711056, 0.00583715))));
     let rot = noise * 6.28318530;

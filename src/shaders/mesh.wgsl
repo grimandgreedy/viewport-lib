@@ -231,7 +231,12 @@ const POISSON_DISK: array<vec2<f32>, 32> = array<vec2<f32>, 32>(
 // ---------------------------------------------------------------------------
 // CSM shadow sampling — selects cascade by eye distance, samples atlas tile
 // ---------------------------------------------------------------------------
-fn sample_shadow_csm(world_pos: vec3<f32>, eye_pos: vec3<f32>, surface_normal: vec3<f32>) -> f32 {
+fn sample_shadow_csm(
+    world_pos: vec3<f32>,
+    eye_pos: vec3<f32>,
+    surface_normal: vec3<f32>,
+    light_dir: vec3<f32>,
+) -> f32 {
     let dist = dot(world_pos - eye_pos, camera.forward);
 
     // Select cascade based on camera-forward depth, which matches the
@@ -269,13 +274,15 @@ fn sample_shadow_csm(world_pos: vec3<f32>, eye_pos: vec3<f32>, surface_normal: v
 
     let texel_size = 1.0 / shadow_atlas.atlas_size;
 
-    // Normal-offset depth bias: project world_pos + N*offset into shadow space
-    // and use the resulting Z as the comparison depth. This offsets depth along
-    // the surface normal direction, so lit faces (N·L > 0) get a depth that is
-    // closer to the light than the actual surface — preventing self-intersection.
-    // Crucially, we keep the UV from the original position (above), so curved
-    // surfaces don't shift into wrong shadow-map regions.
-    let offset_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(world_pos + surface_normal * 0.002, 1.0);
+    // Normal-offset depth bias: move the comparison point toward the light so
+    // the receiver sample does not self-intersect the shadow caster. Increase
+    // the offset near grazing angles, where curved surfaces are most prone to
+    // shadow-terminator acne.
+    let n_dot_l = dot(surface_normal, light_dir);
+    let offset_sign = select(-1.0, 1.0, n_dot_l >= 0.0);
+    let normal_bias = mix(0.006, 0.0015, clamp(abs(n_dot_l), 0.0, 1.0));
+    let offset_world = world_pos + surface_normal * (offset_sign * normal_bias);
+    let offset_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(offset_world, 1.0);
     let biased_depth = (offset_clip.xyz / offset_clip.w).z - lights_uniform.shadow_bias;
 
     // Per-fragment Poisson disk rotation — breaks up the coherent square/blob
@@ -460,6 +467,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         ao_factor = textureSample(ao_map, obj_sampler, in.uv).r;
     }
 
+    // Use the geometric fragment normal for shadowing so the receiver test
+    // matches the faceted mesh that was actually rasterized into the shadow map.
+    var shadow_normal = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
+    if dot(shadow_normal, N) < 0.0 {
+        shadow_normal = -shadow_normal;
+    }
+
     let V = normalize(camera.eye_pos - in.world_pos);
     let tint = vec4<f32>(1.0, 1.0, 1.0, 1.0);
 
@@ -505,12 +519,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
             // Shadow factor (lights[0] only) — CSM.
             var shadow_factor = 1.0;
             if i == 0u && lights_uniform.shadows_enabled != 0u {
-                shadow_factor = sample_shadow_csm(in.world_pos, camera.eye_pos, N);
+                shadow_factor = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L);
                 // Fade shadow to 1.0 near the terminator (N·L ≈ 0).
                 // Shadow-map texels project at grazing angles near the terminator,
                 // causing visible squares. N·L already smoothly darkens that region,
                 // so we suppress the shadow map there.
-                let terminator = smoothstep(0.0, 0.5, dot(N, L));
+                let terminator = smoothstep(0.0, 0.75, dot(shadow_normal, L));
                 shadow_factor = mix(1.0, shadow_factor, terminator);
             }
             radiance *= shadow_factor;
@@ -562,10 +576,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 
             var shadow = 1.0;
             if i == 0u && lights_uniform.shadows_enabled != 0u {
-                shadow = sample_shadow_csm(in.world_pos, camera.eye_pos, N);
+                shadow = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, light_dir);
                 // Terminator fade: suppress shadow map near N·L ≈ 0 to avoid
                 // shadow-texel squares on curved surfaces.
-                let terminator = smoothstep(0.0, 0.5, dot(N, light_dir));
+                let terminator = smoothstep(0.0, 0.75, dot(shadow_normal, light_dir));
                 shadow = mix(1.0, shadow, terminator);
             }
 

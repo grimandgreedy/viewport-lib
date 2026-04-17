@@ -2282,9 +2282,9 @@ impl ApplicationHandler for App {
                             tone_mapping: ToneMapping::Aces,
                             exposure: 1.0,
                             contact_shadows: state.shd_contact_on,
-                            contact_shadow_max_distance: 0.3,
+                            contact_shadow_max_distance: 0.18,
                             contact_shadow_steps: 32,
-                            contact_shadow_thickness: 0.08,
+                            contact_shadow_thickness: 0.04,
                             ..PostProcessSettings::default()
                         }
                     } else {

@@ -37,6 +37,15 @@ impl AppState {
             .expect("sphere mesh upload");
         let sphere_id = MeshId::from_index(sphere_idx);
 
+        // Higher-tessellation sphere for side-by-side shadow acne comparison.
+        let sphere_dense_mesh = make_uv_sphere(64, 32, 0.5);
+        let sphere_dense_idx = self
+            .renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &sphere_dense_mesh)
+            .expect("dense sphere mesh upload");
+        let sphere_dense_id = MeshId::from_index(sphere_dense_idx);
+
         // Box mesh for casters.
         let box_mesh = make_box_with_uvs(1.0, 1.0, 1.0);
         let box_idx = self
@@ -70,7 +79,9 @@ impl AppState {
             ),
         ];
         for (name, pos, color) in object_data {
-            let mesh_id = if name.contains("Sphere") {
+            let mesh_id = if *name == "Sphere Near" {
+                sphere_dense_id
+            } else if name.contains("Sphere") {
                 sphere_id
             } else {
                 box_id

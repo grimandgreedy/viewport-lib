@@ -560,17 +560,15 @@ pub(crate) struct ShadowAtlasUniform {
 }
 // Total: 256 + 16 + 16 + 128 = 416 bytes
 
-/// Contact shadow uniform (160 bytes).
+/// Contact shadow uniform (176 bytes).
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ContactShadowUniform {
-    pub(crate) inv_proj: [[f32; 4]; 4],  // 64 bytes
-    pub(crate) proj: [[f32; 4]; 4],      // 64 bytes
-    pub(crate) light_dir_view: [f32; 3], // 12 bytes
-    pub(crate) max_distance: f32,        //  4 bytes
-    pub(crate) steps: u32,               //  4 bytes
-    pub(crate) thickness: f32,           //  4 bytes
-    pub(crate) _pad: [f32; 2],           //  8 bytes
+    pub(crate) inv_proj: [[f32; 4]; 4],   // 64 bytes
+    pub(crate) proj: [[f32; 4]; 4],       // 64 bytes
+    pub(crate) light_dir_view: [f32; 4],  // 16 bytes
+    pub(crate) world_up_view: [f32; 4],   // 16 bytes
+    pub(crate) params: [f32; 4],          // 16 bytes: [max_distance, steps, thickness, pad]
 }
 
 /// Per-vertex data for overlay rendering: position only (no normal/color in vertex).
