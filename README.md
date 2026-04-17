@@ -28,3 +28,20 @@ Whichever gui library you choose to use (`winit`, `eframe`, `Iced`, `Slint`, etc
 - arcball camera, view presets, framing, and smooth camera animation
 - CPU/GPU picking, rectangle selection, transform gizmos, and snapping
 - annotations, axes indicators
+
+
+## Examples
+
+The `examples/` directory contains working integrations for several GUI frameworks.
+
+- **winit-viewport**: the most basic setup: raw `winit` + `wgpu` with no GUI framework. Start here if you want to understand the minimal integration.
+- **eframe-viewport**: a straightforward example of embedding the viewport inside an `egui`/`eframe` application using `egui_wgpu` callback resources.
+- **winit-showcase**: several more advanced rendering options in 9 showcases
+
+Other examples:
+- `iced-viewport`, `slint-viewport`, `winit-showcase`, `gtk4-viewport`
+
+Run examples with:
+```
+cargo run --example winit-viewport
+```
