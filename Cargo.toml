@@ -1,0 +1,67 @@
+[package]
+name = "viewport-lib"
+version = "0.1.0"
+edition = "2024"
+description = "3D viewport rendering library"
+readme = "README.md"
+license = "GPL-3.0-only"
+repository = "https://github.com/grimandgreedy/viewport-lib"
+homepage = "https://github.com/grimandgreedy/viewport-lib"
+documentation = "https://docs.rs/viewport-lib"
+keywords = ["3d", "viewport", "wgpu", "rendering", "visualization"]
+categories = ["graphics", "rendering", "visualization"]
+rust-version = "1.85"
+publish = false  # keep disabled until the first public release is intentionally cut
+
+[dependencies]
+wgpu = { version = "27.0", features = ["metal", "vulkan"] }
+glam = { version = "=0.30.10", features = ["bytemuck"] }
+bytemuck = { version = "1.25", features = ["derive"] }
+parry3d = "0.26"
+thiserror = "2.0"
+tracing = "0.1"
+serde = { version = "1.0", features = ["derive"], optional = true }
+# egui is optional - enables draw_annotation_labels helper.
+# Pin to =0.33.3 to stay aligned with eframe 0.33.3 used in the examples.
+egui = { version = "=0.33.3", optional = true }
+# gtk4 is optional because it requires system libraries (libgtk-4-dev / brew install gtk4).
+# Build the gtk4 example with: cargo run -p viewport-lib --example gtk4-viewport --features gtk4-example
+gtk4 = { version = "0.9", optional = true }
+
+[features]
+default = ["serde"]
+gtk4-example = ["gtk4"]
+# Enable egui integration helpers (draw_annotation_labels).
+egui = ["dep:egui"]
+
+[dev-dependencies]
+iced = { version = "0.14", features = ["wgpu"] }
+slint = { version = "~1.15", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg-wgpu"] }
+eframe = { version = "=0.33.3", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"] }
+winit = "0.30"
+pollster = "0.4"
+
+[[example]]
+name = "iced-viewport"
+path = "examples/iced_viewport/main.rs"
+
+[[example]]
+name = "slint-viewport"
+path = "examples/slint_viewport/main.rs"
+
+[[example]]
+name = "winit-viewport"
+path = "examples/winit_viewport/main.rs"
+
+[[example]]
+name = "winit-showcase"
+path = "examples/winit_showcase/main.rs"
+
+[[example]]
+name = "eframe-viewport"
+path = "examples/eframe_viewport/main.rs"
+
+[[example]]
+name = "gtk4-viewport"
+path = "examples/gtk4_viewport/main.rs"
+required-features = ["gtk4-example"]

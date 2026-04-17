@@ -1,0 +1,31 @@
+# Qt + viewport-lib example.
+#
+# This example is a standalone crate (not a [[example]] entry) because cxx-qt
+# requires a build.rs to compile the QML module and C++ bridge code.
+#
+# Prerequisites:
+#   - Qt 6 installed (Qt 6.5+ recommended)
+#   - `qmake` in PATH (or set the QMAKE environment variable)
+#
+# Build and run:
+#   cd examples/qt_viewport
+#   cargo run
+
+[workspace]
+
+[package]
+name = "qt-viewport-example"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+viewport-lib = { path = "../.." }
+wgpu = { version = "27.0", features = ["metal", "vulkan"] }
+glam = { version = "=0.30.10", features = ["bytemuck"] }
+pollster = "0.4"
+cxx = "1.0"
+cxx-qt = "0.8"
+cxx-qt-lib = { version = "0.8", features = ["qt_full"] }
+
+[build-dependencies]
+cxx-qt-build = { version = "0.8", features = ["link_qt_object_files"] }

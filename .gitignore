@@ -1,0 +1,18 @@
+/target
+**/target
+book/build/
+
+# Cargo lockfiles are usually omitted for library-style crates and examples here.
+/Cargo.lock
+/examples/qt_viewport/Cargo.lock
+
+# Local editor and OS noise.
+.DS_Store
+.idea/
+.vscode/
+.direnv/
+*.log
+*.swp
+*.swo
+*.user
+*.qtc.user
