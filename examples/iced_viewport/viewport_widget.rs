@@ -9,7 +9,8 @@ use iced::event::Event;
 use iced::widget::shader;
 use iced::{Element, Fill, Point, Rectangle, mouse};
 use viewport_lib::{
-    Camera, CameraUniform, FrameData, LightingSettings, MeshData, SceneRenderItem, ViewportRenderer,
+    Camera, FrameData, LightingSettings, MeshData, RenderCamera, SceneRenderItem,
+    SurfaceSubmission, ViewportRenderer,
 };
 
 use crate::Message;
@@ -86,12 +87,9 @@ pub struct ViewportPrimitive {
     camera_snapshot: CameraSnapshot,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct CameraSnapshot {
-    view_proj: [[f32; 4]; 4],
-    eye_pos: [f32; 3],
-    orientation: glam::Quat,
-    fov_y: f32,
+    render_camera: RenderCamera,
 }
 
 // ---------------------------------------------------------------------------
@@ -207,23 +205,13 @@ impl shader::Primitive for ViewportPrimitive {
 
         let frame_data = {
             let mut fd = FrameData::default();
-            fd.camera_uniform = CameraUniform {
-                view_proj: self.camera_snapshot.view_proj,
-                eye_pos: self.camera_snapshot.eye_pos,
-                _pad: 0.0,
-                forward: [0.0, 0.0, -1.0],
-                _pad1: 0.0,
-            };
-            fd.lighting = LightingSettings::default();
-            fd.eye_pos = self.camera_snapshot.eye_pos;
-            fd.scene_items = scene_items;
-            fd.camera_fov = self.camera_snapshot.fov_y;
-
-            fd.show_grid = true;
-            fd.grid_y = -0.5; // bottom face of unit boxes
-            fd.show_axes_indicator = true;
-            fd.viewport_size = [bounds.width, bounds.height];
-            fd.camera_orientation = self.camera_snapshot.orientation;
+            fd.camera.render_camera = self.camera_snapshot.render_camera.clone();
+            fd.camera.viewport_size = [bounds.width, bounds.height];
+            fd.effects.lighting = LightingSettings::default();
+            fd.scene.surfaces = SurfaceSubmission::Flat(scene_items);
+            fd.viewport.show_grid = true;
+            fd.viewport.grid_y = -0.5; // bottom face of unit boxes
+            fd.viewport.show_axes_indicator = true;
             fd
         };
 
@@ -252,23 +240,13 @@ impl shader::Primitive for ViewportPrimitive {
 
         let frame_data = {
             let mut fd = FrameData::default();
-            fd.camera_uniform = CameraUniform {
-                view_proj: self.camera_snapshot.view_proj,
-                eye_pos: self.camera_snapshot.eye_pos,
-                _pad: 0.0,
-                forward: [0.0, 0.0, -1.0],
-                _pad1: 0.0,
-            };
-            fd.lighting = LightingSettings::default();
-            fd.eye_pos = self.camera_snapshot.eye_pos;
-            fd.scene_items = scene_items;
-            fd.camera_fov = self.camera_snapshot.fov_y;
-
-            fd.show_grid = true;
-            fd.grid_y = -0.5; // bottom face of unit boxes
-            fd.show_axes_indicator = true;
-            fd.viewport_size = [clip_bounds.width as f32, clip_bounds.height as f32];
-            fd.camera_orientation = self.camera_snapshot.orientation;
+            fd.camera.render_camera = self.camera_snapshot.render_camera.clone();
+            fd.camera.viewport_size = [clip_bounds.width as f32, clip_bounds.height as f32];
+            fd.effects.lighting = LightingSettings::default();
+            fd.scene.surfaces = SurfaceSubmission::Flat(scene_items);
+            fd.viewport.show_grid = true;
+            fd.viewport.grid_y = -0.5; // bottom face of unit boxes
+            fd.viewport.show_axes_indicator = true;
             fd
         };
 
@@ -439,10 +417,7 @@ impl shader::Program<Message> for SceneSnapshot {
         ViewportPrimitive {
             objects: self.objects.clone(),
             camera_snapshot: CameraSnapshot {
-                view_proj: cam.view_proj_matrix().to_cols_array_2d(),
-                eye_pos: cam.eye_position().into(),
-                orientation: cam.orientation,
-                fov_y: cam.fov_y,
+                render_camera: RenderCamera::from_camera(&cam),
             },
         }
     }

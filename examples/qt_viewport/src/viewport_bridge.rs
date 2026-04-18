@@ -4,8 +4,8 @@
 
 use std::collections::HashMap;
 use viewport_lib::{
-    Camera, CameraUniform, FrameData, GizmoAxis, GizmoMode, LightingSettings, MeshData, SceneRenderItem,
-    ViewportRenderer,
+    Camera, FrameData, GizmoAxis, GizmoMode, LightingSettings, MeshData, RenderCamera,
+    SceneRenderItem, SurfaceSubmission, ViewportRenderer,
 };
 
 pub struct SceneRenderer {
@@ -103,20 +103,12 @@ impl SceneRenderer {
         }).collect();
 
         let mut frame_data = FrameData::default();
-        frame_data.camera_uniform = CameraUniform {
-            view_proj: self.camera.view_proj_matrix().to_cols_array_2d(),
-            eye_pos: self.camera.eye_position().into(),
-            _pad: 0.0,
-            forward: [0.0, 0.0, -1.0],
-            _pad1: 0.0,
-        };
-        frame_data.lighting = LightingSettings::default();
-        frame_data.eye_pos = self.camera.eye_position().into();
-        frame_data.scene_items = scene_items;
-        frame_data.show_grid = true;
-        frame_data.show_axes_indicator = true;
-        frame_data.viewport_size = [w as f32, h as f32];
-        frame_data.camera_orientation = self.camera.orientation;
+        frame_data.camera.render_camera = RenderCamera::from_camera(&self.camera);
+        frame_data.camera.viewport_size = [w as f32, h as f32];
+        frame_data.effects.lighting = LightingSettings::default();
+        frame_data.scene.surfaces = SurfaceSubmission::Flat(scene_items);
+        frame_data.viewport.show_grid = true;
+        frame_data.viewport.show_axes_indicator = true;
 
         self.renderer.prepare(device, queue, &frame_data);
 
