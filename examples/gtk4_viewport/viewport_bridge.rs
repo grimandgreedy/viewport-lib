@@ -11,8 +11,8 @@
 use std::collections::HashMap;
 
 use viewport_lib::{
-    Camera, FrameData, GizmoAxis, GizmoMode, LightingSettings, MeshData, RenderCamera,
-    SceneRenderItem, SurfaceSubmission, ViewportRenderer,
+    Camera, FrameData, GizmoAxis, GizmoMode, LightingSettings, RenderCamera,
+    SceneRenderItem, SurfaceSubmission, ViewportRenderer, primitives,
 };
 use wgpu;
 
@@ -128,13 +128,12 @@ impl SceneRenderer {
         }
 
         // Upload meshes for any new objects.
-        let box_mesh = unit_box_mesh();
         for &(id, _) in objects {
             if !self.uploaded.contains_key(&id) {
                 let idx = self
                     .renderer
                     .resources_mut()
-                    .upload_mesh_data(device, &box_mesh)
+                    .upload_mesh_data(device, &primitives::cube(1.0))
                     .expect("built-in mesh");
                 self.uploaded.insert(id, idx);
             }
@@ -268,44 +267,3 @@ impl SceneRenderer {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Box mesh helper
-// ---------------------------------------------------------------------------
-
-fn unit_box_mesh() -> MeshData {
-    #[rustfmt::skip]
-    let positions: Vec<[f32; 3]> = vec![
-        [-0.5, -0.5,  0.5], [ 0.5, -0.5,  0.5], [ 0.5,  0.5,  0.5], [-0.5,  0.5,  0.5],
-        [ 0.5, -0.5, -0.5], [-0.5, -0.5, -0.5], [-0.5,  0.5, -0.5], [ 0.5,  0.5, -0.5],
-        [-0.5,  0.5,  0.5], [ 0.5,  0.5,  0.5], [ 0.5,  0.5, -0.5], [-0.5,  0.5, -0.5],
-        [-0.5, -0.5, -0.5], [ 0.5, -0.5, -0.5], [ 0.5, -0.5,  0.5], [-0.5, -0.5,  0.5],
-        [ 0.5, -0.5,  0.5], [ 0.5, -0.5, -0.5], [ 0.5,  0.5, -0.5], [ 0.5,  0.5,  0.5],
-        [-0.5, -0.5, -0.5], [-0.5, -0.5,  0.5], [-0.5,  0.5,  0.5], [-0.5,  0.5, -0.5],
-    ];
-
-    #[rustfmt::skip]
-    let normals: Vec<[f32; 3]> = vec![
-        [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0],
-        [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0],
-        [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0],
-        [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0],
-        [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0],
-        [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0],
-    ];
-
-    #[rustfmt::skip]
-    let indices: Vec<u32> = vec![
-        0,  1,  2,  0,  2,  3,
-        4,  5,  6,  4,  6,  7,
-        8,  9,  10, 8,  10, 11,
-        12, 13, 14, 12, 14, 15,
-        16, 17, 18, 16, 18, 19,
-        20, 21, 22, 20, 22, 23,
-    ];
-
-    let mut mesh = MeshData::default();
-    mesh.positions = positions;
-    mesh.normals = normals;
-    mesh.indices = indices;
-    mesh
-}

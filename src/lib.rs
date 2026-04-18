@@ -37,6 +37,7 @@ pub mod widgets;
 // ---------------------------------------------------------------------------
 
 pub use geometry::bvh;
+pub use geometry::primitives;
 pub use interaction::annotation;
 pub use interaction::gizmo;
 pub use interaction::input;

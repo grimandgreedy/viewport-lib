@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use viewport_lib::{
-    Camera, FrameData, LightingSettings, MeshData, RenderCamera, SceneRenderItem,
-    SurfaceSubmission, ViewportRenderer,
+    Camera, FrameData, LightingSettings, RenderCamera, SceneRenderItem,
+    SurfaceSubmission, ViewportRenderer, primitives,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
@@ -49,7 +49,7 @@ struct AppState {
 
     renderer: ViewportRenderer,
     camera: Camera,
-    mesh_indices: Vec<usize>,
+    mesh_index: usize,
 
     // Mouse tracking state for input handling.
     left_pressed: bool,
@@ -142,16 +142,10 @@ impl ApplicationHandler for App {
 
         let mut renderer = ViewportRenderer::new(&device, format);
 
-        // Upload a few box meshes so the scene isn't empty.
-        let box_mesh = unit_box_mesh();
-        let mut mesh_indices = Vec::new();
-        for _ in 0..4 {
-            let idx = renderer
-                .resources_mut()
-                .upload_mesh_data(&device, &box_mesh)
-                .expect("built-in mesh");
-            mesh_indices.push(idx);
-        }
+        let mesh_index = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &primitives::cube(1.0))
+            .expect("built-in mesh");
 
         let camera = Camera {
             center: glam::Vec3::ZERO,
@@ -169,7 +163,7 @@ impl ApplicationHandler for App {
             depth_view,
             renderer,
             camera,
-            mesh_indices,
+            mesh_index,
             left_pressed: false,
             middle_pressed: false,
             right_pressed: false,
@@ -305,25 +299,21 @@ impl ApplicationHandler for App {
 
                 state.camera.aspect = if h > 0.0 { w / h } else { 1.0 };
 
-                // Build scene: 4 boxes in a grid.
+                // Build scene: 4 cubes in a grid.
                 let positions = [
                     [-1.5, 0.0, -1.5],
-                    [1.5, 0.0, -1.5],
-                    [-1.5, 0.0, 1.5],
-                    [1.5, 0.0, 1.5],
+                    [ 1.5, 0.0, -1.5],
+                    [-1.5, 0.0,  1.5],
+                    [ 1.5, 0.0,  1.5],
                 ];
-                let scene_items: Vec<SceneRenderItem> = state
-                    .mesh_indices
+                let scene_items: Vec<SceneRenderItem> = positions
                     .iter()
-                    .zip(&positions)
-                    .map(|(&mesh_index, pos)| {
-                        let model = glam::Mat4::from_translation(glam::Vec3::from(*pos));
-                        {
-                            let mut item = SceneRenderItem::default();
-                            item.mesh_index = mesh_index;
-                            item.model = model.to_cols_array_2d();
-                            item
-                        }
+                    .map(|&pos| {
+                        let mut item = SceneRenderItem::default();
+                        item.mesh_index = state.mesh_index;
+                        item.model = glam::Mat4::from_translation(glam::Vec3::from(pos))
+                            .to_cols_array_2d();
+                        item
                     })
                     .collect();
 
@@ -391,56 +381,3 @@ impl ApplicationHandler for App {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Box mesh helper
-// ---------------------------------------------------------------------------
-
-fn unit_box_mesh() -> MeshData {
-    #[rustfmt::skip]
-    let positions: Vec<[f32; 3]> = vec![
-        // Front face
-        [-0.5, -0.5,  0.5], [ 0.5, -0.5,  0.5], [ 0.5,  0.5,  0.5], [-0.5,  0.5,  0.5],
-        // Back face
-        [ 0.5, -0.5, -0.5], [-0.5, -0.5, -0.5], [-0.5,  0.5, -0.5], [ 0.5,  0.5, -0.5],
-        // Top face
-        [-0.5,  0.5,  0.5], [ 0.5,  0.5,  0.5], [ 0.5,  0.5, -0.5], [-0.5,  0.5, -0.5],
-        // Bottom face
-        [-0.5, -0.5, -0.5], [ 0.5, -0.5, -0.5], [ 0.5, -0.5,  0.5], [-0.5, -0.5,  0.5],
-        // Right face
-        [ 0.5, -0.5,  0.5], [ 0.5, -0.5, -0.5], [ 0.5,  0.5, -0.5], [ 0.5,  0.5,  0.5],
-        // Left face
-        [-0.5, -0.5, -0.5], [-0.5, -0.5,  0.5], [-0.5,  0.5,  0.5], [-0.5,  0.5, -0.5],
-    ];
-
-    #[rustfmt::skip]
-    let normals: Vec<[f32; 3]> = vec![
-        // Front
-        [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0],
-        // Back
-        [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0],
-        // Top
-        [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0],
-        // Bottom
-        [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0],
-        // Right
-        [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0],
-        // Left
-        [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0],
-    ];
-
-    #[rustfmt::skip]
-    let indices: Vec<u32> = vec![
-        0,  1,  2,  0,  2,  3,   // Front
-        4,  5,  6,  4,  6,  7,   // Back
-        8,  9,  10, 8,  10, 11,  // Top
-        12, 13, 14, 12, 14, 15,  // Bottom
-        16, 17, 18, 16, 18, 19,  // Right
-        20, 21, 22, 20, 22, 23,  // Left
-    ];
-
-    let mut mesh = MeshData::default();
-    mesh.positions = positions;
-    mesh.normals = normals;
-    mesh.indices = indices;
-    mesh
-}
