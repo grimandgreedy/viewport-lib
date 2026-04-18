@@ -23,7 +23,7 @@ fn clip_volume_uniform_size_is_128() {
 #[test]
 fn frame_data_default_clip_volume_is_none() {
     let frame = FrameData::default();
-    assert!(matches!(frame.clip_volume, ClipVolume::None));
+    assert!(matches!(frame.effects.clip_volume, ClipVolume::None));
 }
 
 #[test]
@@ -31,30 +31,30 @@ fn clip_volume_variants_construct_and_assign() {
     let mut frame = FrameData::default();
 
     // Plane variant
-    frame.clip_volume = ClipVolume::Plane {
+    frame.effects.clip_volume = ClipVolume::Plane {
         normal: [0.0, 1.0, 0.0],
         distance: -5.0,
     };
-    assert!(matches!(frame.clip_volume, ClipVolume::Plane { .. }));
+    assert!(matches!(frame.effects.clip_volume, ClipVolume::Plane { .. }));
 
     // Box variant
-    frame.clip_volume = ClipVolume::Box {
+    frame.effects.clip_volume = ClipVolume::Box {
         center: [1.0, 2.0, 3.0],
         half_extents: [0.5, 0.5, 0.5],
         orientation: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
     };
-    assert!(matches!(frame.clip_volume, ClipVolume::Box { .. }));
+    assert!(matches!(frame.effects.clip_volume, ClipVolume::Box { .. }));
 
     // Sphere variant
-    frame.clip_volume = ClipVolume::Sphere {
+    frame.effects.clip_volume = ClipVolume::Sphere {
         center: [0.0, 0.0, 0.0],
         radius: 2.5,
     };
-    assert!(matches!(frame.clip_volume, ClipVolume::Sphere { .. }));
+    assert!(matches!(frame.effects.clip_volume, ClipVolume::Sphere { .. }));
 
     // None resets to no clip
-    frame.clip_volume = ClipVolume::None;
-    assert!(matches!(frame.clip_volume, ClipVolume::None));
+    frame.effects.clip_volume = ClipVolume::None;
+    assert!(matches!(frame.effects.clip_volume, ClipVolume::None));
 }
 
 #[test]

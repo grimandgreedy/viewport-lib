@@ -732,7 +732,6 @@ impl Default for ComputeFilterItem {
 /// Replaces the flat camera fields that were previously scattered across
 /// `FrameData`. Application-side orbit cameras resolve into this type
 /// before frame submission.
-#[non_exhaustive]
 pub struct RenderCamera {
     /// World-to-view transform matrix.
     pub view: glam::Mat4,
