@@ -17,7 +17,6 @@ use viewport_bridge::SceneRenderer;
 /// Camera control constants shared with the other viewport examples.
 const ORBIT_SENSITIVITY: f32 = 0.005;
 const ZOOM_SENSITIVITY: f32 = 0.001;
-const MIN_DISTANCE: f32 = 0.1;
 
 /// Shared application state behind `Rc<RefCell<...>>` so GTK callbacks can
 /// mutate it.
@@ -191,7 +190,7 @@ fn build_ui(app: &gtk4::Application) {
             let scroll_y = dy as f32 * -28.0; // Invert and scale line delta
             let mut s = state.borrow_mut();
             let cam = s.scene_renderer.camera_mut();
-            cam.distance = (cam.distance * (1.0 - scroll_y * ZOOM_SENSITIVITY)).max(MIN_DISTANCE);
+            cam.zoom_by_factor(1.0 - scroll_y * ZOOM_SENSITIVITY);
             s.dirty = true;
             drop(s);
             picture_ref.queue_draw();
@@ -313,16 +312,10 @@ fn attach_drag_gesture(
             if is_pan {
                 let viewport_h = s.tex_h.max(1) as f32;
                 let cam = s.scene_renderer.camera_mut();
-                let pan_scale = 2.0 * cam.distance * (cam.fov_y / 2.0).tan() / viewport_h;
-                let right = cam.right();
-                let up = cam.up();
-                cam.center -= right * dx * pan_scale;
-                cam.center += up * dy * pan_scale;
+                cam.pan_pixels(glam::vec2(dx, dy), viewport_h);
             } else {
                 let cam = s.scene_renderer.camera_mut();
-                let q_yaw = glam::Quat::from_rotation_y(-dx * ORBIT_SENSITIVITY);
-                let q_pitch = glam::Quat::from_rotation_x(-dy * ORBIT_SENSITIVITY);
-                cam.orientation = (q_yaw * cam.orientation * q_pitch).normalize();
+                cam.orbit(dx * ORBIT_SENSITIVITY, dy * ORBIT_SENSITIVITY);
             }
             s.dirty = true;
             drop(s);

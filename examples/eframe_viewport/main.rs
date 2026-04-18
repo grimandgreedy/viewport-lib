@@ -97,7 +97,6 @@ impl Default for App {
 
 const ORBIT_SENSITIVITY: f32 = 0.005;
 const ZOOM_SENSITIVITY: f32 = 0.001;
-const MIN_DISTANCE: f32 = 0.1;
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -148,44 +147,31 @@ impl eframe::App for App {
 
             // --- Camera: Orbit ---
             if let ActionState::Active { delta } = self.input.query(Action::Orbit, &frame_input) {
-                let q_yaw = glam::Quat::from_rotation_y(-delta.x * ORBIT_SENSITIVITY);
-                let q_pitch = glam::Quat::from_rotation_x(-delta.y * ORBIT_SENSITIVITY);
-                self.camera.orientation = (q_yaw * self.camera.orientation * q_pitch).normalize();
+                self.camera.orbit(delta.x * ORBIT_SENSITIVITY, delta.y * ORBIT_SENSITIVITY);
             }
             // Ctrl+scroll orbit (2-axis)
             let cd = frame_input.ctrl_scroll_orbit_delta;
             if cd != glam::Vec2::ZERO {
-                let q_yaw = glam::Quat::from_rotation_y(-cd.x * ORBIT_SENSITIVITY);
-                let q_pitch = glam::Quat::from_rotation_x(-cd.y * ORBIT_SENSITIVITY);
-                self.camera.orientation = (q_yaw * self.camera.orientation * q_pitch).normalize();
+                self.camera.orbit(cd.x * ORBIT_SENSITIVITY, cd.y * ORBIT_SENSITIVITY);
             }
 
             // --- Camera: Pan ---
             if let ActionState::Active { delta } = self.input.query(Action::Pan, &frame_input) {
-                let pan_scale =
-                    2.0 * self.camera.distance * (self.camera.fov_y / 2.0).tan() / rect.height();
-                self.camera.center -= self.camera.right() * delta.x * pan_scale;
-                self.camera.center += self.camera.up() * delta.y * pan_scale;
+                self.camera.pan_pixels(delta, rect.height());
             }
             // Shift+scroll pan (2-axis)
             let sp = frame_input.shift_scroll_pan_delta;
             if sp != glam::Vec2::ZERO {
-                let pan_scale =
-                    2.0 * self.camera.distance * (self.camera.fov_y / 2.0).tan() / rect.height();
-                self.camera.center -= self.camera.right() * sp.x * pan_scale;
-                self.camera.center += self.camera.up() * sp.y * pan_scale;
+                self.camera.pan_pixels(sp, rect.height());
             }
 
             // --- Camera: Zoom ---
             if let ActionState::Active { delta } = self.input.query(Action::Zoom, &frame_input) {
-                self.camera.distance =
-                    (self.camera.distance * (1.0 - delta.y * ZOOM_SENSITIVITY)).max(MIN_DISTANCE);
+                self.camera.zoom_by_factor(1.0 - delta.y * ZOOM_SENSITIVITY);
             }
 
             // Update camera aspect ratio.
-            if rect.height() > 0.0 {
-                self.camera.aspect = rect.width() / rect.height();
-            }
+            self.camera.set_aspect_ratio(rect.width(), rect.height());
 
             // Build scene items.
             let scene_items: Vec<viewport_lib::SceneRenderItem> = self

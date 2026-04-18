@@ -26,8 +26,6 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 const ORBIT_SENSITIVITY: f32 = 0.005;
 const ZOOM_SENSITIVITY: f32 = 0.001;
-const MIN_DISTANCE: f32 = 0.1;
-const MAX_DISTANCE: f32 = 1e15;
 
 // ---------------------------------------------------------------------------
 // Scene layout helper
@@ -96,18 +94,13 @@ impl AppState {
 
     /// Orbit the camera: yaw around world Y, pitch around camera-local X.
     fn orbit(&mut self, dx: f32, dy: f32) {
-        let q_yaw = glam::Quat::from_rotation_y(-dx * ORBIT_SENSITIVITY);
-        let q_pitch = glam::Quat::from_rotation_x(-dy * ORBIT_SENSITIVITY);
-        self.camera.orientation = (q_yaw * self.camera.orientation * q_pitch).normalize();
+        self.camera.orbit(dx * ORBIT_SENSITIVITY, dy * ORBIT_SENSITIVITY);
     }
 
     /// Pan the camera: move look-at centre in the camera's right/up plane.
     fn pan(&mut self, dx: f32, dy: f32) {
         let h = self.surface_config.height as f32;
-        let pan_scale =
-            2.0 * self.camera.distance * (self.camera.fov_y / 2.0).tan() / h.max(1.0);
-        self.camera.center -= self.camera.right() * dx * pan_scale;
-        self.camera.center += self.camera.up() * dy * pan_scale;
+        self.camera.pan_pixels(glam::vec2(dx, dy), h);
     }
 }
 
@@ -346,9 +339,7 @@ impl ApplicationHandler for App {
                     state.pan(raw_dx, raw_dy);
                 } else {
                     // Plain scroll → zoom.
-                    state.camera.distance =
-                        (state.camera.distance * (1.0 - zoom_dy * ZOOM_SENSITIVITY))
-                            .clamp(MIN_DISTANCE, MAX_DISTANCE);
+                    state.camera.zoom_by_factor(1.0 - zoom_dy * ZOOM_SENSITIVITY);
                 }
 
                 state.window.request_redraw();
@@ -372,7 +363,7 @@ impl ApplicationHandler for App {
                 let w = state.surface_config.width as f32;
                 let h = state.surface_config.height as f32;
 
-                state.camera.aspect = if h > 0.0 { w / h } else { 1.0 };
+                state.camera.set_aspect_ratio(w, h);
 
                 let mut frame_data = FrameData::new(
                     CameraFrame::from_camera(&state.camera, [w, h]),

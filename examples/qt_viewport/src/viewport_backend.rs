@@ -62,8 +62,6 @@ unsafe extern "C" {
 
 const ORBIT_SENSITIVITY: f32 = 0.005;
 const ZOOM_SENSITIVITY: f32 = 0.001;
-const MIN_DISTANCE: f32 = 0.1;
-const MAX_PITCH: f32 = std::f32::consts::FRAC_PI_2 - 0.01;
 
 pub struct ViewportBackendRust {
     frame_counter: i32,
@@ -183,27 +181,19 @@ impl qobject::ViewportBackend {
 
     fn orbit(self: Pin<&mut Self>, dx: f32, dy: f32) {
         if let Some(sr) = self.rust_mut().scene_renderer.as_mut() {
-            sr.camera.yaw -= dx * ORBIT_SENSITIVITY;
-            sr.camera.pitch =
-                (sr.camera.pitch + dy * ORBIT_SENSITIVITY).clamp(-MAX_PITCH, MAX_PITCH);
+            sr.camera.orbit(dx * ORBIT_SENSITIVITY, dy * ORBIT_SENSITIVITY);
         }
     }
 
     fn pan(self: Pin<&mut Self>, dx: f32, dy: f32, viewport_height: f32) {
         if let Some(sr) = self.rust_mut().scene_renderer.as_mut() {
-            let h = viewport_height.max(1.0);
-            let pan_scale = 2.0 * sr.camera.distance * (sr.camera.fov_y / 2.0).tan() / h;
-            let right = sr.camera.right();
-            let up = sr.camera.up();
-            sr.camera.center -= right * dx * pan_scale;
-            sr.camera.center += up * dy * pan_scale;
+            sr.camera.pan_pixels(glam::vec2(dx, dy), viewport_height);
         }
     }
 
     fn zoom(self: Pin<&mut Self>, delta: f32) {
         if let Some(sr) = self.rust_mut().scene_renderer.as_mut() {
-            sr.camera.distance =
-                (sr.camera.distance * (1.0 - delta * ZOOM_SENSITIVITY)).max(MIN_DISTANCE);
+            sr.camera.zoom_by_factor(1.0 - delta * ZOOM_SENSITIVITY);
         }
     }
 }

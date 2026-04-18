@@ -32,8 +32,7 @@ impl SceneRenderer {
             camera: Camera {
                 center: glam::Vec3::ZERO,
                 distance: 12.0,
-                yaw: 0.6,
-                pitch: -0.4,
+                orientation: glam::Quat::from_rotation_y(0.6) * glam::Quat::from_rotation_x(-0.4),
                 ..Camera::default()
             },
             uploaded: HashMap::new(),
@@ -91,7 +90,7 @@ impl SceneRenderer {
             }
         }
 
-        self.camera.aspect = w as f32 / h as f32;
+        self.camera.set_aspect_ratio(w as f32, h as f32);
 
         let scene_items: Vec<SceneRenderItem> = objects.iter().filter_map(|&(id, pos)| {
             let mesh_index = *self.uploaded.get(&id)?;

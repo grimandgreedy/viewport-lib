@@ -142,7 +142,7 @@ impl SceneRenderer {
         }
 
         // Update camera aspect.
-        self.camera.aspect = w as f32 / h as f32;
+        self.camera.set_aspect_ratio(w as f32, h as f32);
 
         // Build scene items.
         let scene_items: Vec<SceneRenderItem> = objects

@@ -180,7 +180,6 @@ slint::slint! {
 /// Camera control constants shared with the other viewport examples.
 const ORBIT_SENSITIVITY: f32 = 0.005;
 const ZOOM_SENSITIVITY: f32 = 0.001;
-const MIN_DISTANCE: f32 = 0.1;
 
 fn main() {
     let app = App::new().unwrap();
@@ -248,10 +247,7 @@ fn main() {
         let renderer = scene_renderer.clone();
         app.on_orbit(move |dx, dy| {
             let mut r = renderer.borrow_mut();
-            let cam = r.camera_mut();
-            let q_yaw = glam::Quat::from_rotation_y(-dx * ORBIT_SENSITIVITY);
-            let q_pitch = glam::Quat::from_rotation_x(-dy * ORBIT_SENSITIVITY);
-            cam.orientation = (q_yaw * cam.orientation * q_pitch).normalize();
+            r.camera_mut().orbit(dx * ORBIT_SENSITIVITY, dy * ORBIT_SENSITIVITY);
         });
     }
     {
@@ -261,20 +257,14 @@ fn main() {
             let app = app_weak.unwrap();
             let viewport_h = app.get_requested_texture_height().max(1) as f32;
             let mut r = renderer.borrow_mut();
-            let cam = r.camera_mut();
-            let pan_scale = 2.0 * cam.distance * (cam.fov_y / 2.0).tan() / viewport_h;
-            let right = cam.right();
-            let up = cam.up();
-            cam.center -= right * dx * pan_scale;
-            cam.center += up * dy * pan_scale;
+            r.camera_mut().pan_pixels(glam::vec2(dx, dy), viewport_h);
         });
     }
     {
         let renderer = scene_renderer.clone();
         app.on_zoom(move |delta| {
             let mut r = renderer.borrow_mut();
-            let cam = r.camera_mut();
-            cam.distance = (cam.distance * (1.0 - delta * ZOOM_SENSITIVITY)).max(MIN_DISTANCE);
+            r.camera_mut().zoom_by_factor(1.0 - delta * ZOOM_SENSITIVITY);
         });
     }
 

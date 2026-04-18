@@ -1,6 +1,19 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+
+## [1.3.0]
+
+### Changed
+
+- Updated examples and documentation to present the grouped frame API as the canonical integration style.
+- Continued the API-refactor documentation sweep, including remaining-work tracking and a dedicated camera API refactor plan.
+- Clarified public guidance around `RenderCamera`, `CameraFrame`, `SceneFrame`, and `FrameData` construction.
+
+### Fixed
+
+- Corrected winding inconsistencies in generated primitive meshes so surfaces render correctly with the library's CCW front-face and back-face culling settings.
+- Fixed affected primitives including cylinder, torus, cone, capsule, ellipsoid, spring, arrow, plane, disk, ring, and grid plane.
+- Added a regression test covering primitive triangle winding against emitted normals to prevent back-face culling regressions.
 
 ## [0.3.0]
 

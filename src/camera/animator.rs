@@ -206,9 +206,9 @@ impl CameraAnimator {
         self.zoom_velocity = 0.0;
 
         self.flight = Some(CameraFlight {
-            start_center: camera.center,
-            start_distance: camera.distance,
-            start_orientation: camera.orientation,
+            start_center: camera.center(),
+            start_distance: camera.distance(),
+            start_orientation: camera.orientation(),
             start_projection: camera.projection,
             target_center,
             target_distance,
@@ -246,10 +246,11 @@ impl CameraAnimator {
             let raw_t = (flight.elapsed / flight.duration).min(1.0);
             let t = flight.easing.eval(raw_t);
 
-            camera.center = flight.start_center.lerp(flight.target_center, t);
-            camera.distance =
-                flight.start_distance + (flight.target_distance - flight.start_distance) * t;
-            camera.orientation = flight.start_orientation.slerp(flight.target_orientation, t);
+            camera.set_center(flight.start_center.lerp(flight.target_center, t));
+            camera.set_distance(
+                flight.start_distance + (flight.target_distance - flight.start_distance) * t,
+            );
+            camera.set_orientation(flight.start_orientation.slerp(flight.target_orientation, t));
 
             // Switch projection at the end of the animation.
             if raw_t >= 1.0 {
@@ -266,11 +267,7 @@ impl CameraAnimator {
 
         // Apply orbit velocity.
         if self.orbit_velocity.length() > eps {
-            let yaw = self.orbit_velocity.x;
-            let pitch = self.orbit_velocity.y;
-            let yaw_rot = glam::Quat::from_rotation_y(-yaw);
-            let pitch_rot = glam::Quat::from_rotation_x(-pitch);
-            camera.orientation = (yaw_rot * camera.orientation * pitch_rot).normalize();
+            camera.orbit(self.orbit_velocity.x, self.orbit_velocity.y);
             self.orbit_velocity *= self.damping.orbit.powf(dt * 60.0);
             if self.orbit_velocity.length() <= eps {
                 self.orbit_velocity = glam::Vec2::ZERO;
@@ -279,10 +276,10 @@ impl CameraAnimator {
         }
 
         // Apply pan velocity.
+        // Note: the animator's pan_velocity.y convention is the opposite sign from
+        // pan_world's up_delta (animator subtracts up, pan_world adds up), so negate y.
         if self.pan_velocity.length() > eps {
-            let right = camera.right();
-            let up = camera.up();
-            camera.center -= right * self.pan_velocity.x + up * self.pan_velocity.y;
+            camera.pan_world(self.pan_velocity.x, -self.pan_velocity.y);
             self.pan_velocity *= self.damping.pan.powf(dt * 60.0);
             if self.pan_velocity.length() <= eps {
                 self.pan_velocity = glam::Vec2::ZERO;
@@ -292,7 +289,7 @@ impl CameraAnimator {
 
         // Apply zoom velocity.
         if self.zoom_velocity.abs() > eps {
-            camera.distance = (camera.distance + self.zoom_velocity).max(0.01);
+            camera.zoom_by_delta(self.zoom_velocity);
             self.zoom_velocity *= self.damping.zoom.powf(dt * 60.0);
             if self.zoom_velocity.abs() <= eps {
                 self.zoom_velocity = 0.0;

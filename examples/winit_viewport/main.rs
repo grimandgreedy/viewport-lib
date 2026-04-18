@@ -22,10 +22,6 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 const ORBIT_SENSITIVITY: f32 = 0.005;
 const ZOOM_SENSITIVITY: f32 = 0.001;
-const MIN_DISTANCE: f32 = 0.1;
-// f32 quaternion rotation of a vector of magnitude D involves intermediate
-// products of ~D; cap well below f32::MAX (~3.4e38) to prevent overflow -> NaN.
-const MAX_DISTANCE: f32 = 1e15;
 
 fn main() {
     tracing_subscriber::fmt()
@@ -257,18 +253,11 @@ impl ApplicationHandler for App {
                 if is_pan {
                     let cam = &mut state.camera;
                     let viewport_h = state.surface_config.height as f32;
-                    let pan_scale = 2.0 * cam.distance * (cam.fov_y / 2.0).tan() / viewport_h;
-                    let right = cam.right();
-                    let up = cam.up();
-                    cam.center -= right * dx * pan_scale;
-                    cam.center += up * dy * pan_scale;
+                    cam.pan_pixels(glam::vec2(dx, dy), viewport_h);
                 } else {
                     // Orbit: left-drag or middle-drag (without shift).
                     // Quaternion arcball: world-Y yaw + camera-local-X pitch.
-                    let cam = &mut state.camera;
-                    let q_yaw = glam::Quat::from_rotation_y(-dx * ORBIT_SENSITIVITY);
-                    let q_pitch = glam::Quat::from_rotation_x(-dy * ORBIT_SENSITIVITY);
-                    cam.orientation = (q_yaw * cam.orientation * q_pitch).normalize();
+                    state.camera.orbit(dx * ORBIT_SENSITIVITY, dy * ORBIT_SENSITIVITY);
                 }
 
                 state.window.request_redraw();
@@ -279,9 +268,7 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::LineDelta(_, y) => y * 28.0,
                     MouseScrollDelta::PixelDelta(px) => px.y as f32,
                 };
-                let cam = &mut state.camera;
-                cam.distance = (cam.distance * (1.0 - scroll_y * ZOOM_SENSITIVITY))
-                    .clamp(MIN_DISTANCE, MAX_DISTANCE);
+                state.camera.zoom_by_factor(1.0 - scroll_y * ZOOM_SENSITIVITY);
                 state.window.request_redraw();
             }
 
@@ -307,7 +294,7 @@ impl ApplicationHandler for App {
                 let w = state.surface_config.width as f32;
                 let h = state.surface_config.height as f32;
 
-                state.camera.aspect = if h > 0.0 { w / h } else { 1.0 };
+                state.camera.set_aspect_ratio(w, h);
 
                 // Build scene: 4 cubes in a grid.
                 let positions = [

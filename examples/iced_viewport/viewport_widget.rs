@@ -21,7 +21,6 @@ use crate::Message;
 
 const ORBIT_SENSITIVITY: f32 = 0.005;
 const ZOOM_SENSITIVITY: f32 = 0.001;
-const MIN_DISTANCE: f32 = 0.1;
 
 // ---------------------------------------------------------------------------
 // Snapshot types (passed from App::view each frame)
@@ -367,17 +366,10 @@ impl shader::Program<Message> for SceneSnapshot {
 
                 if is_pan {
                     let cam = &mut state.camera;
-                    let pan_scale = 2.0 * cam.distance * (cam.fov_y / 2.0).tan() / bounds.height;
-                    let right = cam.right();
-                    let up = cam.up();
-                    cam.center -= right * dx * pan_scale;
-                    cam.center += up * dy * pan_scale;
+                    cam.pan_pixels(glam::vec2(dx, dy), bounds.height);
                 } else {
                     // Orbit: left-drag or middle-drag (without shift)
-                    let cam = &mut state.camera;
-                    let q_yaw = glam::Quat::from_rotation_y(-dx * ORBIT_SENSITIVITY);
-                    let q_pitch = glam::Quat::from_rotation_x(-dy * ORBIT_SENSITIVITY);
-                    cam.orientation = (q_yaw * cam.orientation * q_pitch).normalize();
+                    state.camera.orbit(dx * ORBIT_SENSITIVITY, dy * ORBIT_SENSITIVITY);
                 }
 
                 Some(iced::widget::shader::Action::request_redraw().and_capture())
@@ -389,9 +381,7 @@ impl shader::Program<Message> for SceneSnapshot {
                     mouse::ScrollDelta::Lines { y, .. } => *y * 28.0,
                     mouse::ScrollDelta::Pixels { y, .. } => *y,
                 };
-                let cam = &mut state.camera;
-                cam.distance =
-                    (cam.distance * (1.0 - scroll_y * ZOOM_SENSITIVITY)).max(MIN_DISTANCE);
+                state.camera.zoom_by_factor(1.0 - scroll_y * ZOOM_SENSITIVITY);
                 Some(iced::widget::shader::Action::request_redraw().and_capture())
             }
 
@@ -407,11 +397,7 @@ impl shader::Program<Message> for SceneSnapshot {
     ) -> Self::Primitive {
         // Snapshot the camera with the current aspect ratio.
         let mut cam = state.camera.clone();
-        cam.aspect = if bounds.height > 0.0 {
-            bounds.width / bounds.height
-        } else {
-            1.0
-        };
+        cam.set_aspect_ratio(bounds.width, bounds.height);
 
         ViewportPrimitive {
             objects: self.objects.clone(),

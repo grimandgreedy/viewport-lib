@@ -85,7 +85,6 @@ const ZOOM_SENSITIVITY: f32 = 0.001;
 /// so raw input must be scaled down to match the feel of direct manipulation.
 const ANIM_ORBIT_SENSITIVITY: f32 = 0.0008;
 const ANIM_ZOOM_SENSITIVITY: f32 = 0.0003;
-const MIN_DISTANCE: f32 = 0.1;
 const MSAA_SAMPLES: u32 = 4;
 
 fn main() {
@@ -1116,9 +1115,7 @@ impl ApplicationHandler for App {
                                 min: combined_min,
                                 max: combined_max,
                             };
-                            let (center, dist) = state.camera.fit_aabb(&aabb);
-                            state.camera.center = center;
-                            state.camera.distance = dist;
+                            state.camera.frame_aabb(&aabb);
                         }
                         state.window.request_redraw();
                     }
@@ -1257,12 +1254,12 @@ impl ApplicationHandler for App {
                                 min: combined_min,
                                 max: combined_max,
                             };
-                            let (center, dist) = state.camera.fit_aabb(&aabb);
+                            let target = state.camera.fit_aabb_target(&aabb);
                             state.interact_animator.fly_to(
                                 &state.camera,
-                                center,
-                                dist,
-                                state.camera.orientation,
+                                target.center,
+                                target.distance,
+                                target.orientation,
                                 0.6,
                             );
                             state.window.request_redraw();
@@ -1867,18 +1864,10 @@ impl ApplicationHandler for App {
                             .apply_orbit(dx * ANIM_ORBIT_SENSITIVITY, dy * ANIM_ORBIT_SENSITIVITY);
                     }
                 } else if is_pan {
-                    let cam = &mut state.camera;
                     let viewport_h = state.surface_config.height as f32;
-                    let pan_scale = 2.0 * cam.distance * (cam.fov_y / 2.0).tan() / viewport_h;
-                    let right = cam.right();
-                    let up = cam.up();
-                    cam.center -= right * dx * pan_scale;
-                    cam.center += up * dy * pan_scale;
+                    state.camera.pan_pixels(glam::vec2(dx, dy), viewport_h);
                 } else {
-                    let cam = &mut state.camera;
-                    let q_yaw = glam::Quat::from_rotation_y(-dx * ORBIT_SENSITIVITY);
-                    let q_pitch = glam::Quat::from_rotation_x(-dy * ORBIT_SENSITIVITY);
-                    cam.orientation = (q_yaw * cam.orientation * q_pitch).normalize();
+                    state.camera.orbit(dx * ORBIT_SENSITIVITY, dy * ORBIT_SENSITIVITY);
                 }
 
                 state.window.request_redraw();
@@ -1893,9 +1882,7 @@ impl ApplicationHandler for App {
                     let zoom_delta = -scroll_y * ANIM_ZOOM_SENSITIVITY * state.camera.distance;
                     state.interact_animator.apply_zoom(zoom_delta);
                 } else {
-                    let cam = &mut state.camera;
-                    cam.distance =
-                        (cam.distance * (1.0 - scroll_y * ZOOM_SENSITIVITY)).max(MIN_DISTANCE);
+                    state.camera.zoom_by_factor(1.0 - scroll_y * ZOOM_SENSITIVITY);
                 }
                 state.window.request_redraw();
             }
@@ -1922,7 +1909,7 @@ impl ApplicationHandler for App {
                 let w = state.surface_config.width as f32;
                 let h = state.surface_config.height as f32;
 
-                state.camera.aspect = if h > 0.0 { w / h } else { 1.0 };
+                state.camera.set_aspect_ratio(w, h);
 
                 let mut adv_clip_planes: Vec<ClipPlane> = vec![];
                 let mut adv_outline = false;
