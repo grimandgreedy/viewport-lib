@@ -44,8 +44,8 @@ impl Default for Camera {
             projection: Projection::Perspective,
             center: glam::Vec3::ZERO,
             distance: 5.0,
-            // Match old default yaw=0.3, pitch=0.3 via quaternion composition.
-            orientation: glam::Quat::from_rotation_y(0.3) * glam::Quat::from_rotation_x(0.3),
+            // Default to a slight top-down view above the x-y plane.
+            orientation: glam::Quat::from_rotation_y(0.3) * glam::Quat::from_rotation_x(-0.3),
             fov_y: std::f32::consts::FRAC_PI_4,
             aspect: 1.5,
             znear: 0.01,

@@ -541,7 +541,7 @@ impl ApplicationHandler for App {
         let camera = Camera {
             center: glam::Vec3::ZERO,
             distance: 12.0,
-            orientation: glam::Quat::from_rotation_y(0.6) * glam::Quat::from_rotation_x(0.4),
+            orientation: glam::Quat::from_rotation_y(0.6) * glam::Quat::from_rotation_x(-0.4),
             ..Camera::default()
         };
 
@@ -697,7 +697,7 @@ impl ApplicationHandler for App {
                                 center: glam::Vec3::ZERO,
                                 distance: 12.0,
                                 orientation: glam::Quat::from_rotation_y(0.6)
-                                    * glam::Quat::from_rotation_x(0.4),
+                                    * glam::Quat::from_rotation_x(-0.4),
                                 ..Camera::default()
                             };
                         }
@@ -712,7 +712,7 @@ impl ApplicationHandler for App {
                                 center: glam::Vec3::new(0.0, 0.5, 2.0),
                                 distance: 14.0,
                                 orientation: glam::Quat::from_rotation_y(0.4)
-                                    * glam::Quat::from_rotation_x(0.3),
+                                    * glam::Quat::from_rotation_x(-0.3),
                                 ..Camera::default()
                             };
                         }
@@ -727,7 +727,7 @@ impl ApplicationHandler for App {
                                 center: glam::Vec3::new(0.0, 0.5, 0.0),
                                 distance: 8.0,
                                 orientation: glam::Quat::from_rotation_y(0.6)
-                                    * glam::Quat::from_rotation_x(0.45),
+                                    * glam::Quat::from_rotation_x(-0.45),
                                 ..Camera::default()
                             };
                         }
@@ -742,7 +742,7 @@ impl ApplicationHandler for App {
                                 center: glam::Vec3::new(0.0, 0.0, 0.0),
                                 distance: 6.0,
                                 orientation: glam::Quat::from_rotation_y(0.5)
-                                    * glam::Quat::from_rotation_x(0.4),
+                                    * glam::Quat::from_rotation_x(-0.4),
                                 ..Camera::default()
                             };
                         }
@@ -758,7 +758,7 @@ impl ApplicationHandler for App {
                                 center: glam::Vec3::new(0.0, 1.0, 0.0),
                                 distance: 14.0,
                                 orientation: glam::Quat::from_rotation_y(0.4)
-                                    * glam::Quat::from_rotation_x(0.4),
+                                    * glam::Quat::from_rotation_x(-0.4),
                                 ..Camera::default()
                             };
                         }

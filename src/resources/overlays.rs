@@ -110,111 +110,126 @@ impl ViewportGpuResources {
         self.domain_index_count = edge_indices.len() as u32;
     }
 
-    /// Upload an infinite-style ground-plane grid extending well beyond the domain.
+    /// Upload an infinite-style ground-plane grid.
     ///
-    /// For 3D: XZ plane at y=0. For 2D: XY plane at z=0.
-    /// Grid spacing matches the domain (~20 divisions), but lines extend 5x the
-    /// domain extent in every direction so the grid fills the visible space.
-    pub fn upload_grid(&mut self, device: &wgpu::Device, nx: f32, ny: f32, nz: f32, is_2d: bool) {
-        use bytemuck::cast_slice;
-        use wgpu;
+    /// For 3D: XZ plane at `y = y_offset`. For 2D: XY plane at z=0.
+    /// Lines are spaced `spacing` apart and extend `half_extent` in every direction.
+    /// Call twice with `spacing` and `spacing * 10` to produce minor + major layers.
+    pub fn upload_grid(
+        &mut self,
+        device: &wgpu::Device,
+        spacing: f32,
+        half_extent: f32,
+        y_offset: f32,
+        is_2d: bool,
+    ) {
+        let (vbuf, ibuf, count) =
+            Self::build_grid_buffers(device, spacing, half_extent, y_offset, is_2d, "grid");
+        self.grid_vertex_buffer = vbuf;
+        self.grid_index_buffer = ibuf;
+        self.grid_index_count = count;
+    }
 
-        let mut vertices = Vec::new();
+    /// Upload the major (every-10th-line) grid layer.
+    pub fn upload_grid_major(
+        &mut self,
+        device: &wgpu::Device,
+        spacing: f32,
+        half_extent: f32,
+        y_offset: f32,
+        is_2d: bool,
+    ) {
+        let (vbuf, ibuf, count) = Self::build_grid_buffers(
+            device,
+            spacing,
+            half_extent,
+            y_offset,
+            is_2d,
+            "grid_major",
+        );
+        self.grid_major_vertex_buffer = vbuf;
+        self.grid_major_index_buffer = ibuf;
+        self.grid_major_index_count = count;
+    }
+
+    fn build_grid_buffers(
+        device: &wgpu::Device,
+        spacing: f32,
+        half_extent: f32,
+        y_offset: f32,
+        is_2d: bool,
+        label: &str,
+    ) -> (Option<wgpu::Buffer>, Option<wgpu::Buffer>, u32) {
+        use bytemuck::cast_slice;
+
+        let mut vertices: Vec<OverlayVertex> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
 
-        // Grid spacing based on domain, but lines extend far beyond.
-        let divisions = 20usize;
-        let extend = 5.0; // how many domain-widths to extend in each direction
+        let spacing = spacing.max(1e-6);
 
         if is_2d {
-            // XY grid at z=0
-            let spacing_x = nx / divisions as f32;
-            let spacing_y = ny / divisions as f32;
-            let x_min = -(nx * extend);
-            let x_max = nx * (1.0 + extend);
-            let y_min = -(ny * extend);
-            let y_max = ny * (1.0 + extend);
+            let x_min = -half_extent;
+            let x_max = half_extent;
+            let y_min = -half_extent;
+            let y_max = half_extent;
 
-            // Lines parallel to Y axis (stepping along X)
-            let ix_start = (x_min / spacing_x).floor() as i32;
-            let ix_end = (x_max / spacing_x).ceil() as i32;
+            let ix_start = (x_min / spacing).floor() as i32;
+            let ix_end = (x_max / spacing).ceil() as i32;
             for i in ix_start..=ix_end {
-                let x = i as f32 * spacing_x;
+                let x = i as f32 * spacing;
                 let idx = vertices.len() as u32;
-                vertices.push(OverlayVertex {
-                    position: [x, y_min, 0.0],
-                });
-                vertices.push(OverlayVertex {
-                    position: [x, y_max, 0.0],
-                });
+                vertices.push(OverlayVertex { position: [x, y_min, 0.0] });
+                vertices.push(OverlayVertex { position: [x, y_max, 0.0] });
                 indices.push(idx);
                 indices.push(idx + 1);
             }
-            // Lines parallel to X axis (stepping along Y)
-            let iy_start = (y_min / spacing_y).floor() as i32;
-            let iy_end = (y_max / spacing_y).ceil() as i32;
+
+            let iy_start = (y_min / spacing).floor() as i32;
+            let iy_end = (y_max / spacing).ceil() as i32;
             for i in iy_start..=iy_end {
-                let y = i as f32 * spacing_y;
+                let y = i as f32 * spacing;
                 let idx = vertices.len() as u32;
-                vertices.push(OverlayVertex {
-                    position: [x_min, y, 0.0],
-                });
-                vertices.push(OverlayVertex {
-                    position: [x_max, y, 0.0],
-                });
+                vertices.push(OverlayVertex { position: [x_min, y, 0.0] });
+                vertices.push(OverlayVertex { position: [x_max, y, 0.0] });
                 indices.push(idx);
                 indices.push(idx + 1);
             }
         } else {
-            // XZ grid at y=0
-            let spacing_x = nx / divisions as f32;
-            let spacing_z = nz / divisions as f32;
-            let x_min = -(nx * extend);
-            let x_max = nx * (1.0 + extend);
-            let z_min = -(nz * extend);
-            let z_max = nz * (1.0 + extend);
+            let x_min = -half_extent;
+            let x_max = half_extent;
+            let z_min = -half_extent;
+            let z_max = half_extent;
 
-            // Lines parallel to Z axis (stepping along X)
-            let ix_start = (x_min / spacing_x).floor() as i32;
-            let ix_end = (x_max / spacing_x).ceil() as i32;
+            let ix_start = (x_min / spacing).floor() as i32;
+            let ix_end = (x_max / spacing).ceil() as i32;
             for i in ix_start..=ix_end {
-                let x = i as f32 * spacing_x;
+                let x = i as f32 * spacing;
                 let idx = vertices.len() as u32;
-                vertices.push(OverlayVertex {
-                    position: [x, 0.0, z_min],
-                });
-                vertices.push(OverlayVertex {
-                    position: [x, 0.0, z_max],
-                });
+                vertices.push(OverlayVertex { position: [x, y_offset, z_min] });
+                vertices.push(OverlayVertex { position: [x, y_offset, z_max] });
                 indices.push(idx);
                 indices.push(idx + 1);
             }
-            // Lines parallel to X axis (stepping along Z)
-            let iz_start = (z_min / spacing_z).floor() as i32;
-            let iz_end = (z_max / spacing_z).ceil() as i32;
+
+            let iz_start = (z_min / spacing).floor() as i32;
+            let iz_end = (z_max / spacing).ceil() as i32;
             for i in iz_start..=iz_end {
-                let z = i as f32 * spacing_z;
+                let z = i as f32 * spacing;
                 let idx = vertices.len() as u32;
-                vertices.push(OverlayVertex {
-                    position: [x_min, 0.0, z],
-                });
-                vertices.push(OverlayVertex {
-                    position: [x_max, 0.0, z],
-                });
+                vertices.push(OverlayVertex { position: [x_min, y_offset, z] });
+                vertices.push(OverlayVertex { position: [x_max, y_offset, z] });
                 indices.push(idx);
                 indices.push(idx + 1);
             }
         }
 
         if vertices.is_empty() {
-            self.grid_vertex_buffer = None;
-            self.grid_index_buffer = None;
-            self.grid_index_count = 0;
-            return;
+            return (None, None, 0);
         }
 
+        let vbuf_label = format!("{label}_vbuf");
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("grid_vbuf"),
+            label: Some(&vbuf_label),
             size: (std::mem::size_of::<OverlayVertex>() * vertices.len()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
@@ -225,8 +240,9 @@ impl ViewportGpuResources {
             .copy_from_slice(cast_slice(&vertices));
         vertex_buffer.unmap();
 
+        let ibuf_label = format!("{label}_ibuf");
         let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("grid_ibuf"),
+            label: Some(&ibuf_label),
             size: (std::mem::size_of::<u32>() * indices.len()) as u64,
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
@@ -237,9 +253,8 @@ impl ViewportGpuResources {
             .copy_from_slice(cast_slice(&indices));
         index_buffer.unmap();
 
-        self.grid_vertex_buffer = Some(vertex_buffer);
-        self.grid_index_buffer = Some(index_buffer);
-        self.grid_index_count = indices.len() as u32;
+        let count = indices.len() as u32;
+        (Some(vertex_buffer), Some(index_buffer), count)
     }
 
     /// Create a quad mesh (2 triangles, 4 vertices) for a BC overlay on a given domain face.

@@ -841,6 +841,13 @@ pub struct ViewportGpuResources {
     pub overlay_pipeline: wgpu::RenderPipeline,
     /// Overlay wireframe pipeline (LineList — for domain wireframe, no alpha blending needed).
     pub overlay_line_pipeline: wgpu::RenderPipeline,
+    /// Grid line pipeline — minimal group-0 layout; identity camera bound so the
+    /// precomputed (view_proj × translate(snapped)) lives in overlay.model.
+    pub grid_line_pipeline: wgpu::RenderPipeline,
+    /// Identity camera uniform buffer for grid draws (view_proj = identity).
+    pub grid_identity_camera_buf: wgpu::Buffer,
+    /// Bind group for the identity camera (group 0 for grid draw calls).
+    pub grid_identity_camera_bind_group: wgpu::BindGroup,
     /// Bind group layout for overlay uniforms (group 1: model + color uniform).
     pub overlay_bind_group_layout: wgpu::BindGroupLayout,
 
@@ -857,17 +864,29 @@ pub struct ViewportGpuResources {
     /// Bind group for domain uniform (group 1, references domain_uniform_buf).
     pub domain_bind_group: wgpu::BindGroup,
 
-    // --- Grid ---
+    // --- Grid (minor lines) ---
     /// Vertex buffer for ground-plane grid lines. None if not uploaded yet.
     pub grid_vertex_buffer: Option<wgpu::Buffer>,
     /// Index buffer for grid lines (LineList pairs).
     pub grid_index_buffer: Option<wgpu::Buffer>,
     /// Number of indices in the grid index buffer.
     pub grid_index_count: u32,
-    /// Uniform buffer for grid (identity model + gray color).
+    /// Uniform buffer for grid (identity model + minor-line color).
     pub grid_uniform_buf: wgpu::Buffer,
     /// Bind group for grid uniform (group 1).
     pub grid_bind_group: wgpu::BindGroup,
+
+    // --- Grid (major lines — every 10th) ---
+    /// Vertex buffer for major grid lines (every 10th). None if not uploaded.
+    pub grid_major_vertex_buffer: Option<wgpu::Buffer>,
+    /// Index buffer for major grid lines.
+    pub grid_major_index_buffer: Option<wgpu::Buffer>,
+    /// Number of indices in the major grid index buffer.
+    pub grid_major_index_count: u32,
+    /// Uniform buffer for major grid (identity model + brighter color).
+    pub grid_major_uniform_buf: wgpu::Buffer,
+    /// Bind group for major grid uniform (group 1).
+    pub grid_major_bind_group: wgpu::BindGroup,
 
     // --- BC overlay quads ---
     /// Transient BC overlay quads, rebuilt each frame in prepare().

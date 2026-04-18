@@ -33,7 +33,7 @@ impl SceneRenderer {
                 center: glam::Vec3::ZERO,
                 distance: 12.0,
                 yaw: 0.6,
-                pitch: 0.4,
+                pitch: -0.4,
                 ..Camera::default()
             },
             uploaded: HashMap::new(),

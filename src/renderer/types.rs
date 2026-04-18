@@ -752,10 +752,13 @@ pub struct FrameData {
     pub constraint_overlays: Vec<ConstraintOverlay>,
     /// Whether to render the ground-plane grid.
     pub show_grid: bool,
-    /// Grid cell size in world units. Zero means use domain_extents-derived spacing.
+    /// Grid cell size in world units. Zero = auto-derive from domain_extents (or 1.0 if no domain).
     pub grid_cell_size: f32,
-    /// Half-extent of the grid in world units (grid spans ±grid_half_extent). Zero = use domain_extents.
+    /// Half-extent of the grid in world units (grid spans ±grid_half_extent).
+    /// Zero = 1000 units (effectively infinite).
     pub grid_half_extent: f32,
+    /// World-space Y coordinate of the grid plane (3D mode only). Default: 0.0.
+    pub grid_y: f32,
     /// Whether to draw the 2D axes orientation indicator overlay.
     /// Defaults to `true`.
     pub show_axes_indicator: bool,
@@ -920,6 +923,7 @@ impl Default for FrameData {
             show_grid: false,
             grid_cell_size: 0.0,
             grid_half_extent: 0.0,
+            grid_y: 0.0,
             show_axes_indicator: true,
             is_2d: false,
             viewport_size: [800.0, 600.0],
@@ -976,17 +980,32 @@ macro_rules! emit_draw_calls {
         render_pass.set_bind_group(0, camera_bg, &[]);
 
         // Grid pass — rendered first so scene geometry always paints over it.
+        // Uses a dedicated pipeline + identity camera so the precomputed
+        // (view_proj × translate(snapped)) matrix lives in overlay.model and
+        // vertices are small local coordinates (precision fix for far zoom).
+        // Minor lines drawn first, major lines (every 10th) on top.
+        render_pass.set_pipeline(&resources.grid_line_pipeline);
+        render_pass.set_bind_group(0, &resources.grid_identity_camera_bind_group, &[]);
         if let (Some(vbuf), Some(ibuf)) = (
             &resources.grid_vertex_buffer,
             &resources.grid_index_buffer,
         ) {
             if resources.grid_index_count > 0 {
-                render_pass.set_pipeline(&resources.overlay_line_pipeline);
-                render_pass.set_bind_group(0, camera_bg, &[]);
                 render_pass.set_bind_group(1, &resources.grid_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, vbuf.slice(..));
                 render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..resources.grid_index_count, 0, 0..1);
+            }
+        }
+        if let (Some(vbuf), Some(ibuf)) = (
+            &resources.grid_major_vertex_buffer,
+            &resources.grid_major_index_buffer,
+        ) {
+            if resources.grid_major_index_count > 0 {
+                render_pass.set_bind_group(1, &resources.grid_major_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..resources.grid_major_index_count, 0, 0..1);
             }
         }
 

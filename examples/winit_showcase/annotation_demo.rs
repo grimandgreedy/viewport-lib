@@ -114,7 +114,7 @@ impl AppState {
         self.camera = Camera {
             center: glam::Vec3::new(0.0, 1.0, 0.5),
             distance: 12.0,
-            orientation: glam::Quat::from_rotation_y(0.4) * glam::Quat::from_rotation_x(0.35),
+            orientation: glam::Quat::from_rotation_y(0.4) * glam::Quat::from_rotation_x(-0.35),
             ..Camera::default()
         };
     }

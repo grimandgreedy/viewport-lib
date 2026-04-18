@@ -82,7 +82,7 @@ impl Default for App {
             camera: viewport_lib::Camera {
                 center: glam::Vec3::ZERO,
                 distance: 12.0,
-                orientation: glam::Quat::from_rotation_y(0.6) * glam::Quat::from_rotation_x(0.4),
+                orientation: glam::Quat::from_rotation_y(0.6) * glam::Quat::from_rotation_x(-0.4),
                 ..viewport_lib::Camera::default()
             },
             input: InputSystem::new(),

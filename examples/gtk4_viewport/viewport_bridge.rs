@@ -40,7 +40,7 @@ impl SceneRenderer {
         let camera = Camera {
             center: glam::Vec3::ZERO,
             distance: 12.0,
-            orientation: glam::Quat::from_rotation_y(0.6) * glam::Quat::from_rotation_x(0.4),
+            orientation: glam::Quat::from_rotation_y(0.6) * glam::Quat::from_rotation_x(-0.4),
             ..Camera::default()
         };
 

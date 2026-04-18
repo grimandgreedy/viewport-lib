@@ -63,7 +63,7 @@ impl Default for ViewportState {
             camera: Camera {
                 center: glam::Vec3::ZERO,
                 distance: 12.0,
-                orientation: glam::Quat::from_rotation_y(0.6) * glam::Quat::from_rotation_x(0.4),
+                orientation: glam::Quat::from_rotation_y(0.6) * glam::Quat::from_rotation_x(-0.4),
                 ..Camera::default()
             },
             left_pressed: false,
@@ -91,7 +91,7 @@ struct CameraSnapshot {
     view_proj: [[f32; 4]; 4],
     eye_pos: [f32; 3],
     orientation: glam::Quat,
-    _aspect: f32,
+    fov_y: f32,
 }
 
 // ---------------------------------------------------------------------------
@@ -217,7 +217,10 @@ impl shader::Primitive for ViewportPrimitive {
             fd.lighting = LightingSettings::default();
             fd.eye_pos = self.camera_snapshot.eye_pos;
             fd.scene_items = scene_items;
+            fd.camera_fov = self.camera_snapshot.fov_y;
+
             fd.show_grid = true;
+            fd.grid_y = -0.5; // bottom face of unit boxes
             fd.show_axes_indicator = true;
             fd.viewport_size = [bounds.width, bounds.height];
             fd.camera_orientation = self.camera_snapshot.orientation;
@@ -259,7 +262,10 @@ impl shader::Primitive for ViewportPrimitive {
             fd.lighting = LightingSettings::default();
             fd.eye_pos = self.camera_snapshot.eye_pos;
             fd.scene_items = scene_items;
+            fd.camera_fov = self.camera_snapshot.fov_y;
+
             fd.show_grid = true;
+            fd.grid_y = -0.5; // bottom face of unit boxes
             fd.show_axes_indicator = true;
             fd.viewport_size = [clip_bounds.width as f32, clip_bounds.height as f32];
             fd.camera_orientation = self.camera_snapshot.orientation;
@@ -436,7 +442,7 @@ impl shader::Program<Message> for SceneSnapshot {
                 view_proj: cam.view_proj_matrix().to_cols_array_2d(),
                 eye_pos: cam.eye_position().into(),
                 orientation: cam.orientation,
-                _aspect: cam.aspect,
+                fov_y: cam.fov_y,
             },
         }
     }

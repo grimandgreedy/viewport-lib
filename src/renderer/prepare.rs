@@ -866,32 +866,136 @@ impl ViewportRenderer {
 
         // Upload grid.
         if frame.show_grid {
-            let (nx, ny, nz) = if frame.grid_cell_size > 0.0 && frame.grid_half_extent > 0.0 {
-                // Direct cell-size path: express as equivalent domain dims so upload_grid
-                // produces the right spacing (spacing = nx/20) and extent.
-                let nx = frame.grid_cell_size * 20.0;
-                let half = frame.grid_half_extent;
-                // upload_grid extends from -(nx*5) to nx*(1+5); we want ±half, so set nx = half/5.
-                let nx = (half / 5.0).max(nx);
-                (nx, nx, nx)
-            } else {
-                let [nx, ny, nz] = frame.domain_extents.unwrap_or([10.0, 10.0, 10.0]);
-                (nx, ny, nz)
+            let inv_vp = glam::Mat4::from_cols_array_2d(&frame.camera_uniform.view_proj)
+                .inverse();
+            let eye = glam::Vec3::from_array(frame.camera_uniform.eye_pos);
+
+            // Ray from eye through an NDC point → intersect with grid plane y = grid_y.
+            let cast_to_grid = |ndc: glam::Vec4| -> Option<glam::Vec3> {
+                let h = inv_vp * ndc;
+                if h.w.abs() < 1e-10 {
+                    return None;
+                }
+                let world = glam::Vec3::new(h.x, h.y, h.z) / h.w;
+                let dir = world - eye;
+                if dir.y.abs() < 1e-4 {
+                    return None; // ray nearly parallel to grid plane
+                }
+                let t = (frame.grid_y - eye.y) / dir.y;
+                if t <= 0.0 {
+                    return None; // grid plane is behind the camera
+                }
+                Some(eye + dir * t)
             };
-            resources.upload_grid(device, nx, ny, nz, frame.is_2d);
-            let grid_uniform = OverlayUniform {
-                model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                color: [0.3, 0.3, 0.3, 0.5],
+
+            // Frustum footprint on the grid plane — how far the grid must extend.
+            let mut max_dist = 1.0_f32;
+            for &corner in &[
+                glam::Vec4::new(-1.0, -1.0, 1.0, 1.0),
+                glam::Vec4::new(1.0, -1.0, 1.0, 1.0),
+                glam::Vec4::new(1.0, 1.0, 1.0, 1.0),
+                glam::Vec4::new(-1.0, 1.0, 1.0, 1.0),
+            ] {
+                if let Some(hit) = cast_to_grid(corner) {
+                    max_dist = max_dist
+                        .max((hit.x - eye.x).abs())
+                        .max((hit.z - eye.z).abs());
+                }
+            }
+
+            // Adaptive spacing — Blender-style power-of-10 LOD.
+            //
+            // Spacing is derived from the camera's vertical distance above the grid
+            // plane and the viewport height. As the camera moves away the raw spacing
+            // grows, and we snap it UP to the next power of ten — exactly the moment
+            // the finer lines would shrink to sub-pixel size they disappear and only
+            // every-10th line remains. Zooming further repeats the effect.
+            //
+            // Because spacing grows proportionally with the frustum footprint, the
+            // vertex count stays bounded regardless of zoom level.
+            let auto_spacing = if frame.grid_cell_size > 0.0 {
+                frame.grid_cell_size
+            } else {
+                let vertical_depth = (eye.y - frame.grid_y).abs().max(1.0);
+                let world_per_pixel = 2.0 * (frame.camera_fov / 2.0).tan() * vertical_depth
+                    / frame.viewport_size[1].max(1.0);
+                // Target ~60 px between grid lines, then snap to nearest power of 10.
+                let raw = (world_per_pixel * 60.0).max(1e-9);
+                10_f32.powf(raw.log10().ceil()).max(1e-6)
+            };
+
+            // Grid extends to the full frustum footprint, capped so vertex count is
+            // always safe (≤ 2 * MAX_LINES_PER_AXIS vertices per axis).
+            const MAX_LINES_PER_AXIS: f32 = 1000.0;
+            let auto_half_extent = max_dist.min(auto_spacing * MAX_LINES_PER_AXIS);
+
+            let (spacing, half_extent) = if frame.grid_cell_size > 0.0 {
+                let half = if frame.grid_half_extent > 0.0 {
+                    frame.grid_half_extent
+                } else {
+                    auto_half_extent
+                };
+                (frame.grid_cell_size, half)
+            } else {
+                (auto_spacing, auto_half_extent)
+            };
+            // Generate vertices in local (snapped-origin-relative) space so
+            // positions are small numbers — avoids f32 catastrophic cancellation
+            // when large world coordinates are transformed on the GPU.
+            // The y_offset is 0.0 here; grid_y is encoded in the model matrix below.
+            resources.upload_grid(device, spacing, half_extent, 0.0, frame.is_2d);
+            resources.upload_grid_major(device, spacing * 10.0, half_extent, 0.0, frame.is_2d);
+
+            // Precompute combined = view_proj × translate(snapped_origin) on the
+            // CPU. Stored in overlay.model; the GPU then only multiplies small
+            // local positions by this matrix — no large-number cancellation.
+            let view_proj_mat =
+                glam::Mat4::from_cols_array_2d(&frame.camera_uniform.view_proj);
+
+            let snapped_x = (eye.x / spacing).round() * spacing;
+            let snapped_z = (eye.z / spacing).round() * spacing;
+            let minor_combined = view_proj_mat
+                * glam::Mat4::from_translation(glam::Vec3::new(
+                    snapped_x,
+                    frame.grid_y,
+                    snapped_z,
+                ));
+
+            let major_spacing = spacing * 10.0;
+            let snapped_x_major = (eye.x / major_spacing).round() * major_spacing;
+            let snapped_z_major = (eye.z / major_spacing).round() * major_spacing;
+            let major_combined = view_proj_mat
+                * glam::Mat4::from_translation(glam::Vec3::new(
+                    snapped_x_major,
+                    frame.grid_y,
+                    snapped_z_major,
+                ));
+
+            let minor_uniform = OverlayUniform {
+                model: minor_combined.to_cols_array_2d(),
+                color: [0.35, 0.35, 0.35, 0.4],
+            };
+            let major_uniform = OverlayUniform {
+                model: major_combined.to_cols_array_2d(),
+                color: [0.6, 0.6, 0.6, 0.8],
             };
             queue.write_buffer(
                 &resources.grid_uniform_buf,
                 0,
-                bytemuck::cast_slice(&[grid_uniform]),
+                bytemuck::cast_slice(&[minor_uniform]),
+            );
+            queue.write_buffer(
+                &resources.grid_major_uniform_buf,
+                0,
+                bytemuck::cast_slice(&[major_uniform]),
             );
         } else {
             resources.grid_vertex_buffer = None;
             resources.grid_index_buffer = None;
             resources.grid_index_count = 0;
+            resources.grid_major_vertex_buffer = None;
+            resources.grid_major_index_buffer = None;
+            resources.grid_major_index_count = 0;
         }
 
         // Rebuild overlay quad buffers.
