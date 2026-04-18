@@ -7,8 +7,9 @@ mod viewport_callback;
 
 use eframe::egui;
 use viewport_lib::{
-    Action, ActionState, FrameInput, InputSystem, KeyCode, LightKind, MeshData, Modifiers,
-    MouseButton, ViewportRenderer,
+    Action, ActionState, FrameData, FrameInput, InputSystem, KeyCode, LightKind,
+    LightSource, LightingSettings, MeshData, Modifiers, MouseButton, RenderCamera, SceneRenderItem,
+    SurfaceSubmission, ViewportRenderer,
 };
 
 fn main() -> eframe::Result {
@@ -202,16 +203,11 @@ impl eframe::App for App {
                 .collect();
 
             let frame_data = {
-                let mut fd = viewport_lib::FrameData::default();
-                fd.camera_uniform = viewport_lib::CameraUniform {
-                    view_proj: self.camera.view_proj_matrix().to_cols_array_2d(),
-                    eye_pos: self.camera.eye_position().into(),
-                    _pad: 0.0,
-                    forward: [0.0, 0.0, -1.0],
-                    _pad1: 0.0,
-                };
-                fd.lighting = {
-                    let mut ls = viewport_lib::LightingSettings::default();
+                let mut fd = FrameData::default();
+                fd.camera.render_camera = RenderCamera::from_camera(&self.camera);
+                fd.camera.viewport_size = [rect.width(), rect.height()];
+                fd.effects.lighting = {
+                    let mut ls = LightingSettings::default();
                     // 8 point lights, one per octant, aimed toward the origin.
                     let d = 10.0_f32;
                     let s = d / 3.0_f32.sqrt();
@@ -226,20 +222,17 @@ impl eframe::App for App {
                         [-s, -s, -s],
                     ]
                     .into_iter()
-                    .map(|position| viewport_lib::LightSource {
-                        kind: viewport_lib::LightKind::Point { position, range: d * 2.0 },
+                    .map(|position| LightSource {
+                        kind: LightKind::Point { position, range: d * 2.0 },
                         color: [1.0, 1.0, 1.0],
                         intensity: 0.5,
                     })
                     .collect();
                     ls
                 };
-                fd.eye_pos = self.camera.eye_position().into();
-                fd.scene_items = scene_items;
-                fd.show_grid = true;
-                fd.show_axes_indicator = true;
-                fd.viewport_size = [rect.width(), rect.height()];
-                fd.camera_orientation = self.camera.orientation;
+                fd.scene.surfaces = SurfaceSubmission::Flat(scene_items);
+                fd.viewport.show_grid = true;
+                fd.viewport.show_axes_indicator = true;
                 fd
             };
 
