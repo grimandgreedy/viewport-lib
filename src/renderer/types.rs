@@ -1064,22 +1064,26 @@ macro_rules! emit_draw_calls {
         let batches: &[InstancedBatch] = $batches;
         let camera_bg: &wgpu::BindGroup = $camera_bg;
 
+        // Resolve scene items from the SurfaceSubmission seam.
+        let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
+            SurfaceSubmission::Flat(items) => items,
+        };
+
         render_pass.set_bind_group(0, camera_bg, &[]);
 
         // Grid pass — full-screen analytical shader drawn first so scene geometry
         // occludes it. No vertex buffer; depth is written via @builtin(frag_depth).
         // Camera bind group is restored immediately after for subsequent passes.
-        if frame.show_grid && !frame.is_2d {
+        if frame.viewport.show_grid && !frame.viewport.is_2d {
             render_pass.set_pipeline(&resources.grid_pipeline);
             render_pass.set_bind_group(0, &resources.grid_bind_group, &[]);
             render_pass.draw(0..3, 0..1);
             render_pass.set_bind_group(0, camera_bg, &[]);
         }
 
-            if !frame.scene_items.is_empty() {
+            if !scene_items.is_empty() {
                 if use_instancing && !batches.is_empty() {
-                    let excluded_items: Vec<&SceneRenderItem> = frame
-                        .scene_items
+                    let excluded_items: Vec<&SceneRenderItem> = scene_items
                         .iter()
                         .filter(|item| {
                             item.visible
@@ -1156,7 +1160,7 @@ macro_rules! emit_draw_calls {
                     // mesh.object_bind_group (group 1) already contains the object uniform
                     // and fallback textures — no separate group 2 needed.
                     if frame.wireframe_mode {
-                        for item in &frame.scene_items {
+                        for item in scene_items {
                             if !item.visible { continue; }
                             let Some(mesh) = resources.mesh_store.get(crate::resources::mesh_store::MeshId(item.mesh_index)) else { continue };
                             render_pass.set_pipeline(&resources.wireframe_pipeline);
@@ -1192,7 +1196,7 @@ macro_rules! emit_draw_calls {
                     }
             } else {
                 // --- Per-object draw path (original) ---
-                let eye = glam::Vec3::from(frame.eye_pos);
+                let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
 
                 let dist_from_eye = |item: &&SceneRenderItem| -> f32 {
                     let pos = glam::Vec3::new(
@@ -1205,7 +1209,7 @@ macro_rules! emit_draw_calls {
 
                 let mut opaque: Vec<&SceneRenderItem> = Vec::new();
                 let mut transparent: Vec<&SceneRenderItem> = Vec::new();
-                for item in &frame.scene_items {
+                for item in scene_items {
                     if !item.visible || resources.mesh_store.get(crate::resources::mesh_store::MeshId(item.mesh_index)).is_none() {
                         continue;
                     }
@@ -1284,7 +1288,7 @@ macro_rules! emit_draw_calls {
         }
 
         // Gizmo pass.
-        if frame.gizmo_model.is_some() && resources.gizmo_index_count > 0 {
+        if frame.interaction.gizmo_model.is_some() && resources.gizmo_index_count > 0 {
             render_pass.set_pipeline(&resources.gizmo_pipeline);
             render_pass.set_bind_group(0, camera_bg, &[]);
             render_pass.set_bind_group(1, &resources.gizmo_bind_group, &[]);
@@ -1358,7 +1362,7 @@ macro_rules! emit_draw_calls {
         }
 
         // Axes indicator pass (screen-space, last so it draws on top).
-        if frame.show_axes_indicator && resources.axes_vertex_count > 0 {
+        if frame.viewport.show_axes_indicator && resources.axes_vertex_count > 0 {
             render_pass.set_pipeline(&resources.axes_pipeline);
             render_pass.set_vertex_buffer(0, resources.axes_vertex_buffer.slice(..));
             render_pass.draw(0..resources.axes_vertex_count, 0..1);
