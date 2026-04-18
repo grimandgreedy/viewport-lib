@@ -14,8 +14,8 @@
 </table>
 
 Whichever gui library you choose to use (`winit`, `eframe`, `Iced`, `Slint`, etc.), the integration model stays the same in each case:
+- `viewport-lib` owns rendering and viewport-side maths;
 - your application owns the window, event loop, and tool state;
-- `viewport-lib` owns rendering and viewport-side maths.
 
 
 **WARNING**: `viewport-lib` has only recently been extracted as a stand-alone library from a separate project and the API is still somewhat unstable.
