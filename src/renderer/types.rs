@@ -769,6 +769,26 @@ impl RenderCamera {
     pub fn view_proj(&self) -> glam::Mat4 {
         self.projection * self.view
     }
+
+    /// Build a `RenderCamera` from an app-side [`Camera`](crate::camera::Camera).
+    ///
+    /// This is the intended conversion path: resolve the orbit camera to a
+    /// `RenderCamera` once per frame and pass it through `CameraFrame`.
+    pub fn from_camera(cam: &crate::camera::Camera) -> Self {
+        let eye = cam.eye_position();
+        let forward = (cam.center - eye).normalize_or_zero();
+        Self {
+            view: cam.view_matrix(),
+            projection: cam.proj_matrix(),
+            eye_position: eye.to_array(),
+            forward: forward.to_array(),
+            orientation: cam.orientation,
+            near: cam.znear,
+            far: cam.zfar,
+            fov: cam.fov_y,
+            aspect: cam.aspect,
+        }
+    }
 }
 
 impl Default for RenderCamera {
@@ -1459,4 +1479,41 @@ macro_rules! emit_scivis_draw_calls {
             }
         }
     }};
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_camera_from_camera_roundtrip() {
+        let cam = crate::camera::Camera::default();
+        let rc = RenderCamera::from_camera(&cam);
+        assert_eq!(rc.eye_position, cam.eye_position().to_array());
+        assert_eq!(rc.orientation, cam.orientation);
+        assert_eq!(rc.near, cam.znear);
+        assert_eq!(rc.far, cam.zfar);
+        assert_eq!(rc.fov, cam.fov_y);
+        assert_eq!(rc.aspect, cam.aspect);
+        // view_proj should match Camera's own method
+        let expected_vp = cam.view_proj_matrix();
+        let actual_vp = rc.view_proj();
+        assert!(
+            (expected_vp - actual_vp).abs_diff_eq(glam::Mat4::ZERO, 1e-5),
+            "view_proj mismatch"
+        );
+    }
+
+    #[test]
+    fn render_camera_uniform_contains_eye_and_forward() {
+        let rc = RenderCamera {
+            eye_position: [1.0, 2.0, 3.0],
+            forward: [0.0, 0.0, -1.0],
+            ..RenderCamera::default()
+        };
+        let u = rc.camera_uniform();
+        assert_eq!(u.eye_pos, [1.0, 2.0, 3.0]);
+        assert_eq!(u.forward, [0.0, 0.0, -1.0]);
+        assert_eq!(u.view_proj, rc.view_proj().to_cols_array_2d());
+    }
 }

@@ -56,8 +56,9 @@ pub struct PickHit {
 pub struct GpuPickHit {
     /// Object identifier written by the pick shader.
     ///
-    /// Corresponds to the index into `FrameData::scene_items` (cast to `u64`).
-    /// Map to a domain object via `scene_items[object_id as usize].mesh_index`
+    /// Corresponds to the index into the flat surface list resolved from
+    /// `FrameData::scene.surfaces` (cast to `u64`).
+    /// Map to a domain object via `items[object_id as usize].mesh_index`
     /// or however you track scene objects.
     pub object_id: u64,
     /// Clip-space depth value in `[0, 1]` at the picked pixel.
