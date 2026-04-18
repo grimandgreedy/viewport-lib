@@ -937,7 +937,7 @@ impl ViewportRenderer {
                 // the old major lines (which become new minor lines) are already at
                 // the new minor alpha — no visible alpha jump.
                 color_minor: [0.35, 0.35, 0.35, 0.4 * minor_fade],
-                color_major: [0.6, 0.6, 0.6, 0.4 + 0.4 * minor_fade],
+                color_major: [0.40, 0.40, 0.40, 0.4 + 0.2 * minor_fade],
             };
             queue.write_buffer(
                 &resources.grid_uniform_buf,

@@ -7,8 +7,8 @@ mod viewport_callback;
 
 use eframe::egui;
 use viewport_lib::{
-    Action, ActionState, FrameInput, InputSystem, KeyCode, MeshData, Modifiers, MouseButton,
-    ViewportRenderer,
+    Action, ActionState, FrameInput, InputSystem, KeyCode, LightKind, MeshData, Modifiers,
+    MouseButton, ViewportRenderer,
 };
 
 fn main() -> eframe::Result {
@@ -210,7 +210,30 @@ impl eframe::App for App {
                     forward: [0.0, 0.0, -1.0],
                     _pad1: 0.0,
                 };
-                fd.lighting = viewport_lib::LightingSettings::default();
+                fd.lighting = {
+                    let mut ls = viewport_lib::LightingSettings::default();
+                    // 8 point lights, one per octant, aimed toward the origin.
+                    let d = 10.0_f32;
+                    let s = d / 3.0_f32.sqrt();
+                    ls.lights = [
+                        [ s,  s,  s],
+                        [-s,  s,  s],
+                        [ s, -s,  s],
+                        [-s, -s,  s],
+                        [ s,  s, -s],
+                        [-s,  s, -s],
+                        [ s, -s, -s],
+                        [-s, -s, -s],
+                    ]
+                    .into_iter()
+                    .map(|position| viewport_lib::LightSource {
+                        kind: viewport_lib::LightKind::Point { position, range: d * 2.0 },
+                        color: [1.0, 1.0, 1.0],
+                        intensity: 0.5,
+                    })
+                    .collect();
+                    ls
+                };
                 fd.eye_pos = self.camera.eye_position().into();
                 fd.scene_items = scene_items;
                 fd.show_grid = true;
