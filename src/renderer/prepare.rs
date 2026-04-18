@@ -6,10 +6,10 @@ impl ViewportRenderer {
     pub fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame: &FrameData) {
         // Phase G — GPU compute filtering.
         // Dispatch before the render pass. Completely skipped when list is empty (zero overhead).
-        if !frame.compute_filter_items.is_empty() {
+        if !frame.effects.compute_filter_items.is_empty() {
             self.compute_filter_results =
                 self.resources
-                    .run_compute_filters(device, queue, &frame.compute_filter_items);
+                    .run_compute_filters(device, queue, &frame.effects.compute_filter_items);
         } else {
             self.compute_filter_results.clear();
         }
@@ -19,14 +19,19 @@ impl ViewportRenderer {
 
         // Ensure a per-viewport camera slot exists for this viewport index.
         // Must happen before the `resources` borrow below.
-        self.ensure_viewport_camera_slot(device, frame.viewport_index);
+        self.ensure_viewport_camera_slot(device, frame.camera.viewport_index);
 
         let resources = &mut self.resources;
-        let lighting = &frame.lighting;
+        let lighting = &frame.effects.lighting;
+
+        // Resolve scene items from the SurfaceSubmission seam.
+        let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
+            SurfaceSubmission::Flat(items) => items,
+        };
 
         // Compute scene center / extent for shadow framing.
         let (shadow_center, shadow_extent) =
-            if let Some(extent) = frame.lighting.shadow_extent_override {
+            if let Some(extent) = frame.effects.lighting.shadow_extent_override {
                 (glam::Vec3::ZERO, extent)
             } else {
                 (glam::Vec3::ZERO, 20.0)
@@ -183,8 +188,8 @@ impl ViewportRenderer {
         let tile_size = atlas_res / 2;
 
         let cascade_splits = compute_cascade_splits(
-            frame.camera_near.max(0.01),
-            frame.camera_far.max(1.0),
+            frame.camera.render_camera.near.max(0.01),
+            frame.camera.render_camera.far.max(1.0),
             cascade_count as u32,
             lighting.cascade_split_lambda,
         );
@@ -215,21 +220,21 @@ impl ViewportRenderer {
         // Determine if we should use CSM (directional light + valid camera data).
         let use_csm = light_count > 0
             && matches!(lighting.lights[0].kind, LightKind::Directional { .. })
-            && frame.camera_view != glam::Mat4::IDENTITY;
+            && frame.camera.render_camera.view != glam::Mat4::IDENTITY;
 
         if use_csm {
             for i in 0..cascade_count {
                 let split_near = if i == 0 {
-                    frame.camera_near.max(0.01)
+                    frame.camera.render_camera.near.max(0.01)
                 } else {
                     cascade_splits[i - 1]
                 };
                 let split_far = cascade_splits[i];
                 cascade_view_projs[i] = compute_cascade_matrix(
                     light_dir_for_csm,
-                    frame.camera_view,
-                    frame.camera_fov,
-                    frame.camera_aspect,
+                    frame.camera.render_camera.view,
+                    frame.camera.render_camera.fov,
+                    frame.camera.render_camera.aspect,
                     split_near,
                     split_far,
                     tile_size as f32,
@@ -244,7 +249,7 @@ impl ViewportRenderer {
                 glam::Mat4::IDENTITY
             };
             cascade_view_projs[0] = primary_shadow_mat;
-            cascade_split_distances[0] = frame.camera_far;
+            cascade_split_distances[0] = frame.camera.render_camera.far;
         }
         let effective_cascade_count = if use_csm { cascade_count } else { 1 };
 
@@ -297,7 +302,7 @@ impl ViewportRenderer {
         {
             let mut planes = [[0.0f32; 4]; 6];
             let mut count = 0u32;
-            for plane in frame.clip_planes.iter().filter(|p| p.enabled).take(6) {
+            for plane in frame.effects.clip_planes.iter().filter(|p| p.enabled).take(6) {
                 planes[count as usize] = [
                     plane.normal[0],
                     plane.normal[1],
@@ -310,8 +315,8 @@ impl ViewportRenderer {
                 planes,
                 count,
                 _pad0: 0,
-                viewport_width: frame.viewport_size[0].max(1.0),
-                viewport_height: frame.viewport_size[1].max(1.0),
+                viewport_width: frame.camera.viewport_size[0].max(1.0),
+                viewport_height: frame.camera.viewport_size[1].max(1.0),
             };
             queue.write_buffer(
                 &resources.clip_planes_uniform_buf,
@@ -323,7 +328,7 @@ impl ViewportRenderer {
         // Upload clip volume uniform (binding 6).
         {
             use crate::resources::ClipVolumeUniform;
-            let clip_vol_uniform = ClipVolumeUniform::from_clip_volume(&frame.clip_volume);
+            let clip_vol_uniform = ClipVolumeUniform::from_clip_volume(&frame.effects.clip_volume);
             queue.write_buffer(
                 &resources.clip_volume_uniform_buf,
                 0,
@@ -332,18 +337,7 @@ impl ViewportRenderer {
         }
 
         // Upload camera uniform.
-        let camera_forward = frame
-            .camera_view
-            .inverse()
-            .transform_vector3(-glam::Vec3::Z)
-            .normalize_or_zero();
-        let camera_uniform = CameraUniform {
-            view_proj: frame.camera_uniform.view_proj,
-            eye_pos: frame.eye_pos,
-            _pad: 0.0,
-            forward: camera_forward.to_array(),
-            _pad1: 0.0,
-        };
+        let camera_uniform = frame.camera.render_camera.camera_uniform();
         // Write to the shared buffer for single-viewport / legacy callers.
         queue.write_buffer(
             &resources.camera_uniform_buf,
@@ -354,7 +348,7 @@ impl ViewportRenderer {
         // own camera transform even though all prepare() calls happen before
         // any paint() calls (egui-wgpu ordering guarantee).
         // `ensure_viewport_camera_slot` must be called first (done above in prepare).
-        if let Some((vp_buf, _)) = self.per_viewport_cameras.get(frame.viewport_index) {
+        if let Some((vp_buf, _)) = self.per_viewport_cameras.get(frame.camera.viewport_index) {
             queue.write_buffer(vp_buf, 0, bytemuck::cast_slice(&[camera_uniform]));
         }
 
@@ -390,7 +384,7 @@ impl ViewportRenderer {
 
         // -- Instancing preparation --
         // Determine instancing mode BEFORE per-object uniforms so we can skip them.
-        let visible_count = frame.scene_items.iter().filter(|i| i.visible).count();
+        let visible_count = scene_items.iter().filter(|i| i.visible).count();
         let prev_use_instancing = self.use_instancing;
         self.use_instancing = visible_count > INSTANCING_THRESHOLD;
 
@@ -408,13 +402,12 @@ impl ViewportRenderer {
         //
         // Also updates each mesh's `object_bind_group` when the material/attribute key changes,
         // keeping the combined (object-uniform + texture + LUT + scalar-buf) bind group consistent.
-        let has_scalar_items = frame
-            .scene_items
+        let has_scalar_items = scene_items
             .iter()
             .any(|i| i.active_attribute.is_some());
-        let has_two_sided_items = frame.scene_items.iter().any(|i| i.two_sided);
+        let has_two_sided_items = scene_items.iter().any(|i| i.two_sided);
         if !self.use_instancing || frame.wireframe_mode || has_scalar_items || has_two_sided_items {
-            for item in &frame.scene_items {
+            for item in scene_items {
                 if resources
                     .mesh_store
                     .get(crate::resources::mesh_store::MeshId(item.mesh_index))
@@ -528,10 +521,10 @@ impl ViewportRenderer {
             // Also include the scene_items count so that frustum-culling changes (different
             // visible set passed in by the caller) correctly invalidate the cache even when
             // scene_generation is stable (scene not mutated, only camera moved).
-            let cache_valid = frame.scene_generation == self.last_scene_generation
-                && frame.selection_generation == self.last_selection_generation
+            let cache_valid = frame.cache_hints.scene_generation == self.last_scene_generation
+                && frame.cache_hints.selection_generation == self.last_selection_generation
                 && frame.wireframe_mode == self.last_wireframe_mode
-                && frame.scene_items.len() == self.last_scene_items_count;
+                && scene_items.len() == self.last_scene_items_count;
 
             if !cache_valid {
                 // Cache miss — rebuild batches and upload instance data.
@@ -539,8 +532,7 @@ impl ViewportRenderer {
                 // Collect visible items with valid meshes, then sort by batch key.
                 // Items with active scalar attributes or two-sided rasterization are
                 // excluded from instancing — they need per-object draw pipelines.
-                let mut sorted_items: Vec<&SceneRenderItem> = frame
-                    .scene_items
+                let mut sorted_items: Vec<&SceneRenderItem> = scene_items
                     .iter()
                     .filter(|item| {
                         item.visible
@@ -639,10 +631,10 @@ impl ViewportRenderer {
                 self.instanced_batches = self.cached_instanced_batches.clone();
 
                 // Store generations so the next frame can detect staleness.
-                self.last_scene_generation = frame.scene_generation;
-                self.last_selection_generation = frame.selection_generation;
+                self.last_scene_generation = frame.cache_hints.scene_generation;
+                self.last_selection_generation = frame.cache_hints.selection_generation;
                 self.last_wireframe_mode = frame.wireframe_mode;
-                self.last_scene_items_count = frame.scene_items.len();
+                self.last_scene_items_count = scene_items.len();
 
                 // Prime instance+texture bind group cache for all batches.
                 // Called here (while resources is &mut) so the draw macro only needs &resources.
@@ -674,8 +666,8 @@ impl ViewportRenderer {
 
         // Rebuild outline / x-ray per-object buffers.
         resources.outline_object_buffers.clear();
-        if frame.outline_selected {
-            for item in &frame.scene_items {
+        if frame.interaction.outline_selected {
+            for item in scene_items {
                 if !item.visible || !item.selected {
                     continue;
                 }
@@ -768,8 +760,8 @@ impl ViewportRenderer {
 
                 let uniform = OutlineUniform {
                     model: item.model,
-                    color: frame.outline_color,
-                    pixel_offset: frame.outline_width_px,
+                    color: frame.interaction.outline_color,
+                    pixel_offset: frame.interaction.outline_width_px,
                     _pad: [0.0; 3],
                 };
                 let buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -798,14 +790,14 @@ impl ViewportRenderer {
         }
 
         resources.xray_object_buffers.clear();
-        if frame.xray_selected {
-            for item in &frame.scene_items {
+        if frame.interaction.xray_selected {
+            for item in scene_items {
                 if !item.visible || !item.selected {
                     continue;
                 }
                 let uniform = OutlineUniform {
                     model: item.model,
-                    color: frame.xray_color,
+                    color: frame.interaction.xray_color,
                     pixel_offset: 0.0,
                     _pad: [0.0; 3],
                 };
@@ -831,34 +823,33 @@ impl ViewportRenderer {
         }
 
         // Update gizmo.
-        if let Some(model) = frame.gizmo_model {
+        if let Some(model) = frame.interaction.gizmo_model {
             resources.update_gizmo_uniform(queue, model);
             resources.update_gizmo_mesh(
                 device,
                 queue,
-                frame.gizmo_mode,
-                frame.gizmo_hovered,
-                frame.gizmo_space_orientation,
+                frame.interaction.gizmo_mode,
+                frame.interaction.gizmo_hovered,
+                frame.interaction.gizmo_space_orientation,
             );
         }
 
         // Upload grid uniform (full-screen analytical shader — no vertex buffers needed).
-        if frame.show_grid && !frame.is_2d {
-            let view_proj_mat =
-                glam::Mat4::from_cols_array_2d(&frame.camera_uniform.view_proj);
-            let eye = glam::Vec3::from_array(frame.camera_uniform.eye_pos);
+        if frame.viewport.show_grid && !frame.viewport.is_2d {
+            let view_proj_mat = frame.camera.render_camera.view_proj().to_cols_array_2d();
+            let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
 
             // Adaptive LOD spacing — snap to next power of 10 above the target world
             // coverage.  Avoid log10/powf: they are imprecise near exact decade boundaries
             // (e.g. log10(10.0) may return 0.9999999 or 1.0000001 in f32, making ceil
             // flip between 1 and 2 each frame and causing the grid to oscillate).
             // A multiply loop is exact and has no boundary ambiguity.
-            let (spacing, minor_fade) = if frame.grid_cell_size > 0.0 {
-                (frame.grid_cell_size, 1.0_f32)
+            let (spacing, minor_fade) = if frame.viewport.grid_cell_size > 0.0 {
+                (frame.viewport.grid_cell_size, 1.0_f32)
             } else {
-                let vertical_depth = (eye.y - frame.grid_y).abs().max(1.0);
-                let world_per_pixel = 2.0 * (frame.camera_fov / 2.0).tan() * vertical_depth
-                    / frame.viewport_size[1].max(1.0);
+                let vertical_depth = (eye.y - frame.viewport.grid_y).abs().max(1.0);
+                let world_per_pixel = 2.0 * (frame.camera.render_camera.fov / 2.0).tan() * vertical_depth
+                    / frame.camera.viewport_size[1].max(1.0);
                 let target = (world_per_pixel * 60.0).max(1e-9_f32);
                 let mut s = 1.0_f32;
                 while s < target {
@@ -887,7 +878,7 @@ impl ViewportRenderer {
             // Camera-to-world rotation: compute from orientation quaternion.
             // Columns are [right, up, back] where back = camera +Z (away from scene).
             // This is exact (no matrix inversion) and stable at any camera distance.
-            let orient = frame.camera_orientation;
+            let orient = frame.camera.render_camera.orientation;
             let right = orient * glam::Vec3::X;
             let up    = orient * glam::Vec3::Y;
             let back  = orient * glam::Vec3::Z;
@@ -896,17 +887,17 @@ impl ViewportRenderer {
                 [up.x,    up.y,    up.z,    0.0_f32],
                 [back.x,  back.y,  back.z,  0.0_f32],
             ];
-            let aspect = frame.viewport_size[0] / frame.viewport_size[1].max(1.0);
-            let tan_half_fov = (frame.camera_fov / 2.0).tan();
+            let aspect = frame.camera.viewport_size[0] / frame.camera.viewport_size[1].max(1.0);
+            let tan_half_fov = (frame.camera.render_camera.fov / 2.0).tan();
 
             let uniform = GridUniform {
-                view_proj: view_proj_mat.to_cols_array_2d(),
+                view_proj: view_proj_mat,
                 cam_to_world,
                 tan_half_fov,
                 aspect,
                 _pad_ivp: [0.0; 2],
-                eye_pos: frame.camera_uniform.eye_pos,
-                grid_y: frame.grid_y,
+                eye_pos: frame.camera.render_camera.eye_position,
+                grid_y: frame.viewport.grid_y,
                 spacing_minor: spacing,
                 spacing_major,
                 snap_origin: [snap_x, snap_z],
@@ -926,24 +917,24 @@ impl ViewportRenderer {
 
         // Rebuild overlay quad buffers.
         resources.bc_quad_buffers.clear();
-        for quad in &frame.overlay_quads {
+        for quad in &frame.viewport.overlay_quads {
             let buf = resources.create_overlay_quad(device, &quad.corners, quad.color);
             resources.bc_quad_buffers.push(buf);
         }
 
         resources.constraint_line_buffers.clear();
-        for overlay in &frame.constraint_overlays {
+        for overlay in &frame.interaction.constraint_overlays {
             let buf = resources.create_constraint_overlay(device, overlay);
             resources.constraint_line_buffers.push(buf);
         }
 
         // Cap geometry for section-view cross-section fill.
         resources.cap_buffers.clear();
-        if frame.cap_fill_enabled {
-            let active_planes: Vec<_> = frame.clip_planes.iter().filter(|p| p.enabled).collect();
+        if frame.effects.cap_fill_enabled {
+            let active_planes: Vec<_> = frame.effects.clip_planes.iter().filter(|p| p.enabled).collect();
             for plane in &active_planes {
                 let plane_n = glam::Vec3::from(plane.normal);
-                for item in frame.scene_items.iter().filter(|i| i.visible) {
+                for item in scene_items.iter().filter(|i| i.visible) {
                     let Some(mesh) = resources
                         .mesh_store
                         .get(crate::resources::mesh_store::MeshId(item.mesh_index))
@@ -975,12 +966,12 @@ impl ViewportRenderer {
         }
 
         // Axes indicator.
-        if frame.show_axes_indicator && frame.viewport_size[0] > 0.0 && frame.viewport_size[1] > 0.0
+        if frame.viewport.show_axes_indicator && frame.camera.viewport_size[0] > 0.0 && frame.camera.viewport_size[1] > 0.0
         {
             let verts = crate::widgets::axes_indicator::build_axes_geometry(
-                frame.viewport_size[0],
-                frame.viewport_size[1],
-                frame.camera_orientation,
+                frame.camera.viewport_size[0],
+                frame.camera.viewport_size[1],
+                frame.camera.render_camera.orientation,
             );
             let byte_size = std::mem::size_of_val(verts.as_slice()) as u64;
             if byte_size > resources.axes_vertex_buffer.size() {
@@ -1009,9 +1000,9 @@ impl ViewportRenderer {
         // Zero-cost when both vecs are empty (no pipelines created, no uploads).
         // ------------------------------------------------------------------
         self.point_cloud_gpu_data.clear();
-        if !frame.point_clouds.is_empty() {
+        if !frame.scene.point_clouds.is_empty() {
             resources.ensure_point_cloud_pipeline(device);
-            for item in &frame.point_clouds {
+            for item in &frame.scene.point_clouds {
                 if item.positions.is_empty() {
                     continue;
                 }
@@ -1021,9 +1012,9 @@ impl ViewportRenderer {
         }
 
         self.glyph_gpu_data.clear();
-        if !frame.glyphs.is_empty() {
+        if !frame.scene.glyphs.is_empty() {
             resources.ensure_glyph_pipeline(device);
-            for item in &frame.glyphs {
+            for item in &frame.scene.glyphs {
                 if item.positions.is_empty() || item.vectors.is_empty() {
                     continue;
                 }
@@ -1037,9 +1028,9 @@ impl ViewportRenderer {
         // Zero-cost when polylines vec is empty (no pipeline created, no uploads).
         // ------------------------------------------------------------------
         self.polyline_gpu_data.clear();
-        if !frame.polylines.is_empty() {
+        if !frame.scene.polylines.is_empty() {
             resources.ensure_polyline_pipeline(device);
-            for item in &frame.polylines {
+            for item in &frame.scene.polylines {
                 if item.positions.is_empty() {
                     continue;
                 }
@@ -1052,9 +1043,9 @@ impl ViewportRenderer {
         // SciVis Phase L — isoline extraction and upload via polyline pipeline.
         // Zero-cost when isoline_items is empty (no pipeline init, no uploads).
         // ------------------------------------------------------------------
-        if !frame.isoline_items.is_empty() {
+        if !frame.scene.isolines.is_empty() {
             resources.ensure_polyline_pipeline(device);
-            for item in &frame.isoline_items {
+            for item in &frame.scene.isolines {
                 if item.positions.is_empty() || item.indices.is_empty() || item.scalars.is_empty() {
                     continue;
                 }
@@ -1082,9 +1073,9 @@ impl ViewportRenderer {
         // Zero-cost when streamtube_items is empty (no pipeline init, no uploads).
         // ------------------------------------------------------------------
         self.streamtube_gpu_data.clear();
-        if !frame.streamtube_items.is_empty() {
+        if !frame.scene.streamtube_items.is_empty() {
             resources.ensure_streamtube_pipeline(device);
-            for item in &frame.streamtube_items {
+            for item in &frame.scene.streamtube_items {
                 if item.positions.is_empty() || item.strip_lengths.is_empty() {
                     continue;
                 }
@@ -1100,18 +1091,18 @@ impl ViewportRenderer {
         // Zero-cost when volumes vec is empty (no pipeline created, no uploads).
         // ------------------------------------------------------------------
         self.volume_gpu_data.clear();
-        if !frame.volumes.is_empty() {
+        if !frame.scene.volumes.is_empty() {
             resources.ensure_volume_pipeline(device);
-            for item in &frame.volumes {
-                let gpu = resources.upload_volume_frame(device, queue, item, &frame.clip_planes);
+            for item in &frame.scene.volumes {
+                let gpu = resources.upload_volume_frame(device, queue, item, &frame.effects.clip_planes);
                 self.volume_gpu_data.push(gpu);
             }
         }
 
         // -- Frame stats --
         {
-            let total = frame.scene_items.len() as u32;
-            let visible = frame.scene_items.iter().filter(|i| i.visible).count() as u32;
+            let total = scene_items.len() as u32;
+            let visible = scene_items.iter().filter(|i| i.visible).count() as u32;
             let mut draw_calls = 0u32;
             let mut triangles = 0u64;
             let instanced_batch_count = if self.use_instancing {
@@ -1131,7 +1122,7 @@ impl ViewportRenderer {
                     }
                 }
             } else {
-                for item in &frame.scene_items {
+                for item in scene_items {
                     if !item.visible {
                         continue;
                     }
@@ -1161,7 +1152,7 @@ impl ViewportRenderer {
         // Uses set_viewport() to target different regions of the shadow atlas.
         // Submitted as a separate command buffer before the main pass.
         // ------------------------------------------------------------------
-        if frame.lighting.shadows_enabled && !frame.scene_items.is_empty() {
+        if frame.effects.lighting.shadows_enabled && !scene_items.is_empty() {
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("shadow_pass_encoder"),
             });
@@ -1294,7 +1285,7 @@ impl ViewportRenderer {
                             &cascade_view_projs[cascade],
                         );
 
-                        for item in frame.scene_items.iter() {
+                        for item in scene_items.iter() {
                             if !item.visible {
                                 continue;
                             }
@@ -1340,9 +1331,9 @@ impl ViewportRenderer {
         // dedicated RGBA texture so the paint() path (which may lack a
         // depth/stencil attachment, e.g. eframe) can composite it later.
         // ------------------------------------------------------------------
-        if frame.outline_selected && !resources.outline_object_buffers.is_empty() {
-            let w = frame.viewport_size[0] as u32;
-            let h = frame.viewport_size[1] as u32;
+        if frame.interaction.outline_selected && !resources.outline_object_buffers.is_empty() {
+            let w = frame.camera.viewport_size[0] as u32;
+            let h = frame.camera.viewport_size[1] as u32;
             resources.ensure_outline_target(device, w, h);
 
             if let (Some(color_view), Some(depth_view)) =
