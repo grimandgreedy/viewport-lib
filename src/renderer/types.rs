@@ -979,34 +979,14 @@ macro_rules! emit_draw_calls {
 
         render_pass.set_bind_group(0, camera_bg, &[]);
 
-        // Grid pass — rendered first so scene geometry always paints over it.
-        // Uses a dedicated pipeline + identity camera so the precomputed
-        // (view_proj × translate(snapped)) matrix lives in overlay.model and
-        // vertices are small local coordinates (precision fix for far zoom).
-        // Minor lines drawn first, major lines (every 10th) on top.
-        render_pass.set_pipeline(&resources.grid_line_pipeline);
-        render_pass.set_bind_group(0, &resources.grid_identity_camera_bind_group, &[]);
-        if let (Some(vbuf), Some(ibuf)) = (
-            &resources.grid_vertex_buffer,
-            &resources.grid_index_buffer,
-        ) {
-            if resources.grid_index_count > 0 {
-                render_pass.set_bind_group(1, &resources.grid_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, vbuf.slice(..));
-                render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..resources.grid_index_count, 0, 0..1);
-            }
-        }
-        if let (Some(vbuf), Some(ibuf)) = (
-            &resources.grid_major_vertex_buffer,
-            &resources.grid_major_index_buffer,
-        ) {
-            if resources.grid_major_index_count > 0 {
-                render_pass.set_bind_group(1, &resources.grid_major_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, vbuf.slice(..));
-                render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..resources.grid_major_index_count, 0, 0..1);
-            }
+        // Grid pass — full-screen analytical shader drawn first so scene geometry
+        // occludes it. No vertex buffer; depth is written via @builtin(frag_depth).
+        // Camera bind group is restored immediately after for subsequent passes.
+        if frame.show_grid && !frame.is_2d {
+            render_pass.set_pipeline(&resources.grid_pipeline);
+            render_pass.set_bind_group(0, &resources.grid_bind_group, &[]);
+            render_pass.draw(0..3, 0..1);
+            render_pass.set_bind_group(0, camera_bg, &[]);
         }
 
             if !frame.scene_items.is_empty() {

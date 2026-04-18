@@ -937,115 +937,90 @@ impl ViewportGpuResources {
             });
 
         // ------------------------------------------------------------------
-        // Grid line pipeline — uses a minimal group-0 layout (camera uniform only).
+        // Full-screen analytical grid pipeline
         //
-        // The overlay shader only reads camera.view_proj from group 0 binding 0.
-        // By binding an identity view_proj here we can put the precomputed
-        // (view_proj × translate(snapped_origin)) into overlay.model and keep
-        // grid vertex positions as small local coordinates. This avoids the f32
-        // catastrophic cancellation that occurs when large world-space positions
-        // are transformed by the view matrix entirely on the GPU.
+        // No vertex buffer. A hardcoded triangle in the vertex shader covers
+        // the entire screen. The fragment shader ray-marches to the grid plane,
+        // computes analytical anti-aliased lines with fwidth(), and writes
+        // clip-space depth via @builtin(frag_depth) for correct occlusion.
+        // Horizon fade eliminates clipping artefacts at shallow viewing angles.
         // ------------------------------------------------------------------
-        let grid_camera_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("grid_camera_bgl"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
+        let grid_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("grid_shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/grid.wgsl").into()),
+        });
+        let grid_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("grid_bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
         let grid_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("grid_pipeline_layout"),
-                bind_group_layouts: &[&grid_camera_bgl, &overlay_bgl],
+                bind_group_layouts: &[&grid_bgl],
                 push_constant_ranges: &[],
             });
-
-        let grid_line_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("grid_line_pipeline"),
-                layout: Some(&grid_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &overlay_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[OverlayVertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &overlay_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: target_format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::LineList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-                cache: None,
-            });
-
-        // Identity camera uniform — view_proj = identity so the overlay shader
-        // passes vertex positions through unchanged (actual transform is baked
-        // into overlay.model each frame in prepare()).
-        let grid_identity_camera_buf = {
-            let identity_cam = CameraUniform {
-                view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                eye_pos: [0.0; 3],
-                _pad: 0.0,
-                forward: [0.0, 0.0, -1.0],
-                _pad1: 0.0,
-            };
-            let buf = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("grid_identity_camera_buf"),
-                size: std::mem::size_of::<CameraUniform>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: true,
-            });
-            buf.slice(..)
-                .get_mapped_range_mut()
-                .copy_from_slice(bytemuck::cast_slice(&[identity_cam]));
-            buf.unmap();
-            buf
-        };
-
-        let grid_identity_camera_bind_group =
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("grid_identity_camera_bind_group"),
-                layout: &grid_camera_bgl,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: grid_identity_camera_buf.as_entire_binding(),
-                }],
-            });
+        let grid_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("grid_pipeline"),
+            layout: Some(&grid_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &grid_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[], // no vertex buffer — positions hardcoded in shader
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &grid_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+        // Default-zero uniform — overwritten every frame in prepare().
+        let grid_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("grid_uniform_buf"),
+            size: std::mem::size_of::<GridUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let grid_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("grid_bind_group"),
+            layout: &grid_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: grid_uniform_buf.as_entire_binding(),
+            }],
+        });
 
         // ------------------------------------------------------------------
         // Domain wireframe uniform buffer and bind group
@@ -1073,50 +1048,6 @@ impl ViewportGpuResources {
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: domain_uniform_buf.as_entire_binding(),
-            }],
-        });
-
-        // ------------------------------------------------------------------
-        // Grid uniform buffers and bind groups (minor + major)
-        // ------------------------------------------------------------------
-        let make_grid_uniform_buf =
-            |device: &wgpu::Device, label: &str, color: [f32; 4]| -> wgpu::Buffer {
-                let data = OverlayUniform {
-                    model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                    color,
-                };
-                let buf = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some(label),
-                    size: std::mem::size_of::<OverlayUniform>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: true,
-                });
-                buf.slice(..)
-                    .get_mapped_range_mut()
-                    .copy_from_slice(bytemuck::cast_slice(&[data]));
-                buf.unmap();
-                buf
-            };
-
-        let grid_uniform_buf =
-            make_grid_uniform_buf(device, "grid_uniform_buf", [0.65, 0.65, 0.65, 0.5]);
-        let grid_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("grid_bind_group"),
-            layout: &overlay_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: grid_uniform_buf.as_entire_binding(),
-            }],
-        });
-
-        let grid_major_uniform_buf =
-            make_grid_uniform_buf(device, "grid_major_uniform_buf", [0.65, 0.65, 0.65, 0.5]);
-        let grid_major_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("grid_major_bind_group"),
-            layout: &overlay_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: grid_major_uniform_buf.as_entire_binding(),
             }],
         });
 
@@ -1567,25 +1498,15 @@ impl ViewportGpuResources {
             gizmo_bind_group,
             overlay_pipeline,
             overlay_line_pipeline,
-            grid_line_pipeline,
-            grid_identity_camera_buf,
-            grid_identity_camera_bind_group,
+            grid_pipeline,
+            grid_uniform_buf,
+            grid_bind_group,
             overlay_bind_group_layout: overlay_bgl,
             domain_vertex_buffer: None,
             domain_index_buffer: None,
             domain_index_count: 0,
             domain_uniform_buf,
             domain_bind_group,
-            grid_vertex_buffer: None,
-            grid_index_buffer: None,
-            grid_index_count: 0,
-            grid_uniform_buf,
-            grid_bind_group,
-            grid_major_vertex_buffer: None,
-            grid_major_index_buffer: None,
-            grid_major_index_count: 0,
-            grid_major_uniform_buf,
-            grid_major_bind_group,
             bc_quad_buffers: Vec::new(),
             constraint_line_buffers: Vec::new(),
             cap_buffers: Vec::new(),

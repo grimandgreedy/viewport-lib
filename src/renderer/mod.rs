@@ -23,7 +23,7 @@ pub use self::types::{
 use self::shadows::{compute_cascade_matrix, compute_cascade_splits};
 use self::types::{INSTANCING_THRESHOLD, InstancedBatch};
 use crate::resources::{
-    CameraUniform, ClipPlanesUniform, InstanceData, LightsUniform, ObjectUniform,
+    CameraUniform, ClipPlanesUniform, GridUniform, InstanceData, LightsUniform, ObjectUniform,
     OutlineObjectBuffers, OutlineUniform, OverlayUniform, PickInstance, SingleLightUniform,
     ViewportGpuResources,
 };

@@ -605,6 +605,45 @@ pub(crate) struct OverlayUniform {
     pub(crate) color: [f32; 4], // RGBA with alpha for transparency
 }
 
+/// Uniform buffer layout for the full-screen analytical grid shader.
+///
+/// Contains all data needed by `grid.wgsl`: camera matrices for ray unprojection,
+/// eye position, grid plane height, spacing for minor/major lines, and RGBA colors.
+/// Total size: 192 bytes (fits in one 256-byte UBO slot).
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct GridUniform {
+    /// Combined view-projection matrix for computing clip-space depth of grid hits.
+    pub view_proj: [[f32; 4]; 4],      // offset   0, 64 bytes
+    /// Camera-to-world rotation matrix (3 columns as vec4 with w=0 padding, matching
+    /// WGSL mat3x3<f32> layout). Col 0 = right, Col 1 = up, Col 2 = back (camera +Z).
+    /// Used to rotate the analytical camera-space ray direction into world space,
+    /// bypassing the ill-conditioned inv(view_proj) at large camera distances.
+    pub cam_to_world: [[f32; 4]; 3],   // offset  64, 48 bytes
+    /// tan(fov_y / 2) — scales NDC x/y to camera-space ray direction.
+    pub tan_half_fov: f32,             // offset 112,  4 bytes
+    /// Viewport aspect ratio (width / height).
+    pub aspect: f32,                   // offset 116,  4 bytes
+    /// Padding to keep snap_origin at offset 152 (8-byte aligned).
+    pub _pad_ivp: [f32; 2],           // offset 120,  8 bytes
+    /// Eye (camera) position in world space.
+    pub eye_pos: [f32; 3],             // offset 128, 12 bytes
+    /// Y-coordinate of the horizontal grid plane.
+    pub grid_y: f32,                   // offset 140,  4 bytes
+    /// Minor grid line spacing (world units).
+    pub spacing_minor: f32,            // offset 144,  4 bytes
+    /// Major grid line spacing (world units, typically spacing_minor * 10).
+    pub spacing_major: f32,            // offset 148,  4 bytes
+    /// XZ origin used to keep `hit.xz - snap_origin` small for f32 precision.
+    /// Set to `floor(eye.xz / spacing_major) * spacing_major` each frame.
+    pub snap_origin: [f32; 2],         // offset 152,  8 bytes
+    /// RGBA color for minor grid lines.
+    pub color_minor: [f32; 4],         // offset 160, 16 bytes
+    /// RGBA color for major grid lines.
+    pub color_major: [f32; 4],         // offset 176, 16 bytes
+    // Total: 192 bytes
+}
+
 // ---------------------------------------------------------------------------
 // GpuTexture: GPU texture with sampler and bind group
 // ---------------------------------------------------------------------------
@@ -841,13 +880,12 @@ pub struct ViewportGpuResources {
     pub overlay_pipeline: wgpu::RenderPipeline,
     /// Overlay wireframe pipeline (LineList — for domain wireframe, no alpha blending needed).
     pub overlay_line_pipeline: wgpu::RenderPipeline,
-    /// Grid line pipeline — minimal group-0 layout; identity camera bound so the
-    /// precomputed (view_proj × translate(snapped)) lives in overlay.model.
-    pub grid_line_pipeline: wgpu::RenderPipeline,
-    /// Identity camera uniform buffer for grid draws (view_proj = identity).
-    pub grid_identity_camera_buf: wgpu::Buffer,
-    /// Bind group for the identity camera (group 0 for grid draw calls).
-    pub grid_identity_camera_bind_group: wgpu::BindGroup,
+    /// Full-screen analytical grid pipeline (no vertex buffer — positions hardcoded in shader).
+    pub grid_pipeline: wgpu::RenderPipeline,
+    /// Uniform buffer for the grid shader (GridUniform — written every frame in prepare()).
+    pub grid_uniform_buf: wgpu::Buffer,
+    /// Bind group for the grid uniform (group 0, single binding).
+    pub grid_bind_group: wgpu::BindGroup,
     /// Bind group layout for overlay uniforms (group 1: model + color uniform).
     pub overlay_bind_group_layout: wgpu::BindGroupLayout,
 
@@ -863,30 +901,6 @@ pub struct ViewportGpuResources {
     pub domain_uniform_buf: wgpu::Buffer,
     /// Bind group for domain uniform (group 1, references domain_uniform_buf).
     pub domain_bind_group: wgpu::BindGroup,
-
-    // --- Grid (minor lines) ---
-    /// Vertex buffer for ground-plane grid lines. None if not uploaded yet.
-    pub grid_vertex_buffer: Option<wgpu::Buffer>,
-    /// Index buffer for grid lines (LineList pairs).
-    pub grid_index_buffer: Option<wgpu::Buffer>,
-    /// Number of indices in the grid index buffer.
-    pub grid_index_count: u32,
-    /// Uniform buffer for grid (identity model + minor-line color).
-    pub grid_uniform_buf: wgpu::Buffer,
-    /// Bind group for grid uniform (group 1).
-    pub grid_bind_group: wgpu::BindGroup,
-
-    // --- Grid (major lines — every 10th) ---
-    /// Vertex buffer for major grid lines (every 10th). None if not uploaded.
-    pub grid_major_vertex_buffer: Option<wgpu::Buffer>,
-    /// Index buffer for major grid lines.
-    pub grid_major_index_buffer: Option<wgpu::Buffer>,
-    /// Number of indices in the major grid index buffer.
-    pub grid_major_index_count: u32,
-    /// Uniform buffer for major grid (identity model + brighter color).
-    pub grid_major_uniform_buf: wgpu::Buffer,
-    /// Bind group for major grid uniform (group 1).
-    pub grid_major_bind_group: wgpu::BindGroup,
 
     // --- BC overlay quads ---
     /// Transient BC overlay quads, rebuilt each frame in prepare().
