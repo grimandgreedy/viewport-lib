@@ -21,6 +21,9 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Install system dependencies
+        run: sudo apt-get update -q && sudo apt-get install -y libfontconfig1-dev
+
       - name: Check tag matches Cargo.toml version
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
