@@ -50,7 +50,14 @@ cargo run --release --example winit-viewport
 
 ```rust
 use glam::{Mat4, vec3};
-use viewport_lib::{Camera, FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission, primitives};
+use viewport_lib::{
+    Camera,
+    CameraFrame,
+    FrameData,
+    SceneFrame,
+    SceneRenderItem,
+    primitives,
+};
 
 // Upload the cube primitive mesh once at startup
 let mesh_index = renderer.resources_mut().upload_mesh_data(&device, &primitives::cube(1.0))?;
@@ -64,10 +71,10 @@ let item = SceneRenderItem {
     ..SceneRenderItem::default()
 };
 
-let mut fd = FrameData::default();
-fd.camera.render_camera = RenderCamera::from_camera(&camera);
-fd.camera.viewport_size = [width, height];
-fd.scene.surfaces = SurfaceSubmission::Flat(vec![item]);
+let fd = FrameData::new(
+    CameraFrame::from_camera(&camera, [width, height]),
+    SceneFrame::from_surface_items(vec![item]),
+);
 
 renderer.prepare(&device, &queue, &fd);
 // then call the renderer -- this will depend on what GUI you are using
