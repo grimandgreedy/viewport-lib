@@ -54,20 +54,23 @@ impl ViewportRenderer {
         self.resources.ensure_pick_pipeline(device);
 
         // --- build PickInstance data ---
-        // Sentinel scheme: object_id stored = (scene_items_index + 1) so that
-        // clear value 0 unambiguously means "no hit".
-        let pick_instances: Vec<PickInstance> = scene_items
+        // Only surfaces with a nonzero pick_id participate in picking.
+        // Clear value 0 means "no hit" (or non-pickable surface).
+        let pickable_items: Vec<&SceneRenderItem> = scene_items
             .iter()
-            .enumerate()
-            .filter(|(_, item)| item.visible)
-            .map(|(idx, item)| {
+            .filter(|item| item.visible && item.pick_id != 0)
+            .collect();
+
+        let pick_instances: Vec<PickInstance> = pickable_items
+            .iter()
+            .map(|item| {
                 let m = item.model;
                 PickInstance {
                     model_c0: m[0],
                     model_c1: m[1],
                     model_c2: m[2],
                     model_c3: m[3],
-                    object_id: (idx + 1) as u32,
+                    object_id: item.pick_id as u32,
                     _pad: [0; 3],
                 }
             })
@@ -76,15 +79,6 @@ impl ViewportRenderer {
         if pick_instances.is_empty() {
             return None;
         }
-
-        // Build a mapping from sentinel object_id -> original scene_items index.
-        // Also track which scene_items are visible and their scene_items indices
-        // so we can issue the right draw calls.
-        let visible_items: Vec<(usize, &SceneRenderItem)> = scene_items
-            .iter()
-            .enumerate()
-            .filter(|(_, item)| item.visible)
-            .collect();
 
         // --- pick instance storage buffer + bind group ---
         let pick_instance_bytes = bytemuck::cast_slice(&pick_instances);
@@ -242,9 +236,9 @@ impl ViewportRenderer {
             pick_pass.set_bind_group(0, &pick_camera_bg, &[]);
             pick_pass.set_bind_group(1, &pick_instance_bg, &[]);
 
-            // Draw each visible item with its instance slot.
+            // Draw each pickable item with its instance slot.
             // Instance index in the storage buffer = position in pick_instances vec.
-            for (instance_slot, (_, item)) in visible_items.iter().enumerate() {
+            for (instance_slot, item) in pickable_items.iter().enumerate() {
                 let Some(mesh) = self
                     .resources
                     .mesh_store
@@ -358,14 +352,13 @@ impl ViewportRenderer {
         };
         depth_staging.unmap();
 
-        // --- decode sentinel ---
-        // 0 = miss (clear color); anything else is (scene_items_index + 1).
+        // 0 = miss (clear color or non-pickable surface).
         if object_id == 0 {
             return None;
         }
 
         Some(crate::interaction::picking::GpuPickHit {
-            object_id: (object_id - 1) as u64,
+            object_id: object_id as u64,
             depth,
         })
     }

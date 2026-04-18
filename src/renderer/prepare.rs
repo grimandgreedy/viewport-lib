@@ -835,7 +835,7 @@ impl ViewportRenderer {
         }
 
         // Upload grid uniform (full-screen analytical shader — no vertex buffers needed).
-        if frame.viewport.show_grid && !frame.viewport.is_2d {
+        if frame.viewport.show_grid {
             let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
             if !eye.is_finite() {
                 tracing::warn!(eye_x = eye.x, eye_y = eye.y, eye_z = eye.z,
@@ -941,13 +941,6 @@ impl ViewportRenderer {
                 bytemuck::cast_slice(&[uniform]),
             );
             } // end else (eye is finite)
-        }
-
-        // Rebuild overlay quad buffers.
-        resources.bc_quad_buffers.clear();
-        for quad in &frame.viewport.overlay_quads {
-            let buf = resources.create_overlay_quad(device, &quad.corners, quad.color);
-            resources.bc_quad_buffers.push(buf);
         }
 
         resources.constraint_line_buffers.clear();

@@ -672,6 +672,7 @@ impl Scene {
                 colormap_id: None,
                 nan_color: None,
                 two_sided: false,
+                pick_id: node.id,
             });
         }
         items
@@ -739,6 +740,7 @@ impl Scene {
                 colormap_id: None,
                 nan_color: None,
                 two_sided: false,
+                pick_id: node.id,
             });
         }
         (items, stats)

@@ -16,10 +16,9 @@ pub mod stats;
 pub use self::types::{
     CameraFrame, ClipPlane, ClipVolume, ComputeFilterItem, ComputeFilterKind, EffectsFrame,
     FilterMode, FrameData, GlyphItem, GlyphType, InteractionFrame, LightKind, LightSource,
-    LightingSettings, OverlayQuad, PointCloudItem, PointRenderMode, PolylineItem,
-    PostProcessSettings, RenderCamera, ScalarBar, ScalarBarAnchor, ScalarBarOrientation,
-    SceneFrame, SceneRenderItem, ShadowFilter, StreamtubeItem, SurfaceSubmission, ToneMapping,
-    ViewportFrame, VolumeItem,
+    LightingSettings, PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings,
+    RenderCamera, ScalarBar, ScalarBarAnchor, ScalarBarOrientation, SceneFrame, SceneRenderItem,
+    ShadowFilter, StreamtubeItem, SurfaceSubmission, ToneMapping, ViewportFrame, VolumeItem,
 };
 
 use self::shadows::{compute_cascade_matrix, compute_cascade_splits};

@@ -1473,7 +1473,6 @@ impl ViewportGpuResources {
             grid_uniform_buf,
             grid_bind_group,
             overlay_bind_group_layout: overlay_bgl,
-            bc_quad_buffers: Vec::new(),
             constraint_line_buffers: Vec::new(),
             cap_buffers: Vec::new(),
             axes_pipeline,

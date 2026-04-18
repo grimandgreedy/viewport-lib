@@ -889,11 +889,6 @@ pub struct ViewportGpuResources {
     /// Bind group layout for overlay uniforms (group 1: model + color uniform).
     pub overlay_bind_group_layout: wgpu::BindGroupLayout,
 
-    // --- BC overlay quads ---
-    /// Transient BC overlay quads, rebuilt each frame in prepare().
-    /// Each entry: (vertex_buffer, index_buffer, uniform_buffer, bind_group).
-    pub bc_quad_buffers: Vec<(wgpu::Buffer, wgpu::Buffer, wgpu::Buffer, wgpu::BindGroup)>,
-
     // --- Constraint guide lines ---
     /// Transient constraint guide lines, rebuilt each frame in prepare().
     /// Each entry: (vertex_buffer, index_buffer, index_count, uniform_buffer, bind_group).

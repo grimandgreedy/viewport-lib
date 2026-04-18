@@ -2223,10 +2223,8 @@ impl ApplicationHandler for App {
                         state.interact_gizmo.hovered_axis
                     };
                 frame_data.interaction.gizmo_space_orientation = gizmo_space_orient;
-                frame_data.viewport.overlay_quads = vec![];
                 frame_data.viewport.show_grid = true;
                 frame_data.viewport.show_axes_indicator = true;
-                frame_data.viewport.is_2d = false;
                 frame_data.viewport.background_color = bg_color;
                 frame_data.effects.clip_planes = adv_clip_planes;
                 frame_data.interaction.outline_selected = adv_outline;

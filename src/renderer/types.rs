@@ -328,6 +328,13 @@ pub struct SceneRenderItem {
     /// can orbit under. Opaque geometry with this flag uses the
     /// `solid_two_sided_pipeline` instead of `solid_pipeline`.
     pub two_sided: bool,
+    /// GPU pick identifier for this surface. `0` = not pickable.
+    ///
+    /// The renderer only includes surfaces with a nonzero `pick_id` in the GPU
+    /// pick pass. Set a nonzero value for any surface the user should be able to
+    /// click to select. Helper geometry and transient previews that should not
+    /// participate in picking should leave this at the default `0`.
+    pub pick_id: u64,
 }
 
 impl Default for SceneRenderItem {
@@ -344,6 +351,7 @@ impl Default for SceneRenderItem {
             colormap_id: None,
             nan_color: None,
             two_sided: false,
+            pick_id: 0,
         }
     }
 }
@@ -389,14 +397,6 @@ pub enum ScalarBarOrientation {
     Vertical,
     /// Gradient runs from left (min) to right (max).
     Horizontal,
-}
-
-/// Generic overlay quad: pre-computed corners + RGBA color.
-pub struct OverlayQuad {
-    /// Four corner positions in world space (CCW winding when viewed from outside).
-    pub corners: [[f32; 3]; 4],
-    /// RGBA color (alpha for semi-transparency).
-    pub color: [f32; 4],
 }
 
 // ---------------------------------------------------------------------------
@@ -932,8 +932,8 @@ impl SceneFrame {
 
 /// Viewport presentation settings for one frame.
 ///
-/// Groups background, grid, axes indicator, and overlay state — the
-/// viewport chrome that is independent of world-space content.
+/// Groups background, grid, and axes indicator — the viewport chrome that is
+/// independent of world-space content.
 #[non_exhaustive]
 pub struct ViewportFrame {
     /// Optional background/clear color [r, g, b, a]. None = adapter default.
@@ -948,12 +948,8 @@ pub struct ViewportFrame {
     pub grid_half_extent: f32,
     /// World-space Y coordinate of the grid plane (3D mode only). Default: 0.0.
     pub grid_y: f32,
-    /// Whether the simulation is 2D (affects grid plane orientation). Default: false.
-    pub is_2d: bool,
     /// Whether to draw the axes orientation indicator overlay. Default: true.
     pub show_axes_indicator: bool,
-    /// Overlay quads to render this frame.
-    pub overlay_quads: Vec<OverlayQuad>,
 }
 
 impl Default for ViewportFrame {
@@ -965,9 +961,7 @@ impl Default for ViewportFrame {
             grid_cell_size: 0.0,
             grid_half_extent: 0.0,
             grid_y: 0.0,
-            is_2d: false,
             show_axes_indicator: true,
-            overlay_quads: Vec::new(),
         }
     }
 }
@@ -1129,7 +1123,7 @@ macro_rules! emit_draw_calls {
         // Grid pass — full-screen analytical shader drawn first so scene geometry
         // occludes it. No vertex buffer; depth is written via @builtin(frag_depth).
         // Camera bind group is restored immediately after for subsequent passes.
-        if frame.viewport.show_grid && !frame.viewport.is_2d {
+        if frame.viewport.show_grid {
             render_pass.set_pipeline(&resources.grid_pipeline);
             render_pass.set_bind_group(0, &resources.grid_bind_group, &[]);
             render_pass.draw(0..3, 0..1);
@@ -1353,18 +1347,6 @@ macro_rules! emit_draw_calls {
                 wgpu::IndexFormat::Uint32,
             );
             render_pass.draw_indexed(0..resources.gizmo_index_count, 0, 0..1);
-        }
-
-        // Overlay quad pass.
-        if !resources.bc_quad_buffers.is_empty() {
-            render_pass.set_pipeline(&resources.overlay_pipeline);
-            render_pass.set_bind_group(0, camera_bg, &[]);
-            for (vbuf, ibuf, _ubuf, bg) in &resources.bc_quad_buffers {
-                render_pass.set_bind_group(1, bg, &[]);
-                render_pass.set_vertex_buffer(0, vbuf.slice(..));
-                render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..6, 0, 0..1);
-            }
         }
 
         // Constraint guide line pass.
