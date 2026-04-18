@@ -521,8 +521,8 @@ impl ViewportRenderer {
             // Also include the scene_items count so that frustum-culling changes (different
             // visible set passed in by the caller) correctly invalidate the cache even when
             // scene_generation is stable (scene not mutated, only camera moved).
-            let cache_valid = frame.cache_hints.scene_generation == self.last_scene_generation
-                && frame.cache_hints.selection_generation == self.last_selection_generation
+            let cache_valid = frame.scene.generation == self.last_scene_generation
+                && frame.interaction.selection_generation == self.last_selection_generation
                 && frame.viewport.wireframe_mode == self.last_wireframe_mode
                 && scene_items.len() == self.last_scene_items_count;
 
@@ -631,8 +631,8 @@ impl ViewportRenderer {
                 self.instanced_batches = self.cached_instanced_batches.clone();
 
                 // Store generations so the next frame can detect staleness.
-                self.last_scene_generation = frame.cache_hints.scene_generation;
-                self.last_selection_generation = frame.cache_hints.selection_generation;
+                self.last_scene_generation = frame.scene.generation;
+                self.last_selection_generation = frame.interaction.selection_generation;
                 self.last_wireframe_mode = frame.viewport.wireframe_mode;
                 self.last_scene_items_count = scene_items.len();
 

@@ -879,6 +879,11 @@ impl Default for SurfaceSubmission {
 /// visualization primitives are first-class members alongside surfaces.
 #[non_exhaustive]
 pub struct SceneFrame {
+    /// Scene version counter from `Scene::version()`. Default: 0 (triggers rebuild on first frame).
+    ///
+    /// The renderer uses this to skip batch rebuild and GPU upload when scene content
+    /// has not changed since the previous frame.
+    pub generation: u64,
     /// Surface geometry submission (opaque and transparent meshes).
     pub surfaces: SurfaceSubmission,
     /// Point cloud items to render this frame.
@@ -898,6 +903,7 @@ pub struct SceneFrame {
 impl Default for SceneFrame {
     fn default() -> Self {
         Self {
+            generation: 0,
             surfaces: SurfaceSubmission::default(),
             point_clouds: Vec::new(),
             glyphs: Vec::new(),
@@ -973,6 +979,11 @@ impl Default for ViewportFrame {
 /// feedback to the user.
 #[non_exhaustive]
 pub struct InteractionFrame {
+    /// Selection version counter from `Selection::version()`. Default: 0.
+    ///
+    /// The renderer uses this to skip batch rebuild and GPU upload when selection
+    /// state has not changed since the previous frame.
+    pub selection_generation: u64,
     /// Gizmo model matrix. Some = selected object exists and gizmo should render.
     pub gizmo_model: Option<glam::Mat4>,
     /// Current gizmo interaction mode.
@@ -998,6 +1009,7 @@ pub struct InteractionFrame {
 impl Default for InteractionFrame {
     fn default() -> Self {
         Self {
+            selection_generation: 0,
             gizmo_model: None,
             gizmo_mode: GizmoMode::Translate,
             gizmo_hovered: GizmoAxis::None,
@@ -1046,28 +1058,6 @@ impl Default for EffectsFrame {
     }
 }
 
-/// Renderer invalidation hints for one frame.
-///
-/// Generation counters let the renderer skip batch rebuild and GPU upload
-/// when neither scene content nor selection has changed since the previous
-/// frame.
-#[non_exhaustive]
-pub struct CacheHints {
-    /// Scene version counter from `Scene::version()`. Default: 0 (triggers rebuild on first frame).
-    pub scene_generation: u64,
-    /// Selection version counter from `Selection::version()`. Default: 0.
-    pub selection_generation: u64,
-}
-
-impl Default for CacheHints {
-    fn default() -> Self {
-        Self {
-            scene_generation: 0,
-            selection_generation: 0,
-        }
-    }
-}
-
 /// All data needed to render one frame of the viewport.
 ///
 /// Fields are grouped by responsibility. Build the sub-objects you need,
@@ -1085,8 +1075,6 @@ pub struct FrameData {
     pub interaction: InteractionFrame,
     /// Global rendering effects (lighting, clipping, post-process).
     pub effects: EffectsFrame,
-    /// Renderer invalidation hints (scene/selection generation counters).
-    pub cache_hints: CacheHints,
 }
 
 impl Default for FrameData {
@@ -1097,7 +1085,6 @@ impl Default for FrameData {
             viewport: ViewportFrame::default(),
             interaction: InteractionFrame::default(),
             effects: EffectsFrame::default(),
-            cache_hints: CacheHints::default(),
         }
     }
 }

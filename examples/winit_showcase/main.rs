@@ -2231,8 +2231,8 @@ impl ApplicationHandler for App {
                 frame_data.effects.clip_planes = adv_clip_planes;
                 frame_data.interaction.outline_selected = adv_outline;
                 frame_data.interaction.xray_selected = adv_xray;
-                frame_data.cache_hints.scene_generation = scene_gen;
-                frame_data.cache_hints.selection_generation = sel_gen;
+                frame_data.scene.generation = scene_gen;
+                frame_data.interaction.selection_generation = sel_gen;
 
                 if matches!(
                     state.mode,

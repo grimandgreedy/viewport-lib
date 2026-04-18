@@ -92,9 +92,9 @@ pub use widgets::axes_indicator::AxisView;
 pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::FrameStats;
 pub use renderer::{
-    CacheHints, CameraFrame, ClipPlane, ClipVolume, ComputeFilterItem, ComputeFilterKind,
-    EffectsFrame, FilterMode, FrameData, GlyphItem, GlyphType, InteractionFrame, LightKind,
-    LightSource, LightingSettings, OverlayQuad, PointCloudItem, PointRenderMode, PolylineItem,
+    CameraFrame, ClipPlane, ClipVolume, ComputeFilterItem, ComputeFilterKind, EffectsFrame,
+    FilterMode, FrameData, GlyphItem, GlyphType, InteractionFrame, LightKind, LightSource,
+    LightingSettings, OverlayQuad, PointCloudItem, PointRenderMode, PolylineItem,
     PostProcessSettings, RenderCamera, SceneFrame, SceneRenderItem, ShadowFilter, StreamtubeItem,
     SurfaceSubmission, ToneMapping, ViewportFrame, ViewportRenderer, VolumeItem,
 };
