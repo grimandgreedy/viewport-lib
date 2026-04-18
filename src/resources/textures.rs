@@ -268,13 +268,13 @@ impl ViewportGpuResources {
     /// `mesh.last_tex_key` differs from the current frame's material/attribute state.
     ///
     /// The bind group layout is `object_bgl`:
-    ///   binding 0 → object uniform buffer
-    ///   binding 1 → albedo texture view
-    ///   binding 2 → material sampler (also used for LUT sampling)
-    ///   binding 3 → normal map view
-    ///   binding 4 → AO map view
-    ///   binding 5 → LUT (colormap) texture view
-    ///   binding 6 → scalar attribute storage buffer
+    ///   binding 0 -> object uniform buffer
+    ///   binding 1 -> albedo texture view
+    ///   binding 2 -> material sampler (also used for LUT sampling)
+    ///   binding 3 -> normal map view
+    ///   binding 4 -> AO map view
+    ///   binding 5 -> LUT (colormap) texture view
+    ///   binding 6 -> scalar attribute storage buffer
     pub(crate) fn update_mesh_texture_bind_group(
         &mut self,
         device: &wgpu::Device,

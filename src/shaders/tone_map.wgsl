@@ -95,7 +95,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         color = khronos_neutral(color);
     }
 
-    // Gamma correction (linear → sRGB approximation).
+    // Gamma correction (linear -> sRGB approximation).
     color = pow(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));
 
     return vec4<f32>(color, 1.0);

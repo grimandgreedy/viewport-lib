@@ -19,7 +19,7 @@ fn to_u8(x: f32) -> u8 {
 }
 
 // ---------------------------------------------------------------------------
-// Greyscale: linear ramp black → white
+// Greyscale: linear ramp black -> white
 // ---------------------------------------------------------------------------
 
 /// Linear greyscale ramp from black (index 0) to white (index 255).
@@ -84,7 +84,7 @@ pub fn plasma_rgba() -> [[u8; 4]; 256] {
 }
 
 // ---------------------------------------------------------------------------
-// Coolwarm: diverging blue → white → red (cubic Hermite)
+// Coolwarm: diverging blue -> white -> red (cubic Hermite)
 // ---------------------------------------------------------------------------
 
 /// Diverging coolwarm colormap: blue at t=0, white at t=0.5, red at t=1.
@@ -122,7 +122,7 @@ pub fn coolwarm_rgba() -> [[u8; 4]; 256] {
 }
 
 // ---------------------------------------------------------------------------
-// Rainbow: HSV hue sweep 240° (blue) → 0° (red) at full saturation/value
+// Rainbow: HSV hue sweep 240° (blue) -> 0° (red) at full saturation/value
 // ---------------------------------------------------------------------------
 
 /// Rainbow colormap: HSV hue sweep from 240° (blue) at t=0 to 0° (red) at t=1.

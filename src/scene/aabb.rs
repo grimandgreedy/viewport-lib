@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn test_intersects_plane_tangent() {
         let aabb = Aabb::from_positions(&unit_cube_positions());
-        // Plane exactly at the +X face (x=0.5 → distance=-0.5 since dot(n,p)+d=0)
+        // Plane exactly at the +X face (x=0.5 -> distance=-0.5 since dot(n,p)+d=0)
         assert!(aabb.intersects_plane(glam::Vec3::X, -0.5));
     }
 }

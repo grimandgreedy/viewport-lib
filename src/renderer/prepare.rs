@@ -406,7 +406,7 @@ impl ViewportRenderer {
             .iter()
             .any(|i| i.active_attribute.is_some());
         let has_two_sided_items = scene_items.iter().any(|i| i.two_sided);
-        if !self.use_instancing || frame.wireframe_mode || has_scalar_items || has_two_sided_items {
+        if !self.use_instancing || frame.viewport.wireframe_mode || has_scalar_items || has_two_sided_items {
             for item in scene_items {
                 if resources
                     .mesh_store
@@ -439,7 +439,7 @@ impl ViewportRenderer {
                     model: item.model,
                     color: [m.base_color[0], m.base_color[1], m.base_color[2], m.opacity],
                     selected: if item.selected { 1 } else { 0 },
-                    wireframe: if frame.wireframe_mode { 1 } else { 0 },
+                    wireframe: if frame.viewport.wireframe_mode { 1 } else { 0 },
                     ambient: m.ambient,
                     diffuse: m.diffuse,
                     specular: m.specular,
@@ -523,7 +523,7 @@ impl ViewportRenderer {
             // scene_generation is stable (scene not mutated, only camera moved).
             let cache_valid = frame.cache_hints.scene_generation == self.last_scene_generation
                 && frame.cache_hints.selection_generation == self.last_selection_generation
-                && frame.wireframe_mode == self.last_wireframe_mode
+                && frame.viewport.wireframe_mode == self.last_wireframe_mode
                 && scene_items.len() == self.last_scene_items_count;
 
             if !cache_valid {
@@ -591,7 +591,7 @@ impl ViewportRenderer {
                                         m.opacity,
                                     ],
                                     selected: if item.selected { 1 } else { 0 },
-                                    wireframe: if frame.wireframe_mode { 1 } else { 0 },
+                                    wireframe: if frame.viewport.wireframe_mode { 1 } else { 0 },
                                     ambient: m.ambient,
                                     diffuse: m.diffuse,
                                     specular: m.specular,
@@ -633,7 +633,7 @@ impl ViewportRenderer {
                 // Store generations so the next frame can detect staleness.
                 self.last_scene_generation = frame.cache_hints.scene_generation;
                 self.last_selection_generation = frame.cache_hints.selection_generation;
-                self.last_wireframe_mode = frame.wireframe_mode;
+                self.last_wireframe_mode = frame.viewport.wireframe_mode;
                 self.last_scene_items_count = scene_items.len();
 
                 // Prime instance+texture bind group cache for all batches.
@@ -836,8 +836,12 @@ impl ViewportRenderer {
 
         // Upload grid uniform (full-screen analytical shader — no vertex buffers needed).
         if frame.viewport.show_grid && !frame.viewport.is_2d {
-            let view_proj_mat = frame.camera.render_camera.view_proj().to_cols_array_2d();
             let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
+            if !eye.is_finite() {
+                tracing::warn!(eye_x = eye.x, eye_y = eye.y, eye_z = eye.z,
+                    "grid skipped: eye_position is non-finite (camera distance overflow?)");
+            } else {
+            let view_proj_mat = frame.camera.render_camera.view_proj().to_cols_array_2d();
 
             // Adaptive LOD spacing — snap to next power of 10 above the target world
             // coverage.  Avoid log10/powf: they are imprecise near exact decade boundaries
@@ -852,8 +856,10 @@ impl ViewportRenderer {
                     / frame.camera.viewport_size[1].max(1.0);
                 let target = (world_per_pixel * 60.0).max(1e-9_f32);
                 let mut s = 1.0_f32;
+                let mut iters = 0u32;
                 while s < target {
                     s *= 10.0;
+                    iters += 1;
                 }
                 // Fade minor lines out as we approach the LOD boundary so that the
                 // 10× spacing jump is gradual rather than a sudden pop.
@@ -865,6 +871,17 @@ impl ViewportRenderer {
                     let t = (ratio - 0.5) * 2.0; // 0..1
                     1.0 - t * t * (3.0 - 2.0 * t) // smooth step down
                 };
+                tracing::debug!(
+                    eye_y = eye.y,
+                    vertical_depth,
+                    world_per_pixel,
+                    target,
+                    spacing = s,
+                    lod_iters = iters,
+                    ratio,
+                    minor_fade = fade,
+                    "grid LOD"
+                );
                 (s, fade)
             };
 
@@ -874,6 +891,16 @@ impl ViewportRenderer {
             let spacing_major = spacing * 10.0;
             let snap_x = (eye.x / spacing_major).floor() * spacing_major;
             let snap_z = (eye.z / spacing_major).floor() * spacing_major;
+            tracing::debug!(
+                spacing_minor = spacing,
+                spacing_major,
+                snap_x,
+                snap_z,
+                eye_x = eye.x,
+                eye_y = eye.y,
+                eye_z = eye.z,
+                "grid snap"
+            );
 
             // Camera-to-world rotation: compute from orientation quaternion.
             // Columns are [right, up, back] where back = camera +Z (away from scene).
@@ -902,7 +929,7 @@ impl ViewportRenderer {
                 spacing_major,
                 snap_origin: [snap_x, snap_z],
                 // Minor lines fade out as we approach the LOD boundary.
-                // Major lines dim from 0.8 → 0.4 in sync so that at the transition
+                // Major lines dim from 0.8 -> 0.4 in sync so that at the transition
                 // the old major lines (which become new minor lines) are already at
                 // the new minor alpha — no visible alpha jump.
                 color_minor: [0.35, 0.35, 0.35, 0.4 * minor_fade],
@@ -913,6 +940,7 @@ impl ViewportRenderer {
                 0,
                 bytemuck::cast_slice(&[uniform]),
             );
+            } // end else (eye is finite)
         }
 
         // Rebuild overlay quad buffers.

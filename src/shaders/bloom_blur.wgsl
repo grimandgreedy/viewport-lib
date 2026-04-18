@@ -1,5 +1,5 @@
 // bloom_blur.wgsl — separable 9-tap Gaussian blur.
-// params.horizontal=1 → horizontal pass; params.horizontal=0 → vertical pass.
+// params.horizontal=1 -> horizontal pass; params.horizontal=0 -> vertical pass.
 // The same shader + pipeline is used for both axes by swapping bind groups.
 
 struct BloomUniform {

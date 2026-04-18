@@ -53,11 +53,11 @@ pub enum BuiltinColormap {
     Viridis = 0,
     /// Plasma — perceptually uniform, brighter.
     Plasma = 1,
-    /// Greyscale — linear black→white.
+    /// Greyscale — linear black->white.
     Greyscale = 2,
-    /// Coolwarm — diverging blue→white→red.
+    /// Coolwarm — diverging blue->white->red.
     Coolwarm = 3,
-    /// Rainbow — HSV hue sweep 240°→0°.
+    /// Rainbow — HSV hue sweep 240°->0°.
     Rainbow = 4,
 }
 
@@ -528,8 +528,8 @@ pub(crate) struct BloomUniform {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct SsaoUniform {
-    pub(crate) inv_proj: [[f32; 4]; 4], // 64 bytes — NDC→view
-    pub(crate) proj: [[f32; 4]; 4],     // 64 bytes — view→clip (for re-projection)
+    pub(crate) inv_proj: [[f32; 4]; 4], // 64 bytes — NDC->view
+    pub(crate) proj: [[f32; 4]; 4],     // 64 bytes — view->clip (for re-projection)
     pub(crate) radius: f32,
     pub(crate) bias: f32,
     pub(crate) _pad: [f32; 2],
@@ -1029,7 +1029,7 @@ pub struct ViewportGpuResources {
     /// Last HDR target size [w, h]. Used to detect resize.
     pub(crate) hdr_size: [u32; 2],
 
-    /// Tone mapping pipeline (renders fullscreen tri, hdr_texture → output).
+    /// Tone mapping pipeline (renders fullscreen tri, hdr_texture -> output).
     pub(crate) tone_map_pipeline: Option<wgpu::RenderPipeline>,
     /// Tone map bind group layout.
     pub(crate) tone_map_bgl: Option<wgpu::BindGroupLayout>,

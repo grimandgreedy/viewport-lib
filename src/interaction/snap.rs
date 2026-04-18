@@ -101,14 +101,14 @@ mod tests {
         let deg40 = 40.0_f32.to_radians();
         let snapped_20 = snap_angle(deg20, deg15);
         let snapped_40 = snap_angle(deg40, deg15);
-        // 20° → 15° (1 × 15)
+        // 20° -> 15° (1 × 15)
         assert!(
             (snapped_20 - deg15).abs() < 1e-5,
             "20° snapped to {}, expected {}",
             snapped_20.to_degrees(),
             15.0
         );
-        // 40° → 45° (3 × 15)
+        // 40° -> 45° (3 × 15)
         let deg45 = 45.0_f32.to_radians();
         assert!(
             (snapped_40 - deg45).abs() < 1e-5,
@@ -123,7 +123,7 @@ mod tests {
         let snapped = snap_scale(1.37, 0.1);
         assert!(
             (snapped - 1.4).abs() < 1e-5,
-            "1.37 @ 0.1 → {snapped}, expected 1.4"
+            "1.37 @ 0.1 -> {snapped}, expected 1.4"
         );
     }
 

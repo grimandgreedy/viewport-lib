@@ -21,7 +21,7 @@ pub enum Action {
     ResetView,
     /// Toggle between solid and wireframe render modes.
     ToggleWireframe,
-    /// Cycle the gizmo mode (Translate → Rotate → Scale).
+    /// Cycle the gizmo mode (Translate -> Rotate -> Scale).
     CycleGizmoMode,
 
     // -- Fly mode --

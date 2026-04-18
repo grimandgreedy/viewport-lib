@@ -88,8 +88,8 @@ impl Default for AnnotationLabel {
 /// # Arguments
 ///
 /// * `pos` — World-space position to project.
-/// * `view` — Camera view matrix (world → view space).
-/// * `proj` — Camera projection matrix (view space → clip space).
+/// * `view` — Camera view matrix (world -> view space).
+/// * `proj` — Camera projection matrix (view space -> clip space).
 /// * `viewport_size` — Viewport dimensions in physical pixels `[width, height]`.
 ///
 /// # Returns
@@ -121,7 +121,7 @@ pub fn world_to_screen(
         return None;
     }
 
-    // Perspective division → NDC in [-1, 1] on each axis.
+    // Perspective division -> NDC in [-1, 1] on each axis.
     let ndc = glam::Vec3::new(clip.x, clip.y, clip.z) / clip.w;
 
     // Clip any point outside the view frustum on X or Y.
@@ -132,7 +132,7 @@ pub fn world_to_screen(
     // Convert NDC to screen pixels.
     // NDC X: -1 = left edge,  +1 = right edge.
     // NDC Y: -1 = bottom, +1 = top (OpenGL convention).
-    // Screen Y: 0 = top, viewport_height = bottom → flip Y.
+    // Screen Y: 0 = top, viewport_height = bottom -> flip Y.
     let x = (ndc.x * 0.5 + 0.5) * viewport_size[0];
     let y = (1.0 - (ndc.y * 0.5 + 0.5)) * viewport_size[1];
 

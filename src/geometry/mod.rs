@@ -5,5 +5,5 @@ pub(crate) mod cap_geometry;
 pub mod isoline;
 /// CPU-side marching cubes isosurface extraction from volumetric data.
 pub mod marching_cubes;
-/// Geometry primitives: cube, sphere, plane, cylinder.
+/// Geometry primitives: cube, sphere, plane, cylinder, cone, capsule, torus, icosphere, arrow, disk, frustum, hemisphere, ring, ellipsoid, spring, grid_plane.
 pub mod primitives;

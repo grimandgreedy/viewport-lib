@@ -256,7 +256,7 @@ fn sample_shadow_csm(
     let light_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(world_pos, 1.0);
     let ndc = light_clip.xyz / light_clip.w;
 
-    // NDC → tile UV [0,1].
+    // NDC -> tile UV [0,1].
     let tile_uv = vec2<f32>(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
 
     // Out-of-range check.
@@ -295,7 +295,7 @@ fn sample_shadow_csm(
 
     if shadow_atlas.shadow_filter == 1u {
         // ---------------------------------------------------------------
-        // PCSS: blocker search → penumbra estimation → variable PCF
+        // PCSS: blocker search -> penumbra estimation -> variable PCF
         // ---------------------------------------------------------------
         let search_radius = shadow_atlas.pcss_light_radius * 16.0 * texel_size;
 

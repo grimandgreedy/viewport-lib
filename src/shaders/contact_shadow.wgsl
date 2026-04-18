@@ -5,8 +5,8 @@
 // Output: R8Unorm single-channel (1.0 = lit, 0.0 = shadowed).
 
 struct ContactShadowUniform {
-    inv_proj:       mat4x4<f32>,   // NDC → view
-    proj:           mat4x4<f32>,   // view → clip
+    inv_proj:       mat4x4<f32>,   // NDC -> view
+    proj:           mat4x4<f32>,   // view -> clip
     light_dir_view: vec4<f32>,     // xyz = light direction in view space
     world_up_view:  vec4<f32>,     // xyz = world up transformed into view space
     params:         vec4<f32>,     // x=max_distance, y=steps, z=thickness
@@ -35,7 +35,7 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 
 // Reconstruct view-space position from depth buffer at given UV.
 fn view_pos_from_depth(uv: vec2<f32>, depth: f32) -> vec3<f32> {
-    // UV → NDC.
+    // UV -> NDC.
     let ndc = vec4<f32>(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0, depth, 1.0);
     let view_h = params.inv_proj * ndc;
     return view_h.xyz / view_h.w;
@@ -111,7 +111,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Check if the ray is behind the depth buffer surface within thickness.
         // In RH view space, visible geometry has negative Z. "Behind" a surface
         // means march_pos has more-negative Z than the surface, so the surface Z
-        // is greater (less negative) than the march Z → depth_diff > 0 when occluded.
+        // is greater (less negative) than the march Z -> depth_diff > 0 when occluded.
         // Require a minimum depth penetration (half a step) to reject grazing self-hits.
         let depth_diff = sample_view_pos.z - march_pos.z;
         let min_depth = max(step_size * 1.0, 0.015);

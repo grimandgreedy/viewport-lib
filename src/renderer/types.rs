@@ -895,6 +895,8 @@ impl Default for SceneFrame {
 pub struct ViewportFrame {
     /// Optional background/clear color [r, g, b, a]. None = adapter default.
     pub background_color: Option<[f32; 4]>,
+    /// Whether to render the scene in wireframe mode. Default: false.
+    pub wireframe_mode: bool,
     /// Whether to render the ground-plane grid. Default: false.
     pub show_grid: bool,
     /// Grid cell size in world units. Zero = camera-distance-based adaptive spacing.
@@ -915,6 +917,7 @@ impl Default for ViewportFrame {
     fn default() -> Self {
         Self {
             background_color: None,
+            wireframe_mode: false,
             show_grid: false,
             grid_cell_size: 0.0,
             grid_half_extent: 0.0,
@@ -1047,8 +1050,6 @@ pub struct FrameData {
     pub effects: EffectsFrame,
     /// Renderer invalidation hints (scene/selection generation counters).
     pub cache_hints: CacheHints,
-    /// Whether to render in wireframe mode.
-    pub wireframe_mode: bool,
 }
 
 impl Default for FrameData {
@@ -1060,7 +1061,6 @@ impl Default for FrameData {
             interaction: InteractionFrame::default(),
             effects: EffectsFrame::default(),
             cache_hints: CacheHints::default(),
-            wireframe_mode: false,
         }
     }
 }
@@ -1128,7 +1128,7 @@ macro_rules! emit_draw_calls {
                 }
 
                     // Draw opaque instanced batches.
-                    if !opaque_batches.is_empty() && !frame.wireframe_mode {
+                    if !opaque_batches.is_empty() && !frame.viewport.wireframe_mode {
                         if let Some(ref pipeline) = resources.solid_instanced_pipeline {
                             render_pass.set_pipeline(pipeline);
                             for batch in &opaque_batches {
@@ -1153,7 +1153,7 @@ macro_rules! emit_draw_calls {
                     }
 
                     // Draw transparent instanced batches.
-                    if !transparent_batches.is_empty() && !frame.wireframe_mode {
+                    if !transparent_batches.is_empty() && !frame.viewport.wireframe_mode {
                         if let Some(ref pipeline) = resources.transparent_instanced_pipeline {
                             render_pass.set_pipeline(pipeline);
                             for batch in &transparent_batches {
@@ -1179,7 +1179,7 @@ macro_rules! emit_draw_calls {
                     // Wireframe mode fallback: draw per-object.
                     // mesh.object_bind_group (group 1) already contains the object uniform
                     // and fallback textures — no separate group 2 needed.
-                    if frame.wireframe_mode {
+                    if frame.viewport.wireframe_mode {
                         for item in scene_items {
                             if !item.visible { continue; }
                             let Some(mesh) = resources.mesh_store.get(crate::resources::mesh_store::MeshId(item.mesh_index)) else { continue };
@@ -1252,7 +1252,7 @@ macro_rules! emit_draw_calls {
                         // and the correct texture views — updated in prepare() if material changed.
                         render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
 
-                        if frame.wireframe_mode {
+                        if frame.viewport.wireframe_mode {
                             render_pass.set_pipeline(&resources.wireframe_pipeline);
                             render_pass.set_index_buffer(
                                 mesh.edge_index_buffer.slice(..),

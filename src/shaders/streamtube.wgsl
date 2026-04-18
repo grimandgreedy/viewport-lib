@@ -128,7 +128,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
 
     let inst = instances[in.instance_index];
 
-    // Build orientation matrix (local +Y → segment direction).
+    // Build orientation matrix (local +Y -> segment direction).
     var rot = mat3x3<f32>(
         vec3<f32>(1.0, 0.0, 0.0),
         vec3<f32>(0.0, 1.0, 0.0),

@@ -2214,7 +2214,7 @@ impl ApplicationHandler for App {
                     fd.camera.viewport_size = [w, h];
                     fd.effects.lighting = lighting;
                     fd.scene.surfaces = SurfaceSubmission::Flat(scene_items);
-                    fd.wireframe_mode = false;
+                    fd.viewport.wireframe_mode = false;
                     fd.interaction.gizmo_model = gizmo_model;
                     fd.interaction.gizmo_mode = gizmo_mode;
                     fd.interaction.gizmo_hovered = if state.interact_gizmo.active_axis != GizmoAxis::None {

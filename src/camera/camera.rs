@@ -65,7 +65,7 @@ impl Camera {
         self.center + self.eye_offset()
     }
 
-    /// Right-handed view matrix (world → camera space).
+    /// Right-handed view matrix (world -> camera space).
     pub fn view_matrix(&self) -> glam::Mat4 {
         let eye = self.eye_position();
         let up = self.orientation * glam::Vec3::Y;

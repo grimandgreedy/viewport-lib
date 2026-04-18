@@ -58,7 +58,7 @@ impl ViewportRenderer {
     }
 
     /// High-level HDR render method. Handles the full post-processing pipeline:
-    /// scene → HDR texture → (bloom) → (SSAO) → tone map → output_view.
+    /// scene -> HDR texture -> (bloom) -> (SSAO) -> tone map -> output_view.
     ///
     /// When `frame.post_process.enabled` is false, falls back to a simple LDR render
     /// pass targeting `output_view` directly.
@@ -366,7 +366,7 @@ impl ViewportRenderer {
                         }
                     }
 
-                    if !opaque_batches.is_empty() && !frame.wireframe_mode {
+                    if !opaque_batches.is_empty() && !frame.viewport.wireframe_mode {
                         if let Some(ref pipeline) = resources.hdr_solid_instanced_pipeline {
                             render_pass.set_pipeline(pipeline);
                             for batch in &opaque_batches {
@@ -406,7 +406,7 @@ impl ViewportRenderer {
                     // not in the HDR scene pass. This block intentionally left empty.
                     let _ = &transparent_batches; // suppress unused warning
 
-                    if frame.wireframe_mode {
+                    if frame.viewport.wireframe_mode {
                         if let Some(ref hdr_wf) = resources.hdr_wireframe_pipeline {
                             render_pass.set_pipeline(hdr_wf);
                             for item in scene_items {
@@ -508,7 +508,7 @@ impl ViewportRenderer {
                             // and the correct texture views.
                             render_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
                             render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                            if frame.wireframe_mode {
+                            if frame.viewport.wireframe_mode {
                                 render_pass.set_pipeline(wf_pl);
                                 render_pass.set_index_buffer(
                                     mesh.edge_index_buffer.slice(..),
@@ -910,7 +910,7 @@ impl ViewportRenderer {
                 }
 
                 // 4 ping-pong H+V blur passes for a wide glow.
-                // Pass 1: threshold → ping → pong. Passes 2-4: pong → ping → pong.
+                // Pass 1: threshold -> ping -> pong. Passes 2-4: pong -> ping -> pong.
                 if let (
                     Some(blur_h_bg),
                     Some(blur_h_pong_bg),
@@ -951,7 +951,7 @@ impl ViewportRenderer {
                             h_pass.set_bind_group(0, h_bg, &[]);
                             h_pass.draw(0..3, 0..1);
                         }
-                        // V pass: ping → pong.
+                        // V pass: ping -> pong.
                         {
                             let mut v_pass =
                                 encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -979,7 +979,7 @@ impl ViewportRenderer {
         }
 
         // -----------------------------------------------------------------------
-        // Tone map pass: HDR + bloom + AO → (fxaa_texture if FXAA) or output_view.
+        // Tone map pass: HDR + bloom + AO -> (fxaa_texture if FXAA) or output_view.
         // -----------------------------------------------------------------------
         let use_fxaa = pp.fxaa && self.resources.fxaa_view.is_some();
         if let (Some(tone_map_pipeline), Some(tone_map_bg)) = (
@@ -1012,7 +1012,7 @@ impl ViewportRenderer {
         }
 
         // -----------------------------------------------------------------------
-        // FXAA pass: fxaa_texture → output_view (only when FXAA is enabled).
+        // FXAA pass: fxaa_texture -> output_view (only when FXAA is enabled).
         // -----------------------------------------------------------------------
         if use_fxaa {
             if let (Some(fxaa_pipeline), Some(fxaa_bg)) = (
@@ -1098,7 +1098,7 @@ impl ViewportRenderer {
         let cmd_buf = self.render(device, queue, &output_view, frame);
         queue.submit(std::iter::once(cmd_buf));
 
-        // 5. Copy texture → staging buffer (wgpu requires row alignment to 256 bytes).
+        // 5. Copy texture -> staging buffer (wgpu requires row alignment to 256 bytes).
         let bytes_per_pixel = 4u32;
         let unpadded_row = width * bytes_per_pixel;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -1171,7 +1171,7 @@ impl ViewportRenderer {
         }
         staging_buf.unmap();
 
-        // 7. Swizzle BGRA → RGBA if the format stores bytes in BGRA order.
+        // 7. Swizzle BGRA -> RGBA if the format stores bytes in BGRA order.
         let is_bgra = matches!(
             target_format,
             wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb

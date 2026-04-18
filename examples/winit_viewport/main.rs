@@ -23,8 +23,18 @@ use winit::window::{Window, WindowAttributes, WindowId};
 const ORBIT_SENSITIVITY: f32 = 0.005;
 const ZOOM_SENSITIVITY: f32 = 0.001;
 const MIN_DISTANCE: f32 = 0.1;
+// f32 quaternion rotation of a vector of magnitude D involves intermediate
+// products of ~D; cap well below f32::MAX (~3.4e38) to prevent overflow -> NaN.
+const MAX_DISTANCE: f32 = 1e15;
 
 fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("viewport_lib=debug")),
+        )
+        .init();
+
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     let mut app = App::default();
     event_loop.run_app(&mut app).expect("Event loop error");
@@ -270,8 +280,8 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::PixelDelta(px) => px.y as f32,
                 };
                 let cam = &mut state.camera;
-                cam.distance =
-                    (cam.distance * (1.0 - scroll_y * ZOOM_SENSITIVITY)).max(MIN_DISTANCE);
+                cam.distance = (cam.distance * (1.0 - scroll_y * ZOOM_SENSITIVITY))
+                    .clamp(MIN_DISTANCE, MAX_DISTANCE);
                 state.window.request_redraw();
             }
 

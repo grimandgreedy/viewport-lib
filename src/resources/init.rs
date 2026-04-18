@@ -1286,7 +1286,7 @@ impl ViewportGpuResources {
             });
 
         // Pass 1: render selected objects writing stencil=1 (same mesh shader, same layout).
-        // StencilState: compare=Always, pass_op=Replace → writes ref(=1) on depth pass.
+        // StencilState: compare=Always, pass_op=Replace -> writes ref(=1) on depth pass.
         let stencil_write_face = wgpu::StencilFaceState {
             compare: wgpu::CompareFunction::Always,
             fail_op: wgpu::StencilOperation::Keep,

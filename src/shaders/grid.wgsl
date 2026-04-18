@@ -89,7 +89,7 @@ fn fs_main(in: VertexOutput) -> FragOut {
     let pos = hit.xz - grid.snap_origin;
 
     // Minor grid lines.
-    // smoothstep(0, fw, d): 0 at line center, 1 at one pixel away → 1 - result = line coverage.
+    // smoothstep(0, fw, d): 0 at line center, 1 at one pixel away -> 1 - result = line coverage.
     let c_minor  = pos / grid.spacing_minor;
     let d_minor  = abs(fract(c_minor - 0.5) - 0.5);
     let fw_minor = max(fwidth(c_minor), vec2<f32>(1e-4));

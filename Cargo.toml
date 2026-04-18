@@ -40,6 +40,7 @@ slint = { version = "~1.15", default-features = false, features = ["std", "compa
 eframe = { version = "=0.33.3", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"] }
 winit = "0.30"
 pollster = "0.4"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [[example]]
 name = "iced-viewport"
@@ -52,6 +53,10 @@ path = "examples/slint_viewport/main.rs"
 [[example]]
 name = "winit-viewport"
 path = "examples/winit_viewport/main.rs"
+
+[[example]]
+name = "winit-primitives"
+path = "examples/winit_primitives/main.rs"
 
 [[example]]
 name = "winit-showcase"

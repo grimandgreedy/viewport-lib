@@ -77,7 +77,7 @@ impl ViewportRenderer {
             return None;
         }
 
-        // Build a mapping from sentinel object_id → original scene_items index.
+        // Build a mapping from sentinel object_id -> original scene_items index.
         // Also track which scene_items are visible and their scene_items indices
         // so we can issue the right draw calls.
         let visible_items: Vec<(usize, &SceneRenderItem)> = scene_items

@@ -89,7 +89,7 @@ pub(crate) fn build_axes_geometry(
 ) -> Vec<AxesVertex> {
     let mut verts = Vec::with_capacity(1024);
 
-    // Pixel → NDC conversion helpers.
+    // Pixel -> NDC conversion helpers.
     let px_to_ndc_x = |px: f32| -> f32 { px * 2.0 / viewport_w };
     let px_to_ndc_y = |py: f32| -> f32 { py * 2.0 / viewport_h };
 
@@ -219,9 +219,9 @@ pub fn hit_test(
 
     let axes = [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z];
     // Snap targets: eye lands on each world axis respectively.
-    // from_rotation_y(π/2) * Z = X  →  look along X from the +X side.
-    // from_rotation_x(π/2) * Z = Y  →  look down from the +Y side.
-    // identity * Z = Z              →  look along Z from the +Z side.
+    // from_rotation_y(π/2) * Z = X  ->  look along X from the +X side.
+    // from_rotation_x(π/2) * Z = Y  ->  look down from the +Y side.
+    // identity * Z = Z              ->  look along Z from the +Z side.
     let targets = [
         AxisView {
             orientation: glam::Quat::from_rotation_y(FRAC_PI_2),

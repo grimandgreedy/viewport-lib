@@ -86,10 +86,10 @@ impl Frustum {
                 },
             );
             if plane.normal.dot(p) + plane.d < 0.0 {
-                return true; // Fully outside this plane → cull.
+                return true; // Fully outside this plane -> cull.
             }
         }
-        false // Inside or intersecting all planes → visible.
+        false // Inside or intersecting all planes -> visible.
     }
 }
 

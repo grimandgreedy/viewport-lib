@@ -1098,7 +1098,7 @@ mod tests {
         g.space = GizmoSpace::Local;
         let center = glam::Vec3::ZERO;
         let scale = 1.0;
-        // Rotate the object 90° around Y: local X → world -Z, local Z → world +X.
+        // Rotate the object 90° around Y: local X -> world -Z, local Z -> world +X.
         let rot = glam::Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
 
         // A ray that hits along world -Z direction should hit local X axis.

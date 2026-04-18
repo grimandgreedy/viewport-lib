@@ -24,7 +24,7 @@ pub struct Material {
     pub texture_id: Option<u64>,
     /// Optional normal map texture identifier. None = no normal mapping. Default None.
     ///
-    /// The normal map must be in tangent-space with XY encoded as RG (0..1 → -1..+1).
+    /// The normal map must be in tangent-space with XY encoded as RG (0..1 -> -1..+1).
     /// Requires UVs and tangents on the mesh for correct TBN construction.
     pub normal_map_id: Option<u64>,
     /// Optional ambient occlusion map texture identifier. None = no AO map. Default None.
