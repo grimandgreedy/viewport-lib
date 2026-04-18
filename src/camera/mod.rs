@@ -9,4 +9,4 @@ pub mod view_preset;
 
 // Re-export the most-used types at the module level so that
 // `viewport_lib::camera::Camera` continues to resolve.
-pub use camera::{Camera, Projection};
+pub use camera::{Camera, CameraTarget, Projection};

@@ -56,7 +56,7 @@ pub use widgets::axes_indicator;
 pub use error::{ViewportError, ViewportResult};
 
 pub use camera::animator::{CameraAnimator, CameraDamping, Easing};
-pub use camera::camera::{Camera, Projection};
+pub use camera::camera::{Camera, CameraTarget, Projection};
 pub use camera::frustum::{CullStats, Frustum};
 pub use camera::view_preset::ViewPreset;
 

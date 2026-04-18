@@ -1,3 +1,24 @@
+/// A snapshot of camera position state (center, distance, orientation).
+///
+/// Returned by framing helpers such as [`Camera::fit_sphere_target`] and
+/// [`Camera::fit_aabb_target`]. Useful for presets and animation targets: pass
+/// `target.center` / `target.distance` / `target.orientation` to
+/// [`CameraAnimator::fly_to`](crate::camera::animator::CameraAnimator::fly_to).
+///
+/// The getters/setters on [`Camera`] (`center()`, `distance()`,
+/// `orientation()`) are forward-compatible accessors intended for eventual
+/// field privatization (Phase 4). Field access (`camera.center` etc.) still
+/// works and is not deprecated.
+#[derive(Clone, Copy, Debug)]
+pub struct CameraTarget {
+    /// Orbit target point in world space.
+    pub center: glam::Vec3,
+    /// Distance from center to eye.
+    pub distance: f32,
+    /// Camera orientation as a unit quaternion.
+    pub orientation: glam::Quat,
+}
+
 /// Projection mode for the viewport camera.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -55,6 +76,160 @@ impl Default for Camera {
 }
 
 impl Camera {
+    /// Minimum allowed camera distance (zoom limit).
+    pub const MIN_DISTANCE: f32 = 0.01;
+
+    /// Maximum allowed camera distance (zoom limit).
+    pub const MAX_DISTANCE: f32 = 1.0e6;
+
+    // -----------------------------------------------------------------------
+    // Getters and setters
+    // -----------------------------------------------------------------------
+
+    /// Return the orbit target center in world space.
+    ///
+    /// Forward-compatible accessor — equivalent to reading `self.center`.
+    pub fn center(&self) -> glam::Vec3 {
+        self.center
+    }
+
+    /// Set the orbit target center in world space.
+    pub fn set_center(&mut self, center: glam::Vec3) {
+        self.center = center;
+    }
+
+    /// Return the camera distance (zoom).
+    ///
+    /// Forward-compatible accessor — equivalent to reading `self.distance`.
+    pub fn distance(&self) -> f32 {
+        self.distance
+    }
+
+    /// Set the camera distance, clamped to `[MIN_DISTANCE, MAX_DISTANCE]`.
+    pub fn set_distance(&mut self, d: f32) {
+        self.distance = d.clamp(Self::MIN_DISTANCE, Self::MAX_DISTANCE);
+    }
+
+    /// Return the camera orientation quaternion.
+    ///
+    /// Forward-compatible accessor — equivalent to reading `self.orientation`.
+    pub fn orientation(&self) -> glam::Quat {
+        self.orientation
+    }
+
+    /// Set the camera orientation, normalizing the quaternion.
+    pub fn set_orientation(&mut self, q: glam::Quat) {
+        self.orientation = q.normalize();
+    }
+
+    /// Set the vertical field of view in radians.
+    pub fn set_fov_y(&mut self, fov_y: f32) {
+        self.fov_y = fov_y;
+    }
+
+    /// Set the aspect ratio from pixel dimensions.
+    ///
+    /// If `height` is zero or negative, aspect is set to `1.0`.
+    pub fn set_aspect_ratio(&mut self, width: f32, height: f32) {
+        self.aspect = if height > 0.0 { width / height } else { 1.0 };
+    }
+
+    /// Set the near and far clipping plane distances.
+    pub fn set_clip_planes(&mut self, znear: f32, zfar: f32) {
+        self.znear = znear;
+        self.zfar = zfar;
+    }
+
+    // -----------------------------------------------------------------------
+    // Operation methods
+    // -----------------------------------------------------------------------
+
+    /// Orbit the camera by `yaw` and `pitch` radians.
+    ///
+    /// Applies `Quat::from_rotation_y(-yaw) * orientation * Quat::from_rotation_x(-pitch)`.
+    /// The sign convention matches all examples: positive yaw rotates counter-clockwise
+    /// when viewed from above, positive pitch tilts up.
+    pub fn orbit(&mut self, yaw: f32, pitch: f32) {
+        self.orientation = (glam::Quat::from_rotation_y(-yaw)
+            * self.orientation
+            * glam::Quat::from_rotation_x(-pitch))
+        .normalize();
+    }
+
+    /// Pan the camera by world-space deltas.
+    ///
+    /// `right_delta` subtracts from center along the camera right vector;
+    /// `up_delta` adds to center along the camera up vector. This sign
+    /// convention matches mouse pan: dragging right moves the scene left.
+    pub fn pan_world(&mut self, right_delta: f32, up_delta: f32) {
+        self.center -= self.right() * right_delta;
+        self.center += self.up() * up_delta;
+    }
+
+    /// Pan the camera by pixel-space deltas.
+    ///
+    /// Computes `pan_scale = 2 * distance * tan(fov_y/2) / viewport_height`
+    /// then delegates to [`pan_world`](Self::pan_world).
+    pub fn pan_pixels(&mut self, delta_pixels: glam::Vec2, viewport_height: f32) {
+        let pan_scale = 2.0 * self.distance * (self.fov_y / 2.0).tan()
+            / viewport_height.max(1.0);
+        self.pan_world(delta_pixels.x * pan_scale, delta_pixels.y * pan_scale);
+    }
+
+    /// Zoom by multiplying the distance by `factor`, clamped to `[MIN_DISTANCE, MAX_DISTANCE]`.
+    pub fn zoom_by_factor(&mut self, factor: f32) {
+        self.distance = (self.distance * factor).clamp(Self::MIN_DISTANCE, Self::MAX_DISTANCE);
+    }
+
+    /// Zoom by adding `delta` to the distance, clamped to `[MIN_DISTANCE, MAX_DISTANCE]`.
+    pub fn zoom_by_delta(&mut self, delta: f32) {
+        self.distance = (self.distance + delta).clamp(Self::MIN_DISTANCE, Self::MAX_DISTANCE);
+    }
+
+    // -----------------------------------------------------------------------
+    // Framing helpers
+    // -----------------------------------------------------------------------
+
+    /// Frame the camera to contain a bounding sphere, applying the result directly.
+    pub fn frame_sphere(&mut self, center: glam::Vec3, radius: f32) {
+        let (c, d) = self.fit_sphere(center, radius);
+        self.center = c;
+        self.set_distance(d);
+    }
+
+    /// Frame the camera to contain an AABB, applying the result directly.
+    pub fn frame_aabb(&mut self, aabb: &crate::scene::aabb::Aabb) {
+        let (c, d) = self.fit_aabb(aabb);
+        self.center = c;
+        self.set_distance(d);
+    }
+
+    /// Compute a [`CameraTarget`] that would frame a bounding sphere,
+    /// preserving the current orientation.
+    pub fn fit_sphere_target(&self, center: glam::Vec3, radius: f32) -> CameraTarget {
+        let (c, d) = self.fit_sphere(center, radius);
+        CameraTarget {
+            center: c,
+            distance: d,
+            orientation: self.orientation,
+        }
+    }
+
+    /// Compute a [`CameraTarget`] that would frame an AABB,
+    /// preserving the current orientation.
+    pub fn fit_aabb_target(&self, aabb: &crate::scene::aabb::Aabb) -> CameraTarget {
+        let (c, d) = self.fit_aabb(aabb);
+        CameraTarget {
+            center: c,
+            distance: d,
+            orientation: self.orientation,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Internal helpers
+    // -----------------------------------------------------------------------
+
     /// Compute the eye offset from the orbit center in world space.
     fn eye_offset(&self) -> glam::Vec3 {
         self.orientation * (glam::Vec3::Z * self.distance)
@@ -288,5 +463,224 @@ mod tests {
             dot.abs() < 1e-5,
             "right and up should be orthogonal, dot={dot}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Tests for new methods (Task 1)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_constants() {
+        assert!((Camera::MIN_DISTANCE - 0.01).abs() < 1e-7);
+        assert!((Camera::MAX_DISTANCE - 1.0e6).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_set_distance_clamps() {
+        let mut cam = Camera::default();
+        cam.set_distance(-1.0);
+        assert!(
+            (cam.distance - Camera::MIN_DISTANCE).abs() < 1e-7,
+            "negative distance should clamp to MIN_DISTANCE"
+        );
+        cam.set_distance(2.0e6);
+        assert!(
+            (cam.distance - Camera::MAX_DISTANCE).abs() < 1.0,
+            "too-large distance should clamp to MAX_DISTANCE"
+        );
+    }
+
+    #[test]
+    fn test_set_center_and_getter() {
+        let mut cam = Camera::default();
+        let target = glam::Vec3::new(1.0, 2.0, 3.0);
+        cam.set_center(target);
+        assert_eq!(cam.center(), target);
+        assert_eq!(cam.center, target);
+    }
+
+    #[test]
+    fn test_set_distance_getter() {
+        let mut cam = Camera::default();
+        cam.set_distance(7.5);
+        assert!((cam.distance() - 7.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_set_orientation_normalizes() {
+        let mut cam = Camera::default();
+        // Supply a non-unit quaternion.
+        let q = glam::Quat::from_xyzw(0.0, 0.707, 0.0, 0.707) * 2.0;
+        cam.set_orientation(q);
+        let len = (cam.orientation.x * cam.orientation.x
+            + cam.orientation.y * cam.orientation.y
+            + cam.orientation.z * cam.orientation.z
+            + cam.orientation.w * cam.orientation.w)
+            .sqrt();
+        assert!((len - 1.0).abs() < 1e-5, "orientation should be normalized, len={len}");
+    }
+
+    #[test]
+    fn test_set_aspect_ratio_normal() {
+        let mut cam = Camera::default();
+        cam.set_aspect_ratio(800.0, 600.0);
+        let expected = 800.0 / 600.0;
+        assert!((cam.aspect - expected).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_set_aspect_ratio_zero_height() {
+        let mut cam = Camera::default();
+        cam.set_aspect_ratio(800.0, 0.0);
+        assert!((cam.aspect - 1.0).abs() < 1e-5, "zero height should produce aspect=1.0");
+    }
+
+    #[test]
+    fn test_set_fov_y() {
+        let mut cam = Camera::default();
+        cam.set_fov_y(1.2);
+        assert!((cam.fov_y - 1.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_set_clip_planes() {
+        let mut cam = Camera::default();
+        cam.set_clip_planes(0.1, 500.0);
+        assert!((cam.znear - 0.1).abs() < 1e-6);
+        assert!((cam.zfar - 500.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_orbit_matches_manual() {
+        let mut cam = Camera::default();
+        let orig_orientation = cam.orientation;
+        let yaw = 0.1_f32;
+        let pitch = 0.2_f32;
+        let expected = (glam::Quat::from_rotation_y(-yaw)
+            * orig_orientation
+            * glam::Quat::from_rotation_x(-pitch))
+        .normalize();
+        cam.orbit(yaw, pitch);
+        let diff = (cam.orientation - expected).length();
+        assert!(diff < 1e-5, "orbit() result mismatch, diff={diff}");
+    }
+
+    #[test]
+    fn test_pan_world_moves_center() {
+        let mut cam = Camera::default();
+        cam.orientation = glam::Quat::IDENTITY;
+        let right = cam.right();
+        let up = cam.up();
+        let orig_center = cam.center;
+        cam.pan_world(1.0, 0.5);
+        let expected = orig_center - right * 1.0 + up * 0.5;
+        assert!(
+            (cam.center - expected).length() < 1e-5,
+            "pan_world center mismatch"
+        );
+    }
+
+    #[test]
+    fn test_pan_pixels_uses_correct_scale() {
+        let mut cam = Camera::default();
+        cam.orientation = glam::Quat::IDENTITY;
+        cam.distance = 10.0;
+        let viewport_h = 600.0_f32;
+        let pan_scale = 2.0 * cam.distance * (cam.fov_y / 2.0).tan() / viewport_h;
+        let dx = 100.0_f32;
+        let dy = 50.0_f32;
+        let orig_center = cam.center;
+        let right = cam.right();
+        let up = cam.up();
+        cam.pan_pixels(glam::vec2(dx, dy), viewport_h);
+        let expected = orig_center - right * dx * pan_scale + up * dy * pan_scale;
+        assert!(
+            (cam.center - expected).length() < 1e-4,
+            "pan_pixels center mismatch"
+        );
+    }
+
+    #[test]
+    fn test_zoom_by_factor_clamps() {
+        let mut cam = Camera::default();
+        cam.distance = 1.0;
+        cam.zoom_by_factor(0.0);
+        assert!(
+            (cam.distance - Camera::MIN_DISTANCE).abs() < 1e-7,
+            "factor=0 should clamp to MIN_DISTANCE"
+        );
+
+        cam.distance = 1.0;
+        cam.zoom_by_factor(2.0e7);
+        assert!(
+            (cam.distance - Camera::MAX_DISTANCE).abs() < 1.0,
+            "large factor should clamp to MAX_DISTANCE"
+        );
+    }
+
+    #[test]
+    fn test_zoom_by_delta() {
+        let mut cam = Camera::default();
+        cam.distance = 5.0;
+        cam.zoom_by_delta(2.0);
+        assert!((cam.distance - 7.0).abs() < 1e-5);
+        cam.zoom_by_delta(-100.0);
+        assert!(
+            cam.distance >= Camera::MIN_DISTANCE,
+            "delta clamped to MIN_DISTANCE"
+        );
+    }
+
+    #[test]
+    fn test_frame_sphere_applies_result() {
+        let mut cam = Camera::default();
+        let sphere_center = glam::Vec3::new(1.0, 2.0, 3.0);
+        let radius = 5.0;
+        let (expected_c, expected_d) = cam.fit_sphere(sphere_center, radius);
+        cam.frame_sphere(sphere_center, radius);
+        assert!((cam.center - expected_c).length() < 1e-5);
+        assert!((cam.distance - expected_d.clamp(Camera::MIN_DISTANCE, Camera::MAX_DISTANCE)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_frame_aabb_applies_result() {
+        let mut cam = Camera::default();
+        let aabb = crate::scene::aabb::Aabb {
+            min: glam::Vec3::splat(-1.0),
+            max: glam::Vec3::splat(1.0),
+        };
+        let (expected_c, expected_d) = cam.fit_aabb(&aabb);
+        cam.frame_aabb(&aabb);
+        assert!((cam.center - expected_c).length() < 1e-5);
+        assert!((cam.distance - expected_d.clamp(Camera::MIN_DISTANCE, Camera::MAX_DISTANCE)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_fit_sphere_target() {
+        let cam = Camera::default();
+        let sphere_center = glam::Vec3::new(0.0, 1.0, 0.0);
+        let radius = 2.0;
+        let target = cam.fit_sphere_target(sphere_center, radius);
+        let (expected_c, expected_d) = cam.fit_sphere(sphere_center, radius);
+        assert!((target.center - expected_c).length() < 1e-5);
+        assert!((target.distance - expected_d).abs() < 1e-5);
+        // Orientation should be preserved.
+        let diff = (target.orientation - cam.orientation).length();
+        assert!(diff < 1e-5, "fit_sphere_target should preserve orientation");
+    }
+
+    #[test]
+    fn test_fit_aabb_target() {
+        let cam = Camera::default();
+        let aabb = crate::scene::aabb::Aabb {
+            min: glam::Vec3::splat(-2.0),
+            max: glam::Vec3::splat(2.0),
+        };
+        let target = cam.fit_aabb_target(&aabb);
+        let (expected_c, expected_d) = cam.fit_aabb(&aabb);
+        assert!((target.center - expected_c).length() < 1e-5);
+        assert!((target.distance - expected_d).abs() < 1e-5);
+        let diff = (target.orientation - cam.orientation).length();
+        assert!(diff < 1e-5, "fit_aabb_target should preserve orientation");
     }
 }
