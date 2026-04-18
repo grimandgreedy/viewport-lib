@@ -14,10 +14,12 @@ mod shadows;
 pub mod stats;
 
 pub use self::types::{
-    ClipPlane, ClipVolume, ComputeFilterItem, ComputeFilterKind, FilterMode, FrameData, GlyphItem,
-    GlyphType, LightKind, LightSource, LightingSettings, OverlayQuad, PointCloudItem,
-    PointRenderMode, PolylineItem, PostProcessSettings, ScalarBar, ScalarBarAnchor,
-    ScalarBarOrientation, SceneRenderItem, ShadowFilter, StreamtubeItem, ToneMapping, VolumeItem,
+    CacheHints, CameraFrame, ClipPlane, ClipVolume, ComputeFilterItem, ComputeFilterKind,
+    EffectsFrame, FilterMode, FrameData, GlyphItem, GlyphType, InteractionFrame, LightKind,
+    LightSource, LightingSettings, OverlayQuad, PointCloudItem, PointRenderMode, PolylineItem,
+    PostProcessSettings, RenderCamera, ScalarBar, ScalarBarAnchor, ScalarBarOrientation,
+    SceneFrame, SceneRenderItem, ShadowFilter, StreamtubeItem, SurfaceSubmission, ToneMapping,
+    ViewportFrame, VolumeItem,
 };
 
 use self::shadows::{compute_cascade_matrix, compute_cascade_splits};

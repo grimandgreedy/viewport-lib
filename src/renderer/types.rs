@@ -723,20 +723,217 @@ impl Default for ComputeFilterItem {
     }
 }
 
-/// All data needed to render one frame of the viewport.
+// ---------------------------------------------------------------------------
+// 0.2.0 grouped frame API types
+// ---------------------------------------------------------------------------
+
+/// Canonical renderer-facing camera state.
+///
+/// Replaces the flat camera fields that were previously scattered across
+/// `FrameData`. Application-side orbit cameras resolve into this type
+/// before frame submission.
+#[derive(Debug, Clone)]
+pub struct RenderCamera {
+    /// World-to-view transform matrix.
+    pub view: glam::Mat4,
+    /// View-to-clip (projection) matrix.
+    pub projection: glam::Mat4,
+    /// Camera eye position in world space.
+    pub eye_position: [f32; 3],
+    /// Camera forward direction in world space.
+    pub forward: [f32; 3],
+    /// Camera orientation quaternion.
+    pub orientation: glam::Quat,
+    /// Near clip plane distance. Default: 0.1.
+    pub near: f32,
+    /// Far clip plane distance. Default: 1000.0.
+    pub far: f32,
+    /// Vertical field of view in radians. Default: PI/4.
+    pub fov: f32,
+    /// Aspect ratio (width / height). Default: 1.333.
+    pub aspect: f32,
+}
+
+impl RenderCamera {
+    /// Build the GPU-facing camera uniform from this camera's state.
+    pub fn camera_uniform(&self) -> CameraUniform {
+        CameraUniform {
+            view_proj: self.view_proj().to_cols_array_2d(),
+            eye_pos: self.eye_position,
+            _pad: 0.0,
+            forward: self.forward,
+            _pad1: 0.0,
+        }
+    }
+
+    /// Combined view-projection matrix (projection * view).
+    pub fn view_proj(&self) -> glam::Mat4 {
+        self.projection * self.view
+    }
+
+    /// Build a `RenderCamera` from an app-side [`Camera`](crate::camera::Camera).
+    ///
+    /// This is the intended conversion path: resolve the orbit camera to a
+    /// `RenderCamera` once per frame and pass it through `CameraFrame`.
+    pub fn from_camera(cam: &crate::camera::Camera) -> Self {
+        let eye = cam.eye_position();
+        let forward = (cam.center - eye).normalize_or_zero();
+        Self {
+            view: cam.view_matrix(),
+            projection: cam.proj_matrix(),
+            eye_position: eye.to_array(),
+            forward: forward.to_array(),
+            orientation: cam.orientation,
+            near: cam.znear,
+            far: cam.zfar,
+            fov: cam.fov_y,
+            aspect: cam.aspect,
+        }
+    }
+}
+
+impl Default for RenderCamera {
+    fn default() -> Self {
+        Self {
+            view: glam::Mat4::IDENTITY,
+            projection: glam::Mat4::IDENTITY,
+            eye_position: [0.0, 0.0, 5.0],
+            forward: [0.0, 0.0, -1.0],
+            orientation: glam::Quat::IDENTITY,
+            near: 0.1,
+            far: 1000.0,
+            fov: std::f32::consts::FRAC_PI_4,
+            aspect: 1.333,
+        }
+    }
+}
+
+/// Camera submission state for one frame.
+///
+/// Groups the canonical render camera with viewport sizing and multi-viewport
+/// slot index. This is the single owner of all camera-derived state submitted
+/// to the renderer each frame.
 #[non_exhaustive]
-pub struct FrameData {
-    /// Per-frame camera uniform (view-proj matrix, eye position).
-    pub camera_uniform: CameraUniform,
-    /// Per-frame lighting configuration.
-    pub lighting: LightingSettings,
-    /// Camera eye position in world space (for Blinn-Phong specular lighting).
-    pub eye_pos: [f32; 3],
-    /// Per-object render items.
-    pub scene_items: Vec<SceneRenderItem>,
-    /// Whether to render in wireframe mode.
-    pub wireframe_mode: bool,
-    /// Gizmo model matrix (Some = selected object exists and gizmo should render).
+pub struct CameraFrame {
+    /// Canonical renderer-facing camera state.
+    pub render_camera: RenderCamera,
+    /// Viewport size in physical pixels (width, height). Default: [800.0, 600.0].
+    pub viewport_size: [f32; 2],
+    /// Multi-viewport slot index. Default: 0 (single-viewport mode).
+    pub viewport_index: usize,
+}
+
+impl Default for CameraFrame {
+    fn default() -> Self {
+        Self {
+            render_camera: RenderCamera::default(),
+            viewport_size: [800.0, 600.0],
+            viewport_index: 0,
+        }
+    }
+}
+
+/// Surface submission seam for world-space geometry.
+///
+/// For 0.2.0, only `Flat` submission is supported. This enum exists to
+/// provide an explicit seam for future large-scene or chunked submission
+/// without changing the `SceneFrame` public type.
+#[non_exhaustive]
+pub enum SurfaceSubmission {
+    /// A flat list of scene render items (current behavior).
+    Flat(Vec<SceneRenderItem>),
+}
+
+impl Default for SurfaceSubmission {
+    fn default() -> Self {
+        SurfaceSubmission::Flat(Vec::new())
+    }
+}
+
+/// World-space scene content for one frame.
+///
+/// Groups all renderable world-space content submitted to the renderer.
+/// Surfaces are submitted through the [`SurfaceSubmission`] seam; scientific
+/// visualization primitives are first-class members alongside surfaces.
+#[non_exhaustive]
+pub struct SceneFrame {
+    /// Surface geometry submission (opaque and transparent meshes).
+    pub surfaces: SurfaceSubmission,
+    /// Point cloud items to render this frame.
+    pub point_clouds: Vec<PointCloudItem>,
+    /// Instanced glyph items to render this frame.
+    pub glyphs: Vec<GlyphItem>,
+    /// Polyline (streamline) items to render this frame.
+    pub polylines: Vec<PolylineItem>,
+    /// Volume items to render this frame via GPU ray-marching.
+    pub volumes: Vec<VolumeItem>,
+    /// Isoline (contour line) items to render on mesh surfaces.
+    pub isolines: Vec<crate::geometry::isoline::IsolineItem>,
+    /// Streamtube items to render this frame.
+    pub streamtube_items: Vec<StreamtubeItem>,
+}
+
+impl Default for SceneFrame {
+    fn default() -> Self {
+        Self {
+            surfaces: SurfaceSubmission::default(),
+            point_clouds: Vec::new(),
+            glyphs: Vec::new(),
+            polylines: Vec::new(),
+            volumes: Vec::new(),
+            isolines: Vec::new(),
+            streamtube_items: Vec::new(),
+        }
+    }
+}
+
+/// Viewport presentation settings for one frame.
+///
+/// Groups background, grid, axes indicator, and overlay state — the
+/// viewport chrome that is independent of world-space content.
+#[non_exhaustive]
+pub struct ViewportFrame {
+    /// Optional background/clear color [r, g, b, a]. None = adapter default.
+    pub background_color: Option<[f32; 4]>,
+    /// Whether to render the ground-plane grid. Default: false.
+    pub show_grid: bool,
+    /// Grid cell size in world units. Zero = camera-distance-based adaptive spacing.
+    pub grid_cell_size: f32,
+    /// Half-extent of the grid in world units. Zero = 1000 (effectively infinite).
+    pub grid_half_extent: f32,
+    /// World-space Y coordinate of the grid plane (3D mode only). Default: 0.0.
+    pub grid_y: f32,
+    /// Whether the simulation is 2D (affects grid plane orientation). Default: false.
+    pub is_2d: bool,
+    /// Whether to draw the axes orientation indicator overlay. Default: true.
+    pub show_axes_indicator: bool,
+    /// Overlay quads to render this frame.
+    pub overlay_quads: Vec<OverlayQuad>,
+}
+
+impl Default for ViewportFrame {
+    fn default() -> Self {
+        Self {
+            background_color: None,
+            show_grid: false,
+            grid_cell_size: 0.0,
+            grid_half_extent: 0.0,
+            grid_y: 0.0,
+            is_2d: false,
+            show_axes_indicator: true,
+            overlay_quads: Vec::new(),
+        }
+    }
+}
+
+/// Interaction and selection visualization state for one frame.
+///
+/// Groups the gizmo, selection overlays, constraint guides, outline, and
+/// x-ray state — everything that communicates selection and interaction
+/// feedback to the user.
+#[non_exhaustive]
+pub struct InteractionFrame {
+    /// Gizmo model matrix. Some = selected object exists and gizmo should render.
     pub gizmo_model: Option<glam::Mat4>,
     /// Current gizmo interaction mode.
     pub gizmo_mode: GizmoMode,
@@ -744,213 +941,126 @@ pub struct FrameData {
     pub gizmo_hovered: GizmoAxis,
     /// Orientation for gizmo space (identity for world, object orientation for local).
     pub gizmo_space_orientation: glam::Quat,
-    /// Overlay quads to render this frame.
-    pub overlay_quads: Vec<OverlayQuad>,
     /// Constraint guide lines to render this frame.
     pub constraint_overlays: Vec<ConstraintOverlay>,
-    /// Whether to render the ground-plane grid.
-    pub show_grid: bool,
-    /// Grid cell size in world units. Zero = camera-distance-based adaptive spacing.
-    pub grid_cell_size: f32,
-    /// Half-extent of the grid in world units (grid spans ±grid_half_extent).
-    /// Zero = 1000 units (effectively infinite).
-    pub grid_half_extent: f32,
-    /// World-space Y coordinate of the grid plane (3D mode only). Default: 0.0.
-    pub grid_y: f32,
-    /// Whether to draw the 2D axes orientation indicator overlay.
-    /// Defaults to `true`.
-    pub show_axes_indicator: bool,
-    /// Whether the simulation is 2D (affects grid plane orientation).
-    pub is_2d: bool,
-    /// Viewport size in physical pixels (width, height). Required for axes indicator.
-    pub viewport_size: [f32; 2],
-    /// Camera orientation quaternion (used for axes indicator projection).
-    pub camera_orientation: glam::Quat,
-    /// Optional background/clear color [r, g, b, a]. Adapters can use this as the
-    /// render pass clear color. None = let the adapter choose its default.
-    pub background_color: Option<[f32; 4]>,
-
-    // -----------------------------------------------------------------------
-    // Phase 6 additions (all opt-in; defaults preserve Phase 1–5 behavior)
-    // -----------------------------------------------------------------------
-    /// Active section-view clip planes. Max 6. Default: empty (no clipping).
-    pub clip_planes: Vec<ClipPlane>,
-
-    /// Whether to render filled caps at clip plane cross-sections. Default: `true`.
-    pub cap_fill_enabled: bool,
-
-    /// Draw a stencil-outline ring around selected objects. Default: `false`.
+    /// Draw a stencil-outline ring around selected objects. Default: false.
     pub outline_selected: bool,
-    /// RGBA color of the selection outline ring. Default: orange `[1.0, 0.5, 0.0, 1.0]`.
+    /// RGBA color of the selection outline ring. Default: orange [1.0, 0.5, 0.0, 1.0].
     pub outline_color: [f32; 4],
-    /// Width of the outline ring in pixels. Default: `2.0`.
+    /// Width of the outline ring in pixels. Default: 2.0.
     pub outline_width_px: f32,
-
-    /// Render selected objects as a semi-transparent x-ray overlay. Default: `false`.
+    /// Render selected objects as a semi-transparent x-ray overlay. Default: false.
     pub xray_selected: bool,
-    /// RGBA color of the x-ray tint (should have alpha < 1). Default: `[0.3, 0.7, 1.0, 0.25]`.
+    /// RGBA color of the x-ray tint (should have alpha < 1). Default: [0.3, 0.7, 1.0, 0.25].
     pub xray_color: [f32; 4],
-
-    /// Optional post-processing settings. Default: disabled.
-    pub post_process: PostProcessSettings,
-
-    /// Projection matrix (without view). Required for correct SSAO view-space reconstruction.
-    /// Defaults to identity; set this when `post_process.ssao` is true.
-    pub camera_proj: glam::Mat4,
-
-    /// Camera view matrix (world → view). Required for CSM cascade computation.
-    /// Defaults to identity; set this when using cascaded shadow maps.
-    pub camera_view: glam::Mat4,
-    /// Camera near clip plane. Default: 0.1.
-    pub camera_near: f32,
-    /// Camera far clip plane. Default: 1000.0.
-    pub camera_far: f32,
-    /// Camera vertical field of view in radians. Default: PI/4.
-    pub camera_fov: f32,
-    /// Camera aspect ratio (width / height). Default: 1.333.
-    pub camera_aspect: f32,
-
-    // -----------------------------------------------------------------------
-    // Phase 6.6 additions — generation-based cache invalidation
-    // -----------------------------------------------------------------------
-    /// Scene version counter from `Scene::version()`. Used by the renderer to
-    /// skip batch rebuild and GPU upload when the scene has not changed.
-    /// Default: 0 (triggers rebuild on first frame).
-    pub scene_generation: u64,
-
-    /// Selection version counter from `Selection::version()`. Used by the renderer
-    /// to skip batch rebuild when the selection has not changed.
-    /// Default: 0 (triggers rebuild on first frame).
-    pub selection_generation: u64,
-
-    // -----------------------------------------------------------------------
-    // SciVis Phase B — point cloud and glyph renderers
-    // -----------------------------------------------------------------------
-    /// Point cloud items to render this frame. Default: empty (zero-cost skip).
-    pub point_clouds: Vec<PointCloudItem>,
-    /// Instanced glyph items to render this frame. Default: empty (zero-cost skip).
-    pub glyphs: Vec<GlyphItem>,
-
-    // -----------------------------------------------------------------------
-    // SciVis Phase M8 — polyline (stream tracer) renderer
-    // -----------------------------------------------------------------------
-    /// Polyline (streamline) items to render this frame. Default: empty (zero-cost skip).
-    pub polylines: Vec<PolylineItem>,
-
-    // -----------------------------------------------------------------------
-    // SciVis Phase D -- volume rendering
-    // -----------------------------------------------------------------------
-    /// Volume items to render this frame via GPU ray-marching. Default: empty (zero-cost skip).
-    pub volumes: Vec<VolumeItem>,
-
-    // -----------------------------------------------------------------------
-    // Multi-viewport support
-    // -----------------------------------------------------------------------
-    /// Which viewport slot this frame data belongs to (0-based).
-    ///
-    /// In single-viewport mode this is always 0.  In multi-viewport mode each
-    /// sub-viewport sets a distinct index so the renderer can maintain
-    /// independent per-viewport camera buffers and bind groups.  The renderer
-    /// grows its internal per-viewport storage automatically as new indices are
-    /// seen.  Default: `0`.
-    pub viewport_index: usize,
-
-    // -----------------------------------------------------------------------
-    // Phase G — GPU compute filtering
-    // -----------------------------------------------------------------------
-    /// GPU compute filter items dispatched before the render pass.
-    ///
-    /// Default: empty — the compute pass is completely skipped (zero overhead).
-    /// Each item references an uploaded mesh by index and specifies a Clip or
-    /// Threshold filter. The renderer replaces the mesh's index buffer with the
-    /// compacted output during `paint()`.
-    pub compute_filter_items: Vec<ComputeFilterItem>,
-
-    // -----------------------------------------------------------------------
-    // SciVis Phase L — isoline / contour line renderer
-    // -----------------------------------------------------------------------
-    /// Isoline (contour line) items to render on mesh surfaces.
-    ///
-    /// Default: empty — zero overhead when no isolines are requested.
-    /// Each [`crate::geometry::isoline::IsolineItem`] carries its own mesh geometry,
-    /// per-vertex scalars, and a list of isovalues.  The renderer extracts
-    /// the segments on the CPU and uploads them through the existing polyline
-    /// pipeline (no new GPU pipeline or shader required).
-    pub isoline_items: Vec<crate::geometry::isoline::IsolineItem>,
-
-    // -----------------------------------------------------------------------
-    // SciVis Phase M — streamtube renderer
-    // -----------------------------------------------------------------------
-    /// Streamtube items to render this frame.
-    ///
-    /// Default: empty — zero overhead when unused.  Each [`StreamtubeItem`]
-    /// is converted to instanced cylinder segments during `prepare()`.
-    pub streamtube_items: Vec<StreamtubeItem>,
-
-    // -----------------------------------------------------------------------
-    // SciVis Phase N — extended clip volumes
-    // -----------------------------------------------------------------------
-    /// Optional volumetric clip region.  Fragments outside the volume are discarded,
-    /// in addition to any [`clip_planes`](Self::clip_planes) already active.
-    ///
-    /// Default: [`ClipVolume::None`] — zero GPU overhead.
-    pub clip_volume: ClipVolume,
 }
 
-impl Default for FrameData {
+impl Default for InteractionFrame {
     fn default() -> Self {
         Self {
-            camera_uniform: CameraUniform {
-                view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                eye_pos: [0.0, 0.0, 5.0],
-                _pad: 0.0,
-                forward: [0.0, 0.0, -1.0],
-                _pad1: 0.0,
-            },
-            lighting: LightingSettings::default(),
-            eye_pos: [0.0, 0.0, 5.0],
-            scene_items: Vec::new(),
-            wireframe_mode: false,
             gizmo_model: None,
             gizmo_mode: GizmoMode::Translate,
             gizmo_hovered: GizmoAxis::None,
             gizmo_space_orientation: glam::Quat::IDENTITY,
-            overlay_quads: Vec::new(),
             constraint_overlays: Vec::new(),
-            show_grid: false,
-            grid_cell_size: 0.0,
-            grid_half_extent: 0.0,
-            grid_y: 0.0,
-            show_axes_indicator: true,
-            is_2d: false,
-            viewport_size: [800.0, 600.0],
-            camera_orientation: glam::Quat::IDENTITY,
-            background_color: None,
-            clip_planes: Vec::new(),
-            cap_fill_enabled: true,
             outline_selected: false,
             outline_color: [1.0, 0.5, 0.0, 1.0],
             outline_width_px: 2.0,
             xray_selected: false,
             xray_color: [0.3, 0.7, 1.0, 0.25],
+        }
+    }
+}
+
+/// Global rendering effects and modifiers for one frame.
+///
+/// Groups lighting, clipping, post-processing, compute filtering, and clip
+/// volumes — effects that apply globally across the scene rather than to
+/// individual objects.
+#[non_exhaustive]
+pub struct EffectsFrame {
+    /// Per-frame lighting configuration.
+    pub lighting: LightingSettings,
+    /// Active section-view clip planes. Max 6. Default: empty (no clipping).
+    pub clip_planes: Vec<ClipPlane>,
+    /// Whether to render filled caps at clip plane cross-sections. Default: true.
+    pub cap_fill_enabled: bool,
+    /// Optional post-processing settings. Default: disabled.
+    pub post_process: PostProcessSettings,
+    /// GPU compute filter items dispatched before the render pass.
+    pub compute_filter_items: Vec<ComputeFilterItem>,
+    /// Optional volumetric clip region. Default: ClipVolume::None (zero overhead).
+    pub clip_volume: ClipVolume,
+}
+
+impl Default for EffectsFrame {
+    fn default() -> Self {
+        Self {
+            lighting: LightingSettings::default(),
+            clip_planes: Vec::new(),
+            cap_fill_enabled: true,
             post_process: PostProcessSettings::default(),
-            camera_proj: glam::Mat4::IDENTITY,
-            camera_view: glam::Mat4::IDENTITY,
-            camera_near: 0.1,
-            camera_far: 1000.0,
-            camera_fov: std::f32::consts::FRAC_PI_4,
-            camera_aspect: 1.333,
+            compute_filter_items: Vec::new(),
+            clip_volume: ClipVolume::None,
+        }
+    }
+}
+
+/// Renderer invalidation hints for one frame.
+///
+/// Generation counters let the renderer skip batch rebuild and GPU upload
+/// when neither scene content nor selection has changed since the previous
+/// frame.
+#[non_exhaustive]
+pub struct CacheHints {
+    /// Scene version counter from `Scene::version()`. Default: 0 (triggers rebuild on first frame).
+    pub scene_generation: u64,
+    /// Selection version counter from `Selection::version()`. Default: 0.
+    pub selection_generation: u64,
+}
+
+impl Default for CacheHints {
+    fn default() -> Self {
+        Self {
             scene_generation: 0,
             selection_generation: 0,
-            point_clouds: Vec::new(),
-            glyphs: Vec::new(),
-            polylines: Vec::new(),
-            volumes: Vec::new(),
-            viewport_index: 0,
-            compute_filter_items: Vec::new(),
-            isoline_items: Vec::new(),
-            streamtube_items: Vec::new(),
-            clip_volume: ClipVolume::None,
+        }
+    }
+}
+
+/// All data needed to render one frame of the viewport.
+///
+/// Fields are grouped by responsibility. Build the sub-objects you need,
+/// leave others at their `Default`, then call `prepare()` followed by
+/// `paint()` or `paint_to()`.
+#[non_exhaustive]
+pub struct FrameData {
+    /// Camera state, viewport size, and viewport slot.
+    pub camera: CameraFrame,
+    /// World-space scene content (surfaces, point clouds, glyphs, etc.).
+    pub scene: SceneFrame,
+    /// Viewport presentation settings (background, grid, axes indicator).
+    pub viewport: ViewportFrame,
+    /// Interaction and selection visualization (gizmo, outline, x-ray).
+    pub interaction: InteractionFrame,
+    /// Global rendering effects (lighting, clipping, post-process).
+    pub effects: EffectsFrame,
+    /// Renderer invalidation hints (scene/selection generation counters).
+    pub cache_hints: CacheHints,
+    /// Whether to render in wireframe mode.
+    pub wireframe_mode: bool,
+}
+
+impl Default for FrameData {
+    fn default() -> Self {
+        Self {
+            camera: CameraFrame::default(),
+            scene: SceneFrame::default(),
+            viewport: ViewportFrame::default(),
+            interaction: InteractionFrame::default(),
+            effects: EffectsFrame::default(),
+            cache_hints: CacheHints::default(),
+            wireframe_mode: false,
         }
     }
 }
@@ -974,22 +1084,26 @@ macro_rules! emit_draw_calls {
         let batches: &[InstancedBatch] = $batches;
         let camera_bg: &wgpu::BindGroup = $camera_bg;
 
+        // Resolve scene items from the SurfaceSubmission seam.
+        let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
+            SurfaceSubmission::Flat(items) => items,
+        };
+
         render_pass.set_bind_group(0, camera_bg, &[]);
 
         // Grid pass — full-screen analytical shader drawn first so scene geometry
         // occludes it. No vertex buffer; depth is written via @builtin(frag_depth).
         // Camera bind group is restored immediately after for subsequent passes.
-        if frame.show_grid && !frame.is_2d {
+        if frame.viewport.show_grid && !frame.viewport.is_2d {
             render_pass.set_pipeline(&resources.grid_pipeline);
             render_pass.set_bind_group(0, &resources.grid_bind_group, &[]);
             render_pass.draw(0..3, 0..1);
             render_pass.set_bind_group(0, camera_bg, &[]);
         }
 
-            if !frame.scene_items.is_empty() {
+            if !scene_items.is_empty() {
                 if use_instancing && !batches.is_empty() {
-                    let excluded_items: Vec<&SceneRenderItem> = frame
-                        .scene_items
+                    let excluded_items: Vec<&SceneRenderItem> = scene_items
                         .iter()
                         .filter(|item| {
                             item.visible
@@ -1066,7 +1180,7 @@ macro_rules! emit_draw_calls {
                     // mesh.object_bind_group (group 1) already contains the object uniform
                     // and fallback textures — no separate group 2 needed.
                     if frame.wireframe_mode {
-                        for item in &frame.scene_items {
+                        for item in scene_items {
                             if !item.visible { continue; }
                             let Some(mesh) = resources.mesh_store.get(crate::resources::mesh_store::MeshId(item.mesh_index)) else { continue };
                             render_pass.set_pipeline(&resources.wireframe_pipeline);
@@ -1102,7 +1216,7 @@ macro_rules! emit_draw_calls {
                     }
             } else {
                 // --- Per-object draw path (original) ---
-                let eye = glam::Vec3::from(frame.eye_pos);
+                let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
 
                 let dist_from_eye = |item: &&SceneRenderItem| -> f32 {
                     let pos = glam::Vec3::new(
@@ -1115,7 +1229,7 @@ macro_rules! emit_draw_calls {
 
                 let mut opaque: Vec<&SceneRenderItem> = Vec::new();
                 let mut transparent: Vec<&SceneRenderItem> = Vec::new();
-                for item in &frame.scene_items {
+                for item in scene_items {
                     if !item.visible || resources.mesh_store.get(crate::resources::mesh_store::MeshId(item.mesh_index)).is_none() {
                         continue;
                     }
@@ -1194,7 +1308,7 @@ macro_rules! emit_draw_calls {
         }
 
         // Gizmo pass.
-        if frame.gizmo_model.is_some() && resources.gizmo_index_count > 0 {
+        if frame.interaction.gizmo_model.is_some() && resources.gizmo_index_count > 0 {
             render_pass.set_pipeline(&resources.gizmo_pipeline);
             render_pass.set_bind_group(0, camera_bg, &[]);
             render_pass.set_bind_group(1, &resources.gizmo_bind_group, &[]);
@@ -1268,7 +1382,7 @@ macro_rules! emit_draw_calls {
         }
 
         // Axes indicator pass (screen-space, last so it draws on top).
-        if frame.show_axes_indicator && resources.axes_vertex_count > 0 {
+        if frame.viewport.show_axes_indicator && resources.axes_vertex_count > 0 {
             render_pass.set_pipeline(&resources.axes_pipeline);
             render_pass.set_vertex_buffer(0, resources.axes_vertex_buffer.slice(..));
             render_pass.draw(0..resources.axes_vertex_count, 0..1);
@@ -1366,4 +1480,41 @@ macro_rules! emit_scivis_draw_calls {
             }
         }
     }};
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_camera_from_camera_roundtrip() {
+        let cam = crate::camera::Camera::default();
+        let rc = RenderCamera::from_camera(&cam);
+        assert_eq!(rc.eye_position, cam.eye_position().to_array());
+        assert_eq!(rc.orientation, cam.orientation);
+        assert_eq!(rc.near, cam.znear);
+        assert_eq!(rc.far, cam.zfar);
+        assert_eq!(rc.fov, cam.fov_y);
+        assert_eq!(rc.aspect, cam.aspect);
+        // view_proj should match Camera's own method
+        let expected_vp = cam.view_proj_matrix();
+        let actual_vp = rc.view_proj();
+        assert!(
+            (expected_vp - actual_vp).abs_diff_eq(glam::Mat4::ZERO, 1e-5),
+            "view_proj mismatch"
+        );
+    }
+
+    #[test]
+    fn render_camera_uniform_contains_eye_and_forward() {
+        let rc = RenderCamera {
+            eye_position: [1.0, 2.0, 3.0],
+            forward: [0.0, 0.0, -1.0],
+            ..RenderCamera::default()
+        };
+        let u = rc.camera_uniform();
+        assert_eq!(u.eye_pos, [1.0, 2.0, 3.0]);
+        assert_eq!(u.forward, [0.0, 0.0, -1.0]);
+        assert_eq!(u.view_proj, rc.view_proj().to_cols_array_2d());
+    }
 }

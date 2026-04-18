@@ -8,7 +8,8 @@
 use std::collections::HashMap;
 
 use viewport_lib::{
-    Camera, CameraUniform, FrameData, LightingSettings, MeshData, SceneRenderItem, ViewportRenderer,
+    Camera, FrameData, LightingSettings, RenderCamera, SceneRenderItem, SurfaceSubmission,
+    ViewportRenderer, primitives,
 };
 use wgpu;
 
@@ -129,13 +130,12 @@ impl SceneRenderer {
         }
 
         // Upload meshes for any new objects.
-        let box_mesh = unit_box_mesh();
         for &(id, _) in objects {
             if !self.uploaded.contains_key(&id) {
                 let idx = self
                     .renderer
                     .resources_mut()
-                    .upload_mesh_data(device, &box_mesh)
+                    .upload_mesh_data(device, &primitives::cube(1.0))
                     .expect("built-in mesh");
                 self.uploaded.insert(id, idx);
             }
@@ -157,24 +157,14 @@ impl SceneRenderer {
             })
             .collect();
 
-        let camera_uniform = CameraUniform {
-            view_proj: self.camera.view_proj_matrix().to_cols_array_2d(),
-            eye_pos: self.camera.eye_position().into(),
-            _pad: 0.0,
-            forward: [0.0, 0.0, -1.0],
-            _pad1: 0.0,
-        };
-
         let frame_data = {
             let mut fd = FrameData::default();
-            fd.camera_uniform = camera_uniform;
-            fd.lighting = LightingSettings::default();
-            fd.eye_pos = self.camera.eye_position().into();
-            fd.scene_items = scene_items;
-            fd.show_grid = true;
-            fd.show_axes_indicator = true;
-            fd.viewport_size = [w as f32, h as f32];
-            fd.camera_orientation = self.camera.orientation;
+            fd.camera.render_camera = RenderCamera::from_camera(&self.camera);
+            fd.camera.viewport_size = [w as f32, h as f32];
+            fd.effects.lighting = LightingSettings::default();
+            fd.scene.surfaces = SurfaceSubmission::Flat(scene_items);
+            fd.viewport.show_grid = true;
+            fd.viewport.show_axes_indicator = true;
             fd
         };
 
@@ -282,56 +272,3 @@ impl SceneRenderer {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Box mesh helper
-// ---------------------------------------------------------------------------
-
-fn unit_box_mesh() -> MeshData {
-    #[rustfmt::skip]
-    let positions: Vec<[f32; 3]> = vec![
-        // Front face
-        [-0.5, -0.5,  0.5], [ 0.5, -0.5,  0.5], [ 0.5,  0.5,  0.5], [-0.5,  0.5,  0.5],
-        // Back face
-        [ 0.5, -0.5, -0.5], [-0.5, -0.5, -0.5], [-0.5,  0.5, -0.5], [ 0.5,  0.5, -0.5],
-        // Top face
-        [-0.5,  0.5,  0.5], [ 0.5,  0.5,  0.5], [ 0.5,  0.5, -0.5], [-0.5,  0.5, -0.5],
-        // Bottom face
-        [-0.5, -0.5, -0.5], [ 0.5, -0.5, -0.5], [ 0.5, -0.5,  0.5], [-0.5, -0.5,  0.5],
-        // Right face
-        [ 0.5, -0.5,  0.5], [ 0.5, -0.5, -0.5], [ 0.5,  0.5, -0.5], [ 0.5,  0.5,  0.5],
-        // Left face
-        [-0.5, -0.5, -0.5], [-0.5, -0.5,  0.5], [-0.5,  0.5,  0.5], [-0.5,  0.5, -0.5],
-    ];
-
-    #[rustfmt::skip]
-    let normals: Vec<[f32; 3]> = vec![
-        // Front
-        [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0],
-        // Back
-        [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0],
-        // Top
-        [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0],
-        // Bottom
-        [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0],
-        // Right
-        [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0],
-        // Left
-        [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0],
-    ];
-
-    #[rustfmt::skip]
-    let indices: Vec<u32> = vec![
-        0,  1,  2,  0,  2,  3,   // Front
-        4,  5,  6,  4,  6,  7,   // Back
-        8,  9,  10, 8,  10, 11,  // Top
-        12, 13, 14, 12, 14, 15,  // Bottom
-        16, 17, 18, 16, 18, 19,  // Right
-        20, 21, 22, 20, 22, 23,  // Left
-    ];
-
-    let mut mesh = MeshData::default();
-    mesh.positions = positions;
-    mesh.normals = normals;
-    mesh.indices = indices;
-    mesh
-}

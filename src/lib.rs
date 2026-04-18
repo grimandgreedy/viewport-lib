@@ -9,7 +9,9 @@
 //!
 //! 1. Create a [`ViewportRenderer`] from a `wgpu::Device` and target format.
 //! 2. Upload meshes or volumes through [`ViewportGpuResources`].
-//! 3. Build a [`FrameData`] each frame.
+//! 3. Build a [`FrameData`] each frame (camera via [`CameraFrame`] and
+//!    [`RenderCamera`], scene content via [`SceneFrame`], viewport chrome via
+//!    [`ViewportFrame`], etc.).
 //! 4. Call [`ViewportRenderer::prepare`] and then [`ViewportRenderer::paint_to`].
 
 /// Error types for the viewport library.
@@ -35,6 +37,7 @@ pub mod widgets;
 // ---------------------------------------------------------------------------
 
 pub use geometry::bvh;
+pub use geometry::primitives;
 pub use interaction::annotation;
 pub use interaction::gizmo;
 pub use interaction::input;
@@ -89,10 +92,11 @@ pub use widgets::axes_indicator::AxisView;
 pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::FrameStats;
 pub use renderer::{
-    ClipPlane, ClipVolume, ComputeFilterItem, ComputeFilterKind, FilterMode, FrameData, GlyphItem,
-    GlyphType, LightKind, LightSource, LightingSettings, OverlayQuad, PointCloudItem,
-    PointRenderMode, PolylineItem, PostProcessSettings, SceneRenderItem, ShadowFilter,
-    StreamtubeItem, ToneMapping, ViewportRenderer, VolumeItem,
+    CacheHints, CameraFrame, ClipPlane, ClipVolume, ComputeFilterItem, ComputeFilterKind,
+    EffectsFrame, FilterMode, FrameData, GlyphItem, GlyphType, InteractionFrame, LightKind,
+    LightSource, LightingSettings, OverlayQuad, PointCloudItem, PointRenderMode, PolylineItem,
+    PostProcessSettings, RenderCamera, SceneFrame, SceneRenderItem, ShadowFilter, StreamtubeItem,
+    SurfaceSubmission, ToneMapping, ViewportFrame, ViewportRenderer, VolumeItem,
 };
 pub use renderer::{ScalarBar, ScalarBarAnchor, ScalarBarOrientation};
 

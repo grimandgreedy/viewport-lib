@@ -5,3 +5,5 @@ pub(crate) mod cap_geometry;
 pub mod isoline;
 /// CPU-side marching cubes isosurface extraction from volumetric data.
 pub mod marching_cubes;
+/// Geometry primitives: cube, sphere, plane, cylinder.
+pub mod primitives;

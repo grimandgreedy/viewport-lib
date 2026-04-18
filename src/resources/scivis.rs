@@ -3,7 +3,7 @@ use super::*;
 impl ViewportGpuResources {
     /// Lazily create the point cloud render pipeline (PointList topology).
     ///
-    /// No-op if already created. Called from `prepare()` when `frame.point_clouds` is non-empty.
+    /// No-op if already created. Called from `prepare()` when `frame.scene.point_clouds` is non-empty.
     pub(crate) fn ensure_point_cloud_pipeline(&mut self, device: &wgpu::Device) {
         if self.point_cloud_pipeline.is_some() {
             return;
@@ -126,7 +126,7 @@ impl ViewportGpuResources {
 
     /// Upload one [`PointCloudItem`] to the GPU and return draw data.
     ///
-    /// Called from `prepare()` for each non-empty item in `frame.point_clouds`.
+    /// Called from `prepare()` for each non-empty item in `frame.scene.point_clouds`.
     pub(crate) fn upload_point_cloud(
         &mut self,
         device: &wgpu::Device,
@@ -282,7 +282,7 @@ impl ViewportGpuResources {
 
     /// Lazily create the polyline render pipeline (LineStrip topology).
     ///
-    /// No-op if already created. Called from `prepare()` when `frame.polylines` is non-empty.
+    /// No-op if already created. Called from `prepare()` when `frame.scene.polylines` is non-empty.
     pub(crate) fn ensure_polyline_pipeline(&mut self, device: &wgpu::Device) {
         if self.polyline_pipeline.is_some() {
             return;
@@ -393,7 +393,7 @@ impl ViewportGpuResources {
 
     /// Upload one [`PolylineItem`] to the GPU and return draw data.
     ///
-    /// Called from `prepare()` for each non-empty item in `frame.polylines`.
+    /// Called from `prepare()` for each non-empty item in `frame.scene.polylines`.
     pub(crate) fn upload_polyline(
         &mut self,
         device: &wgpu::Device,
@@ -517,7 +517,7 @@ impl ViewportGpuResources {
 
     /// Lazily create the glyph render pipeline (instanced TriangleList).
     ///
-    /// No-op if already created. Called from `prepare()` when `frame.glyphs` is non-empty.
+    /// No-op if already created. Called from `prepare()` when `frame.scene.glyphs` is non-empty.
     pub(crate) fn ensure_glyph_pipeline(&mut self, device: &wgpu::Device) {
         if self.glyph_pipeline.is_some() {
             return;
@@ -631,7 +631,7 @@ impl ViewportGpuResources {
 
     /// Upload one [`GlyphItem`] to the GPU and return draw data.
     ///
-    /// Called from `prepare()` for each non-empty item in `frame.glyphs`.
+    /// Called from `prepare()` for each non-empty item in `frame.scene.glyphs`.
     /// The glyph base mesh is cached in `glyph_arrow_mesh` / `glyph_sphere_mesh` / `glyph_cube_mesh`.
     pub(crate) fn upload_glyph_set(
         &mut self,
@@ -864,7 +864,7 @@ impl ViewportGpuResources {
 
     /// Lazily create the streamtube render pipeline (instanced cylinder TriangleList).
     ///
-    /// No-op if already created.  Called from `prepare()` when `frame.streamtube_items`
+    /// No-op if already created. Called from `prepare()` when `frame.scene.streamtube_items`
     /// is non-empty.
     pub(crate) fn ensure_streamtube_pipeline(&mut self, device: &wgpu::Device) {
         if self.streamtube_pipeline.is_some() {

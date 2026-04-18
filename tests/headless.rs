@@ -6,8 +6,8 @@
 use viewport_lib::{
     Camera, Material, MeshId, Scene, Selection,
     error::ViewportError,
-    renderer::{FrameData, LightingSettings, SceneRenderItem, ViewportRenderer},
-    resources::{CameraUniform, MeshData},
+    renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission, ViewportRenderer},
+    resources::MeshData,
 };
 
 /// Create a headless wgpu device + queue for testing.
@@ -153,20 +153,21 @@ fn prepare_empty_scene_no_panic() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera_uniform = viewport_lib::resources::CameraUniform {
-        view_proj: cam.view_proj_matrix().to_cols_array_2d(),
-        eye_pos: cam.eye_position().to_array(),
-        _pad: 0.0,
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
         forward: [0.0, 0.0, -1.0],
-        _pad1: 0.0,
+        orientation: cam.orientation,
+        near: cam.znear,
+        far: cam.zfar,
+        fov: cam.fov_y,
+        aspect: cam.aspect,
     };
-    frame.lighting = LightingSettings::default();
-    frame.eye_pos = cam.eye_position().to_array();
-    frame.scene_items = vec![];
-    frame.show_grid = false;
-    frame.show_axes_indicator = false;
-    frame.viewport_size = [0.0, 0.0];
-    frame.camera_orientation = cam.orientation;
+    frame.camera.viewport_size = [0.0, 0.0];
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![]);
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
     // Should not panic.
     renderer.prepare(&device, &queue, &frame);
 }
@@ -257,25 +258,26 @@ fn render_offscreen_produces_rgba_pixels() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera_uniform = CameraUniform {
-        view_proj: cam.view_proj_matrix().to_cols_array_2d(),
-        eye_pos: cam.eye_position().to_array(),
-        _pad: 0.0,
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
         forward: [0.0, 0.0, -1.0],
-        _pad1: 0.0,
+        orientation: cam.orientation,
+        near: cam.znear,
+        far: cam.zfar,
+        fov: cam.fov_y,
+        aspect: 1.0,
     };
-    frame.eye_pos = cam.eye_position().to_array();
-    frame.camera_orientation = cam.orientation;
-    frame.viewport_size = [64.0, 64.0];
-    frame.camera_aspect = 1.0;
-    frame.show_grid = false;
-    frame.show_axes_indicator = false;
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
     // Add the box as a scene item.
     let mut item = SceneRenderItem::default();
     item.mesh_index = mesh_idx;
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
     item.selected = false;
-    frame.scene_items.push(item);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item]);
 
     let width = 64u32;
     let height = 64u32;

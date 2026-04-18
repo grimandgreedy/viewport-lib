@@ -4,8 +4,8 @@
 
 use std::collections::HashMap;
 use viewport_lib::{
-    Camera, CameraUniform, FrameData, GizmoAxis, GizmoMode, LightingSettings, MeshData, SceneRenderItem,
-    ViewportRenderer,
+    Camera, FrameData, GizmoAxis, GizmoMode, LightingSettings, RenderCamera,
+    SceneRenderItem, SurfaceSubmission, ViewportRenderer, primitives,
 };
 
 pub struct SceneRenderer {
@@ -84,10 +84,9 @@ impl SceneRenderer {
             self.tex_h = h;
         }
 
-        let box_mesh = unit_box_mesh();
         for &(id, _) in objects {
             if !self.uploaded.contains_key(&id) {
-                let idx = self.renderer.resources_mut().upload_mesh_data(device, &box_mesh).expect("built-in mesh");
+                let idx = self.renderer.resources_mut().upload_mesh_data(device, &primitives::cube(1.0)).expect("built-in mesh");
                 self.uploaded.insert(id, idx);
             }
         }
@@ -103,20 +102,12 @@ impl SceneRenderer {
         }).collect();
 
         let mut frame_data = FrameData::default();
-        frame_data.camera_uniform = CameraUniform {
-            view_proj: self.camera.view_proj_matrix().to_cols_array_2d(),
-            eye_pos: self.camera.eye_position().into(),
-            _pad: 0.0,
-            forward: [0.0, 0.0, -1.0],
-            _pad1: 0.0,
-        };
-        frame_data.lighting = LightingSettings::default();
-        frame_data.eye_pos = self.camera.eye_position().into();
-        frame_data.scene_items = scene_items;
-        frame_data.show_grid = true;
-        frame_data.show_axes_indicator = true;
-        frame_data.viewport_size = [w as f32, h as f32];
-        frame_data.camera_orientation = self.camera.orientation;
+        frame_data.camera.render_camera = RenderCamera::from_camera(&self.camera);
+        frame_data.camera.viewport_size = [w as f32, h as f32];
+        frame_data.effects.lighting = LightingSettings::default();
+        frame_data.scene.surfaces = SurfaceSubmission::Flat(scene_items);
+        frame_data.viewport.show_grid = true;
+        frame_data.viewport.show_axes_indicator = true;
 
         self.renderer.prepare(device, queue, &frame_data);
 
@@ -168,33 +159,3 @@ impl SceneRenderer {
     }
 }
 
-fn unit_box_mesh() -> MeshData {
-    #[rustfmt::skip]
-    let p: Vec<[f32; 3]> = vec![
-        [-0.5,-0.5, 0.5],[0.5,-0.5, 0.5],[0.5, 0.5, 0.5],[-0.5, 0.5, 0.5],
-        [0.5,-0.5,-0.5],[-0.5,-0.5,-0.5],[-0.5, 0.5,-0.5],[0.5, 0.5,-0.5],
-        [-0.5, 0.5, 0.5],[0.5, 0.5, 0.5],[0.5, 0.5,-0.5],[-0.5, 0.5,-0.5],
-        [-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,-0.5, 0.5],[-0.5,-0.5, 0.5],
-        [0.5,-0.5, 0.5],[0.5,-0.5,-0.5],[0.5, 0.5,-0.5],[0.5, 0.5, 0.5],
-        [-0.5,-0.5,-0.5],[-0.5,-0.5, 0.5],[-0.5, 0.5, 0.5],[-0.5, 0.5,-0.5],
-    ];
-    #[rustfmt::skip]
-    let n: Vec<[f32; 3]> = vec![
-        [0.0,0.0,1.0],[0.0,0.0,1.0],[0.0,0.0,1.0],[0.0,0.0,1.0],
-        [0.0,0.0,-1.0],[0.0,0.0,-1.0],[0.0,0.0,-1.0],[0.0,0.0,-1.0],
-        [0.0,1.0,0.0],[0.0,1.0,0.0],[0.0,1.0,0.0],[0.0,1.0,0.0],
-        [0.0,-1.0,0.0],[0.0,-1.0,0.0],[0.0,-1.0,0.0],[0.0,-1.0,0.0],
-        [1.0,0.0,0.0],[1.0,0.0,0.0],[1.0,0.0,0.0],[1.0,0.0,0.0],
-        [-1.0,0.0,0.0],[-1.0,0.0,0.0],[-1.0,0.0,0.0],[-1.0,0.0,0.0],
-    ];
-    #[rustfmt::skip]
-    let i: Vec<u32> = vec![
-        0,1,2,0,2,3, 4,5,6,4,6,7, 8,9,10,8,10,11,
-        12,13,14,12,14,15, 16,17,18,16,18,19, 20,21,22,20,22,23,
-    ];
-    let mut mesh = MeshData::default();
-    mesh.positions = p;
-    mesh.normals = n;
-    mesh.indices = i;
-    mesh
-}

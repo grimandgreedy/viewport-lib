@@ -7,8 +7,9 @@ mod viewport_callback;
 
 use eframe::egui;
 use viewport_lib::{
-    Action, ActionState, FrameInput, InputSystem, KeyCode, LightKind, MeshData, Modifiers,
-    MouseButton, ViewportRenderer,
+    Action, ActionState, FrameData, FrameInput, InputSystem, KeyCode, LightKind,
+    LightSource, LightingSettings, Modifiers, MouseButton, RenderCamera,
+    SurfaceSubmission, ViewportRenderer, primitives,
 };
 
 fn main() -> eframe::Result {
@@ -39,13 +40,13 @@ fn main() -> eframe::Result {
                 .insert(renderer);
 
             // Upload the box mesh once at startup.
-            let box_mesh = unit_box_mesh();
             let mut guard = wgpu_render_state.renderer.write();
             if let Some(vr) = guard.callback_resources.get_mut::<ViewportRenderer>() {
                 // Pre-upload a few meshes so objects added later can reference them.
+                let cube = primitives::cube(1.0);
                 for _ in 0..16 {
                     vr.resources_mut()
-                        .upload_mesh_data(device, &box_mesh)
+                        .upload_mesh_data(device, &cube)
                         .expect("built-in mesh");
                 }
             }
@@ -202,16 +203,11 @@ impl eframe::App for App {
                 .collect();
 
             let frame_data = {
-                let mut fd = viewport_lib::FrameData::default();
-                fd.camera_uniform = viewport_lib::CameraUniform {
-                    view_proj: self.camera.view_proj_matrix().to_cols_array_2d(),
-                    eye_pos: self.camera.eye_position().into(),
-                    _pad: 0.0,
-                    forward: [0.0, 0.0, -1.0],
-                    _pad1: 0.0,
-                };
-                fd.lighting = {
-                    let mut ls = viewport_lib::LightingSettings::default();
+                let mut fd = FrameData::default();
+                fd.camera.render_camera = RenderCamera::from_camera(&self.camera);
+                fd.camera.viewport_size = [rect.width(), rect.height()];
+                fd.effects.lighting = {
+                    let mut ls = LightingSettings::default();
                     // 8 point lights, one per octant, aimed toward the origin.
                     let d = 10.0_f32;
                     let s = d / 3.0_f32.sqrt();
@@ -226,20 +222,17 @@ impl eframe::App for App {
                         [-s, -s, -s],
                     ]
                     .into_iter()
-                    .map(|position| viewport_lib::LightSource {
-                        kind: viewport_lib::LightKind::Point { position, range: d * 2.0 },
+                    .map(|position| LightSource {
+                        kind: LightKind::Point { position, range: d * 2.0 },
                         color: [1.0, 1.0, 1.0],
                         intensity: 0.5,
                     })
                     .collect();
                     ls
                 };
-                fd.eye_pos = self.camera.eye_position().into();
-                fd.scene_items = scene_items;
-                fd.show_grid = true;
-                fd.show_axes_indicator = true;
-                fd.viewport_size = [rect.width(), rect.height()];
-                fd.camera_orientation = self.camera.orientation;
+                fd.scene.surfaces = SurfaceSubmission::Flat(scene_items);
+                fd.viewport.show_grid = true;
+                fd.viewport.show_axes_indicator = true;
                 fd
             };
 
@@ -453,56 +446,3 @@ fn build_frame_input(ui: &egui::Ui, response: &egui::Response) -> FrameInput {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Box mesh helper
-// ---------------------------------------------------------------------------
-
-fn unit_box_mesh() -> MeshData {
-    #[rustfmt::skip]
-    let positions: Vec<[f32; 3]> = vec![
-        // Front face
-        [-0.5, -0.5,  0.5], [ 0.5, -0.5,  0.5], [ 0.5,  0.5,  0.5], [-0.5,  0.5,  0.5],
-        // Back face
-        [ 0.5, -0.5, -0.5], [-0.5, -0.5, -0.5], [-0.5,  0.5, -0.5], [ 0.5,  0.5, -0.5],
-        // Top face
-        [-0.5,  0.5,  0.5], [ 0.5,  0.5,  0.5], [ 0.5,  0.5, -0.5], [-0.5,  0.5, -0.5],
-        // Bottom face
-        [-0.5, -0.5, -0.5], [ 0.5, -0.5, -0.5], [ 0.5, -0.5,  0.5], [-0.5, -0.5,  0.5],
-        // Right face
-        [ 0.5, -0.5,  0.5], [ 0.5, -0.5, -0.5], [ 0.5,  0.5, -0.5], [ 0.5,  0.5,  0.5],
-        // Left face
-        [-0.5, -0.5, -0.5], [-0.5, -0.5,  0.5], [-0.5,  0.5,  0.5], [-0.5,  0.5, -0.5],
-    ];
-
-    #[rustfmt::skip]
-    let normals: Vec<[f32; 3]> = vec![
-        // Front
-        [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0],
-        // Back
-        [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0],
-        // Top
-        [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0],
-        // Bottom
-        [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0],
-        // Right
-        [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0],
-        // Left
-        [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0],
-    ];
-
-    #[rustfmt::skip]
-    let indices: Vec<u32> = vec![
-        0,  1,  2,  0,  2,  3,   // Front
-        4,  5,  6,  4,  6,  7,   // Back
-        8,  9,  10, 8,  10, 11,  // Top
-        12, 13, 14, 12, 14, 15,  // Bottom
-        16, 17, 18, 16, 18, 19,  // Right
-        20, 21, 22, 20, 22, 23,  // Left
-    ];
-
-    let mut mesh = MeshData::default();
-    mesh.positions = positions;
-    mesh.normals = normals;
-    mesh.indices = indices;
-    mesh
-}
