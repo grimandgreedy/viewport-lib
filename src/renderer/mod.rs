@@ -70,7 +70,7 @@ pub struct ViewportRenderer {
     /// `resources.camera_bind_group`).  In multi-viewport mode each sub-viewport
     /// has its own slot so concurrent `prepare` calls don't clobber each other.
     ///
-    /// The outer Vec is indexed by `FrameData::viewport_index`.  Slots are
+    /// The outer Vec is indexed by `FrameData::camera.viewport_index`. Slots are
     /// grown lazily in `prepare` via `ensure_viewport_camera_slot`.
     per_viewport_cameras: Vec<(wgpu::Buffer, wgpu::BindGroup)>,
     /// Phase G — GPU compute filter results from the last `prepare()` call.

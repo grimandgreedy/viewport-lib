@@ -833,6 +833,28 @@ impl Default for CameraFrame {
     }
 }
 
+impl CameraFrame {
+    /// Build a camera frame from a render camera and viewport size.
+    pub fn new(render_camera: RenderCamera, viewport_size: [f32; 2]) -> Self {
+        Self {
+            render_camera,
+            viewport_size,
+            viewport_index: 0,
+        }
+    }
+
+    /// Build a camera frame from an app-side camera and viewport size.
+    pub fn from_camera(cam: &crate::camera::Camera, viewport_size: [f32; 2]) -> Self {
+        Self::new(RenderCamera::from_camera(cam), viewport_size)
+    }
+
+    /// Set the multi-viewport slot index for this camera frame.
+    pub fn with_viewport_index(mut self, viewport_index: usize) -> Self {
+        self.viewport_index = viewport_index;
+        self
+    }
+}
+
 /// Surface submission seam for world-space geometry.
 ///
 /// For 0.2.0, only `Flat` submission is supported. This enum exists to
@@ -884,6 +906,21 @@ impl Default for SceneFrame {
             isolines: Vec::new(),
             streamtube_items: Vec::new(),
         }
+    }
+}
+
+impl SceneFrame {
+    /// Build a scene frame from a surface submission.
+    pub fn new(surfaces: SurfaceSubmission) -> Self {
+        Self {
+            surfaces,
+            ..Self::default()
+        }
+    }
+
+    /// Build a scene frame from a flat list of surface render items.
+    pub fn from_surface_items(items: Vec<SceneRenderItem>) -> Self {
+        Self::new(SurfaceSubmission::Flat(items))
     }
 }
 
@@ -1061,6 +1098,17 @@ impl Default for FrameData {
             interaction: InteractionFrame::default(),
             effects: EffectsFrame::default(),
             cache_hints: CacheHints::default(),
+        }
+    }
+}
+
+impl FrameData {
+    /// Build frame data from the required camera and scene groups.
+    pub fn new(camera: CameraFrame, scene: SceneFrame) -> Self {
+        Self {
+            camera,
+            scene,
+            ..Self::default()
         }
     }
 }

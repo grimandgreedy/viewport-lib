@@ -11,8 +11,8 @@
 use std::sync::Arc;
 
 use viewport_lib::{
-    Camera, FrameData, LightingSettings, Material, RenderCamera, SceneRenderItem,
-    SurfaceSubmission, ViewportRenderer, primitives,
+    Camera, CameraFrame, FrameData, LightingSettings, Material, SceneFrame,
+    SceneRenderItem, ViewportRenderer, primitives,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
@@ -374,16 +374,13 @@ impl ApplicationHandler for App {
 
                 state.camera.aspect = if h > 0.0 { w / h } else { 1.0 };
 
-                let frame_data = {
-                    let mut fd = FrameData::default();
-                    fd.camera.render_camera = RenderCamera::from_camera(&state.camera);
-                    fd.camera.viewport_size = [w, h];
-                    fd.effects.lighting = LightingSettings::default();
-                    fd.scene.surfaces = SurfaceSubmission::Flat(state.scene_items.clone());
-                    fd.viewport.show_grid = true;
-                    fd.viewport.show_axes_indicator = true;
-                    fd
-                };
+                let mut frame_data = FrameData::new(
+                    CameraFrame::from_camera(&state.camera, [w, h]),
+                    SceneFrame::from_surface_items(state.scene_items.clone()),
+                );
+                frame_data.effects.lighting = LightingSettings::default();
+                frame_data.viewport.show_grid = true;
+                frame_data.viewport.show_axes_indicator = true;
 
                 state.renderer.prepare(&state.device, &state.queue, &frame_data);
 

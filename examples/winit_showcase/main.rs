@@ -54,11 +54,11 @@
 use std::sync::Arc;
 
 use viewport_lib::{
-    Camera, CameraAnimator, ClipPlane, Easing, FrameData, FrameStats, Gizmo,
-    GizmoAxis, GizmoMode, GizmoSpace, LightKind, LightSource, LightingSettings, Material, MeshData,
-    MeshId, NodeId, PickAccelerator, PostProcessSettings, Projection, RenderCamera, SceneRenderItem,
-    Selection, ShadowFilter, SnapConfig, SurfaceSubmission, ToneMapping, ViewPreset,
-    ViewportRenderer,
+    Camera, CameraAnimator, CameraFrame, ClipPlane, Easing, FrameData, FrameStats,
+    Gizmo, GizmoAxis, GizmoMode, GizmoSpace, LightKind, LightSource, LightingSettings,
+    Material, MeshData, MeshId, NodeId, PickAccelerator, PostProcessSettings, Projection,
+    RenderCamera, SceneFrame, SceneRenderItem, Selection, ShadowFilter, SnapConfig,
+    ToneMapping, ViewPreset, ViewportRenderer,
     gizmo::{self, compute_gizmo_scale},
     scene::{LayerId, Scene},
 };
@@ -2208,33 +2208,31 @@ impl ApplicationHandler for App {
                     ),
                 };
 
-                let frame_data = {
-                    let mut fd = FrameData::default();
-                    fd.camera.render_camera = RenderCamera::from_camera(&state.camera);
-                    fd.camera.viewport_size = [w, h];
-                    fd.effects.lighting = lighting;
-                    fd.scene.surfaces = SurfaceSubmission::Flat(scene_items);
-                    fd.viewport.wireframe_mode = false;
-                    fd.interaction.gizmo_model = gizmo_model;
-                    fd.interaction.gizmo_mode = gizmo_mode;
-                    fd.interaction.gizmo_hovered = if state.interact_gizmo.active_axis != GizmoAxis::None {
+                let mut frame_data = FrameData::new(
+                    CameraFrame::from_camera(&state.camera, [w, h]),
+                    SceneFrame::from_surface_items(scene_items),
+                );
+                frame_data.effects.lighting = lighting;
+                frame_data.viewport.wireframe_mode = false;
+                frame_data.interaction.gizmo_model = gizmo_model;
+                frame_data.interaction.gizmo_mode = gizmo_mode;
+                frame_data.interaction.gizmo_hovered =
+                    if state.interact_gizmo.active_axis != GizmoAxis::None {
                         state.interact_gizmo.active_axis
                     } else {
                         state.interact_gizmo.hovered_axis
                     };
-                    fd.interaction.gizmo_space_orientation = gizmo_space_orient;
-                    fd.viewport.overlay_quads = vec![];
-                    fd.viewport.show_grid = true;
-                    fd.viewport.show_axes_indicator = true;
-                    fd.viewport.is_2d = false;
-                    fd.viewport.background_color = bg_color;
-                    fd.effects.clip_planes = adv_clip_planes;
-                    fd.interaction.outline_selected = adv_outline;
-                    fd.interaction.xray_selected = adv_xray;
-                    fd.cache_hints.scene_generation = scene_gen;
-                    fd.cache_hints.selection_generation = sel_gen;
-                    fd
-                };
+                frame_data.interaction.gizmo_space_orientation = gizmo_space_orient;
+                frame_data.viewport.overlay_quads = vec![];
+                frame_data.viewport.show_grid = true;
+                frame_data.viewport.show_axes_indicator = true;
+                frame_data.viewport.is_2d = false;
+                frame_data.viewport.background_color = bg_color;
+                frame_data.effects.clip_planes = adv_clip_planes;
+                frame_data.interaction.outline_selected = adv_outline;
+                frame_data.interaction.xray_selected = adv_xray;
+                frame_data.cache_hints.scene_generation = scene_gen;
+                frame_data.cache_hints.selection_generation = sel_gen;
 
                 if matches!(
                     state.mode,

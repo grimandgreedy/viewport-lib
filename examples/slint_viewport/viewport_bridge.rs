@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use viewport_lib::{
-    Camera, FrameData, LightingSettings, RenderCamera, SceneRenderItem, SurfaceSubmission,
+    Camera, CameraFrame, FrameData, LightingSettings, SceneFrame, SceneRenderItem,
     ViewportRenderer, primitives,
 };
 use wgpu;
@@ -157,16 +157,13 @@ impl SceneRenderer {
             })
             .collect();
 
-        let frame_data = {
-            let mut fd = FrameData::default();
-            fd.camera.render_camera = RenderCamera::from_camera(&self.camera);
-            fd.camera.viewport_size = [w as f32, h as f32];
-            fd.effects.lighting = LightingSettings::default();
-            fd.scene.surfaces = SurfaceSubmission::Flat(scene_items);
-            fd.viewport.show_grid = true;
-            fd.viewport.show_axes_indicator = true;
-            fd
-        };
+        let mut frame_data = FrameData::new(
+            CameraFrame::from_camera(&self.camera, [w as f32, h as f32]),
+            SceneFrame::from_surface_items(scene_items),
+        );
+        frame_data.effects.lighting = LightingSettings::default();
+        frame_data.viewport.show_grid = true;
+        frame_data.viewport.show_axes_indicator = true;
 
         self.renderer.prepare(device, queue, &frame_data);
 
@@ -271,4 +268,3 @@ impl SceneRenderer {
         slint::Image::from_rgba8(pixel_buffer)
     }
 }
-

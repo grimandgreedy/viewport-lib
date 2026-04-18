@@ -1093,8 +1093,8 @@ impl ViewportRenderer {
 
         // 4. Render the scene into the offscreen texture.
         //    The caller must set `frame.camera.viewport_size` to `[width as f32, height as f32]`
-        //    and `frame.camera_aspect` to `width as f32 / height as f32` for correct
-        //    HDR target allocation and scissor rects.
+        //    and `frame.camera.render_camera.aspect` to `width as f32 / height as f32`
+        //    for correct HDR target allocation and scissor rects.
         let cmd_buf = self.render(device, queue, &output_view, frame);
         queue.submit(std::iter::once(cmd_buf));
 

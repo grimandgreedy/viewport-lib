@@ -9,8 +9,8 @@ use iced::event::Event;
 use iced::widget::shader;
 use iced::{Element, Fill, Point, Rectangle, mouse};
 use viewport_lib::{
-    Camera, FrameData, LightingSettings, RenderCamera, SceneRenderItem,
-    SurfaceSubmission, ViewportRenderer, primitives,
+    Camera, CameraFrame, FrameData, LightingSettings, RenderCamera, SceneFrame,
+    SceneRenderItem, ViewportRenderer, primitives,
 };
 
 use crate::Message;
@@ -202,17 +202,17 @@ impl shader::Primitive for ViewportPrimitive {
             })
             .collect();
 
-        let frame_data = {
-            let mut fd = FrameData::default();
-            fd.camera.render_camera = self.camera_snapshot.render_camera.clone();
-            fd.camera.viewport_size = [bounds.width, bounds.height];
-            fd.effects.lighting = LightingSettings::default();
-            fd.scene.surfaces = SurfaceSubmission::Flat(scene_items);
-            fd.viewport.show_grid = true;
-            fd.viewport.grid_y = -0.5; // bottom face of unit boxes
-            fd.viewport.show_axes_indicator = true;
-            fd
-        };
+        let mut frame_data = FrameData::new(
+            CameraFrame::new(
+                self.camera_snapshot.render_camera.clone(),
+                [bounds.width, bounds.height],
+            ),
+            SceneFrame::from_surface_items(scene_items),
+        );
+        frame_data.effects.lighting = LightingSettings::default();
+        frame_data.viewport.show_grid = true;
+        frame_data.viewport.grid_y = -0.5; // bottom face of unit boxes
+        frame_data.viewport.show_axes_indicator = true;
 
         pipeline.renderer.prepare(device, queue, &frame_data);
     }
@@ -237,17 +237,17 @@ impl shader::Primitive for ViewportPrimitive {
             })
             .collect();
 
-        let frame_data = {
-            let mut fd = FrameData::default();
-            fd.camera.render_camera = self.camera_snapshot.render_camera.clone();
-            fd.camera.viewport_size = [clip_bounds.width as f32, clip_bounds.height as f32];
-            fd.effects.lighting = LightingSettings::default();
-            fd.scene.surfaces = SurfaceSubmission::Flat(scene_items);
-            fd.viewport.show_grid = true;
-            fd.viewport.grid_y = -0.5; // bottom face of unit boxes
-            fd.viewport.show_axes_indicator = true;
-            fd
-        };
+        let mut frame_data = FrameData::new(
+            CameraFrame::new(
+                self.camera_snapshot.render_camera.clone(),
+                [clip_bounds.width as f32, clip_bounds.height as f32],
+            ),
+            SceneFrame::from_surface_items(scene_items),
+        );
+        frame_data.effects.lighting = LightingSettings::default();
+        frame_data.viewport.show_grid = true;
+        frame_data.viewport.grid_y = -0.5; // bottom face of unit boxes
+        frame_data.viewport.show_axes_indicator = true;
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("iced_viewport_render_pass"),
@@ -444,4 +444,3 @@ impl shader::Program<Message> for SceneSnapshot {
 pub fn viewport_shader(scene: SceneSnapshot) -> Element<'static, Message> {
     shader(scene).width(Fill).height(Fill).into()
 }
-

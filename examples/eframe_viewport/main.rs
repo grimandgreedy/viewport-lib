@@ -7,9 +7,9 @@ mod viewport_callback;
 
 use eframe::egui;
 use viewport_lib::{
-    Action, ActionState, FrameData, FrameInput, InputSystem, KeyCode, LightKind,
-    LightSource, LightingSettings, Modifiers, MouseButton, RenderCamera,
-    SurfaceSubmission, ViewportRenderer, primitives,
+    Action, ActionState, CameraFrame, FrameData, FrameInput, InputSystem, KeyCode,
+    LightKind, LightSource, LightingSettings, Modifiers, MouseButton, SceneFrame,
+    ViewportRenderer, primitives,
 };
 
 fn main() -> eframe::Result {
@@ -202,39 +202,36 @@ impl eframe::App for App {
                 })
                 .collect();
 
-            let frame_data = {
-                let mut fd = FrameData::default();
-                fd.camera.render_camera = RenderCamera::from_camera(&self.camera);
-                fd.camera.viewport_size = [rect.width(), rect.height()];
-                fd.effects.lighting = {
-                    let mut ls = LightingSettings::default();
-                    // 8 point lights, one per octant, aimed toward the origin.
-                    let d = 10.0_f32;
-                    let s = d / 3.0_f32.sqrt();
-                    ls.lights = [
-                        [ s,  s,  s],
-                        [-s,  s,  s],
-                        [ s, -s,  s],
-                        [-s, -s,  s],
-                        [ s,  s, -s],
-                        [-s,  s, -s],
-                        [ s, -s, -s],
-                        [-s, -s, -s],
-                    ]
-                    .into_iter()
-                    .map(|position| LightSource {
-                        kind: LightKind::Point { position, range: d * 2.0 },
-                        color: [1.0, 1.0, 1.0],
-                        intensity: 0.5,
-                    })
-                    .collect();
-                    ls
-                };
-                fd.scene.surfaces = SurfaceSubmission::Flat(scene_items);
-                fd.viewport.show_grid = true;
-                fd.viewport.show_axes_indicator = true;
-                fd
+            let mut frame_data = FrameData::new(
+                CameraFrame::from_camera(&self.camera, [rect.width(), rect.height()]),
+                SceneFrame::from_surface_items(scene_items),
+            );
+            frame_data.effects.lighting = {
+                let mut ls = LightingSettings::default();
+                // 8 point lights, one per octant, aimed toward the origin.
+                let d = 10.0_f32;
+                let s = d / 3.0_f32.sqrt();
+                ls.lights = [
+                    [ s,  s,  s],
+                    [-s,  s,  s],
+                    [ s, -s,  s],
+                    [-s, -s,  s],
+                    [ s,  s, -s],
+                    [-s,  s, -s],
+                    [ s, -s, -s],
+                    [-s, -s, -s],
+                ]
+                .into_iter()
+                .map(|position| LightSource {
+                    kind: LightKind::Point { position, range: d * 2.0 },
+                    color: [1.0, 1.0, 1.0],
+                    intensity: 0.5,
+                })
+                .collect();
+                ls
             };
+            frame_data.viewport.show_grid = true;
+            frame_data.viewport.show_axes_indicator = true;
 
             // Schedule the viewport paint callback.
             ui.painter()
@@ -445,4 +442,3 @@ fn build_frame_input(ui: &egui::Ui, response: &egui::Response) -> FrameInput {
         shift_scroll_pan_delta,
     }
 }
-

@@ -20,7 +20,7 @@ impl ViewportRenderer {
     /// * `device` — wgpu device
     /// * `queue` — wgpu queue
     /// * `cursor` — cursor position in viewport-local pixels (top-left origin)
-    /// * `frame` — current frame data (camera, scene_items, viewport_size)
+    /// * `frame` — current grouped frame data (camera, scene surfaces, viewport size)
     ///
     /// # Returns
     /// `Some(GpuPickHit)` if an object is under the cursor, `None` if empty space.

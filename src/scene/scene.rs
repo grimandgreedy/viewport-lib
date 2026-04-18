@@ -2,7 +2,8 @@
 //!
 //! `Scene` is a standalone struct that apps own alongside `ViewportRenderer`.
 //! It produces `Vec<SceneRenderItem>` via `collect_render_items()`, which feeds
-//! directly into `FrameData::scene_items`. The renderer itself remains stateless.
+//! into `SceneFrame::surfaces` (usually via `SceneFrame::from_surface_items(...)`).
+//! The renderer itself remains stateless.
 
 use std::collections::{HashMap, HashSet};
 
