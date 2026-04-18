@@ -45,3 +45,37 @@ Run examples with:
 ```
 cargo run --release --example winit-viewport
 ```
+
+## Quick start
+
+Build a `FrameData` each frame using the grouped 0.2.0 API:
+
+```rust
+use glam::{Mat4, vec3};
+use viewport_lib::{Camera, FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission, primitives};
+
+// Upload the cube primitive mesh once at startup
+let mesh_index = renderer.resources_mut().upload_mesh_data(&device, &primitives::cube(1.0))?;
+
+// Build a frame each render tick
+let camera = Camera::default();
+let model = glam::Mat4::from_translation(glam::vec3(1.0, 2.0, 0.0));
+let item = SceneRenderItem {
+    mesh_index,
+    model: model.to_cols_array_2d(),
+    ..SceneRenderItem::default()
+};
+
+let mut fd = FrameData::default();
+fd.camera.render_camera = RenderCamera::from_camera(&camera);
+fd.camera.viewport_size = [width, height];
+fd.scene.surfaces = SurfaceSubmission::Flat(vec![item]);
+
+renderer.prepare(&device, &queue, &fd);
+// then call the renderer as appropriate
+renderer.paint_to(&mut render_pass, &fd);
+
+```
+
+See `examples/winit_viewport/main.rs` for the complete minimal integration, or
+`docs/migration/0.1.x-to-0.2.0.md` for the field-by-field upgrade guide from 0.1.x.

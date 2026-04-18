@@ -9,7 +9,9 @@
 //!
 //! 1. Create a [`ViewportRenderer`] from a `wgpu::Device` and target format.
 //! 2. Upload meshes or volumes through [`ViewportGpuResources`].
-//! 3. Build a [`FrameData`] each frame.
+//! 3. Build a [`FrameData`] each frame (camera via [`CameraFrame`] and
+//!    [`RenderCamera`], scene content via [`SceneFrame`], viewport chrome via
+//!    [`ViewportFrame`], etc.).
 //! 4. Call [`ViewportRenderer::prepare`] and then [`ViewportRenderer::paint_to`].
 
 /// Error types for the viewport library.
