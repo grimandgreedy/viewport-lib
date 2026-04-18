@@ -141,8 +141,8 @@ pub fn world_to_screen(
 
 /// Convenience wrapper that extracts camera matrices and viewport size from a [`FrameData`].
 ///
-/// Equivalent to calling [`world_to_screen`] with `frame.camera_view`, `frame.camera_proj`,
-/// and `frame.viewport_size`.
+/// Equivalent to calling [`world_to_screen`] with `frame.camera.render_camera.view`,
+/// `frame.camera.render_camera.projection`, and `frame.camera.viewport_size`.
 ///
 /// # Arguments
 ///
@@ -155,9 +155,9 @@ pub fn world_to_screen(
 pub fn world_to_screen_from_frame(pos: glam::Vec3, frame: &FrameData) -> Option<glam::Vec2> {
     world_to_screen(
         pos,
-        &frame.camera_view,
-        &frame.camera_proj,
-        frame.viewport_size,
+        &frame.camera.render_camera.view,
+        &frame.camera.render_camera.projection,
+        frame.camera.viewport_size,
     )
 }
 

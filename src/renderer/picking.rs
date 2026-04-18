@@ -31,14 +31,19 @@ impl ViewportRenderer {
         cursor: glam::Vec2,
         frame: &FrameData,
     ) -> Option<crate::interaction::picking::GpuPickHit> {
-        let vp_w = frame.viewport_size[0] as u32;
-        let vp_h = frame.viewport_size[1] as u32;
+        // Resolve scene items from the SurfaceSubmission seam.
+        let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
+            SurfaceSubmission::Flat(items) => items,
+        };
+
+        let vp_w = frame.camera.viewport_size[0] as u32;
+        let vp_h = frame.camera.viewport_size[1] as u32;
 
         // --- bounds check ---
         if cursor.x < 0.0
             || cursor.y < 0.0
-            || cursor.x >= frame.viewport_size[0]
-            || cursor.y >= frame.viewport_size[1]
+            || cursor.x >= frame.camera.viewport_size[0]
+            || cursor.y >= frame.camera.viewport_size[1]
             || vp_w == 0
             || vp_h == 0
         {
@@ -51,8 +56,7 @@ impl ViewportRenderer {
         // --- build PickInstance data ---
         // Sentinel scheme: object_id stored = (scene_items_index + 1) so that
         // clear value 0 unambiguously means "no hit".
-        let pick_instances: Vec<PickInstance> = frame
-            .scene_items
+        let pick_instances: Vec<PickInstance> = scene_items
             .iter()
             .enumerate()
             .filter(|(_, item)| item.visible)
@@ -76,8 +80,7 @@ impl ViewportRenderer {
         // Build a mapping from sentinel object_id → original scene_items index.
         // Also track which scene_items are visible and their scene_items indices
         // so we can issue the right draw calls.
-        let visible_items: Vec<(usize, &SceneRenderItem)> = frame
-            .scene_items
+        let visible_items: Vec<(usize, &SceneRenderItem)> = scene_items
             .iter()
             .enumerate()
             .filter(|(_, item)| item.visible)
@@ -107,18 +110,7 @@ impl ViewportRenderer {
         });
 
         // --- pick camera uniform buffer + bind group ---
-        let camera_uniform = CameraUniform {
-            view_proj: (frame.camera_proj * frame.camera_view).to_cols_array_2d(),
-            eye_pos: frame.camera_uniform.eye_pos,
-            _pad: 0.0,
-            forward: frame
-                .camera_view
-                .inverse()
-                .transform_vector3(-glam::Vec3::Z)
-                .normalize_or_zero()
-                .to_array(),
-            _pad1: 0.0,
-        };
+        let camera_uniform = frame.camera.render_camera.camera_uniform();
         let camera_bytes = bytemuck::bytes_of(&camera_uniform);
         let pick_camera_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("pick_camera_buf"),

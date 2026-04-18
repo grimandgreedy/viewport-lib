@@ -7,7 +7,7 @@ impl ViewportRenderer {
     /// `CallbackTrait`). For non-static render passes (iced, manual wgpu),
     /// use [`paint_to`](Self::paint_to).
     pub fn paint(&self, render_pass: &mut wgpu::RenderPass<'static>, frame: &FrameData) {
-        let camera_bg = self.viewport_camera_bind_group(frame.viewport_index);
+        let camera_bg = self.viewport_camera_bind_group(frame.camera.viewport_index);
         emit_draw_calls!(
             &self.resources,
             &mut *render_pass,
@@ -35,7 +35,7 @@ impl ViewportRenderer {
     /// non-`'static` lifetime, making it usable from iced, raw wgpu, or any
     /// framework that creates its own render pass.
     pub fn paint_to<'rp>(&'rp self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
-        let camera_bg = self.viewport_camera_bind_group(frame.viewport_index);
+        let camera_bg = self.viewport_camera_bind_group(frame.camera.viewport_index);
         emit_draw_calls!(
             &self.resources,
             &mut *render_pass,
@@ -74,12 +74,18 @@ impl ViewportRenderer {
         // Always run prepare() to upload uniforms and run the shadow pass.
         self.prepare(device, queue, frame);
 
+        // Resolve scene items from the SurfaceSubmission seam.
+        let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
+            SurfaceSubmission::Flat(items) => items,
+        };
+
         let bg_color =
             frame
+                .viewport
                 .background_color
                 .unwrap_or([65.0 / 255.0, 65.0 / 255.0, 65.0 / 255.0, 1.0]);
 
-        if !frame.post_process.enabled {
+        if !frame.effects.post_process.enabled {
             // LDR fallback: render directly to output_view.
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("ldr_encoder"),
@@ -114,7 +120,7 @@ impl ViewportRenderer {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
-                let camera_bg = self.viewport_camera_bind_group(frame.viewport_index);
+                let camera_bg = self.viewport_camera_bind_group(frame.camera.viewport_index);
                 emit_draw_calls!(
                     &self.resources,
                     &mut render_pass,
@@ -139,8 +145,8 @@ impl ViewportRenderer {
         }
 
         // HDR path.
-        let w = frame.viewport_size[0] as u32;
-        let h = frame.viewport_size[1] as u32;
+        let w = frame.camera.viewport_size[0] as u32;
+        let h = frame.camera.viewport_size[1] as u32;
 
         self.resources.ensure_hdr_target(
             device,
@@ -150,7 +156,7 @@ impl ViewportRenderer {
             h.max(1),
         );
 
-        let pp = &frame.post_process;
+        let pp = &frame.effects.post_process;
 
         // Upload tone map uniform.
         let mode = match pp.tone_mapping {
@@ -173,7 +179,7 @@ impl ViewportRenderer {
         // Upload SSAO uniform if needed.
         if pp.ssao {
             if let Some(buf) = &self.resources.ssao_uniform_buf {
-                let proj = frame.camera_proj;
+                let proj = frame.camera.render_camera.projection;
                 let inv_proj = proj.inverse();
                 let ssao_uniform = crate::resources::SsaoUniform {
                     inv_proj: inv_proj.to_cols_array_2d(),
@@ -189,10 +195,10 @@ impl ViewportRenderer {
         // Upload contact shadow uniform if needed.
         if pp.contact_shadows {
             if let Some(buf) = &self.resources.contact_shadow_uniform_buf {
-                let proj = frame.camera_proj;
+                let proj = frame.camera.render_camera.projection;
                 let inv_proj = proj.inverse();
                 // Transform first light direction to view space.
-                let light_dir_world: glam::Vec3 = if let Some(l) = frame.lighting.lights.first() {
+                let light_dir_world: glam::Vec3 = if let Some(l) = frame.effects.lighting.lights.first() {
                     match l.kind {
                         LightKind::Directional { direction } => {
                             glam::Vec3::from(direction).normalize()
@@ -205,7 +211,7 @@ impl ViewportRenderer {
                 } else {
                     glam::Vec3::new(0.0, -1.0, 0.0)
                 };
-                let view = frame.camera_view;
+                let view = frame.camera.render_camera.view;
                 let light_dir_view = view.transform_vector3(light_dir_world).normalize();
                 let world_up_view = view.transform_vector3(glam::Vec3::Y).normalize();
                 let cs_uniform = crate::resources::ContactShadowUniform {
@@ -258,14 +264,13 @@ impl ViewportRenderer {
             let needs_oit = if self.use_instancing && !self.instanced_batches.is_empty() {
                 self.instanced_batches.iter().any(|b| b.is_transparent)
             } else {
-                frame
-                    .scene_items
+                scene_items
                     .iter()
                     .any(|i| i.visible && i.material.opacity < 1.0)
             };
             if needs_oit {
-                let w = (frame.viewport_size[0] as u32).max(1);
-                let h = (frame.viewport_size[1] as u32).max(1);
+                let w = (frame.camera.viewport_size[0] as u32).max(1);
+                let h = (frame.camera.viewport_size[1] as u32).max(1);
                 self.resources.ensure_oit_targets(device, w, h);
             }
         }
@@ -278,7 +283,7 @@ impl ViewportRenderer {
         });
 
         // Per-viewport camera bind group for the HDR path.
-        let camera_bg = self.viewport_camera_bind_group(frame.viewport_index);
+        let camera_bg = self.viewport_camera_bind_group(frame.camera.viewport_index);
 
         // -----------------------------------------------------------------------
         // HDR scene pass: render geometry into the HDR texture.
@@ -336,10 +341,9 @@ impl ViewportRenderer {
             let use_instancing = self.use_instancing;
             let batches = &self.instanced_batches;
 
-            if !frame.scene_items.is_empty() {
+            if !scene_items.is_empty() {
                 if use_instancing && !batches.is_empty() {
-                    let excluded_items: Vec<&SceneRenderItem> = frame
-                        .scene_items
+                    let excluded_items: Vec<&SceneRenderItem> = scene_items
                         .iter()
                         .filter(|item| {
                             item.visible
@@ -405,7 +409,7 @@ impl ViewportRenderer {
                     if frame.wireframe_mode {
                         if let Some(ref hdr_wf) = resources.hdr_wireframe_pipeline {
                             render_pass.set_pipeline(hdr_wf);
-                            for item in &frame.scene_items {
+                            for item in scene_items {
                                 if !item.visible {
                                     continue;
                                 }
@@ -455,7 +459,7 @@ impl ViewportRenderer {
                     }
                 } else {
                     // Per-object path.
-                    let eye = glam::Vec3::from(frame.eye_pos);
+                    let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
                     let dist_from_eye = |item: &&SceneRenderItem| -> f32 {
                         let pos =
                             glam::Vec3::new(item.model[3][0], item.model[3][1], item.model[3][2]);
@@ -464,7 +468,7 @@ impl ViewportRenderer {
 
                     let mut opaque: Vec<&SceneRenderItem> = Vec::new();
                     let mut transparent: Vec<&SceneRenderItem> = Vec::new();
-                    for item in &frame.scene_items {
+                    for item in scene_items {
                         if !item.visible
                             || resources
                                 .mesh_store
@@ -588,8 +592,7 @@ impl ViewportRenderer {
         let has_transparent = if self.use_instancing && !self.instanced_batches.is_empty() {
             self.instanced_batches.iter().any(|b| b.is_transparent)
         } else {
-            frame
-                .scene_items
+            scene_items
                 .iter()
                 .any(|i| i.visible && i.material.opacity < 1.0)
         };
@@ -687,7 +690,7 @@ impl ViewportRenderer {
                     }
                 } else if let Some(ref pipeline) = self.resources.oit_pipeline {
                     oit_pass.set_pipeline(pipeline);
-                    for item in &frame.scene_items {
+                    for item in scene_items {
                         if !item.visible || item.material.opacity >= 1.0 {
                             continue;
                         }
@@ -1089,7 +1092,7 @@ impl ViewportRenderer {
             .ensure_outline_target(device, width.max(1), height.max(1));
 
         // 4. Render the scene into the offscreen texture.
-        //    The caller must set `frame.viewport_size` to `[width as f32, height as f32]`
+        //    The caller must set `frame.camera.viewport_size` to `[width as f32, height as f32]`
         //    and `frame.camera_aspect` to `width as f32 / height as f32` for correct
         //    HDR target allocation and scissor rects.
         let cmd_buf = self.render(device, queue, &output_view, frame);
