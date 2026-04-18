@@ -878,7 +878,7 @@ pub struct ViewportGpuResources {
     // --- Overlay resources ---
     /// Overlay render pipeline (TriangleList with alpha blending — for semi-transparent BC quads).
     pub overlay_pipeline: wgpu::RenderPipeline,
-    /// Overlay wireframe pipeline (LineList — for domain wireframe, no alpha blending needed).
+    /// Overlay wireframe pipeline (LineList, no alpha blending needed).
     pub overlay_line_pipeline: wgpu::RenderPipeline,
     /// Full-screen analytical grid pipeline (no vertex buffer — positions hardcoded in shader).
     pub grid_pipeline: wgpu::RenderPipeline,
@@ -888,19 +888,6 @@ pub struct ViewportGpuResources {
     pub grid_bind_group: wgpu::BindGroup,
     /// Bind group layout for overlay uniforms (group 1: model + color uniform).
     pub overlay_bind_group_layout: wgpu::BindGroupLayout,
-
-    // --- Domain wireframe ---
-    /// Vertex buffer for domain wireframe corners (8 vertices, OverlayVertex).
-    /// None if domain has not been uploaded yet.
-    pub domain_vertex_buffer: Option<wgpu::Buffer>,
-    /// Index buffer for domain wireframe edges (24 indices, LineList pairs).
-    pub domain_index_buffer: Option<wgpu::Buffer>,
-    /// Number of indices in the domain wireframe index buffer.
-    pub domain_index_count: u32,
-    /// Uniform buffer for domain wireframe (identity model + white color).
-    pub domain_uniform_buf: wgpu::Buffer,
-    /// Bind group for domain uniform (group 1, references domain_uniform_buf).
-    pub domain_bind_group: wgpu::BindGroup,
 
     // --- BC overlay quads ---
     /// Transient BC overlay quads, rebuilt each frame in prepare().

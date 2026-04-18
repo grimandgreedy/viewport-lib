@@ -257,7 +257,7 @@ pub struct LightingSettings {
     pub ground_color: [f32; 3],
     /// Hemisphere ambient intensity. 0.0 = disabled. Default 0.0.
     pub hemisphere_intensity: f32,
-    /// Override the shadow frustum half-extent (world units). None = auto (20.0 or from domain_extents).
+    /// Override the shadow frustum half-extent (world units). None = auto (20.0).
     /// Tighter values improve shadow map texel density and reduce contact-shadow penumbra.
     pub shadow_extent_override: Option<f32>,
 
@@ -744,15 +744,13 @@ pub struct FrameData {
     pub gizmo_hovered: GizmoAxis,
     /// Orientation for gizmo space (identity for world, object orientation for local).
     pub gizmo_space_orientation: glam::Quat,
-    /// Domain extents for wireframe rendering. None if domain has zero extents.
-    pub domain_extents: Option<[f32; 3]>,
     /// Overlay quads to render this frame.
     pub overlay_quads: Vec<OverlayQuad>,
     /// Constraint guide lines to render this frame.
     pub constraint_overlays: Vec<ConstraintOverlay>,
     /// Whether to render the ground-plane grid.
     pub show_grid: bool,
-    /// Grid cell size in world units. Zero = auto-derive from domain_extents (or 1.0 if no domain).
+    /// Grid cell size in world units. Zero = camera-distance-based adaptive spacing.
     pub grid_cell_size: f32,
     /// Half-extent of the grid in world units (grid spans ±grid_half_extent).
     /// Zero = 1000 units (effectively infinite).
@@ -917,7 +915,6 @@ impl Default for FrameData {
             gizmo_mode: GizmoMode::Translate,
             gizmo_hovered: GizmoAxis::None,
             gizmo_space_orientation: glam::Quat::IDENTITY,
-            domain_extents: None,
             overlay_quads: Vec::new(),
             constraint_overlays: Vec::new(),
             show_grid: false,
@@ -1207,21 +1204,6 @@ macro_rules! emit_draw_calls {
                 wgpu::IndexFormat::Uint32,
             );
             render_pass.draw_indexed(0..resources.gizmo_index_count, 0, 0..1);
-        }
-
-        // Domain wireframe pass.
-        if let (Some(vbuf), Some(ibuf)) = (
-            &resources.domain_vertex_buffer,
-            &resources.domain_index_buffer,
-        ) {
-            if resources.domain_index_count > 0 {
-                render_pass.set_pipeline(&resources.overlay_line_pipeline);
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                render_pass.set_bind_group(1, &resources.domain_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, vbuf.slice(..));
-                render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..resources.domain_index_count, 0, 0..1);
-            }
         }
 
         // Overlay quad pass.

@@ -15,6 +15,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check tag matches Cargo.toml version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          test "$TAG_VERSION" = "$CARGO_VERSION"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -23,12 +29,6 @@ jobs:
 
       - name: Install system dependencies
         run: sudo apt-get update -q && sudo apt-get install -y libfontconfig1-dev
-
-      - name: Check tag matches Cargo.toml version
-        run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          test "$TAG_VERSION" = "$CARGO_VERSION"
 
       - name: Run tests
         run: cargo test --lib

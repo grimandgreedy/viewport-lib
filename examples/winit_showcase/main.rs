@@ -2228,7 +2228,6 @@ impl ApplicationHandler for App {
                         state.interact_gizmo.hovered_axis
                     };
                     fd.gizmo_space_orientation = gizmo_space_orient;
-                    fd.domain_extents = None;
                     fd.overlay_quads = vec![];
                     fd.show_grid = true;
                     fd.show_axes_indicator = true;

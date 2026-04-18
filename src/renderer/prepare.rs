@@ -28,10 +28,6 @@ impl ViewportRenderer {
         let (shadow_center, shadow_extent) =
             if let Some(extent) = frame.lighting.shadow_extent_override {
                 (glam::Vec3::ZERO, extent)
-            } else if let Some([nx, ny, nz]) = frame.domain_extents {
-                let center = glam::Vec3::new(nx / 2.0, ny / 2.0, nz / 2.0);
-                let diag = (nx * nx + ny * ny + nz * nz).sqrt();
-                (center, diag * 0.75)
             } else {
                 (glam::Vec3::ZERO, 20.0)
             };
@@ -844,24 +840,6 @@ impl ViewportRenderer {
                 frame.gizmo_hovered,
                 frame.gizmo_space_orientation,
             );
-        }
-
-        // Update domain wireframe.
-        if let Some([nx, ny, nz]) = frame.domain_extents {
-            resources.upload_domain_wireframe(device, nx, ny, nz);
-            let domain_uniform = OverlayUniform {
-                model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                color: [1.0, 1.0, 1.0, 1.0],
-            };
-            queue.write_buffer(
-                &resources.domain_uniform_buf,
-                0,
-                bytemuck::cast_slice(&[domain_uniform]),
-            );
-        } else {
-            resources.domain_vertex_buffer = None;
-            resources.domain_index_buffer = None;
-            resources.domain_index_count = 0;
         }
 
         // Upload grid uniform (full-screen analytical shader — no vertex buffers needed).

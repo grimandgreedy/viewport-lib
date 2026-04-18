@@ -50,67 +50,7 @@ impl ViewportGpuResources {
         queue.write_buffer(&self.gizmo_uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
     }
 
-    /// Upload domain wireframe mesh (8 corners, 12 edges as LineList — 24 indices).
-    ///
-    /// Creates or replaces the domain vertex/index buffers. Call when domain extents change.
-    /// The wireframe is drawn with the existing `wireframe_pipeline` (LineList topology).
-    pub fn upload_domain_wireframe(&mut self, device: &wgpu::Device, nx: f32, ny: f32, nz: f32) {
-        use bytemuck::cast_slice;
-        use wgpu;
-
-        // 8 corners of the box from (0,0,0) to (nx,ny,nz)
-        let corners: [[f32; 3]; 8] = [
-            [0.0, 0.0, 0.0],
-            [nx, 0.0, 0.0],
-            [nx, ny, 0.0],
-            [0.0, ny, 0.0],
-            [0.0, 0.0, nz],
-            [nx, 0.0, nz],
-            [nx, ny, nz],
-            [0.0, ny, nz],
-        ];
-        // 12 edges as LineList pairs (24 indices total)
-        let edge_indices: [u32; 24] = [
-            0, 1, 1, 2, 2, 3, 3, 0, // bottom face
-            4, 5, 5, 6, 6, 7, 7, 4, // top face
-            0, 4, 1, 5, 2, 6, 3, 7, // vertical edges
-        ];
-
-        let vertices: Vec<OverlayVertex> = corners
-            .iter()
-            .map(|p| OverlayVertex { position: *p })
-            .collect();
-
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("domain_wireframe_vbuf"),
-            size: (std::mem::size_of::<OverlayVertex>() * vertices.len()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        vertex_buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(cast_slice(&vertices));
-        vertex_buffer.unmap();
-
-        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("domain_wireframe_ibuf"),
-            size: (std::mem::size_of::<u32>() * edge_indices.len()) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        index_buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(cast_slice(&edge_indices));
-        index_buffer.unmap();
-
-        self.domain_vertex_buffer = Some(vertex_buffer);
-        self.domain_index_buffer = Some(index_buffer);
-        self.domain_index_count = edge_indices.len() as u32;
-    }
-
-    /// Create a quad mesh (2 triangles, 4 vertices) for a BC overlay on a given domain face.
+    /// Create a quad mesh (2 triangles, 4 vertices) for an overlay on a face.
     ///
     /// Create an overlay quad from pre-computed corner positions and color.
     ///

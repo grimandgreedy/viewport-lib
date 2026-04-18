@@ -1,4 +1,4 @@
-// Overlay shader for semi-transparent BC quads and domain wireframe.
+// Overlay shader for semi-transparent quads and line overlays.
 //
 // Group 0: Camera uniform (view-projection matrix).
 // Group 1: Overlay uniform (model matrix + RGBA color with alpha for transparency).

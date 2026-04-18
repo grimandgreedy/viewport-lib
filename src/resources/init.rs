@@ -886,9 +886,9 @@ impl ViewportGpuResources {
         });
 
         // ------------------------------------------------------------------
-        // Overlay line pipeline (LineList — for domain wireframe)
+        // Overlay line pipeline (LineList)
         // Uses the same overlay shader + bind group layout as the triangle overlay.
-        // No alpha blending needed; domain wireframe is fully opaque white.
+        // No alpha blending needed for line overlays.
         // depth_write_enabled: false — overlay lines don't corrupt depth buffer.
         // ------------------------------------------------------------------
         let overlay_line_pipeline =
@@ -1019,35 +1019,6 @@ impl ViewportGpuResources {
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: grid_uniform_buf.as_entire_binding(),
-            }],
-        });
-
-        // ------------------------------------------------------------------
-        // Domain wireframe uniform buffer and bind group
-        // Initial state: identity model matrix, white color, full alpha.
-        // ------------------------------------------------------------------
-        let domain_uniform_data = OverlayUniform {
-            model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            color: [1.0, 1.0, 1.0, 1.0],
-        };
-        let domain_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("domain_uniform_buf"),
-            size: std::mem::size_of::<OverlayUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        domain_uniform_buf
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(bytemuck::cast_slice(&[domain_uniform_data]));
-        domain_uniform_buf.unmap();
-
-        let domain_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("domain_bind_group"),
-            layout: &overlay_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: domain_uniform_buf.as_entire_binding(),
             }],
         });
 
@@ -1502,11 +1473,6 @@ impl ViewportGpuResources {
             grid_uniform_buf,
             grid_bind_group,
             overlay_bind_group_layout: overlay_bgl,
-            domain_vertex_buffer: None,
-            domain_index_buffer: None,
-            domain_index_count: 0,
-            domain_uniform_buf,
-            domain_bind_group,
             bc_quad_buffers: Vec::new(),
             constraint_line_buffers: Vec::new(),
             cap_buffers: Vec::new(),
