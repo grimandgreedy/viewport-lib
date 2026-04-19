@@ -111,6 +111,16 @@ impl OrbitCameraController {
         self.input.push_event(event);
     }
 
+    /// Resolve accumulated events into an [`ActionFrame`] without applying any
+    /// camera navigation.
+    ///
+    /// Use this when the caller needs to inspect actions but camera movement
+    /// should be suppressed — for example during gizmo manipulation or fly mode
+    /// where the camera is driven by other logic.
+    pub fn resolve(&self) -> ActionFrame {
+        self.input.resolve()
+    }
+
     /// Resolve accumulated events, apply camera navigation, and return the
     /// [`ActionFrame`] for this frame.
     ///
