@@ -101,6 +101,11 @@ pub(super) struct ManipulationSession {
     /// The per-frame delta passed to solvers is `(current − anchor) − cursor_last_total`.
     /// Reset to zero whenever `cursor_anchor` is updated.
     pub(super) cursor_last_total: glam::Vec2,
+    /// The cumulative distance-ratio scale factor applied on the previous frame.
+    ///
+    /// Used in scale mode to convert the cumulative factor (current_dist / anchor_dist)
+    /// into a per-frame incremental factor.  Reset to 1.0 whenever `cursor_anchor` is updated.
+    pub(super) last_scale_factor: f32,
 }
 
 impl ManipulationSession {

@@ -98,6 +98,7 @@ impl ManipulationController {
             if session.axis != axis_before || session.exclude_axis != exclude_before {
                 session.cursor_anchor = ctx.cursor_viewport;
                 session.cursor_last_total = glam::Vec2::ZERO;
+                session.last_scale_factor = 1.0;
                 return ManipResult::ConstraintChanged;
             }
 
@@ -174,14 +175,49 @@ impl ManipulationController {
                 }
 
                 ManipulationKind::Scale => {
-                    delta.scale = solvers::constrained_scale(
-                        pointer_delta,
-                        session.axis,
-                        session.exclude_axis,
-                        session.gizmo_center,
-                        view_proj,
-                        ctx.viewport_size,
+                    // Project the pivot into viewport-pixel space.
+                    let ndc = view_proj.project_point3(session.gizmo_center);
+                    let center_screen = glam::Vec2::new(
+                        (ndc.x + 1.0) * 0.5 * ctx.viewport_size.x,
+                        (1.0 - ndc.y) * 0.5 * ctx.viewport_size.y,
                     );
+
+                    // Cumulative scale factor = current distance / anchor distance.
+                    // Moving toward the centre shrinks; moving away (or passing through
+                    // and out the other side) grows.
+                    let cumulative = match (ctx.cursor_viewport, session.cursor_anchor) {
+                        (Some(cursor), Some(anchor)) => {
+                            let dist_anchor = (anchor - center_screen).length();
+                            let dist_now    = (cursor - center_screen).length();
+                            if dist_anchor > 2.0 {
+                                (dist_now / dist_anchor).max(0.001)
+                            } else {
+                                1.0
+                            }
+                        }
+                        _ => {
+                            // Fallback when cursor is unavailable: integrate pointer_delta.
+                            (session.last_scale_factor
+                                * (1.0 + pointer_delta.x * 4.0 / ctx.viewport_size.x.max(1.0)))
+                                .max(0.001)
+                        }
+                    };
+
+                    // Convert cumulative → per-frame incremental so the app can keep
+                    // multiplying each frame as before.
+                    let incr = (cumulative / session.last_scale_factor).max(0.001);
+                    session.last_scale_factor = cumulative;
+
+                    delta.scale = match (session.axis, session.exclude_axis) {
+                        (None, _)                          => glam::Vec3::splat(incr),
+                        (Some(GizmoAxis::X), false)        => glam::Vec3::new(incr, 1.0, 1.0),
+                        (Some(GizmoAxis::Y), false)        => glam::Vec3::new(1.0, incr, 1.0),
+                        (Some(_), false)                   => glam::Vec3::new(1.0, 1.0, incr),
+                        (Some(GizmoAxis::X), true)         => glam::Vec3::new(1.0, incr, incr),
+                        (Some(GizmoAxis::Y), true)         => glam::Vec3::new(incr, 1.0, incr),
+                        (Some(_), true)                    => glam::Vec3::new(incr, incr, 1.0),
+                    };
+
                     // Numeric scale override.
                     if let Some(ref numeric) = session.numeric {
                         delta.scale_override = numeric.parsed_values();
@@ -238,6 +274,7 @@ impl ManipulationController {
                         gizmo_center: center,
                         cursor_anchor: ctx.cursor_viewport,
                         cursor_last_total: glam::Vec2::ZERO,
+                        last_scale_factor: 1.0,
                     });
                     return ManipResult::None;
                 }
@@ -266,6 +303,7 @@ impl ManipulationController {
                     gizmo_center: center,
                     cursor_anchor: ctx.cursor_viewport,
                     cursor_last_total: glam::Vec2::ZERO,
+                    last_scale_factor: 1.0,
                 });
                 return ManipResult::None;
             }
@@ -305,6 +343,7 @@ impl ManipulationController {
             gizmo_center: center,
             cursor_anchor: None,
             cursor_last_total: glam::Vec2::ZERO,
+            last_scale_factor: 1.0,
         });
     }
 
@@ -390,6 +429,7 @@ mod tests {
             gizmo_center: glam::Vec3::ZERO,
             cursor_anchor: None,
             cursor_last_total: glam::Vec2::ZERO,
+            last_scale_factor: 1.0,
         };
 
         // X: constrained, not excluded.
