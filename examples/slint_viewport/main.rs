@@ -10,6 +10,7 @@ use std::rc::Rc;
 
 use slint::Model;
 use viewport_bridge::SceneRenderer;
+use viewport_lib::{ButtonState, MouseButton, Modifiers, ScrollUnits, ViewportEvent};
 
 slint::slint! {
     struct ObjectEntry {
@@ -31,14 +32,12 @@ slint::slint! {
         callback add-object();
         callback remove-object(int);
 
-        // Viewport input callbacks - Slint tracks mouse state and sends deltas
-        // to Rust, which applies them to the Camera.
-        //   orbit(dx, dy):  pixel delta for orbit rotation
-        //   pan(dx, dy):    pixel delta for camera panning
-        //   zoom(delta):    scroll amount for zoom
-        callback orbit(float, float);
-        callback pan(float, float);
-        callback zoom(float);
+        // Viewport input callbacks — raw input forwarded to OrbitCameraController.
+        callback pointer-pressed(float, float, int);   // x, y, button (1=left,2=right,3=middle)
+        callback pointer-released(int);                // button
+        callback pointer-moved(float, float);          // x, y (viewport-local)
+        callback scrolled(float);                      // scroll delta y (pixels)
+        callback modifiers-changed(bool);              // shift held
 
         HorizontalLayout {
             // --- Left panel: object list ---
@@ -114,12 +113,8 @@ slint::slint! {
 
             // --- Right side: viewport with input handling ---
             //
-            // The TouchArea wraps the viewport image and captures all mouse
-            // interactions. It tracks which button was pressed, computes pixel
-            // deltas on `moved`, and dispatches to the appropriate callback:
-            //   - Left-drag or Middle-drag (no shift): orbit
-            //   - Right-drag or Shift+Middle-drag: pan
-            //   - Scroll wheel: zoom
+            // The TouchArea forwards raw pointer/scroll events to Rust, which
+            // passes them to OrbitCameraController via push_event().
             Rectangle {
                 viewport-area := Image {
                     source: root.viewport-texture;
@@ -127,48 +122,34 @@ slint::slint! {
                     height: 100%;
                 }
 
-                // Track which button initiated the current drag.
-                // 0 = none, 1 = left, 2 = right, 3 = middle
-                property <int> active-button: 0;
-                property <bool> shift-held: false;
-                property <float> last-x: 0;
-                property <float> last-y: 0;
-
                 touch := TouchArea {
                     pointer-event(event) => {
                         if (event.kind == PointerEventKind.down) {
-                            parent.last-x = self.mouse-x / 1phx;
-                            parent.last-y = self.mouse-y / 1phx;
-                            parent.shift-held = event.modifiers.shift;
+                            root.modifiers-changed(event.modifiers.shift);
                             if (event.button == PointerEventButton.left) {
-                                parent.active-button = 1;
+                                root.pointer-pressed(self.mouse-x / 1phx, self.mouse-y / 1phx, 1);
                             } else if (event.button == PointerEventButton.right) {
-                                parent.active-button = 2;
+                                root.pointer-pressed(self.mouse-x / 1phx, self.mouse-y / 1phx, 2);
                             } else if (event.button == PointerEventButton.middle) {
-                                parent.active-button = 3;
+                                root.pointer-pressed(self.mouse-x / 1phx, self.mouse-y / 1phx, 3);
                             }
                         } else if (event.kind == PointerEventKind.up) {
-                            parent.active-button = 0;
+                            if (event.button == PointerEventButton.left) {
+                                root.pointer-released(1);
+                            } else if (event.button == PointerEventButton.right) {
+                                root.pointer-released(2);
+                            } else if (event.button == PointerEventButton.middle) {
+                                root.pointer-released(3);
+                            }
                         }
                     }
 
                     moved => {
-                        if (parent.active-button != 0) {
-                            if (parent.active-button == 2 ||
-                                (parent.active-button == 3 && parent.shift-held)) {
-                                root.pan(self.mouse-x / 1phx - parent.last-x,
-                                         self.mouse-y / 1phx - parent.last-y);
-                            } else {
-                                root.orbit(self.mouse-x / 1phx - parent.last-x,
-                                           self.mouse-y / 1phx - parent.last-y);
-                            }
-                            parent.last-x = self.mouse-x / 1phx;
-                            parent.last-y = self.mouse-y / 1phx;
-                        }
+                        root.pointer-moved(self.mouse-x / 1phx, self.mouse-y / 1phx);
                     }
 
                     scroll-event(event) => {
-                        root.zoom(event.delta-y / 1phx);
+                        root.scrolled(event.delta-y / 1phx);
                         return accept;
                     }
                 }
@@ -176,10 +157,6 @@ slint::slint! {
         }
     }
 }
-
-/// Camera control constants shared with the other viewport examples.
-const ORBIT_SENSITIVITY: f32 = 0.005;
-const ZOOM_SENSITIVITY: f32 = 0.001;
 
 fn main() {
     let app = App::new().unwrap();
@@ -237,34 +214,61 @@ fn main() {
         });
     }
 
-    // --- Viewport input callbacks ---
-    //
-    // These receive pixel deltas from the Slint TouchArea and apply them
-    // to the Camera inside the SceneRenderer. This is the Slint-specific
-    // input adapter - each framework needs its own version of this
-    // translation, but the camera math is identical.
+    // --- Viewport input callbacks — forward raw events to OrbitCameraController ---
     {
         let renderer = scene_renderer.clone();
-        app.on_orbit(move |dx, dy| {
-            let mut r = renderer.borrow_mut();
-            r.camera_mut().orbit(dx * ORBIT_SENSITIVITY, dy * ORBIT_SENSITIVITY);
+        app.on_pointer_pressed(move |x, y, btn| {
+            let button = match btn {
+                1 => MouseButton::Left,
+                2 => MouseButton::Right,
+                _ => MouseButton::Middle,
+            };
+            renderer.borrow_mut().push_event(ViewportEvent::PointerMoved {
+                position: glam::vec2(x, y),
+            });
+            renderer.borrow_mut().push_event(ViewportEvent::MouseButton {
+                button,
+                state: ButtonState::Pressed,
+            });
         });
     }
     {
         let renderer = scene_renderer.clone();
-        let app_weak = app.as_weak();
-        app.on_pan(move |dx, dy| {
-            let app = app_weak.unwrap();
-            let viewport_h = app.get_requested_texture_height().max(1) as f32;
-            let mut r = renderer.borrow_mut();
-            r.camera_mut().pan_pixels(glam::vec2(dx, dy), viewport_h);
+        app.on_pointer_released(move |btn| {
+            let button = match btn {
+                1 => MouseButton::Left,
+                2 => MouseButton::Right,
+                _ => MouseButton::Middle,
+            };
+            renderer.borrow_mut().push_event(ViewportEvent::MouseButton {
+                button,
+                state: ButtonState::Released,
+            });
         });
     }
     {
         let renderer = scene_renderer.clone();
-        app.on_zoom(move |delta| {
-            let mut r = renderer.borrow_mut();
-            r.camera_mut().zoom_by_factor(1.0 - delta * ZOOM_SENSITIVITY);
+        app.on_pointer_moved(move |x, y| {
+            renderer.borrow_mut().push_event(ViewportEvent::PointerMoved {
+                position: glam::vec2(x, y),
+            });
+        });
+    }
+    {
+        let renderer = scene_renderer.clone();
+        app.on_scrolled(move |dy| {
+            renderer.borrow_mut().push_event(ViewportEvent::Wheel {
+                delta: glam::vec2(0.0, dy),
+                units: ScrollUnits::Pixels,
+            });
+        });
+    }
+    {
+        let renderer = scene_renderer.clone();
+        app.on_modifiers_changed(move |shift| {
+            renderer.borrow_mut().push_event(ViewportEvent::ModifiersChanged(
+                if shift { Modifiers::SHIFT } else { Modifiers::NONE },
+            ));
         });
     }
 

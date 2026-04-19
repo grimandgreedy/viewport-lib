@@ -7,20 +7,14 @@ use std::collections::HashMap;
 
 use iced::event::Event;
 use iced::widget::shader;
-use iced::{Element, Fill, Point, Rectangle, mouse};
+use iced::{Element, Fill, Rectangle, mouse};
 use viewport_lib::{
-    Camera, CameraFrame, FrameData, LightingSettings, RenderCamera, SceneFrame,
-    SceneRenderItem, ViewportRenderer, primitives,
+    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, Modifiers, MouseButton,
+    OrbitCameraController, RenderCamera, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext,
+    ViewportEvent, ViewportRenderer, primitives,
 };
 
 use crate::Message;
-
-// ---------------------------------------------------------------------------
-// Camera control constants shared with the other viewport examples.
-// ---------------------------------------------------------------------------
-
-const ORBIT_SENSITIVITY: f32 = 0.005;
-const ZOOM_SENSITIVITY: f32 = 0.001;
 
 // ---------------------------------------------------------------------------
 // Snapshot types (passed from App::view each frame)
@@ -41,20 +35,13 @@ pub struct ObjSnapshot {
 // ViewportState - persists across frames, tracks mouse + camera
 // ---------------------------------------------------------------------------
 
-/// Iced shader widget state. Tracks mouse button/position state and owns the
-/// camera so that input events in `update()` directly drive orbit/pan/zoom.
+/// Iced shader widget state. Owns the camera and controller so that input
+/// events in `update()` are forwarded to `OrbitCameraController` via `push_event`.
 pub struct ViewportState {
     pub camera: Camera,
-    /// Whether the left mouse button is currently pressed.
-    left_pressed: bool,
-    /// Whether the middle mouse button is currently pressed.
-    middle_pressed: bool,
-    /// Whether the right mouse button is currently pressed.
-    right_pressed: bool,
-    /// Whether shift is held (used to switch middle-drag from orbit to pan).
-    shift_held: bool,
-    /// Last known cursor position (for computing deltas on drag).
-    last_pos: Point,
+    controller: OrbitCameraController,
+    /// Track dragging state for cursor interaction display.
+    any_pressed: bool,
 }
 
 impl Default for ViewportState {
@@ -66,11 +53,8 @@ impl Default for ViewportState {
                 orientation: glam::Quat::from_rotation_y(0.6) * glam::Quat::from_rotation_x(-0.4),
                 ..Camera::default()
             },
-            left_pressed: false,
-            middle_pressed: false,
-            right_pressed: false,
-            shift_held: false,
-            last_pos: Point::ORIGIN,
+            controller: OrbitCameraController::viewport_primitives(),
+            any_pressed: false,
         }
     }
 }
@@ -297,19 +281,14 @@ impl shader::Program<Message> for SceneSnapshot {
     type State = ViewportState;
     type Primitive = ViewportPrimitive;
 
-    /// Translate Iced events into camera updates.
+    /// Translate Iced events into `ViewportEvent`s, forward them to
+    /// `OrbitCameraController`, and apply the result to the camera immediately.
     ///
-    /// This is the Iced-specific input adapter. Each UI framework needs its own
-    /// version of this translation layer:
-    ///   - Track which mouse buttons are pressed (for drag detection)
-    ///   - Compute cursor deltas between frames
-    ///   - Map button+modifier combinations to orbit/pan/zoom actions
-    ///   - Apply the resulting deltas to the Camera
-    ///
-    /// Controls:
-    ///   - Left-drag or Middle-drag:  Orbit (rotate camera around center)
-    ///   - Right-drag or Shift+Middle-drag:  Pan (translate camera center)
-    ///   - Scroll wheel:  Zoom (adjust camera distance)
+    /// Because iced delivers one event per `update()` call (no explicit frame
+    /// boundary), we call `begin_frame` + `apply_to_camera` around each event.
+    /// `begin_frame` only resets the per-frame drag/wheel accumulators — it
+    /// preserves `pointer_pos` and `button_held` — so delta computation remains
+    /// correct across consecutive `PointerMoved` events.
     fn update(
         &self,
         state: &mut Self::State,
@@ -317,72 +296,95 @@ impl shader::Program<Message> for SceneSnapshot {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<iced::widget::shader::Action<Message>> {
-        // Only handle events when cursor is over the viewport.
-        let pos = cursor.position_in(bounds)?;
+        let vp_ctx = ViewportContext {
+            hovered: true,
+            focused: true,
+            viewport_size: glam::vec2(bounds.width, bounds.height).into(),
+        };
 
         match event {
-            // --- Track modifier keys ---
             Event::Keyboard(iced::keyboard::Event::ModifiersChanged(mods)) => {
-                state.shift_held = mods.shift();
+                state.controller.begin_frame(vp_ctx);
+                state.controller.push_event(ViewportEvent::ModifiersChanged(
+                    if mods.shift() { Modifiers::SHIFT } else { Modifiers::NONE },
+                ));
+                state.controller.apply_to_camera(&mut state.camera);
                 None
             }
 
-            // --- Mouse button press: record position for delta tracking ---
             Event::Mouse(mouse::Event::ButtonPressed(button)) => {
-                match button {
-                    mouse::Button::Left => state.left_pressed = true,
-                    mouse::Button::Middle => state.middle_pressed = true,
-                    mouse::Button::Right => state.right_pressed = true,
+                let pos = cursor.position_in(bounds)?;
+                let vp_btn = match button {
+                    mouse::Button::Left => MouseButton::Left,
+                    mouse::Button::Right => MouseButton::Right,
+                    mouse::Button::Middle => MouseButton::Middle,
                     _ => return None,
-                }
-                state.last_pos = pos;
+                };
+                state.controller.begin_frame(vp_ctx);
+                state.controller.push_event(ViewportEvent::PointerMoved {
+                    position: glam::vec2(pos.x, pos.y),
+                });
+                state.controller.push_event(ViewportEvent::MouseButton {
+                    button: vp_btn,
+                    state: ButtonState::Pressed,
+                });
+                state.controller.apply_to_camera(&mut state.camera);
+                state.any_pressed = true;
                 Some(iced::widget::shader::Action::request_redraw().and_capture())
             }
 
-            // --- Mouse button release ---
             Event::Mouse(mouse::Event::ButtonReleased(button)) => {
-                match button {
-                    mouse::Button::Left => state.left_pressed = false,
-                    mouse::Button::Middle => state.middle_pressed = false,
-                    mouse::Button::Right => state.right_pressed = false,
+                let vp_btn = match button {
+                    mouse::Button::Left => MouseButton::Left,
+                    mouse::Button::Right => MouseButton::Right,
+                    mouse::Button::Middle => MouseButton::Middle,
                     _ => return None,
-                }
+                };
+                state.controller.begin_frame(vp_ctx);
+                state.controller.push_event(ViewportEvent::MouseButton {
+                    button: vp_btn,
+                    state: ButtonState::Released,
+                });
+                state.controller.apply_to_camera(&mut state.camera);
+                state.any_pressed = false;
                 None
             }
 
-            // --- Mouse move: apply orbit or pan based on which buttons are held ---
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                let dx = pos.x - state.last_pos.x;
-                let dy = pos.y - state.last_pos.y;
-                state.last_pos = pos;
-
-                let any_drag = state.left_pressed || state.middle_pressed || state.right_pressed;
-                if !any_drag || (dx.abs() < 0.001 && dy.abs() < 0.001) {
-                    return None;
-                }
-
-                // Pan: right-drag, or shift+middle-drag
-                let is_pan = state.right_pressed || (state.middle_pressed && state.shift_held);
-
-                if is_pan {
-                    let cam = &mut state.camera;
-                    cam.pan_pixels(glam::vec2(dx, dy), bounds.height);
+                let pos = cursor.position_in(bounds)?;
+                state.controller.begin_frame(vp_ctx);
+                state.controller.push_event(ViewportEvent::PointerMoved {
+                    position: glam::vec2(pos.x, pos.y),
+                });
+                state.controller.apply_to_camera(&mut state.camera);
+                if state.any_pressed {
+                    Some(iced::widget::shader::Action::request_redraw().and_capture())
                 } else {
-                    // Orbit: left-drag or middle-drag (without shift)
-                    state.camera.orbit(dx * ORBIT_SENSITIVITY, dy * ORBIT_SENSITIVITY);
+                    None
                 }
-
-                Some(iced::widget::shader::Action::request_redraw().and_capture())
             }
 
-            // --- Scroll: zoom ---
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+                let _ = cursor.position_in(bounds)?;
                 let scroll_y = match delta {
                     mouse::ScrollDelta::Lines { y, .. } => *y * 28.0,
                     mouse::ScrollDelta::Pixels { y, .. } => *y,
                 };
-                state.camera.zoom_by_factor(1.0 - scroll_y * ZOOM_SENSITIVITY);
+                state.controller.begin_frame(vp_ctx);
+                state.controller.push_event(ViewportEvent::Wheel {
+                    delta: glam::vec2(0.0, scroll_y),
+                    units: ScrollUnits::Pixels,
+                });
+                state.controller.apply_to_camera(&mut state.camera);
                 Some(iced::widget::shader::Action::request_redraw().and_capture())
+            }
+
+            Event::Mouse(mouse::Event::CursorLeft) => {
+                state.controller.begin_frame(vp_ctx);
+                state.controller.push_event(ViewportEvent::PointerLeft);
+                state.controller.apply_to_camera(&mut state.camera);
+                state.any_pressed = false;
+                None
             }
 
             _ => None,
@@ -396,6 +398,7 @@ impl shader::Program<Message> for SceneSnapshot {
         bounds: Rectangle,
     ) -> Self::Primitive {
         // Snapshot the camera with the current aspect ratio.
+        // Camera is updated in update() via apply_to_camera.
         let mut cam = state.camera.clone();
         cam.set_aspect_ratio(bounds.width, bounds.height);
 
@@ -413,7 +416,7 @@ impl shader::Program<Message> for SceneSnapshot {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> mouse::Interaction {
-        if state.left_pressed || state.middle_pressed || state.right_pressed {
+        if state.any_pressed {
             mouse::Interaction::Grabbing
         } else if cursor.is_over(bounds) {
             mouse::Interaction::Grab
