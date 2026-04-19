@@ -21,8 +21,12 @@ pub enum BindingPreset {
     /// - Shift + Scroll → Pan (two-axis)
     ViewportPrimitives,
 
-    /// Full binding set: camera navigation from [`ViewportPrimitives`] plus all
-    /// keyboard shortcuts (normal mode, fly mode, manipulation mode, global).
+    /// Full binding set: camera navigation plus all keyboard shortcuts (normal
+    /// mode, fly mode, manipulation mode, global).
+    ///
+    /// Differs from [`ViewportPrimitives`]: left drag is **not** bound to orbit
+    /// because it is reserved for box selection and gizmo dragging. Orbit is
+    /// available via Ctrl+Scroll.
     ///
     /// Use this preset to replace [`crate::InputSystem`] entirely.
     ViewportAll,
@@ -103,6 +107,12 @@ pub fn viewport_all_bindings() -> Vec<ViewportBinding> {
     let any = ModifiersMatch::Any;
 
     let mut bindings = viewport_primitives_bindings();
+
+    // Left drag is reserved for box selection and gizmo interaction; orbit is
+    // available via Ctrl+Scroll (included via viewport_primitives_bindings).
+    bindings.retain(|b| {
+        !matches!(b.gesture, ViewportGesture::Drag { button: MouseButton::Left, .. })
+    });
 
     // -- Normal mode: object manipulation shortcuts --
     bindings.push(ViewportBinding::new(
