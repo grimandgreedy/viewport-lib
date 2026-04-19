@@ -112,7 +112,7 @@ pub fn plane(width: f32, depth: f32) -> MeshData {
         [-hw, 0.0,  hd],
     ];
     let normals = vec![[0.0, 1.0, 0.0]; 4];
-    let indices = vec![0, 1, 2, 0, 2, 3];
+    let indices = vec![0, 2, 1, 0, 3, 2];
 
     MeshData { positions, normals, indices, ..MeshData::default() }
 }
@@ -146,7 +146,7 @@ pub fn cylinder(radius: f32, height: f32, sectors: u32) -> MeshData {
         let next = (j + 1) % sectors;
         let t = j + sectors;
         let t_next = next + sectors;
-        indices.extend_from_slice(&[b, next, t_next, b, t_next, t]);
+        indices.extend_from_slice(&[b, t_next, next, b, t, t_next]);
     }
 
     // Cap centers
@@ -176,10 +176,10 @@ pub fn cylinder(radius: f32, height: f32, sectors: u32) -> MeshData {
     // Cap faces
     for j in 0..sectors as u32 {
         let next = (j + 1) % sectors as u32;
-        // Bottom (winding reversed so normal faces down)
-        indices.extend_from_slice(&[bottom_center, bottom_rim_start + next, bottom_rim_start + j]);
+        // Bottom
+        indices.extend_from_slice(&[bottom_center, bottom_rim_start + j, bottom_rim_start + next]);
         // Top
-        indices.extend_from_slice(&[top_center, top_rim_start + j, top_rim_start + next]);
+        indices.extend_from_slice(&[top_center, top_rim_start + next, top_rim_start + j]);
     }
 
     MeshData { positions, normals, indices, ..MeshData::default() }
@@ -265,7 +265,7 @@ pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
         positions.push([radius * a1.cos(), -half_h, radius * a1.sin()]);
         normals.push([nr * a1.cos(), ny, nr * a1.sin()]);
 
-        indices.extend_from_slice(&[base, base + 1, base + 2]);
+        indices.extend_from_slice(&[base, base + 2, base + 1]);
     }
 
     // Bottom cap
@@ -281,7 +281,7 @@ pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
     }
     for j in 0..sectors as u32 {
         let next = (j + 1) % sectors as u32;
-        indices.extend_from_slice(&[bottom_center, rim_start + next, rim_start + j]);
+        indices.extend_from_slice(&[bottom_center, rim_start + j, rim_start + next]);
     }
 
     MeshData { positions, normals, indices, ..MeshData::default() }
@@ -338,9 +338,9 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
         let k2 = k1 + cols;
         for j in 0..sectors {
             if i != 0 {
-                indices.extend_from_slice(&[k1 + j, k2 + j, k1 + j + 1]);
+                indices.extend_from_slice(&[k1 + j, k1 + j + 1, k2 + j]);
             }
-            indices.extend_from_slice(&[k1 + j + 1, k2 + j, k2 + j + 1]);
+            indices.extend_from_slice(&[k1 + j + 1, k2 + j + 1, k2 + j]);
         }
     }
 
@@ -350,8 +350,8 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
         let k2 = bottom_off * cols;
         for j in 0..sectors {
             indices.extend_from_slice(&[
-                k1 + j, k2 + j, k1 + j + 1,
-                k1 + j + 1, k2 + j, k2 + j + 1,
+                k1 + j, k1 + j + 1, k2 + j,
+                k1 + j + 1, k2 + j + 1, k2 + j,
             ]);
         }
     }
@@ -361,9 +361,9 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
         let k1 = (bottom_off + i) * cols;
         let k2 = k1 + cols;
         for j in 0..sectors {
-            indices.extend_from_slice(&[k1 + j, k2 + j, k1 + j + 1]);
+            indices.extend_from_slice(&[k1 + j, k1 + j + 1, k2 + j]);
             if i != hemi_stacks - 1 {
-                indices.extend_from_slice(&[k1 + j + 1, k2 + j, k2 + j + 1]);
+                indices.extend_from_slice(&[k1 + j + 1, k2 + j + 1, k2 + j]);
             }
         }
     }
@@ -412,8 +412,8 @@ pub fn torus(major_radius: f32, minor_radius: f32, sectors: u32, stacks: u32) ->
         let k2 = k1 + cols;
         for j in 0..sectors {
             indices.extend_from_slice(&[
-                k1 + j, k2 + j, k1 + j + 1,
-                k1 + j + 1, k2 + j, k2 + j + 1,
+                k1 + j, k1 + j + 1, k2 + j,
+                k1 + j + 1, k2 + j + 1, k2 + j,
             ]);
         }
     }
@@ -519,7 +519,7 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
         let next = (j + 1) % sectors;
         let t = j + sectors;
         let t_next = next + sectors;
-        indices.extend_from_slice(&[j, next, t_next, j, t_next, t]);
+        indices.extend_from_slice(&[j, t_next, next, j, t, t_next]);
     }
 
     // Shaft bottom cap
@@ -534,7 +534,7 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
     }
     for j in 0..sectors as u32 {
         let next = (j + 1) % sectors as u32;
-        indices.extend_from_slice(&[sb_center, sb_rim + next, sb_rim + j]);
+        indices.extend_from_slice(&[sb_center, sb_rim + j, sb_rim + next]);
     }
 
     // Cone head side (one duplicated tip per sector)
@@ -556,7 +556,7 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
         positions.push([head_radius * a1.cos(), head_bot, head_radius * a1.sin()]);
         normals.push([cnr * a1.cos(), cny, cnr * a1.sin()]);
 
-        indices.extend_from_slice(&[base, base + 1, base + 2]);
+        indices.extend_from_slice(&[base, base + 2, base + 1]);
     }
 
     // Cone base cap
@@ -571,7 +571,7 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
     }
     for j in 0..sectors as u32 {
         let next = (j + 1) % sectors as u32;
-        indices.extend_from_slice(&[hb_center, hb_rim + next, hb_rim + j]);
+        indices.extend_from_slice(&[hb_center, hb_rim + j, hb_rim + next]);
     }
 
     MeshData { positions, normals, indices, ..MeshData::default() }
@@ -596,7 +596,7 @@ pub fn disk(radius: f32, sectors: u32) -> MeshData {
 
     for j in 0..sectors as u32 {
         let next = (j + 1) % sectors as u32;
-        indices.extend_from_slice(&[0, j + 1, next + 1]);
+        indices.extend_from_slice(&[0, next + 1, j + 1]);
     }
 
     MeshData { positions, normals, indices, ..MeshData::default() }
@@ -691,9 +691,9 @@ pub fn hemisphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
         let k2 = k1 + cols;
         for j in 0..sectors {
             if i != 0 {
-                indices.extend_from_slice(&[k1 + j, k2 + j, k1 + j + 1]);
+                indices.extend_from_slice(&[k1 + j, k1 + j + 1, k2 + j]);
             }
-            indices.extend_from_slice(&[k1 + j + 1, k2 + j, k2 + j + 1]);
+            indices.extend_from_slice(&[k1 + j + 1, k2 + j + 1, k2 + j]);
         }
     }
 
@@ -709,7 +709,7 @@ pub fn hemisphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
     }
     for j in 0..sectors as u32 {
         let next = (j + 1) % sectors as u32;
-        indices.extend_from_slice(&[center, rim_start + next, rim_start + j]);
+        indices.extend_from_slice(&[center, rim_start + j, rim_start + next]);
     }
 
     MeshData { positions, normals, indices, ..MeshData::default() }
@@ -742,7 +742,7 @@ pub fn ring(inner_radius: f32, outer_radius: f32, sectors: u32) -> MeshData {
         let o0 = i0 + 1;
         let i1 = i0 + 2;
         let o1 = i0 + 3;
-        indices.extend_from_slice(&[i0, o0, i1, i1, o0, o1]);
+        indices.extend_from_slice(&[i0, i1, o0, i1, o1, o0]);
     }
 
     MeshData { positions, normals, indices, ..MeshData::default() }
@@ -792,10 +792,10 @@ pub fn ellipsoid(rx: f32, ry: f32, rz: f32, sectors: u32, stacks: u32) -> MeshDa
         let k2 = k1 + sectors + 1;
         for j in 0..sectors {
             if i != 0 {
-                indices.extend_from_slice(&[k1 + j, k2 + j, k1 + j + 1]);
+                indices.extend_from_slice(&[k1 + j, k1 + j + 1, k2 + j]);
             }
             if i != stacks - 1 {
-                indices.extend_from_slice(&[k1 + j + 1, k2 + j, k2 + j + 1]);
+                indices.extend_from_slice(&[k1 + j + 1, k2 + j + 1, k2 + j]);
             }
         }
     }
@@ -864,8 +864,8 @@ pub fn spring(radius: f32, coil_radius: f32, turns: f32, sectors: u32) -> MeshDa
         let k2 = k1 + cols;
         for sec in 0..sectors {
             indices.extend_from_slice(&[
-                k1 + sec, k2 + sec, k1 + sec + 1,
-                k1 + sec + 1, k2 + sec, k2 + sec + 1,
+                k1 + sec, k1 + sec + 1, k2 + sec,
+                k1 + sec + 1, k2 + sec + 1, k2 + sec,
             ]);
         }
     }
@@ -908,4 +908,63 @@ pub fn grid_plane(width: f32, depth: f32, cols: u32, rows: u32) -> MeshData {
     }
 
     MeshData { positions, normals, indices, ..MeshData::default() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_triangle_winding_matches_normals(mesh: &MeshData) {
+        for tri in mesh.indices.chunks_exact(3) {
+            let ia = tri[0] as usize;
+            let ib = tri[1] as usize;
+            let ic = tri[2] as usize;
+
+            let a = glam::Vec3::from_array(mesh.positions[ia]);
+            let b = glam::Vec3::from_array(mesh.positions[ib]);
+            let c = glam::Vec3::from_array(mesh.positions[ic]);
+            let face_normal = (b - a).cross(c - a);
+            if face_normal.length_squared() <= 1e-12 {
+                continue;
+            }
+
+            let avg_vertex_normal =
+                glam::Vec3::from_array(mesh.normals[ia])
+                + glam::Vec3::from_array(mesh.normals[ib])
+                + glam::Vec3::from_array(mesh.normals[ic]);
+
+            assert!(
+                face_normal.dot(avg_vertex_normal) > 0.0,
+                "triangle winding does not match vertex normals: {tri:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn generated_primitives_have_consistent_outward_winding() {
+        let meshes = [
+            ("cube", cube(1.0)),
+            ("sphere", sphere(1.0, 24, 12)),
+            ("plane", plane(1.0, 1.0)),
+            ("cylinder", cylinder(1.0, 2.0, 24)),
+            ("cuboid", cuboid(1.0, 1.5, 2.0)),
+            ("cone", cone(1.0, 2.0, 24)),
+            ("capsule", capsule(1.0, 3.0, 24, 12)),
+            ("torus", torus(2.0, 0.5, 24, 24)),
+            ("icosphere", icosphere(1.0, 2)),
+            ("arrow", arrow(0.2, 0.4, 0.3, 24)),
+            ("disk", disk(1.0, 24)),
+            ("frustum", frustum(std::f32::consts::FRAC_PI_4, 1.5, 0.1, 2.0)),
+            ("hemisphere", hemisphere(1.0, 24, 12)),
+            ("ring", ring(0.5, 1.0, 24)),
+            ("ellipsoid", ellipsoid(1.0, 0.75, 1.25, 24, 12)),
+            ("spring", spring(2.0, 0.25, 3.0, 16)),
+            ("grid_plane", grid_plane(1.0, 1.0, 4, 4)),
+        ];
+
+        for (name, mesh) in &meshes {
+            eprintln!("checking {name}");
+            assert_triangle_winding_matches_normals(mesh);
+        }
+    }
 }
