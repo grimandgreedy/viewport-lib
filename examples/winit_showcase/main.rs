@@ -2129,7 +2129,7 @@ impl ApplicationHandler for App {
                 };
 
                 let clear_color =
-                    bg_color.unwrap_or([65.0 / 255.0, 65.0 / 255.0, 65.0 / 255.0, 1.0]);
+                    bg_color.unwrap_or([10.0 / 255.0, 10.0 / 255.0, 10.0 / 255.0, 1.0]);
 
                 // Compute gizmo model matrix for Interaction mode.
                 let (gizmo_model, gizmo_mode, gizmo_space_orient) =
