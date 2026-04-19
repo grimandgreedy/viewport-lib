@@ -7,8 +7,8 @@ mod viewport_callback;
 
 use eframe::egui;
 use viewport_lib::{
-    Action, ActionState, CameraFrame, FrameData, FrameInput, InputSystem, KeyCode,
-    LightKind, LightSource, LightingSettings, Modifiers, MouseButton, SceneFrame,
+    ButtonState, CameraFrame, FrameData, LightKind, LightSource, LightingSettings,
+    OrbitCameraController, SceneFrame, ScrollUnits, ViewportContext, ViewportEvent,
     ViewportRenderer, primitives,
 };
 
@@ -64,7 +64,7 @@ struct App {
     objects: Vec<SceneObj>,
     next_id: u64,
     camera: viewport_lib::Camera,
-    input: InputSystem,
+    controller: OrbitCameraController,
 }
 
 #[derive(Clone)]
@@ -86,17 +86,10 @@ impl Default for App {
                 orientation: glam::Quat::from_rotation_y(0.6) * glam::Quat::from_rotation_x(-0.4),
                 ..viewport_lib::Camera::default()
             },
-            input: InputSystem::new(),
+            controller: OrbitCameraController::viewport_primitives(),
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Camera control constants shared with the other viewport examples.
-// ---------------------------------------------------------------------------
-
-const ORBIT_SENSITIVITY: f32 = 0.005;
-const ZOOM_SENSITIVITY: f32 = 0.001;
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -142,33 +135,62 @@ impl eframe::App for App {
             let available = ui.available_size();
             let (rect, response) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
 
-            // Translate egui input into a framework-agnostic FrameInput.
-            let frame_input = build_frame_input(ui, &response);
+            // Begin frame for input controller.
+            self.controller.begin_frame(ViewportContext {
+                hovered: response.hovered(),
+                focused: response.has_focus(),
+                viewport_size: [rect.width(), rect.height()],
+            });
 
-            // --- Camera: Orbit ---
-            if let ActionState::Active { delta } = self.input.query(Action::Orbit, &frame_input) {
-                self.camera.orbit(delta.x * ORBIT_SENSITIVITY, delta.y * ORBIT_SENSITIVITY);
-            }
-            // Ctrl+scroll orbit (2-axis)
-            let cd = frame_input.ctrl_scroll_orbit_delta;
-            if cd != glam::Vec2::ZERO {
-                self.camera.orbit(cd.x * ORBIT_SENSITIVITY, cd.y * ORBIT_SENSITIVITY);
-            }
+            // Translate egui events to ViewportEvents.
+            ui.input(|i| {
+                // Modifier state
+                let mods = viewport_lib::Modifiers {
+                    alt: i.modifiers.alt,
+                    shift: i.modifiers.shift,
+                    ctrl: i.modifiers.command,
+                };
+                self.controller.push_event(ViewportEvent::ModifiersChanged(mods));
 
-            // --- Camera: Pan ---
-            if let ActionState::Active { delta } = self.input.query(Action::Pan, &frame_input) {
-                self.camera.pan_pixels(delta, rect.height());
-            }
-            // Shift+scroll pan (2-axis)
-            let sp = frame_input.shift_scroll_pan_delta;
-            if sp != glam::Vec2::ZERO {
-                self.camera.pan_pixels(sp, rect.height());
-            }
+                // Pointer position (viewport-local coordinates)
+                if let Some(pos) = i.pointer.interact_pos() {
+                    let local = glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top());
+                    self.controller.push_event(ViewportEvent::PointerMoved { position: local });
+                }
 
-            // --- Camera: Zoom ---
-            if let ActionState::Active { delta } = self.input.query(Action::Zoom, &frame_input) {
-                self.camera.zoom_by_factor(1.0 - delta.y * ZOOM_SENSITIVITY);
-            }
+                // Mouse buttons and wheel events
+                for event in &i.events {
+                    match event {
+                        egui::Event::PointerButton { button, pressed, .. } => {
+                            let vp_button = match button {
+                                egui::PointerButton::Primary => viewport_lib::MouseButton::Left,
+                                egui::PointerButton::Secondary => viewport_lib::MouseButton::Right,
+                                egui::PointerButton::Middle => viewport_lib::MouseButton::Middle,
+                                _ => continue,
+                            };
+                            let state = if *pressed {
+                                ButtonState::Pressed
+                            } else {
+                                ButtonState::Released
+                            };
+                            self.controller.push_event(ViewportEvent::MouseButton {
+                                button: vp_button,
+                                state,
+                            });
+                        }
+                        egui::Event::MouseWheel { delta, .. } => {
+                            self.controller.push_event(ViewportEvent::Wheel {
+                                delta: glam::Vec2::new(delta.x, delta.y),
+                                units: ScrollUnits::Lines,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            });
+
+            // Apply to camera.
+            self.controller.apply_to_camera(&mut self.camera);
 
             // Update camera aspect ratio.
             self.camera.set_aspect_ratio(rect.width(), rect.height());
@@ -233,198 +255,5 @@ impl eframe::App for App {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
             }
         });
-    }
-}
-
-// ---------------------------------------------------------------------------
-// egui -> FrameInput adapter
-// ---------------------------------------------------------------------------
-
-fn egui_key_to_keycode(key: egui::Key) -> Option<KeyCode> {
-    match key {
-        egui::Key::A => Some(KeyCode::A),
-        egui::Key::B => Some(KeyCode::B),
-        egui::Key::C => Some(KeyCode::C),
-        egui::Key::D => Some(KeyCode::D),
-        egui::Key::E => Some(KeyCode::E),
-        egui::Key::F => Some(KeyCode::F),
-        egui::Key::G => Some(KeyCode::G),
-        egui::Key::H => Some(KeyCode::H),
-        egui::Key::I => Some(KeyCode::I),
-        egui::Key::J => Some(KeyCode::J),
-        egui::Key::K => Some(KeyCode::K),
-        egui::Key::L => Some(KeyCode::L),
-        egui::Key::M => Some(KeyCode::M),
-        egui::Key::N => Some(KeyCode::N),
-        egui::Key::O => Some(KeyCode::O),
-        egui::Key::P => Some(KeyCode::P),
-        egui::Key::Q => Some(KeyCode::Q),
-        egui::Key::R => Some(KeyCode::R),
-        egui::Key::S => Some(KeyCode::S),
-        egui::Key::T => Some(KeyCode::T),
-        egui::Key::U => Some(KeyCode::U),
-        egui::Key::V => Some(KeyCode::V),
-        egui::Key::W => Some(KeyCode::W),
-        egui::Key::X => Some(KeyCode::X),
-        egui::Key::Y => Some(KeyCode::Y),
-        egui::Key::Z => Some(KeyCode::Z),
-        egui::Key::Tab => Some(KeyCode::Tab),
-        egui::Key::Enter => Some(KeyCode::Enter),
-        egui::Key::Escape => Some(KeyCode::Escape),
-        egui::Key::Backtick => Some(KeyCode::Backtick),
-        _ => None,
-    }
-}
-
-fn build_frame_input(ui: &egui::Ui, response: &egui::Response) -> FrameInput {
-    use std::collections::HashSet;
-
-    let mut keys_pressed = HashSet::new();
-    let mut keys_held = HashSet::new();
-
-    ui.input(|i| {
-        for event in &i.events {
-            if let egui::Event::Key {
-                key,
-                pressed,
-                repeat,
-                ..
-            } = event
-            {
-                if let Some(kc) = egui_key_to_keycode(*key) {
-                    if *pressed && !*repeat {
-                        keys_pressed.insert(kc);
-                    }
-                    if *pressed {
-                        keys_held.insert(kc);
-                    }
-                }
-            }
-        }
-        for key in [
-            egui::Key::A,
-            egui::Key::B,
-            egui::Key::C,
-            egui::Key::D,
-            egui::Key::E,
-            egui::Key::F,
-            egui::Key::G,
-            egui::Key::H,
-            egui::Key::I,
-            egui::Key::J,
-            egui::Key::K,
-            egui::Key::L,
-            egui::Key::M,
-            egui::Key::N,
-            egui::Key::O,
-            egui::Key::P,
-            egui::Key::Q,
-            egui::Key::R,
-            egui::Key::S,
-            egui::Key::T,
-            egui::Key::U,
-            egui::Key::V,
-            egui::Key::W,
-            egui::Key::X,
-            egui::Key::Y,
-            egui::Key::Z,
-            egui::Key::Tab,
-            egui::Key::Enter,
-            egui::Key::Escape,
-            egui::Key::Backtick,
-        ] {
-            if i.key_down(key) {
-                if let Some(kc) = egui_key_to_keycode(key) {
-                    keys_held.insert(kc);
-                }
-            }
-        }
-    });
-
-    let modifiers = ui.input(|i| Modifiers {
-        alt: i.modifiers.alt,
-        shift: i.modifiers.shift,
-        ctrl: i.modifiers.command,
-    });
-
-    let mut drag_started = HashSet::new();
-    let mut dragging = HashSet::new();
-    let mut clicked = HashSet::new();
-
-    for (egui_btn, our_btn) in [
-        (egui::PointerButton::Primary, MouseButton::Left),
-        (egui::PointerButton::Secondary, MouseButton::Right),
-        (egui::PointerButton::Middle, MouseButton::Middle),
-    ] {
-        if response.drag_started_by(egui_btn) {
-            drag_started.insert(our_btn);
-        }
-        if response.dragged_by(egui_btn) {
-            dragging.insert(our_btn);
-        }
-        if response.clicked_by(egui_btn) {
-            clicked.insert(our_btn);
-        }
-    }
-
-    let drag_delta_egui = response.drag_delta();
-    let scroll_delta = if response.hovered() {
-        ui.input(|i| i.smooth_scroll_delta.y).clamp(-150.0, 150.0)
-    } else {
-        0.0
-    };
-    let pointer_delta_egui = ui.input(|i| i.pointer.delta());
-
-    let ctrl_scroll_orbit_delta = if response.hovered() {
-        let ctrl = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
-        if ctrl {
-            ui.input(|i| {
-                let mut d = egui::Vec2::ZERO;
-                for e in &i.events {
-                    if let egui::Event::MouseWheel { delta, .. } = e {
-                        d += *delta;
-                    }
-                }
-                glam::Vec2::new(d.x, d.y)
-            })
-        } else {
-            glam::Vec2::ZERO
-        }
-    } else {
-        glam::Vec2::ZERO
-    };
-
-    let shift_scroll_pan_delta = if response.hovered() {
-        let shift = ui.input(|i| i.modifiers.shift);
-        if shift {
-            ui.input(|i| {
-                let mut d = egui::Vec2::ZERO;
-                for e in &i.events {
-                    if let egui::Event::MouseWheel { delta, .. } = e {
-                        d += *delta;
-                    }
-                }
-                glam::Vec2::new(d.x, d.y)
-            })
-        } else {
-            glam::Vec2::ZERO
-        }
-    } else {
-        glam::Vec2::ZERO
-    };
-
-    FrameInput {
-        keys_pressed,
-        keys_held,
-        modifiers,
-        drag_started,
-        dragging,
-        drag_delta: glam::Vec2::new(drag_delta_egui.x, drag_delta_egui.y),
-        scroll_delta,
-        pointer_delta: glam::Vec2::new(pointer_delta_egui.x, pointer_delta_egui.y),
-        clicked,
-        hovered: response.hovered(),
-        ctrl_scroll_orbit_delta,
-        shift_scroll_pan_delta,
     }
 }
