@@ -80,6 +80,12 @@ pub use interaction::input::{
     Action, ActionState, Binding, FrameInput, InputMode, InputSystem, KeyCode, Modifiers,
     MouseButton,
 };
+// New input pipeline — re-exported at crate root for convenience.
+pub use interaction::input::{
+    ActionFrame, BindingPreset, ButtonState, ModifiersMatch, NavigationActions,
+    OrbitCameraController, ScrollUnits, ViewportAction, ViewportBinding, ViewportContext,
+    ViewportEvent, ViewportGesture, ViewportInput,
+};
 pub use interaction::picking::{
     GpuPickHit, PickHit, ProbeBinding, RectPickResult, pick_rect,
     pick_scene_accelerated_with_probe, pick_scene_nodes_with_probe, pick_scene_with_probe,

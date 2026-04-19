@@ -7,21 +7,14 @@
 use std::sync::Arc;
 
 use viewport_lib::{
-    Camera, CameraFrame, FrameData, LightingSettings, SceneFrame, SceneRenderItem,
-    ViewportRenderer, primitives,
+    Camera, CameraFrame, FrameData, LightingSettings, OrbitCameraController, SceneFrame,
+    SceneRenderItem, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
 };
+use viewport_lib::{ButtonState, ScrollUnits};
 use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
-
-// ---------------------------------------------------------------------------
-// Camera control constants shared with the other viewport examples.
-// ---------------------------------------------------------------------------
-
-const ORBIT_SENSITIVITY: f32 = 0.005;
-const ZOOM_SENSITIVITY: f32 = 0.001;
 
 fn main() {
     tracing_subscriber::fmt()
@@ -56,13 +49,7 @@ struct AppState {
     renderer: ViewportRenderer,
     camera: Camera,
     mesh_index: usize,
-
-    // Mouse tracking state for input handling.
-    left_pressed: bool,
-    middle_pressed: bool,
-    right_pressed: bool,
-    shift_held: bool,
-    last_cursor: PhysicalPosition<f64>,
+    controller: OrbitCameraController,
 }
 
 impl AppState {
@@ -160,6 +147,14 @@ impl ApplicationHandler for App {
             ..Camera::default()
         };
 
+        // Prime the controller for the first frame of events.
+        let mut controller = OrbitCameraController::viewport_primitives();
+        controller.begin_frame(ViewportContext {
+            hovered: true,
+            focused: true,
+            viewport_size: [config.width as f32, config.height as f32],
+        });
+
         self.state = Some(AppState {
             window,
             surface,
@@ -170,11 +165,7 @@ impl ApplicationHandler for App {
             renderer,
             camera,
             mesh_index,
-            left_pressed: false,
-            middle_pressed: false,
-            right_pressed: false,
-            shift_held: false,
-            last_cursor: PhysicalPosition::new(0.0, 0.0),
+            controller,
         });
     }
 
@@ -206,15 +197,12 @@ impl ApplicationHandler for App {
                 }
             }
 
-            // --- Input handling ---
-            //
-            // winit gives us raw OS-level events. We translate them into camera
-            // operations using the same pattern as every other framework adapter:
-            //   1. Track button state on press/release
-            //   2. Compute pixel deltas on cursor move
-            //   3. Map button+modifier combos to orbit/pan/zoom
             WindowEvent::ModifiersChanged(mods) => {
-                state.shift_held = mods.state().shift_key();
+                let mut m = viewport_lib::Modifiers::default();
+                m.shift = mods.state().shift_key();
+                m.ctrl = mods.state().control_key();
+                m.alt = mods.state().alt_key();
+                state.controller.push_event(ViewportEvent::ModifiersChanged(m));
             }
 
             WindowEvent::MouseInput {
@@ -222,53 +210,48 @@ impl ApplicationHandler for App {
                 button,
                 ..
             } => {
-                let pressed = btn_state == ElementState::Pressed;
-                match button {
-                    MouseButton::Left => state.left_pressed = pressed,
-                    MouseButton::Middle => state.middle_pressed = pressed,
-                    MouseButton::Right => state.right_pressed = pressed,
-                    _ => {}
-                }
-                if pressed {
-                    // Reset last_cursor on press so the first delta isn't a jump.
-                    // (The actual position is set by the next CursorMoved event,
-                    // but this prevents a stale value from causing a large delta.)
-                }
+                let vp_button = match button {
+                    MouseButton::Left => viewport_lib::MouseButton::Left,
+                    MouseButton::Middle => viewport_lib::MouseButton::Middle,
+                    MouseButton::Right => viewport_lib::MouseButton::Right,
+                    _ => return,
+                };
+                let vp_state = if btn_state == ElementState::Pressed {
+                    ButtonState::Pressed
+                } else {
+                    ButtonState::Released
+                };
+                state.controller.push_event(ViewportEvent::MouseButton {
+                    button: vp_button,
+                    state: vp_state,
+                });
                 state.window.request_redraw();
             }
 
             WindowEvent::CursorMoved { position, .. } => {
-                let dx = (position.x - state.last_cursor.x) as f32;
-                let dy = (position.y - state.last_cursor.y) as f32;
-                state.last_cursor = position;
-
-                let any_drag = state.left_pressed || state.middle_pressed || state.right_pressed;
-                if !any_drag || (dx.abs() < 0.001 && dy.abs() < 0.001) {
-                    return;
-                }
-
-                // Pan: right-drag, or shift+middle-drag.
-                let is_pan = state.right_pressed || (state.middle_pressed && state.shift_held);
-
-                if is_pan {
-                    let cam = &mut state.camera;
-                    let viewport_h = state.surface_config.height as f32;
-                    cam.pan_pixels(glam::vec2(dx, dy), viewport_h);
-                } else {
-                    // Orbit: left-drag or middle-drag (without shift).
-                    // Quaternion arcball: world-Y yaw + camera-local-X pitch.
-                    state.camera.orbit(dx * ORBIT_SENSITIVITY, dy * ORBIT_SENSITIVITY);
-                }
-
+                state.controller.push_event(ViewportEvent::PointerMoved {
+                    position: glam::Vec2::new(position.x as f32, position.y as f32),
+                });
                 state.window.request_redraw();
             }
 
+            WindowEvent::CursorLeft { .. } => {
+                state.controller.push_event(ViewportEvent::PointerLeft);
+            }
+
+            WindowEvent::Focused(false) => {
+                state.controller.push_event(ViewportEvent::FocusLost);
+            }
+
             WindowEvent::MouseWheel { delta, .. } => {
-                let scroll_y = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y * 28.0,
-                    MouseScrollDelta::PixelDelta(px) => px.y as f32,
+                let (d, units) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => (glam::Vec2::new(x, y), ScrollUnits::Lines),
+                    MouseScrollDelta::PixelDelta(px) => (
+                        glam::Vec2::new(px.x as f32, px.y as f32),
+                        ScrollUnits::Pixels,
+                    ),
                 };
-                state.camera.zoom_by_factor(1.0 - scroll_y * ZOOM_SENSITIVITY);
+                state.controller.push_event(ViewportEvent::Wheel { delta: d, units });
                 state.window.request_redraw();
             }
 
@@ -294,6 +277,8 @@ impl ApplicationHandler for App {
                 let w = state.surface_config.width as f32;
                 let h = state.surface_config.height as f32;
 
+                // Apply accumulated events to camera.
+                state.controller.apply_to_camera(&mut state.camera);
                 state.camera.set_aspect_ratio(w, h);
 
                 // Build scene: 4 cubes in a grid.
@@ -368,6 +353,13 @@ impl ApplicationHandler for App {
 
                 state.queue.submit(std::iter::once(encoder.finish()));
                 frame.present();
+
+                // Begin accumulation for the next frame's events.
+                state.controller.begin_frame(ViewportContext {
+                    hovered: true,
+                    focused: true,
+                    viewport_size: [w, h],
+                });
             }
 
             _ => {}

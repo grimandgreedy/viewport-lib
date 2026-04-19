@@ -11,21 +11,14 @@
 use std::sync::Arc;
 
 use viewport_lib::{
-    Camera, CameraFrame, FrameData, LightingSettings, Material, SceneFrame,
-    SceneRenderItem, ViewportRenderer, primitives,
+    Camera, CameraFrame, FrameData, LightingSettings, Material, OrbitCameraController,
+    SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
 };
+use viewport_lib::{ButtonState, ScrollUnits};
 use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
-
-// ---------------------------------------------------------------------------
-// Navigation constants — match the egui template exactly
-// ---------------------------------------------------------------------------
-
-const ORBIT_SENSITIVITY: f32 = 0.005;
-const ZOOM_SENSITIVITY: f32 = 0.001;
 
 // ---------------------------------------------------------------------------
 // Scene layout helper
@@ -59,14 +52,7 @@ struct AppState {
 
     renderer: ViewportRenderer,
     camera: Camera,
-
-    // Input tracking
-    left_pressed: bool,
-    right_pressed: bool,
-    middle_pressed: bool,
-    shift_held: bool,
-    ctrl_held: bool,
-    last_cursor: PhysicalPosition<f64>,
+    controller: OrbitCameraController,
 
     // Pre-built scene (constant across frames)
     scene_items: Vec<SceneRenderItem>,
@@ -90,17 +76,6 @@ impl AppState {
                 view_formats: &[],
             })
             .create_view(&wgpu::TextureViewDescriptor::default())
-    }
-
-    /// Orbit the camera: yaw around world Y, pitch around camera-local X.
-    fn orbit(&mut self, dx: f32, dy: f32) {
-        self.camera.orbit(dx * ORBIT_SENSITIVITY, dy * ORBIT_SENSITIVITY);
-    }
-
-    /// Pan the camera: move look-at centre in the camera's right/up plane.
-    fn pan(&mut self, dx: f32, dy: f32) {
-        let h = self.surface_config.height as f32;
-        self.camera.pan_pixels(glam::vec2(dx, dy), h);
     }
 }
 
@@ -236,6 +211,14 @@ impl ApplicationHandler for App {
             ..Camera::default()
         };
 
+        // Prime the controller for the first frame of events.
+        let mut controller = OrbitCameraController::viewport_primitives();
+        controller.begin_frame(ViewportContext {
+            hovered: true,
+            focused: true,
+            viewport_size: [config.width as f32, config.height as f32],
+        });
+
         self.state = Some(AppState {
             window,
             surface,
@@ -245,12 +228,7 @@ impl ApplicationHandler for App {
             depth_view,
             renderer,
             camera,
-            left_pressed: false,
-            right_pressed: false,
-            middle_pressed: false,
-            shift_held: false,
-            ctrl_held: false,
-            last_cursor: PhysicalPosition::new(0.0, 0.0),
+            controller,
             scene_items,
         });
     }
@@ -278,70 +256,56 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::ModifiersChanged(mods) => {
-                state.shift_held = mods.state().shift_key();
-                state.ctrl_held = mods.state().control_key();
+                let mut m = viewport_lib::Modifiers::default();
+                m.shift = mods.state().shift_key();
+                m.ctrl = mods.state().control_key();
+                m.alt = mods.state().alt_key();
+                state.controller.push_event(ViewportEvent::ModifiersChanged(m));
             }
 
             WindowEvent::MouseInput { state: btn_state, button, .. } => {
-                let pressed = btn_state == ElementState::Pressed;
-                match button {
-                    MouseButton::Left => state.left_pressed = pressed,
-                    MouseButton::Middle => state.middle_pressed = pressed,
-                    MouseButton::Right => state.right_pressed = pressed,
-                    _ => {}
-                }
+                let vp_button = match button {
+                    MouseButton::Left => viewport_lib::MouseButton::Left,
+                    MouseButton::Middle => viewport_lib::MouseButton::Middle,
+                    MouseButton::Right => viewport_lib::MouseButton::Right,
+                    _ => return,
+                };
+                let vp_state = if btn_state == ElementState::Pressed {
+                    ButtonState::Pressed
+                } else {
+                    ButtonState::Released
+                };
+                state.controller.push_event(ViewportEvent::MouseButton {
+                    button: vp_button,
+                    state: vp_state,
+                });
                 state.window.request_redraw();
             }
 
             WindowEvent::CursorMoved { position, .. } => {
-                let dx = (position.x - state.last_cursor.x) as f32;
-                let dy = (position.y - state.last_cursor.y) as f32;
-                state.last_cursor = position;
-
-                let any_drag =
-                    state.left_pressed || state.middle_pressed || state.right_pressed;
-                if !any_drag || (dx.abs() < 0.001 && dy.abs() < 0.001) {
-                    return;
-                }
-
-                // Pan: right-drag, or middle + shift.
-                let is_pan =
-                    state.right_pressed || (state.middle_pressed && state.shift_held);
-
-                if is_pan {
-                    state.pan(dx, dy);
-                } else {
-                    // Orbit: left-drag or middle-drag (without shift).
-                    state.orbit(dx, dy);
-                }
-
+                state.controller.push_event(ViewportEvent::PointerMoved {
+                    position: glam::Vec2::new(position.x as f32, position.y as f32),
+                });
                 state.window.request_redraw();
             }
 
+            WindowEvent::CursorLeft { .. } => {
+                state.controller.push_event(ViewportEvent::PointerLeft);
+            }
+
+            WindowEvent::Focused(false) => {
+                state.controller.push_event(ViewportEvent::FocusLost);
+            }
+
             WindowEvent::MouseWheel { delta, .. } => {
-                // For orbit/pan from scroll we use the raw line count (~1.0 per notch)
-                // so that ORBIT_SENSITIVITY stays consistent with drag-based orbit.
-                // For zoom we scale up to pixel-equivalent amounts.
-                let (raw_dx, raw_dy, zoom_dy) = match delta {
-                    MouseScrollDelta::LineDelta(x, y) => (x, y, y * 28.0),
-                    MouseScrollDelta::PixelDelta(px) => {
-                        let x = px.x as f32;
-                        let y = px.y as f32;
-                        (x, y, y)
-                    }
+                let (d, units) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => (glam::Vec2::new(x, y), ScrollUnits::Lines),
+                    MouseScrollDelta::PixelDelta(px) => (
+                        glam::Vec2::new(px.x as f32, px.y as f32),
+                        ScrollUnits::Pixels,
+                    ),
                 };
-
-                if state.ctrl_held {
-                    // Ctrl+scroll → orbit (X = yaw, Y = pitch).
-                    state.orbit(raw_dx, raw_dy);
-                } else if state.shift_held {
-                    // Shift+scroll → pan (X = right, Y = up).
-                    state.pan(raw_dx, raw_dy);
-                } else {
-                    // Plain scroll → zoom.
-                    state.camera.zoom_by_factor(1.0 - zoom_dy * ZOOM_SENSITIVITY);
-                }
-
+                state.controller.push_event(ViewportEvent::Wheel { delta: d, units });
                 state.window.request_redraw();
             }
 
@@ -363,6 +327,8 @@ impl ApplicationHandler for App {
                 let w = state.surface_config.width as f32;
                 let h = state.surface_config.height as f32;
 
+                // Apply accumulated events to camera.
+                state.controller.apply_to_camera(&mut state.camera);
                 state.camera.set_aspect_ratio(w, h);
 
                 let mut frame_data = FrameData::new(
@@ -418,6 +384,13 @@ impl ApplicationHandler for App {
 
                 state.queue.submit(std::iter::once(encoder.finish()));
                 frame.present();
+
+                // Begin accumulation for the next frame's events.
+                state.controller.begin_frame(ViewportContext {
+                    hovered: true,
+                    focused: true,
+                    viewport_size: [w, h],
+                });
             }
 
             _ => {}

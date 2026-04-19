@@ -3,6 +3,18 @@
 //! Decouples semantic actions (Orbit, Pan, Zoom, ...) from physical triggers
 //! (key/mouse combinations), enabling future key reconfiguration and
 //! context-sensitive controls (Normal / FlyMode / Manipulating).
+//!
+//! # New input pipeline (recommended)
+//!
+//! The new pipeline provides a higher-level, framework-agnostic path:
+//!
+//! 1. Translate native events to [`ViewportEvent`]
+//! 2. Feed into [`OrbitCameraController`] (or lower-level [`ViewportInput`])
+//! 3. Call [`OrbitCameraController::apply_to_camera`] each frame
+//!
+//! # Legacy input system (compatibility)
+//!
+//! The older [`InputSystem`] / [`FrameInput`] query model remains available.
 
 /// Semantic action enum.
 pub mod action;
@@ -15,11 +27,37 @@ pub mod mode;
 /// Per-frame input snapshot and action-state query evaluation.
 pub mod query;
 
+// New input pipeline modules
+/// Per-frame resolved action output.
+pub mod action_frame;
+/// High-level orbit/pan/zoom camera controller.
+pub mod controller;
+/// Per-frame viewport context.
+pub mod context;
+/// Framework-agnostic viewport events.
+pub mod event;
+/// Named control presets.
+pub mod preset;
+/// Viewport gesture and binding types.
+pub mod viewport_binding;
+/// Stateful viewport input accumulator and resolver.
+pub mod viewport_input;
+
+// Legacy re-exports (compatibility)
 pub use action::Action;
 pub use binding::{ActivationMode, Binding, KeyCode, Modifiers, MouseButton, Trigger, TriggerKind};
 pub use defaults::default_bindings;
 pub use mode::InputMode;
 pub use query::{ActionState, FrameInput};
+
+// New pipeline re-exports
+pub use action_frame::{ActionFrame, NavigationActions};
+pub use context::ViewportContext;
+pub use controller::OrbitCameraController;
+pub use event::{ButtonState, ScrollUnits, ViewportEvent};
+pub use preset::BindingPreset;
+pub use viewport_binding::{ModifiersMatch, ViewportAction, ViewportBinding, ViewportGesture};
+pub use viewport_input::ViewportInput;
 
 /// Central input system that evaluates action queries against the current
 /// binding table and input mode.
