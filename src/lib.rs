@@ -83,8 +83,8 @@ pub use interaction::input::{
 // New input pipeline — re-exported at crate root for convenience.
 pub use interaction::input::{
     ActionFrame, BindingPreset, ButtonState, ModifiersMatch, NavigationActions,
-    OrbitCameraController, ScrollUnits, ViewportAction, ViewportBinding, ViewportContext,
-    ViewportEvent, ViewportGesture, ViewportInput,
+    OrbitCameraController, ResolvedActionState, ScrollUnits, ViewportBinding, ViewportContext,
+    ViewportEvent, ViewportGesture, ViewportInput, viewport_all_bindings,
 };
 pub use interaction::picking::{
     GpuPickHit, PickHit, ProbeBinding, RectPickResult, pick_rect,

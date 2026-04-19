@@ -1,6 +1,7 @@
 //! Viewport gesture and binding types for the new input pipeline.
 
-use super::binding::{Modifiers, MouseButton};
+use super::action::Action;
+use super::binding::{KeyCode, Modifiers, MouseButton};
 
 /// Modifier matching policy for viewport gestures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -53,31 +54,34 @@ pub enum ViewportGesture {
         /// Required modifier state.
         modifiers: ModifiersMatch,
     },
+    /// A single key press — fires once on the initial press, not on repeat.
+    KeyPress {
+        /// The key that must be pressed.
+        key: KeyCode,
+        /// Required modifier state.
+        modifiers: ModifiersMatch,
+    },
+    /// A key held down — fires every frame while the key is held.
+    KeyHold {
+        /// The key that must be held.
+        key: KeyCode,
+        /// Required modifier state.
+        modifiers: ModifiersMatch,
+    },
 }
 
-/// Semantic action identifiers for the new viewport binding table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ViewportAction {
-    /// Orbit/arcball rotate the camera.
-    Orbit,
-    /// Pan the camera (translate orbit center in the camera plane).
-    Pan,
-    /// Zoom in or out (adjust camera distance).
-    Zoom,
-}
-
-/// Binds a [`ViewportAction`] to a [`ViewportGesture`].
+/// Binds an [`Action`] to a [`ViewportGesture`].
 #[derive(Debug, Clone)]
 pub struct ViewportBinding {
     /// The action this binding fires.
-    pub action: ViewportAction,
+    pub action: Action,
     /// The gesture that activates it.
     pub gesture: ViewportGesture,
 }
 
 impl ViewportBinding {
     /// Convenience constructor.
-    pub fn new(action: ViewportAction, gesture: ViewportGesture) -> Self {
+    pub fn new(action: Action, gesture: ViewportGesture) -> Self {
         Self { action, gesture }
     }
 }

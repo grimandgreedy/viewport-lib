@@ -51,12 +51,12 @@ pub use mode::InputMode;
 pub use query::{ActionState, FrameInput};
 
 // New pipeline re-exports
-pub use action_frame::{ActionFrame, NavigationActions};
+pub use action_frame::{ActionFrame, NavigationActions, ResolvedActionState};
 pub use context::ViewportContext;
 pub use controller::OrbitCameraController;
 pub use event::{ButtonState, ScrollUnits, ViewportEvent};
-pub use preset::BindingPreset;
-pub use viewport_binding::{ModifiersMatch, ViewportAction, ViewportBinding, ViewportGesture};
+pub use preset::{BindingPreset, viewport_all_bindings};
+pub use viewport_binding::{ModifiersMatch, ViewportBinding, ViewportGesture};
 pub use viewport_input::ViewportInput;
 
 /// Central input system that evaluates action queries against the current

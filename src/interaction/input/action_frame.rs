@@ -1,6 +1,19 @@
 //! Per-frame resolved action output for the new input pipeline.
 
-use super::viewport_binding::ViewportAction;
+use std::collections::HashMap;
+
+use super::action::Action;
+
+/// State of a resolved action for one frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ResolvedActionState {
+    /// The action was triggered this frame (KeyPress).
+    Pressed,
+    /// The action is actively held (KeyHold, Drag in progress).
+    Held,
+    /// The action is producing a two-axis delta (Drag, WheelXY).
+    Delta(glam::Vec2),
+}
 
 /// Resolved navigation actions for one frame.
 ///
@@ -24,15 +37,18 @@ pub struct NavigationActions {
 pub struct ActionFrame {
     /// Resolved camera navigation actions.
     pub navigation: NavigationActions,
+    /// General action states resolved this frame (key presses, holds, etc.).
+    pub actions: HashMap<Action, ResolvedActionState>,
 }
 
 impl ActionFrame {
-    /// Returns the raw delta for the given action, or `glam::Vec2::ZERO` if inactive.
-    pub fn delta(&self, action: ViewportAction) -> glam::Vec2 {
-        match action {
-            ViewportAction::Orbit => self.navigation.orbit,
-            ViewportAction::Pan => self.navigation.pan,
-            ViewportAction::Zoom => glam::Vec2::new(self.navigation.zoom, self.navigation.zoom),
-        }
+    /// Returns the resolved state for the given action, if active this frame.
+    pub fn action(&self, action: Action) -> Option<&ResolvedActionState> {
+        self.actions.get(&action)
+    }
+
+    /// Returns `true` if the action is active (pressed, held, or producing a delta) this frame.
+    pub fn is_active(&self, action: Action) -> bool {
+        self.actions.contains_key(&action)
     }
 }

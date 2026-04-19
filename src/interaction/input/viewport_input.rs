@@ -3,12 +3,15 @@
 //! [`ViewportInput`] is the lower-level input resolver. Most consumers should
 //! use [`super::controller::OrbitCameraController`] which wraps it.
 
-use super::action_frame::{ActionFrame, NavigationActions};
-use super::binding::{Modifiers, MouseButton};
+use std::collections::HashSet;
+
+use super::action::Action;
+use super::action_frame::{ActionFrame, NavigationActions, ResolvedActionState};
+use super::binding::{KeyCode, Modifiers, MouseButton};
 use super::context::ViewportContext;
 use super::event::{ButtonState, ScrollUnits, ViewportEvent};
-use super::preset::{BindingPreset, viewport_primitives_bindings};
-use super::viewport_binding::{ViewportAction, ViewportBinding, ViewportGesture};
+use super::preset::{BindingPreset, viewport_all_bindings, viewport_primitives_bindings};
+use super::viewport_binding::{ViewportBinding, ViewportGesture};
 
 /// Pixels-per-line conversion for scroll delta normalisation.
 const PIXELS_PER_LINE: f32 = 28.0;
@@ -38,6 +41,9 @@ pub struct ViewportInput {
     drag_delta: glam::Vec2,
     wheel_delta: glam::Vec2, // always in pixels
 
+    // Per-frame key accumulators (reset by begin_frame)
+    keys_pressed: HashSet<KeyCode>,
+
     // Persistent state
     pointer_pos: Option<glam::Vec2>,
     /// Which buttons are currently held. Tracks three buttons.
@@ -45,6 +51,8 @@ pub struct ViewportInput {
     /// Position at which each button was first pressed (to detect in-viewport press).
     button_press_pos: [Option<glam::Vec2>; 3],
     modifiers: Modifiers,
+    /// Keys currently held down (persistent across frames).
+    keys_held: HashSet<KeyCode>,
 
     ctx: ViewportContext,
 }
@@ -64,10 +72,12 @@ impl ViewportInput {
             bindings,
             drag_delta: glam::Vec2::ZERO,
             wheel_delta: glam::Vec2::ZERO,
+            keys_pressed: HashSet::new(),
             pointer_pos: None,
             button_held: [false; 3],
             button_press_pos: [None, None, None],
             modifiers: Modifiers::NONE,
+            keys_held: HashSet::new(),
             ctx: ViewportContext::default(),
         }
     }
@@ -76,6 +86,7 @@ impl ViewportInput {
     pub fn from_preset(preset: BindingPreset) -> Self {
         let bindings = match preset {
             BindingPreset::ViewportPrimitives => viewport_primitives_bindings(),
+            BindingPreset::ViewportAll => viewport_all_bindings(),
         };
         Self::new(bindings)
     }
@@ -89,7 +100,8 @@ impl ViewportInput {
         self.ctx = ctx;
         self.drag_delta = glam::Vec2::ZERO;
         self.wheel_delta = glam::Vec2::ZERO;
-        // Note: persistent state (button_held, pointer_pos, modifiers) is NOT reset.
+        self.keys_pressed.clear();
+        // Note: persistent state (button_held, pointer_pos, modifiers, keys_held) is NOT reset.
     }
 
     /// Push a single viewport-scoped event into the accumulator.
@@ -130,6 +142,23 @@ impl ViewportInput {
             ViewportEvent::ModifiersChanged(mods) => {
                 self.modifiers = mods;
             }
+            ViewportEvent::Key { key, state, repeat } => {
+                // Only process key events when the viewport is focused
+                if !self.ctx.focused {
+                    return;
+                }
+                match state {
+                    ButtonState::Pressed => {
+                        if !repeat {
+                            self.keys_pressed.insert(key);
+                        }
+                        self.keys_held.insert(key);
+                    }
+                    ButtonState::Released => {
+                        self.keys_held.remove(&key);
+                    }
+                }
+            }
             ViewportEvent::PointerLeft => {
                 self.pointer_pos = None;
                 // Release all buttons on pointer leave to avoid stuck state
@@ -141,16 +170,15 @@ impl ViewportInput {
                 }
             }
             ViewportEvent::FocusLost => {
-                // Release all buttons on focus loss
+                // Release all buttons and keys on focus loss
                 for held in &mut self.button_held {
                     *held = false;
                 }
                 for pos in &mut self.button_press_pos {
                     *pos = None;
                 }
-            }
-            ViewportEvent::Key { .. } => {
-                // Key events not used for camera navigation in this resolver
+                self.keys_held.clear();
+                self.keys_pressed.clear();
             }
         }
     }
@@ -162,75 +190,101 @@ impl ViewportInput {
         let mut orbit = glam::Vec2::ZERO;
         let mut pan = glam::Vec2::ZERO;
         let mut zoom = 0.0f32;
+        let mut actions = std::collections::HashMap::new();
 
-        // Skip all gesture evaluation if viewport is not hovered (and no button is actively held)
-        // Buttons that started in the viewport are still allowed to complete their drag.
+        // Skip pointer/wheel gesture evaluation if viewport is not hovered
+        // (and no button is actively held from a press that started inside).
         let any_held_with_press = self.button_held.iter().enumerate().any(|(i, &held)| {
             held && self.button_press_pos[i].is_some()
         });
-        let active = self.ctx.hovered || any_held_with_press;
-        if !active {
-            return ActionFrame::default();
-        }
+        let pointer_active = self.ctx.hovered || any_held_with_press;
 
         for binding in &self.bindings {
             match &binding.gesture {
                 ViewportGesture::Drag { button, modifiers } => {
+                    if !pointer_active {
+                        continue;
+                    }
                     let idx = button_index(*button);
                     let held = self.button_held[idx];
                     let press_started = self.button_press_pos[idx].is_some();
                     if held && press_started && modifiers.matches(self.modifiers) {
-                        // First matching drag binding wins for the accumulated delta
+                        let delta = self.drag_delta;
                         match binding.action {
-                            ViewportAction::Orbit => {
+                            Action::Orbit => {
                                 if orbit == glam::Vec2::ZERO {
-                                    orbit += self.drag_delta;
+                                    orbit += delta;
+                                    actions.entry(binding.action).or_insert(
+                                        ResolvedActionState::Delta(delta),
+                                    );
                                 }
                             }
-                            ViewportAction::Pan => {
+                            Action::Pan => {
                                 if pan == glam::Vec2::ZERO {
-                                    pan += self.drag_delta;
+                                    pan += delta;
+                                    actions.entry(binding.action).or_insert(
+                                        ResolvedActionState::Delta(delta),
+                                    );
                                 }
                             }
-                            ViewportAction::Zoom => {
+                            Action::Zoom => {
                                 if zoom == 0.0 {
-                                    zoom += self.drag_delta.y;
+                                    zoom += delta.y;
+                                    actions.entry(binding.action).or_insert(
+                                        ResolvedActionState::Delta(delta),
+                                    );
                                 }
+                            }
+                            _ => {
+                                actions.entry(binding.action).or_insert(
+                                    ResolvedActionState::Delta(delta),
+                                );
                             }
                         }
-                        break; // first matching drag wins
                     }
                 }
                 ViewportGesture::WheelY { modifiers } => {
+                    if !pointer_active {
+                        continue;
+                    }
                     if modifiers.matches(self.modifiers) && self.wheel_delta.y != 0.0 {
+                        let y = self.wheel_delta.y;
                         match binding.action {
-                            ViewportAction::Zoom => {
-                                zoom += self.wheel_delta.y;
-                            }
-                            ViewportAction::Orbit => {
-                                orbit.y += self.wheel_delta.y;
-                            }
-                            ViewportAction::Pan => {
-                                pan.y += self.wheel_delta.y;
-                            }
+                            Action::Zoom => zoom += y,
+                            Action::Orbit => orbit.y += y,
+                            Action::Pan => pan.y += y,
+                            _ => {}
                         }
+                        actions.entry(binding.action).or_insert(
+                            ResolvedActionState::Delta(glam::Vec2::new(0.0, y)),
+                        );
                     }
                 }
                 ViewportGesture::WheelXY { modifiers } => {
-                    if modifiers.matches(self.modifiers)
-                        && self.wheel_delta != glam::Vec2::ZERO
-                    {
+                    if !pointer_active {
+                        continue;
+                    }
+                    if modifiers.matches(self.modifiers) && self.wheel_delta != glam::Vec2::ZERO {
+                        let delta = self.wheel_delta;
                         match binding.action {
-                            ViewportAction::Orbit => {
-                                orbit += self.wheel_delta;
-                            }
-                            ViewportAction::Pan => {
-                                pan += self.wheel_delta;
-                            }
-                            ViewportAction::Zoom => {
-                                zoom += self.wheel_delta.y;
-                            }
+                            Action::Orbit => orbit += delta,
+                            Action::Pan => pan += delta,
+                            Action::Zoom => zoom += delta.y,
+                            _ => {}
                         }
+                        actions.entry(binding.action).or_insert(
+                            ResolvedActionState::Delta(delta),
+                        );
+                    }
+                }
+                ViewportGesture::KeyPress { key, modifiers } => {
+                    if self.keys_pressed.contains(key) && modifiers.matches(self.modifiers) {
+                        actions.entry(binding.action).or_insert(ResolvedActionState::Pressed);
+                    }
+                }
+                ViewportGesture::KeyHold { key, modifiers } => {
+                    if self.keys_held.contains(key) && modifiers.matches(self.modifiers) {
+                        actions.entry(binding.action).or_insert(ResolvedActionState::Held);
                     }
                 }
             }
@@ -238,11 +292,62 @@ impl ViewportInput {
 
         ActionFrame {
             navigation: NavigationActions { orbit, pan, zoom },
+            actions,
         }
     }
 
     /// Current modifier state.
     pub fn modifiers(&self) -> Modifiers {
         self.modifiers
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interaction::input::preset::viewport_all_bindings;
+    use crate::interaction::input::event::ButtonState;
+
+    fn focused_ctx() -> ViewportContext {
+        ViewportContext {
+            hovered: true,
+            focused: true,
+            viewport_size: [800.0, 600.0],
+        }
+    }
+
+    #[test]
+    fn key_press_fires_once_then_clears() {
+        let mut input = ViewportInput::new(viewport_all_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::Key {
+            key: KeyCode::F,
+            state: ButtonState::Pressed,
+            repeat: false,
+        });
+        let frame = input.resolve();
+        assert!(frame.is_active(Action::FocusObject), "FocusObject should be active on first frame");
+
+        // Second frame without a new press should not fire
+        input.begin_frame(focused_ctx());
+        let frame2 = input.resolve();
+        assert!(!frame2.is_active(Action::FocusObject), "FocusObject should not be active on second frame");
+    }
+
+    #[test]
+    fn key_ignored_when_not_focused() {
+        let mut input = ViewportInput::new(viewport_all_bindings());
+        input.begin_frame(ViewportContext {
+            hovered: true,
+            focused: false,
+            viewport_size: [800.0, 600.0],
+        });
+        input.push_event(ViewportEvent::Key {
+            key: KeyCode::F,
+            state: ButtonState::Pressed,
+            repeat: false,
+        });
+        let frame = input.resolve();
+        assert!(!frame.is_active(Action::FocusObject), "key should be ignored without focus");
     }
 }

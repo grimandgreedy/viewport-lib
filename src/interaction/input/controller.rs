@@ -9,7 +9,7 @@ use crate::Camera;
 use super::action_frame::ActionFrame;
 use super::context::ViewportContext;
 use super::event::ViewportEvent;
-use super::preset::{BindingPreset, viewport_primitives_bindings};
+use super::preset::{BindingPreset, viewport_all_bindings, viewport_primitives_bindings};
 use super::viewport_input::ViewportInput;
 
 /// High-level orbit / pan / zoom camera controller.
@@ -64,6 +64,7 @@ impl OrbitCameraController {
     pub fn new(preset: BindingPreset) -> Self {
         let bindings = match preset {
             BindingPreset::ViewportPrimitives => viewport_primitives_bindings(),
+            BindingPreset::ViewportAll => viewport_all_bindings(),
         };
         Self {
             input: ViewportInput::new(bindings),
@@ -78,6 +79,15 @@ impl OrbitCameraController {
     /// This is the canonical control scheme matching `examples/winit_primitives`.
     pub fn viewport_primitives() -> Self {
         Self::new(BindingPreset::ViewportPrimitives)
+    }
+
+    /// Create a controller with the [`BindingPreset::ViewportAll`] preset.
+    ///
+    /// Includes all camera navigation bindings plus keyboard shortcuts for
+    /// normal mode, fly mode, and manipulation mode. Use this to replace
+    /// [`crate::InputSystem`] entirely.
+    pub fn viewport_all() -> Self {
+        Self::new(BindingPreset::ViewportAll)
     }
 
     /// Begin a new frame.
