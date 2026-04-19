@@ -36,10 +36,10 @@ The `examples/` directory contains working integrations for several GUI framewor
 
 - **winit-viewport**: the most basic setup: raw `winit` + `wgpu` with no GUI framework. Start here if you want to understand the minimal integration.
 - **eframe-viewport**: a straightforward example of embedding the viewport inside an `egui`/`eframe` application using `egui_wgpu` callback resources.
-- **winit-showcase**: several more advanced rendering options in 9 showcases
+- **winit-showcase**: several more advanced rendering options across multiple showcases.
+- **winit-primitives**: demonstrates the built-in geometry primitives.
 
-Other examples:
-- `iced-viewport`, `slint-viewport`, `winit-showcase`, `gtk4-viewport`
+Other examples: `iced-viewport`, `slint-viewport`, `gtk4-viewport`, `qt-viewport`
 
 Run examples with:
 ```
@@ -48,7 +48,10 @@ cargo run --release --example winit-viewport
 
 ## Quick start
 
-```rust
+In a typical app you will need to use both the renderer (to build and submit a `FrameData`) and the input handler to define and handle keys and events.
+
+### Rendering
+```
 use glam::{Mat4, vec3};
 use viewport_lib::{
     Camera,
@@ -80,4 +83,62 @@ renderer.prepare(&device, &queue, &fd);
 // then call the renderer -- this will depend on what GUI you are using
 // renderer.paint_to(&mut render_pass, &fd);
 
+```
+
+### Input handling
+
+`OrbitCameraController` is one of the available built-in controllers. You can also build your own controller directly on top of `ViewportInput` and `ViewportBinding` if you need different navigation behaviour - but OrbinCameraController is a good starting point. Push events each frame, then call `apply_to_camera` to orbit/pan/zoom and get back an `ActionFrame` for the rest of your input logic.
+
+```rust
+use viewport_lib::{BindingPreset, ManipulationContext, ManipulationController, ManipResult, OrbitCameraController, ViewportContext, ViewportEvent};
+
+// --- app state ---
+let mut orbit = OrbitCameraController::new(BindingPreset::ViewportAll);
+let mut manip = ManipulationController::new();
+
+// prime the controller before the first frame
+orbit.begin_frame(ViewportContext { hovered: true, focused: true, viewport_size: [width, height] });
+
+// --- each frame ---
+
+// 1. drive camera navigation; get the action frame for this frame
+let frame = if manip.is_active() {
+    // suppress orbit while a manipulation is in progress
+    orbit.resolve()
+} else {
+    orbit.apply_to_camera(&mut camera)
+};
+
+// 2. drive the manipulation controller
+let ctx = ManipulationContext {
+    camera: camera.clone(),
+    viewport_size: glam::Vec2::new(width, height),
+    cursor_viewport: Some(cursor_pos),
+    pointer_delta,
+    selection_center: selected_object_center,
+    gizmo: None,
+    drag_started,
+    dragging,
+    clicked,
+};
+
+match manip.update(&frame, ctx) {
+    ManipResult::Update(delta) => {
+        // apply incremental transform to selected objects each frame
+        object_translation += delta.translation;
+        object_rotation    = delta.rotation * object_rotation;
+        object_scale       *= delta.scale;
+    }
+    ManipResult::ConstraintChanged => {
+        // axis constraint changed mid-session: restore objects to their
+        // pre-session transforms (same as cancel but keep the session alive)
+        restore_snapshot();
+    }
+    ManipResult::Commit => finalize_and_push_undo(),
+    ManipResult::Cancel => restore_snapshot(),
+    ManipResult::None   => {}
+}
+
+// 3. reset for next frame
+orbit.begin_frame(ViewportContext { hovered, focused, viewport_size: [width, height] });
 ```
