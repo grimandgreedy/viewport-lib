@@ -51,6 +51,15 @@ pub enum ManipResult {
     Commit,
     /// Session cancelled (Escape). Restore original transforms.
     Cancel,
+    /// Axis constraint changed this frame (e.g. free→X, X→Y, X→Shift+Z).
+    ///
+    /// The app should restore selected objects to the transforms they had at
+    /// session start — the same restore it would perform on `Cancel` — but
+    /// **without** ending the session or clearing the undo snapshot.
+    /// The controller has reset its cursor anchor so the next `Update` delta
+    /// will be computed relative to the current cursor position with the new
+    /// constraint applied.
+    ConstraintChanged,
 }
 
 /// Inspectable snapshot of the current manipulation session.

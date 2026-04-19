@@ -91,6 +91,16 @@ pub(super) struct ManipulationSession {
     pub(super) is_gizmo_drag: bool,
     /// World-space center captured when the session began.
     pub(super) gizmo_center: glam::Vec3,
+    /// Viewport-local cursor position when the session started or the constraint last changed.
+    ///
+    /// Used to compute true per-frame increments from the absolute cursor position,
+    /// so that changing constraints resets the delta accumulation cleanly.
+    pub(super) cursor_anchor: Option<glam::Vec2>,
+    /// Total cursor displacement (current − anchor) that was used on the previous frame.
+    ///
+    /// The per-frame delta passed to solvers is `(current − anchor) − cursor_last_total`.
+    /// Reset to zero whenever `cursor_anchor` is updated.
+    pub(super) cursor_last_total: glam::Vec2,
 }
 
 impl ManipulationSession {

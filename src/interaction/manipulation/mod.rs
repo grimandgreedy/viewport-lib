@@ -79,6 +79,8 @@ impl ManipulationController {
             }
 
             // 4. Constraint and numeric updates.
+            let axis_before = session.axis;
+            let exclude_before = session.exclude_axis;
             update_constraint(
                 session,
                 frame.is_active(Action::ConstrainX),
@@ -90,9 +92,29 @@ impl ManipulationController {
             );
             update_numeric_state(session, frame);
 
+            // If the constraint changed, reset the cursor anchor so the next
+            // frame's delta is computed relative to the current cursor position
+            // with the new constraint — and tell the app to restore its snapshot.
+            if session.axis != axis_before || session.exclude_axis != exclude_before {
+                session.cursor_anchor = ctx.cursor_viewport;
+                session.cursor_last_total = glam::Vec2::ZERO;
+                return ManipResult::ConstraintChanged;
+            }
+
             // 5. Compute delta.
+            //
+            // Prefer absolute-cursor arithmetic over raw pointer_delta so that
+            // the per-frame increment is stable even if the OS coalesces events.
+            // Falls back to ctx.pointer_delta when cursor_viewport is unavailable.
             let pointer_delta = if session.numeric.is_some() {
                 glam::Vec2::ZERO
+            } else if let (Some(current), Some(anchor)) =
+                (ctx.cursor_viewport, session.cursor_anchor)
+            {
+                let total = current - anchor;
+                let increment = total - session.cursor_last_total;
+                session.cursor_last_total = total;
+                increment
             } else {
                 ctx.pointer_delta
             };
@@ -214,6 +236,8 @@ impl ManipulationController {
                         numeric: None,
                         is_gizmo_drag: true,
                         gizmo_center: center,
+                        cursor_anchor: ctx.cursor_viewport,
+                        cursor_last_total: glam::Vec2::ZERO,
                     });
                     return ManipResult::None;
                 }
@@ -240,6 +264,8 @@ impl ManipulationController {
                     numeric: None,
                     is_gizmo_drag: false,
                     gizmo_center: center,
+                    cursor_anchor: ctx.cursor_viewport,
+                    cursor_last_total: glam::Vec2::ZERO,
                 });
                 return ManipResult::None;
             }
@@ -277,6 +303,8 @@ impl ManipulationController {
             numeric: None,
             is_gizmo_drag: false,
             gizmo_center: center,
+            cursor_anchor: None,
+            cursor_last_total: glam::Vec2::ZERO,
         });
     }
 
@@ -360,6 +388,8 @@ mod tests {
             numeric: None,
             is_gizmo_drag: false,
             gizmo_center: glam::Vec3::ZERO,
+            cursor_anchor: None,
+            cursor_last_total: glam::Vec2::ZERO,
         };
 
         // X: constrained, not excluded.
