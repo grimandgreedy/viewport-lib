@@ -376,12 +376,9 @@ fn unproject_cursor_to_ray(
 
     let inv_vp = view_proj.inverse();
 
-    // Near plane point and far plane point in world space.
-    let near_world = inv_vp.project_point3(glam::Vec3::new(ndc_x, ndc_y, 0.0));
-    let far_world  = inv_vp.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
+    let far_world = inv_vp.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
 
     // Use the camera eye position for accuracy (same as the gizmo hit-test origin).
-    let _ = near_world;
     let eye = camera.eye_position();
     (far_world - eye).normalize_or(glam::Vec3::NEG_Z)
 }
