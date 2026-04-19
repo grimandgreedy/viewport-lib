@@ -41,6 +41,7 @@ pub use geometry::primitives;
 pub use interaction::annotation;
 pub use interaction::gizmo;
 pub use interaction::input;
+pub use interaction::manipulation;
 pub use interaction::picking;
 pub use interaction::selection;
 pub use interaction::snap;
@@ -86,6 +87,14 @@ pub use interaction::input::{
     OrbitCameraController, ResolvedActionState, ScrollUnits, ViewportBinding, ViewportContext,
     ViewportEvent, ViewportGesture, ViewportInput, viewport_all_bindings,
 };
+pub use interaction::manipulation::{
+    GizmoInfo, ManipResult, ManipulationContext, ManipulationController, ManipulationKind,
+    ManipulationState, TransformDelta,
+};
+pub use interaction::manipulation::solvers::{
+    angular_rotation_from_cursor, constrained_scale, constrained_translation,
+};
+
 pub use interaction::picking::{
     GpuPickHit, PickHit, ProbeBinding, RectPickResult, pick_rect,
     pick_scene_accelerated_with_probe, pick_scene_nodes_with_probe, pick_scene_with_probe,

@@ -4,6 +4,8 @@ pub mod annotation;
 pub mod gizmo;
 /// Action-based input system with mode-sensitive key/mouse bindings.
 pub mod input;
+/// Object manipulation controller (move, rotate, scale with constraints and numeric input).
+pub mod manipulation;
 /// Ray-cast object picking.
 pub mod picking;
 /// Multi-select system for viewport objects.
