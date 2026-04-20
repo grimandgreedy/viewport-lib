@@ -18,7 +18,7 @@ Whichever gui library you choose to use (`winit`, `eframe`, `Iced`, `Slint`, etc
 - your application owns the window, event loop, and tool state;
 
 
-**WARNING**: `viewport-lib` has only recently been extracted as a stand-alone library from a separate project and the API is still somewhat unstable.
+**WARNING**: `viewport-lib` has only recently been extracted as a stand-alone library from a separate project and the API is still somewhat unstable. This is still in pre-release. Once the important API has been refactored for more general use I will release v1.0.0 -- 
 
 ## Core features
 - mesh, point cloud, polyline, and volume rendering
