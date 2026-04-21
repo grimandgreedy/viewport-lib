@@ -5,23 +5,23 @@
 
 use crate::camera::camera::Projection;
 
-/// Standard viewport orientations matching engineering CAD conventions.
+/// Standard viewport orientations matching engineering CAD conventions (Z-up).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ViewPreset {
-    /// Front view — looking along -Z from the +Z side.
+    /// Front view — looking from +Y toward -Y, with Z up.
     Front,
-    /// Back view — looking along +Z from the -Z side.
+    /// Back view — looking from -Y toward +Y, with Z up.
     Back,
-    /// Left view — looking along +X from the -X side.
+    /// Left view — looking from -X toward +X, with Z up.
     Left,
-    /// Right view — looking along -X from the +X side.
+    /// Right view — looking from +X toward -X, with Z up.
     Right,
-    /// Top view — looking down along -Y from the +Y side.
+    /// Top view — looking down along -Z from the +Z side, with Y forward.
     Top,
-    /// Bottom view — looking up along +Y from the -Y side.
+    /// Bottom view — looking up along +Z from the -Z side, with Y forward.
     Bottom,
-    /// True isometric view at 45° yaw and ~35.26° pitch.
+    /// True isometric view at 45° yaw (around Z) and ~35.26° pitch.
     Isometric,
 }
 
@@ -54,21 +54,32 @@ impl ViewPreset {
 
     /// Target camera orientation quaternion.
     ///
-    /// Convention: camera looks along -Z in its local space, so identity = front view.
+    /// Convention: eye = center + orientation * Vec3::Z * distance.
+    /// Identity = looking down from +Z (top view in Z-up world).
     pub fn orientation(self) -> glam::Quat {
-        use std::f32::consts::PI;
+        use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+        // Front view basis: eye at +Y, viewport up = world Z.
+        // Derived: orientation * Vec3::Z = Vec3::Y, orientation * Vec3::Y = Vec3::Z.
+        // This is a 180° rotation around the (0, 1, 1)/√2 axis.
+        let frac_1_sqrt_2 = std::f32::consts::FRAC_1_SQRT_2;
+        let front = glam::Quat::from_xyzw(0.0, frac_1_sqrt_2, frac_1_sqrt_2, 0.0);
         match self {
-            Self::Front => glam::Quat::IDENTITY,
-            Self::Back => glam::Quat::from_rotation_y(PI),
-            Self::Left => glam::Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2),
-            Self::Right => glam::Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
-            Self::Top => glam::Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
-            Self::Bottom => glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+            // Eye at +Y, up = Z.
+            Self::Front => front,
+            // Eye at -Y, up = Z.
+            Self::Back => glam::Quat::from_rotation_x(FRAC_PI_2),
+            // Eye at -X, up = Z.
+            Self::Left => glam::Quat::from_rotation_z(FRAC_PI_2) * front,
+            // Eye at +X, up = Z.
+            Self::Right => glam::Quat::from_rotation_z(-FRAC_PI_2) * front,
+            // Eye at +Z, looking down at XY plane, up = +Y (identity).
+            Self::Top => glam::Quat::IDENTITY,
+            // Eye at -Z, up = +Y.
+            Self::Bottom => glam::Quat::from_rotation_y(PI),
             Self::Isometric => {
-                // True isometric: rotate 45° around Y, then arctan(1/√2) ≈ 35.264° around X.
+                // True isometric: yaw 45° around Z, then arctan(1/√2) ≈ 35.264° pitch.
                 let iso_pitch = (1.0_f32 / 2.0_f32.sqrt()).atan();
-                glam::Quat::from_rotation_y(std::f32::consts::FRAC_PI_4)
-                    * glam::Quat::from_rotation_x(iso_pitch)
+                glam::Quat::from_rotation_z(FRAC_PI_4) * front * glam::Quat::from_rotation_x(iso_pitch)
             }
         }
     }
@@ -103,13 +114,19 @@ mod tests {
     }
 
     #[test]
-    fn test_front_looks_along_negative_z() {
+    fn test_front_eye_along_positive_y() {
         let q = ViewPreset::Front.orientation();
-        // Identity quaternion: camera at +Z looking at origin (-Z direction).
-        let forward = q * glam::Vec3::NEG_Z;
+        // Z-up Front view: eye is along +Y (orientation * Z = Y).
+        let eye_dir = q * glam::Vec3::Z;
         assert!(
-            (forward - glam::Vec3::NEG_Z).length() < 1e-5,
-            "front forward = {forward:?}, expected -Z"
+            (eye_dir - glam::Vec3::Y).length() < 1e-5,
+            "front eye_dir = {eye_dir:?}, expected +Y"
+        );
+        // Viewport up should be +Z (orientation * Y = Z).
+        let up = q * glam::Vec3::Y;
+        assert!(
+            (up - glam::Vec3::Z).length() < 1e-5,
+            "front up = {up:?}, expected +Z"
         );
     }
 

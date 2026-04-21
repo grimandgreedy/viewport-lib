@@ -46,10 +46,10 @@ impl ViewportRenderer {
             match kind {
                 LightKind::Directional { direction } => {
                     let dir = glam::Vec3::from(*direction).normalize();
-                    let light_up = if dir.y.abs() > 0.99 {
-                        glam::Vec3::Z
-                    } else {
+                    let light_up = if dir.z.abs() > 0.99 {
                         glam::Vec3::Y
+                    } else {
+                        glam::Vec3::Z
                     };
                     let light_pos = shadow_center + dir * shadow_extent * 2.0;
                     let light_view = glam::Mat4::look_at_rh(light_pos, shadow_center, light_up);
@@ -66,10 +66,10 @@ impl ViewportRenderer {
                 LightKind::Point { position, range } => {
                     let pos = glam::Vec3::from(*position);
                     let to_center = (shadow_center - pos).normalize();
-                    let light_up = if to_center.y.abs() > 0.99 {
-                        glam::Vec3::Z
-                    } else {
+                    let light_up = if to_center.z.abs() > 0.99 {
                         glam::Vec3::Y
+                    } else {
+                        glam::Vec3::Z
                     };
                     let light_view = glam::Mat4::look_at_rh(pos, shadow_center, light_up);
                     let light_proj =
@@ -85,10 +85,10 @@ impl ViewportRenderer {
                     let pos = glam::Vec3::from(*position);
                     let dir = glam::Vec3::from(*direction).normalize();
                     let look_target = pos + dir;
-                    let up = if dir.y.abs() > 0.99 {
-                        glam::Vec3::Z
-                    } else {
+                    let up = if dir.z.abs() > 0.99 {
                         glam::Vec3::Y
+                    } else {
+                        glam::Vec3::Z
                     };
                     let light_view = glam::Mat4::look_at_rh(pos, look_target, up);
                     let light_proj =
@@ -867,7 +867,7 @@ impl ViewportRenderer {
             let (spacing, minor_fade) = if frame.viewport.grid_cell_size > 0.0 {
                 (frame.viewport.grid_cell_size, 1.0_f32)
             } else {
-                let vertical_depth = (eye.y - frame.viewport.grid_y).abs().max(1.0);
+                let vertical_depth = (eye.z - frame.viewport.grid_z).abs().max(1.0);
                 let world_per_pixel = 2.0 * (frame.camera.render_camera.fov / 2.0).tan() * vertical_depth
                     / frame.camera.viewport_size[1].max(1.0);
                 let target = (world_per_pixel * 60.0).max(1e-9_f32);
@@ -888,7 +888,7 @@ impl ViewportRenderer {
                     1.0 - t * t * (3.0 - 2.0 * t) // smooth step down
                 };
                 tracing::debug!(
-                    eye_y = eye.y,
+                    eye_z = eye.z,
                     vertical_depth,
                     world_per_pixel,
                     target,
@@ -901,17 +901,17 @@ impl ViewportRenderer {
                 (s, fade)
             };
 
-            // Snap eye.xz to the nearest spacing_major multiple so the GPU works
-            // with hit.xz - snap_origin (small offset) rather than raw world coords.
+            // Snap eye.xy to the nearest spacing_major multiple so the GPU works
+            // with hit.xy - snap_origin (small offset) rather than raw world coords.
             // spacing_major is a power of 10, so snap_origin is exactly representable in f32.
             let spacing_major = spacing * 10.0;
             let snap_x = (eye.x / spacing_major).floor() * spacing_major;
-            let snap_z = (eye.z / spacing_major).floor() * spacing_major;
+            let snap_y = (eye.y / spacing_major).floor() * spacing_major;
             tracing::debug!(
                 spacing_minor = spacing,
                 spacing_major,
                 snap_x,
-                snap_z,
+                snap_y,
                 eye_x = eye.x,
                 eye_y = eye.y,
                 eye_z = eye.z,
@@ -940,10 +940,10 @@ impl ViewportRenderer {
                 aspect,
                 _pad_ivp: [0.0; 2],
                 eye_pos: frame.camera.render_camera.eye_position,
-                grid_y: frame.viewport.grid_y,
+                grid_z: frame.viewport.grid_z,
                 spacing_minor: spacing,
                 spacing_major,
-                snap_origin: [snap_x, snap_z],
+                snap_origin: [snap_x, snap_y],
                 // Minor lines fade out as we approach the LOD boundary.
                 // Major lines dim from 0.8 -> 0.4 in sync so that at the transition
                 // the old major lines (which become new minor lines) are already at

@@ -2,8 +2,9 @@
 //
 // No vertex buffer — triangle positions are hardcoded in vs_main (full-screen triangle).
 // The fragment shader unprojects each pixel to a world-space ray, intersects with the
-// horizontal grid plane y = grid_y, and writes both an analytically anti-aliased grid
-// color and the correct clip-space depth via @builtin(frag_depth).
+// horizontal grid plane z = grid_z (Z-up, XY ground plane), and writes both an
+// analytically anti-aliased grid color and the correct clip-space depth via
+// @builtin(frag_depth).
 //
 // Horizon fade: lines fade to transparent as the viewing angle approaches horizontal,
 // eliminating the clipping and mangle artifacts that line-primitive grids suffer from.
@@ -15,7 +16,7 @@ struct GridUniform {
     aspect:       f32,           // offset 116 — viewport width/height
     _pad_ivp:     vec2<f32>,     // offset 120 — padding
     eye_pos:      vec3<f32>,     // offset 128
-    grid_y:       f32,           // offset 140
+    grid_z:       f32,           // offset 140
     spacing_minor: f32,          // offset 144
     spacing_major: f32,          // offset 148
     snap_origin:  vec2<f32>,     // offset 152
@@ -60,9 +61,9 @@ fn fs_main(in: VertexOutput) -> FragOut {
     // Rotate to world space using the camera orientation (pure rotation, no translation).
     let ray_dir = grid.cam_to_world * dir_cam;
 
-    // Intersect the ray with the horizontal grid plane y = grid_y.
-    if abs(ray_dir.y) < 1e-6 { discard; }
-    let t = (grid.grid_y - grid.eye_pos.y) / ray_dir.y;
+    // Intersect the ray with the horizontal grid plane z = grid_z (Z-up, XY ground plane).
+    if abs(ray_dir.z) < 1e-6 { discard; }
+    let t = (grid.grid_z - grid.eye_pos.z) / ray_dir.z;
     if t <= 0.0 { discard; }
 
     let hit = grid.eye_pos + ray_dir * t;
@@ -73,9 +74,9 @@ fn fs_main(in: VertexOutput) -> FragOut {
     let grid_depth = clamp(hit_clip.z / hit_clip.w, 0.0, 1.0);
 
     // Horizon fade — |sin| of angle between ray and grid plane.
-    // 0 at horizon (ray parallel to plane), 1 looking straight down.
+    // 0 at horizon (ray parallel to XY plane), 1 looking straight down (along -Z).
     // Fades lines to transparent near the horizon to eliminate clipping artifacts.
-    let angle_sin = abs(ray_dir.y) / length(ray_dir);
+    let angle_sin = abs(ray_dir.z) / length(ray_dir);
     let fade = smoothstep(0.02, 0.10, angle_sin);
     if fade < 0.001 { discard; }
 
@@ -83,10 +84,10 @@ fn fs_main(in: VertexOutput) -> FragOut {
     // fwidth gives the rate of change per pixel, enabling sub-pixel AA without MSAA.
     //
     // Work in snap-origin-relative coordinates so that fract() operates on small numbers.
-    // snap_origin = floor(eye.xz / spacing_major) * spacing_major (computed on CPU).
+    // snap_origin = floor(eye.xy / spacing_major) * spacing_major (computed on CPU).
     // Since spacing_major is a power of 10, snap_origin is exactly representable in f32.
-    // hit.xz - snap_origin is always within [-spacing_major, +spacing_major].
-    let pos = hit.xz - grid.snap_origin;
+    // hit.xy - snap_origin is always within [-spacing_major, +spacing_major].
+    let pos = hit.xy - grid.snap_origin;
 
     // Minor grid lines.
     // smoothstep(0, fw, d): 0 at line center, 1 at one pixel away -> 1 - result = line coverage.

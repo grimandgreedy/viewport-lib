@@ -194,7 +194,7 @@ impl shader::Primitive for ViewportPrimitive {
         );
         frame_data.effects.lighting = LightingSettings::default();
         frame_data.viewport.show_grid = true;
-        frame_data.viewport.grid_y = -0.5; // bottom face of unit boxes
+        frame_data.viewport.grid_z = -0.5; // bottom face of unit boxes
         frame_data.viewport.show_axes_indicator = true;
 
         pipeline.renderer.prepare(device, queue, &frame_data);
@@ -229,7 +229,7 @@ impl shader::Primitive for ViewportPrimitive {
         );
         frame_data.effects.lighting = LightingSettings::default();
         frame_data.viewport.show_grid = true;
-        frame_data.viewport.grid_y = -0.5; // bottom face of unit boxes
+        frame_data.viewport.grid_z = -0.5; // bottom face of unit boxes
         frame_data.viewport.show_axes_indicator = true;
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

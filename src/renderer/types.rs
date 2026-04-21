@@ -949,8 +949,8 @@ pub struct ViewportFrame {
     pub grid_cell_size: f32,
     /// Half-extent of the grid in world units. Zero = 1000 (effectively infinite).
     pub grid_half_extent: f32,
-    /// World-space Y coordinate of the grid plane (3D mode only). Default: 0.0.
-    pub grid_y: f32,
+    /// World-space Z coordinate of the grid plane (3D mode only, Z-up). Default: 0.0.
+    pub grid_z: f32,
     /// Whether to draw the axes orientation indicator overlay. Default: true.
     pub show_axes_indicator: bool,
 }
@@ -963,7 +963,7 @@ impl Default for ViewportFrame {
             show_grid: false,
             grid_cell_size: 0.0,
             grid_half_extent: 0.0,
-            grid_y: 0.0,
+            grid_z: 0.0,
             show_axes_indicator: true,
         }
     }

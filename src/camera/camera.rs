@@ -65,8 +65,8 @@ impl Default for Camera {
             projection: Projection::Perspective,
             center: glam::Vec3::ZERO,
             distance: 5.0,
-            // Default to a slight top-down view above the x-y plane.
-            orientation: glam::Quat::from_rotation_y(0.3) * glam::Quat::from_rotation_x(-0.3),
+            // Default to a slight top-down view above the x-y plane (Z-up world).
+            orientation: glam::Quat::from_rotation_z(0.3) * glam::Quat::from_rotation_x(0.8),
             fov_y: std::f32::consts::FRAC_PI_4,
             aspect: 1.5,
             znear: 0.01,
@@ -146,11 +146,11 @@ impl Camera {
 
     /// Orbit the camera by `yaw` and `pitch` radians.
     ///
-    /// Applies `Quat::from_rotation_y(-yaw) * orientation * Quat::from_rotation_x(-pitch)`.
+    /// Applies `Quat::from_rotation_z(-yaw) * orientation * Quat::from_rotation_x(-pitch)`.
     /// The sign convention matches all examples: positive yaw rotates counter-clockwise
-    /// when viewed from above, positive pitch tilts up.
+    /// when viewed from above (Z-up), positive pitch tilts up.
     pub fn orbit(&mut self, yaw: f32, pitch: f32) {
-        self.orientation = (glam::Quat::from_rotation_y(-yaw)
+        self.orientation = (glam::Quat::from_rotation_z(-yaw)
             * self.orientation
             * glam::Quat::from_rotation_x(-pitch))
         .normalize();
@@ -556,7 +556,7 @@ mod tests {
         let orig_orientation = cam.orientation;
         let yaw = 0.1_f32;
         let pitch = 0.2_f32;
-        let expected = (glam::Quat::from_rotation_y(-yaw)
+        let expected = (glam::Quat::from_rotation_z(-yaw)
             * orig_orientation
             * glam::Quat::from_rotation_x(-pitch))
         .normalize();

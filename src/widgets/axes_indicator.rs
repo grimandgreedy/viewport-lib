@@ -7,7 +7,7 @@
 //! - `hit_test`: given a click position in pixels, returns the target
 //!   (yaw, pitch) if an axis circle was hit.
 
-use std::f32::consts::{FRAC_PI_2, PI};
+use std::f32::consts::PI;
 
 // ---------------------------------------------------------------------------
 // Vertex type (matches axes_overlay.wgsl)
@@ -218,23 +218,25 @@ pub fn hit_test(
     };
 
     let axes = [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z];
-    // Snap targets: eye lands on each world axis respectively.
-    // from_rotation_y(π/2) * Z = X  ->  look along X from the +X side.
-    // from_rotation_x(π/2) * Z = Y  ->  look down from the +Y side.
-    // identity * Z = Z              ->  look along Z from the +Z side.
+    // Snap targets: eye lands on each world axis respectively (Z-up convention).
+    // X click -> Right view: eye at +X, up = Z.
+    // Y click -> Front view: eye at +Y, up = Z.
+    // Z click -> Top view:   eye at +Z, up = Y (identity).
+    let frac_1_sqrt_2 = std::f32::consts::FRAC_1_SQRT_2;
+    let front = glam::Quat::from_xyzw(0.0, frac_1_sqrt_2, frac_1_sqrt_2, 0.0);
     let targets = [
         AxisView {
-            orientation: glam::Quat::from_rotation_y(FRAC_PI_2),
+            orientation: glam::Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2) * front,
             axis_index: 0,
-        }, // X
+        }, // X → Right view
         AxisView {
-            orientation: glam::Quat::from_rotation_x(FRAC_PI_2),
+            orientation: front,
             axis_index: 1,
-        }, // Y (top-down)
+        }, // Y → Front view
         AxisView {
             orientation: glam::Quat::IDENTITY,
             axis_index: 2,
-        }, // Z
+        }, // Z → Top view
     ];
 
     // Check front-to-back (reverse depth order) so frontmost wins.

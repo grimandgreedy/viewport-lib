@@ -638,8 +638,8 @@ pub(crate) struct GridUniform {
     pub _pad_ivp: [f32; 2],           // offset 120,  8 bytes
     /// Eye (camera) position in world space.
     pub eye_pos: [f32; 3],             // offset 128, 12 bytes
-    /// Y-coordinate of the horizontal grid plane.
-    pub grid_y: f32,                   // offset 140,  4 bytes
+    /// Z-coordinate of the horizontal grid plane (Z-up, XY ground plane).
+    pub grid_z: f32,                   // offset 140,  4 bytes
     /// Minor grid line spacing (world units).
     pub spacing_minor: f32,            // offset 144,  4 bytes
     /// Major grid line spacing (world units, typically spacing_minor * 10).

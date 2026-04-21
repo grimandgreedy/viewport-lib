@@ -213,7 +213,7 @@ impl ViewportRenderer {
                 };
                 let view = frame.camera.render_camera.view;
                 let light_dir_view = view.transform_vector3(light_dir_world).normalize();
-                let world_up_view = view.transform_vector3(glam::Vec3::Y).normalize();
+                let world_up_view = view.transform_vector3(glam::Vec3::Z).normalize();
                 let cs_uniform = crate::resources::ContactShadowUniform {
                     inv_proj: inv_proj.to_cols_array_2d(),
                     proj: proj.to_cols_array_2d(),
