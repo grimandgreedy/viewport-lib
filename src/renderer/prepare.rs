@@ -965,6 +965,15 @@ impl ViewportRenderer {
             resources.constraint_line_buffers.push(buf);
         }
 
+        resources.clip_plane_fill_buffers.clear();
+        resources.clip_plane_line_buffers.clear();
+        for overlay in &frame.interaction.clip_plane_overlays {
+            let fill = resources.create_clip_plane_fill_overlay(device, overlay);
+            resources.clip_plane_fill_buffers.push(fill);
+            let lines = resources.create_clip_plane_line_overlay(device, overlay);
+            resources.clip_plane_line_buffers.push(lines);
+        }
+
         // Cap geometry for section-view cross-section fill.
         resources.cap_buffers.clear();
         if frame.effects.cap_fill_enabled {

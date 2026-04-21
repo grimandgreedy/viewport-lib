@@ -68,6 +68,12 @@ pub enum Action {
     /// Cancel the current operation (Escape / right-click).
     Cancel,
 
+    // -- Numeric input (manipulation mode) --
+    /// Backspace: erase the last typed digit in the numeric buffer.
+    NumericBackspace,
+    /// Tab: advance focus to the next axis buffer in numeric input.
+    NumericNextAxis,
+
     // -- Global --
     /// Undo the last action.
     Undo,

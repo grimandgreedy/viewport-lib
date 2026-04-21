@@ -112,6 +112,8 @@ pub enum KeyCode {
     Escape,
     /// Backtick/grave-accent key.
     Backtick,
+    /// Backspace key.
+    Backspace,
 }
 
 /// Mouse buttons.

@@ -39,6 +39,7 @@ pub mod widgets;
 pub use geometry::bvh;
 pub use geometry::primitives;
 pub use interaction::annotation;
+pub use interaction::clip_plane;
 pub use interaction::gizmo;
 pub use interaction::input;
 pub use interaction::manipulation;
@@ -102,6 +103,12 @@ pub use interaction::picking::{
 pub use interaction::selection::{NodeId, Selection};
 pub use interaction::sub_object::{SubObjectRef, SubSelection};
 pub use interaction::sub_object;
+pub use interaction::clip_plane::{
+    ClipAxis, ClipPlaneDelta, ClipPlaneContext, ClipPlaneController, ClipPlaneHit,
+    ClipPlaneOverlay, ClipPlaneResult, ClipPlaneSessionKind,
+    hit_test_normal_handle, hit_test_plane_quad, plane_from_axis_preset,
+    project_drag_onto_normal, ray_plane_intersection, snap_plane_distance,
+};
 pub use interaction::snap::{ConstraintOverlay, SnapConfig};
 
 pub use widgets::axes_indicator::AxisView;

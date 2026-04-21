@@ -921,6 +921,24 @@ pub struct ViewportGpuResources {
         wgpu::BindGroup,
     )>,
 
+    // --- Clip plane handle overlays ---
+    /// Semi-transparent quad fill for each ClipPlaneOverlay (TriangleList, alpha blended).
+    pub(crate) clip_plane_fill_buffers: Vec<(
+        wgpu::Buffer,
+        wgpu::Buffer,
+        u32,
+        wgpu::Buffer,
+        wgpu::BindGroup,
+    )>,
+    /// Border edges and normal indicator for each ClipPlaneOverlay (LineList).
+    pub(crate) clip_plane_line_buffers: Vec<(
+        wgpu::Buffer,
+        wgpu::Buffer,
+        u32,
+        wgpu::Buffer,
+        wgpu::BindGroup,
+    )>,
+
     // --- Axes indicator ---
     /// Screen-space axes indicator pipeline (TriangleList, no depth, alpha blending).
     pub axes_pipeline: wgpu::RenderPipeline,
@@ -988,10 +1006,12 @@ pub struct ViewportGpuResources {
     pub(crate) outline_depth_view: Option<wgpu::TextureView>,
     /// Size of the current outline offscreen textures.
     pub(crate) outline_target_size: [u32; 2],
-    /// Fullscreen composite pipeline for single-sample targets such as HDR textures.
+    /// Fullscreen composite pipeline for single-sample LDR targets.
     pub(crate) outline_composite_pipeline_single: Option<wgpu::RenderPipeline>,
     /// Fullscreen composite pipeline for main render passes that use the renderer sample count.
     pub(crate) outline_composite_pipeline_msaa: Option<wgpu::RenderPipeline>,
+    /// Fullscreen composite pipeline for HDR (Rgba16Float) targets.
+    pub(crate) outline_composite_pipeline_hdr: Option<wgpu::RenderPipeline>,
     pub(crate) outline_composite_bgl: Option<wgpu::BindGroupLayout>,
     pub(crate) outline_composite_bind_group: Option<wgpu::BindGroup>,
     pub(crate) outline_composite_sampler: Option<wgpu::Sampler>,

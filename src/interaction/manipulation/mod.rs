@@ -450,18 +450,57 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    #[ignore = "numeric input deferred: Action enum lacks NumericDigit/Backspace/Tab variants"]
     fn numeric_parse_x_axis() {
-        // When numeric input actions are added, this test should verify:
-        //   NumericInputState with axis=Some(X), after typing "2", ".", "5", "0"
-        //   -> parsed_values() returns [Some(2.5), None, None]
         let mut state = NumericInputState::new(Some(GizmoAxis::X), false);
-        // Simulated digit pushes (would be driven by Action events):
         state.axis_inputs[0] = "2.50".to_string();
         let parsed = state.parsed_values();
         assert_eq!(parsed[0], Some(2.5));
         assert_eq!(parsed[1], None);
         assert_eq!(parsed[2], None);
+    }
+
+    #[test]
+    fn numeric_input_bootstraps_on_first_digit() {
+        let mut ctrl = ManipulationController::new();
+        let center = glam::Vec3::new(1.0, 0.0, 0.0);
+        ctrl.begin(ManipulationKind::Move, center);
+        assert!(ctrl.is_active());
+
+        // First digit: bootstrap numeric state.
+        let mut frame = ActionFrame::default();
+        frame.typed_chars.push('2');
+        let mut ctx = idle_ctx();
+        ctx.dragging = false; // not a mouse drag
+        let result = ctrl.update(&frame, ctx);
+        // Should get an Update with a zero translation (numeric override pending parse).
+        assert!(matches!(result, ManipResult::Update(_)));
+        let state = ctrl.state().unwrap();
+        assert!(state.numeric_display.is_some(), "numeric display should be set after first digit");
+    }
+
+    #[test]
+    fn numeric_backspace_removes_last_digit() {
+        let mut ctrl = ManipulationController::new();
+        ctrl.begin(ManipulationKind::Move, glam::Vec3::ZERO);
+
+        // Type "25".
+        let mut frame = ActionFrame::default();
+        frame.typed_chars.extend(['2', '5']);
+        ctrl.update(&frame, idle_ctx());
+
+        // Backspace once.
+        let mut frame2 = ActionFrame::default();
+        frame2.actions.insert(
+            crate::interaction::input::Action::NumericBackspace,
+            crate::interaction::input::ResolvedActionState::Pressed,
+        );
+        ctrl.update(&frame2, idle_ctx());
+
+        let state = ctrl.state().unwrap();
+        // Should now show "2" only.
+        let display = state.numeric_display.unwrap();
+        assert!(display.contains('2'), "display should contain '2': {display}");
+        assert!(!display.contains('5'), "display should not contain '5' after backspace: {display}");
     }
 
     // -----------------------------------------------------------------------

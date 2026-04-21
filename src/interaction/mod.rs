@@ -1,5 +1,7 @@
 /// World-space annotation labels and screen-projection utilities.
 pub mod annotation;
+/// Interactive clip plane controller: position and orient section planes.
+pub mod clip_plane;
 /// Transform gizmo (translate, rotate, scale) with hit testing.
 pub mod gizmo;
 /// Action-based input system with mode-sensitive key/mouse bindings.

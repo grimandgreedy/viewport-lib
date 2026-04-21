@@ -4,6 +4,7 @@
 //! that take raw `wgpu` types. GUI framework adapters (e.g. the egui
 //! `CallbackTrait` impl in the application crate) delegate to these methods.
 
+use crate::interaction::clip_plane::ClipPlaneOverlay;
 use crate::interaction::gizmo::{GizmoAxis, GizmoMode};
 use crate::interaction::snap::ConstraintOverlay;
 use crate::resources::{CameraUniform, ColormapId};
@@ -990,6 +991,12 @@ pub struct InteractionFrame {
     pub gizmo_space_orientation: glam::Quat,
     /// Constraint guide lines to render this frame.
     pub constraint_overlays: Vec<ConstraintOverlay>,
+    /// Clip plane handle overlays to render this frame.
+    ///
+    /// Each entry produces a semi-transparent quad fill, a border outline, and
+    /// a normal-axis indicator in the viewport. Populate by calling
+    /// [`ClipPlaneController::overlay`] and pushing the result.
+    pub clip_plane_overlays: Vec<ClipPlaneOverlay>,
     /// Draw a stencil-outline ring around selected objects. Default: false.
     pub outline_selected: bool,
     /// RGBA color of the selection outline ring. Default: orange [1.0, 0.5, 0.0, 1.0].
@@ -1011,6 +1018,7 @@ impl Default for InteractionFrame {
             gizmo_hovered: GizmoAxis::None,
             gizmo_space_orientation: glam::Quat::IDENTITY,
             constraint_overlays: Vec::new(),
+            clip_plane_overlays: Vec::new(),
             outline_selected: false,
             outline_color: [1.0, 0.5, 0.0, 1.0],
             outline_width_px: 2.0,
@@ -1398,6 +1406,30 @@ macro_rules! emit_draw_calls {
             render_pass.set_pipeline(&resources.overlay_pipeline);
             render_pass.set_bind_group(0, camera_bg, &[]);
             for (vbuf, ibuf, idx_count, _ubuf, bg) in &resources.cap_buffers {
+                render_pass.set_bind_group(1, bg, &[]);
+                render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..*idx_count, 0, 0..1);
+            }
+        }
+
+        // Clip plane handle fill pass (semi-transparent quad fills, alpha blended).
+        if !resources.clip_plane_fill_buffers.is_empty() {
+            render_pass.set_pipeline(&resources.overlay_pipeline);
+            render_pass.set_bind_group(0, camera_bg, &[]);
+            for (vbuf, ibuf, idx_count, _ubuf, bg) in &resources.clip_plane_fill_buffers {
+                render_pass.set_bind_group(1, bg, &[]);
+                render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..*idx_count, 0, 0..1);
+            }
+        }
+
+        // Clip plane handle border and normal indicator pass (line list).
+        if !resources.clip_plane_line_buffers.is_empty() {
+            render_pass.set_pipeline(&resources.overlay_line_pipeline);
+            render_pass.set_bind_group(0, camera_bg, &[]);
+            for (vbuf, ibuf, idx_count, _ubuf, bg) in &resources.clip_plane_line_buffers {
                 render_pass.set_bind_group(1, bg, &[]);
                 render_pass.set_vertex_buffer(0, vbuf.slice(..));
                 render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);

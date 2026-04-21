@@ -231,6 +231,16 @@ pub fn viewport_all_bindings() -> Vec<ViewportBinding> {
         },
     ));
 
+    // -- Manipulation mode: numeric input --
+    bindings.push(ViewportBinding::new(
+        Action::NumericBackspace,
+        ViewportGesture::KeyPress { key: KeyCode::Backspace, modifiers: none },
+    ));
+    bindings.push(ViewportBinding::new(
+        Action::NumericNextAxis,
+        ViewportGesture::KeyPress { key: KeyCode::Tab, modifiers: none },
+    ));
+
     // -- Confirm / Cancel (fly mode + manipulation mode; callers must gate on mode) --
     bindings.push(ViewportBinding::new(
         Action::Confirm,

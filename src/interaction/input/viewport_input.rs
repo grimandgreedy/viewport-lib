@@ -43,6 +43,8 @@ pub struct ViewportInput {
 
     // Per-frame key accumulators (reset by begin_frame)
     keys_pressed: HashSet<KeyCode>,
+    /// Characters typed this frame (reset by begin_frame, drained into ActionFrame).
+    typed_chars: Vec<char>,
 
     // Persistent state
     pointer_pos: Option<glam::Vec2>,
@@ -73,6 +75,7 @@ impl ViewportInput {
             drag_delta: glam::Vec2::ZERO,
             wheel_delta: glam::Vec2::ZERO,
             keys_pressed: HashSet::new(),
+            typed_chars: Vec::new(),
             pointer_pos: None,
             button_held: [false; 3],
             button_press_pos: [None, None, None],
@@ -101,6 +104,7 @@ impl ViewportInput {
         self.drag_delta = glam::Vec2::ZERO;
         self.wheel_delta = glam::Vec2::ZERO;
         self.keys_pressed.clear();
+        self.typed_chars.clear();
         // Note: persistent state (button_held, pointer_pos, modifiers, keys_held) is NOT reset.
     }
 
@@ -157,6 +161,14 @@ impl ViewportInput {
                     ButtonState::Released => {
                         self.keys_held.remove(&key);
                     }
+                }
+            }
+            ViewportEvent::Character(c) => {
+                // Only accept characters that are valid in a numeric expression.
+                // The app is responsible for only pushing this event while a
+                // manipulation session is active (see ViewportEvent::Character docs).
+                if c.is_ascii_digit() || c == '.' || c == '-' {
+                    self.typed_chars.push(c);
                 }
             }
             ViewportEvent::PointerLeft => {
@@ -293,6 +305,7 @@ impl ViewportInput {
         ActionFrame {
             navigation: NavigationActions { orbit, pan, zoom },
             actions,
+            typed_chars: self.typed_chars.clone(),
         }
     }
 

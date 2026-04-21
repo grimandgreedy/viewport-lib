@@ -3,7 +3,7 @@
 //! This module is not part of the public API. All types are `pub(super)`.
 
 use crate::interaction::gizmo::GizmoAxis;
-use crate::interaction::input::ActionFrame;
+use crate::interaction::input::{Action, ActionFrame};
 
 use super::types::{ManipulationKind, ManipulationState};
 
@@ -156,14 +156,42 @@ pub(super) fn update_constraint(
 
 /// Update numeric buffering for the session.
 ///
-/// NOTE: Numeric input requires `NumericDigit`, `Backspace`, and `Tab` actions
-/// in the `Action` enum. These are not present in the current `Action` enum.
-/// This function is a no-op until those actions are added.
-///
-/// TODO: numeric input requires NumericDigit/Backspace/Tab actions in Action enum
-#[allow(unused_variables)]
+/// Reads `frame.typed_chars` (digits, `.`, `-`) and `Action::NumericBackspace` /
+/// `Action::NumericNextAxis` to maintain per-axis string buffers. The first digit
+/// typed automatically initialises the numeric state.
 pub(super) fn update_numeric_state(session: &mut ManipulationSession, frame: &ActionFrame) {
-    // Deferred: the current Action enum does not include character-level input
-    // events (NumericDigit, Backspace, Tab). Numeric buffering will be wired up
-    // once those action variants are available.
+    // Bootstrap: create numeric state on the first typed digit.
+    if session.numeric.is_none() && !frame.typed_chars.is_empty() {
+        session.numeric = Some(NumericInputState::new(session.axis, session.exclude_axis));
+    }
+
+    let Some(ref mut numeric) = session.numeric else { return };
+    let axis_idx = numeric.current_axis();
+
+    // Append typed characters to the current axis buffer.
+    for &c in &frame.typed_chars {
+        let buf = &mut numeric.axis_inputs[axis_idx];
+        // Allow '-' only as the first character.
+        if c == '-' && buf.is_empty() {
+            buf.push(c);
+        } else if c.is_ascii_digit() || c == '.' {
+            // Allow at most one decimal point.
+            if c != '.' || !buf.contains('.') {
+                buf.push(c);
+            }
+        }
+    }
+
+    // Backspace: pop the last character.
+    if frame.is_active(Action::NumericBackspace) {
+        numeric.axis_inputs[axis_idx].pop();
+    }
+
+    // Tab: advance to the next active axis.
+    if frame.is_active(Action::NumericNextAxis) {
+        let len = numeric.active_axes.len();
+        if len > 1 {
+            numeric.current_axis_idx = (numeric.current_axis_idx + 1) % len;
+        }
+    }
 }

@@ -39,6 +39,12 @@ pub struct ActionFrame {
     pub navigation: NavigationActions,
     /// General action states resolved this frame (key presses, holds, etc.).
     pub actions: HashMap<Action, ResolvedActionState>,
+    /// Characters typed this frame, for numeric manipulation input.
+    ///
+    /// Only populated when the app forwards [`super::event::ViewportEvent::Character`]
+    /// events (which it should do only while `ManipulationController::is_active()`).
+    /// Already filtered to `0-9`, `.`, `-` by the input layer.
+    pub typed_chars: Vec<char>,
 }
 
 impl ActionFrame {

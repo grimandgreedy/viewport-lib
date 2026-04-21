@@ -61,4 +61,11 @@ pub enum ViewportEvent {
     PointerLeft,
     /// The viewport lost keyboard focus.
     FocusLost,
+    /// A character was typed (Unicode).
+    ///
+    /// Only push this event when the manipulation controller is active
+    /// (`ManipulationController::is_active()`) to avoid swallowing other keypresses.
+    /// The library filters the character stream to digits, `.`, and `-` before
+    /// passing it to the numeric input buffer.
+    Character(char),
 }
