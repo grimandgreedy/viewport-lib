@@ -277,7 +277,7 @@ pub struct LightsUniform {
     /// Alignment padding.
     pub _pad2: f32, //  4 bytes
     /// Per-light parameters (up to 8 lights).
-    pub lights: [SingleLightUniform; 8], // 8 * 128 = 1024 bytes
+    pub lights: [SingleLightUniform; 8], // 8 * 144 = 1152 bytes
     /// 1 = IBL environment map is active, 0 = disabled.
     pub ibl_enabled: u32, // 4 bytes
     /// IBL intensity multiplier.
@@ -1227,7 +1227,7 @@ pub struct ViewportGpuResources {
     pub(crate) ibl_fallback_texture: wgpu::Texture,
     /// View of ibl_fallback_texture.
     pub(crate) ibl_fallback_view: wgpu::TextureView,
-    /// Fallback 1×1 BRDF LUT (white — max F, no geometry term attenuation).
+    /// Fallback 1×1 BRDF LUT (black — placeholder, never sampled due to `ibl_enabled` guard).
     #[allow(dead_code)]
     pub(crate) ibl_fallback_brdf_texture: wgpu::Texture,
     pub(crate) ibl_fallback_brdf_view: wgpu::TextureView,

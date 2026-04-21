@@ -14,6 +14,7 @@ struct Camera {
     _pad: f32,
     forward: vec3<f32>,
     _pad1: f32,
+    inv_view_proj: mat4x4<f32>,
 };
 
 struct SingleLight {
@@ -315,7 +316,8 @@ fn F_Schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
     return F0 + (vec3<f32>(1.0) - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
-// IBL helpers
+// IBL helpers — canonical source: mesh.wgsl
+// Keep in sync with: mesh.wgsl, mesh_oit.wgsl, mesh_instanced_oit.wgsl
 const IBL_PI: f32 = 3.14159265;
 fn dir_to_equirect_uv(dir: vec3<f32>, rotation: f32) -> vec2<f32> {
     let s = sin(rotation); let c = cos(rotation);
@@ -456,7 +458,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
             let ambient_scale = vec3<f32>(inst.ambient) + hemi_color * lights_uniform.hemisphere_intensity;
             ambient = ambient_scale * (base_color * (1.0 - metallic) + F0 * metallic) * ao_factor;
         }
-        final_rgb = (Lo + ambient) * tint.rgb;
+        final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     } else {
         var total_color_contrib = vec3<f32>(0.0);
         for (var i = 0u; i < lights_uniform.count; i++) {

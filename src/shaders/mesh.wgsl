@@ -26,6 +26,7 @@ struct Camera {
     _pad: f32,
     forward: vec3<f32>,
     _pad1: f32,
+    inv_view_proj: mat4x4<f32>,
 };
 
 // Single light entry — 128 bytes.
@@ -387,6 +388,8 @@ fn F_Schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
 
 // ---------------------------------------------------------------------------
 // IBL helpers — equirectangular sampling
+// This is the CANONICAL copy. Keep in sync with:
+//   mesh_instanced.wgsl, mesh_oit.wgsl, mesh_instanced_oit.wgsl
 // ---------------------------------------------------------------------------
 
 const IBL_PI: f32 = 3.14159265;
@@ -624,7 +627,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
             ambient = ambient_scale * (base_color * (1.0 - metallic) + F0 * metallic) * ao_factor;
         }
 
-        final_rgb = (Lo + ambient) * tint.rgb;
+        final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     } else {
         // Multi-light Blinn-Phong path
         var total_color_contrib = vec3<f32>(0.0);

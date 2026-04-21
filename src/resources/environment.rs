@@ -6,6 +6,11 @@
 //! - **BRDF integration LUT** (128×128) — Schlick-GGX split-sum second integral.
 //!
 //! All textures are Rgba16Float for HDR correctness.
+//!
+//! NOTE: The IBL shader helpers (`dir_to_equirect_uv`, `sample_ibl_irradiance`,
+//! `ibl_ambient`, etc.) are duplicated in mesh.wgsl, mesh_instanced.wgsl,
+//! mesh_oit.wgsl, and mesh_instanced_oit.wgsl. mesh.wgsl is the canonical copy.
+//! Update all four when changing IBL shader code.
 
 use std::f32::consts::PI;
 
@@ -18,6 +23,11 @@ use std::f32::consts::PI;
 /// `pixels` is row-major RGBA f32 (4 floats per pixel), `width`×`height`.
 /// After this call, the camera bind groups must be rebuilt so shaders see the
 /// new textures — call `rebuild_camera_bind_groups` on the renderer.
+///
+/// **Performance:** This performs heavy CPU-side precomputation (irradiance
+/// convolution, GGX specular prefilter, BRDF LUT). Call during asset loading
+/// or on a background thread, not on the hot render path. The BRDF LUT is
+/// scene-independent and could be cached across different environment maps.
 pub fn upload_environment_map(
     resources: &mut super::ViewportGpuResources,
     device: &wgpu::Device,
@@ -78,12 +88,7 @@ fn upload_rgba16f(
     height: u32,
     label: &str,
 ) -> wgpu::Texture {
-    let mip_level_count = if label == "ibl_prefiltered" {
-        // Caller creates mips separately for prefiltered.
-        1
-    } else {
-        1
-    };
+    let mip_level_count = 1;
     let tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
@@ -450,12 +455,18 @@ fn normalize(v: [f32; 3]) -> [f32; 3] {
     }
 }
 
-/// Convert f32 to IEEE 754 half-precision (f16) bits.
+/// Convert f32 to IEEE 754 half-precision (f16) bits with round-to-nearest.
 fn f32_to_f16(value: f32) -> u16 {
     let bits = value.to_bits();
     let sign = (bits >> 16) & 0x8000;
+
+    // NaN → f16 NaN (preserve sign, quiet NaN).
+    if (bits & 0x7FFF_FFFF) > 0x7F80_0000 {
+        return (sign | 0x7E00) as u16;
+    }
+
     let exp = ((bits >> 23) & 0xFF) as i32 - 127;
-    let mantissa = bits & 0x7FFFFF;
+    let mantissa = bits & 0x7F_FFFF;
 
     if exp > 15 {
         // Overflow → infinity.
@@ -464,8 +475,18 @@ fn f32_to_f16(value: f32) -> u16 {
         // Underflow → flush to zero (denormals ignored for simplicity).
         sign as u16
     } else {
-        let f16_exp = ((exp + 15) as u32) << 10;
-        let f16_mantissa = mantissa >> 13;
-        (sign | f16_exp | f16_mantissa) as u16
+        let rounded = mantissa + 0x0000_1000; // round to nearest
+        if rounded & 0x0080_0000 != 0 {
+            // Mantissa overflow — carry into exponent.
+            let new_exp = (exp + 16) as u32;
+            if new_exp > 30 {
+                return (sign | 0x7C00) as u16; // overflow to infinity
+            }
+            (sign | (new_exp << 10)) as u16
+        } else {
+            let f16_exp = ((exp + 15) as u32) << 10;
+            let f16_mantissa = (rounded >> 13) & 0x3FF;
+            (sign | f16_exp | f16_mantissa) as u16
+        }
     }
 }

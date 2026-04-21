@@ -338,17 +338,13 @@ impl ViewportRenderer {
             let resources = &self.resources;
             render_pass.set_bind_group(0, camera_bg, &[]);
 
-            // Draw skybox background if environment map is loaded and show_skybox is enabled.
+            // Check skybox eligibility early; drawn after all opaques below.
             let show_skybox = frame
                 .effects
                 .environment
                 .as_ref()
                 .is_some_and(|e| e.show_skybox)
                 && resources.ibl_skybox_view.is_some();
-            if show_skybox {
-                render_pass.set_pipeline(&resources.skybox_pipeline);
-                render_pass.draw(0..3, 0..1);
-            }
 
             let use_instancing = self.use_instancing;
             let batches = &self.instanced_batches;
@@ -595,6 +591,13 @@ impl ViewportRenderer {
                 &self.streamtube_gpu_data,
                 camera_bg
             );
+
+            // Draw skybox last among opaques — only uncovered sky pixels pass depth == 1.0.
+            if show_skybox {
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                render_pass.set_pipeline(&resources.skybox_pipeline);
+                render_pass.draw(0..3, 0..1);
+            }
         }
 
         // -----------------------------------------------------------------------

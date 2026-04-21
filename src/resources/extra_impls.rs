@@ -458,6 +458,93 @@ impl ViewportGpuResources {
 
         Ok(())
     }
+
+    /// Create a camera bind group (group 0) for the given camera uniform buffer.
+    ///
+    /// All other bindings (shadow, lighting, clip, IBL) come from shared resources.
+    /// IBL texture slots fall back to placeholder textures when no environment map
+    /// is uploaded.
+    ///
+    /// NOTE: The initial bind group in `init.rs` is constructed inline (before
+    /// `Self` exists). Keep the binding layout in sync when modifying either site.
+    pub(crate) fn create_camera_bind_group(
+        &self,
+        device: &wgpu::Device,
+        camera_buf: &wgpu::Buffer,
+        label: &str,
+    ) -> wgpu::BindGroup {
+        let irr = self
+            .ibl_irradiance_view
+            .as_ref()
+            .unwrap_or(&self.ibl_fallback_view);
+        let spec = self
+            .ibl_prefiltered_view
+            .as_ref()
+            .unwrap_or(&self.ibl_fallback_view);
+        let brdf = self
+            .ibl_brdf_lut_view
+            .as_ref()
+            .unwrap_or(&self.ibl_fallback_brdf_view);
+        let skybox = self
+            .ibl_skybox_view
+            .as_ref()
+            .unwrap_or(&self.ibl_fallback_view);
+
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout: &self.camera_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: camera_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.shadow_map_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.shadow_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.light_uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.clip_planes_uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.shadow_info_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: self.clip_volume_uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(irr),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::TextureView(spec),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: wgpu::BindingResource::TextureView(brdf),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: wgpu::BindingResource::Sampler(&self.ibl_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: wgpu::BindingResource::TextureView(skybox),
+                },
+            ],
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------

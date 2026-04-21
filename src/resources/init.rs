@@ -571,8 +571,9 @@ impl ViewportGpuResources {
         });
 
         // ------------------------------------------------------------------
-        // IBL fallback textures: 1×1 black (Rgba16Float) for irradiance/prefiltered/skybox,
-        // 1×1 white for BRDF LUT, and a linear-clamp sampler.
+        // IBL fallback textures: 1×1 black (Rgba16Float) placeholder for all IBL slots,
+        // and a linear/repeat sampler. Never sampled — the `ibl_enabled` uniform guard
+        // prevents IBL calculations when no environment map is uploaded.
         // ------------------------------------------------------------------
         let ibl_fallback_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("ibl_fallback_black"),
@@ -587,6 +588,9 @@ impl ViewportGpuResources {
         let ibl_fallback_view =
             ibl_fallback_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
+        // 1×1 black Rgba16Float — never actually sampled because the `ibl_enabled` guard
+        // in prepare.rs prevents IBL calculations when no environment map is uploaded.
+        // Exists only to satisfy the bind group layout.
         let ibl_fallback_brdf_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("ibl_fallback_brdf"),
             size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
@@ -605,7 +609,7 @@ impl ViewportGpuResources {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Linear,
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
@@ -1585,9 +1589,9 @@ impl ViewportGpuResources {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth24PlusStencil8,
-                // Write depth = 1.0 so all scene geometry renders in front.
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
+                // Drawn after opaques: only sky pixels (depth == 1.0) pass.
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Equal,
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
