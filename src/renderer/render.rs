@@ -765,8 +765,14 @@ impl ViewportRenderer {
         // pass with no depth attachment, so the composite pipeline is compatible.
         // -----------------------------------------------------------------------
         if !self.resources.outline_object_buffers.is_empty() {
+            // Prefer the HDR-format pipeline; fall back to LDR single-sample.
+            let hdr_pipeline = self
+                .resources
+                .outline_composite_pipeline_hdr
+                .as_ref()
+                .or(self.resources.outline_composite_pipeline_single.as_ref());
             if let (Some(pipeline), Some(bg), Some(hdr_view), Some(hdr_depth_view)) = (
-                &self.resources.outline_composite_pipeline_single,
+                hdr_pipeline,
                 &self.resources.outline_composite_bind_group,
                 &self.resources.hdr_view,
                 &self.resources.hdr_depth_view,

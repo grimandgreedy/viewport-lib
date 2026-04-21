@@ -207,6 +207,60 @@ impl ViewportGpuResources {
         self.outline_color_view = Some(color_view);
         self.outline_depth_texture = Some(depth_tex);
         self.outline_depth_view = Some(depth_view);
+        // HDR-format variant for compositing onto the Rgba16Float HDR texture.
+        // Created here in case outline resources are initialized after the HDR
+        // target already exists.
+        if self.hdr_texture.is_some() && self.outline_composite_pipeline_hdr.is_none() {
+            let hdr_pipeline =
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("outline_composite_pipeline_hdr"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba16Float,
+                            blend: Some(wgpu::BlendState {
+                                color: wgpu::BlendComponent {
+                                    src_factor: wgpu::BlendFactor::SrcAlpha,
+                                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                    operation: wgpu::BlendOperation::Add,
+                                },
+                                alpha: wgpu::BlendComponent {
+                                    src_factor: wgpu::BlendFactor::One,
+                                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                    operation: wgpu::BlendOperation::Add,
+                                },
+                            }),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: wgpu::TextureFormat::Depth24PlusStencil8,
+                        depth_write_enabled: false,
+                        depth_compare: wgpu::CompareFunction::Always,
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                });
+            self.outline_composite_pipeline_hdr = Some(hdr_pipeline);
+        }
+
         self.outline_composite_pipeline_single = Some(pipeline_single);
         self.outline_composite_pipeline_msaa = Some(pipeline_msaa);
         self.outline_composite_bgl = Some(bgl);
@@ -1637,6 +1691,73 @@ impl ViewportGpuResources {
         self.hdr_solid_instanced_pipeline = hdr_solid_instanced;
         self.hdr_transparent_instanced_pipeline = hdr_transparent_instanced;
         self.hdr_overlay_pipeline = Some(hdr_overlay_pipeline);
+
+        // ------------------------------------------------------------------
+        // HDR-format outline composite pipeline (Rgba16Float target).
+        // The LDR pipelines are created in init_outline_resources() for the
+        // surface format; this variant is for compositing outlines onto the
+        // HDR texture.
+        // ------------------------------------------------------------------
+        if let Some(ref bgl) = self.outline_composite_bgl {
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("outline_composite_shader_hdr"),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("../shaders/outline_composite.wgsl").into(),
+                ),
+            });
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("outline_composite_layout_hdr"),
+                bind_group_layouts: &[bgl],
+                push_constant_ranges: &[],
+            });
+            self.outline_composite_pipeline_hdr =
+                Some(device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("outline_composite_pipeline_hdr"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba16Float,
+                            blend: Some(wgpu::BlendState {
+                                color: wgpu::BlendComponent {
+                                    src_factor: wgpu::BlendFactor::SrcAlpha,
+                                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                    operation: wgpu::BlendOperation::Add,
+                                },
+                                alpha: wgpu::BlendComponent {
+                                    src_factor: wgpu::BlendFactor::One,
+                                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                    operation: wgpu::BlendOperation::Add,
+                                },
+                            }),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: wgpu::TextureFormat::Depth24PlusStencil8,
+                        depth_write_enabled: false,
+                        depth_compare: wgpu::CompareFunction::Always,
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                }));
+        }
 
         // ------------------------------------------------------------------
         // FXAA intermediate texture and pipeline.
