@@ -353,6 +353,18 @@ impl ViewportRenderer {
         }
 
         // Upload lights uniform.
+        // IBL fields from environment map settings.
+        let (ibl_enabled, ibl_intensity, ibl_rotation, show_skybox) =
+            if let Some(env) = &frame.effects.environment {
+                if resources.ibl_irradiance_view.is_some() {
+                    (1u32, env.intensity, env.rotation, if env.show_skybox { 1u32 } else { 0 })
+                } else {
+                    (0, 0.0, 0.0, 0)
+                }
+            } else {
+                (0, 0.0, 0.0, 0)
+            };
+
         let lights_uniform = LightsUniform {
             count: light_count,
             shadow_bias: lighting.shadow_bias,
@@ -363,6 +375,10 @@ impl ViewportRenderer {
             ground_color: lighting.ground_color,
             _pad2: 0.0,
             lights: lights_arr,
+            ibl_enabled,
+            ibl_intensity,
+            ibl_rotation,
+            show_skybox,
         };
         queue.write_buffer(
             &resources.light_uniform_buf,

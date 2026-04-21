@@ -195,6 +195,8 @@ pub struct CameraUniform {
     pub forward: [f32; 3],
     /// Padding to align `forward` to 16 bytes.
     pub _pad1: f32,
+    /// Inverse view-projection matrix (for reconstructing world-space rays, e.g. skybox).
+    pub inv_view_proj: [[f32; 4]; 4],
 }
 
 /// GPU-side per-light uniform (one entry in the `LightsUniform` array).
@@ -276,6 +278,14 @@ pub struct LightsUniform {
     pub _pad2: f32, //  4 bytes
     /// Per-light parameters (up to 8 lights).
     pub lights: [SingleLightUniform; 8], // 8 * 128 = 1024 bytes
+    /// 1 = IBL environment map is active, 0 = disabled.
+    pub ibl_enabled: u32, // 4 bytes
+    /// IBL intensity multiplier.
+    pub ibl_intensity: f32, // 4 bytes
+    /// IBL Y-axis rotation in radians.
+    pub ibl_rotation: f32, // 4 bytes
+    /// 1 = show skybox background, 0 = use background color.
+    pub show_skybox: u32, // 4 bytes
 }
 
 /// Alias kept for backward compatibility — existing app code imports `LightUniform`.
@@ -1200,6 +1210,41 @@ pub struct ViewportGpuResources {
     pub(crate) oit_composite_sampler: Option<wgpu::Sampler>,
     /// Last OIT target size [w, h]. Used to detect resize.
     pub(crate) oit_size: [u32; 2],
+
+    // --- IBL / environment map resources ---
+    /// IBL irradiance equirect texture view (binding 7). None until environment uploaded.
+    pub ibl_irradiance_view: Option<wgpu::TextureView>,
+    /// IBL prefiltered specular equirect texture view (binding 8). None until environment uploaded.
+    pub ibl_prefiltered_view: Option<wgpu::TextureView>,
+    /// BRDF integration LUT texture view (binding 9). None until environment uploaded.
+    pub ibl_brdf_lut_view: Option<wgpu::TextureView>,
+    /// IBL linear-clamp sampler (binding 10).
+    pub(crate) ibl_sampler: wgpu::Sampler,
+    /// Skybox / full-res environment equirect texture view (binding 11). None until uploaded.
+    pub ibl_skybox_view: Option<wgpu::TextureView>,
+    /// Fallback 1×1 black Rgba16Float texture for IBL slots when no environment is loaded.
+    #[allow(dead_code)]
+    pub(crate) ibl_fallback_texture: wgpu::Texture,
+    /// View of ibl_fallback_texture.
+    pub(crate) ibl_fallback_view: wgpu::TextureView,
+    /// Fallback 1×1 BRDF LUT (white — max F, no geometry term attenuation).
+    #[allow(dead_code)]
+    pub(crate) ibl_fallback_brdf_texture: wgpu::Texture,
+    pub(crate) ibl_fallback_brdf_view: wgpu::TextureView,
+    /// Uploaded irradiance texture (owned, kept alive for view).
+    #[allow(dead_code)]
+    pub(crate) ibl_irradiance_texture: Option<wgpu::Texture>,
+    /// Uploaded prefiltered specular texture (owned).
+    #[allow(dead_code)]
+    pub(crate) ibl_prefiltered_texture: Option<wgpu::Texture>,
+    /// Uploaded BRDF LUT texture (owned).
+    #[allow(dead_code)]
+    pub(crate) ibl_brdf_lut_texture: Option<wgpu::Texture>,
+    /// Uploaded skybox equirect texture (owned).
+    #[allow(dead_code)]
+    pub(crate) ibl_skybox_texture: Option<wgpu::Texture>,
+    /// Skybox fullscreen render pipeline (renders equirect environment as background).
+    pub(crate) skybox_pipeline: wgpu::RenderPipeline,
 
     // --- Phase K: GPU object-ID picking (lazily created) ---
     /// Render pipeline that outputs flat u32 object IDs to R32Uint + R32Float targets.

@@ -2,7 +2,7 @@
 ///
 /// Materials carry all shading parameters that were previously global in `LightingSettings`.
 /// Each `SceneRenderItem` now has its own `Material`, enabling per-object visual distinction.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Material {
     /// Base diffuse color [r, g, b] in linear 0..1 range. Default [0.7, 0.7, 0.7].
     pub base_color: [f32; 3],

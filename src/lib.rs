@@ -110,10 +110,10 @@ pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::FrameStats;
 pub use renderer::{
     CameraFrame, ClipPlane, ClipVolume, ComputeFilterItem, ComputeFilterKind, EffectsFrame,
-    FilterMode, FrameData, GlyphItem, GlyphType, InteractionFrame, LightKind, LightSource,
-    LightingSettings, PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings,
-    RenderCamera, SceneFrame, SceneRenderItem, ShadowFilter, StreamtubeItem, SurfaceSubmission,
-    ToneMapping, ViewportFrame, ViewportRenderer, VolumeItem,
+    EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, InteractionFrame, LightKind,
+    LightSource, LightingSettings, PointCloudItem, PointRenderMode, PolylineItem,
+    PostProcessSettings, RenderCamera, SceneFrame, SceneRenderItem, ShadowFilter, StreamtubeItem,
+    SurfaceSubmission, ToneMapping, ViewportFrame, ViewportRenderer, VolumeItem,
 };
 pub use renderer::{ScalarBar, ScalarBarAnchor, ScalarBarOrientation};
 

@@ -1,5 +1,7 @@
 /// Built-in colormap LUT data.
 pub mod colormap_data;
+/// IBL precomputation and environment map upload.
+pub mod environment;
 mod extra_impls;
 mod init;
 mod instancing;

@@ -757,12 +757,14 @@ pub struct RenderCamera {
 impl RenderCamera {
     /// Build the GPU-facing camera uniform from this camera's state.
     pub fn camera_uniform(&self) -> CameraUniform {
+        let vp = self.view_proj();
         CameraUniform {
-            view_proj: self.view_proj().to_cols_array_2d(),
+            view_proj: vp.to_cols_array_2d(),
             eye_pos: self.eye_position,
             _pad: 0.0,
             forward: self.forward,
             _pad1: 0.0,
+            inv_view_proj: vp.inverse().to_cols_array_2d(),
         }
     }
 
@@ -1018,6 +1020,33 @@ impl Default for InteractionFrame {
     }
 }
 
+/// Environment map configuration for IBL (image-based lighting) and skybox.
+///
+/// When set on `EffectsFrame::environment`, the renderer uses the environment
+/// map for PBR ambient lighting (irradiance + specular) and optionally renders
+/// it as the scene background (skybox).
+#[derive(Clone, Debug)]
+pub struct EnvironmentMap {
+    /// Intensity multiplier for IBL contribution. Default: 1.0.
+    pub intensity: f32,
+    /// Y-axis rotation in radians. Default: 0.0.
+    pub rotation: f32,
+    /// Whether to render the environment as a visible skybox background.
+    /// When false, IBL still contributes lighting but the background uses
+    /// `ViewportFrame::background_color`. Default: true.
+    pub show_skybox: bool,
+}
+
+impl Default for EnvironmentMap {
+    fn default() -> Self {
+        Self {
+            intensity: 1.0,
+            rotation: 0.0,
+            show_skybox: true,
+        }
+    }
+}
+
 /// Global rendering effects and modifiers for one frame.
 ///
 /// Groups lighting, clipping, post-processing, compute filtering, and clip
@@ -1037,6 +1066,8 @@ pub struct EffectsFrame {
     pub compute_filter_items: Vec<ComputeFilterItem>,
     /// Optional volumetric clip region. Default: ClipVolume::None (zero overhead).
     pub clip_volume: ClipVolume,
+    /// Optional environment map for IBL and skybox. Default: None.
+    pub environment: Option<EnvironmentMap>,
 }
 
 impl Default for EffectsFrame {
@@ -1048,6 +1079,7 @@ impl Default for EffectsFrame {
             post_process: PostProcessSettings::default(),
             compute_filter_items: Vec::new(),
             clip_volume: ClipVolume::None,
+            environment: None,
         }
     }
 }

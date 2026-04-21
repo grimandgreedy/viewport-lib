@@ -95,6 +95,57 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
+                // Binding 7: IBL irradiance equirect texture.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // Binding 8: IBL prefiltered specular equirect texture.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // Binding 9: BRDF integration LUT texture.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 9,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // Binding 10: IBL sampler (linear, clamp-to-edge).
+                wgpu::BindGroupLayoutEntry {
+                    binding: 10,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // Binding 11: Skybox/environment equirect texture (full-res for skybox).
+                wgpu::BindGroupLayoutEntry {
+                    binding: 11,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -519,6 +570,46 @@ impl ViewportGpuResources {
             mapped_at_creation: false,
         });
 
+        // ------------------------------------------------------------------
+        // IBL fallback textures: 1×1 black (Rgba16Float) for irradiance/prefiltered/skybox,
+        // 1×1 white for BRDF LUT, and a linear-clamp sampler.
+        // ------------------------------------------------------------------
+        let ibl_fallback_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("ibl_fallback_black"),
+            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let ibl_fallback_view =
+            ibl_fallback_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let ibl_fallback_brdf_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("ibl_fallback_brdf"),
+            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let ibl_fallback_brdf_view =
+            ibl_fallback_brdf_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let ibl_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("ibl_sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            ..Default::default()
+        });
+
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("camera_bind_group"),
             layout: &camera_bgl,
@@ -550,6 +641,27 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: clip_volume_uniform_buf.as_entire_binding(),
+                },
+                // IBL textures (bindings 7-11) — fallback until environment is uploaded.
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(&ibl_fallback_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::TextureView(&ibl_fallback_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: wgpu::BindingResource::TextureView(&ibl_fallback_brdf_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: wgpu::BindingResource::Sampler(&ibl_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: wgpu::BindingResource::TextureView(&ibl_fallback_view),
                 },
             ],
         });
@@ -1436,6 +1548,54 @@ impl ViewportGpuResources {
             cache: None,
         });
 
+        // Skybox pipeline: fullscreen triangle that samples the equirect environment map.
+        let skybox_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("skybox_shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/skybox.wgsl").into()),
+        });
+        let skybox_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("skybox_pipeline_layout"),
+                bind_group_layouts: &[&camera_bgl],
+                push_constant_ranges: &[],
+            });
+        let skybox_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("skybox_pipeline"),
+            layout: Some(&skybox_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &skybox_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &skybox_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                // Write depth = 1.0 so all scene geometry renders in front.
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         Self {
             target_format,
             sample_count,
@@ -1618,6 +1778,21 @@ impl ViewportGpuResources {
             oit_composite_bind_group: None,
             oit_composite_sampler: None,
             oit_size: [0, 0],
+            // IBL / environment map resources.
+            ibl_irradiance_view: None,
+            ibl_prefiltered_view: None,
+            ibl_brdf_lut_view: None,
+            ibl_sampler,
+            ibl_skybox_view: None,
+            ibl_fallback_texture,
+            ibl_fallback_view,
+            ibl_fallback_brdf_texture,
+            ibl_fallback_brdf_view,
+            ibl_irradiance_texture: None,
+            ibl_prefiltered_texture: None,
+            ibl_brdf_lut_texture: None,
+            ibl_skybox_texture: None,
+            skybox_pipeline,
             pick_pipeline: None,
             pick_bind_group_layout_1: None,
             pick_camera_bgl: None,

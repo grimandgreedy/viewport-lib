@@ -15,10 +15,11 @@ pub mod stats;
 
 pub use self::types::{
     CameraFrame, ClipPlane, ClipVolume, ComputeFilterItem, ComputeFilterKind, EffectsFrame,
-    FilterMode, FrameData, GlyphItem, GlyphType, InteractionFrame, LightKind, LightSource,
-    LightingSettings, PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings,
-    RenderCamera, ScalarBar, ScalarBarAnchor, ScalarBarOrientation, SceneFrame, SceneRenderItem,
-    ShadowFilter, StreamtubeItem, SurfaceSubmission, ToneMapping, ViewportFrame, VolumeItem,
+    EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, InteractionFrame, LightKind,
+    LightSource, LightingSettings, PointCloudItem, PointRenderMode, PolylineItem,
+    PostProcessSettings, RenderCamera, ScalarBar, ScalarBarAnchor, ScalarBarOrientation,
+    SceneFrame, SceneRenderItem, ShadowFilter, StreamtubeItem, SurfaceSubmission, ToneMapping,
+    ViewportFrame, VolumeItem,
 };
 
 use self::shadows::{compute_cascade_matrix, compute_cascade_splits};
@@ -133,6 +134,86 @@ impl ViewportRenderer {
         &mut self.resources
     }
 
+    /// Upload an equirectangular HDR environment map and precompute IBL textures.
+    ///
+    /// `pixels` is row-major RGBA f32 data (4 floats per texel), `width`×`height`.
+    /// This rebuilds camera bind groups so shaders immediately see the new textures.
+    pub fn upload_environment_map(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        pixels: &[f32],
+        width: u32,
+        height: u32,
+    ) {
+        crate::resources::environment::upload_environment_map(
+            &mut self.resources,
+            device,
+            queue,
+            pixels,
+            width,
+            height,
+        );
+        self.rebuild_camera_bind_groups(device);
+    }
+
+    /// Rebuild the primary + per-viewport camera bind groups.
+    ///
+    /// Call after IBL textures are uploaded so shaders see the new environment.
+    fn rebuild_camera_bind_groups(&mut self, device: &wgpu::Device) {
+        // Helper closure to get the active view for each IBL slot.
+        let irr = self.resources.ibl_irradiance_view.as_ref()
+            .unwrap_or(&self.resources.ibl_fallback_view);
+        let spec = self.resources.ibl_prefiltered_view.as_ref()
+            .unwrap_or(&self.resources.ibl_fallback_view);
+        let brdf = self.resources.ibl_brdf_lut_view.as_ref()
+            .unwrap_or(&self.resources.ibl_fallback_brdf_view);
+        let skybox = self.resources.ibl_skybox_view.as_ref()
+            .unwrap_or(&self.resources.ibl_fallback_view);
+
+        // Rebuild primary camera bind group.
+        self.resources.camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("camera_bind_group"),
+            layout: &self.resources.camera_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: self.resources.camera_uniform_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&self.resources.shadow_map_view) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.resources.shadow_sampler) },
+                wgpu::BindGroupEntry { binding: 3, resource: self.resources.light_uniform_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: self.resources.clip_planes_uniform_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: self.resources.shadow_info_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: self.resources.clip_volume_uniform_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(irr) },
+                wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::TextureView(spec) },
+                wgpu::BindGroupEntry { binding: 9, resource: wgpu::BindingResource::TextureView(brdf) },
+                wgpu::BindGroupEntry { binding: 10, resource: wgpu::BindingResource::Sampler(&self.resources.ibl_sampler) },
+                wgpu::BindGroupEntry { binding: 11, resource: wgpu::BindingResource::TextureView(skybox) },
+            ],
+        });
+
+        // Rebuild per-viewport camera bind groups.
+        for (buf, bg) in &mut self.per_viewport_cameras {
+            *bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("per_viewport_camera_bg"),
+                layout: &self.resources.camera_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&self.resources.shadow_map_view) },
+                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.resources.shadow_sampler) },
+                    wgpu::BindGroupEntry { binding: 3, resource: self.resources.light_uniform_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 4, resource: self.resources.clip_planes_uniform_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 5, resource: self.resources.shadow_info_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 6, resource: self.resources.clip_volume_uniform_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(irr) },
+                    wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::TextureView(spec) },
+                    wgpu::BindGroupEntry { binding: 9, resource: wgpu::BindingResource::TextureView(brdf) },
+                    wgpu::BindGroupEntry { binding: 10, resource: wgpu::BindingResource::Sampler(&self.resources.ibl_sampler) },
+                    wgpu::BindGroupEntry { binding: 11, resource: wgpu::BindingResource::TextureView(skybox) },
+                ],
+            });
+        }
+    }
+
     /// Ensure a per-viewport camera slot exists for `viewport_index`.
     ///
     /// Creates a new `(Buffer, BindGroup)` pair that mirrors the layout of the
@@ -185,6 +266,39 @@ impl ViewportRenderer {
                     wgpu::BindGroupEntry {
                         binding: 6,
                         resource: self.resources.clip_volume_uniform_buf.as_entire_binding(),
+                    },
+                    // IBL textures (bindings 7-11) — use real views if uploaded, else fallback.
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: wgpu::BindingResource::TextureView(
+                            self.resources.ibl_irradiance_view.as_ref()
+                                .unwrap_or(&self.resources.ibl_fallback_view),
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 8,
+                        resource: wgpu::BindingResource::TextureView(
+                            self.resources.ibl_prefiltered_view.as_ref()
+                                .unwrap_or(&self.resources.ibl_fallback_view),
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 9,
+                        resource: wgpu::BindingResource::TextureView(
+                            self.resources.ibl_brdf_lut_view.as_ref()
+                                .unwrap_or(&self.resources.ibl_fallback_brdf_view),
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 10,
+                        resource: wgpu::BindingResource::Sampler(&self.resources.ibl_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 11,
+                        resource: wgpu::BindingResource::TextureView(
+                            self.resources.ibl_skybox_view.as_ref()
+                                .unwrap_or(&self.resources.ibl_fallback_view),
+                        ),
                     },
                 ],
             });

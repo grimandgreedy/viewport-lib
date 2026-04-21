@@ -39,6 +39,10 @@ struct Lights {
     ground_color: vec3<f32>,
     _pad2: f32,
     lights: array<SingleLight, 8>,
+    ibl_enabled: u32,
+    ibl_intensity: f32,
+    ibl_rotation: f32,
+    show_skybox: u32,
 };
 
 struct ClipPlanes {
@@ -102,6 +106,11 @@ struct ClipVolumeUB {
 @group(0) @binding(4) var<uniform> clip_planes: ClipPlanes;
 @group(0) @binding(5) var<uniform> shadow_atlas: ShadowAtlas;
 @group(0) @binding(6) var<uniform> clip_volume: ClipVolumeUB;
+@group(0) @binding(7) var ibl_irradiance: texture_2d<f32>;
+@group(0) @binding(8) var ibl_prefiltered: texture_2d<f32>;
+@group(0) @binding(9) var ibl_brdf_lut: texture_2d<f32>;
+@group(0) @binding(10) var ibl_sampler: sampler;
+@group(0) @binding(11) var ibl_skybox: texture_2d<f32>;
 
 fn clip_volume_test(p: vec3<f32>) -> bool {
     if clip_volume.volume_type == 0u { return true; }
@@ -306,6 +315,37 @@ fn F_Schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
     return F0 + (vec3<f32>(1.0) - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
+// IBL helpers
+const IBL_PI: f32 = 3.14159265;
+fn dir_to_equirect_uv(dir: vec3<f32>, rotation: f32) -> vec2<f32> {
+    let s = sin(rotation); let c = cos(rotation);
+    let d = vec3<f32>(c * dir.x + s * dir.z, dir.y, -s * dir.x + c * dir.z);
+    return vec2<f32>(0.5 + atan2(d.z, d.x) / (2.0 * IBL_PI), 0.5 - asin(clamp(d.y, -1.0, 1.0)) / IBL_PI);
+}
+fn sample_ibl_irradiance(N: vec3<f32>, rotation: f32) -> vec3<f32> {
+    return textureSampleLevel(ibl_irradiance, ibl_sampler, dir_to_equirect_uv(N, rotation), 0.0).rgb;
+}
+fn sample_ibl_prefiltered(R: vec3<f32>, roughness: f32, rotation: f32) -> vec3<f32> {
+    return textureSampleLevel(ibl_prefiltered, ibl_sampler, dir_to_equirect_uv(R, rotation), roughness * 4.0).rgb;
+}
+fn sample_brdf_lut(NdotV: f32, roughness: f32) -> vec2<f32> {
+    return textureSampleLevel(ibl_brdf_lut, ibl_sampler, vec2<f32>(NdotV, roughness), 0.0).rg;
+}
+fn F_Schlick_roughness(cos_theta: f32, F0: vec3<f32>, roughness: f32) -> vec3<f32> {
+    return F0 + (max(vec3<f32>(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+fn ibl_ambient(N: vec3<f32>, V: vec3<f32>, base_color: vec3<f32>, metallic: f32,
+               roughness: f32, F0: vec3<f32>, ao: f32, intensity: f32, rotation: f32) -> vec3<f32> {
+    let NdotV = max(dot(N, V), 0.001);
+    let F = F_Schlick_roughness(NdotV, F0, roughness);
+    let kD = (vec3<f32>(1.0) - F) * (1.0 - metallic);
+    let irradiance = sample_ibl_irradiance(N, rotation);
+    let R = reflect(-V, N);
+    let prefiltered = sample_ibl_prefiltered(R, roughness, rotation);
+    let brdf = sample_brdf_lut(NdotV, roughness);
+    return (kD * irradiance * base_color + prefiltered * (F * brdf.x + brdf.y)) * ao * intensity;
+}
+
 fn pbr_light_contrib(
     N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, radiance: vec3<f32>,
     base_color: vec3<f32>, metallic: f32, roughness: f32, F0: vec3<f32>,
@@ -405,11 +445,18 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
             radiance *= shadow_factor;
             Lo += pbr_light_contrib(N, V, L, radiance, base_color, metallic, roughness, F0);
         }
-        let hemi_t = clamp(in.world_normal.y * 0.5 + 0.5, 0.0, 1.0);
-        let hemi_color = mix(lights_uniform.ground_color, lights_uniform.sky_color, hemi_t);
-        let ambient_scale = vec3<f32>(inst.ambient) + hemi_color * lights_uniform.hemisphere_intensity;
-        let ambient = ambient_scale * (base_color * (1.0 - metallic) + F0 * metallic) * ao_factor;
-        final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+        var ambient: vec3<f32>;
+        if lights_uniform.ibl_enabled != 0u {
+            ambient = ibl_ambient(N, V, base_color, metallic, roughness, F0,
+                                  ao_factor, lights_uniform.ibl_intensity,
+                                  lights_uniform.ibl_rotation);
+        } else {
+            let hemi_t = clamp(in.world_normal.y * 0.5 + 0.5, 0.0, 1.0);
+            let hemi_color = mix(lights_uniform.ground_color, lights_uniform.sky_color, hemi_t);
+            let ambient_scale = vec3<f32>(inst.ambient) + hemi_color * lights_uniform.hemisphere_intensity;
+            ambient = ambient_scale * (base_color * (1.0 - metallic) + F0 * metallic) * ao_factor;
+        }
+        final_rgb = (Lo + ambient) * tint.rgb;
     } else {
         var total_color_contrib = vec3<f32>(0.0);
         for (var i = 0u; i < lights_uniform.count; i++) {
