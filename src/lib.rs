@@ -100,6 +100,8 @@ pub use interaction::picking::{
     pick_scene_accelerated_with_probe, pick_scene_nodes_with_probe, pick_scene_with_probe,
 };
 pub use interaction::selection::{NodeId, Selection};
+pub use interaction::sub_object::{SubObjectRef, SubSelection};
+pub use interaction::sub_object;
 pub use interaction::snap::{ConstraintOverlay, SnapConfig};
 
 pub use widgets::axes_indicator::AxisView;

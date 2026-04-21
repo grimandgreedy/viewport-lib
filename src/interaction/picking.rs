@@ -2,11 +2,11 @@
 ///
 /// Uses parry3d 0.26's glam-native API (no nalgebra required).
 /// All conversions are contained here at the picking boundary.
+use crate::interaction::sub_object::SubObjectRef;
 use crate::resources::{AttributeData, AttributeKind, AttributeRef};
 use crate::scene::traits::ViewportObject;
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
-use parry3d::shape::FeatureId;
 
 // ---------------------------------------------------------------------------
 // PickHit — rich hit result
@@ -21,15 +21,26 @@ use parry3d::shape::FeatureId;
 pub struct PickHit {
     /// The object/node ID of the hit.
     pub id: u64,
-    /// Which triangle was hit (from parry3d `FeatureId::Face`).
-    /// `u32::MAX` if the feature was not a face (edge/vertex hit — rare for TriMesh).
-    pub triangle_index: u32,
+    /// Typed sub-object reference — the authoritative source for sub-object identity.
+    ///
+    /// `Some(SubObjectRef::Face(i))` for mesh picks; `Some(SubObjectRef::Point(i))` for
+    /// point cloud picks; `None` when no specific sub-object could be identified.
+    pub sub_object: Option<SubObjectRef>,
     /// World-space position of the hit point (`ray_origin + ray_dir * toi`).
     pub world_pos: glam::Vec3,
     /// Surface normal at the hit point, in world space.
     pub normal: glam::Vec3,
+    /// Which triangle was hit (from parry3d `FeatureId::Face`).
+    /// `u32::MAX` if the feature was not a face (edge/vertex hit — rare for TriMesh).
+    ///
+    /// **Deprecated** — use [`sub_object`](Self::sub_object) instead.
+    #[deprecated(since = "0.5.0", note = "use `sub_object` instead")]
+    pub triangle_index: u32,
     /// Index of the hit point within a [`crate::renderer::PointCloudItem`].
     /// `None` for mesh picks; set when a point cloud item is hit.
+    ///
+    /// **Deprecated** — use [`sub_object`](Self::sub_object) instead.
+    #[deprecated(since = "0.5.0", note = "use `sub_object` instead")]
     pub point_index: Option<u32>,
     /// Interpolated scalar attribute value at the hit point.
     ///
@@ -159,25 +170,26 @@ pub fn pick_scene(
                     {
                         let toi = intersection.time_of_impact;
                         if best_hit.is_none() || toi < best_hit.as_ref().unwrap().1 {
-                            let triangle_index = match intersection.feature {
-                                FeatureId::Face(idx) => idx,
-                                _ => u32::MAX,
-                            };
+                            let sub_object = SubObjectRef::from_feature_id(intersection.feature);
                             let world_pos = ray_origin + ray_dir * toi;
                             // intersection.normal is already in world space (pose transforms it).
                             let normal = intersection.normal;
-                            best_hit = Some((
-                                obj.id(),
-                                toi,
-                                PickHit {
-                                    id: obj.id(),
-                                    triangle_index,
-                                    world_pos,
-                                    normal,
-                                    point_index: None,
-                                    scalar_value: None,
-                                },
-                            ));
+                            let triangle_index = if let Some(SubObjectRef::Face(i)) = sub_object {
+                                i
+                            } else {
+                                u32::MAX
+                            };
+                            #[allow(deprecated)]
+                            let hit = PickHit {
+                                id: obj.id(),
+                                sub_object,
+                                triangle_index,
+                                world_pos,
+                                normal,
+                                point_index: None,
+                                scalar_value: None,
+                            };
+                            best_hit = Some((obj.id(), toi, hit));
                         }
                     }
                 }
@@ -254,17 +266,18 @@ fn barycentric(p: glam::Vec3, a: glam::Vec3, b: glam::Vec3, c: glam::Vec3) -> (f
 /// Given a `PickHit` and matching `ProbeBinding`, compute the scalar value at
 /// the hit point and write it into `hit.scalar_value`.
 fn probe_scalar(hit: &mut PickHit, binding: &ProbeBinding<'_>) {
-    if hit.triangle_index == u32::MAX {
-        return;
-    }
+    let tri_idx_raw = match hit.sub_object {
+        Some(SubObjectRef::Face(i)) => i,
+        _ => return,
+    };
 
     let num_triangles = binding.indices.len() / 3;
     // parry3d may return back-face indices (idx >= num_triangles) for solid
     // meshes. Map them back to the original triangle.
-    let tri_idx = if (hit.triangle_index as usize) >= num_triangles && num_triangles > 0 {
-        hit.triangle_index as usize - num_triangles
+    let tri_idx = if (tri_idx_raw as usize) >= num_triangles && num_triangles > 0 {
+        tri_idx_raw as usize - num_triangles
     } else {
-        hit.triangle_index as usize
+        tri_idx_raw as usize
     };
 
     match binding.attribute_ref.kind {
@@ -368,18 +381,19 @@ pub fn pick_scene_accelerated_with_probe(
 
 /// Result of a rectangular (rubber-band) pick.
 ///
-/// Maps each hit object's identifier to the sub-object indices that fall
-/// inside the selection rectangle:
-/// - For mesh objects: triangle indices whose centroid projects inside the rect.
-/// - For point clouds: point indices whose position projects inside the rect.
+/// Maps each hit object's identifier to the typed sub-object references that
+/// fall inside the selection rectangle:
+/// - For mesh objects: [`SubObjectRef::Face`] entries whose centroid projects inside the rect.
+/// - For point clouds: [`SubObjectRef::Point`] entries whose position projects inside the rect.
 #[derive(Clone, Debug, Default)]
 pub struct RectPickResult {
-    /// Per-object sub-object indices.
+    /// Per-object typed sub-object references.
     ///
     /// Key = object identifier (`mesh_index` cast to `u64` for scene items,
     /// [`crate::renderer::PointCloudItem::id`] for point clouds).
-    /// Value = indices of triangles or points inside the rect.
-    pub hits: std::collections::HashMap<u64, Vec<u32>>,
+    /// Value = [`SubObjectRef`]s inside the rect — `Face` for mesh triangles,
+    /// `Point` for point cloud points.
+    pub hits: std::collections::HashMap<u64, Vec<SubObjectRef>>,
 }
 
 impl RectPickResult {
@@ -445,7 +459,7 @@ pub fn pick_rect(
         let model = glam::Mat4::from_cols_array_2d(&item.model);
         let mvp = view_proj * model;
 
-        let mut tri_hits: Vec<u32> = Vec::new();
+        let mut tri_hits: Vec<SubObjectRef> = Vec::new();
 
         for (tri_idx, chunk) in indices.chunks(3).enumerate() {
             if chunk.len() < 3 {
@@ -473,7 +487,7 @@ pub fn pick_rect(
 
             if ndc.x >= ndc_min.x && ndc.x <= ndc_max.x && ndc.y >= ndc_min.y && ndc.y <= ndc_max.y
             {
-                tri_hits.push(tri_idx as u32);
+                tri_hits.push(SubObjectRef::Face(tri_idx as u32));
             }
         }
 
@@ -492,7 +506,7 @@ pub fn pick_rect(
         let model = glam::Mat4::from_cols_array_2d(&pc.model);
         let mvp = view_proj * model;
 
-        let mut pt_hits: Vec<u32> = Vec::new();
+        let mut pt_hits: Vec<SubObjectRef> = Vec::new();
 
         for (pt_idx, pos) in pc.positions.iter().enumerate() {
             let p = glam::Vec3::from(*pos);
@@ -504,7 +518,7 @@ pub fn pick_rect(
 
             if ndc.x >= ndc_min.x && ndc.x <= ndc_max.x && ndc.y >= ndc_min.y && ndc.y <= ndc_max.y
             {
-                pt_hits.push(pt_idx as u32);
+                pt_hits.push(SubObjectRef::Point(pt_idx as u32));
             }
         }
 
@@ -1060,6 +1074,10 @@ mod tests {
             2,
             "both points should be inside the full-screen rect"
         );
+        // Verify the hits are typed as Point sub-objects.
+        assert!(hits.iter().all(|s| s.is_point()), "expected SubObjectRef::Point entries");
+        assert_eq!(hits[0], SubObjectRef::Point(0));
+        assert_eq!(hits[1], SubObjectRef::Point(1));
     }
 
     #[test]
@@ -1099,8 +1117,8 @@ mod tests {
         assert!(r.is_empty());
         assert_eq!(r.total_count(), 0);
 
-        r.hits.insert(1, vec![0, 1, 2]);
-        r.hits.insert(2, vec![5]);
+        r.hits.insert(1, vec![SubObjectRef::Face(0), SubObjectRef::Face(1), SubObjectRef::Face(2)]);
+        r.hits.insert(2, vec![SubObjectRef::Point(5)]);
         assert!(!r.is_empty());
         assert_eq!(r.total_count(), 4);
     }

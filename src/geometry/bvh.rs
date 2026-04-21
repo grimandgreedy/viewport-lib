@@ -14,7 +14,8 @@ use crate::scene::scene::Scene;
 
 use parry3d::math::Vector;
 use parry3d::query::{Ray, RayCast};
-use parry3d::shape::FeatureId;
+
+use crate::interaction::sub_object::SubObjectRef;
 
 /// An entry in the BVH representing a single scene object.
 #[derive(Debug, Clone)]
@@ -202,9 +203,11 @@ impl PickAccelerator {
                 let avg_scale = (scale.x + scale.y + scale.z) / 3.0;
                 let toi = intersection.time_of_impact * avg_scale;
 
-                let triangle_index = match intersection.feature {
-                    FeatureId::Face(idx) => idx,
-                    _ => u32::MAX,
+                let sub_object = SubObjectRef::from_feature_id(intersection.feature);
+                let triangle_index = if let Some(SubObjectRef::Face(i)) = sub_object {
+                    i
+                } else {
+                    u32::MAX
                 };
 
                 // Transform hit point to world space.
@@ -221,17 +224,17 @@ impl PickAccelerator {
                 // Use inverse-transpose (scale the normal by inv_scale) then normalize.
                 let world_normal = (rotation * (intersection.normal * inv_scale)).normalize();
 
-                (
-                    toi,
-                    crate::interaction::picking::PickHit {
-                        id: 0, // placeholder — caller fills in actual node_id
-                        triangle_index,
-                        world_pos,
-                        normal: world_normal,
-                        point_index: None,
-                        scalar_value: None,
-                    },
-                )
+                #[allow(deprecated)]
+                let hit = crate::interaction::picking::PickHit {
+                    id: 0, // placeholder — caller fills in actual node_id
+                    sub_object,
+                    triangle_index,
+                    world_pos,
+                    normal: world_normal,
+                    point_index: None,
+                    scalar_value: None,
+                };
+                (toi, hit)
             })
     }
 
