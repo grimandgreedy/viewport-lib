@@ -196,6 +196,14 @@ pub(crate) struct AppState {
     interact_gizmo: Gizmo,
     interact_snap_cycle: usize,
     interact_snap: SnapConfig,
+    /// Cumulative unsnapped translation during a gizmo drag (for snap accumulation).
+    interact_drag_accum_translation: glam::Vec3,
+    /// Cumulative unsnapped rotation angle during a gizmo drag (for snap accumulation).
+    interact_drag_accum_rotation: f32,
+    /// Last snapped translation applied (to compute per-frame snapped delta).
+    interact_drag_last_snapped_translation: glam::Vec3,
+    /// Last snapped rotation angle applied (to compute per-frame snapped delta).
+    interact_drag_last_snapped_rotation: f32,
     interact_built: bool,
     /// Cached gizmo center + scale for the current frame (set during render, used for drag).
     interact_gizmo_center: Option<glam::Vec3>,
@@ -585,6 +593,10 @@ impl ApplicationHandler for App {
             interact_gizmo: Gizmo::new(),
             interact_snap_cycle: 0,
             interact_snap: SnapConfig::default(),
+            interact_drag_accum_translation: glam::Vec3::ZERO,
+            interact_drag_accum_rotation: 0.0,
+            interact_drag_last_snapped_translation: glam::Vec3::ZERO,
+            interact_drag_last_snapped_rotation: 0.0,
             interact_built: false,
             interact_gizmo_center: None,
             interact_gizmo_scale: 1.0,
@@ -1497,6 +1509,11 @@ impl ApplicationHandler for App {
                             if hit != GizmoAxis::None {
                                 state.interact_gizmo.active_axis = hit;
                                 state.interact_gizmo.drag_start_mouse = Some(cursor);
+                                // Reset snap accumulators for a fresh drag.
+                                state.interact_drag_accum_translation = glam::Vec3::ZERO;
+                                state.interact_drag_accum_rotation = 0.0;
+                                state.interact_drag_last_snapped_translation = glam::Vec3::ZERO;
+                                state.interact_drag_last_snapped_rotation = 0.0;
                             }
                         }
                     } else {
@@ -1754,7 +1771,18 @@ impl ApplicationHandler for App {
                                     };
                                     let snap_delta =
                                         if let Some(inc) = state.interact_snap.translation {
-                                            viewport_lib::snap::snap_vec3(delta, inc)
+                                            // Accumulate raw delta, snap the cumulative total,
+                                            // and apply only the change since the last snapped value.
+                                            state.interact_drag_accum_translation += delta;
+                                            let snapped_total = viewport_lib::snap::snap_vec3(
+                                                state.interact_drag_accum_translation,
+                                                inc,
+                                            );
+                                            let step = snapped_total
+                                                - state.interact_drag_last_snapped_translation;
+                                            state.interact_drag_last_snapped_translation =
+                                                snapped_total;
+                                            step
                                         } else {
                                             delta
                                         };
@@ -1781,7 +1809,17 @@ impl ApplicationHandler for App {
                                     };
                                     let snap_angle = if let Some(inc) = state.interact_snap.rotation
                                     {
-                                        viewport_lib::snap::snap_angle(angle, inc)
+                                        // Accumulate raw angle, snap the cumulative total,
+                                        // and apply only the change since the last snapped value.
+                                        state.interact_drag_accum_rotation += angle;
+                                        let snapped_total = viewport_lib::snap::snap_angle(
+                                            state.interact_drag_accum_rotation,
+                                            inc,
+                                        );
+                                        let step =
+                                            snapped_total - state.interact_drag_last_snapped_rotation;
+                                        state.interact_drag_last_snapped_rotation = snapped_total;
+                                        step
                                     } else {
                                         angle
                                     };
