@@ -181,7 +181,7 @@ impl eframe::App for App {
                         egui::Event::MouseWheel { delta, .. } => {
                             self.controller.push_event(ViewportEvent::Wheel {
                                 delta: glam::Vec2::new(delta.x, delta.y),
-                                units: ScrollUnits::Lines,
+                                units: ScrollUnits::Pixels,
                             });
                         }
                         _ => {}

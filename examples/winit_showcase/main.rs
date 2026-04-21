@@ -86,6 +86,7 @@ const ZOOM_SENSITIVITY: f32 = 0.001;
 const ANIM_ORBIT_SENSITIVITY: f32 = 0.0008;
 const ANIM_ZOOM_SENSITIVITY: f32 = 0.0003;
 const MSAA_SAMPLES: u32 = 4;
+const BG_COLOR: [f32; 4] = [0.08, 0.08, 0.10, 1.0];
 
 fn main() {
     let event_loop = EventLoop::new().expect("Failed to create event loop");
@@ -456,7 +457,7 @@ fn material_preset(index: usize) -> Material {
 
 fn background_color(index: usize) -> [f32; 4] {
     match index % 3 {
-        0 => [65.0 / 255.0, 65.0 / 255.0, 65.0 / 255.0, 1.0],
+        0 => BG_COLOR,
         1 => [0.05, 0.08, 0.15, 1.0],
         2 => [0.18, 0.16, 0.14, 1.0],
         _ => unreachable!(),
@@ -1954,7 +1955,7 @@ impl ApplicationHandler for App {
                             LightingSettings::default()
                         };
 
-                        (items, None, lighting)
+                        (items, Some(BG_COLOR), lighting)
                     }
                     ShowcaseMode::SceneGraph => {
                         // Collect from Scene.
@@ -1984,7 +1985,7 @@ impl ApplicationHandler for App {
                         let items = state.perf_scene_items_cache.clone();
 
                         let lighting = LightingSettings::default();
-                        (items, Some([0.08, 0.08, 0.10, 1.0]), lighting)
+                        (items, Some(BG_COLOR), lighting)
                     }
                     ShowcaseMode::Advanced => {
                         let items = state.adv_scene.collect_render_items(&state.adv_selection);
@@ -2000,7 +2001,7 @@ impl ApplicationHandler for App {
                         adv_xray = state.adv_xray_on && !state.adv_selection.is_empty();
                         (
                             items,
-                            Some([0.07, 0.07, 0.09, 1.0]),
+                            Some(BG_COLOR),
                             LightingSettings::default(),
                         )
                     }
@@ -2008,7 +2009,7 @@ impl ApplicationHandler for App {
                         let items = state.pp_scene.collect_render_items(&Selection::new());
                         (
                             items,
-                            Some([0.05, 0.05, 0.07, 1.0]),
+                            Some(BG_COLOR),
                             LightingSettings {
                                 lights: vec![
                                     LightSource {
@@ -2046,7 +2047,7 @@ impl ApplicationHandler for App {
                         }
                         (
                             items,
-                            Some([0.05, 0.05, 0.07, 1.0]),
+                            Some(BG_COLOR),
                             LightingSettings {
                                 lights: vec![
                                     LightSource {
@@ -2075,7 +2076,7 @@ impl ApplicationHandler for App {
                         let items = state.shd_scene.collect_render_items(&Selection::new());
                         (
                             items,
-                            Some([0.08, 0.08, 0.10, 1.0]),
+                            Some(BG_COLOR),
                             LightingSettings {
                                 lights: vec![LightSource {
                                     kind: LightKind::Directional {
@@ -2101,7 +2102,7 @@ impl ApplicationHandler for App {
                         // Labels are projected via world_to_screen in update_title each frame.
                         (
                             items,
-                            Some([0.05, 0.07, 0.10, 1.0]),
+                            Some(BG_COLOR),
                             LightingSettings::default(),
                         )
                     }
@@ -2122,14 +2123,14 @@ impl ApplicationHandler for App {
                         let lighting = LightingSettings::default();
                         (
                             items,
-                            Some([65.0 / 255.0, 65.0 / 255.0, 65.0 / 255.0, 1.0]),
+                            Some(BG_COLOR),
                             lighting,
                         )
                     }
                 };
 
                 let clear_color =
-                    bg_color.unwrap_or([10.0 / 255.0, 10.0 / 255.0, 10.0 / 255.0, 1.0]);
+                    bg_color.unwrap_or(BG_COLOR);
 
                 // Compute gizmo model matrix for Interaction mode.
                 let (gizmo_model, gizmo_mode, gizmo_space_orient) =

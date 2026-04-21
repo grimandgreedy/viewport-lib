@@ -6,17 +6,14 @@
 
 mod viewport_bridge;
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk4::gdk;
 use gtk4::glib;
 use gtk4::prelude::*;
 use viewport_bridge::SceneRenderer;
-
-/// Camera control constants shared with the other viewport examples.
-const ORBIT_SENSITIVITY: f32 = 0.005;
-const ZOOM_SENSITIVITY: f32 = 0.001;
+use viewport_lib::{ButtonState, Modifiers, MouseButton, ScrollUnits, ViewportEvent};
 
 /// Shared application state behind `Rc<RefCell<...>>` so GTK callbacks can
 /// mutate it.
@@ -166,31 +163,127 @@ fn build_ui(app: &gtk4::Application) {
         });
     }
 
-    // --- Viewport input handling ---
+    // --- Viewport input handling —- forward raw events to OrbitCameraController ---
     //
-    // GTK4 uses gesture controllers attached to widgets. We create separate
-    // GestureDrag instances for each mouse button and an EventControllerScroll
-    // for zoom. Each gesture tracks the cumulative drag offset and computes
-    // frame-to-frame deltas by remembering the previous offset.
+    // EventControllerMotion  → PointerMoved / PointerLeft
+    // GestureClick (all btns) → MouseButton Pressed / Released
+    // EventControllerKey     → ModifiersChanged (shift tracking)
+    // EventControllerScroll  → Wheel
 
-    // Left-drag: orbit
-    attach_drag_gesture(&picture, 1, false, state.clone());
-    // Middle-drag: orbit (or pan with shift)
-    attach_drag_gesture(&picture, 2, false, state.clone());
-    // Right-drag: pan
-    attach_drag_gesture(&picture, 3, true, state.clone());
+    // Motion: update cursor position for the controller.
+    {
+        let state = state.clone();
+        let motion = gtk4::EventControllerMotion::new();
+        let state_enter = state.clone();
+        motion.connect_enter(move |_ctrl, x, y| {
+            let mut s = state_enter.borrow_mut();
+            s.scene_renderer.push_event(ViewportEvent::PointerMoved {
+                position: glam::vec2(x as f32, y as f32),
+            });
+            s.dirty = true;
+        });
+        let state_motion = state.clone();
+        let picture_ref = picture.clone();
+        motion.connect_motion(move |_ctrl, x, y| {
+            let mut s = state_motion.borrow_mut();
+            s.scene_renderer.push_event(ViewportEvent::PointerMoved {
+                position: glam::vec2(x as f32, y as f32),
+            });
+            s.dirty = true;
+            drop(s);
+            picture_ref.queue_draw();
+        });
+        let state_leave = state.clone();
+        motion.connect_leave(move |_ctrl| {
+            let mut s = state_leave.borrow_mut();
+            s.scene_renderer.push_event(ViewportEvent::PointerLeft);
+            s.dirty = true;
+        });
+        picture.add_controller(motion);
+    }
 
-    // Scroll: zoom
+    // Button press/release: GestureClick with button=0 captures all buttons.
+    {
+        let click = gtk4::GestureClick::new();
+        click.set_button(0);
+        let state_press = state.clone();
+        let picture_press = picture.clone();
+        click.connect_pressed(move |gesture, _n_press, x, y| {
+            let gtk_btn = gesture.current_button();
+            let vp_btn = match gtk_btn {
+                1 => MouseButton::Left,
+                3 => MouseButton::Right,
+                2 => MouseButton::Middle,
+                _ => return,
+            };
+            let shift = gesture
+                .current_event_state()
+                .contains(gdk::ModifierType::SHIFT_MASK);
+            let mut s = state_press.borrow_mut();
+            s.scene_renderer.push_event(ViewportEvent::ModifiersChanged(
+                if shift { Modifiers::SHIFT } else { Modifiers::NONE },
+            ));
+            s.scene_renderer.push_event(ViewportEvent::PointerMoved {
+                position: glam::vec2(x as f32, y as f32),
+            });
+            s.scene_renderer.push_event(ViewportEvent::MouseButton {
+                button: vp_btn,
+                state: ButtonState::Pressed,
+            });
+            s.dirty = true;
+            drop(s);
+            picture_press.queue_draw();
+        });
+        let state_release = state.clone();
+        click.connect_released(move |gesture, _n_press, _x, _y| {
+            let gtk_btn = gesture.current_button();
+            let vp_btn = match gtk_btn {
+                1 => MouseButton::Left,
+                3 => MouseButton::Right,
+                2 => MouseButton::Middle,
+                _ => return,
+            };
+            state_release
+                .borrow_mut()
+                .scene_renderer
+                .push_event(ViewportEvent::MouseButton {
+                    button: vp_btn,
+                    state: ButtonState::Released,
+                });
+        });
+        picture.add_controller(click);
+    }
+
+    // Modifier tracking: catch shift press/release even without a button held.
+    {
+        let state_key = state.clone();
+        let key_ctrl = gtk4::EventControllerKey::new();
+        key_ctrl.connect_modifiers(move |_ctrl, mods| {
+            let shift = mods.contains(gdk::ModifierType::SHIFT_MASK);
+            state_key
+                .borrow_mut()
+                .scene_renderer
+                .push_event(ViewportEvent::ModifiersChanged(
+                    if shift { Modifiers::SHIFT } else { Modifiers::NONE },
+                ));
+            false
+        });
+        window.add_controller(key_ctrl);
+    }
+
+    // Scroll: zoom.
     {
         let state = state.clone();
         let picture_ref = picture.clone();
         let scroll_ctrl =
             gtk4::EventControllerScroll::new(gtk4::EventControllerScrollFlags::VERTICAL);
         scroll_ctrl.connect_scroll(move |_ctrl, _dx, dy| {
-            let scroll_y = dy as f32 * -28.0; // Invert and scale line delta
+            let scroll_y = dy as f32 * -28.0; // GTK dy is inverted relative to convention
             let mut s = state.borrow_mut();
-            let cam = s.scene_renderer.camera_mut();
-            cam.zoom_by_factor(1.0 - scroll_y * ZOOM_SENSITIVITY);
+            s.scene_renderer.push_event(ViewportEvent::Wheel {
+                delta: glam::vec2(0.0, scroll_y),
+                units: ScrollUnits::Pixels,
+            });
             s.dirty = true;
             drop(s);
             picture_ref.queue_draw();
@@ -259,69 +352,3 @@ fn build_ui(app: &gtk4::Application) {
     window.present();
 }
 
-/// Create a `GestureDrag` for a specific mouse button and attach it to the
-/// viewport widget. Computes frame-to-frame deltas from the cumulative offset
-/// and applies orbit or pan to the camera.
-fn attach_drag_gesture(
-    widget: &gtk4::Picture,
-    button: u32,
-    force_pan: bool,
-    state: Rc<RefCell<AppState>>,
-) {
-    let drag = gtk4::GestureDrag::new();
-    drag.set_button(button);
-
-    // Track previous offset so we can compute frame-to-frame deltas.
-    // GestureDrag's `drag-update` signal gives the total offset from
-    // the drag start, not the per-frame delta.
-    let prev_offset = Rc::new(Cell::new((0.0f64, 0.0f64)));
-
-    {
-        let prev_offset = prev_offset.clone();
-        drag.connect_drag_begin(move |_gesture, _x, _y| {
-            prev_offset.set((0.0, 0.0));
-        });
-    }
-
-    {
-        let state = state.clone();
-        let prev_offset = prev_offset.clone();
-        let widget = widget.clone();
-        drag.connect_drag_update(move |gesture, offset_x, offset_y| {
-            let (px, py) = prev_offset.get();
-            let dx = (offset_x - px) as f32;
-            let dy = (offset_y - py) as f32;
-            prev_offset.set((offset_x, offset_y));
-
-            if dx.abs() < 0.001 && dy.abs() < 0.001 {
-                return;
-            }
-
-            // Middle button: check shift modifier to decide orbit vs pan.
-            let is_pan = if force_pan {
-                true
-            } else if button == 2 {
-                gesture
-                    .current_event_state()
-                    .contains(gdk::ModifierType::SHIFT_MASK)
-            } else {
-                false
-            };
-
-            let mut s = state.borrow_mut();
-            if is_pan {
-                let viewport_h = s.tex_h.max(1) as f32;
-                let cam = s.scene_renderer.camera_mut();
-                cam.pan_pixels(glam::vec2(dx, dy), viewport_h);
-            } else {
-                let cam = s.scene_renderer.camera_mut();
-                cam.orbit(dx * ORBIT_SENSITIVITY, dy * ORBIT_SENSITIVITY);
-            }
-            s.dirty = true;
-            drop(s);
-            widget.queue_draw();
-        });
-    }
-
-    widget.add_controller(drag);
-}

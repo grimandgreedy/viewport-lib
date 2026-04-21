@@ -11,8 +11,8 @@
 use std::collections::HashMap;
 
 use viewport_lib::{
-    Camera, CameraFrame, FrameData, GizmoAxis, GizmoMode, LightingSettings, SceneFrame,
-    SceneRenderItem, ViewportRenderer, primitives,
+    Camera, CameraFrame, FrameData, LightingSettings, OrbitCameraController, SceneFrame,
+    SceneRenderItem, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
 };
 use wgpu;
 
@@ -20,6 +20,7 @@ use wgpu;
 pub struct SceneRenderer {
     renderer: ViewportRenderer,
     camera: Camera,
+    controller: OrbitCameraController,
     uploaded: HashMap<u64, usize>,
     color_texture: Option<wgpu::Texture>,
     depth_view: Option<wgpu::TextureView>,
@@ -47,6 +48,7 @@ impl SceneRenderer {
         Self {
             renderer,
             camera,
+            controller: OrbitCameraController::viewport_primitives(),
             uploaded: HashMap::new(),
             color_texture: None,
             depth_view: None,
@@ -57,8 +59,8 @@ impl SceneRenderer {
         }
     }
 
-    pub fn camera_mut(&mut self) -> &mut Camera {
-        &mut self.camera
+    pub fn push_event(&mut self, event: ViewportEvent) {
+        self.controller.push_event(event);
     }
 
     fn aligned_row_stride(width: u32) -> u32 {
@@ -139,7 +141,13 @@ impl SceneRenderer {
             }
         }
 
-        // Update camera aspect.
+        // Apply accumulated input from last frame, then reset for next batch.
+        self.controller.apply_to_camera(&mut self.camera);
+        self.controller.begin_frame(ViewportContext {
+            hovered: true,
+            focused: true,
+            viewport_size: [w as f32, h as f32],
+        });
         self.camera.set_aspect_ratio(w as f32, h as f32);
 
         // Build scene items.

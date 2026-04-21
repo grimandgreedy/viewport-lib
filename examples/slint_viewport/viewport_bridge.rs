@@ -143,13 +143,13 @@ impl SceneRenderer {
             }
         }
 
-        // Apply controller input and update camera aspect.
+        // Apply accumulated input from last frame, then reset for next batch.
+        self.controller.apply_to_camera(&mut self.camera);
         self.controller.begin_frame(ViewportContext {
             hovered: true,
             focused: true,
             viewport_size: glam::vec2(w as f32, h as f32).into(),
         });
-        self.controller.apply_to_camera(&mut self.camera);
         self.camera.set_aspect_ratio(w as f32, h as f32);
 
         // Build scene items.
