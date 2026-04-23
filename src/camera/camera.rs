@@ -65,8 +65,9 @@ impl Default for Camera {
             projection: Projection::Perspective,
             center: glam::Vec3::ZERO,
             distance: 5.0,
-            // Default to a slight top-down view above the x-y plane (Z-up world).
-            orientation: glam::Quat::from_rotation_z(0.3) * glam::Quat::from_rotation_x(0.8),
+            // Default: eye slightly above the x-y plane (Z-up world), ~27° elevation.
+            // from_rotation_x(1.1) ≈ 63° from top = 27° above horizontal.
+            orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
             fov_y: std::f32::consts::FRAC_PI_4,
             aspect: 1.5,
             znear: 0.01,

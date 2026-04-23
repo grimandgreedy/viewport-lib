@@ -142,15 +142,16 @@ impl ManipulationController {
                 }
 
                 ManipulationKind::Rotate => {
+                    let twist = frame.navigation.twist;
                     let rot = if let Some(ax) = session.axis {
                         if session.exclude_axis {
                             // Excluded axis: rotate around the dominant of the two remaining axes.
                             let (ax1, ax2) = solvers::excluded_axes(ax);
                             let a1 = solvers::drag_onto_rotation(pointer_delta, ax1, camera_view);
                             let a2 = solvers::drag_onto_rotation(pointer_delta, ax2, camera_view);
-                            let (chosen_axis, angle) =
+                            let (chosen_axis, drag_angle) =
                                 if a1.abs() >= a2.abs() { (ax1, a1) } else { (ax2, a2) };
-                            glam::Quat::from_axis_angle(chosen_axis, angle)
+                            glam::Quat::from_axis_angle(chosen_axis, drag_angle + twist)
                         } else {
                             // Constrained to a single axis: angular sweep around screen center.
                             let axis_world = solvers::gizmo_axis_to_vec3(ax);
@@ -162,14 +163,14 @@ impl ManipulationController {
                                 view_proj,
                                 ctx.viewport_size,
                                 camera_view,
-                            );
+                            ) + twist;
                             glam::Quat::from_axis_angle(axis_world, angle)
                         }
                     } else {
                         // Unconstrained: rotate around camera view direction.
                         let view_dir =
                             (ctx.camera.center - ctx.camera.eye_position()).normalize();
-                        glam::Quat::from_axis_angle(view_dir, pointer_delta.x * 0.01)
+                        glam::Quat::from_axis_angle(view_dir, pointer_delta.x * 0.01 + twist)
                     };
                     delta.rotation = rot;
                 }

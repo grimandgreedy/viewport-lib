@@ -255,6 +255,13 @@ impl ApplicationHandler for App {
                 state.window.request_redraw();
             }
 
+            WindowEvent::RotationGesture { delta, .. } => {
+                state
+                    .controller
+                    .push_event(ViewportEvent::TrackpadRotate(delta.to_radians()));
+                state.window.request_redraw();
+            }
+
             // --- Render ---
             WindowEvent::RedrawRequested => {
                 let frame = match state.surface.get_current_texture() {

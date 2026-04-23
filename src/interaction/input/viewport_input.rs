@@ -40,6 +40,7 @@ pub struct ViewportInput {
     // Per-frame accumulated deltas
     drag_delta: glam::Vec2,
     wheel_delta: glam::Vec2, // always in pixels
+    rotate_gesture: f32,     // accumulated two-finger rotation this frame, radians
 
     // Per-frame key accumulators (reset by begin_frame)
     keys_pressed: HashSet<KeyCode>,
@@ -74,6 +75,7 @@ impl ViewportInput {
             bindings,
             drag_delta: glam::Vec2::ZERO,
             wheel_delta: glam::Vec2::ZERO,
+            rotate_gesture: 0.0,
             keys_pressed: HashSet::new(),
             typed_chars: Vec::new(),
             pointer_pos: None,
@@ -103,6 +105,7 @@ impl ViewportInput {
         self.ctx = ctx;
         self.drag_delta = glam::Vec2::ZERO;
         self.wheel_delta = glam::Vec2::ZERO;
+        self.rotate_gesture = 0.0;
         self.keys_pressed.clear();
         self.typed_chars.clear();
         // Note: persistent state (button_held, pointer_pos, modifiers, keys_held) is NOT reset.
@@ -191,6 +194,11 @@ impl ViewportInput {
                 }
                 self.keys_held.clear();
                 self.keys_pressed.clear();
+            }
+            ViewportEvent::TrackpadRotate(angle) => {
+                if self.ctx.hovered {
+                    self.rotate_gesture += angle;
+                }
             }
         }
     }
@@ -303,7 +311,7 @@ impl ViewportInput {
         }
 
         ActionFrame {
-            navigation: NavigationActions { orbit, pan, zoom },
+            navigation: NavigationActions { orbit, pan, zoom, twist: self.rotate_gesture },
             actions,
             typed_chars: self.typed_chars.clone(),
         }

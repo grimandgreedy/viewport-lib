@@ -27,6 +27,9 @@ pub struct NavigationActions {
     pub pan: glam::Vec2,
     /// Zoom factor delta. Positive = zoom in. Zero if no zoom input.
     pub zoom: f32,
+    /// Two-finger trackpad rotation gesture delta, in radians.
+    /// Positive = counter-clockwise. Zero if no gesture this frame.
+    pub twist: f32,
 }
 
 /// Per-frame resolved action output.

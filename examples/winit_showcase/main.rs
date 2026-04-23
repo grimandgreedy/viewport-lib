@@ -263,6 +263,7 @@ pub(crate) struct AppState {
     middle_pressed: bool,
     right_pressed: bool,
     shift_held: bool,
+    ctrl_held: bool,
     last_cursor: PhysicalPosition<f64>,
     /// True if the left button has moved more than the click threshold since it was pressed.
     /// Used to distinguish an orbit drag from a click-to-select.
@@ -635,6 +636,7 @@ impl ApplicationHandler for App {
             middle_pressed: false,
             right_pressed: false,
             shift_held: false,
+            ctrl_held: false,
             last_cursor: PhysicalPosition::new(0.0, 0.0),
             left_drag_active: false,
         };
@@ -1400,6 +1402,7 @@ impl ApplicationHandler for App {
             // --- Mouse ---
             WindowEvent::ModifiersChanged(mods) => {
                 state.shift_held = mods.state().shift_key();
+                state.ctrl_held = mods.state().control_key();
             }
 
             WindowEvent::MouseInput {
@@ -1913,15 +1916,40 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
-                let scroll_y = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y * 28.0,
-                    MouseScrollDelta::PixelDelta(px) => px.y as f32,
+                let (scroll_x, scroll_y) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => (x * 28.0, y * 28.0),
+                    MouseScrollDelta::PixelDelta(px) => (px.x as f32, px.y as f32),
                 };
-                if state.mode == ShowcaseMode::Interaction {
-                    let zoom_delta = -scroll_y * ANIM_ZOOM_SENSITIVITY * state.camera.distance;
-                    state.interact_animator.apply_zoom(zoom_delta);
+                if state.ctrl_held {
+                    // Ctrl + Scroll → orbit (two-axis, matching the controller preset).
+                    if state.mode == ShowcaseMode::Interaction {
+                        state.interact_animator.apply_orbit(
+                            scroll_x * ANIM_ORBIT_SENSITIVITY,
+                            scroll_y * ANIM_ORBIT_SENSITIVITY,
+                        );
+                    } else {
+                        state.camera.orbit(
+                            scroll_x * ORBIT_SENSITIVITY,
+                            scroll_y * ORBIT_SENSITIVITY,
+                        );
+                    }
                 } else {
-                    state.camera.zoom_by_factor(1.0 - scroll_y * ZOOM_SENSITIVITY);
+                    if state.mode == ShowcaseMode::Interaction {
+                        let zoom_delta = -scroll_y * ANIM_ZOOM_SENSITIVITY * state.camera.distance;
+                        state.interact_animator.apply_zoom(zoom_delta);
+                    } else {
+                        state.camera.zoom_by_factor(1.0 - scroll_y * ZOOM_SENSITIVITY);
+                    }
+                }
+                state.window.request_redraw();
+            }
+
+            WindowEvent::RotationGesture { delta, .. } => {
+                let angle = delta.to_radians();
+                if state.mode == ShowcaseMode::Interaction {
+                    state.interact_animator.apply_orbit(angle, 0.0);
+                } else {
+                    state.camera.orbit(angle, 0.0);
                 }
                 state.window.request_redraw();
             }

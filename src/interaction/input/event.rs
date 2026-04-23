@@ -68,4 +68,14 @@ pub enum ViewportEvent {
     /// The library filters the character stream to digits, `.`, and `-` before
     /// passing it to the numeric input buffer.
     Character(char),
+
+    /// Two-finger trackpad rotation gesture.
+    ///
+    /// `delta` is the change in angle this event, in radians.
+    /// Positive = counter-clockwise (matches winit's `RotationGesture` convention,
+    /// converted from degrees to radians by the host).
+    ///
+    /// ## Platform-specific
+    /// Only emitted on macOS (and iOS). Silently unused on Windows and Linux.
+    TrackpadRotate(f32),
 }

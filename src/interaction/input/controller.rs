@@ -50,6 +50,10 @@ pub struct OrbitCameraController {
     pub orbit_sensitivity: f32,
     /// Sensitivity for scroll-based zoom (scale factor per pixel).
     pub zoom_sensitivity: f32,
+    /// Sensitivity applied to two-finger trackpad rotation gesture (radians per radian).
+    /// Default: `1.0` (gesture angle applied directly to camera yaw).
+    /// Set to `0.0` to suppress the gesture entirely.
+    pub gesture_sensitivity: f32,
     /// Current viewport size (cached from the last `begin_frame`).
     viewport_size: [f32; 2],
 }
@@ -59,6 +63,8 @@ impl OrbitCameraController {
     pub const DEFAULT_ORBIT_SENSITIVITY: f32 = 0.005;
     /// Default scroll zoom sensitivity: 0.001 scale per pixel.
     pub const DEFAULT_ZOOM_SENSITIVITY: f32 = 0.001;
+    /// Default gesture sensitivity: 1.0 (gesture radians applied 1:1 to camera yaw).
+    pub const DEFAULT_GESTURE_SENSITIVITY: f32 = 1.0;
 
     /// Create a controller from the given binding preset.
     pub fn new(preset: BindingPreset) -> Self {
@@ -70,6 +76,7 @@ impl OrbitCameraController {
             input: ViewportInput::new(bindings),
             orbit_sensitivity: Self::DEFAULT_ORBIT_SENSITIVITY,
             zoom_sensitivity: Self::DEFAULT_ZOOM_SENSITIVITY,
+            gesture_sensitivity: Self::DEFAULT_GESTURE_SENSITIVITY,
             viewport_size: [1.0, 1.0],
         }
     }
@@ -137,6 +144,11 @@ impl OrbitCameraController {
                 nav.orbit.x * self.orbit_sensitivity,
                 nav.orbit.y * self.orbit_sensitivity,
             );
+        }
+
+        // Two-finger trackpad rotation: already in radians, apply via gesture_sensitivity.
+        if nav.twist != 0.0 && self.gesture_sensitivity != 0.0 {
+            camera.orbit(nav.twist * self.gesture_sensitivity, 0.0);
         }
 
         if nav.pan != glam::Vec2::ZERO {
