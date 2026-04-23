@@ -10,6 +10,7 @@ struct ToneMapUniform {
     _pad0:                   u32,
     _pad1:                   u32,
     _pad2:                   u32,
+    background_color:        vec4<f32>,
 }
 
 @group(0) @binding(0) var hdr_texture:  texture_2d<f32>;
@@ -18,6 +19,7 @@ struct ToneMapUniform {
 @group(0) @binding(3) var bloom_texture: texture_2d<f32>;
 @group(0) @binding(4) var ao_texture:    texture_2d<f32>;
 @group(0) @binding(5) var cs_texture:    texture_2d<f32>;
+@group(0) @binding(6) var depth_texture: texture_depth_2d;
 
 struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
@@ -63,6 +65,14 @@ fn khronos_neutral(x: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let depth_dims = textureDimensions(depth_texture);
+    let depth_uv = clamp(in.uv, vec2<f32>(0.0), vec2<f32>(0.99999994));
+    let depth_coord = vec2<i32>(vec2<u32>(depth_uv * vec2<f32>(depth_dims)));
+    let depth = textureLoad(depth_texture, depth_coord, 0);
+    if depth >= 0.999999 {
+        return params.background_color;
+    }
+
     var color = textureSample(hdr_texture, hdr_sampler, in.uv).rgb;
 
     // Add bloom additively before tone mapping.

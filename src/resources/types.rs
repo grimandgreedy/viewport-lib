@@ -513,7 +513,7 @@ pub(crate) struct OutlineObjectBuffers {
     pub outline_bind_group: wgpu::BindGroup,
 }
 
-/// Tone mapping uniform (16 bytes).
+/// Tone mapping uniform.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ToneMapUniform {
@@ -523,6 +523,7 @@ pub(crate) struct ToneMapUniform {
     pub(crate) ssao_enabled: u32,
     pub(crate) contact_shadows_enabled: u32,
     pub(crate) _pad_tm: [u32; 3],
+    pub(crate) background_color: [f32; 4],
 }
 
 /// Bloom pass uniform (16 bytes).

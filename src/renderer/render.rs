@@ -210,6 +210,12 @@ impl ViewportRenderer {
         // HDR path.
         let pp = &frame.effects.post_process;
 
+        let hdr_clear_rgb = [
+            bg_color[0].powf(2.2),
+            bg_color[1].powf(2.2),
+            bg_color[2].powf(2.2),
+        ];
+
         // Upload tone map uniform into the per-viewport buffer.
         let mode = match pp.tone_mapping {
             crate::renderer::ToneMapping::Reinhard => 0u32,
@@ -223,6 +229,7 @@ impl ViewportRenderer {
             ssao_enabled: if pp.ssao { 1 } else { 0 },
             contact_shadows_enabled: if pp.contact_shadows { 1 } else { 0 },
             _pad_tm: [0; 3],
+            background_color: bg_color,
         };
         {
             let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
@@ -353,9 +360,9 @@ impl ViewportRenderer {
             let hdr_depth_view = &slot_hdr.hdr_depth_view;
 
             let clear_wgpu = wgpu::Color {
-                r: bg_color[0] as f64,
-                g: bg_color[1] as f64,
-                b: bg_color[2] as f64,
+                r: hdr_clear_rgb[0] as f64,
+                g: hdr_clear_rgb[1] as f64,
+                b: hdr_clear_rgb[2] as f64,
                 a: bg_color[3] as f64,
             };
 
@@ -840,7 +847,7 @@ impl ViewportRenderer {
                         view: hdr_depth_view,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Discard,
+                            store: wgpu::StoreOp::Store,
                         }),
                         stencil_ops: None,
                     }),
@@ -1071,6 +1078,179 @@ impl ViewportRenderer {
                 fxaa_pass.set_pipeline(fxaa_pipeline);
                 fxaa_pass.set_bind_group(0, &slot_hdr.fxaa_bind_group, &[]);
                 fxaa_pass.draw(0..3, 0..1);
+            }
+        }
+
+        // Grid pass (HDR path): draw the existing analytical grid on the final
+        // output after tone mapping / FXAA, reusing the scene depth buffer so
+        // scene geometry still occludes the grid exactly as in the LDR path.
+        if frame.viewport.show_grid {
+            let slot = &self.viewport_slots[vp_idx];
+            let slot_hdr = slot.hdr.as_ref().unwrap();
+            let grid_bg = &slot.grid_bind_group;
+            let mut grid_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("hdr_grid_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: output_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &slot_hdr.hdr_depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            grid_pass.set_pipeline(&self.resources.grid_pipeline);
+            grid_pass.set_bind_group(0, grid_bg, &[]);
+            grid_pass.draw(0..3, 0..1);
+        }
+
+        // Editor overlay pass (HDR path): draw viewport/editor overlays on the
+        // final output after tone mapping / FXAA, reusing the scene depth
+        // buffer so depth-tested helpers still behave correctly.
+        {
+            let slot = &self.viewport_slots[vp_idx];
+            let slot_hdr = slot.hdr.as_ref().unwrap();
+            let has_editor_overlays =
+                (frame.interaction.gizmo_model.is_some() && slot.gizmo_index_count > 0)
+                || !slot.constraint_line_buffers.is_empty()
+                || !slot.clip_plane_fill_buffers.is_empty()
+                || !slot.clip_plane_line_buffers.is_empty()
+                || !slot.xray_object_buffers.is_empty();
+            if has_editor_overlays {
+                let camera_bg = &slot.camera_bind_group;
+                let mut overlay_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("hdr_editor_overlay_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: output_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &slot_hdr.hdr_depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Discard,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+
+                if frame.interaction.gizmo_model.is_some() && slot.gizmo_index_count > 0 {
+                    overlay_pass.set_pipeline(&self.resources.gizmo_pipeline);
+                    overlay_pass.set_bind_group(0, camera_bg, &[]);
+                    overlay_pass.set_bind_group(1, &slot.gizmo_bind_group, &[]);
+                    overlay_pass.set_vertex_buffer(0, slot.gizmo_vertex_buffer.slice(..));
+                    overlay_pass.set_index_buffer(
+                        slot.gizmo_index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    overlay_pass.draw_indexed(0..slot.gizmo_index_count, 0, 0..1);
+                }
+
+                if !slot.constraint_line_buffers.is_empty() {
+                    overlay_pass.set_pipeline(&self.resources.overlay_line_pipeline);
+                    overlay_pass.set_bind_group(0, camera_bg, &[]);
+                    for (vbuf, ibuf, index_count, _ubuf, bg) in &slot.constraint_line_buffers {
+                        overlay_pass.set_bind_group(1, bg, &[]);
+                        overlay_pass.set_vertex_buffer(0, vbuf.slice(..));
+                        overlay_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                        overlay_pass.draw_indexed(0..*index_count, 0, 0..1);
+                    }
+                }
+
+                if !slot.clip_plane_fill_buffers.is_empty() {
+                    overlay_pass.set_pipeline(&self.resources.overlay_pipeline);
+                    overlay_pass.set_bind_group(0, camera_bg, &[]);
+                    for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.clip_plane_fill_buffers {
+                        overlay_pass.set_bind_group(1, bg, &[]);
+                        overlay_pass.set_vertex_buffer(0, vbuf.slice(..));
+                        overlay_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                        overlay_pass.draw_indexed(0..*idx_count, 0, 0..1);
+                    }
+                }
+
+                if !slot.clip_plane_line_buffers.is_empty() {
+                    overlay_pass.set_pipeline(&self.resources.overlay_line_pipeline);
+                    overlay_pass.set_bind_group(0, camera_bg, &[]);
+                    for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.clip_plane_line_buffers {
+                        overlay_pass.set_bind_group(1, bg, &[]);
+                        overlay_pass.set_vertex_buffer(0, vbuf.slice(..));
+                        overlay_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                        overlay_pass.draw_indexed(0..*idx_count, 0, 0..1);
+                    }
+                }
+
+                if !slot.xray_object_buffers.is_empty() {
+                    overlay_pass.set_pipeline(&self.resources.xray_pipeline);
+                    overlay_pass.set_bind_group(0, camera_bg, &[]);
+                    for (mesh_idx, _buf, bg) in &slot.xray_object_buffers {
+                        let Some(mesh) = self
+                            .resources
+                            .mesh_store
+                            .get(crate::resources::mesh_store::MeshId(*mesh_idx))
+                        else {
+                            continue;
+                        };
+                        overlay_pass.set_bind_group(1, bg, &[]);
+                        overlay_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        overlay_pass.set_index_buffer(
+                            mesh.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        overlay_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                    }
+                }
+            }
+        }
+
+        // Axes indicator pass (HDR path): draw in screen space on the final
+        // output after tone mapping / FXAA so it stays visible in PBR mode.
+        if frame.viewport.show_axes_indicator {
+            let slot = &self.viewport_slots[vp_idx];
+            if slot.axes_vertex_count > 0 {
+                let slot_hdr = slot.hdr.as_ref().unwrap();
+                let mut axes_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("hdr_axes_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: output_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &slot_hdr.hdr_depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Discard,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                axes_pass.set_pipeline(&self.resources.axes_pipeline);
+                axes_pass.set_vertex_buffer(0, slot.axes_vertex_buffer.slice(..));
+                axes_pass.draw(0..slot.axes_vertex_count, 0..1);
             }
         }
 

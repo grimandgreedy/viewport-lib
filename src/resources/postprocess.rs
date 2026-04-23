@@ -794,7 +794,7 @@ impl ViewportGpuResources {
         // Bind group layouts
         // ------------------------------------------------------------------
 
-        // Tone map BGL: hdr_tex, sampler, uniform, bloom_tex, ao_tex.
+        // Tone map BGL: hdr_tex, sampler, uniform, bloom_tex, ao_tex, cs_tex, depth_tex.
         let tone_map_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("tone_map_bgl"),
             entries: &[
@@ -850,6 +850,16 @@ impl ViewportGpuResources {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -1190,6 +1200,10 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::TextureView(cs_placeholder_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&hdr_depth_only_view),
                 },
             ],
         });
@@ -1959,6 +1973,12 @@ impl ViewportGpuResources {
                     binding: 5,
                     resource: wgpu::BindingResource::TextureView(cs_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(
+                        self.hdr_depth_only_view.as_ref().expect("hdr depth view"),
+                    ),
+                },
             ],
         });
         self.tone_map_bind_group = Some(bg);
@@ -2270,6 +2290,16 @@ impl ViewportGpuResources {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -3543,6 +3573,10 @@ impl ViewportGpuResources {
                     binding: 5,
                     resource: wgpu::BindingResource::TextureView(cs_placeholder_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&hdr_depth_only_view),
+                },
             ],
         });
         let bloom_threshold_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -3856,6 +3890,10 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::TextureView(cs_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&hdr.hdr_depth_only_view),
                 },
             ],
         });
