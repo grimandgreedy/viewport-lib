@@ -9,9 +9,9 @@ mod viewport_callback;
 
 use eframe::egui;
 use viewport_lib::{
-    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, Material,
-    OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext,
-    ViewportEvent, ViewportRenderer, primitives,
+    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, Material, OrbitCameraController,
+    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer,
+    primitives,
 };
 
 fn main() -> eframe::Result {
@@ -24,7 +24,10 @@ fn main() -> eframe::Result {
             ..Default::default()
         },
         Box::new(|cc| {
-            let rs = cc.wgpu_render_state.as_ref().expect("wgpu backend required");
+            let rs = cc
+                .wgpu_render_state
+                .as_ref()
+                .expect("wgpu backend required");
             let device = &rs.device;
 
             let mut renderer = ViewportRenderer::new(device, rs.target_format);
@@ -37,28 +40,32 @@ fn main() -> eframe::Result {
             }
 
             // Row 0 — basic solids
-            let m_cube      = mesh!(primitives::cube(1.0));
-            let m_cuboid    = mesh!(primitives::cuboid(2.0, 0.75, 1.0));
-            let m_sphere    = mesh!(primitives::sphere(0.6, 32, 16));
+            let m_cube = mesh!(primitives::cube(1.0));
+            let m_cuboid = mesh!(primitives::cuboid(2.0, 0.75, 1.0));
+            let m_sphere = mesh!(primitives::sphere(0.6, 32, 16));
             let m_icosphere = mesh!(primitives::icosphere(0.6, 3));
 
             // Row 1 — round / capped
-            let m_ellipsoid  = mesh!(primitives::ellipsoid(0.9, 0.5, 0.6, 28, 14));
+            let m_ellipsoid = mesh!(primitives::ellipsoid(0.9, 0.5, 0.6, 28, 14));
             let m_hemisphere = mesh!(primitives::hemisphere(0.65, 32, 16));
-            let m_cone       = mesh!(primitives::cone(0.55, 1.1, 28));
-            let m_cylinder   = mesh!(primitives::cylinder(0.4, 1.1, 28));
+            let m_cone = mesh!(primitives::cone(0.55, 1.1, 28));
+            let m_cylinder = mesh!(primitives::cylinder(0.4, 1.1, 28));
 
             // Row 2 — curved surfaces
             let m_capsule = mesh!(primitives::capsule(0.38, 1.4, 24, 16));
-            let m_torus   = mesh!(primitives::torus(0.55, 0.2, 40, 24));
-            let m_disk    = mesh!(primitives::disk(0.65, 40));
-            let m_ring    = mesh!(primitives::ring(0.3, 0.65, 48));
+            let m_torus = mesh!(primitives::torus(0.55, 0.2, 40, 24));
+            let m_disk = mesh!(primitives::disk(0.65, 40));
+            let m_ring = mesh!(primitives::ring(0.3, 0.65, 48));
 
             // Row 3 — flat / composite
-            let m_plane      = mesh!(primitives::plane(1.8, 1.8));
+            let m_plane = mesh!(primitives::plane(1.8, 1.8));
             let m_grid_plane = mesh!(primitives::grid_plane(1.8, 1.8, 8, 8));
-            let m_frustum =
-                mesh!(primitives::frustum(std::f32::consts::FRAC_PI_3, 16.0 / 9.0, 0.3, 2.5));
+            let m_frustum = mesh!(primitives::frustum(
+                std::f32::consts::FRAC_PI_3,
+                16.0 / 9.0,
+                0.3,
+                2.5
+            ));
             let m_arrow = mesh!(primitives::arrow(0.07, 0.18, 0.28, 24));
 
             // Row 4 — spring variants
@@ -75,32 +82,31 @@ fn main() -> eframe::Result {
                 s.mesh_index = mesh_index;
                 s.model =
                     glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, z)).to_cols_array_2d();
-                s.material = Material { base_color: color, ..Material::default() };
+                s.material = Material {
+                    base_color: color,
+                    ..Material::default()
+                };
                 s.two_sided = true;
                 s
             };
 
             let scene_items = vec![
-                item(m_cube,      cx[0], rz[0], [0.75, 0.75, 0.75]),
-                item(m_cuboid,    cx[1], rz[0], [0.35, 0.55, 0.90]),
-                item(m_sphere,    cx[2], rz[0], [0.90, 0.50, 0.20]),
+                item(m_cube, cx[0], rz[0], [0.75, 0.75, 0.75]),
+                item(m_cuboid, cx[1], rz[0], [0.35, 0.55, 0.90]),
+                item(m_sphere, cx[2], rz[0], [0.90, 0.50, 0.20]),
                 item(m_icosphere, cx[3], rz[0], [0.25, 0.75, 0.40]),
-
-                item(m_ellipsoid,  cx[0], rz[1], [0.70, 0.30, 0.85]),
+                item(m_ellipsoid, cx[0], rz[1], [0.70, 0.30, 0.85]),
                 item(m_hemisphere, cx[1], rz[1], [0.50, 0.80, 0.35]),
-                item(m_cone,       cx[2], rz[1], [0.85, 0.20, 0.25]),
-                item(m_cylinder,   cx[3], rz[1], [0.20, 0.70, 0.80]),
-
+                item(m_cone, cx[2], rz[1], [0.85, 0.20, 0.25]),
+                item(m_cylinder, cx[3], rz[1], [0.20, 0.70, 0.80]),
                 item(m_capsule, cx[0], rz[2], [0.90, 0.45, 0.65]),
-                item(m_torus,   cx[1], rz[2], [0.85, 0.70, 0.15]),
-                item(m_disk,    cx[2], rz[2], [0.40, 0.65, 0.95]),
-                item(m_ring,    cx[3], rz[2], [0.55, 0.90, 0.30]),
-
-                item(m_plane,      cx[0], rz[3], [0.60, 0.55, 0.75]),
+                item(m_torus, cx[1], rz[2], [0.85, 0.70, 0.15]),
+                item(m_disk, cx[2], rz[2], [0.40, 0.65, 0.95]),
+                item(m_ring, cx[3], rz[2], [0.55, 0.90, 0.30]),
+                item(m_plane, cx[0], rz[3], [0.60, 0.55, 0.75]),
                 item(m_grid_plane, cx[1], rz[3], [0.80, 0.50, 0.25]),
-                item(m_frustum,    cx[2], rz[3], [0.30, 0.65, 0.90]),
-                item(m_arrow,      cx[3], rz[3], [0.90, 0.25, 0.30]),
-
+                item(m_frustum, cx[2], rz[3], [0.30, 0.65, 0.90]),
+                item(m_arrow, cx[3], rz[3], [0.90, 0.25, 0.30]),
                 item(m_spring_a, cx[0], rz[4], [0.85, 0.30, 0.75]),
                 item(m_spring_b, cx[1], rz[4], [0.55, 0.35, 0.90]),
             ];
@@ -160,7 +166,9 @@ impl eframe::App for App {
 
                 for event in &i.events {
                     match event {
-                        egui::Event::PointerButton { button, pressed, .. } => {
+                        egui::Event::PointerButton {
+                            button, pressed, ..
+                        } => {
                             let vp_button = match button {
                                 egui::PointerButton::Primary => viewport_lib::MouseButton::Left,
                                 egui::PointerButton::Secondary => viewport_lib::MouseButton::Right,
@@ -201,10 +209,11 @@ impl eframe::App for App {
             frame_data.viewport.show_grid = true;
             frame_data.viewport.show_axes_indicator = true;
 
-            ui.painter().add(eframe::egui_wgpu::Callback::new_paint_callback(
-                rect,
-                viewport_callback::ViewportCallback { frame: frame_data },
-            ));
+            ui.painter()
+                .add(eframe::egui_wgpu::Callback::new_paint_callback(
+                    rect,
+                    viewport_callback::ViewportCallback { frame: frame_data },
+                ));
 
             if response.dragged() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);

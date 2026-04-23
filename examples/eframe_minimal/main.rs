@@ -24,17 +24,25 @@ fn main() -> eframe::Result {
             ..Default::default()
         },
         Box::new(|cc| {
-            let rs = cc.wgpu_render_state.as_ref().expect("wgpu backend required");
+            let rs = cc
+                .wgpu_render_state
+                .as_ref()
+                .expect("wgpu backend required");
             let device = &rs.device;
             let format = rs.target_format;
 
             let mut renderer = ViewportRenderer::new(device, format);
             let res = renderer.resources_mut();
 
-            let m_sphere = res.upload_mesh_data(device, &primitives::sphere(0.6, 24, 12)).unwrap();
-            let m_cube = res.upload_mesh_data(device, &primitives::cube(1.0)).unwrap();
-            let m_torus =
-                res.upload_mesh_data(device, &primitives::torus(0.5, 0.18, 32, 16)).unwrap();
+            let m_sphere = res
+                .upload_mesh_data(device, &primitives::sphere(0.6, 24, 12))
+                .unwrap();
+            let m_cube = res
+                .upload_mesh_data(device, &primitives::cube(1.0))
+                .unwrap();
+            let m_torus = res
+                .upload_mesh_data(device, &primitives::torus(0.5, 0.18, 32, 16))
+                .unwrap();
 
             rs.renderer.write().callback_resources.insert(renderer);
 
@@ -64,21 +72,26 @@ impl App {
         let mut make = |mesh_index, [x, y, z]: [f32; 3], color: [f32; 3]| {
             let mut item = SceneRenderItem::default();
             item.mesh_index = mesh_index;
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
-            item.material = Material { base_color: color, ..Material::default() };
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
+            item.material = Material {
+                base_color: color,
+                ..Material::default()
+            };
             item.two_sided = true;
             item
         };
 
         Self {
-            camera: Camera { distance: 10.0, ..Camera::default() },
+            camera: Camera {
+                distance: 10.0,
+                ..Camera::default()
+            },
             controller: OrbitCameraController::viewport_primitives(),
             manip: ManipulationController::new(),
             scene_items: vec![
                 make(m_sphere, [-2.5, 0.0, 0.0], [0.9, 0.5, 0.2]),
-                make(m_cube,   [ 0.0, 0.0, 0.0], [0.4, 0.6, 0.9]),
-                make(m_torus,  [ 2.5, 0.0, 0.0], [0.3, 0.8, 0.4]),
+                make(m_cube, [0.0, 0.0, 0.0], [0.4, 0.6, 0.9]),
+                make(m_torus, [2.5, 0.0, 0.0], [0.3, 0.8, 0.4]),
             ],
             selected: None,
             transforms_snapshot: Vec::new(),
@@ -118,18 +131,22 @@ impl eframe::App for App {
                 ));
 
                 // Cursor position in viewport-local space.
-                let local_pos = i.pointer.interact_pos().map(|p| {
-                    glam::Vec2::new(p.x - rect.left(), p.y - rect.top())
-                });
+                let local_pos = i
+                    .pointer
+                    .interact_pos()
+                    .map(|p| glam::Vec2::new(p.x - rect.left(), p.y - rect.top()));
                 self.cursor_prev = self.cursor_viewport;
                 self.cursor_viewport = local_pos;
                 if let Some(pos) = local_pos {
-                    self.controller.push_event(ViewportEvent::PointerMoved { position: pos });
+                    self.controller
+                        .push_event(ViewportEvent::PointerMoved { position: pos });
                 }
 
                 for event in &i.events {
                     match event {
-                        egui::Event::PointerButton { button, pressed, .. } => {
+                        egui::Event::PointerButton {
+                            button, pressed, ..
+                        } => {
                             let vp_button = match button {
                                 egui::PointerButton::Primary => viewport_lib::MouseButton::Left,
                                 egui::PointerButton::Secondary => viewport_lib::MouseButton::Right,
@@ -211,8 +228,7 @@ impl eframe::App for App {
             match self.manip.update(&action_frame, manip_ctx) {
                 ManipResult::Update(delta) => {
                     if let Some(idx) = self.selected {
-                        let current =
-                            glam::Mat4::from_cols_array_2d(&self.scene_items[idx].model);
+                        let current = glam::Mat4::from_cols_array_2d(&self.scene_items[idx].model);
                         let delta_mat = glam::Mat4::from_scale_rotation_translation(
                             delta.scale,
                             delta.rotation,
@@ -223,15 +239,16 @@ impl eframe::App for App {
                 }
                 ManipResult::Commit => {}
                 ManipResult::Cancel | ManipResult::ConstraintChanged => {
-                    for (item, snap) in
-                        self.scene_items.iter_mut().zip(self.transforms_snapshot.iter())
+                    for (item, snap) in self
+                        .scene_items
+                        .iter_mut()
+                        .zip(self.transforms_snapshot.iter())
                     {
                         item.model = *snap;
                     }
                 }
                 ManipResult::None => {
-                    self.transforms_snapshot =
-                        self.scene_items.iter().map(|i| i.model).collect();
+                    self.transforms_snapshot = self.scene_items.iter().map(|i| i.model).collect();
                 }
             }
 
@@ -241,10 +258,11 @@ impl eframe::App for App {
             );
             frame_data.effects.lighting = LightingSettings::default();
 
-            ui.painter().add(eframe::egui_wgpu::Callback::new_paint_callback(
-                rect,
-                viewport_callback::ViewportCallback { frame: frame_data },
-            ));
+            ui.painter()
+                .add(eframe::egui_wgpu::Callback::new_paint_callback(
+                    rect,
+                    viewport_callback::ViewportCallback { frame: frame_data },
+                ));
 
             if response.dragged() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);

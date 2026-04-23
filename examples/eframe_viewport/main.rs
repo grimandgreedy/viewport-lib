@@ -150,18 +150,22 @@ impl eframe::App for App {
                     shift: i.modifiers.shift,
                     ctrl: i.modifiers.command,
                 };
-                self.controller.push_event(ViewportEvent::ModifiersChanged(mods));
+                self.controller
+                    .push_event(ViewportEvent::ModifiersChanged(mods));
 
                 // Pointer position (viewport-local coordinates)
                 if let Some(pos) = i.pointer.interact_pos() {
                     let local = glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top());
-                    self.controller.push_event(ViewportEvent::PointerMoved { position: local });
+                    self.controller
+                        .push_event(ViewportEvent::PointerMoved { position: local });
                 }
 
                 // Mouse buttons and wheel events
                 for event in &i.events {
                     match event {
-                        egui::Event::PointerButton { button, pressed, .. } => {
+                        egui::Event::PointerButton {
+                            button, pressed, ..
+                        } => {
                             let vp_button = match button {
                                 egui::PointerButton::Primary => viewport_lib::MouseButton::Left,
                                 egui::PointerButton::Secondary => viewport_lib::MouseButton::Right,
@@ -220,18 +224,21 @@ impl eframe::App for App {
                 let d = 10.0_f32;
                 let s = d / 3.0_f32.sqrt();
                 ls.lights = [
-                    [ s,  s,  s],
-                    [-s,  s,  s],
-                    [ s, -s,  s],
-                    [-s, -s,  s],
-                    [ s,  s, -s],
-                    [-s,  s, -s],
-                    [ s, -s, -s],
+                    [s, s, s],
+                    [-s, s, s],
+                    [s, -s, s],
+                    [-s, -s, s],
+                    [s, s, -s],
+                    [-s, s, -s],
+                    [s, -s, -s],
                     [-s, -s, -s],
                 ]
                 .into_iter()
                 .map(|position| LightSource {
-                    kind: LightKind::Point { position, range: d * 2.0 },
+                    kind: LightKind::Point {
+                        position,
+                        range: d * 2.0,
+                    },
                     color: [1.0, 1.0, 1.0],
                     intensity: 0.5,
                 })

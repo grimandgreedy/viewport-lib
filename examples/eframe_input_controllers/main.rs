@@ -13,10 +13,9 @@ mod viewport_callback;
 
 use eframe::egui;
 use viewport_lib::{
-    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, ManipResult,
+    ButtonState, Camera, CameraFrame, FrameData, KeyCode, LightingSettings, ManipResult,
     ManipulationContext, ManipulationController, Material, OrbitCameraController, SceneFrame,
     SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
-    KeyCode,
 };
 
 fn main() -> eframe::Result {
@@ -29,14 +28,21 @@ fn main() -> eframe::Result {
             ..Default::default()
         },
         Box::new(|cc| {
-            let rs = cc.wgpu_render_state.as_ref().expect("wgpu backend required");
+            let rs = cc
+                .wgpu_render_state
+                .as_ref()
+                .expect("wgpu backend required");
             let device = &rs.device;
             let format = rs.target_format;
 
             let mut renderer = ViewportRenderer::new(device, format);
             let res = renderer.resources_mut();
-            let m_box    = res.upload_mesh_data(device, &primitives::cube(1.0)).unwrap();
-            let m_sphere = res.upload_mesh_data(device, &primitives::sphere(0.75, 32, 16)).unwrap();
+            let m_box = res
+                .upload_mesh_data(device, &primitives::cube(1.0))
+                .unwrap();
+            let m_sphere = res
+                .upload_mesh_data(device, &primitives::sphere(0.75, 32, 16))
+                .unwrap();
 
             rs.renderer.write().callback_resources.insert(renderer);
             Ok(Box::new(App::new(m_box, m_sphere)))
@@ -92,8 +98,7 @@ impl App {
             mode: Mode::Primitives,
             camera: Camera {
                 distance: 10.0,
-                orientation: glam::Quat::from_rotation_y(0.5)
-                    * glam::Quat::from_rotation_x(-0.3),
+                orientation: glam::Quat::from_rotation_y(0.5) * glam::Quat::from_rotation_x(-0.3),
                 ..Camera::default()
             },
             ctrl_primitives: OrbitCameraController::viewport_primitives(),
@@ -127,11 +132,11 @@ fn egui_key_to_keycode(key: egui::Key) -> Option<KeyCode> {
         egui::Key::X => Some(KeyCode::X),
         egui::Key::Y => Some(KeyCode::Y),
         egui::Key::Z => Some(KeyCode::Z),
-        egui::Key::Tab       => Some(KeyCode::Tab),
-        egui::Key::Enter     => Some(KeyCode::Enter),
-        egui::Key::Escape    => Some(KeyCode::Escape),
+        egui::Key::Tab => Some(KeyCode::Tab),
+        egui::Key::Enter => Some(KeyCode::Enter),
+        egui::Key::Escape => Some(KeyCode::Escape),
         egui::Key::Backspace => Some(KeyCode::Backspace),
-        egui::Key::Backtick  => Some(KeyCode::Backtick),
+        egui::Key::Backtick => Some(KeyCode::Backtick),
         _ => None,
     }
 }
@@ -145,7 +150,13 @@ impl eframe::App for App {
         // Mode switch: consume 1/2 before any controller sees them.
         ctx.input(|i| {
             for event in &i.events {
-                if let egui::Event::Key { key, pressed: true, repeat: false, .. } = event {
+                if let egui::Event::Key {
+                    key,
+                    pressed: true,
+                    repeat: false,
+                    ..
+                } = event
+                {
                     let next = match key {
                         egui::Key::Num1 => Some(Mode::Primitives),
                         egui::Key::Num2 => Some(Mode::All),
@@ -155,8 +166,10 @@ impl eframe::App for App {
                         if m != self.mode {
                             // Flush held state in the outgoing controller.
                             match self.mode {
-                                Mode::Primitives => self.ctrl_primitives.push_event(ViewportEvent::FocusLost),
-                                Mode::All        => self.ctrl_all.push_event(ViewportEvent::FocusLost),
+                                Mode::Primitives => {
+                                    self.ctrl_primitives.push_event(ViewportEvent::FocusLost)
+                                }
+                                Mode::All => self.ctrl_all.push_event(ViewportEvent::FocusLost),
                             }
                             self.mode = m;
                             self.manip.reset();
@@ -196,7 +209,7 @@ impl eframe::App for App {
             };
             match self.mode {
                 Mode::Primitives => self.ctrl_primitives.begin_frame(vp_ctx),
-                Mode::All        => self.ctrl_all.begin_frame(vp_ctx),
+                Mode::All => self.ctrl_all.begin_frame(vp_ctx),
             }
 
             // ---- Collect events into a Vec, then push outside the closure ----
@@ -205,14 +218,15 @@ impl eframe::App for App {
 
             ui.input(|i| {
                 vp_events.push(ViewportEvent::ModifiersChanged(viewport_lib::Modifiers {
-                    alt:  i.modifiers.alt,
+                    alt: i.modifiers.alt,
                     shift: i.modifiers.shift,
                     ctrl: i.modifiers.command,
                 }));
 
-                let local_pos = i.pointer.interact_pos().map(|p| {
-                    glam::Vec2::new(p.x - rect.left(), p.y - rect.top())
-                });
+                let local_pos = i
+                    .pointer
+                    .interact_pos()
+                    .map(|p| glam::Vec2::new(p.x - rect.left(), p.y - rect.top()));
                 self.cursor_prev = self.cursor_viewport;
                 self.cursor_viewport = local_pos;
                 if let Some(pos) = local_pos {
@@ -221,7 +235,12 @@ impl eframe::App for App {
 
                 for event in &i.events {
                     match event {
-                        egui::Event::Key { key, pressed, repeat, .. } => {
+                        egui::Event::Key {
+                            key,
+                            pressed,
+                            repeat,
+                            ..
+                        } => {
                             if matches!(key, egui::Key::Num1 | egui::Key::Num2) {
                                 continue; // consumed above
                             }
@@ -237,11 +256,13 @@ impl eframe::App for App {
                                 });
                             }
                         }
-                        egui::Event::PointerButton { button, pressed, .. } => {
+                        egui::Event::PointerButton {
+                            button, pressed, ..
+                        } => {
                             let vp_button = match button {
-                                egui::PointerButton::Primary   => viewport_lib::MouseButton::Left,
+                                egui::PointerButton::Primary => viewport_lib::MouseButton::Left,
                                 egui::PointerButton::Secondary => viewport_lib::MouseButton::Right,
-                                egui::PointerButton::Middle    => viewport_lib::MouseButton::Middle,
+                                egui::PointerButton::Middle => viewport_lib::MouseButton::Middle,
                                 _ => continue,
                             };
                             vp_events.push(ViewportEvent::MouseButton {
@@ -290,7 +311,7 @@ impl eframe::App for App {
             // Push collected events to the active controller.
             let ctrl = match self.mode {
                 Mode::Primitives => &mut self.ctrl_primitives,
-                Mode::All        => &mut self.ctrl_all,
+                Mode::All => &mut self.ctrl_all,
             };
             for e in vp_events {
                 ctrl.push_event(e);
@@ -314,16 +335,19 @@ impl eframe::App for App {
 
                     [
                         ([-2.0f32, 0.0, 0.0], [0.4f32, 0.6, 0.9]),
-                        ([ 0.0,    0.0, 0.0], [0.9,    0.5, 0.2]),
-                        ([ 2.0,    0.0, 0.0], [0.3,    0.8, 0.4]),
+                        ([0.0, 0.0, 0.0], [0.9, 0.5, 0.2]),
+                        ([2.0, 0.0, 0.0], [0.3, 0.8, 0.4]),
                     ]
                     .iter()
                     .map(|&(pos, color)| {
                         let mut item = SceneRenderItem::default();
                         item.mesh_index = self.m_box;
-                        item.model = glam::Mat4::from_translation(glam::Vec3::from(pos))
-                            .to_cols_array_2d();
-                        item.material = Material { base_color: color, ..Material::default() };
+                        item.model =
+                            glam::Mat4::from_translation(glam::Vec3::from(pos)).to_cols_array_2d();
+                        item.material = Material {
+                            base_color: color,
+                            ..Material::default()
+                        };
                         item
                     })
                     .collect()
@@ -379,7 +403,10 @@ impl eframe::App for App {
                     let mut item = SceneRenderItem::default();
                     item.mesh_index = self.m_sphere;
                     item.model = self.sphere_model;
-                    item.material = Material { base_color: [0.4, 0.7, 1.0], ..Material::default() };
+                    item.material = Material {
+                        base_color: [0.4, 0.7, 1.0],
+                        ..Material::default()
+                    };
                     item.selected = true;
                     vec![item]
                 }
@@ -395,10 +422,11 @@ impl eframe::App for App {
             frame_data.viewport.show_grid = true;
             frame_data.viewport.show_axes_indicator = true;
 
-            ui.painter().add(eframe::egui_wgpu::Callback::new_paint_callback(
-                rect,
-                viewport_callback::ViewportCallback { frame: frame_data },
-            ));
+            ui.painter()
+                .add(eframe::egui_wgpu::Callback::new_paint_callback(
+                    rect,
+                    viewport_callback::ViewportCallback { frame: frame_data },
+                ));
 
             if response.dragged() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);

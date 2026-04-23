@@ -6,11 +6,11 @@
 
 use std::sync::Arc;
 
+use viewport_lib::{ButtonState, ScrollUnits};
 use viewport_lib::{
     Camera, CameraFrame, FrameData, LightingSettings, OrbitCameraController, SceneFrame,
     SceneRenderItem, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
 };
-use viewport_lib::{ButtonState, ScrollUnits};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -202,7 +202,9 @@ impl ApplicationHandler for App {
                 m.shift = mods.state().shift_key();
                 m.ctrl = mods.state().control_key();
                 m.alt = mods.state().alt_key();
-                state.controller.push_event(ViewportEvent::ModifiersChanged(m));
+                state
+                    .controller
+                    .push_event(ViewportEvent::ModifiersChanged(m));
             }
 
             WindowEvent::MouseInput {
@@ -245,13 +247,17 @@ impl ApplicationHandler for App {
 
             WindowEvent::MouseWheel { delta, .. } => {
                 let (d, units) = match delta {
-                    MouseScrollDelta::LineDelta(x, y) => (glam::Vec2::new(x, y), ScrollUnits::Lines),
+                    MouseScrollDelta::LineDelta(x, y) => {
+                        (glam::Vec2::new(x, y), ScrollUnits::Lines)
+                    }
                     MouseScrollDelta::PixelDelta(px) => (
                         glam::Vec2::new(px.x as f32, px.y as f32),
                         ScrollUnits::Pixels,
                     ),
                 };
-                state.controller.push_event(ViewportEvent::Wheel { delta: d, units });
+                state
+                    .controller
+                    .push_event(ViewportEvent::Wheel { delta: d, units });
                 state.window.request_redraw();
             }
 
@@ -291,17 +297,17 @@ impl ApplicationHandler for App {
                 // Build scene: 4 cubes in a grid.
                 let positions = [
                     [-1.5, 0.0, -1.5],
-                    [ 1.5, 0.0, -1.5],
-                    [-1.5, 0.0,  1.5],
-                    [ 1.5, 0.0,  1.5],
+                    [1.5, 0.0, -1.5],
+                    [-1.5, 0.0, 1.5],
+                    [1.5, 0.0, 1.5],
                 ];
                 let scene_items: Vec<SceneRenderItem> = positions
                     .iter()
                     .map(|&pos| {
                         let mut item = SceneRenderItem::default();
                         item.mesh_index = state.mesh_index;
-                        item.model = glam::Mat4::from_translation(glam::Vec3::from(pos))
-                            .to_cols_array_2d();
+                        item.model =
+                            glam::Mat4::from_translation(glam::Vec3::from(pos)).to_cols_array_2d();
                         item
                     })
                     .collect();

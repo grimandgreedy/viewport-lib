@@ -62,7 +62,11 @@ fn make_depth_view(device: &wgpu::Device, w: u32, h: u32) -> wgpu::TextureView {
     device
         .create_texture(&wgpu::TextureDescriptor {
             label: Some("depth"),
-            size: wgpu::Extent3d { width: w.max(1), height: h.max(1), depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: w.max(1),
+                height: h.max(1),
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -103,8 +107,12 @@ impl ApplicationHandler for App {
 
         let size = window.inner_size();
         let caps = surface.get_capabilities(&adapter);
-        let format =
-            caps.formats.iter().find(|f| f.is_srgb()).copied().unwrap_or(caps.formats[0]);
+        let format = caps
+            .formats
+            .iter()
+            .find(|f| f.is_srgb())
+            .copied()
+            .unwrap_or(caps.formats[0]);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -121,27 +129,38 @@ impl ApplicationHandler for App {
         let mut renderer = ViewportRenderer::new(&device, format);
         let res = renderer.resources_mut();
 
-        let m_sphere = res.upload_mesh_data(&device, &primitives::sphere(0.6, 24, 12)).unwrap();
-        let m_cube = res.upload_mesh_data(&device, &primitives::cube(1.0)).unwrap();
-        let m_torus = res.upload_mesh_data(&device, &primitives::torus(0.5, 0.18, 32, 16)).unwrap();
+        let m_sphere = res
+            .upload_mesh_data(&device, &primitives::sphere(0.6, 24, 12))
+            .unwrap();
+        let m_cube = res
+            .upload_mesh_data(&device, &primitives::cube(1.0))
+            .unwrap();
+        let m_torus = res
+            .upload_mesh_data(&device, &primitives::torus(0.5, 0.18, 32, 16))
+            .unwrap();
 
         let mut make_item = |mesh_index, [x, y, z]: [f32; 3], color: [f32; 3]| {
             let mut item = SceneRenderItem::default();
             item.mesh_index = mesh_index;
-            item.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
-            item.material = Material { base_color: color, ..Material::default() };
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
+            item.material = Material {
+                base_color: color,
+                ..Material::default()
+            };
             item.two_sided = true;
             item
         };
 
         let scene_items = vec![
             make_item(m_sphere, [-2.5, 0.0, 0.0], [0.9, 0.5, 0.2]),
-            make_item(m_cube,   [ 0.0, 0.0, 0.0], [0.4, 0.6, 0.9]),
-            make_item(m_torus,  [ 2.5, 0.0, 0.0], [0.3, 0.8, 0.4]),
+            make_item(m_cube, [0.0, 0.0, 0.0], [0.4, 0.6, 0.9]),
+            make_item(m_torus, [2.5, 0.0, 0.0], [0.3, 0.8, 0.4]),
         ];
 
-        let camera = Camera { distance: 10.0, ..Camera::default() };
+        let camera = Camera {
+            distance: 10.0,
+            ..Camera::default()
+        };
 
         let mut controller = OrbitCameraController::viewport_primitives();
         controller.begin_frame(ViewportContext {
@@ -180,7 +199,9 @@ impl ApplicationHandler for App {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        let Some(state) = self.state.as_mut() else { return };
+        let Some(state) = self.state.as_mut() else {
+            return;
+        };
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
@@ -189,7 +210,9 @@ impl ApplicationHandler for App {
                 if sz.width > 0 && sz.height > 0 {
                     state.surface_config.width = sz.width;
                     state.surface_config.height = sz.height;
-                    state.surface.configure(&state.device, &state.surface_config);
+                    state
+                        .surface
+                        .configure(&state.device, &state.surface_config);
                     state.depth_view = make_depth_view(&state.device, sz.width, sz.height);
                     state.window.request_redraw();
                 }
@@ -200,10 +223,16 @@ impl ApplicationHandler for App {
                 m.shift = mods.state().shift_key();
                 m.ctrl = mods.state().control_key();
                 m.alt = mods.state().alt_key();
-                state.controller.push_event(ViewportEvent::ModifiersChanged(m));
+                state
+                    .controller
+                    .push_event(ViewportEvent::ModifiersChanged(m));
             }
 
-            WindowEvent::MouseInput { state: btn_state, button, .. } => {
+            WindowEvent::MouseInput {
+                state: btn_state,
+                button,
+                ..
+            } => {
                 let vp_button = match button {
                     MouseButton::Left => viewport_lib::MouseButton::Left,
                     MouseButton::Middle => viewport_lib::MouseButton::Middle,
@@ -211,8 +240,11 @@ impl ApplicationHandler for App {
                     _ => return,
                 };
                 let pressed = btn_state == ElementState::Pressed;
-                let vp_state =
-                    if pressed { ButtonState::Pressed } else { ButtonState::Released };
+                let vp_state = if pressed {
+                    ButtonState::Pressed
+                } else {
+                    ButtonState::Released
+                };
 
                 state.controller.push_event(ViewportEvent::MouseButton {
                     button: vp_button,
@@ -247,7 +279,9 @@ impl ApplicationHandler for App {
                 let pos = glam::Vec2::new(position.x as f32, position.y as f32);
                 state.cursor_prev = state.cursor_pos;
                 state.cursor_pos = Some(pos);
-                state.controller.push_event(ViewportEvent::PointerMoved { position: pos });
+                state
+                    .controller
+                    .push_event(ViewportEvent::PointerMoved { position: pos });
                 state.window.request_redraw();
             }
 
@@ -265,11 +299,14 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::LineDelta(x, y) => {
                         (glam::Vec2::new(x, y), ScrollUnits::Lines)
                     }
-                    MouseScrollDelta::PixelDelta(px) => {
-                        (glam::Vec2::new(px.x as f32, px.y as f32), ScrollUnits::Pixels)
-                    }
+                    MouseScrollDelta::PixelDelta(px) => (
+                        glam::Vec2::new(px.x as f32, px.y as f32),
+                        ScrollUnits::Pixels,
+                    ),
                 };
-                state.controller.push_event(ViewportEvent::Wheel { delta: d, units });
+                state
+                    .controller
+                    .push_event(ViewportEvent::Wheel { delta: d, units });
                 state.window.request_redraw();
             }
 
@@ -277,7 +314,9 @@ impl ApplicationHandler for App {
                 let frame = match state.surface.get_current_texture() {
                     Ok(f) => f,
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                        state.surface.configure(&state.device, &state.surface_config);
+                        state
+                            .surface
+                            .configure(&state.device, &state.surface_config);
                         return;
                     }
                     Err(e) => {
@@ -286,7 +325,9 @@ impl ApplicationHandler for App {
                     }
                 };
 
-                let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let view = frame
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
                 let w = state.surface_config.width as f32;
                 let h = state.surface_config.height as f32;
 
@@ -334,8 +375,7 @@ impl ApplicationHandler for App {
                                 delta.rotation,
                                 delta.translation,
                             );
-                            state.scene_items[idx].model =
-                                (delta_mat * current).to_cols_array_2d();
+                            state.scene_items[idx].model = (delta_mat * current).to_cols_array_2d();
                         }
                     }
                     ManipResult::Commit => {}
@@ -366,7 +406,9 @@ impl ApplicationHandler for App {
                 );
                 frame_data.effects.lighting = LightingSettings::default();
 
-                state.renderer.prepare(&state.device, &state.queue, &frame_data);
+                state
+                    .renderer
+                    .prepare(&state.device, &state.queue, &frame_data);
 
                 let mut encoder = state
                     .device

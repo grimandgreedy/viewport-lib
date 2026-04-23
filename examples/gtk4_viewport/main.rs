@@ -220,9 +220,12 @@ fn build_ui(app: &gtk4::Application) {
                 .current_event_state()
                 .contains(gdk::ModifierType::SHIFT_MASK);
             let mut s = state_press.borrow_mut();
-            s.scene_renderer.push_event(ViewportEvent::ModifiersChanged(
-                if shift { Modifiers::SHIFT } else { Modifiers::NONE },
-            ));
+            s.scene_renderer
+                .push_event(ViewportEvent::ModifiersChanged(if shift {
+                    Modifiers::SHIFT
+                } else {
+                    Modifiers::NONE
+                }));
             s.scene_renderer.push_event(ViewportEvent::PointerMoved {
                 position: glam::vec2(x as f32, y as f32),
             });
@@ -263,9 +266,11 @@ fn build_ui(app: &gtk4::Application) {
             state_key
                 .borrow_mut()
                 .scene_renderer
-                .push_event(ViewportEvent::ModifiersChanged(
-                    if shift { Modifiers::SHIFT } else { Modifiers::NONE },
-                ));
+                .push_event(ViewportEvent::ModifiersChanged(if shift {
+                    Modifiers::SHIFT
+                } else {
+                    Modifiers::NONE
+                }));
             false
         });
         window.add_controller(key_ctrl);
@@ -351,4 +356,3 @@ fn build_ui(app: &gtk4::Application) {
 
     window.present();
 }
-

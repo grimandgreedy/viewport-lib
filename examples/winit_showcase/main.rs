@@ -54,11 +54,11 @@
 use std::sync::Arc;
 
 use viewport_lib::{
-    Camera, CameraAnimator, CameraFrame, ClipPlane, Easing, FrameData, FrameStats,
-    Gizmo, GizmoAxis, GizmoMode, GizmoSpace, LightKind, LightSource, LightingSettings,
-    Material, MeshData, MeshId, NodeId, PickAccelerator, PostProcessSettings, Projection,
-    RenderCamera, SceneFrame, SceneRenderItem, Selection, ShadowFilter, SnapConfig,
-    ToneMapping, ViewPreset, ViewportRenderer,
+    Camera, CameraAnimator, CameraFrame, ClipPlane, Easing, FrameData, FrameStats, Gizmo,
+    GizmoAxis, GizmoMode, GizmoSpace, LightKind, LightSource, LightingSettings, Material, MeshData,
+    MeshId, NodeId, PickAccelerator, PostProcessSettings, Projection, RenderCamera, SceneFrame,
+    SceneRenderItem, Selection, ShadowFilter, SnapConfig, ToneMapping, ViewPreset,
+    ViewportRenderer,
     gizmo::{self, compute_gizmo_scale},
     scene::{LayerId, Scene},
 };
@@ -1819,8 +1819,8 @@ impl ApplicationHandler for App {
                                             state.interact_drag_accum_rotation,
                                             inc,
                                         );
-                                        let step =
-                                            snapped_total - state.interact_drag_last_snapped_rotation;
+                                        let step = snapped_total
+                                            - state.interact_drag_last_snapped_rotation;
                                         state.interact_drag_last_snapped_rotation = snapped_total;
                                         step
                                     } else {
@@ -1909,7 +1909,9 @@ impl ApplicationHandler for App {
                     let viewport_h = state.surface_config.height as f32;
                     state.camera.pan_pixels(glam::vec2(dx, dy), viewport_h);
                 } else {
-                    state.camera.orbit(dx * ORBIT_SENSITIVITY, dy * ORBIT_SENSITIVITY);
+                    state
+                        .camera
+                        .orbit(dx * ORBIT_SENSITIVITY, dy * ORBIT_SENSITIVITY);
                 }
 
                 state.window.request_redraw();
@@ -1928,17 +1930,18 @@ impl ApplicationHandler for App {
                             scroll_y * ANIM_ORBIT_SENSITIVITY,
                         );
                     } else {
-                        state.camera.orbit(
-                            scroll_x * ORBIT_SENSITIVITY,
-                            scroll_y * ORBIT_SENSITIVITY,
-                        );
+                        state
+                            .camera
+                            .orbit(scroll_x * ORBIT_SENSITIVITY, scroll_y * ORBIT_SENSITIVITY);
                     }
                 } else {
                     if state.mode == ShowcaseMode::Interaction {
                         let zoom_delta = -scroll_y * ANIM_ZOOM_SENSITIVITY * state.camera.distance;
                         state.interact_animator.apply_zoom(zoom_delta);
                     } else {
-                        state.camera.zoom_by_factor(1.0 - scroll_y * ZOOM_SENSITIVITY);
+                        state
+                            .camera
+                            .zoom_by_factor(1.0 - scroll_y * ZOOM_SENSITIVITY);
                     }
                 }
                 state.window.request_redraw();
@@ -2065,11 +2068,7 @@ impl ApplicationHandler for App {
                         }
                         adv_outline = state.adv_outline_on && !state.adv_selection.is_empty();
                         adv_xray = state.adv_xray_on && !state.adv_selection.is_empty();
-                        (
-                            items,
-                            Some(BG_COLOR),
-                            LightingSettings::default(),
-                        )
+                        (items, Some(BG_COLOR), LightingSettings::default())
                     }
                     ShowcaseMode::PostProcess => {
                         let items = state.pp_scene.collect_render_items(&Selection::new());
@@ -2166,11 +2165,7 @@ impl ApplicationHandler for App {
                         // Collect marker boxes from the annotation scene.
                         let items = state.ann_scene.collect_render_items(&Selection::new());
                         // Labels are projected via world_to_screen in update_title each frame.
-                        (
-                            items,
-                            Some(BG_COLOR),
-                            LightingSettings::default(),
-                        )
+                        (items, Some(BG_COLOR), LightingSettings::default())
                     }
                     ShowcaseMode::Interaction => {
                         // Advance the camera animator.
@@ -2187,16 +2182,11 @@ impl ApplicationHandler for App {
                             .interact_scene
                             .collect_render_items(&state.interact_selection);
                         let lighting = LightingSettings::default();
-                        (
-                            items,
-                            Some(BG_COLOR),
-                            lighting,
-                        )
+                        (items, Some(BG_COLOR), lighting)
                     }
                 };
 
-                let clear_color =
-                    bg_color.unwrap_or(BG_COLOR);
+                let clear_color = bg_color.unwrap_or(BG_COLOR);
 
                 // Compute gizmo model matrix for Interaction mode.
                 let (gizmo_model, gizmo_mode, gizmo_space_orient) =
@@ -2300,12 +2290,8 @@ impl ApplicationHandler for App {
                         // wasting resolution and leaving the whole scene in cascade 0).
                         let mut rc = RenderCamera::from_camera(&state.camera);
                         rc.far = state.camera.zfar.min(60.0);
-                        rc.projection = glam::Mat4::perspective_rh(
-                            rc.fov,
-                            rc.aspect,
-                            rc.near,
-                            rc.far,
-                        );
+                        rc.projection =
+                            glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
                         fd.camera.render_camera = rc;
                     }
                     fd.effects.post_process = if state.mode == ShowcaseMode::PostProcess {

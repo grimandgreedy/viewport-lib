@@ -305,9 +305,13 @@ impl shader::Program<Message> for SceneSnapshot {
         match event {
             Event::Keyboard(iced::keyboard::Event::ModifiersChanged(mods)) => {
                 state.controller.begin_frame(vp_ctx);
-                state.controller.push_event(ViewportEvent::ModifiersChanged(
-                    if mods.shift() { Modifiers::SHIFT } else { Modifiers::NONE },
-                ));
+                state
+                    .controller
+                    .push_event(ViewportEvent::ModifiersChanged(if mods.shift() {
+                        Modifiers::SHIFT
+                    } else {
+                        Modifiers::NONE
+                    }));
                 state.controller.apply_to_camera(&mut state.camera);
                 None
             }

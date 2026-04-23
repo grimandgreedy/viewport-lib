@@ -10,11 +10,11 @@
 
 use std::sync::Arc;
 
-use viewport_lib::{
-    Camera, CameraFrame, FrameData, LightingSettings, Material, OrbitCameraController,
-    SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
-};
 use viewport_lib::{ButtonState, ScrollUnits};
+use viewport_lib::{
+    Camera, CameraFrame, FrameData, LightingSettings, Material, OrbitCameraController, SceneFrame,
+    SceneRenderItem, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
+};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -28,7 +28,10 @@ fn item(mesh_index: usize, x: f32, y: f32, z: f32, color: [f32; 3]) -> SceneRend
     let mut s = SceneRenderItem::default();
     s.mesh_index = mesh_index;
     s.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
-    s.material = Material { base_color: color, ..Material::default() };
+    s.material = Material {
+        base_color: color,
+        ..Material::default()
+    };
     s.two_sided = true;
     s
 }
@@ -115,8 +118,12 @@ impl ApplicationHandler for App {
 
         let size = window.inner_size();
         let caps = surface.get_capabilities(&adapter);
-        let format =
-            caps.formats.iter().find(|f| f.is_srgb()).copied().unwrap_or(caps.formats[0]);
+        let format = caps
+            .formats
+            .iter()
+            .find(|f| f.is_srgb())
+            .copied()
+            .unwrap_or(caps.formats[0]);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -141,28 +148,32 @@ impl ApplicationHandler for App {
         }
 
         // Row 0 — basic solids
-        let m_cube      = mesh!(primitives::cube(1.0));
-        let m_cuboid    = mesh!(primitives::cuboid(2.0, 0.75, 1.0));
-        let m_sphere    = mesh!(primitives::sphere(0.6, 32, 16));
+        let m_cube = mesh!(primitives::cube(1.0));
+        let m_cuboid = mesh!(primitives::cuboid(2.0, 0.75, 1.0));
+        let m_sphere = mesh!(primitives::sphere(0.6, 32, 16));
         let m_icosphere = mesh!(primitives::icosphere(0.6, 3));
 
         // Row 1 — round / capped
-        let m_ellipsoid  = mesh!(primitives::ellipsoid(0.9, 0.5, 0.6, 28, 14));
+        let m_ellipsoid = mesh!(primitives::ellipsoid(0.9, 0.5, 0.6, 28, 14));
         let m_hemisphere = mesh!(primitives::hemisphere(0.65, 32, 16));
-        let m_cone       = mesh!(primitives::cone(0.55, 1.1, 28));
-        let m_cylinder   = mesh!(primitives::cylinder(0.4, 1.1, 28));
+        let m_cone = mesh!(primitives::cone(0.55, 1.1, 28));
+        let m_cylinder = mesh!(primitives::cylinder(0.4, 1.1, 28));
 
         // Row 2 — curved surfaces
         let m_capsule = mesh!(primitives::capsule(0.38, 1.4, 24, 16));
-        let m_torus   = mesh!(primitives::torus(0.55, 0.2, 40, 24));
-        let m_disk    = mesh!(primitives::disk(0.65, 40));
-        let m_ring    = mesh!(primitives::ring(0.3, 0.65, 48));
+        let m_torus = mesh!(primitives::torus(0.55, 0.2, 40, 24));
+        let m_disk = mesh!(primitives::disk(0.65, 40));
+        let m_ring = mesh!(primitives::ring(0.3, 0.65, 48));
 
         // Row 3 — flat / composite
-        let m_plane      = mesh!(primitives::plane(1.8, 1.8));
+        let m_plane = mesh!(primitives::plane(1.8, 1.8));
         let m_grid_plane = mesh!(primitives::grid_plane(1.8, 1.8, 8, 8));
-        let m_frustum =
-            mesh!(primitives::frustum(std::f32::consts::FRAC_PI_3, 16.0 / 9.0, 0.3, 2.5));
+        let m_frustum = mesh!(primitives::frustum(
+            std::f32::consts::FRAC_PI_3,
+            16.0 / 9.0,
+            0.3,
+            2.5
+        ));
         let m_arrow = mesh!(primitives::arrow(0.07, 0.18, 0.28, 24));
 
         // Row 4 — spring (two variants)
@@ -176,29 +187,25 @@ impl ApplicationHandler for App {
 
         let scene_items: Vec<SceneRenderItem> = vec![
             // Row 0: basic solids
-            item(m_cube,      cx[0], 0.0, rz[0], [0.75, 0.75, 0.75]),
-            item(m_cuboid,    cx[1], 0.0, rz[0], [0.35, 0.55, 0.90]),
-            item(m_sphere,    cx[2], 0.0, rz[0], [0.90, 0.50, 0.20]),
+            item(m_cube, cx[0], 0.0, rz[0], [0.75, 0.75, 0.75]),
+            item(m_cuboid, cx[1], 0.0, rz[0], [0.35, 0.55, 0.90]),
+            item(m_sphere, cx[2], 0.0, rz[0], [0.90, 0.50, 0.20]),
             item(m_icosphere, cx[3], 0.0, rz[0], [0.25, 0.75, 0.40]),
-
             // Row 1: round / capped
-            item(m_ellipsoid,  cx[0], 0.0, rz[1], [0.70, 0.30, 0.85]),
+            item(m_ellipsoid, cx[0], 0.0, rz[1], [0.70, 0.30, 0.85]),
             item(m_hemisphere, cx[1], 0.0, rz[1], [0.50, 0.80, 0.35]),
-            item(m_cone,       cx[2], 0.0, rz[1], [0.85, 0.20, 0.25]),
-            item(m_cylinder,   cx[3], 0.0, rz[1], [0.20, 0.70, 0.80]),
-
+            item(m_cone, cx[2], 0.0, rz[1], [0.85, 0.20, 0.25]),
+            item(m_cylinder, cx[3], 0.0, rz[1], [0.20, 0.70, 0.80]),
             // Row 2: curved surfaces
             item(m_capsule, cx[0], 0.0, rz[2], [0.90, 0.45, 0.65]),
-            item(m_torus,   cx[1], 0.0, rz[2], [0.85, 0.70, 0.15]),
-            item(m_disk,    cx[2], 0.0, rz[2], [0.40, 0.65, 0.95]),
-            item(m_ring,    cx[3], 0.0, rz[2], [0.55, 0.90, 0.30]),
-
+            item(m_torus, cx[1], 0.0, rz[2], [0.85, 0.70, 0.15]),
+            item(m_disk, cx[2], 0.0, rz[2], [0.40, 0.65, 0.95]),
+            item(m_ring, cx[3], 0.0, rz[2], [0.55, 0.90, 0.30]),
             // Row 3: flat / composite
-            item(m_plane,      cx[0], 0.0, rz[3], [0.60, 0.55, 0.75]),
+            item(m_plane, cx[0], 0.0, rz[3], [0.60, 0.55, 0.75]),
             item(m_grid_plane, cx[1], 0.0, rz[3], [0.80, 0.50, 0.25]),
-            item(m_frustum,    cx[2], 0.0, rz[3], [0.30, 0.65, 0.90]),
-            item(m_arrow,      cx[3], 0.0, rz[3], [0.90, 0.25, 0.30]),
-
+            item(m_frustum, cx[2], 0.0, rz[3], [0.30, 0.65, 0.90]),
+            item(m_arrow, cx[3], 0.0, rz[3], [0.90, 0.25, 0.30]),
             // Row 4: spring variants
             item(m_spring_a, cx[0], 0.0, rz[4], [0.85, 0.30, 0.75]),
             item(m_spring_b, cx[1], 0.0, rz[4], [0.55, 0.35, 0.90]),
@@ -239,7 +246,9 @@ impl ApplicationHandler for App {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        let Some(state) = self.state.as_mut() else { return };
+        let Some(state) = self.state.as_mut() else {
+            return;
+        };
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
@@ -248,7 +257,9 @@ impl ApplicationHandler for App {
                 if sz.width > 0 && sz.height > 0 {
                     state.surface_config.width = sz.width;
                     state.surface_config.height = sz.height;
-                    state.surface.configure(&state.device, &state.surface_config);
+                    state
+                        .surface
+                        .configure(&state.device, &state.surface_config);
                     state.depth_view =
                         AppState::make_depth_view(&state.device, sz.width, sz.height);
                     state.window.request_redraw();
@@ -260,10 +271,16 @@ impl ApplicationHandler for App {
                 m.shift = mods.state().shift_key();
                 m.ctrl = mods.state().control_key();
                 m.alt = mods.state().alt_key();
-                state.controller.push_event(ViewportEvent::ModifiersChanged(m));
+                state
+                    .controller
+                    .push_event(ViewportEvent::ModifiersChanged(m));
             }
 
-            WindowEvent::MouseInput { state: btn_state, button, .. } => {
+            WindowEvent::MouseInput {
+                state: btn_state,
+                button,
+                ..
+            } => {
                 let vp_button = match button {
                     MouseButton::Left => viewport_lib::MouseButton::Left,
                     MouseButton::Middle => viewport_lib::MouseButton::Middle,
@@ -299,13 +316,17 @@ impl ApplicationHandler for App {
 
             WindowEvent::MouseWheel { delta, .. } => {
                 let (d, units) = match delta {
-                    MouseScrollDelta::LineDelta(x, y) => (glam::Vec2::new(x, y), ScrollUnits::Lines),
+                    MouseScrollDelta::LineDelta(x, y) => {
+                        (glam::Vec2::new(x, y), ScrollUnits::Lines)
+                    }
                     MouseScrollDelta::PixelDelta(px) => (
                         glam::Vec2::new(px.x as f32, px.y as f32),
                         ScrollUnits::Pixels,
                     ),
                 };
-                state.controller.push_event(ViewportEvent::Wheel { delta: d, units });
+                state
+                    .controller
+                    .push_event(ViewportEvent::Wheel { delta: d, units });
                 state.window.request_redraw();
             }
 
@@ -313,7 +334,9 @@ impl ApplicationHandler for App {
                 let frame = match state.surface.get_current_texture() {
                     Ok(f) => f,
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                        state.surface.configure(&state.device, &state.surface_config);
+                        state
+                            .surface
+                            .configure(&state.device, &state.surface_config);
                         return;
                     }
                     Err(e) => {
@@ -322,8 +345,9 @@ impl ApplicationHandler for App {
                     }
                 };
 
-                let view =
-                    frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let view = frame
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
                 let w = state.surface_config.width as f32;
                 let h = state.surface_config.height as f32;
 
@@ -339,44 +363,45 @@ impl ApplicationHandler for App {
                 frame_data.viewport.show_grid = true;
                 frame_data.viewport.show_axes_indicator = true;
 
-                state.renderer.prepare(&state.device, &state.queue, &frame_data);
+                state
+                    .renderer
+                    .prepare(&state.device, &state.queue, &frame_data);
 
                 let mut encoder =
-                    state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("primitives_encoder"),
-                    });
+                    state
+                        .device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("primitives_encoder"),
+                        });
 
                 {
-                    let mut pass =
-                        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("primitives_pass"),
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: &view,
-                                resolve_target: None,
-                                ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                                        r: 0.09,
-                                        g: 0.09,
-                                        b: 0.11,
-                                        a: 1.0,
-                                    }),
-                                    store: wgpu::StoreOp::Store,
-                                },
-                                depth_slice: None,
-                            })],
-                            depth_stencil_attachment: Some(
-                                wgpu::RenderPassDepthStencilAttachment {
-                                    view: &state.depth_view,
-                                    depth_ops: Some(wgpu::Operations {
-                                        load: wgpu::LoadOp::Clear(1.0),
-                                        store: wgpu::StoreOp::Discard,
-                                    }),
-                                    stencil_ops: None,
-                                },
-                            ),
-                            timestamp_writes: None,
-                            occlusion_query_set: None,
-                        });
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("primitives_pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color {
+                                    r: 0.09,
+                                    g: 0.09,
+                                    b: 0.11,
+                                    a: 1.0,
+                                }),
+                                store: wgpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        })],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: &state.depth_view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(1.0),
+                                store: wgpu::StoreOp::Discard,
+                            }),
+                            stencil_ops: None,
+                        }),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
 
                     pass.set_viewport(0.0, 0.0, w, h, 0.0, 1.0);
                     state.renderer.paint_to(&mut pass, &frame_data);

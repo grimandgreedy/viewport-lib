@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use slint::Model;
 use viewport_bridge::SceneRenderer;
-use viewport_lib::{ButtonState, MouseButton, Modifiers, ScrollUnits, ViewportEvent};
+use viewport_lib::{ButtonState, Modifiers, MouseButton, ScrollUnits, ViewportEvent};
 
 slint::slint! {
     struct ObjectEntry {
@@ -223,13 +223,17 @@ fn main() {
                 2 => MouseButton::Right,
                 _ => MouseButton::Middle,
             };
-            renderer.borrow_mut().push_event(ViewportEvent::PointerMoved {
-                position: glam::vec2(x, y),
-            });
-            renderer.borrow_mut().push_event(ViewportEvent::MouseButton {
-                button,
-                state: ButtonState::Pressed,
-            });
+            renderer
+                .borrow_mut()
+                .push_event(ViewportEvent::PointerMoved {
+                    position: glam::vec2(x, y),
+                });
+            renderer
+                .borrow_mut()
+                .push_event(ViewportEvent::MouseButton {
+                    button,
+                    state: ButtonState::Pressed,
+                });
         });
     }
     {
@@ -240,18 +244,22 @@ fn main() {
                 2 => MouseButton::Right,
                 _ => MouseButton::Middle,
             };
-            renderer.borrow_mut().push_event(ViewportEvent::MouseButton {
-                button,
-                state: ButtonState::Released,
-            });
+            renderer
+                .borrow_mut()
+                .push_event(ViewportEvent::MouseButton {
+                    button,
+                    state: ButtonState::Released,
+                });
         });
     }
     {
         let renderer = scene_renderer.clone();
         app.on_pointer_moved(move |x, y| {
-            renderer.borrow_mut().push_event(ViewportEvent::PointerMoved {
-                position: glam::vec2(x, y),
-            });
+            renderer
+                .borrow_mut()
+                .push_event(ViewportEvent::PointerMoved {
+                    position: glam::vec2(x, y),
+                });
         });
     }
     {
@@ -266,9 +274,13 @@ fn main() {
     {
         let renderer = scene_renderer.clone();
         app.on_modifiers_changed(move |shift| {
-            renderer.borrow_mut().push_event(ViewportEvent::ModifiersChanged(
-                if shift { Modifiers::SHIFT } else { Modifiers::NONE },
-            ));
+            renderer
+                .borrow_mut()
+                .push_event(ViewportEvent::ModifiersChanged(if shift {
+                    Modifiers::SHIFT
+                } else {
+                    Modifiers::NONE
+                }));
         });
     }
 
