@@ -1,15 +1,27 @@
+use super::types::{SceneEffects, ViewportEffects};
 use super::*;
 
 impl ViewportRenderer {
-    /// Upload per-frame data to GPU buffers and render the shadow pass.
-    /// Call before `paint()`.
-    pub fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame: &FrameData) {
+    /// Scene-global prepare stage: compute filters, lighting, shadow pass, batching, scivis.
+    ///
+    /// Call once per frame before any `prepare_viewport_internal` calls.
+    ///
+    /// Reads `scene_fx` for lighting, IBL, and compute filters.  Still reads
+    /// `frame.camera` for shadow cascade computation (Phase 1 coupling — see
+    /// multi-viewport-plan.md § shadow strategy; decoupled in Phase 2).
+    pub(super) fn prepare_scene_internal(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &FrameData,
+        scene_fx: &SceneEffects<'_>,
+    ) {
         // Phase G — GPU compute filtering.
         // Dispatch before the render pass. Completely skipped when list is empty (zero overhead).
-        if !frame.effects.compute_filter_items.is_empty() {
+        if !scene_fx.compute_filter_items.is_empty() {
             self.compute_filter_results =
                 self.resources
-                    .run_compute_filters(device, queue, &frame.effects.compute_filter_items);
+                    .run_compute_filters(device, queue, scene_fx.compute_filter_items);
         } else {
             self.compute_filter_results.clear();
         }
@@ -17,12 +29,8 @@ impl ViewportRenderer {
         // Ensure built-in colormaps are uploaded on first frame.
         self.resources.ensure_colormaps_initialized(device, queue);
 
-        // Ensure a per-viewport camera slot exists for this viewport index.
-        // Must happen before the `resources` borrow below.
-        self.ensure_viewport_camera_slot(device, frame.camera.viewport_index);
-
         let resources = &mut self.resources;
-        let lighting = &frame.effects.lighting;
+        let lighting = scene_fx.lighting;
 
         // Resolve scene items from the SurfaceSubmission seam.
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
@@ -30,12 +38,11 @@ impl ViewportRenderer {
         };
 
         // Compute scene center / extent for shadow framing.
-        let (shadow_center, shadow_extent) =
-            if let Some(extent) = frame.effects.lighting.shadow_extent_override {
-                (glam::Vec3::ZERO, extent)
-            } else {
-                (glam::Vec3::ZERO, 20.0)
-            };
+        let (shadow_center, shadow_extent) = if let Some(extent) = lighting.shadow_extent_override {
+            (glam::Vec3::ZERO, extent)
+        } else {
+            (glam::Vec3::ZERO, 20.0)
+        };
 
         /// Build a light-space view-projection matrix for shadow mapping.
         fn compute_shadow_matrix(
@@ -182,6 +189,7 @@ impl ViewportRenderer {
 
         // -------------------------------------------------------------------
         // Compute CSM cascade matrices for lights[0] (directional).
+        // Phase 1 note: uses frame.camera — see multi-viewport-plan.md § shadow strategy.
         // -------------------------------------------------------------------
         let cascade_count = lighting.shadow_cascade_count.clamp(1, 4) as usize;
         let atlas_res = lighting.shadow_atlas_resolution.max(64);
@@ -275,7 +283,7 @@ impl ViewportRenderer {
                     vp_data[c * 4 + row] = cols[row];
                 }
             }
-            let shadow_atlas_uniform = crate::resources::ShadowAtlasUniform {
+            let shadow_atlas_uniform = ShadowAtlasUniform {
                 cascade_view_proj: vp_data,
                 cascade_splits: cascade_split_distances,
                 cascade_count: effective_cascade_count as u32,
@@ -292,72 +300,32 @@ impl ViewportRenderer {
                 0,
                 bytemuck::cast_slice(&[shadow_atlas_uniform]),
             );
+            // Write to all per-viewport slot buffers so each viewport's bind group
+            // references correctly populated shadow info.
+            for slot in &self.viewport_slots {
+                queue.write_buffer(
+                    &slot.shadow_info_buf,
+                    0,
+                    bytemuck::cast_slice(&[shadow_atlas_uniform]),
+                );
+            }
         }
 
         // The primary shadow matrix is still stored in lights[0].light_view_proj for
         // backward compat with the non-instanced shadow pass uniform.
         let _primary_shadow_mat = cascade_view_projs[0];
 
-        // Upload clip planes uniform (binding 4).
-        {
-            let mut planes = [[0.0f32; 4]; 6];
-            let mut count = 0u32;
-            for plane in frame.effects.clip_planes.iter().filter(|p| p.enabled).take(6) {
-                planes[count as usize] = [
-                    plane.normal[0],
-                    plane.normal[1],
-                    plane.normal[2],
-                    plane.distance,
-                ];
-                count += 1;
-            }
-            let clip_uniform = ClipPlanesUniform {
-                planes,
-                count,
-                _pad0: 0,
-                viewport_width: frame.camera.viewport_size[0].max(1.0),
-                viewport_height: frame.camera.viewport_size[1].max(1.0),
-            };
-            queue.write_buffer(
-                &resources.clip_planes_uniform_buf,
-                0,
-                bytemuck::cast_slice(&[clip_uniform]),
-            );
-        }
-
-        // Upload clip volume uniform (binding 6).
-        {
-            use crate::resources::ClipVolumeUniform;
-            let clip_vol_uniform = ClipVolumeUniform::from_clip_volume(&frame.effects.clip_volume);
-            queue.write_buffer(
-                &resources.clip_volume_uniform_buf,
-                0,
-                bytemuck::cast_slice(&[clip_vol_uniform]),
-            );
-        }
-
-        // Upload camera uniform.
-        let camera_uniform = frame.camera.render_camera.camera_uniform();
-        // Write to the shared buffer for single-viewport / legacy callers.
-        queue.write_buffer(
-            &resources.camera_uniform_buf,
-            0,
-            bytemuck::cast_slice(&[camera_uniform]),
-        );
-        // Also write to the per-viewport slot so each sub-viewport gets its
-        // own camera transform even though all prepare() calls happen before
-        // any paint() calls (egui-wgpu ordering guarantee).
-        // `ensure_viewport_camera_slot` must be called first (done above in prepare).
-        if let Some((vp_buf, _)) = self.per_viewport_cameras.get(frame.camera.viewport_index) {
-            queue.write_buffer(vp_buf, 0, bytemuck::cast_slice(&[camera_uniform]));
-        }
-
         // Upload lights uniform.
         // IBL fields from environment map settings.
         let (ibl_enabled, ibl_intensity, ibl_rotation, show_skybox) =
-            if let Some(env) = &frame.effects.environment {
+            if let Some(env) = scene_fx.environment {
                 if resources.ibl_irradiance_view.is_some() {
-                    (1u32, env.intensity, env.rotation, if env.show_skybox { 1u32 } else { 0 })
+                    (
+                        1u32,
+                        env.intensity,
+                        env.rotation,
+                        if env.show_skybox { 1u32 } else { 0 },
+                    )
                 } else {
                     (0, 0.0, 0.0, 0)
                 }
@@ -415,14 +383,13 @@ impl ViewportRenderer {
         // Per-object uniform writes — needed for the non-instanced path, wireframe mode,
         // and for any items with active scalar attributes or two-sided materials
         // (both bypass the instanced path).
-        //
-        // Also updates each mesh's `object_bind_group` when the material/attribute key changes,
-        // keeping the combined (object-uniform + texture + LUT + scalar-buf) bind group consistent.
-        let has_scalar_items = scene_items
-            .iter()
-            .any(|i| i.active_attribute.is_some());
+        let has_scalar_items = scene_items.iter().any(|i| i.active_attribute.is_some());
         let has_two_sided_items = scene_items.iter().any(|i| i.two_sided);
-        if !self.use_instancing || frame.viewport.wireframe_mode || has_scalar_items || has_two_sided_items {
+        if !self.use_instancing
+            || frame.viewport.wireframe_mode
+            || has_scalar_items
+            || has_two_sided_items
+        {
             for item in scene_items {
                 if resources
                     .mesh_store
@@ -534,20 +501,15 @@ impl ViewportRenderer {
             resources.ensure_instanced_pipelines(device);
 
             // Generation-based cache: skip batch rebuild and GPU upload when nothing changed.
-            // Also include the scene_items count so that frustum-culling changes (different
-            // visible set passed in by the caller) correctly invalidate the cache even when
-            // scene_generation is stable (scene not mutated, only camera moved).
+            // Phase 2: wireframe_mode removed from cache key — wireframe rendering
+            // uses the per-object wireframe_pipeline, not the instanced path, so
+            // instance data is now viewport-agnostic.
             let cache_valid = frame.scene.generation == self.last_scene_generation
                 && frame.interaction.selection_generation == self.last_selection_generation
-                && frame.viewport.wireframe_mode == self.last_wireframe_mode
                 && scene_items.len() == self.last_scene_items_count;
 
             if !cache_valid {
                 // Cache miss — rebuild batches and upload instance data.
-
-                // Collect visible items with valid meshes, then sort by batch key.
-                // Items with active scalar attributes or two-sided rasterization are
-                // excluded from instancing — they need per-object draw pipelines.
                 let mut sorted_items: Vec<&SceneRenderItem> = scene_items
                     .iter()
                     .filter(|item| {
@@ -561,8 +523,6 @@ impl ViewportRenderer {
                     })
                     .collect();
 
-                // Sort by (mesh_index, texture_id, normal_map_id, ao_map_id) so identical
-                // batch keys are contiguous — enables O(N) linear scan instead of HashMap.
                 sorted_items.sort_unstable_by_key(|item| {
                     (
                         item.mesh_index,
@@ -572,7 +532,6 @@ impl ViewportRenderer {
                     )
                 });
 
-                // Build contiguous instance data array and batch descriptors via linear scan.
                 let mut all_instances: Vec<InstanceData> = Vec::with_capacity(sorted_items.len());
                 let mut instanced_batches: Vec<InstancedBatch> = Vec::new();
 
@@ -590,9 +549,8 @@ impl ViewportRenderer {
                         };
 
                         if at_end || key_changed {
-                            // Flush the current batch.
                             let batch_items = &sorted_items[batch_start..i];
-                            let rep = batch_items[0]; // representative item for batch metadata
+                            let rep = batch_items[0];
                             let instance_offset = all_instances.len() as u32;
                             let is_transparent = rep.material.opacity < 1.0;
 
@@ -607,7 +565,7 @@ impl ViewportRenderer {
                                         m.opacity,
                                     ],
                                     selected: if item.selected { 1 } else { 0 },
-                                    wireframe: if frame.viewport.wireframe_mode { 1 } else { 0 },
+                                    wireframe: 0, // Phase 2: always 0 — wireframe uses per-object pipeline
                                     ambient: m.ambient,
                                     diffuse: m.diffuse,
                                     specular: m.specular,
@@ -636,24 +594,17 @@ impl ViewportRenderer {
                     }
                 }
 
-                // Store to cache.
                 self.cached_instance_data = all_instances;
                 self.cached_instanced_batches = instanced_batches;
 
-                // Upload instance data to GPU.
                 resources.upload_instance_data(device, queue, &self.cached_instance_data);
 
-                // Promote cached batches to active batches.
                 self.instanced_batches = self.cached_instanced_batches.clone();
 
-                // Store generations so the next frame can detect staleness.
                 self.last_scene_generation = frame.scene.generation;
                 self.last_selection_generation = frame.interaction.selection_generation;
-                self.last_wireframe_mode = frame.viewport.wireframe_mode;
                 self.last_scene_items_count = scene_items.len();
 
-                // Prime instance+texture bind group cache for all batches.
-                // Called here (while resources is &mut) so the draw macro only needs &resources.
                 for batch in &self.instanced_batches {
                     resources.get_instance_bind_group(
                         device,
@@ -663,8 +614,6 @@ impl ViewportRenderer {
                     );
                 }
             } else {
-                // Cache hit: batches unchanged, but instance bind groups must still be primed
-                // in case the storage buffer was resized (cache cleared) without batch rebuild.
                 for batch in &self.instanced_batches {
                     resources.get_instance_bind_group(
                         device,
@@ -674,15 +623,528 @@ impl ViewportRenderer {
                     );
                 }
             }
-            // On cache hit: self.instanced_batches is reused unchanged; no GPU upload needed.
         }
 
-        // Non-instanced path: mesh.object_bind_group already carries the texture (updated
-        // per-item in the uniform-write loop above). No separate material bind group needed.
+        // ------------------------------------------------------------------
+        // SciVis Phase B — point cloud and glyph GPU data upload.
+        // ------------------------------------------------------------------
+        self.point_cloud_gpu_data.clear();
+        if !frame.scene.point_clouds.is_empty() {
+            resources.ensure_point_cloud_pipeline(device);
+            for item in &frame.scene.point_clouds {
+                if item.positions.is_empty() {
+                    continue;
+                }
+                let gpu_data = resources.upload_point_cloud(device, queue, item);
+                self.point_cloud_gpu_data.push(gpu_data);
+            }
+        }
 
-        // Rebuild outline / x-ray per-object buffers.
-        resources.outline_object_buffers.clear();
+        self.glyph_gpu_data.clear();
+        if !frame.scene.glyphs.is_empty() {
+            resources.ensure_glyph_pipeline(device);
+            for item in &frame.scene.glyphs {
+                if item.positions.is_empty() || item.vectors.is_empty() {
+                    continue;
+                }
+                let gpu_data = resources.upload_glyph_set(device, queue, item);
+                self.glyph_gpu_data.push(gpu_data);
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // SciVis Phase M8 — polyline GPU data upload.
+        // ------------------------------------------------------------------
+        self.polyline_gpu_data.clear();
+        if !frame.scene.polylines.is_empty() {
+            resources.ensure_polyline_pipeline(device);
+            for item in &frame.scene.polylines {
+                if item.positions.is_empty() {
+                    continue;
+                }
+                let gpu_data = resources.upload_polyline(device, queue, item);
+                self.polyline_gpu_data.push(gpu_data);
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // SciVis Phase L — isoline extraction and upload via polyline pipeline.
+        // ------------------------------------------------------------------
+        if !frame.scene.isolines.is_empty() {
+            resources.ensure_polyline_pipeline(device);
+            for item in &frame.scene.isolines {
+                if item.positions.is_empty() || item.indices.is_empty() || item.scalars.is_empty() {
+                    continue;
+                }
+                let (positions, strip_lengths) = crate::geometry::isoline::extract_isolines(item);
+                if positions.is_empty() {
+                    continue;
+                }
+                let polyline = PolylineItem {
+                    positions,
+                    scalars: Vec::new(),
+                    strip_lengths,
+                    scalar_range: None,
+                    colormap_id: None,
+                    default_color: item.color,
+                    line_width: item.line_width,
+                    id: 0,
+                };
+                let gpu_data = resources.upload_polyline(device, queue, &polyline);
+                self.polyline_gpu_data.push(gpu_data);
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // SciVis Phase M — streamtube GPU data upload.
+        // ------------------------------------------------------------------
+        self.streamtube_gpu_data.clear();
+        if !frame.scene.streamtube_items.is_empty() {
+            resources.ensure_streamtube_pipeline(device);
+            for item in &frame.scene.streamtube_items {
+                if item.positions.is_empty() || item.strip_lengths.is_empty() {
+                    continue;
+                }
+                let gpu_data = resources.upload_streamtube(device, queue, item);
+                if gpu_data.instance_count > 0 {
+                    self.streamtube_gpu_data.push(gpu_data);
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // SciVis Phase D — volume GPU data upload.
+        // Phase 1 note: clip_planes are per-viewport but passed here for culling.
+        // Fix in Phase 2/3: upload clip-plane-agnostic data; apply planes in shader.
+        // ------------------------------------------------------------------
+        self.volume_gpu_data.clear();
+        if !frame.scene.volumes.is_empty() {
+            resources.ensure_volume_pipeline(device);
+            for item in &frame.scene.volumes {
+                let gpu =
+                    resources.upload_volume_frame(device, queue, item, &frame.effects.clip_planes);
+                self.volume_gpu_data.push(gpu);
+            }
+        }
+
+        // -- Frame stats --
+        {
+            let total = scene_items.len() as u32;
+            let visible = scene_items.iter().filter(|i| i.visible).count() as u32;
+            let mut draw_calls = 0u32;
+            let mut triangles = 0u64;
+            let instanced_batch_count = if self.use_instancing {
+                self.instanced_batches.len() as u32
+            } else {
+                0
+            };
+
+            if self.use_instancing {
+                for batch in &self.instanced_batches {
+                    if let Some(mesh) = resources
+                        .mesh_store
+                        .get(crate::resources::mesh_store::MeshId(batch.mesh_index))
+                    {
+                        draw_calls += 1;
+                        triangles += (mesh.index_count / 3) as u64 * batch.instance_count as u64;
+                    }
+                }
+            } else {
+                for item in scene_items {
+                    if !item.visible {
+                        continue;
+                    }
+                    if let Some(mesh) = resources
+                        .mesh_store
+                        .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                    {
+                        draw_calls += 1;
+                        triangles += (mesh.index_count / 3) as u64;
+                    }
+                }
+            }
+
+            self.last_stats = crate::renderer::stats::FrameStats {
+                total_objects: total,
+                visible_objects: visible,
+                culled_objects: total.saturating_sub(visible),
+                draw_calls,
+                instanced_batches: instanced_batch_count,
+                triangles_submitted: triangles,
+                shadow_draw_calls: 0, // Updated below in shadow pass.
+            };
+        }
+
+        // ------------------------------------------------------------------
+        // Shadow depth pass — CSM: render each cascade into its atlas tile.
+        // ------------------------------------------------------------------
+        if lighting.shadows_enabled && !scene_items.is_empty() {
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("shadow_pass_encoder"),
+            });
+            {
+                let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("shadow_pass"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &resources.shadow_map_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+
+                let mut shadow_draws = 0u32;
+                let tile_px = tile_size as f32;
+
+                if self.use_instancing {
+                    if let (Some(pipeline), Some(instance_bg)) = (
+                        &resources.shadow_instanced_pipeline,
+                        self.instanced_batches.first().and_then(|b| {
+                            resources.instance_bind_groups.get(&(
+                                b.texture_id.unwrap_or(u64::MAX),
+                                b.normal_map_id.unwrap_or(u64::MAX),
+                                b.ao_map_id.unwrap_or(u64::MAX),
+                            ))
+                        }),
+                    ) {
+                        for cascade in 0..effective_cascade_count {
+                            let tile_col = (cascade % 2) as f32;
+                            let tile_row = (cascade / 2) as f32;
+                            shadow_pass.set_viewport(
+                                tile_col * tile_px,
+                                tile_row * tile_px,
+                                tile_px,
+                                tile_px,
+                                0.0,
+                                1.0,
+                            );
+                            shadow_pass.set_scissor_rect(
+                                (tile_col * tile_px) as u32,
+                                (tile_row * tile_px) as u32,
+                                tile_size,
+                                tile_size,
+                            );
+
+                            shadow_pass.set_pipeline(pipeline);
+
+                            queue.write_buffer(
+                                resources.shadow_instanced_cascade_bufs[cascade]
+                                    .as_ref()
+                                    .expect("shadow_instanced_cascade_bufs not allocated"),
+                                0,
+                                bytemuck::cast_slice(
+                                    &cascade_view_projs[cascade].to_cols_array_2d(),
+                                ),
+                            );
+
+                            let cascade_bg = resources.shadow_instanced_cascade_bgs[cascade]
+                                .as_ref()
+                                .expect("shadow_instanced_cascade_bgs not allocated");
+                            shadow_pass.set_bind_group(0, cascade_bg, &[]);
+                            shadow_pass.set_bind_group(1, instance_bg, &[]);
+
+                            for batch in &self.instanced_batches {
+                                if batch.is_transparent {
+                                    continue;
+                                }
+                                let Some(mesh) = resources
+                                    .mesh_store
+                                    .get(crate::resources::mesh_store::MeshId(batch.mesh_index))
+                                else {
+                                    continue;
+                                };
+                                shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                shadow_pass.set_index_buffer(
+                                    mesh.index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
+                                shadow_pass.draw_indexed(
+                                    0..mesh.index_count,
+                                    0,
+                                    batch.instance_offset
+                                        ..batch.instance_offset + batch.instance_count,
+                                );
+                                shadow_draws += 1;
+                            }
+                        }
+                    }
+                } else {
+                    for cascade in 0..effective_cascade_count {
+                        let tile_col = (cascade % 2) as f32;
+                        let tile_row = (cascade / 2) as f32;
+                        shadow_pass.set_viewport(
+                            tile_col * tile_px,
+                            tile_row * tile_px,
+                            tile_px,
+                            tile_px,
+                            0.0,
+                            1.0,
+                        );
+                        shadow_pass.set_scissor_rect(
+                            (tile_col * tile_px) as u32,
+                            (tile_row * tile_px) as u32,
+                            tile_size,
+                            tile_size,
+                        );
+
+                        shadow_pass.set_pipeline(&resources.shadow_pipeline);
+                        shadow_pass.set_bind_group(
+                            0,
+                            &resources.shadow_bind_group,
+                            &[cascade as u32 * 256],
+                        );
+
+                        let cascade_frustum = crate::camera::frustum::Frustum::from_view_proj(
+                            &cascade_view_projs[cascade],
+                        );
+
+                        for item in scene_items.iter() {
+                            if !item.visible {
+                                continue;
+                            }
+                            if item.material.opacity < 1.0 {
+                                continue;
+                            }
+                            let Some(mesh) = resources
+                                .mesh_store
+                                .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                            else {
+                                continue;
+                            };
+
+                            let world_aabb = mesh
+                                .aabb
+                                .transformed(&glam::Mat4::from_cols_array_2d(&item.model));
+                            if cascade_frustum.cull_aabb(&world_aabb) {
+                                continue;
+                            }
+
+                            shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
+                            shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                            shadow_pass.set_index_buffer(
+                                mesh.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            shadow_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                            shadow_draws += 1;
+                        }
+                    }
+                }
+                drop(shadow_pass);
+                self.last_stats.shadow_draw_calls = shadow_draws;
+            }
+            queue.submit(std::iter::once(encoder.finish()));
+        }
+    }
+
+    /// Per-viewport prepare stage: camera, clip planes, clip volume, grid, overlays, cap geometry, axes.
+    ///
+    /// Call once per viewport per frame, after `prepare_scene_internal`.
+    /// Reads `viewport_fx` for clip planes, clip volume, cap fill, and post-process settings.
+    pub(super) fn prepare_viewport_internal(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &FrameData,
+        viewport_fx: &ViewportEffects<'_>,
+    ) {
+        // Ensure a per-viewport camera slot exists for this viewport index.
+        // Must happen before the `resources` borrow below.
+        self.ensure_viewport_slot(device, frame.camera.viewport_index);
+
+        let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
+            SurfaceSubmission::Flat(items) => items,
+        };
+
+        {
+            let resources = &mut self.resources;
+
+            // Upload clip planes uniform to per-viewport slot buffer (binding 4).
+            {
+                let mut planes = [[0.0f32; 4]; 6];
+                let mut count = 0u32;
+                for plane in viewport_fx.clip_planes.iter().filter(|p| p.enabled).take(6) {
+                    planes[count as usize] = [
+                        plane.normal[0],
+                        plane.normal[1],
+                        plane.normal[2],
+                        plane.distance,
+                    ];
+                    count += 1;
+                }
+                let clip_uniform = ClipPlanesUniform {
+                    planes,
+                    count,
+                    _pad0: 0,
+                    viewport_width: frame.camera.viewport_size[0].max(1.0),
+                    viewport_height: frame.camera.viewport_size[1].max(1.0),
+                };
+                // Write to per-viewport slot buffer.
+                if let Some(slot) = self.viewport_slots.get(frame.camera.viewport_index) {
+                    queue.write_buffer(
+                        &slot.clip_planes_buf,
+                        0,
+                        bytemuck::cast_slice(&[clip_uniform]),
+                    );
+                }
+                // Also write to shared buffer for legacy single-viewport callers.
+                queue.write_buffer(
+                    &resources.clip_planes_uniform_buf,
+                    0,
+                    bytemuck::cast_slice(&[clip_uniform]),
+                );
+            }
+
+            // Upload clip volume uniform to per-viewport slot buffer (binding 6).
+            {
+                let clip_vol_uniform = ClipVolumeUniform::from_clip_volume(viewport_fx.clip_volume);
+                if let Some(slot) = self.viewport_slots.get(frame.camera.viewport_index) {
+                    queue.write_buffer(
+                        &slot.clip_volume_buf,
+                        0,
+                        bytemuck::cast_slice(&[clip_vol_uniform]),
+                    );
+                }
+                queue.write_buffer(
+                    &resources.clip_volume_uniform_buf,
+                    0,
+                    bytemuck::cast_slice(&[clip_vol_uniform]),
+                );
+            }
+
+            // Upload camera uniform to per-viewport slot buffer.
+            let camera_uniform = frame.camera.render_camera.camera_uniform();
+            // Write to shared buffer for legacy single-viewport callers.
+            queue.write_buffer(
+                &resources.camera_uniform_buf,
+                0,
+                bytemuck::cast_slice(&[camera_uniform]),
+            );
+            // Write to the per-viewport slot buffer.
+            if let Some(slot) = self.viewport_slots.get(frame.camera.viewport_index) {
+                queue.write_buffer(&slot.camera_buf, 0, bytemuck::cast_slice(&[camera_uniform]));
+            }
+
+            // Upload grid uniform (full-screen analytical shader — no vertex buffers needed).
+            if frame.viewport.show_grid {
+                let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
+                if !eye.is_finite() {
+                    tracing::warn!(
+                        eye_x = eye.x,
+                        eye_y = eye.y,
+                        eye_z = eye.z,
+                        "grid skipped: eye_position is non-finite (camera distance overflow?)"
+                    );
+                } else {
+                    let view_proj_mat = frame.camera.render_camera.view_proj().to_cols_array_2d();
+
+                    let (spacing, minor_fade) = if frame.viewport.grid_cell_size > 0.0 {
+                        (frame.viewport.grid_cell_size, 1.0_f32)
+                    } else {
+                        let vertical_depth = (eye.z - frame.viewport.grid_z).abs().max(1.0);
+                        let world_per_pixel =
+                            2.0 * (frame.camera.render_camera.fov / 2.0).tan() * vertical_depth
+                                / frame.camera.viewport_size[1].max(1.0);
+                        let target = (world_per_pixel * 60.0).max(1e-9_f32);
+                        let mut s = 1.0_f32;
+                        let mut iters = 0u32;
+                        while s < target {
+                            s *= 10.0;
+                            iters += 1;
+                        }
+                        let ratio = (target / s).clamp(0.0, 1.0);
+                        let fade = if ratio < 0.5 {
+                            1.0_f32
+                        } else {
+                            let t = (ratio - 0.5) * 2.0;
+                            1.0 - t * t * (3.0 - 2.0 * t)
+                        };
+                        tracing::debug!(
+                            eye_z = eye.z,
+                            vertical_depth,
+                            world_per_pixel,
+                            target,
+                            spacing = s,
+                            lod_iters = iters,
+                            ratio,
+                            minor_fade = fade,
+                            "grid LOD"
+                        );
+                        (s, fade)
+                    };
+
+                    let spacing_major = spacing * 10.0;
+                    let snap_x = (eye.x / spacing_major).floor() * spacing_major;
+                    let snap_y = (eye.y / spacing_major).floor() * spacing_major;
+                    tracing::debug!(
+                        spacing_minor = spacing,
+                        spacing_major,
+                        snap_x,
+                        snap_y,
+                        eye_x = eye.x,
+                        eye_y = eye.y,
+                        eye_z = eye.z,
+                        "grid snap"
+                    );
+
+                    let orient = frame.camera.render_camera.orientation;
+                    let right = orient * glam::Vec3::X;
+                    let up = orient * glam::Vec3::Y;
+                    let back = orient * glam::Vec3::Z;
+                    let cam_to_world = [
+                        [right.x, right.y, right.z, 0.0_f32],
+                        [up.x, up.y, up.z, 0.0_f32],
+                        [back.x, back.y, back.z, 0.0_f32],
+                    ];
+                    let aspect =
+                        frame.camera.viewport_size[0] / frame.camera.viewport_size[1].max(1.0);
+                    let tan_half_fov = (frame.camera.render_camera.fov / 2.0).tan();
+
+                    let uniform = GridUniform {
+                        view_proj: view_proj_mat,
+                        cam_to_world,
+                        tan_half_fov,
+                        aspect,
+                        _pad_ivp: [0.0; 2],
+                        eye_pos: frame.camera.render_camera.eye_position,
+                        grid_z: frame.viewport.grid_z,
+                        spacing_minor: spacing,
+                        spacing_major,
+                        snap_origin: [snap_x, snap_y],
+                        color_minor: [0.35, 0.35, 0.35, 0.4 * minor_fade],
+                        color_major: [0.40, 0.40, 0.40, 0.4 + 0.2 * minor_fade],
+                    };
+                    // Write to per-viewport slot buffer.
+                    if let Some(slot) = self.viewport_slots.get(frame.camera.viewport_index) {
+                        queue.write_buffer(&slot.grid_buf, 0, bytemuck::cast_slice(&[uniform]));
+                    }
+                    // Also write to shared buffer for legacy callers.
+                    queue.write_buffer(
+                        &resources.grid_uniform_buf,
+                        0,
+                        bytemuck::cast_slice(&[uniform]),
+                    );
+                }
+            }
+        } // `resources` mutable borrow dropped here.
+
+        // ------------------------------------------------------------------
+        // Build per-viewport interaction state into local variables.
+        // Uses &self.resources (immutable) for BGL lookups; no conflict with
+        // the slot borrow that follows.
+        // ------------------------------------------------------------------
+
+        let vp_idx = frame.camera.viewport_index;
+
+        // Outline buffers for selected objects.
+        let mut outline_object_buffers: Vec<OutlineObjectBuffers> = Vec::new();
         if frame.interaction.outline_selected {
+            let resources = &self.resources;
             for item in scene_items {
                 if !item.visible || !item.selected {
                     continue;
@@ -795,8 +1257,9 @@ impl ViewportRenderer {
                         resource: buf.as_entire_binding(),
                     }],
                 });
-                resources.outline_object_buffers.push(OutlineObjectBuffers {
+                outline_object_buffers.push(OutlineObjectBuffers {
                     mesh_index: item.mesh_index,
+                    two_sided: item.two_sided,
                     _stencil_uniform_buf: stencil_buf,
                     stencil_bind_group: stencil_bg,
                     _outline_uniform_buf: buf,
@@ -805,8 +1268,10 @@ impl ViewportRenderer {
             }
         }
 
-        resources.xray_object_buffers.clear();
+        // X-ray buffers for selected objects.
+        let mut xray_object_buffers: Vec<(usize, wgpu::Buffer, wgpu::BindGroup)> = Vec::new();
         if frame.interaction.xray_selected {
+            let resources = &self.resources;
             for item in scene_items {
                 if !item.visible || !item.selected {
                     continue;
@@ -832,156 +1297,43 @@ impl ViewportRenderer {
                         resource: buf.as_entire_binding(),
                     }],
                 });
-                resources
-                    .xray_object_buffers
-                    .push((item.mesh_index, buf, bg));
+                xray_object_buffers.push((item.mesh_index, buf, bg));
             }
         }
 
-        // Update gizmo.
-        if let Some(model) = frame.interaction.gizmo_model {
-            resources.update_gizmo_uniform(queue, model);
-            resources.update_gizmo_mesh(
-                device,
-                queue,
-                frame.interaction.gizmo_mode,
-                frame.interaction.gizmo_hovered,
-                frame.interaction.gizmo_space_orientation,
-            );
-        }
-
-        // Upload grid uniform (full-screen analytical shader — no vertex buffers needed).
-        if frame.viewport.show_grid {
-            let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
-            if !eye.is_finite() {
-                tracing::warn!(eye_x = eye.x, eye_y = eye.y, eye_z = eye.z,
-                    "grid skipped: eye_position is non-finite (camera distance overflow?)");
-            } else {
-            let view_proj_mat = frame.camera.render_camera.view_proj().to_cols_array_2d();
-
-            // Adaptive LOD spacing — snap to next power of 10 above the target world
-            // coverage.  Avoid log10/powf: they are imprecise near exact decade boundaries
-            // (e.g. log10(10.0) may return 0.9999999 or 1.0000001 in f32, making ceil
-            // flip between 1 and 2 each frame and causing the grid to oscillate).
-            // A multiply loop is exact and has no boundary ambiguity.
-            let (spacing, minor_fade) = if frame.viewport.grid_cell_size > 0.0 {
-                (frame.viewport.grid_cell_size, 1.0_f32)
-            } else {
-                let vertical_depth = (eye.z - frame.viewport.grid_z).abs().max(1.0);
-                let world_per_pixel = 2.0 * (frame.camera.render_camera.fov / 2.0).tan() * vertical_depth
-                    / frame.camera.viewport_size[1].max(1.0);
-                let target = (world_per_pixel * 60.0).max(1e-9_f32);
-                let mut s = 1.0_f32;
-                let mut iters = 0u32;
-                while s < target {
-                    s *= 10.0;
-                    iters += 1;
-                }
-                // Fade minor lines out as we approach the LOD boundary so that the
-                // 10× spacing jump is gradual rather than a sudden pop.
-                // ratio ∈ (0.1, 1.0]: 0.1 = just entered this LOD, 1.0 = about to leave.
-                let ratio = (target / s).clamp(0.0, 1.0);
-                let fade = if ratio < 0.5 {
-                    1.0_f32
-                } else {
-                    let t = (ratio - 0.5) * 2.0; // 0..1
-                    1.0 - t * t * (3.0 - 2.0 * t) // smooth step down
-                };
-                tracing::debug!(
-                    eye_z = eye.z,
-                    vertical_depth,
-                    world_per_pixel,
-                    target,
-                    spacing = s,
-                    lod_iters = iters,
-                    ratio,
-                    minor_fade = fade,
-                    "grid LOD"
-                );
-                (s, fade)
-            };
-
-            // Snap eye.xy to the nearest spacing_major multiple so the GPU works
-            // with hit.xy - snap_origin (small offset) rather than raw world coords.
-            // spacing_major is a power of 10, so snap_origin is exactly representable in f32.
-            let spacing_major = spacing * 10.0;
-            let snap_x = (eye.x / spacing_major).floor() * spacing_major;
-            let snap_y = (eye.y / spacing_major).floor() * spacing_major;
-            tracing::debug!(
-                spacing_minor = spacing,
-                spacing_major,
-                snap_x,
-                snap_y,
-                eye_x = eye.x,
-                eye_y = eye.y,
-                eye_z = eye.z,
-                "grid snap"
-            );
-
-            // Camera-to-world rotation: compute from orientation quaternion.
-            // Columns are [right, up, back] where back = camera +Z (away from scene).
-            // This is exact (no matrix inversion) and stable at any camera distance.
-            let orient = frame.camera.render_camera.orientation;
-            let right = orient * glam::Vec3::X;
-            let up    = orient * glam::Vec3::Y;
-            let back  = orient * glam::Vec3::Z;
-            let cam_to_world = [
-                [right.x, right.y, right.z, 0.0_f32],
-                [up.x,    up.y,    up.z,    0.0_f32],
-                [back.x,  back.y,  back.z,  0.0_f32],
-            ];
-            let aspect = frame.camera.viewport_size[0] / frame.camera.viewport_size[1].max(1.0);
-            let tan_half_fov = (frame.camera.render_camera.fov / 2.0).tan();
-
-            let uniform = GridUniform {
-                view_proj: view_proj_mat,
-                cam_to_world,
-                tan_half_fov,
-                aspect,
-                _pad_ivp: [0.0; 2],
-                eye_pos: frame.camera.render_camera.eye_position,
-                grid_z: frame.viewport.grid_z,
-                spacing_minor: spacing,
-                spacing_major,
-                snap_origin: [snap_x, snap_y],
-                // Minor lines fade out as we approach the LOD boundary.
-                // Major lines dim from 0.8 -> 0.4 in sync so that at the transition
-                // the old major lines (which become new minor lines) are already at
-                // the new minor alpha — no visible alpha jump.
-                color_minor: [0.35, 0.35, 0.35, 0.4 * minor_fade],
-                color_major: [0.40, 0.40, 0.40, 0.4 + 0.2 * minor_fade],
-            };
-            queue.write_buffer(
-                &resources.grid_uniform_buf,
-                0,
-                bytemuck::cast_slice(&[uniform]),
-            );
-            } // end else (eye is finite)
-        }
-
-        resources.constraint_line_buffers.clear();
+        // Constraint guide lines.
+        let mut constraint_line_buffers = Vec::new();
         for overlay in &frame.interaction.constraint_overlays {
-            let buf = resources.create_constraint_overlay(device, overlay);
-            resources.constraint_line_buffers.push(buf);
+            constraint_line_buffers.push(self.resources.create_constraint_overlay(device, overlay));
         }
 
-        resources.clip_plane_fill_buffers.clear();
-        resources.clip_plane_line_buffers.clear();
+        // Clip plane overlays.
+        let mut clip_plane_fill_buffers = Vec::new();
+        let mut clip_plane_line_buffers = Vec::new();
         for overlay in &frame.interaction.clip_plane_overlays {
-            let fill = resources.create_clip_plane_fill_overlay(device, overlay);
-            resources.clip_plane_fill_buffers.push(fill);
-            let lines = resources.create_clip_plane_line_overlay(device, overlay);
-            resources.clip_plane_line_buffers.push(lines);
+            clip_plane_fill_buffers.push(
+                self.resources
+                    .create_clip_plane_fill_overlay(device, overlay),
+            );
+            clip_plane_line_buffers.push(
+                self.resources
+                    .create_clip_plane_line_overlay(device, overlay),
+            );
         }
 
         // Cap geometry for section-view cross-section fill.
-        resources.cap_buffers.clear();
-        if frame.effects.cap_fill_enabled {
-            let active_planes: Vec<_> = frame.effects.clip_planes.iter().filter(|p| p.enabled).collect();
+        let mut cap_buffers = Vec::new();
+        if viewport_fx.cap_fill_enabled {
+            let active_planes: Vec<_> = viewport_fx
+                .clip_planes
+                .iter()
+                .filter(|p| p.enabled)
+                .collect();
             for plane in &active_planes {
                 let plane_n = glam::Vec3::from(plane.normal);
                 for item in scene_items.iter().filter(|i| i.visible) {
-                    let Some(mesh) = resources
+                    let Some(mesh) = self
+                        .resources
                         .mesh_store
                         .get(crate::resources::mesh_store::MeshId(item.mesh_index))
                     else {
@@ -1004,460 +1356,213 @@ impl ViewportRenderer {
                     ) {
                         let bc = item.material.base_color;
                         let color = plane.cap_color.unwrap_or([bc[0], bc[1], bc[2], 1.0]);
-                        let buf = resources.upload_cap_geometry(device, &cap, color);
-                        resources.cap_buffers.push(buf);
+                        let buf = self.resources.upload_cap_geometry(device, &cap, color);
+                        cap_buffers.push(buf);
                     }
                 }
             }
         }
 
-        // Axes indicator.
-        if frame.viewport.show_axes_indicator && frame.camera.viewport_size[0] > 0.0 && frame.camera.viewport_size[1] > 0.0
+        // Axes indicator geometry (built here, written to slot buffer below).
+        let axes_verts = if frame.viewport.show_axes_indicator
+            && frame.camera.viewport_size[0] > 0.0
+            && frame.camera.viewport_size[1] > 0.0
         {
             let verts = crate::widgets::axes_indicator::build_axes_geometry(
                 frame.camera.viewport_size[0],
                 frame.camera.viewport_size[1],
                 frame.camera.render_camera.orientation,
             );
-            let byte_size = std::mem::size_of_val(verts.as_slice()) as u64;
-            if byte_size > resources.axes_vertex_buffer.size() {
-                // Reallocate if too small.
-                resources.axes_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("axes_vertex_buf"),
-                    size: byte_size,
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-            }
-            if !verts.is_empty() {
-                queue.write_buffer(
-                    &resources.axes_vertex_buffer,
-                    0,
-                    bytemuck::cast_slice(&verts),
-                );
-            }
-            resources.axes_vertex_count = verts.len() as u32;
+            if verts.is_empty() { None } else { Some(verts) }
         } else {
-            resources.axes_vertex_count = 0;
-        }
+            None
+        };
+
+        // Gizmo mesh + uniform (built here, written to slot buffers below).
+        let gizmo_update = frame.interaction.gizmo_model.map(|model| {
+            let (verts, indices) = crate::interaction::gizmo::build_gizmo_mesh(
+                frame.interaction.gizmo_mode,
+                frame.interaction.gizmo_hovered,
+                frame.interaction.gizmo_space_orientation,
+            );
+            (verts, indices, model)
+        });
 
         // ------------------------------------------------------------------
-        // SciVis Phase B — point cloud and glyph GPU data upload.
-        // Zero-cost when both vecs are empty (no pipelines created, no uploads).
+        // Assign all interaction state to the per-viewport slot.
         // ------------------------------------------------------------------
-        self.point_cloud_gpu_data.clear();
-        if !frame.scene.point_clouds.is_empty() {
-            resources.ensure_point_cloud_pipeline(device);
-            for item in &frame.scene.point_clouds {
-                if item.positions.is_empty() {
-                    continue;
-                }
-                let gpu_data = resources.upload_point_cloud(device, queue, item);
-                self.point_cloud_gpu_data.push(gpu_data);
-            }
-        }
-
-        self.glyph_gpu_data.clear();
-        if !frame.scene.glyphs.is_empty() {
-            resources.ensure_glyph_pipeline(device);
-            for item in &frame.scene.glyphs {
-                if item.positions.is_empty() || item.vectors.is_empty() {
-                    continue;
-                }
-                let gpu_data = resources.upload_glyph_set(device, queue, item);
-                self.glyph_gpu_data.push(gpu_data);
-            }
-        }
-
-        // ------------------------------------------------------------------
-        // SciVis Phase M8 — polyline GPU data upload.
-        // Zero-cost when polylines vec is empty (no pipeline created, no uploads).
-        // ------------------------------------------------------------------
-        self.polyline_gpu_data.clear();
-        if !frame.scene.polylines.is_empty() {
-            resources.ensure_polyline_pipeline(device);
-            for item in &frame.scene.polylines {
-                if item.positions.is_empty() {
-                    continue;
-                }
-                let gpu_data = resources.upload_polyline(device, queue, item);
-                self.polyline_gpu_data.push(gpu_data);
-            }
-        }
-
-        // ------------------------------------------------------------------
-        // SciVis Phase L — isoline extraction and upload via polyline pipeline.
-        // Zero-cost when isoline_items is empty (no pipeline init, no uploads).
-        // ------------------------------------------------------------------
-        if !frame.scene.isolines.is_empty() {
-            resources.ensure_polyline_pipeline(device);
-            for item in &frame.scene.isolines {
-                if item.positions.is_empty() || item.indices.is_empty() || item.scalars.is_empty() {
-                    continue;
-                }
-                let (positions, strip_lengths) = crate::geometry::isoline::extract_isolines(item);
-                if positions.is_empty() {
-                    continue;
-                }
-                let polyline = PolylineItem {
-                    positions,
-                    scalars: Vec::new(), // solid color — no per-vertex scalar coloring
-                    strip_lengths,
-                    scalar_range: None,
-                    colormap_id: None,
-                    default_color: item.color,
-                    line_width: item.line_width,
-                    id: 0, // isolines are not individually pickable
-                };
-                let gpu_data = resources.upload_polyline(device, queue, &polyline);
-                self.polyline_gpu_data.push(gpu_data);
-            }
-        }
-
-        // ------------------------------------------------------------------
-        // SciVis Phase M — streamtube GPU data upload.
-        // Zero-cost when streamtube_items is empty (no pipeline init, no uploads).
-        // ------------------------------------------------------------------
-        self.streamtube_gpu_data.clear();
-        if !frame.scene.streamtube_items.is_empty() {
-            resources.ensure_streamtube_pipeline(device);
-            for item in &frame.scene.streamtube_items {
-                if item.positions.is_empty() || item.strip_lengths.is_empty() {
-                    continue;
-                }
-                let gpu_data = resources.upload_streamtube(device, queue, item);
-                if gpu_data.instance_count > 0 {
-                    self.streamtube_gpu_data.push(gpu_data);
-                }
-            }
-        }
-
-        // ------------------------------------------------------------------
-        // SciVis Phase D -- volume GPU data upload.
-        // Zero-cost when volumes vec is empty (no pipeline created, no uploads).
-        // ------------------------------------------------------------------
-        self.volume_gpu_data.clear();
-        if !frame.scene.volumes.is_empty() {
-            resources.ensure_volume_pipeline(device);
-            for item in &frame.scene.volumes {
-                let gpu = resources.upload_volume_frame(device, queue, item, &frame.effects.clip_planes);
-                self.volume_gpu_data.push(gpu);
-            }
-        }
-
-        // -- Frame stats --
         {
-            let total = scene_items.len() as u32;
-            let visible = scene_items.iter().filter(|i| i.visible).count() as u32;
-            let mut draw_calls = 0u32;
-            let mut triangles = 0u64;
-            let instanced_batch_count = if self.use_instancing {
-                self.instanced_batches.len() as u32
-            } else {
-                0
-            };
+            let slot = &mut self.viewport_slots[vp_idx];
+            slot.outline_object_buffers = outline_object_buffers;
+            slot.xray_object_buffers = xray_object_buffers;
+            slot.constraint_line_buffers = constraint_line_buffers;
+            slot.clip_plane_fill_buffers = clip_plane_fill_buffers;
+            slot.clip_plane_line_buffers = clip_plane_line_buffers;
+            slot.cap_buffers = cap_buffers;
 
-            if self.use_instancing {
-                for batch in &self.instanced_batches {
-                    if let Some(mesh) = resources
-                        .mesh_store
-                        .get(crate::resources::mesh_store::MeshId(batch.mesh_index))
-                    {
-                        draw_calls += 1;
-                        triangles += (mesh.index_count / 3) as u64 * batch.instance_count as u64;
-                    }
+            // Axes: resize buffer if needed, then upload.
+            if let Some(verts) = axes_verts {
+                let byte_size = std::mem::size_of_val(verts.as_slice()) as u64;
+                if byte_size > slot.axes_vertex_buffer.size() {
+                    slot.axes_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("vp_axes_vertex_buf"),
+                        size: byte_size,
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
                 }
+                queue.write_buffer(&slot.axes_vertex_buffer, 0, bytemuck::cast_slice(&verts));
+                slot.axes_vertex_count = verts.len() as u32;
             } else {
-                for item in scene_items {
-                    if !item.visible {
-                        continue;
-                    }
-                    if let Some(mesh) = resources
-                        .mesh_store
-                        .get(crate::resources::mesh_store::MeshId(item.mesh_index))
-                    {
-                        draw_calls += 1;
-                        triangles += (mesh.index_count / 3) as u64;
-                    }
-                }
+                slot.axes_vertex_count = 0;
             }
 
-            self.last_stats = crate::renderer::stats::FrameStats {
-                total_objects: total,
-                visible_objects: visible,
-                culled_objects: total.saturating_sub(visible),
-                draw_calls,
-                instanced_batches: instanced_batch_count,
-                triangles_submitted: triangles,
-                shadow_draw_calls: 0, // Updated below in shadow pass.
-            };
+            // Gizmo: resize buffers if needed, then upload mesh + uniform.
+            if let Some((verts, indices, model)) = gizmo_update {
+                let vert_bytes: &[u8] = bytemuck::cast_slice(&verts);
+                let idx_bytes: &[u8] = bytemuck::cast_slice(&indices);
+                if vert_bytes.len() as u64 > slot.gizmo_vertex_buffer.size() {
+                    slot.gizmo_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("vp_gizmo_vertex_buf"),
+                        size: vert_bytes.len() as u64,
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+                }
+                if idx_bytes.len() as u64 > slot.gizmo_index_buffer.size() {
+                    slot.gizmo_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("vp_gizmo_index_buf"),
+                        size: idx_bytes.len() as u64,
+                        usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+                }
+                queue.write_buffer(&slot.gizmo_vertex_buffer, 0, vert_bytes);
+                queue.write_buffer(&slot.gizmo_index_buffer, 0, idx_bytes);
+                slot.gizmo_index_count = indices.len() as u32;
+                let uniform = crate::interaction::gizmo::GizmoUniform {
+                    model: model.to_cols_array_2d(),
+                };
+                queue.write_buffer(&slot.gizmo_uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
+            }
         }
 
         // ------------------------------------------------------------------
-        // Shadow depth pass — CSM: render each cascade into its atlas tile.
-        // Uses set_viewport() to target different regions of the shadow atlas.
-        // Submitted as a separate command buffer before the main pass.
+        // Outline offscreen pass — render stencil-based outline ring into a
+        // dedicated RGBA texture so the paint() path can composite it later.
+        //
+        // Uses the per-viewport camera bind group and per-viewport HDR views.
         // ------------------------------------------------------------------
-        if frame.effects.lighting.shadows_enabled && !scene_items.is_empty() {
+        if frame.interaction.outline_selected
+            && !self.viewport_slots[vp_idx]
+                .outline_object_buffers
+                .is_empty()
+        {
+            let w = frame.camera.viewport_size[0] as u32;
+            let h = frame.camera.viewport_size[1] as u32;
+
+            // Ensure per-viewport HDR state exists (provides outline color + depth views).
+            self.ensure_viewport_hdr(device, queue, vp_idx, w.max(1), h.max(1));
+
+            // Extract raw pointers for slot fields needed inside the render pass
+            // alongside &self.resources borrows (borrow-checker trick: slot and resources
+            // are independent fields of self).
+            let slot_ref = &self.viewport_slots[vp_idx];
+            let outlines_ptr = &slot_ref.outline_object_buffers as *const Vec<OutlineObjectBuffers>;
+            let camera_bg_ptr = &slot_ref.camera_bind_group as *const wgpu::BindGroup;
+            let slot_hdr = slot_ref.hdr.as_ref().unwrap();
+            let color_view_ptr = &slot_hdr.outline_color_view as *const wgpu::TextureView;
+            let depth_view_ptr = &slot_hdr.outline_depth_view as *const wgpu::TextureView;
+            // SAFETY: slot fields remain valid for the duration of this function;
+            // no other code modifies these fields here.
+            let (outlines, camera_bg, color_view, depth_view) = unsafe {
+                (
+                    &*outlines_ptr,
+                    &*camera_bg_ptr,
+                    &*color_view_ptr,
+                    &*depth_view_ptr,
+                )
+            };
+
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("shadow_pass_encoder"),
+                label: Some("outline_offscreen_encoder"),
             });
             {
-                let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("shadow_pass"),
-                    color_attachments: &[],
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("outline_offscreen_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: color_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &resources.shadow_map_view,
+                        view: depth_view,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
+                            store: wgpu::StoreOp::Discard,
                         }),
-                        stencil_ops: None,
+                        stencil_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(0),
+                            store: wgpu::StoreOp::Discard,
+                        }),
                     }),
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
 
-                let mut shadow_draws = 0u32;
-                let tile_px = tile_size as f32;
-
-                if self.use_instancing {
-                    // Instanced shadow pass: one draw call per InstancedBatch per cascade.
-                    // No per-item limit — all instances in the storage buffer are drawn.
-                    if let (Some(pipeline), Some(instance_bg)) = (
-                        &resources.shadow_instanced_pipeline,
-                        self.instanced_batches.first().and_then(|b| {
-                            resources.instance_bind_groups.get(&(
-                                b.texture_id.unwrap_or(u64::MAX),
-                                b.normal_map_id.unwrap_or(u64::MAX),
-                                b.ao_map_id.unwrap_or(u64::MAX),
-                            ))
-                        }),
-                    ) {
-                        for cascade in 0..effective_cascade_count {
-                            let tile_col = (cascade % 2) as f32;
-                            let tile_row = (cascade / 2) as f32;
-                            shadow_pass.set_viewport(
-                                tile_col * tile_px,
-                                tile_row * tile_px,
-                                tile_px,
-                                tile_px,
-                                0.0,
-                                1.0,
-                            );
-                            shadow_pass.set_scissor_rect(
-                                (tile_col * tile_px) as u32,
-                                (tile_row * tile_px) as u32,
-                                tile_size,
-                                tile_size,
-                            );
-
-                            shadow_pass.set_pipeline(pipeline);
-
-                            // Write this cascade's view-projection matrix into its dedicated buffer.
-                            queue.write_buffer(
-                                resources.shadow_instanced_cascade_bufs[cascade]
-                                    .as_ref()
-                                    .expect("shadow_instanced_cascade_bufs not allocated"),
-                                0,
-                                bytemuck::cast_slice(
-                                    &cascade_view_projs[cascade].to_cols_array_2d(),
-                                ),
-                            );
-
-                            let cascade_bg = resources.shadow_instanced_cascade_bgs[cascade]
-                                .as_ref()
-                                .expect("shadow_instanced_cascade_bgs not allocated");
-                            shadow_pass.set_bind_group(0, cascade_bg, &[]);
-                            shadow_pass.set_bind_group(1, instance_bg, &[]);
-
-                            for batch in &self.instanced_batches {
-                                // OIT: transparent items do not cast shadows.
-                                if batch.is_transparent {
-                                    continue;
-                                }
-                                let Some(mesh) = resources
-                                    .mesh_store
-                                    .get(crate::resources::mesh_store::MeshId(batch.mesh_index))
-                                else {
-                                    continue;
-                                };
-                                shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                                shadow_pass.set_index_buffer(
-                                    mesh.index_buffer.slice(..),
-                                    wgpu::IndexFormat::Uint32,
-                                );
-                                shadow_pass.draw_indexed(
-                                    0..mesh.index_count,
-                                    0,
-                                    batch.instance_offset
-                                        ..batch.instance_offset + batch.instance_count,
-                                );
-                                shadow_draws += 1;
-                            }
-                        }
-                    }
-                } else {
-                    // Per-item shadow pass (legacy path, used when instancing is disabled).
-                    for cascade in 0..effective_cascade_count {
-                        // Set viewport to this cascade's tile in the atlas.
-                        let tile_col = (cascade % 2) as f32;
-                        let tile_row = (cascade / 2) as f32;
-                        shadow_pass.set_viewport(
-                            tile_col * tile_px,
-                            tile_row * tile_px,
-                            tile_px,
-                            tile_px,
-                            0.0,
-                            1.0,
-                        );
-                        shadow_pass.set_scissor_rect(
-                            (tile_col * tile_px) as u32,
-                            (tile_row * tile_px) as u32,
-                            tile_size,
-                            tile_size,
-                        );
-
-                        shadow_pass.set_pipeline(&resources.shadow_pipeline);
-                        // Dynamic offset selects this cascade's pre-uploaded matrix slot.
-                        shadow_pass.set_bind_group(
-                            0,
-                            &resources.shadow_bind_group,
-                            &[cascade as u32 * 256],
-                        );
-
-                        // Frustum-cull against this cascade's frustum.
-                        let cascade_frustum = crate::camera::frustum::Frustum::from_view_proj(
-                            &cascade_view_projs[cascade],
-                        );
-
-                        for item in scene_items.iter() {
-                            if !item.visible {
-                                continue;
-                            }
-                            // OIT: transparent items do not cast shadows.
-                            if item.material.opacity < 1.0 {
-                                continue;
-                            }
-                            let Some(mesh) = resources
-                                .mesh_store
-                                .get(crate::resources::mesh_store::MeshId(item.mesh_index))
-                            else {
-                                continue;
-                            };
-
-                            let world_aabb = mesh
-                                .aabb
-                                .transformed(&glam::Mat4::from_cols_array_2d(&item.model));
-                            if cascade_frustum.cull_aabb(&world_aabb) {
-                                continue;
-                            }
-
-                            // Use the per-mesh object bind group (already uploaded during
-                            // the main pass prepare step) to supply the model matrix.
-                            shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
-                            shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                            shadow_pass.set_index_buffer(
-                                mesh.index_buffer.slice(..),
-                                wgpu::IndexFormat::Uint32,
-                            );
-                            shadow_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                            shadow_draws += 1;
-                        }
-                    }
+                // Pass 1: write stencil=1 for selected objects.
+                pass.set_stencil_reference(1);
+                pass.set_bind_group(0, camera_bg, &[]);
+                for outlined in outlines {
+                    let Some(mesh) = self
+                        .resources
+                        .mesh_store
+                        .get(crate::resources::mesh_store::MeshId(outlined.mesh_index))
+                    else {
+                        continue;
+                    };
+                    let pipeline = if outlined.two_sided {
+                        &self.resources.stencil_write_two_sided_pipeline
+                    } else {
+                        &self.resources.stencil_write_pipeline
+                    };
+                    pass.set_pipeline(pipeline);
+                    pass.set_bind_group(1, &outlined.stencil_bind_group, &[]);
+                    pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                    pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                 }
-                drop(shadow_pass);
-                self.last_stats.shadow_draw_calls = shadow_draws;
+
+                // Pass 2: draw expanded outline ring where stencil != 1.
+                pass.set_pipeline(&self.resources.outline_pipeline);
+                pass.set_stencil_reference(1);
+                for outlined in outlines {
+                    let Some(mesh) = self
+                        .resources
+                        .mesh_store
+                        .get(crate::resources::mesh_store::MeshId(outlined.mesh_index))
+                    else {
+                        continue;
+                    };
+                    pass.set_bind_group(1, &outlined.outline_bind_group, &[]);
+                    pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                    pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                }
             }
             queue.submit(std::iter::once(encoder.finish()));
         }
+    }
 
-        // ------------------------------------------------------------------
-        // Outline offscreen pass — render stencil-based outline ring into a
-        // dedicated RGBA texture so the paint() path (which may lack a
-        // depth/stencil attachment, e.g. eframe) can composite it later.
-        // ------------------------------------------------------------------
-        if frame.interaction.outline_selected && !resources.outline_object_buffers.is_empty() {
-            let w = frame.camera.viewport_size[0] as u32;
-            let h = frame.camera.viewport_size[1] as u32;
-            resources.ensure_outline_target(device, w, h);
-
-            if let (Some(color_view), Some(depth_view)) =
-                (&resources.outline_color_view, &resources.outline_depth_view)
-            {
-                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("outline_offscreen_encoder"),
-                });
-                {
-                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("outline_offscreen_pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: color_view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        })],
-                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                            view: depth_view,
-                            depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(1.0),
-                                store: wgpu::StoreOp::Discard,
-                            }),
-                            stencil_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(0),
-                                store: wgpu::StoreOp::Discard,
-                            }),
-                        }),
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
-
-                    // Pass 1: write stencil=1 for selected objects.
-                    // mesh.object_bind_group (group 1) contains both the object uniform and
-                    // fallback textures — no separate group 2 bind group needed.
-                    pass.set_pipeline(&resources.stencil_write_pipeline);
-                    pass.set_stencil_reference(1);
-                    pass.set_bind_group(0, &resources.camera_bind_group, &[]);
-                    for outlined in &resources.outline_object_buffers {
-                        let Some(mesh) = resources
-                            .mesh_store
-                            .get(crate::resources::mesh_store::MeshId(outlined.mesh_index))
-                        else {
-                            continue;
-                        };
-                        pass.set_bind_group(1, &outlined.stencil_bind_group, &[]);
-                        pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                        pass.set_index_buffer(
-                            mesh.index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
-                        );
-                        pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                    }
-
-                    // Pass 2: draw expanded outline ring where stencil != 1.
-                    pass.set_pipeline(&resources.outline_pipeline);
-                    pass.set_stencil_reference(1);
-                    for outlined in &resources.outline_object_buffers {
-                        let Some(mesh) = resources
-                            .mesh_store
-                            .get(crate::resources::mesh_store::MeshId(outlined.mesh_index))
-                        else {
-                            continue;
-                        };
-                        pass.set_bind_group(1, &outlined.outline_bind_group, &[]);
-                        pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                        pass.set_index_buffer(
-                            mesh.index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
-                        );
-                        pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                    }
-                }
-                queue.submit(std::iter::once(encoder.finish()));
-            }
-        }
+    /// Upload per-frame data to GPU buffers and render the shadow pass.
+    /// Call before `paint()`.
+    pub fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame: &FrameData) {
+        let (scene_fx, viewport_fx) = frame.effects.split();
+        self.prepare_scene_internal(device, queue, frame, &scene_fx);
+        self.prepare_viewport_internal(device, queue, frame, &viewport_fx);
     }
 }

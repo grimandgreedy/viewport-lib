@@ -31,13 +31,25 @@ impl NumericInputState {
         let active_axes = match axis {
             None => vec![0, 1, 2],
             Some(GizmoAxis::X) => {
-                if excluded { vec![1, 2] } else { vec![0] }
+                if excluded {
+                    vec![1, 2]
+                } else {
+                    vec![0]
+                }
             }
             Some(GizmoAxis::Y) => {
-                if excluded { vec![0, 2] } else { vec![1] }
+                if excluded {
+                    vec![0, 2]
+                } else {
+                    vec![1]
+                }
             }
             Some(GizmoAxis::Z) | Some(GizmoAxis::None) => {
-                if excluded { vec![0, 1] } else { vec![2] }
+                if excluded {
+                    vec![0, 1]
+                } else {
+                    vec![2]
+                }
             }
             _ => vec![0, 1, 2],
         };
@@ -146,12 +158,24 @@ pub(super) fn update_constraint(
         session.numeric = None;
     };
 
-    if constrain_x { set_axis(GizmoAxis::X, false); }
-    if constrain_y { set_axis(GizmoAxis::Y, false); }
-    if constrain_z { set_axis(GizmoAxis::Z, false); }
-    if exclude_x   { set_axis(GizmoAxis::X, true);  }
-    if exclude_y   { set_axis(GizmoAxis::Y, true);  }
-    if exclude_z   { set_axis(GizmoAxis::Z, true);  }
+    if constrain_x {
+        set_axis(GizmoAxis::X, false);
+    }
+    if constrain_y {
+        set_axis(GizmoAxis::Y, false);
+    }
+    if constrain_z {
+        set_axis(GizmoAxis::Z, false);
+    }
+    if exclude_x {
+        set_axis(GizmoAxis::X, true);
+    }
+    if exclude_y {
+        set_axis(GizmoAxis::Y, true);
+    }
+    if exclude_z {
+        set_axis(GizmoAxis::Z, true);
+    }
 }
 
 /// Update numeric buffering for the session.
@@ -165,7 +189,9 @@ pub(super) fn update_numeric_state(session: &mut ManipulationSession, frame: &Ac
         session.numeric = Some(NumericInputState::new(session.axis, session.exclude_axis));
     }
 
-    let Some(ref mut numeric) = session.numeric else { return };
+    let Some(ref mut numeric) = session.numeric else {
+        return;
+    };
     let axis_idx = numeric.current_axis();
 
     // Append typed characters to the current axis buffer.

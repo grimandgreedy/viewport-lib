@@ -53,10 +53,10 @@ pub(super) fn compute_cascade_matrix(
 
     // Build light view matrix.
     let dir = light_dir.normalize();
-    let light_up = if dir.y.abs() > 0.99 {
-        glam::Vec3::Z
+    let light_up = if dir.z.abs() > 0.99 {
+        glam::Vec3::X
     } else {
-        glam::Vec3::Y
+        glam::Vec3::Z
     };
     let light_view = glam::Mat4::look_at_rh(center + dir * 500.0, center, light_up);
 

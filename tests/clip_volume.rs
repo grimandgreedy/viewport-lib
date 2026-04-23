@@ -35,7 +35,10 @@ fn clip_volume_variants_construct_and_assign() {
         normal: [0.0, 1.0, 0.0],
         distance: -5.0,
     };
-    assert!(matches!(frame.effects.clip_volume, ClipVolume::Plane { .. }));
+    assert!(matches!(
+        frame.effects.clip_volume,
+        ClipVolume::Plane { .. }
+    ));
 
     // Box variant
     frame.effects.clip_volume = ClipVolume::Box {
@@ -50,7 +53,10 @@ fn clip_volume_variants_construct_and_assign() {
         center: [0.0, 0.0, 0.0],
         radius: 2.5,
     };
-    assert!(matches!(frame.effects.clip_volume, ClipVolume::Sphere { .. }));
+    assert!(matches!(
+        frame.effects.clip_volume,
+        ClipVolume::Sphere { .. }
+    ));
 
     // None resets to no clip
     frame.effects.clip_volume = ClipVolume::None;

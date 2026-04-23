@@ -207,10 +207,7 @@ impl SubSelection {
     ///
     /// Adds all sub-objects from the rect pick without clearing the current
     /// selection. Call [`clear`](Self::clear) first if you want a fresh selection.
-    pub fn extend_from_rect_pick(
-        &mut self,
-        result: &crate::interaction::picking::RectPickResult,
-    ) {
+    pub fn extend_from_rect_pick(&mut self, result: &crate::interaction::picking::RectPickResult) {
         for (&object_id, subs) in &result.hits {
             for &sub in subs {
                 self.selected.insert((object_id, sub));
@@ -315,10 +312,7 @@ mod tests {
             SubObjectRef::from_feature_id(FeatureId::Edge(2)),
             Some(SubObjectRef::Edge(2))
         );
-        assert_eq!(
-            SubObjectRef::from_feature_id(FeatureId::Unknown),
-            None
-        );
+        assert_eq!(SubObjectRef::from_feature_id(FeatureId::Unknown), None);
     }
 
     #[test]
@@ -457,7 +451,9 @@ mod tests {
     #[test]
     fn sub_selection_extend_from_rect_pick() {
         let mut result = RectPickResult::default();
-        result.hits.insert(10, vec![SubObjectRef::Face(0), SubObjectRef::Face(1)]);
+        result
+            .hits
+            .insert(10, vec![SubObjectRef::Face(0), SubObjectRef::Face(1)]);
         result.hits.insert(20, vec![SubObjectRef::Point(5)]);
 
         let mut sel = SubSelection::new();

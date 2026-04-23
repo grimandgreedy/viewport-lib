@@ -834,10 +834,10 @@ fn build_rotation_rings(
 
 /// Compute two perpendicular unit vectors to the given axis.
 fn perpendicular_pair(axis: glam::Vec3) -> (glam::Vec3, glam::Vec3) {
-    let hint = if axis.dot(glam::Vec3::Y).abs() > 0.9 {
+    let hint = if axis.dot(glam::Vec3::Z).abs() > 0.9 {
         glam::Vec3::X
     } else {
-        glam::Vec3::Y
+        glam::Vec3::Z
     };
     let u = axis.cross(hint).normalize();
     let v = axis.cross(u).normalize();

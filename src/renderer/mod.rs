@@ -18,17 +18,105 @@ pub use self::types::{
     EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, InteractionFrame, LightKind,
     LightSource, LightingSettings, PointCloudItem, PointRenderMode, PolylineItem,
     PostProcessSettings, RenderCamera, ScalarBar, ScalarBarAnchor, ScalarBarOrientation,
-    SceneFrame, SceneRenderItem, ShadowFilter, StreamtubeItem, SurfaceSubmission, ToneMapping,
-    ViewportFrame, VolumeItem,
+    SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, StreamtubeItem, SurfaceSubmission,
+    ToneMapping, ViewportEffects, ViewportFrame, VolumeItem,
 };
+
+/// An opaque handle to a per-viewport GPU state slot.
+///
+/// Obtained from [`ViewportRenderer::create_viewport`] and passed to
+/// [`ViewportRenderer::prepare_viewport`], [`ViewportRenderer::paint_viewport`],
+/// and [`ViewportRenderer::render_viewport`].
+///
+/// The inner `usize` is the slot index and doubles as the value for
+/// [`CameraFrame::with_viewport_index`].  Single-viewport applications that use
+/// the legacy [`ViewportRenderer::prepare`] / [`ViewportRenderer::paint`] API do
+/// not need this type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ViewportId(pub usize);
 
 use self::shadows::{compute_cascade_matrix, compute_cascade_splits};
 use self::types::{INSTANCING_THRESHOLD, InstancedBatch};
 use crate::resources::{
-    CameraUniform, ClipPlanesUniform, GridUniform, InstanceData, LightsUniform, ObjectUniform,
-    OutlineObjectBuffers, OutlineUniform, PickInstance, SingleLightUniform,
-    ViewportGpuResources,
+    CameraUniform, ClipPlanesUniform, ClipVolumeUniform, GridUniform, InstanceData, LightsUniform,
+    ObjectUniform, OutlineObjectBuffers, OutlineUniform, PickInstance, ShadowAtlasUniform,
+    SingleLightUniform, ViewportGpuResources,
 };
+
+/// Per-viewport GPU state: uniform buffers and bind groups that differ per viewport.
+///
+/// Each viewport slot owns its own camera, clip planes, clip volume, shadow info,
+/// and grid buffers, plus the bind groups that reference them. Scene-global
+/// resources (lights, shadow atlas texture, IBL) are shared via the bind group
+/// pointing to buffers on `ViewportGpuResources`.
+pub(crate) struct ViewportSlot {
+    pub camera_buf: wgpu::Buffer,
+    pub clip_planes_buf: wgpu::Buffer,
+    pub clip_volume_buf: wgpu::Buffer,
+    pub shadow_info_buf: wgpu::Buffer,
+    pub grid_buf: wgpu::Buffer,
+    /// Camera bind group (group 0) referencing this slot's per-viewport buffers
+    /// plus shared scene-global resources.
+    pub camera_bind_group: wgpu::BindGroup,
+    /// Grid bind group (group 0 for grid pipeline) referencing this slot's grid buffer.
+    pub grid_bind_group: wgpu::BindGroup,
+    /// Per-viewport HDR post-process render targets.
+    ///
+    /// Created lazily on first HDR render call and resized when viewport dimensions change.
+    pub hdr: Option<crate::resources::ViewportHdrState>,
+
+    // --- Per-viewport interaction state (Phase 4) ---
+    /// Per-frame outline buffers for selected objects, rebuilt in prepare().
+    pub outline_object_buffers: Vec<OutlineObjectBuffers>,
+    /// Per-frame x-ray buffers for selected objects, rebuilt in prepare().
+    pub xray_object_buffers: Vec<(usize, wgpu::Buffer, wgpu::BindGroup)>,
+    /// Per-frame constraint guide line buffers, rebuilt in prepare().
+    pub constraint_line_buffers: Vec<(
+        wgpu::Buffer,
+        wgpu::Buffer,
+        u32,
+        wgpu::Buffer,
+        wgpu::BindGroup,
+    )>,
+    /// Per-frame cap geometry buffers (section view cross-section fill), rebuilt in prepare().
+    pub cap_buffers: Vec<(
+        wgpu::Buffer,
+        wgpu::Buffer,
+        u32,
+        wgpu::Buffer,
+        wgpu::BindGroup,
+    )>,
+    /// Per-frame clip plane fill overlay buffers, rebuilt in prepare().
+    pub clip_plane_fill_buffers: Vec<(
+        wgpu::Buffer,
+        wgpu::Buffer,
+        u32,
+        wgpu::Buffer,
+        wgpu::BindGroup,
+    )>,
+    /// Per-frame clip plane line overlay buffers, rebuilt in prepare().
+    pub clip_plane_line_buffers: Vec<(
+        wgpu::Buffer,
+        wgpu::Buffer,
+        u32,
+        wgpu::Buffer,
+        wgpu::BindGroup,
+    )>,
+    /// Vertex buffer for axes indicator geometry (rebuilt each frame).
+    pub axes_vertex_buffer: wgpu::Buffer,
+    /// Number of vertices in the axes indicator buffer.
+    pub axes_vertex_count: u32,
+    /// Gizmo model-matrix uniform buffer.
+    pub gizmo_uniform_buf: wgpu::Buffer,
+    /// Gizmo bind group (group 1: model matrix uniform).
+    pub gizmo_bind_group: wgpu::BindGroup,
+    /// Gizmo vertex buffer.
+    pub gizmo_vertex_buffer: wgpu::Buffer,
+    /// Gizmo index buffer.
+    pub gizmo_index_buffer: wgpu::Buffer,
+    /// Number of indices in the current gizmo mesh.
+    pub gizmo_index_count: u32,
+}
 
 /// High-level renderer wrapping all GPU resources and providing framework-agnostic
 /// `prepare()` and `paint()` methods.
@@ -44,8 +132,6 @@ pub struct ViewportRenderer {
     last_scene_generation: u64,
     /// Last selection generation seen during prepare(). u64::MAX forces rebuild on first frame.
     last_selection_generation: u64,
-    /// Last wireframe mode seen during prepare(). Batch layout differs between solid and wireframe.
-    last_wireframe_mode: bool,
     /// Last scene_items count seen during prepare(). usize::MAX forces rebuild on first frame.
     /// Included in cache key so that frustum-culling changes (different visible set, different
     /// count) correctly invalidate the instance buffer even when scene_generation is stable.
@@ -64,15 +150,13 @@ pub struct ViewportRenderer {
     volume_gpu_data: Vec<crate::resources::VolumeGpuData>,
     /// Per-frame streamtube GPU data, rebuilt in prepare(), consumed in paint().
     streamtube_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
-    /// Per-viewport camera uniform buffers and bind groups.
+    /// Per-viewport GPU state slots.
     ///
-    /// In single-viewport mode only slot 0 is used (same as the legacy
-    /// `resources.camera_bind_group`).  In multi-viewport mode each sub-viewport
-    /// has its own slot so concurrent `prepare` calls don't clobber each other.
-    ///
-    /// The outer Vec is indexed by `FrameData::camera.viewport_index`. Slots are
-    /// grown lazily in `prepare` via `ensure_viewport_camera_slot`.
-    per_viewport_cameras: Vec<(wgpu::Buffer, wgpu::BindGroup)>,
+    /// Indexed by `FrameData::camera.viewport_index`. Each slot owns independent
+    /// uniform buffers and bind groups for camera, clip planes, clip volume,
+    /// shadow info, and grid. Slots are grown lazily in `prepare` via
+    /// `ensure_viewport_slot`. There are at most 4 in the current UI.
+    viewport_slots: Vec<ViewportSlot>,
     /// Phase G — GPU compute filter results from the last `prepare()` call.
     ///
     /// Each entry contains a compacted index buffer + count for one filtered mesh.
@@ -105,7 +189,6 @@ impl ViewportRenderer {
             last_stats: crate::renderer::stats::FrameStats::default(),
             last_scene_generation: u64::MAX,
             last_selection_generation: u64::MAX,
-            last_wireframe_mode: false,
             last_scene_items_count: usize::MAX,
             cached_instance_data: Vec::new(),
             cached_instanced_batches: Vec::new(),
@@ -114,7 +197,7 @@ impl ViewportRenderer {
             polyline_gpu_data: Vec::new(),
             volume_gpu_data: Vec::new(),
             streamtube_gpu_data: Vec::new(),
-            per_viewport_cameras: Vec::new(),
+            viewport_slots: Vec::new(),
             compute_filter_results: Vec::new(),
         }
     }
@@ -164,39 +247,331 @@ impl ViewportRenderer {
         self.resources.camera_bind_group = self.resources.create_camera_bind_group(
             device,
             &self.resources.camera_uniform_buf,
+            &self.resources.clip_planes_uniform_buf,
+            &self.resources.shadow_info_buf,
+            &self.resources.clip_volume_uniform_buf,
             "camera_bind_group",
         );
 
-        for (buf, bg) in &mut self.per_viewport_cameras {
-            *bg = self.resources.create_camera_bind_group(
+        for slot in &mut self.viewport_slots {
+            slot.camera_bind_group = self.resources.create_camera_bind_group(
                 device,
-                buf,
+                &slot.camera_buf,
+                &slot.clip_planes_buf,
+                &slot.shadow_info_buf,
+                &slot.clip_volume_buf,
                 "per_viewport_camera_bg",
             );
         }
     }
 
-    /// Ensure a per-viewport camera slot exists for `viewport_index`.
+    /// Ensure a per-viewport slot exists for `viewport_index`.
     ///
-    /// Creates a new `(Buffer, BindGroup)` pair that mirrors the layout of the
-    /// shared `resources.camera_bind_group` but with an independent camera
-    /// uniform buffer.  Slots are created lazily and never destroyed (there are
-    /// at most 4 in the current UI: single, split-h top/bottom, quad × 4).
-    fn ensure_viewport_camera_slot(&mut self, device: &wgpu::Device, viewport_index: usize) {
-        while self.per_viewport_cameras.len() <= viewport_index {
-            let buf = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("per_viewport_camera_buf"),
-                size: std::mem::size_of::<crate::resources::CameraUniform>() as u64,
+    /// Creates a full `ViewportSlot` with independent uniform buffers for camera,
+    /// clip planes, clip volume, shadow info, and grid. The camera bind group
+    /// references this slot's per-viewport buffers plus shared scene-global
+    /// resources. Slots are created lazily and never destroyed.
+    fn ensure_viewport_slot(&mut self, device: &wgpu::Device, viewport_index: usize) {
+        while self.viewport_slots.len() <= viewport_index {
+            let camera_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("vp_camera_buf"),
+                size: std::mem::size_of::<CameraUniform>() as u64,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            let bg = self.resources.create_camera_bind_group(
+            let clip_planes_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("vp_clip_planes_buf"),
+                size: std::mem::size_of::<ClipPlanesUniform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let clip_volume_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("vp_clip_volume_buf"),
+                size: std::mem::size_of::<ClipVolumeUniform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let shadow_info_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("vp_shadow_info_buf"),
+                size: std::mem::size_of::<ShadowAtlasUniform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let grid_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("vp_grid_buf"),
+                size: std::mem::size_of::<GridUniform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            let camera_bind_group = self.resources.create_camera_bind_group(
                 device,
-                &buf,
+                &camera_buf,
+                &clip_planes_buf,
+                &shadow_info_buf,
+                &clip_volume_buf,
                 "per_viewport_camera_bg",
             );
-            self.per_viewport_cameras.push((buf, bg));
+
+            let grid_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("vp_grid_bind_group"),
+                layout: &self.resources.grid_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: grid_buf.as_entire_binding(),
+                }],
+            });
+
+            // Per-viewport gizmo buffers (initial mesh: Translate, no hover, identity orientation).
+            let (gizmo_verts, gizmo_indices) = crate::interaction::gizmo::build_gizmo_mesh(
+                crate::interaction::gizmo::GizmoMode::Translate,
+                crate::interaction::gizmo::GizmoAxis::None,
+                glam::Quat::IDENTITY,
+            );
+            let gizmo_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("vp_gizmo_vertex_buf"),
+                size: (std::mem::size_of::<crate::resources::Vertex>() * gizmo_verts.len().max(1))
+                    as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: true,
+            });
+            gizmo_vertex_buffer
+                .slice(..)
+                .get_mapped_range_mut()
+                .copy_from_slice(bytemuck::cast_slice(&gizmo_verts));
+            gizmo_vertex_buffer.unmap();
+            let gizmo_index_count = gizmo_indices.len() as u32;
+            let gizmo_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("vp_gizmo_index_buf"),
+                size: (std::mem::size_of::<u32>() * gizmo_indices.len().max(1)) as u64,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: true,
+            });
+            gizmo_index_buffer
+                .slice(..)
+                .get_mapped_range_mut()
+                .copy_from_slice(bytemuck::cast_slice(&gizmo_indices));
+            gizmo_index_buffer.unmap();
+            let gizmo_uniform = crate::interaction::gizmo::GizmoUniform {
+                model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            };
+            let gizmo_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("vp_gizmo_uniform_buf"),
+                size: std::mem::size_of::<crate::interaction::gizmo::GizmoUniform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: true,
+            });
+            gizmo_uniform_buf
+                .slice(..)
+                .get_mapped_range_mut()
+                .copy_from_slice(bytemuck::cast_slice(&[gizmo_uniform]));
+            gizmo_uniform_buf.unmap();
+            let gizmo_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("vp_gizmo_bind_group"),
+                layout: &self.resources.gizmo_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: gizmo_uniform_buf.as_entire_binding(),
+                }],
+            });
+
+            // Per-viewport axes vertex buffer (2048 vertices = enough for all axes geometry).
+            let axes_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("vp_axes_vertex_buf"),
+                size: (std::mem::size_of::<crate::widgets::axes_indicator::AxesVertex>() * 2048)
+                    as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            self.viewport_slots.push(ViewportSlot {
+                camera_buf,
+                clip_planes_buf,
+                clip_volume_buf,
+                shadow_info_buf,
+                grid_buf,
+                camera_bind_group,
+                grid_bind_group,
+                hdr: None,
+                outline_object_buffers: Vec::new(),
+                xray_object_buffers: Vec::new(),
+                constraint_line_buffers: Vec::new(),
+                cap_buffers: Vec::new(),
+                clip_plane_fill_buffers: Vec::new(),
+                clip_plane_line_buffers: Vec::new(),
+                axes_vertex_buffer,
+                axes_vertex_count: 0,
+                gizmo_uniform_buf,
+                gizmo_bind_group,
+                gizmo_vertex_buffer,
+                gizmo_index_buffer,
+                gizmo_index_count,
+            });
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Multi-viewport public API (Phase 5)
+    // -----------------------------------------------------------------------
+
+    /// Create a new viewport slot and return its handle.
+    ///
+    /// The returned [`ViewportId`] is stable for the lifetime of the renderer.
+    /// Pass it to [`prepare_viewport`](Self::prepare_viewport),
+    /// [`paint_viewport`](Self::paint_viewport), and
+    /// [`render_viewport`](Self::render_viewport) each frame.
+    ///
+    /// Also set `CameraFrame::viewport_index` to `id.0` when building the
+    /// [`FrameData`] for this viewport:
+    /// ```rust,ignore
+    /// let id = renderer.create_viewport(&device);
+    /// let frame = FrameData {
+    ///     camera: CameraFrame::from_camera(&cam, size).with_viewport_index(id.0),
+    ///     ..Default::default()
+    /// };
+    /// ```
+    pub fn create_viewport(&mut self, device: &wgpu::Device) -> ViewportId {
+        let idx = self.viewport_slots.len();
+        self.ensure_viewport_slot(device, idx);
+        ViewportId(idx)
+    }
+
+    /// Release the heavy GPU texture memory (HDR targets, OIT, bloom, SSAO) held
+    /// by `id`.
+    ///
+    /// The slot index is not reclaimed — future calls with this `ViewportId` will
+    /// lazily recreate the texture resources as needed.  This is useful when a
+    /// viewport is hidden or minimised and you want to reduce VRAM pressure without
+    /// invalidating the handle.
+    pub fn destroy_viewport(&mut self, id: ViewportId) {
+        if let Some(slot) = self.viewport_slots.get_mut(id.0) {
+            slot.hdr = None;
+        }
+    }
+
+    /// Prepare shared scene data.  Call **once per frame**, before any
+    /// [`prepare_viewport`](Self::prepare_viewport) calls.
+    ///
+    /// `frame` provides the scene content (`frame.scene`) and the primary camera
+    /// used for shadow cascade framing (`frame.camera`).  In a multi-viewport
+    /// setup use any one viewport's `FrameData` here — typically the perspective
+    /// view — as the shadow framing reference.
+    ///
+    /// `scene_effects` carries the scene-global effects: lighting, environment
+    /// map, and compute filters.  Obtain it by constructing [`SceneEffects`]
+    /// directly or via [`EffectsFrame::split`].
+    pub fn prepare_scene(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &FrameData,
+        scene_effects: &SceneEffects<'_>,
+    ) {
+        self.prepare_scene_internal(device, queue, frame, scene_effects);
+    }
+
+    /// Prepare per-viewport GPU state (camera, clip planes, overlays, axes).
+    ///
+    /// Call once per viewport per frame, **after** [`prepare_scene`](Self::prepare_scene).
+    ///
+    /// `id` must have been obtained from [`create_viewport`](Self::create_viewport).
+    /// `frame.camera.viewport_index` must equal `id.0`; use
+    /// [`CameraFrame::with_viewport_index`] when building the frame.
+    pub fn prepare_viewport(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: ViewportId,
+        frame: &FrameData,
+    ) {
+        debug_assert_eq!(
+            frame.camera.viewport_index, id.0,
+            "frame.camera.viewport_index ({}) must equal the ViewportId ({}); \
+             use CameraFrame::with_viewport_index(id.0)",
+            frame.camera.viewport_index, id.0,
+        );
+        let (_, viewport_fx) = frame.effects.split();
+        self.prepare_viewport_internal(device, queue, frame, &viewport_fx);
+    }
+
+    /// Issue draw calls for `id` into a `'static` render pass (as provided by egui callbacks).
+    ///
+    /// This is the method to use from an egui/eframe `CallbackTrait::paint` implementation.
+    /// Call [`prepare_scene`](Self::prepare_scene) and [`prepare_viewport`](Self::prepare_viewport)
+    /// first (in `CallbackTrait::prepare`), then set the render pass viewport/scissor to confine
+    /// drawing to the correct quadrant, and call this method.
+    ///
+    /// For non-`'static` render passes (winit, iced, manual wgpu), use
+    /// [`paint_viewport_to`](Self::paint_viewport_to).
+    pub fn paint_viewport(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'static>,
+        id: ViewportId,
+        frame: &FrameData,
+    ) {
+        let vp_idx = id.0;
+        let camera_bg = self.viewport_camera_bind_group(vp_idx);
+        let grid_bg = self.viewport_grid_bind_group(vp_idx);
+        let vp_slot = self.viewport_slots.get(vp_idx);
+        emit_draw_calls!(
+            &self.resources,
+            &mut *render_pass,
+            frame,
+            self.use_instancing,
+            &self.instanced_batches,
+            camera_bg,
+            grid_bg,
+            &self.compute_filter_results,
+            vp_slot
+        );
+        emit_scivis_draw_calls!(
+            &self.resources,
+            render_pass,
+            &self.point_cloud_gpu_data,
+            &self.glyph_gpu_data,
+            &self.polyline_gpu_data,
+            &self.volume_gpu_data,
+            &self.streamtube_gpu_data,
+            camera_bg
+        );
+    }
+
+    /// Issue draw calls for `id` into a render pass with any lifetime.
+    ///
+    /// Identical to [`paint_viewport`](Self::paint_viewport) but accepts a render pass with a
+    /// non-`'static` lifetime, making it usable from winit, iced, or raw wgpu where the encoder
+    /// creates its own render pass.
+    pub fn paint_viewport_to<'rp>(
+        &'rp self,
+        render_pass: &mut wgpu::RenderPass<'rp>,
+        id: ViewportId,
+        frame: &FrameData,
+    ) {
+        let vp_idx = id.0;
+        let camera_bg = self.viewport_camera_bind_group(vp_idx);
+        let grid_bg = self.viewport_grid_bind_group(vp_idx);
+        let vp_slot = self.viewport_slots.get(vp_idx);
+        emit_draw_calls!(
+            &self.resources,
+            &mut *render_pass,
+            frame,
+            self.use_instancing,
+            &self.instanced_batches,
+            camera_bg,
+            grid_bg,
+            &self.compute_filter_results,
+            vp_slot
+        );
+        emit_scivis_draw_calls!(
+            &self.resources,
+            render_pass,
+            &self.point_cloud_gpu_data,
+            &self.glyph_gpu_data,
+            &self.polyline_gpu_data,
+            &self.volume_gpu_data,
+            &self.streamtube_gpu_data,
+            camera_bg
+        );
     }
 
     /// Return a reference to the camera bind group for the given viewport slot.
@@ -204,9 +579,51 @@ impl ViewportRenderer {
     /// Falls back to `resources.camera_bind_group` if no per-viewport slot
     /// exists (e.g. in single-viewport mode before the first prepare call).
     fn viewport_camera_bind_group(&self, viewport_index: usize) -> &wgpu::BindGroup {
-        self.per_viewport_cameras
+        self.viewport_slots
             .get(viewport_index)
-            .map(|(_, bg)| bg)
+            .map(|slot| &slot.camera_bind_group)
             .unwrap_or(&self.resources.camera_bind_group)
+    }
+
+    /// Return a reference to the grid bind group for the given viewport slot.
+    ///
+    /// Falls back to `resources.grid_bind_group` if no per-viewport slot exists.
+    fn viewport_grid_bind_group(&self, viewport_index: usize) -> &wgpu::BindGroup {
+        self.viewport_slots
+            .get(viewport_index)
+            .map(|slot| &slot.grid_bind_group)
+            .unwrap_or(&self.resources.grid_bind_group)
+    }
+
+    /// Ensure per-viewport HDR state exists for `viewport_index` at dimensions `w`×`h`.
+    ///
+    /// Calls `ensure_hdr_shared` once to initialise shared pipelines/BGLs/samplers, then
+    /// lazily creates or resizes the `ViewportHdrState` inside the slot. Idempotent: if the
+    /// slot already has HDR state at the correct size nothing is recreated.
+    pub(crate) fn ensure_viewport_hdr(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        viewport_index: usize,
+        w: u32,
+        h: u32,
+    ) {
+        let format = self.resources.target_format;
+        // Ensure shared infrastructure (pipelines, BGLs, samplers) exists.
+        self.resources.ensure_hdr_shared(device, queue, format);
+        // Ensure the slot exists.
+        self.ensure_viewport_slot(device, viewport_index);
+        let slot = &mut self.viewport_slots[viewport_index];
+        // Create or resize the per-viewport HDR state.
+        let needs_create = match &slot.hdr {
+            None => true,
+            Some(h_state) => h_state.size != [w, h],
+        };
+        if needs_create {
+            slot.hdr = Some(
+                self.resources
+                    .create_hdr_viewport_state(device, queue, format, w, h),
+            );
+        }
     }
 }

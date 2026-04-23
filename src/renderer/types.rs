@@ -221,7 +221,9 @@ impl Default for LightSource {
     fn default() -> Self {
         Self {
             kind: LightKind::Directional {
-                direction: [0.3, 1.0, 0.5],
+                // Surface-to-light direction. Z is up in the default coordinate system.
+                // ~65° elevation: mostly overhead, slight front-right bias.
+                direction: [0.4, 0.3, 1.5],
             },
             color: [1.0, 1.0, 1.0],
             intensity: 1.0,
@@ -284,7 +286,7 @@ impl Default for LightingSettings {
             shadows_enabled: true,
             sky_color: [0.8, 0.9, 1.0],
             ground_color: [0.3, 0.2, 0.1],
-            hemisphere_intensity: 0.0,
+            hemisphere_intensity: 0.5,
             shadow_extent_override: None,
             shadow_cascade_count: 4,
             cascade_split_lambda: 0.75,
@@ -1021,7 +1023,7 @@ impl Default for InteractionFrame {
             clip_plane_overlays: Vec::new(),
             outline_selected: false,
             outline_color: [1.0, 0.5, 0.0, 1.0],
-            outline_width_px: 2.0,
+            outline_width_px: 4.0,
             xray_selected: false,
             xray_color: [0.3, 0.7, 1.0, 0.25],
         }
@@ -1092,6 +1094,71 @@ impl Default for EffectsFrame {
     }
 }
 
+/// Scene-global effects for one frame, consumed by [`ViewportRenderer::prepare_scene`].
+///
+/// Groups the lighting, environment, and compute-filter configuration that applies
+/// to the whole scene (not per-viewport). Construct directly or obtain via
+/// [`EffectsFrame::split`].
+///
+/// # Multi-viewport usage
+/// Call [`ViewportRenderer::prepare_scene`] once per frame with this struct.
+/// Each viewport's per-viewport effects are passed separately via
+/// [`ViewportEffects`] in [`ViewportRenderer::prepare_viewport`].
+pub struct SceneEffects<'a> {
+    /// Per-frame lighting configuration (drives the shadow pass and light uniform).
+    pub lighting: &'a LightingSettings,
+    /// Optional environment map for IBL and skybox.
+    pub environment: &'a Option<EnvironmentMap>,
+    /// GPU compute filter items dispatched before the render pass.
+    pub compute_filter_items: &'a [ComputeFilterItem],
+}
+
+/// Per-viewport effects for one frame, consumed by [`ViewportRenderer::prepare_viewport`].
+///
+/// Groups the clip planes, clip volume, and post-processing settings that differ
+/// per viewport. Construct directly or obtain via [`EffectsFrame::split`].
+///
+/// # Multi-viewport usage
+/// Pass one `ViewportEffects` per viewport to [`ViewportRenderer::prepare_viewport`].
+/// Scene-global effects are passed once via [`SceneEffects`] in
+/// [`ViewportRenderer::prepare_scene`].
+pub struct ViewportEffects<'a> {
+    /// Active section-view clip planes.
+    pub clip_planes: &'a [ClipPlane],
+    /// Optional volumetric clip region.
+    pub clip_volume: &'a ClipVolume,
+    /// Whether to render filled caps at clip plane cross-sections.
+    pub cap_fill_enabled: bool,
+    /// Optional post-processing settings (tone mapping, bloom, SSAO).
+    pub post_process: &'a PostProcessSettings,
+}
+
+impl EffectsFrame {
+    /// Decompose into scene-global and per-viewport effect references.
+    ///
+    /// Both halves borrow from `self` and cannot outlive the `EffectsFrame`.
+    /// The scene half is passed to [`ViewportRenderer::prepare_scene`]; the
+    /// viewport half is passed to [`ViewportRenderer::prepare_viewport`].
+    ///
+    /// Single-viewport callers can continue using [`ViewportRenderer::prepare`]
+    /// directly without calling `split()`.
+    pub fn split(&self) -> (SceneEffects<'_>, ViewportEffects<'_>) {
+        (
+            SceneEffects {
+                lighting: &self.lighting,
+                environment: &self.environment,
+                compute_filter_items: &self.compute_filter_items,
+            },
+            ViewportEffects {
+                clip_planes: &self.clip_planes,
+                clip_volume: &self.clip_volume,
+                cap_fill_enabled: self.cap_fill_enabled,
+                post_process: &self.post_process,
+            },
+        )
+    }
+}
+
 /// All data needed to render one frame of the viewport.
 ///
 /// Fields are grouped by responsibility. Build the sub-objects you need,
@@ -1143,15 +1210,17 @@ impl FrameData {
 /// ~90 lines of rendering code while satisfying Rust's lifetime invariance
 /// on `&mut RenderPass<'a>`.
 macro_rules! emit_draw_calls {
-    ($resources:expr, $render_pass:expr, $frame:expr, $use_instancing:expr, $batches:expr, $camera_bg:expr, $compute_filter_results:expr) => {{
+    ($resources:expr, $render_pass:expr, $frame:expr, $use_instancing:expr, $batches:expr, $camera_bg:expr, $grid_bg:expr, $compute_filter_results:expr, $slot:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let frame = $frame;
         let use_instancing: bool = $use_instancing;
+        let _vp_slot: Option<&ViewportSlot> = $slot;
         // Phase G compute filter results: used by per-object path to override index buffers.
         let compute_filter_results: &[crate::resources::ComputeFilterResult] = $compute_filter_results;
         let batches: &[InstancedBatch] = $batches;
         let camera_bg: &wgpu::BindGroup = $camera_bg;
+        let grid_bg: &wgpu::BindGroup = $grid_bg;
 
         // Resolve scene items from the SurfaceSubmission seam.
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
@@ -1165,7 +1234,7 @@ macro_rules! emit_draw_calls {
         // Camera bind group is restored immediately after for subsequent passes.
         if frame.viewport.show_grid {
             render_pass.set_pipeline(&resources.grid_pipeline);
-            render_pass.set_bind_group(0, &resources.grid_bind_group, &[]);
+            render_pass.set_bind_group(0, grid_bg, &[]);
             render_pass.draw(0..3, 0..1);
             render_pass.set_bind_group(0, camera_bg, &[]);
         }
@@ -1377,96 +1446,112 @@ macro_rules! emit_draw_calls {
         }
 
         // Gizmo pass.
-        if frame.interaction.gizmo_model.is_some() && resources.gizmo_index_count > 0 {
-            render_pass.set_pipeline(&resources.gizmo_pipeline);
-            render_pass.set_bind_group(0, camera_bg, &[]);
-            render_pass.set_bind_group(1, &resources.gizmo_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, resources.gizmo_vertex_buffer.slice(..));
-            render_pass.set_index_buffer(
-                resources.gizmo_index_buffer.slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
-            render_pass.draw_indexed(0..resources.gizmo_index_count, 0, 0..1);
+        if let Some(slot) = _vp_slot {
+            if frame.interaction.gizmo_model.is_some() && slot.gizmo_index_count > 0 {
+                render_pass.set_pipeline(&resources.gizmo_pipeline);
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                render_pass.set_bind_group(1, &slot.gizmo_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, slot.gizmo_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(
+                    slot.gizmo_index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                render_pass.draw_indexed(0..slot.gizmo_index_count, 0, 0..1);
+            }
         }
 
         // Constraint guide line pass.
-        if !resources.constraint_line_buffers.is_empty() {
-            render_pass.set_pipeline(&resources.overlay_line_pipeline);
-            render_pass.set_bind_group(0, camera_bg, &[]);
-            for (vbuf, ibuf, index_count, _ubuf, bg) in &resources.constraint_line_buffers {
-                render_pass.set_bind_group(1, bg, &[]);
-                render_pass.set_vertex_buffer(0, vbuf.slice(..));
-                render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..*index_count, 0, 0..1);
+        if let Some(slot) = _vp_slot {
+            if !slot.constraint_line_buffers.is_empty() {
+                render_pass.set_pipeline(&resources.overlay_line_pipeline);
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for (vbuf, ibuf, index_count, _ubuf, bg) in &slot.constraint_line_buffers {
+                    render_pass.set_bind_group(1, bg, &[]);
+                    render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                    render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.draw_indexed(0..*index_count, 0, 0..1);
+                }
             }
         }
 
         // Cap fill pass (section view cross-section fill).
-        if !resources.cap_buffers.is_empty() {
-            render_pass.set_pipeline(&resources.overlay_pipeline);
-            render_pass.set_bind_group(0, camera_bg, &[]);
-            for (vbuf, ibuf, idx_count, _ubuf, bg) in &resources.cap_buffers {
-                render_pass.set_bind_group(1, bg, &[]);
-                render_pass.set_vertex_buffer(0, vbuf.slice(..));
-                render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..*idx_count, 0, 0..1);
+        if let Some(slot) = _vp_slot {
+            if !slot.cap_buffers.is_empty() {
+                render_pass.set_pipeline(&resources.overlay_pipeline);
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.cap_buffers {
+                    render_pass.set_bind_group(1, bg, &[]);
+                    render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                    render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.draw_indexed(0..*idx_count, 0, 0..1);
+                }
             }
         }
 
         // Clip plane handle fill pass (semi-transparent quad fills, alpha blended).
-        if !resources.clip_plane_fill_buffers.is_empty() {
-            render_pass.set_pipeline(&resources.overlay_pipeline);
-            render_pass.set_bind_group(0, camera_bg, &[]);
-            for (vbuf, ibuf, idx_count, _ubuf, bg) in &resources.clip_plane_fill_buffers {
-                render_pass.set_bind_group(1, bg, &[]);
-                render_pass.set_vertex_buffer(0, vbuf.slice(..));
-                render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..*idx_count, 0, 0..1);
+        if let Some(slot) = _vp_slot {
+            if !slot.clip_plane_fill_buffers.is_empty() {
+                render_pass.set_pipeline(&resources.overlay_pipeline);
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.clip_plane_fill_buffers {
+                    render_pass.set_bind_group(1, bg, &[]);
+                    render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                    render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.draw_indexed(0..*idx_count, 0, 0..1);
+                }
             }
         }
 
         // Clip plane handle border and normal indicator pass (line list).
-        if !resources.clip_plane_line_buffers.is_empty() {
-            render_pass.set_pipeline(&resources.overlay_line_pipeline);
-            render_pass.set_bind_group(0, camera_bg, &[]);
-            for (vbuf, ibuf, idx_count, _ubuf, bg) in &resources.clip_plane_line_buffers {
-                render_pass.set_bind_group(1, bg, &[]);
-                render_pass.set_vertex_buffer(0, vbuf.slice(..));
-                render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..*idx_count, 0, 0..1);
+        if let Some(slot) = _vp_slot {
+            if !slot.clip_plane_line_buffers.is_empty() {
+                render_pass.set_pipeline(&resources.overlay_line_pipeline);
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.clip_plane_line_buffers {
+                    render_pass.set_bind_group(1, bg, &[]);
+                    render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                    render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.draw_indexed(0..*idx_count, 0, 0..1);
+                }
             }
         }
 
         // X-ray pass: render selected objects as semi-transparent overlay through geometry.
-        if !resources.xray_object_buffers.is_empty() {
-            render_pass.set_pipeline(&resources.xray_pipeline);
-            render_pass.set_bind_group(0, camera_bg, &[]);
-            for (mesh_idx, _buf, bg) in &resources.xray_object_buffers {
-                let Some(mesh) = resources.mesh_store.get(crate::resources::mesh_store::MeshId(*mesh_idx)) else { continue };
-                render_pass.set_bind_group(1, bg, &[]);
-                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+        if let Some(slot) = _vp_slot {
+            if !slot.xray_object_buffers.is_empty() {
+                render_pass.set_pipeline(&resources.xray_pipeline);
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for (mesh_idx, _buf, bg) in &slot.xray_object_buffers {
+                    let Some(mesh) = resources.mesh_store.get(crate::resources::mesh_store::MeshId(*mesh_idx)) else { continue };
+                    render_pass.set_bind_group(1, bg, &[]);
+                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                    render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                }
             }
         }
 
         // Outline composite: blit the offscreen outline texture (rendered in prepare()).
-        if !resources.outline_object_buffers.is_empty() {
-            if let (Some(pipeline), Some(bg)) = (
-                &resources.outline_composite_pipeline_msaa,
-                &resources.outline_composite_bind_group,
-            ) {
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_bind_group(0, bg, &[]);
-                render_pass.draw(0..3, 0..1);
+        if let Some(slot) = _vp_slot {
+            if !slot.outline_object_buffers.is_empty() {
+                let composite_bg = slot.hdr.as_ref().map(|h| &h.outline_composite_bind_group);
+                let pipeline = resources.outline_composite_pipeline_msaa.as_ref()
+                    .or(resources.outline_composite_pipeline_single.as_ref());
+                if let (Some(pipeline), Some(bg)) = (pipeline, composite_bg) {
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_bind_group(0, bg, &[]);
+                    render_pass.draw(0..3, 0..1);
+                }
             }
         }
 
         // Axes indicator pass (screen-space, last so it draws on top).
-        if frame.viewport.show_axes_indicator && resources.axes_vertex_count > 0 {
-            render_pass.set_pipeline(&resources.axes_pipeline);
-            render_pass.set_vertex_buffer(0, resources.axes_vertex_buffer.slice(..));
-            render_pass.draw(0..resources.axes_vertex_count, 0..1);
+        if let Some(slot) = _vp_slot {
+            if frame.viewport.show_axes_indicator && slot.axes_vertex_count > 0 {
+                render_pass.set_pipeline(&resources.axes_pipeline);
+                render_pass.set_vertex_buffer(0, slot.axes_vertex_buffer.slice(..));
+                render_pass.draw(0..slot.axes_vertex_count, 0..1);
+            }
         }
     }};
 }

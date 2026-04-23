@@ -12,7 +12,7 @@ pub mod manipulation;
 pub mod picking;
 /// Multi-select system for viewport objects.
 pub mod selection;
-/// Typed sub-object reference and sub-object selection set.
-pub mod sub_object;
 /// Transform snapping helpers and constraint overlay types.
 pub mod snap;
+/// Typed sub-object reference and sub-object selection set.
+pub mod sub_object;

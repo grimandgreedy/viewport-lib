@@ -214,9 +214,11 @@ impl ViewportInput {
 
         // Skip pointer/wheel gesture evaluation if viewport is not hovered
         // (and no button is actively held from a press that started inside).
-        let any_held_with_press = self.button_held.iter().enumerate().any(|(i, &held)| {
-            held && self.button_press_pos[i].is_some()
-        });
+        let any_held_with_press = self
+            .button_held
+            .iter()
+            .enumerate()
+            .any(|(i, &held)| held && self.button_press_pos[i].is_some());
         let pointer_active = self.ctx.hovered || any_held_with_press;
 
         for binding in &self.bindings {
@@ -234,31 +236,31 @@ impl ViewportInput {
                             Action::Orbit => {
                                 if orbit == glam::Vec2::ZERO {
                                     orbit += delta;
-                                    actions.entry(binding.action).or_insert(
-                                        ResolvedActionState::Delta(delta),
-                                    );
+                                    actions
+                                        .entry(binding.action)
+                                        .or_insert(ResolvedActionState::Delta(delta));
                                 }
                             }
                             Action::Pan => {
                                 if pan == glam::Vec2::ZERO {
                                     pan += delta;
-                                    actions.entry(binding.action).or_insert(
-                                        ResolvedActionState::Delta(delta),
-                                    );
+                                    actions
+                                        .entry(binding.action)
+                                        .or_insert(ResolvedActionState::Delta(delta));
                                 }
                             }
                             Action::Zoom => {
                                 if zoom == 0.0 {
                                     zoom += delta.y;
-                                    actions.entry(binding.action).or_insert(
-                                        ResolvedActionState::Delta(delta),
-                                    );
+                                    actions
+                                        .entry(binding.action)
+                                        .or_insert(ResolvedActionState::Delta(delta));
                                 }
                             }
                             _ => {
-                                actions.entry(binding.action).or_insert(
-                                    ResolvedActionState::Delta(delta),
-                                );
+                                actions
+                                    .entry(binding.action)
+                                    .or_insert(ResolvedActionState::Delta(delta));
                             }
                         }
                     }
@@ -275,9 +277,9 @@ impl ViewportInput {
                             Action::Pan => pan.y += y,
                             _ => {}
                         }
-                        actions.entry(binding.action).or_insert(
-                            ResolvedActionState::Delta(glam::Vec2::new(0.0, y)),
-                        );
+                        actions
+                            .entry(binding.action)
+                            .or_insert(ResolvedActionState::Delta(glam::Vec2::new(0.0, y)));
                     }
                 }
                 ViewportGesture::WheelXY { modifiers } => {
@@ -292,26 +294,35 @@ impl ViewportInput {
                             Action::Zoom => zoom += delta.y,
                             _ => {}
                         }
-                        actions.entry(binding.action).or_insert(
-                            ResolvedActionState::Delta(delta),
-                        );
+                        actions
+                            .entry(binding.action)
+                            .or_insert(ResolvedActionState::Delta(delta));
                     }
                 }
                 ViewportGesture::KeyPress { key, modifiers } => {
                     if self.keys_pressed.contains(key) && modifiers.matches(self.modifiers) {
-                        actions.entry(binding.action).or_insert(ResolvedActionState::Pressed);
+                        actions
+                            .entry(binding.action)
+                            .or_insert(ResolvedActionState::Pressed);
                     }
                 }
                 ViewportGesture::KeyHold { key, modifiers } => {
                     if self.keys_held.contains(key) && modifiers.matches(self.modifiers) {
-                        actions.entry(binding.action).or_insert(ResolvedActionState::Held);
+                        actions
+                            .entry(binding.action)
+                            .or_insert(ResolvedActionState::Held);
                     }
                 }
             }
         }
 
         ActionFrame {
-            navigation: NavigationActions { orbit, pan, zoom, twist: self.rotate_gesture },
+            navigation: NavigationActions {
+                orbit,
+                pan,
+                zoom,
+                twist: self.rotate_gesture,
+            },
             actions,
             typed_chars: self.typed_chars.clone(),
         }
@@ -326,8 +337,8 @@ impl ViewportInput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interaction::input::preset::viewport_all_bindings;
     use crate::interaction::input::event::ButtonState;
+    use crate::interaction::input::preset::viewport_all_bindings;
 
     fn focused_ctx() -> ViewportContext {
         ViewportContext {
@@ -347,12 +358,18 @@ mod tests {
             repeat: false,
         });
         let frame = input.resolve();
-        assert!(frame.is_active(Action::FocusObject), "FocusObject should be active on first frame");
+        assert!(
+            frame.is_active(Action::FocusObject),
+            "FocusObject should be active on first frame"
+        );
 
         // Second frame without a new press should not fire
         input.begin_frame(focused_ctx());
         let frame2 = input.resolve();
-        assert!(!frame2.is_active(Action::FocusObject), "FocusObject should not be active on second frame");
+        assert!(
+            !frame2.is_active(Action::FocusObject),
+            "FocusObject should not be active on second frame"
+        );
     }
 
     #[test]
@@ -369,6 +386,9 @@ mod tests {
             repeat: false,
         });
         let frame = input.resolve();
-        assert!(!frame.is_active(Action::FocusObject), "key should be ignored without focus");
+        assert!(
+            !frame.is_active(Action::FocusObject),
+            "key should be ignored without focus"
+        );
     }
 }

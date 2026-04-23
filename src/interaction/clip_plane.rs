@@ -114,7 +114,12 @@ pub fn plane_from_axis_preset(axis: ClipAxis, distance: f32) -> ClipPlane {
         ClipAxis::Y => [0.0, 1.0, 0.0],
         ClipAxis::Z => [0.0, 0.0, 1.0],
     };
-    ClipPlane { normal, distance, enabled: true, cap_color: None }
+    ClipPlane {
+        normal,
+        distance,
+        enabled: true,
+        cap_color: None,
+    }
 }
 
 /// Compute the intersection point of a ray with a plane.
@@ -255,7 +260,13 @@ pub fn hit_test_normal_handle(
     let t0 = (-b - sqrt_disc) / (2.0 * a);
     let t1 = (-b + sqrt_disc) / (2.0 * a);
 
-    let t = if t0 > 0.0 { t0 } else if t1 > 0.0 { t1 } else { return ClipPlaneHit::None };
+    let t = if t0 > 0.0 {
+        t0
+    } else if t1 > 0.0 {
+        t1
+    } else {
+        return ClipPlaneHit::None;
+    };
 
     // Verify the hit point lies within the finite cylinder length.
     let hit_point = ray_origin + ray_dir * t;
@@ -352,7 +363,10 @@ pub struct ClipPlaneController {
 impl ClipPlaneController {
     /// Create a controller with no active session.
     pub fn new() -> Self {
-        Self { session: None, hovered: false }
+        Self {
+            session: None,
+            hovered: false,
+        }
     }
 
     /// Drive the controller for one frame.
@@ -404,11 +418,17 @@ impl ClipPlaneController {
                         &ctx.camera,
                         ctx.viewport_size,
                     );
-                    ClipPlaneDelta { distance_delta, normal_override: None }
+                    ClipPlaneDelta {
+                        distance_delta,
+                        normal_override: None,
+                    }
                 }
                 ClipPlaneSessionKind::Orient => {
                     // Orient session deferred per plan — emit zero delta.
-                    ClipPlaneDelta { distance_delta: 0.0, normal_override: None }
+                    ClipPlaneDelta {
+                        distance_delta: 0.0,
+                        normal_override: None,
+                    }
                 }
             };
 
@@ -551,8 +571,12 @@ impl Default for ClipPlaneController {
 
 /// Compute two orthogonal tangent vectors for a plane with the given normal.
 pub(crate) fn plane_tangents(normal: glam::Vec3) -> (glam::Vec3, glam::Vec3) {
-    let up = if normal.x.abs() < 0.9 { glam::Vec3::X } else { glam::Vec3::Y };
-    let t1 = (up - normal * up.dot(normal)).normalize_or(glam::Vec3::Y);
+    let up = if normal.z.abs() < 0.9 {
+        glam::Vec3::Z
+    } else {
+        glam::Vec3::X
+    };
+    let t1 = (up - normal * up.dot(normal)).normalize_or(glam::Vec3::X);
     let t2 = normal.cross(t1);
     (t1, t2)
 }
@@ -586,7 +610,12 @@ mod tests {
     }
 
     fn default_plane() -> ClipPlane {
-        ClipPlane { normal: [0.0, 1.0, 0.0], distance: 0.0, enabled: true, cap_color: None }
+        ClipPlane {
+            normal: [0.0, 1.0, 0.0],
+            distance: 0.0,
+            enabled: true,
+            cap_color: None,
+        }
     }
 
     fn idle_ctx() -> ClipPlaneContext {
@@ -708,7 +737,10 @@ mod tests {
         let (t1, t2) = plane_tangents(n);
         assert!(t1.dot(n).abs() < 1e-5, "t1 not perpendicular to normal");
         assert!(t2.dot(n).abs() < 1e-5, "t2 not perpendicular to normal");
-        assert!(t1.dot(t2).abs() < 1e-5, "t1 and t2 not perpendicular to each other");
+        assert!(
+            t1.dot(t2).abs() < 1e-5,
+            "t1 and t2 not perpendicular to each other"
+        );
         assert!((t1.length() - 1.0).abs() < 1e-5, "t1 not unit length");
         assert!((t2.length() - 1.0).abs() < 1e-5, "t2 not unit length");
     }
@@ -749,7 +781,12 @@ mod tests {
         let mut ctrl = ClipPlaneController::new();
         ctrl.begin_distance(default_plane());
         // Second call is a no-op.
-        ctrl.begin_distance(ClipPlane { normal: [1.0, 0.0, 0.0], distance: 5.0, enabled: true, cap_color: None });
+        ctrl.begin_distance(ClipPlane {
+            normal: [1.0, 0.0, 0.0],
+            distance: 5.0,
+            enabled: true,
+            cap_color: None,
+        });
         // Still in the first session's plane.
         assert!(ctrl.is_active());
     }
@@ -768,7 +805,9 @@ mod tests {
         ctrl.begin_distance(default_plane());
 
         let mut frame = ActionFrame::default();
-        frame.actions.insert(Action::Cancel, ResolvedActionState::Pressed);
+        frame
+            .actions
+            .insert(Action::Cancel, ResolvedActionState::Pressed);
         let mut ctx = idle_ctx();
         ctx.dragging = true;
 

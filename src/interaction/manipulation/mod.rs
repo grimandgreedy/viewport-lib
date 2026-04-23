@@ -149,8 +149,11 @@ impl ManipulationController {
                             let (ax1, ax2) = solvers::excluded_axes(ax);
                             let a1 = solvers::drag_onto_rotation(pointer_delta, ax1, camera_view);
                             let a2 = solvers::drag_onto_rotation(pointer_delta, ax2, camera_view);
-                            let (chosen_axis, drag_angle) =
-                                if a1.abs() >= a2.abs() { (ax1, a1) } else { (ax2, a2) };
+                            let (chosen_axis, drag_angle) = if a1.abs() >= a2.abs() {
+                                (ax1, a1)
+                            } else {
+                                (ax2, a2)
+                            };
                             glam::Quat::from_axis_angle(chosen_axis, drag_angle + twist)
                         } else {
                             // Constrained to a single axis: angular sweep around screen center.
@@ -168,8 +171,7 @@ impl ManipulationController {
                         }
                     } else {
                         // Unconstrained: rotate around camera view direction.
-                        let view_dir =
-                            (ctx.camera.center - ctx.camera.eye_position()).normalize();
+                        let view_dir = (ctx.camera.center - ctx.camera.eye_position()).normalize();
                         glam::Quat::from_axis_angle(view_dir, pointer_delta.x * 0.01 + twist)
                     };
                     delta.rotation = rot;
@@ -189,7 +191,7 @@ impl ManipulationController {
                     let cumulative = match (ctx.cursor_viewport, session.cursor_anchor) {
                         (Some(cursor), Some(anchor)) => {
                             let dist_anchor = (anchor - center_screen).length();
-                            let dist_now    = (cursor - center_screen).length();
+                            let dist_now = (cursor - center_screen).length();
                             if dist_anchor > 2.0 {
                                 (dist_now / dist_anchor).max(0.001)
                             } else {
@@ -200,7 +202,7 @@ impl ManipulationController {
                             // Fallback when cursor is unavailable: integrate pointer_delta.
                             (session.last_scale_factor
                                 * (1.0 + pointer_delta.x * 4.0 / ctx.viewport_size.x.max(1.0)))
-                                .max(0.001)
+                            .max(0.001)
                         }
                     };
 
@@ -210,13 +212,13 @@ impl ManipulationController {
                     session.last_scale_factor = cumulative;
 
                     delta.scale = match (session.axis, session.exclude_axis) {
-                        (None, _)                          => glam::Vec3::splat(incr),
-                        (Some(GizmoAxis::X), false)        => glam::Vec3::new(incr, 1.0, 1.0),
-                        (Some(GizmoAxis::Y), false)        => glam::Vec3::new(1.0, incr, 1.0),
-                        (Some(_), false)                   => glam::Vec3::new(1.0, 1.0, incr),
-                        (Some(GizmoAxis::X), true)         => glam::Vec3::new(1.0, incr, incr),
-                        (Some(GizmoAxis::Y), true)         => glam::Vec3::new(incr, 1.0, incr),
-                        (Some(_), true)                    => glam::Vec3::new(incr, incr, 1.0),
+                        (None, _) => glam::Vec3::splat(incr),
+                        (Some(GizmoAxis::X), false) => glam::Vec3::new(incr, 1.0, 1.0),
+                        (Some(GizmoAxis::Y), false) => glam::Vec3::new(1.0, incr, 1.0),
+                        (Some(_), false) => glam::Vec3::new(1.0, 1.0, incr),
+                        (Some(GizmoAxis::X), true) => glam::Vec3::new(1.0, incr, incr),
+                        (Some(GizmoAxis::Y), true) => glam::Vec3::new(incr, 1.0, incr),
+                        (Some(_), true) => glam::Vec3::new(incr, incr, 1.0),
                     };
 
                     // Numeric scale override.
@@ -263,8 +265,8 @@ impl ManipulationController {
                 if hit != GizmoAxis::None {
                     let kind = match gizmo_info.mode {
                         GizmoMode::Translate => ManipulationKind::Move,
-                        GizmoMode::Rotate    => ManipulationKind::Rotate,
-                        GizmoMode::Scale     => ManipulationKind::Scale,
+                        GizmoMode::Rotate => ManipulationKind::Rotate,
+                        GizmoMode::Scale => ManipulationKind::Scale,
                     };
                     self.session = Some(ManipulationSession {
                         kind,
@@ -476,7 +478,10 @@ mod tests {
         // Should get an Update with a zero translation (numeric override pending parse).
         assert!(matches!(result, ManipResult::Update(_)));
         let state = ctrl.state().unwrap();
-        assert!(state.numeric_display.is_some(), "numeric display should be set after first digit");
+        assert!(
+            state.numeric_display.is_some(),
+            "numeric display should be set after first digit"
+        );
     }
 
     #[test]
@@ -500,8 +505,14 @@ mod tests {
         let state = ctrl.state().unwrap();
         // Should now show "2" only.
         let display = state.numeric_display.unwrap();
-        assert!(display.contains('2'), "display should contain '2': {display}");
-        assert!(!display.contains('5'), "display should not contain '5' after backspace: {display}");
+        assert!(
+            display.contains('2'),
+            "display should contain '2': {display}"
+        );
+        assert!(
+            !display.contains('5'),
+            "display should not contain '5' after backspace: {display}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -515,12 +526,8 @@ mod tests {
             glam::Vec3::ZERO,
             glam::Vec3::Y,
         );
-        let proj = glam::Mat4::perspective_rh(
-            std::f32::consts::FRAC_PI_4,
-            800.0 / 600.0,
-            0.1,
-            100.0,
-        );
+        let proj =
+            glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 800.0 / 600.0, 0.1, 100.0);
         (view, proj * view)
     }
 

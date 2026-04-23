@@ -1075,7 +1075,10 @@ mod tests {
             "both points should be inside the full-screen rect"
         );
         // Verify the hits are typed as Point sub-objects.
-        assert!(hits.iter().all(|s| s.is_point()), "expected SubObjectRef::Point entries");
+        assert!(
+            hits.iter().all(|s| s.is_point()),
+            "expected SubObjectRef::Point entries"
+        );
         assert_eq!(hits[0], SubObjectRef::Point(0));
         assert_eq!(hits[1], SubObjectRef::Point(1));
     }
@@ -1117,7 +1120,14 @@ mod tests {
         assert!(r.is_empty());
         assert_eq!(r.total_count(), 0);
 
-        r.hits.insert(1, vec![SubObjectRef::Face(0), SubObjectRef::Face(1), SubObjectRef::Face(2)]);
+        r.hits.insert(
+            1,
+            vec![
+                SubObjectRef::Face(0),
+                SubObjectRef::Face(1),
+                SubObjectRef::Face(2),
+            ],
+        );
         r.hits.insert(2, vec![SubObjectRef::Point(5)]);
         assert!(!r.is_empty());
         assert_eq!(r.total_count(), 4);

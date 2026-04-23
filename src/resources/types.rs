@@ -506,6 +506,7 @@ pub(crate) struct OutlineUniform {
 
 pub(crate) struct OutlineObjectBuffers {
     pub mesh_index: usize,
+    pub two_sided: bool,
     pub _stencil_uniform_buf: wgpu::Buffer,
     pub stencil_bind_group: wgpu::BindGroup,
     pub _outline_uniform_buf: wgpu::Buffer,
@@ -574,11 +575,11 @@ pub(crate) struct ShadowAtlasUniform {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ContactShadowUniform {
-    pub(crate) inv_proj: [[f32; 4]; 4],   // 64 bytes
-    pub(crate) proj: [[f32; 4]; 4],       // 64 bytes
-    pub(crate) light_dir_view: [f32; 4],  // 16 bytes
-    pub(crate) world_up_view: [f32; 4],   // 16 bytes
-    pub(crate) params: [f32; 4],          // 16 bytes: [max_distance, steps, thickness, pad]
+    pub(crate) inv_proj: [[f32; 4]; 4],  // 64 bytes
+    pub(crate) proj: [[f32; 4]; 4],      // 64 bytes
+    pub(crate) light_dir_view: [f32; 4], // 16 bytes
+    pub(crate) world_up_view: [f32; 4],  // 16 bytes
+    pub(crate) params: [f32; 4],         // 16 bytes: [max_distance, steps, thickness, pad]
 }
 
 /// Per-vertex data for overlay rendering: position only (no normal/color in vertex).
@@ -624,34 +625,34 @@ pub(crate) struct OverlayUniform {
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct GridUniform {
     /// Combined view-projection matrix for computing clip-space depth of grid hits.
-    pub view_proj: [[f32; 4]; 4],      // offset   0, 64 bytes
+    pub view_proj: [[f32; 4]; 4], // offset   0, 64 bytes
     /// Camera-to-world rotation matrix (3 columns as vec4 with w=0 padding, matching
     /// WGSL mat3x3<f32> layout). Col 0 = right, Col 1 = up, Col 2 = back (camera +Z).
     /// Used to rotate the analytical camera-space ray direction into world space,
     /// bypassing the ill-conditioned inv(view_proj) at large camera distances.
-    pub cam_to_world: [[f32; 4]; 3],   // offset  64, 48 bytes
+    pub cam_to_world: [[f32; 4]; 3], // offset  64, 48 bytes
     /// tan(fov_y / 2) — scales NDC x/y to camera-space ray direction.
-    pub tan_half_fov: f32,             // offset 112,  4 bytes
+    pub tan_half_fov: f32, // offset 112,  4 bytes
     /// Viewport aspect ratio (width / height).
-    pub aspect: f32,                   // offset 116,  4 bytes
+    pub aspect: f32, // offset 116,  4 bytes
     /// Padding to keep snap_origin at offset 152 (8-byte aligned).
-    pub _pad_ivp: [f32; 2],           // offset 120,  8 bytes
+    pub _pad_ivp: [f32; 2], // offset 120,  8 bytes
     /// Eye (camera) position in world space.
-    pub eye_pos: [f32; 3],             // offset 128, 12 bytes
+    pub eye_pos: [f32; 3], // offset 128, 12 bytes
     /// Z-coordinate of the horizontal grid plane (Z-up, XY ground plane).
-    pub grid_z: f32,                   // offset 140,  4 bytes
+    pub grid_z: f32, // offset 140,  4 bytes
     /// Minor grid line spacing (world units).
-    pub spacing_minor: f32,            // offset 144,  4 bytes
+    pub spacing_minor: f32, // offset 144,  4 bytes
     /// Major grid line spacing (world units, typically spacing_minor * 10).
-    pub spacing_major: f32,            // offset 148,  4 bytes
+    pub spacing_major: f32, // offset 148,  4 bytes
     /// XZ origin used to keep `hit.xz - snap_origin` small for f32 precision.
     /// Set to `floor(eye.xz / spacing_major) * spacing_major` each frame.
-    pub snap_origin: [f32; 2],         // offset 152,  8 bytes
+    pub snap_origin: [f32; 2], // offset 152,  8 bytes
     /// RGBA color for minor grid lines.
-    pub color_minor: [f32; 4],         // offset 160, 16 bytes
+    pub color_minor: [f32; 4], // offset 160, 16 bytes
     /// RGBA color for major grid lines.
-    pub color_major: [f32; 4],         // offset 176, 16 bytes
-    // Total: 192 bytes
+    pub color_major: [f32; 4], // offset 176, 16 bytes
+                               // Total: 192 bytes
 }
 
 // ---------------------------------------------------------------------------
@@ -819,6 +820,94 @@ pub struct VolumeGpuData {
 }
 
 // ---------------------------------------------------------------------------
+// ViewportHdrState: per-viewport HDR/post-process render target bundle
+// ---------------------------------------------------------------------------
+
+/// Per-viewport HDR/post-process GPU state.
+///
+/// Holds all viewport-size-dependent render targets, their associated bind
+/// groups, and the per-viewport uniform buffers used by the post-process
+/// pipeline.  Created lazily in `ViewportRenderer::ensure_viewport_hdr` and
+/// resized automatically when the viewport dimensions change.
+///
+/// Shared infrastructure (pipelines, BGLs, samplers, placeholder textures,
+/// SSAO noise/kernel) lives on [`ViewportGpuResources`] and is created once
+/// by `ensure_hdr_shared`.
+#[allow(dead_code)]
+pub(crate) struct ViewportHdrState {
+    // --- HDR scene target ---
+    pub hdr_texture: wgpu::Texture,
+    pub hdr_view: wgpu::TextureView,
+    pub hdr_depth_texture: wgpu::Texture,
+    pub hdr_depth_view: wgpu::TextureView,
+    pub hdr_depth_only_view: wgpu::TextureView,
+
+    // --- Bloom ---
+    pub bloom_threshold_texture: wgpu::Texture,
+    pub bloom_threshold_view: wgpu::TextureView,
+    pub bloom_ping_texture: wgpu::Texture,
+    pub bloom_ping_view: wgpu::TextureView,
+    pub bloom_pong_texture: wgpu::Texture,
+    pub bloom_pong_view: wgpu::TextureView,
+
+    // --- SSAO ---
+    pub ssao_texture: wgpu::Texture,
+    pub ssao_view: wgpu::TextureView,
+    pub ssao_blur_texture: wgpu::Texture,
+    pub ssao_blur_view: wgpu::TextureView,
+
+    // --- Contact shadow ---
+    pub contact_shadow_texture: wgpu::Texture,
+    pub contact_shadow_view: wgpu::TextureView,
+
+    // --- FXAA ---
+    pub fxaa_texture: wgpu::Texture,
+    pub fxaa_view: wgpu::TextureView,
+
+    // --- OIT (lazily allocated when transparent geometry is present) ---
+    pub oit_accum_texture: Option<wgpu::Texture>,
+    pub oit_accum_view: Option<wgpu::TextureView>,
+    pub oit_reveal_texture: Option<wgpu::Texture>,
+    pub oit_reveal_view: Option<wgpu::TextureView>,
+    pub oit_composite_bind_group: Option<wgpu::BindGroup>,
+    pub oit_size: [u32; 2],
+
+    // --- Outline offscreen (used by the outline prepare pass) ---
+    pub outline_color_texture: wgpu::Texture,
+    pub outline_color_view: wgpu::TextureView,
+    pub outline_depth_texture: wgpu::Texture,
+    pub outline_depth_view: wgpu::TextureView,
+    pub outline_composite_bind_group: wgpu::BindGroup,
+
+    // --- Bind groups (rebuilt when viewport dimensions change) ---
+    pub tone_map_bind_group: wgpu::BindGroup,
+    pub bloom_threshold_bg: wgpu::BindGroup,
+    /// H-blur bind group that reads from bloom_threshold (pass 0 only).
+    pub bloom_blur_h_bg: wgpu::BindGroup,
+    /// V-blur bind group that reads from bloom_ping.
+    pub bloom_blur_v_bg: wgpu::BindGroup,
+    /// H-blur bind group that reads from bloom_pong (passes 1+).
+    pub bloom_blur_h_pong_bg: wgpu::BindGroup,
+    pub ssao_bg: wgpu::BindGroup,
+    pub ssao_blur_bg: wgpu::BindGroup,
+    pub contact_shadow_bg: wgpu::BindGroup,
+    pub fxaa_bind_group: wgpu::BindGroup,
+
+    // --- Per-viewport uniform buffers ---
+    pub tone_map_uniform_buf: wgpu::Buffer,
+    pub bloom_uniform_buf: wgpu::Buffer,
+    /// Constant H-blur uniform buffer (horizontal=1, written once at creation).
+    pub bloom_h_uniform_buf: wgpu::Buffer,
+    /// Constant V-blur uniform buffer (horizontal=0, written once at creation).
+    pub bloom_v_uniform_buf: wgpu::Buffer,
+    pub ssao_uniform_buf: wgpu::Buffer,
+    pub contact_shadow_uniform_buf: wgpu::Buffer,
+
+    /// Current [width, height] of all size-dependent textures.
+    pub size: [u32; 2],
+}
+
+// ---------------------------------------------------------------------------
 // ViewportGpuResources: top-level GPU resource container
 // ---------------------------------------------------------------------------
 
@@ -884,6 +973,8 @@ pub struct ViewportGpuResources {
     pub gizmo_uniform_buf: wgpu::Buffer,
     /// Bind group for gizmo uniform (group 1).
     pub gizmo_bind_group: wgpu::BindGroup,
+    /// Bind group layout for gizmo uniforms — stored so per-viewport gizmo bind groups can be created.
+    pub(crate) gizmo_bind_group_layout: wgpu::BindGroupLayout,
 
     // --- Overlay resources ---
     /// Overlay render pipeline (TriangleList with alpha blending — for semi-transparent BC quads).
@@ -896,6 +987,8 @@ pub struct ViewportGpuResources {
     pub grid_uniform_buf: wgpu::Buffer,
     /// Bind group for the grid uniform (group 0, single binding).
     pub grid_bind_group: wgpu::BindGroup,
+    /// Bind group layout for the grid uniform (stored so per-viewport grid bind groups can be created).
+    pub(crate) grid_bind_group_layout: wgpu::BindGroupLayout,
     /// Bind group layout for overlay uniforms (group 1: model + color uniform).
     pub overlay_bind_group_layout: wgpu::BindGroupLayout,
 
@@ -903,35 +996,6 @@ pub struct ViewportGpuResources {
     /// Transient constraint guide lines, rebuilt each frame in prepare().
     /// Each entry: (vertex_buffer, index_buffer, index_count, uniform_buffer, bind_group).
     pub constraint_line_buffers: Vec<(
-        wgpu::Buffer,
-        wgpu::Buffer,
-        u32,
-        wgpu::Buffer,
-        wgpu::BindGroup,
-    )>,
-
-    // --- Cap geometry (section view cross-section fill) ---
-    /// Transient cap geometry buffers, rebuilt each frame in prepare().
-    /// Each entry: (vertex_buffer, index_buffer, index_count, uniform_buffer, bind_group).
-    pub(crate) cap_buffers: Vec<(
-        wgpu::Buffer,
-        wgpu::Buffer,
-        u32,
-        wgpu::Buffer,
-        wgpu::BindGroup,
-    )>,
-
-    // --- Clip plane handle overlays ---
-    /// Semi-transparent quad fill for each ClipPlaneOverlay (TriangleList, alpha blended).
-    pub(crate) clip_plane_fill_buffers: Vec<(
-        wgpu::Buffer,
-        wgpu::Buffer,
-        u32,
-        wgpu::Buffer,
-        wgpu::BindGroup,
-    )>,
-    /// Border edges and normal indicator for each ClipPlaneOverlay (LineList).
-    pub(crate) clip_plane_line_buffers: Vec<(
         wgpu::Buffer,
         wgpu::Buffer,
         u32,
@@ -976,6 +1040,8 @@ pub struct ViewportGpuResources {
     pub(crate) fxaa_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) fxaa_bgl: Option<wgpu::BindGroupLayout>,
     pub(crate) fxaa_bind_group: Option<wgpu::BindGroup>,
+    /// Linear-clamp sampler shared by the FXAA pass (stored for recreating per-viewport bind groups).
+    pub(crate) fxaa_sampler: Option<wgpu::Sampler>,
 
     // --- Clip planes ---
     /// Uniform buffer for clip planes (binding 4 of camera bind group).
@@ -988,15 +1054,12 @@ pub struct ViewportGpuResources {
     pub(crate) outline_bind_group_layout: wgpu::BindGroupLayout,
     /// Stencil-write pipeline: draws selected objects writing stencil=1 (depth pass).
     pub(crate) stencil_write_pipeline: wgpu::RenderPipeline,
+    /// Two-sided stencil-write pipeline for selected meshes rendered without face culling.
+    pub(crate) stencil_write_two_sided_pipeline: wgpu::RenderPipeline,
     /// Outline pipeline: draws expanded silhouette where stencil != 1.
     pub(crate) outline_pipeline: wgpu::RenderPipeline,
     /// X-ray pipeline: draws selected objects through occluders (depth_compare Always).
     pub(crate) xray_pipeline: wgpu::RenderPipeline,
-    /// Per-selected-object buffers for outline rendering, rebuilt each frame in prepare().
-    pub(crate) outline_object_buffers: Vec<OutlineObjectBuffers>,
-    /// Per-selected-object buffers for x-ray rendering, rebuilt each frame in prepare().
-    pub(crate) xray_object_buffers: Vec<(usize, wgpu::Buffer, wgpu::BindGroup)>,
-
     // --- Outline offscreen resources (lazily created) ---
     /// Offscreen RGBA texture the outline stencil pass renders into.
     pub(crate) outline_color_texture: Option<wgpu::Texture>,
@@ -1040,6 +1103,17 @@ pub struct ViewportGpuResources {
     pub(crate) shadow_instanced_cascade_bufs: [Option<wgpu::Buffer>; 4],
     /// Per-cascade bind groups for shadow_instanced_pipeline group 0.
     pub(crate) shadow_instanced_cascade_bgs: [Option<wgpu::BindGroup>; 4],
+
+    // --- Post-processing shared infrastructure (BGLs / pipelines / samplers / static textures) ---
+    // Viewport-sized textures, bind groups, and uniform buffers are stored in
+    // per-viewport ViewportHdrState (see renderer::ViewportSlot).
+    // The fields below are the shared resources created once by ensure_hdr_shared().
+    /// Bloom BGL: input_tex + sampler + uniform.
+    pub(crate) bloom_bgl: Option<wgpu::BindGroupLayout>,
+    /// SSAO BGL: depth + depth_sampler(non-filter) + noise + noise_sampler + kernel + uniform.
+    pub(crate) ssao_bgl: Option<wgpu::BindGroupLayout>,
+    /// SSAO blur BGL: ssao_tex + sampler.
+    pub(crate) ssao_blur_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- Post-processing (HDR, bloom, SSAO) ---
     // These are all Option<> and created lazily by ensure_hdr_target().
@@ -1210,6 +1284,8 @@ pub struct ViewportGpuResources {
     pub(crate) compute_filter_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- Phase J: Order-independent transparency (OIT) — lazily created ---
+    // These fields are superseded by ViewportHdrState.oit_* but kept for ensure_oit_targets compat.
+    #[allow(dead_code)]
     /// Weighted-blended accumulation texture (Rgba16Float, viewport-sized).
     pub(crate) oit_accum_texture: Option<wgpu::Texture>,
     pub(crate) oit_accum_view: Option<wgpu::TextureView>,

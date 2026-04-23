@@ -46,22 +46,37 @@ pub fn upload_environment_map(
     let irr_w = 64u32;
     let irr_h = 32u32;
     let irradiance_data = convolve_irradiance(pixels, width, height, irr_w, irr_h);
-    let irr_tex = upload_rgba16f(device, queue, &irradiance_data, irr_w, irr_h, "ibl_irradiance");
+    let irr_tex = upload_rgba16f(
+        device,
+        queue,
+        &irradiance_data,
+        irr_w,
+        irr_h,
+        "ibl_irradiance",
+    );
     let irr_view = irr_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
     // 3. Generate prefiltered specular map (5 roughness levels).
     let spec_w = 128u32;
     let spec_h = 64u32;
     let mip_levels = 5u32;
-    let (spec_data_mips, spec_tex) =
-        prefilter_specular(device, queue, pixels, width, height, spec_w, spec_h, mip_levels);
+    let (spec_data_mips, spec_tex) = prefilter_specular(
+        device, queue, pixels, width, height, spec_w, spec_h, mip_levels,
+    );
     let _ = spec_data_mips; // CPU data no longer needed
     let spec_view = spec_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
     // 4. Generate BRDF integration LUT.
     let brdf_size = 128u32;
     let brdf_data = generate_brdf_lut(brdf_size);
-    let brdf_tex = upload_rgba16f(device, queue, &brdf_data, brdf_size, brdf_size, "ibl_brdf_lut");
+    let brdf_tex = upload_rgba16f(
+        device,
+        queue,
+        &brdf_data,
+        brdf_size,
+        brdf_size,
+        "ibl_brdf_lut",
+    );
     let brdf_view = brdf_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
     // 5. Store on resources.
@@ -91,7 +106,11 @@ fn upload_rgba16f(
     let mip_level_count = 1;
     let tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
-        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
         mip_level_count,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -114,7 +133,11 @@ fn upload_rgba16f(
             bytes_per_row: Some(width * 8), // 4 × f16 = 8 bytes per pixel
             rows_per_image: Some(height),
         },
-        wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
     );
     tex
 }
@@ -143,13 +166,7 @@ fn sample_equirect(pixels: &[f32], width: u32, height: u32, dir: [f32; 3]) -> [f
 // Irradiance convolution (hemisphere cosine-weighted sampling)
 // -------------------------------------------------------------------------
 
-fn convolve_irradiance(
-    src: &[f32],
-    src_w: u32,
-    src_h: u32,
-    dst_w: u32,
-    dst_h: u32,
-) -> Vec<f32> {
+fn convolve_irradiance(src: &[f32], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<f32> {
     let sample_delta = 0.05f32; // ~40 phi steps × ~20 theta steps = 800 samples
     let mut out = vec![0.0f32; (dst_w * dst_h * 4) as usize];
 
@@ -166,7 +183,11 @@ fn convolve_irradiance(
             let normal = [ct * cp, st, ct * sp];
 
             // Build tangent frame.
-            let up = if normal[1].abs() < 0.999 { [0.0, 1.0, 0.0] } else { [1.0, 0.0, 0.0] };
+            let up = if normal[1].abs() < 0.999 {
+                [0.0, 1.0, 0.0]
+            } else {
+                [1.0, 0.0, 0.0]
+            };
             let tangent = cross(up, normal);
             let tangent = normalize(tangent);
             let bitangent = cross(normal, tangent);
@@ -226,7 +247,11 @@ fn prefilter_specular(
 ) -> (Vec<Vec<f32>>, wgpu::Texture) {
     let tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("ibl_prefiltered"),
-        size: wgpu::Extent3d { width: base_w, height: base_h, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width: base_w,
+            height: base_h,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: mip_levels,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -256,7 +281,8 @@ fn prefilter_specular(
                 let r = n; // reflect = normal for prefilter
                 let v_dir = r;
 
-                let color = prefilter_sample(src, src_w, src_h, n, r, v_dir, roughness, num_samples);
+                let color =
+                    prefilter_sample(src, src_w, src_h, n, r, v_dir, roughness, num_samples);
                 let idx = (y * mip_w + x) as usize * 4;
                 data[idx] = color[0];
                 data[idx + 1] = color[1];
@@ -280,7 +306,11 @@ fn prefilter_specular(
                 bytes_per_row: Some(mip_w * 8),
                 rows_per_image: Some(mip_h),
             },
-            wgpu::Extent3d { width: mip_w, height: mip_h, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: mip_w,
+                height: mip_h,
+                depth_or_array_layers: 1,
+            },
         );
 
         all_mips.push(data);
@@ -353,11 +383,7 @@ fn generate_brdf_lut(size: u32) -> Vec<f32> {
 }
 
 fn integrate_brdf(n_dot_v: f32, roughness: f32, num_samples: u32) -> (f32, f32) {
-    let v = [
-        (1.0 - n_dot_v * n_dot_v).sqrt(),
-        0.0,
-        n_dot_v,
-    ];
+    let v = [(1.0 - n_dot_v * n_dot_v).sqrt(), 0.0, n_dot_v];
     let n = [0.0f32, 0.0, 1.0];
     let a = roughness * roughness;
 
@@ -418,7 +444,11 @@ fn importance_sample_ggx(xi: [f32; 2], n: [f32; 3], a: f32) -> [f32; 3] {
     let h_ts = [sin_theta * phi.cos(), sin_theta * phi.sin(), cos_theta];
 
     // Build tangent frame from N.
-    let up = if n[1].abs() < 0.999 { [0.0, 1.0, 0.0] } else { [1.0, 0.0, 0.0] };
+    let up = if n[1].abs() < 0.999 {
+        [0.0, 1.0, 0.0]
+    } else {
+        [1.0, 0.0, 0.0]
+    };
     let tangent = normalize(cross(up, n));
     let bitangent = cross(n, tangent);
 

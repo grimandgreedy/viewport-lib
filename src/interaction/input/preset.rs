@@ -111,21 +111,36 @@ pub fn viewport_all_bindings() -> Vec<ViewportBinding> {
     // Left drag is reserved for box selection and gizmo interaction; orbit is
     // available via Ctrl+Scroll (included via viewport_primitives_bindings).
     bindings.retain(|b| {
-        !matches!(b.gesture, ViewportGesture::Drag { button: MouseButton::Left, .. })
+        !matches!(
+            b.gesture,
+            ViewportGesture::Drag {
+                button: MouseButton::Left,
+                ..
+            }
+        )
     });
 
     // -- Normal mode: object manipulation shortcuts --
     bindings.push(ViewportBinding::new(
         Action::BeginMove,
-        ViewportGesture::KeyPress { key: KeyCode::G, modifiers: none },
+        ViewportGesture::KeyPress {
+            key: KeyCode::G,
+            modifiers: none,
+        },
     ));
     bindings.push(ViewportBinding::new(
         Action::BeginRotate,
-        ViewportGesture::KeyPress { key: KeyCode::R, modifiers: none },
+        ViewportGesture::KeyPress {
+            key: KeyCode::R,
+            modifiers: none,
+        },
     ));
     bindings.push(ViewportBinding::new(
         Action::BeginScale,
-        ViewportGesture::KeyPress { key: KeyCode::S, modifiers: none },
+        ViewportGesture::KeyPress {
+            key: KeyCode::S,
+            modifiers: none,
+        },
     ));
 
     // -- Normal mode: object shortcuts --
@@ -138,27 +153,45 @@ pub fn viewport_all_bindings() -> Vec<ViewportBinding> {
     ));
     bindings.push(ViewportBinding::new(
         Action::DeleteSelected,
-        ViewportGesture::KeyPress { key: KeyCode::X, modifiers: none },
+        ViewportGesture::KeyPress {
+            key: KeyCode::X,
+            modifiers: none,
+        },
     ));
     bindings.push(ViewportBinding::new(
         Action::FocusObject,
-        ViewportGesture::KeyPress { key: KeyCode::F, modifiers: none },
+        ViewportGesture::KeyPress {
+            key: KeyCode::F,
+            modifiers: none,
+        },
     ));
     bindings.push(ViewportBinding::new(
         Action::ResetView,
-        ViewportGesture::KeyPress { key: KeyCode::R, modifiers: none },
+        ViewportGesture::KeyPress {
+            key: KeyCode::R,
+            modifiers: none,
+        },
     ));
     bindings.push(ViewportBinding::new(
         Action::ToggleWireframe,
-        ViewportGesture::KeyPress { key: KeyCode::W, modifiers: none },
+        ViewportGesture::KeyPress {
+            key: KeyCode::W,
+            modifiers: none,
+        },
     ));
     bindings.push(ViewportBinding::new(
         Action::CycleGizmoMode,
-        ViewportGesture::KeyPress { key: KeyCode::Tab, modifiers: none },
+        ViewportGesture::KeyPress {
+            key: KeyCode::Tab,
+            modifiers: none,
+        },
     ));
     bindings.push(ViewportBinding::new(
         Action::ToggleGizmoSpace,
-        ViewportGesture::KeyPress { key: KeyCode::Backtick, modifiers: none },
+        ViewportGesture::KeyPress {
+            key: KeyCode::Backtick,
+            modifiers: none,
+        },
     ));
 
     // -- Fly mode entry --
@@ -173,41 +206,68 @@ pub fn viewport_all_bindings() -> Vec<ViewportBinding> {
     // -- Fly mode movement (KeyHold; callers must gate on InputMode::FlyMode) --
     bindings.push(ViewportBinding::new(
         Action::FlyForward,
-        ViewportGesture::KeyHold { key: KeyCode::W, modifiers: any },
+        ViewportGesture::KeyHold {
+            key: KeyCode::W,
+            modifiers: any,
+        },
     ));
     bindings.push(ViewportBinding::new(
         Action::FlyBackward,
-        ViewportGesture::KeyHold { key: KeyCode::S, modifiers: any },
+        ViewportGesture::KeyHold {
+            key: KeyCode::S,
+            modifiers: any,
+        },
     ));
     bindings.push(ViewportBinding::new(
         Action::FlyLeft,
-        ViewportGesture::KeyHold { key: KeyCode::A, modifiers: any },
+        ViewportGesture::KeyHold {
+            key: KeyCode::A,
+            modifiers: any,
+        },
     ));
     bindings.push(ViewportBinding::new(
         Action::FlyRight,
-        ViewportGesture::KeyHold { key: KeyCode::D, modifiers: any },
+        ViewportGesture::KeyHold {
+            key: KeyCode::D,
+            modifiers: any,
+        },
     ));
     bindings.push(ViewportBinding::new(
         Action::FlyUp,
-        ViewportGesture::KeyHold { key: KeyCode::E, modifiers: any },
+        ViewportGesture::KeyHold {
+            key: KeyCode::E,
+            modifiers: any,
+        },
     ));
     bindings.push(ViewportBinding::new(
         Action::FlyDown,
-        ViewportGesture::KeyHold { key: KeyCode::Q, modifiers: any },
+        ViewportGesture::KeyHold {
+            key: KeyCode::Q,
+            modifiers: any,
+        },
     ));
 
     // -- Manipulation mode: axis constraints --
     bindings.push(ViewportBinding::new(
         Action::ConstrainX,
-        ViewportGesture::KeyPress { key: KeyCode::X, modifiers: none },
+        ViewportGesture::KeyPress {
+            key: KeyCode::X,
+            modifiers: none,
+        },
     ));
     bindings.push(ViewportBinding::new(
         Action::ConstrainY,
-        ViewportGesture::KeyPress { key: KeyCode::Y, modifiers: none },
+        ViewportGesture::KeyPress {
+            key: KeyCode::Y,
+            modifiers: none,
+        },
     ));
     bindings.push(ViewportBinding::new(
         Action::ConstrainZ,
-        ViewportGesture::KeyPress { key: KeyCode::Z, modifiers: none },
+        ViewportGesture::KeyPress {
+            key: KeyCode::Z,
+            modifiers: none,
+        },
     ));
     bindings.push(ViewportBinding::new(
         Action::ExcludeX,
@@ -234,21 +294,33 @@ pub fn viewport_all_bindings() -> Vec<ViewportBinding> {
     // -- Manipulation mode: numeric input --
     bindings.push(ViewportBinding::new(
         Action::NumericBackspace,
-        ViewportGesture::KeyPress { key: KeyCode::Backspace, modifiers: none },
+        ViewportGesture::KeyPress {
+            key: KeyCode::Backspace,
+            modifiers: none,
+        },
     ));
     bindings.push(ViewportBinding::new(
         Action::NumericNextAxis,
-        ViewportGesture::KeyPress { key: KeyCode::Tab, modifiers: none },
+        ViewportGesture::KeyPress {
+            key: KeyCode::Tab,
+            modifiers: none,
+        },
     ));
 
     // -- Confirm / Cancel (fly mode + manipulation mode; callers must gate on mode) --
     bindings.push(ViewportBinding::new(
         Action::Confirm,
-        ViewportGesture::KeyPress { key: KeyCode::Enter, modifiers: none },
+        ViewportGesture::KeyPress {
+            key: KeyCode::Enter,
+            modifiers: none,
+        },
     ));
     bindings.push(ViewportBinding::new(
         Action::Cancel,
-        ViewportGesture::KeyPress { key: KeyCode::Escape, modifiers: none },
+        ViewportGesture::KeyPress {
+            key: KeyCode::Escape,
+            modifiers: none,
+        },
     ));
 
     // -- Global: undo/redo --

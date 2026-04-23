@@ -459,11 +459,11 @@ impl ViewportGpuResources {
         Ok(())
     }
 
-    /// Create a camera bind group (group 0) for the given camera uniform buffer.
+    /// Create a camera bind group (group 0) for the given per-viewport buffers.
     ///
-    /// All other bindings (shadow, lighting, clip, IBL) come from shared resources.
-    /// IBL texture slots fall back to placeholder textures when no environment map
-    /// is uploaded.
+    /// Per-viewport buffers (camera, clip planes, shadow info, clip volume) are
+    /// passed explicitly. Scene-global resources (lights, shadow atlas, IBL) come
+    /// from shared resources on `self`.
     ///
     /// NOTE: The initial bind group in `init.rs` is constructed inline (before
     /// `Self` exists). Keep the binding layout in sync when modifying either site.
@@ -471,6 +471,9 @@ impl ViewportGpuResources {
         &self,
         device: &wgpu::Device,
         camera_buf: &wgpu::Buffer,
+        clip_planes_buf: &wgpu::Buffer,
+        shadow_info_buf: &wgpu::Buffer,
+        clip_volume_buf: &wgpu::Buffer,
         label: &str,
     ) -> wgpu::BindGroup {
         let irr = self
@@ -512,15 +515,15 @@ impl ViewportGpuResources {
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: self.clip_planes_uniform_buf.as_entire_binding(),
+                    resource: clip_planes_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: self.shadow_info_buf.as_entire_binding(),
+                    resource: shadow_info_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 6,
-                    resource: self.clip_volume_uniform_buf.as_entire_binding(),
+                    resource: clip_volume_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 7,
@@ -676,6 +679,7 @@ impl ViewportGpuResources {
     /// for the given viewport size.  Call once per frame before the OIT pass.
     ///
     /// Early-returns immediately if the size is unchanged and all resources are present.
+    #[allow(dead_code)]
     pub(crate) fn ensure_oit_targets(&mut self, device: &wgpu::Device, w: u32, h: u32) {
         let w = w.max(1);
         let h = h.max(1);

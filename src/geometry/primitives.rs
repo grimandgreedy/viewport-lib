@@ -25,12 +25,12 @@ pub fn cube(size: f32) -> MeshData {
 
     // Build per-face flat normals
     let face_normals: [[f32; 3]; 6] = [
-        [ 0.0,  0.0,  1.0],
-        [ 0.0,  0.0, -1.0],
-        [ 0.0,  1.0,  0.0],
-        [ 0.0, -1.0,  0.0],
-        [ 1.0,  0.0,  0.0],
-        [-1.0,  0.0,  0.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, -1.0],
+        [0.0, 1.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
     ];
     let normals: Vec<[f32; 3]> = face_normals
         .iter()
@@ -45,7 +45,12 @@ pub fn cube(size: f32) -> MeshData {
         })
         .collect();
 
-    MeshData { positions, normals, indices, ..MeshData::default() }
+    MeshData {
+        positions,
+        normals,
+        indices,
+        ..MeshData::default()
+    }
 }
 
 /// UV sphere centered at the origin.
@@ -95,7 +100,12 @@ pub fn sphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
         }
     }
 
-    MeshData { positions, normals, indices, ..MeshData::default() }
+    MeshData {
+        positions,
+        normals,
+        indices,
+        ..MeshData::default()
+    }
 }
 
 /// Flat XZ plane centered at the origin.
@@ -107,14 +117,19 @@ pub fn plane(width: f32, depth: f32) -> MeshData {
 
     let positions = vec![
         [-hw, 0.0, -hd],
-        [ hw, 0.0, -hd],
-        [ hw, 0.0,  hd],
-        [-hw, 0.0,  hd],
+        [hw, 0.0, -hd],
+        [hw, 0.0, hd],
+        [-hw, 0.0, hd],
     ];
     let normals = vec![[0.0, 1.0, 0.0]; 4];
     let indices = vec![0, 2, 1, 0, 3, 2];
 
-    MeshData { positions, normals, indices, ..MeshData::default() }
+    MeshData {
+        positions,
+        normals,
+        indices,
+        ..MeshData::default()
+    }
 }
 
 /// Cylinder centered at the origin, axis along Y.
@@ -182,7 +197,12 @@ pub fn cylinder(radius: f32, height: f32, sectors: u32) -> MeshData {
         indices.extend_from_slice(&[top_center, top_rim_start + next, top_rim_start + j]);
     }
 
-    MeshData { positions, normals, indices, ..MeshData::default() }
+    MeshData {
+        positions,
+        normals,
+        indices,
+        ..MeshData::default()
+    }
 }
 
 /// Non-uniform box (cuboid) centered at the origin.
@@ -210,12 +230,12 @@ pub fn cuboid(width: f32, height: f32, depth: f32) -> MeshData {
     ];
 
     let face_normals: [[f32; 3]; 6] = [
-        [ 0.0,  0.0,  1.0],
-        [ 0.0,  0.0, -1.0],
-        [ 0.0,  1.0,  0.0],
-        [ 0.0, -1.0,  0.0],
-        [ 1.0,  0.0,  0.0],
-        [-1.0,  0.0,  0.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, -1.0],
+        [0.0, 1.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
     ];
     let normals: Vec<[f32; 3]> = face_normals
         .iter()
@@ -229,7 +249,12 @@ pub fn cuboid(width: f32, height: f32, depth: f32) -> MeshData {
         })
         .collect();
 
-    MeshData { positions, normals, indices, ..MeshData::default() }
+    MeshData {
+        positions,
+        normals,
+        indices,
+        ..MeshData::default()
+    }
 }
 
 /// Cone with tip at +Y and base at −Y, centered at the origin.
@@ -284,7 +309,12 @@ pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
         indices.extend_from_slice(&[bottom_center, rim_start + j, rim_start + next]);
     }
 
-    MeshData { positions, normals, indices, ..MeshData::default() }
+    MeshData {
+        positions,
+        normals,
+        indices,
+        ..MeshData::default()
+    }
 }
 
 /// Capsule (cylinder body with hemispherical caps) centered at the origin, axis along Y.
@@ -350,8 +380,12 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
         let k2 = bottom_off * cols;
         for j in 0..sectors {
             indices.extend_from_slice(&[
-                k1 + j, k1 + j + 1, k2 + j,
-                k1 + j + 1, k2 + j + 1, k2 + j,
+                k1 + j,
+                k1 + j + 1,
+                k2 + j,
+                k1 + j + 1,
+                k2 + j + 1,
+                k2 + j,
             ]);
         }
     }
@@ -368,7 +402,12 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
         }
     }
 
-    MeshData { positions, normals, indices, ..MeshData::default() }
+    MeshData {
+        positions,
+        normals,
+        indices,
+        ..MeshData::default()
+    }
 }
 
 /// Torus centered at the origin, lying in the XZ plane.
@@ -401,7 +440,11 @@ pub fn torus(major_radius: f32, minor_radius: f32, sectors: u32, stacks: u32) ->
             let ny = sin_theta;
             let nz = sin_phi * cos_theta;
 
-            positions.push([cx + minor_radius * nx, minor_radius * ny, cz + minor_radius * nz]);
+            positions.push([
+                cx + minor_radius * nx,
+                minor_radius * ny,
+                cz + minor_radius * nz,
+            ]);
             normals.push([nx, ny, nz]);
         }
     }
@@ -412,13 +455,22 @@ pub fn torus(major_radius: f32, minor_radius: f32, sectors: u32, stacks: u32) ->
         let k2 = k1 + cols;
         for j in 0..sectors {
             indices.extend_from_slice(&[
-                k1 + j, k1 + j + 1, k2 + j,
-                k1 + j + 1, k2 + j + 1, k2 + j,
+                k1 + j,
+                k1 + j + 1,
+                k2 + j,
+                k1 + j + 1,
+                k2 + j + 1,
+                k2 + j,
             ]);
         }
     }
 
-    MeshData { positions, normals, indices, ..MeshData::default() }
+    MeshData {
+        positions,
+        normals,
+        indices,
+        ..MeshData::default()
+    }
 }
 
 /// Icosphere centered at the origin (better tessellation than UV sphere; no pole pinching).
@@ -431,15 +483,40 @@ pub fn icosphere(radius: f32, subdivisions: u32) -> MeshData {
     let b = phi / norm;
 
     let mut verts: Vec<[f32; 3]> = vec![
-        [-a,  b,  0.0], [ a,  b,  0.0], [-a, -b,  0.0], [ a, -b,  0.0],
-        [ 0.0, -a,  b], [ 0.0,  a,  b], [ 0.0, -a, -b], [ 0.0,  a, -b],
-        [ b,  0.0, -a], [ b,  0.0,  a], [-b,  0.0, -a], [-b,  0.0,  a],
+        [-a, b, 0.0],
+        [a, b, 0.0],
+        [-a, -b, 0.0],
+        [a, -b, 0.0],
+        [0.0, -a, b],
+        [0.0, a, b],
+        [0.0, -a, -b],
+        [0.0, a, -b],
+        [b, 0.0, -a],
+        [b, 0.0, a],
+        [-b, 0.0, -a],
+        [-b, 0.0, a],
     ];
     let mut faces: Vec<[u32; 3]> = vec![
-        [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
-        [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
-        [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
-        [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
+        [0, 11, 5],
+        [0, 5, 1],
+        [0, 1, 7],
+        [0, 7, 10],
+        [0, 10, 11],
+        [1, 5, 9],
+        [5, 11, 4],
+        [11, 10, 2],
+        [10, 7, 6],
+        [7, 1, 8],
+        [3, 9, 4],
+        [3, 4, 2],
+        [3, 2, 6],
+        [3, 6, 8],
+        [3, 8, 9],
+        [4, 9, 5],
+        [2, 4, 11],
+        [6, 2, 10],
+        [8, 6, 7],
+        [9, 8, 1],
     ];
 
     for _ in 0..subdivisions {
@@ -458,10 +535,18 @@ pub fn icosphere(radius: f32, subdivisions: u32) -> MeshData {
     }
 
     let normals: Vec<[f32; 3]> = verts.clone();
-    let positions: Vec<[f32; 3]> = verts.iter().map(|v| [v[0] * radius, v[1] * radius, v[2] * radius]).collect();
+    let positions: Vec<[f32; 3]> = verts
+        .iter()
+        .map(|v| [v[0] * radius, v[1] * radius, v[2] * radius])
+        .collect();
     let indices: Vec<u32> = faces.iter().flat_map(|f| f.iter().copied()).collect();
 
-    MeshData { positions, normals, indices, ..MeshData::default() }
+    MeshData {
+        positions,
+        normals,
+        indices,
+        ..MeshData::default()
+    }
 }
 
 fn ico_midpoint(
@@ -470,7 +555,11 @@ fn ico_midpoint(
     a: u32,
     b: u32,
 ) -> u32 {
-    let key = if a < b { (a as u64) << 32 | b as u64 } else { (b as u64) << 32 | a as u64 };
+    let key = if a < b {
+        (a as u64) << 32 | b as u64
+    } else {
+        (b as u64) << 32 | a as u64
+    };
     if let Some(&idx) = cache.get(&key) {
         return idx;
     }
@@ -574,7 +663,12 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
         indices.extend_from_slice(&[hb_center, hb_rim + j, hb_rim + next]);
     }
 
-    MeshData { positions, normals, indices, ..MeshData::default() }
+    MeshData {
+        positions,
+        normals,
+        indices,
+        ..MeshData::default()
+    }
 }
 
 /// Flat disk in the XZ plane, centered at the origin, normal pointing +Y.
@@ -599,7 +693,12 @@ pub fn disk(radius: f32, sectors: u32) -> MeshData {
         indices.extend_from_slice(&[0, next + 1, j + 1]);
     }
 
-    MeshData { positions, normals, indices, ..MeshData::default() }
+    MeshData {
+        positions,
+        normals,
+        indices,
+        ..MeshData::default()
+    }
 }
 
 /// Camera frustum mesh for visualization.
@@ -615,13 +714,13 @@ pub fn frustum(fov_y: f32, aspect: f32, near: f32, far: f32) -> MeshData {
 
     // 8 corners
     let nbl = [-half_w_n, -half_h_n, -near];
-    let nbr = [ half_w_n, -half_h_n, -near];
-    let ntr = [ half_w_n,  half_h_n, -near];
-    let ntl = [-half_w_n,  half_h_n, -near];
+    let nbr = [half_w_n, -half_h_n, -near];
+    let ntr = [half_w_n, half_h_n, -near];
+    let ntl = [-half_w_n, half_h_n, -near];
     let fbl = [-half_w_f, -half_h_f, -far];
-    let fbr = [ half_w_f, -half_h_f, -far];
-    let ftr = [ half_w_f,  half_h_f, -far];
-    let ftl = [-half_w_f,  half_h_f, -far];
+    let fbr = [half_w_f, -half_h_f, -far];
+    let ftr = [half_w_f, half_h_f, -far];
+    let ftl = [-half_w_f, half_h_f, -far];
 
     // 6 faces as (v0, v1, v2, v3); normal from (v1-v0) × (v3-v0)
     let face_quads: [[[f32; 3]; 4]; 6] = [
@@ -639,15 +738,19 @@ pub fn frustum(fov_y: f32, aspect: f32, near: f32, far: f32) -> MeshData {
 
     for quad in &face_quads {
         let [v0, v1, _, v3] = quad;
-        let e1 = [v1[0]-v0[0], v1[1]-v0[1], v1[2]-v0[2]];
-        let e2 = [v3[0]-v0[0], v3[1]-v0[1], v3[2]-v0[2]];
+        let e1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
+        let e2 = [v3[0] - v0[0], v3[1] - v0[1], v3[2] - v0[2]];
         let nr = [
-            e1[1]*e2[2] - e1[2]*e2[1],
-            e1[2]*e2[0] - e1[0]*e2[2],
-            e1[0]*e2[1] - e1[1]*e2[0],
+            e1[1] * e2[2] - e1[2] * e2[1],
+            e1[2] * e2[0] - e1[0] * e2[2],
+            e1[0] * e2[1] - e1[1] * e2[0],
         ];
-        let len = (nr[0]*nr[0] + nr[1]*nr[1] + nr[2]*nr[2]).sqrt();
-        let n = if len > 0.0 { [nr[0]/len, nr[1]/len, nr[2]/len] } else { [0.0, 0.0, 1.0] };
+        let len = (nr[0] * nr[0] + nr[1] * nr[1] + nr[2] * nr[2]).sqrt();
+        let n = if len > 0.0 {
+            [nr[0] / len, nr[1] / len, nr[2] / len]
+        } else {
+            [0.0, 0.0, 1.0]
+        };
 
         let base = positions.len() as u32;
         for v in quad {
@@ -657,7 +760,12 @@ pub fn frustum(fov_y: f32, aspect: f32, near: f32, far: f32) -> MeshData {
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
-    MeshData { positions, normals, indices, ..MeshData::default() }
+    MeshData {
+        positions,
+        normals,
+        indices,
+        ..MeshData::default()
+    }
 }
 
 /// Hemisphere (upper half of a UV sphere) centered at the origin, dome facing +Y.
@@ -712,7 +820,12 @@ pub fn hemisphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
         indices.extend_from_slice(&[center, rim_start + j, rim_start + next]);
     }
 
-    MeshData { positions, normals, indices, ..MeshData::default() }
+    MeshData {
+        positions,
+        normals,
+        indices,
+        ..MeshData::default()
+    }
 }
 
 /// Flat ring (annulus) in the XZ plane, centered at the origin, normal pointing +Y.
@@ -745,7 +858,12 @@ pub fn ring(inner_radius: f32, outer_radius: f32, sectors: u32) -> MeshData {
         indices.extend_from_slice(&[i0, i1, o0, i1, o1, o0]);
     }
 
-    MeshData { positions, normals, indices, ..MeshData::default() }
+    MeshData {
+        positions,
+        normals,
+        indices,
+        ..MeshData::default()
+    }
 }
 
 /// Ellipsoid centered at the origin.
@@ -782,8 +900,12 @@ pub fn ellipsoid(rx: f32, ry: f32, rz: f32, sectors: u32, stacks: u32) -> MeshDa
             let nx = x / (rx * rx);
             let ny = y / (ry * ry);
             let nz = z / (rz * rz);
-            let len = (nx*nx + ny*ny + nz*nz).sqrt();
-            normals.push(if len > 0.0 { [nx/len, ny/len, nz/len] } else { [0.0, 1.0, 0.0] });
+            let len = (nx * nx + ny * ny + nz * nz).sqrt();
+            normals.push(if len > 0.0 {
+                [nx / len, ny / len, nz / len]
+            } else {
+                [0.0, 1.0, 0.0]
+            });
         }
     }
 
@@ -800,7 +922,12 @@ pub fn ellipsoid(rx: f32, ry: f32, rz: f32, sectors: u32, stacks: u32) -> MeshDa
         }
     }
 
-    MeshData { positions, normals, indices, ..MeshData::default() }
+    MeshData {
+        positions,
+        normals,
+        indices,
+        ..MeshData::default()
+    }
 }
 
 /// Helical spring centered at the origin, axis along Y.
@@ -831,7 +958,7 @@ pub fn spring(radius: f32, coil_radius: f32, turns: f32, sectors: u32) -> MeshDa
         let dtx = -radius * t.sin();
         let dty = pitch / std::f32::consts::TAU;
         let dtz = radius * t.cos();
-        let dt_len = (dtx*dtx + dty*dty + dtz*dtz).sqrt();
+        let dt_len = (dtx * dtx + dty * dty + dtz * dtz).sqrt();
         let (tx, ty, tz) = (dtx / dt_len, dty / dt_len, dtz / dt_len);
 
         // Principal normal: inward radial toward helix axis
@@ -853,7 +980,11 @@ pub fn spring(radius: f32, coil_radius: f32, turns: f32, sectors: u32) -> MeshDa
             let on_y = cp * pny + sp * by;
             let on_z = cp * pnz + sp * bz;
 
-            positions.push([cx + coil_radius * on_x, cy + coil_radius * on_y, cz + coil_radius * on_z]);
+            positions.push([
+                cx + coil_radius * on_x,
+                cy + coil_radius * on_y,
+                cz + coil_radius * on_z,
+            ]);
             normals.push([on_x, on_y, on_z]);
         }
     }
@@ -864,13 +995,22 @@ pub fn spring(radius: f32, coil_radius: f32, turns: f32, sectors: u32) -> MeshDa
         let k2 = k1 + cols;
         for sec in 0..sectors {
             indices.extend_from_slice(&[
-                k1 + sec, k1 + sec + 1, k2 + sec,
-                k1 + sec + 1, k2 + sec + 1, k2 + sec,
+                k1 + sec,
+                k1 + sec + 1,
+                k2 + sec,
+                k1 + sec + 1,
+                k2 + sec + 1,
+                k2 + sec,
             ]);
         }
     }
 
-    MeshData { positions, normals, indices, ..MeshData::default() }
+    MeshData {
+        positions,
+        normals,
+        indices,
+        ..MeshData::default()
+    }
 }
 
 /// Subdivided plane in the XZ plane, centered at the origin, normal pointing +Y.
@@ -907,7 +1047,12 @@ pub fn grid_plane(width: f32, depth: f32, cols: u32, rows: u32) -> MeshData {
         }
     }
 
-    MeshData { positions, normals, indices, ..MeshData::default() }
+    MeshData {
+        positions,
+        normals,
+        indices,
+        ..MeshData::default()
+    }
 }
 
 #[cfg(test)]
@@ -928,8 +1073,7 @@ mod tests {
                 continue;
             }
 
-            let avg_vertex_normal =
-                glam::Vec3::from_array(mesh.normals[ia])
+            let avg_vertex_normal = glam::Vec3::from_array(mesh.normals[ia])
                 + glam::Vec3::from_array(mesh.normals[ib])
                 + glam::Vec3::from_array(mesh.normals[ic]);
 
@@ -954,7 +1098,10 @@ mod tests {
             ("icosphere", icosphere(1.0, 2)),
             ("arrow", arrow(0.2, 0.4, 0.3, 24)),
             ("disk", disk(1.0, 24)),
-            ("frustum", frustum(std::f32::consts::FRAC_PI_4, 1.5, 0.1, 2.0)),
+            (
+                "frustum",
+                frustum(std::f32::consts::FRAC_PI_4, 1.5, 0.1, 2.0),
+            ),
             ("hemisphere", hemisphere(1.0, 24, 12)),
             ("ring", ring(0.5, 1.0, 24)),
             ("ellipsoid", ellipsoid(1.0, 0.75, 1.25, 24, 12)),

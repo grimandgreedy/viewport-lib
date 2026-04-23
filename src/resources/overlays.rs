@@ -177,8 +177,8 @@ impl ViewportGpuResources {
         wgpu::Buffer,
         wgpu::BindGroup,
     ) {
-        use bytemuck::cast_slice;
         use crate::interaction::clip_plane::plane_tangents;
+        use bytemuck::cast_slice;
 
         let (t1, t2) = plane_tangents(overlay.normal);
         let e = overlay.extent;
@@ -194,7 +194,9 @@ impl ViewportGpuResources {
 
         let vertices: Vec<OverlayVertex> = corners
             .iter()
-            .map(|p| OverlayVertex { position: p.to_array() })
+            .map(|p| OverlayVertex {
+                position: p.to_array(),
+            })
             .collect();
         // Two triangles: (0,1,2) and (0,2,3).
         let indices: Vec<u32> = vec![0, 1, 2, 0, 2, 3];
@@ -271,8 +273,8 @@ impl ViewportGpuResources {
         wgpu::Buffer,
         wgpu::BindGroup,
     ) {
-        use bytemuck::cast_slice;
         use crate::interaction::clip_plane::plane_tangents;
+        use bytemuck::cast_slice;
 
         let (t1, t2) = plane_tangents(overlay.normal);
         let e = overlay.extent;
@@ -291,20 +293,40 @@ impl ViewportGpuResources {
         // 4 border edges + 1 normal indicator = 10 vertices.
         let vertices: Vec<OverlayVertex> = vec![
             // Edge 0→1
-            OverlayVertex { position: c0.to_array() },
-            OverlayVertex { position: c1.to_array() },
+            OverlayVertex {
+                position: c0.to_array(),
+            },
+            OverlayVertex {
+                position: c1.to_array(),
+            },
             // Edge 1→2
-            OverlayVertex { position: c1.to_array() },
-            OverlayVertex { position: c2.to_array() },
+            OverlayVertex {
+                position: c1.to_array(),
+            },
+            OverlayVertex {
+                position: c2.to_array(),
+            },
             // Edge 2→3
-            OverlayVertex { position: c2.to_array() },
-            OverlayVertex { position: c3.to_array() },
+            OverlayVertex {
+                position: c2.to_array(),
+            },
+            OverlayVertex {
+                position: c3.to_array(),
+            },
             // Edge 3→0
-            OverlayVertex { position: c3.to_array() },
-            OverlayVertex { position: c0.to_array() },
+            OverlayVertex {
+                position: c3.to_array(),
+            },
+            OverlayVertex {
+                position: c0.to_array(),
+            },
             // Normal indicator
-            OverlayVertex { position: c.to_array() },
-            OverlayVertex { position: n_tip.to_array() },
+            OverlayVertex {
+                position: c.to_array(),
+            },
+            OverlayVertex {
+                position: n_tip.to_array(),
+            },
         ];
         let indices: Vec<u32> = (0..vertices.len() as u32).collect();
 

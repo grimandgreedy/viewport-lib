@@ -63,7 +63,11 @@ pub fn angular_rotation_from_cursor(
     // In Y-down screen space, CCW visual → negative cross2d → negative screen_angle,
     // so we negate to recover the positive world angle.
     let axis_z_cam = (camera_view * axis_world.extend(0.0)).z;
-    if axis_z_cam >= 0.0 { -screen_angle } else { screen_angle }
+    if axis_z_cam >= 0.0 {
+        -screen_angle
+    } else {
+        screen_angle
+    }
 }
 
 /// Compute the world-space translation vector from a pointer delta given an axis constraint.
@@ -83,8 +87,7 @@ pub fn constrained_translation(
     camera: &Camera,
     viewport_size: glam::Vec2,
 ) -> glam::Vec3 {
-    let pan_scale = 2.0 * camera.distance * (camera.fov_y / 2.0).tan()
-        / viewport_size.y.max(1.0);
+    let pan_scale = 2.0 * camera.distance * (camera.fov_y / 2.0).tan() / viewport_size.y.max(1.0);
     let camera_right = camera.right();
     let camera_up = camera.up();
 
@@ -158,10 +161,22 @@ pub fn constrained_scale(
                 let factor = (1.0 + pointer_delta.x * sensitivity).max(MIN_SCALE);
                 let mut scale = glam::Vec3::ONE;
                 match ax {
-                    GizmoAxis::X => { scale.y = factor; scale.z = factor; }
-                    GizmoAxis::Y => { scale.x = factor; scale.z = factor; }
-                    GizmoAxis::Z | GizmoAxis::None => { scale.x = factor; scale.y = factor; }
-                    _ => { scale.x = factor; scale.y = factor; }
+                    GizmoAxis::X => {
+                        scale.y = factor;
+                        scale.z = factor;
+                    }
+                    GizmoAxis::Y => {
+                        scale.x = factor;
+                        scale.z = factor;
+                    }
+                    GizmoAxis::Z | GizmoAxis::None => {
+                        scale.x = factor;
+                        scale.y = factor;
+                    }
+                    _ => {
+                        scale.x = factor;
+                        scale.y = factor;
+                    }
                 }
                 scale
             } else {
@@ -180,7 +195,8 @@ pub fn constrained_scale(
                 let axis_screen = tip_screen - base_screen;
                 let axis_screen_len = axis_screen.length();
                 let amount = if axis_screen_len > 1e-4 {
-                    pointer_delta.dot(axis_screen / axis_screen_len) / viewport_size.x.max(1.0) * 8.0
+                    pointer_delta.dot(axis_screen / axis_screen_len) / viewport_size.x.max(1.0)
+                        * 8.0
                 } else {
                     0.0
                 };

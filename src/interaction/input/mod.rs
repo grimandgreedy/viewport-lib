@@ -30,10 +30,10 @@ pub mod query;
 // New input pipeline modules
 /// Per-frame resolved action output.
 pub mod action_frame;
-/// High-level orbit/pan/zoom camera controller.
-pub mod controller;
 /// Per-frame viewport context.
 pub mod context;
+/// High-level orbit/pan/zoom camera controller.
+pub mod controller;
 /// Framework-agnostic viewport events.
 pub mod event;
 /// Named control presets.

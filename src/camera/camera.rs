@@ -47,7 +47,7 @@ pub struct Camera {
     pub distance: f32,
     /// Camera orientation as a unit quaternion.
     /// eye = center + orientation * (Vec3::Z * distance).
-    /// Identity = looking along -Z from +Z position (standard front view).
+    /// Identity = looking along -Z from +Z position (top view in a Z-up world).
     pub orientation: glam::Quat,
     /// Vertical field of view in radians.
     pub fov_y: f32,
@@ -172,8 +172,7 @@ impl Camera {
     /// Computes `pan_scale = 2 * distance * tan(fov_y/2) / viewport_height`
     /// then delegates to [`pan_world`](Self::pan_world).
     pub fn pan_pixels(&mut self, delta_pixels: glam::Vec2, viewport_height: f32) {
-        let pan_scale = 2.0 * self.distance * (self.fov_y / 2.0).tan()
-            / viewport_height.max(1.0);
+        let pan_scale = 2.0 * self.distance * (self.fov_y / 2.0).tan() / viewport_height.max(1.0);
         self.pan_world(delta_pixels.x * pan_scale, delta_pixels.y * pan_scale);
     }
 
@@ -518,7 +517,10 @@ mod tests {
             + cam.orientation.z * cam.orientation.z
             + cam.orientation.w * cam.orientation.w)
             .sqrt();
-        assert!((len - 1.0).abs() < 1e-5, "orientation should be normalized, len={len}");
+        assert!(
+            (len - 1.0).abs() < 1e-5,
+            "orientation should be normalized, len={len}"
+        );
     }
 
     #[test]
@@ -533,7 +535,10 @@ mod tests {
     fn test_set_aspect_ratio_zero_height() {
         let mut cam = Camera::default();
         cam.set_aspect_ratio(800.0, 0.0);
-        assert!((cam.aspect - 1.0).abs() < 1e-5, "zero height should produce aspect=1.0");
+        assert!(
+            (cam.aspect - 1.0).abs() < 1e-5,
+            "zero height should produce aspect=1.0"
+        );
     }
 
     #[test]
@@ -640,7 +645,10 @@ mod tests {
         let (expected_c, expected_d) = cam.fit_sphere(sphere_center, radius);
         cam.frame_sphere(sphere_center, radius);
         assert!((cam.center - expected_c).length() < 1e-5);
-        assert!((cam.distance - expected_d.clamp(Camera::MIN_DISTANCE, Camera::MAX_DISTANCE)).abs() < 1e-5);
+        assert!(
+            (cam.distance - expected_d.clamp(Camera::MIN_DISTANCE, Camera::MAX_DISTANCE)).abs()
+                < 1e-5
+        );
     }
 
     #[test]
@@ -653,7 +661,10 @@ mod tests {
         let (expected_c, expected_d) = cam.fit_aabb(&aabb);
         cam.frame_aabb(&aabb);
         assert!((cam.center - expected_c).length() < 1e-5);
-        assert!((cam.distance - expected_d.clamp(Camera::MIN_DISTANCE, Camera::MAX_DISTANCE)).abs() < 1e-5);
+        assert!(
+            (cam.distance - expected_d.clamp(Camera::MIN_DISTANCE, Camera::MAX_DISTANCE)).abs()
+                < 1e-5
+        );
     }
 
     #[test]

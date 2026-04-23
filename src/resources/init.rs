@@ -577,7 +577,11 @@ impl ViewportGpuResources {
         // ------------------------------------------------------------------
         let ibl_fallback_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("ibl_fallback_black"),
-            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -593,7 +597,11 @@ impl ViewportGpuResources {
         // Exists only to satisfy the bind group layout.
         let ibl_fallback_brdf_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("ibl_fallback_brdf"),
-            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -1078,12 +1086,11 @@ impl ViewportGpuResources {
                 count: None,
             }],
         });
-        let grid_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("grid_pipeline_layout"),
-                bind_group_layouts: &[&grid_bgl],
-                push_constant_ranges: &[],
-            });
+        let grid_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("grid_pipeline_layout"),
+            bind_group_layouts: &[&grid_bgl],
+            push_constant_ranges: &[],
+        });
         let grid_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("grid_pipeline"),
             layout: Some(&grid_pipeline_layout),
@@ -1457,6 +1464,52 @@ impl ViewportGpuResources {
                 cache: None,
             });
 
+        let stencil_write_two_sided_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("stencil_write_two_sided_pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::empty(),
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState {
+                        front: stencil_write_face,
+                        back: stencil_write_face,
+                        read_mask: 0xFF,
+                        write_mask: 0xFF,
+                    },
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            });
+
         // Pass 2: draw expanded silhouette ring where stencil != 1 (outline ring).
         // depth_compare=Always so ring always appears on top of occluding geometry.
         let outline_ring_face = wgpu::StencilFaceState {
@@ -1631,16 +1684,15 @@ impl ViewportGpuResources {
             gizmo_index_count,
             gizmo_uniform_buf,
             gizmo_bind_group,
+            gizmo_bind_group_layout: gizmo_bgl,
             overlay_pipeline,
             overlay_line_pipeline,
             grid_pipeline,
             grid_uniform_buf,
             grid_bind_group,
+            grid_bind_group_layout: grid_bgl,
             overlay_bind_group_layout: overlay_bgl,
             constraint_line_buffers: Vec::new(),
-            cap_buffers: Vec::new(),
-            clip_plane_fill_buffers: Vec::new(),
-            clip_plane_line_buffers: Vec::new(),
             axes_pipeline,
             axes_vertex_buffer,
             axes_vertex_count: 0,
@@ -1659,14 +1711,14 @@ impl ViewportGpuResources {
             fxaa_pipeline: None,
             fxaa_bgl: None,
             fxaa_bind_group: None,
+            fxaa_sampler: None,
             clip_planes_uniform_buf,
             clip_volume_uniform_buf,
             outline_bind_group_layout: outline_bgl,
             stencil_write_pipeline,
+            stencil_write_two_sided_pipeline,
             outline_pipeline,
             xray_pipeline,
-            outline_object_buffers: Vec::new(),
-            xray_object_buffers: Vec::new(),
             outline_color_texture: None,
             outline_color_view: None,
             outline_depth_texture: None,
@@ -1687,6 +1739,10 @@ impl ViewportGpuResources {
             shadow_instanced_pipeline: None,
             shadow_instanced_cascade_bufs: [None, None, None, None],
             shadow_instanced_cascade_bgs: [None, None, None, None],
+            // Post-processing shared infrastructure (None until ensure_hdr_shared is called).
+            bloom_bgl: None,
+            ssao_bgl: None,
+            ssao_blur_bgl: None,
             // Post-processing (all None until ensure_hdr_target is called).
             hdr_texture: None,
             hdr_view: None,

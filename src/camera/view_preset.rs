@@ -78,8 +78,12 @@ impl ViewPreset {
             Self::Bottom => glam::Quat::from_rotation_y(PI),
             Self::Isometric => {
                 // True isometric: yaw 45° around Z, then arctan(1/√2) ≈ 35.264° pitch.
+                // The negative pitch keeps the eye on the +Z side so the default
+                // isometric view sits above the XY plane in this Z-up world.
                 let iso_pitch = (1.0_f32 / 2.0_f32.sqrt()).atan();
-                glam::Quat::from_rotation_z(FRAC_PI_4) * front * glam::Quat::from_rotation_x(iso_pitch)
+                glam::Quat::from_rotation_z(FRAC_PI_4)
+                    * front
+                    * glam::Quat::from_rotation_x(-iso_pitch)
             }
         }
     }
@@ -149,6 +153,15 @@ mod tests {
                 b
             );
         }
+    }
+
+    #[test]
+    fn test_isometric_eye_is_above_xy_plane() {
+        let eye_dir = ViewPreset::Isometric.orientation() * glam::Vec3::Z;
+        assert!(
+            eye_dir.z > 0.0,
+            "isometric eye_dir = {eye_dir:?}, expected positive Z"
+        );
     }
 
     #[test]
