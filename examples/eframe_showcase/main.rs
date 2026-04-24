@@ -70,13 +70,16 @@
 
 use eframe::egui;
 use viewport_lib::{
-    AnnotationLabel, ButtonState, Camera, CameraAnimator, CameraFrame, ClipPlane, Easing,
-    FrameData, FrameStats, Gizmo, GizmoAxis, GizmoMode, GizmoSpace, LightKind, LightSource,
-    LightingSettings, Material, MeshData, MeshId, NodeId, OrbitCameraController, PickAccelerator,
-    PostProcessSettings, Projection, RenderCamera, SceneFrame, SceneRenderItem, ScrollUnits,
-    Selection, ShadowFilter, SnapConfig, ViewPreset, ViewportContext, ViewportEvent,
-    ViewportRenderer,
+    AnnotationLabel, AttributeKind, AttributeRef, BuiltinColormap, ButtonState, Camera,
+    CameraAnimator, CameraFrame, ClipAxis, ClipPlane, ClipPlaneController,
+    ColormapId, Easing, FrameData, FrameStats, Gizmo, GizmoAxis, GizmoMode, GizmoSpace,
+    GlyphType, LightKind, LightSource, LightingSettings, Material, MeshData, MeshId, NodeId,
+    OrbitCameraController, PickAccelerator, PostProcessSettings, Projection, RenderCamera,
+    SceneFrame, SceneRenderItem, ScrollUnits, Selection, ShadowFilter, SnapConfig, ViewPreset,
+    ViewportContext, ViewportEvent, ViewportRenderer, VolumeData, VolumeId,
+    geometry::isoline::IsolineItem,
     gizmo::{self, compute_gizmo_scale},
+    interaction::input::ActionFrame,
     scene::{LayerId, Scene},
 };
 
@@ -94,6 +97,11 @@ mod showcase_10_camera_tools;
 mod showcase_11_lights;
 mod showcase_12_scalar_fields;
 mod showcase_13_multi_viewport;
+mod showcase_14_isolines;
+mod showcase_15_point_clouds;
+mod showcase_16_streamlines;
+mod showcase_17_volume;
+mod showcase_18_clip_volumes;
 mod viewport_callback;
 
 const BG_COLOR: [f32; 4] = [0.08, 0.08, 0.10, 1.0];
@@ -301,6 +309,86 @@ fn main() -> eframe::Result {
                 mv_drag_accum_rotation: 0.0,
                 mv_drag_last_snapped_translation: glam::Vec3::ZERO,
                 mv_drag_last_snapped_rotation: 0.0,
+                iso_scene: Scene::new(),
+                iso_mesh_index: 0,
+                iso_positions: Vec::new(),
+                iso_indices: Vec::new(),
+                iso_scalars: Vec::new(),
+                iso_grid_resolution: 128,
+                iso_contour_count: 8,
+                iso_line_color: [1.0, 1.0, 0.2, 1.0],
+                iso_line_width: 1.5,
+                iso_show_surface_color: true,
+                iso_depth_bias: 0.005,
+                iso_built: false,
+                pc_built: false,
+                pc_sub_mode: PcSubMode::PointCloud,
+                pc_point_size: 4.0,
+                pc_colormap: BuiltinColormap::Viridis,
+                pc_scalar_range_manual: false,
+                pc_scalar_range: (2.6, 3.4),
+                pc_glyph_type: GlyphType::Arrow,
+                pc_glyph_scale: 1.0,
+                pc_glyph_magnitude_scale: true,
+                pc_cloud_positions: Vec::new(),
+                pc_cloud_scalars: Vec::new(),
+                pc_field_positions: Vec::new(),
+                pc_field_vectors: Vec::new(),
+                stream_built: false,
+                stream_use_tubes: false,
+                stream_tube_radius: 0.06,
+                stream_line_width: 4.0,
+                stream_color_by_speed: true,
+                stream_colormap: BuiltinColormap::Viridis,
+                stream_flat_color: [0.4, 0.7, 1.0, 1.0],
+                stream_seed_count: 32,
+                stream_step_size: 0.08,
+                stream_paths: Vec::new(),
+                stream_scalars: Vec::new(),
+                vol_built: false,
+                vol_volume_id: None,
+                vol_iso_mesh_index: None,
+                vol_field: VolumeData {
+                    data: Vec::new(),
+                    dims: [1, 1, 1],
+                    origin: [0.0; 3],
+                    spacing: [1.0; 3],
+                },
+                vol_mode: showcase_17_volume::VolumeMode::VolumeOnly,
+                vol_isovalue: 0.35,
+                vol_color_lut: BuiltinColormap::Viridis,
+                vol_opacity_scale: 1.0,
+                vol_threshold: (0.05, 1.0),
+                vol_step_scale: 1.0,
+                vol_shading: true,
+                vol_nan_on: false,
+                vol_iso_material: Material {
+                    base_color: [0.6, 0.8, 1.0],
+                    roughness: 0.4,
+                    metallic: 0.0,
+                    ..Material::default()
+                },
+                clipvol_scene: Scene::new(),
+                clipvol_built: false,
+                clipvol_sub_mode: showcase_18_clip_volumes::ClipVolSubMode::BoxClip,
+                clipvol_box_center: [0.0; 3],
+                clipvol_box_half_extents: [2.5, 2.5, 2.5],
+                clipvol_box_yaw: 0.0,
+                clipvol_sphere_center: [0.0; 3],
+                clipvol_sphere_radius: 2.8,
+                clipvol_plane: ClipPlane {
+                    normal: [0.0, 0.0, 1.0],
+                    distance: 0.0,
+                    enabled: true,
+                    cap_color: None,
+                },
+                clipvol_plane_controller: ClipPlaneController::new(),
+                clipvol_plane_axis: ClipAxis::Z,
+                clipvol_action_frame: ActionFrame::default(),
+                clipvol_pointer_delta: glam::Vec2::ZERO,
+                clipvol_cursor_in_viewport: false,
+                clipvol_drag_started: false,
+                clipvol_dragging: false,
             }))
         }),
     )
@@ -309,6 +397,13 @@ fn main() -> eframe::Result {
 // ---------------------------------------------------------------------------
 // Showcase mode
 // ---------------------------------------------------------------------------
+
+/// Sub-mode for Showcase 15 (Point Clouds & Glyphs).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PcSubMode {
+    PointCloud,
+    VectorField,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ShowcaseMode {
@@ -325,6 +420,11 @@ enum ShowcaseMode {
     Lights,
     ScalarFields,
     MultiViewport,
+    Isolines,
+    PointClouds,
+    Streamlines,
+    Volume,
+    ClipVolumes,
 }
 
 impl ShowcaseMode {
@@ -343,6 +443,11 @@ impl ShowcaseMode {
             Self::Lights => "11: Lights",
             Self::ScalarFields => "12: Scalar Fields",
             Self::MultiViewport => "13: Multi-Viewport",
+            Self::Isolines => "14: Isolines & Contours",
+            Self::PointClouds => "15: Point Clouds & Glyphs",
+            Self::Streamlines => "16: Streamlines & Tubes",
+            Self::Volume => "17: Volume & Isosurface",
+            Self::ClipVolumes => "18: Clip Volumes",
         }
     }
 }
@@ -499,6 +604,98 @@ pub(crate) struct App {
     mv_drag_accum_rotation: f32,
     mv_drag_last_snapped_translation: glam::Vec3,
     mv_drag_last_snapped_rotation: f32,
+
+    // --- Showcase 14 ---
+    pub(crate) iso_scene: Scene,
+    pub(crate) iso_mesh_index: usize,
+    /// CPU-side positions for IsolineItem re-submission.
+    pub(crate) iso_positions: Vec<[f32; 3]>,
+    /// CPU-side indices for IsolineItem re-submission.
+    pub(crate) iso_indices: Vec<u32>,
+    /// CPU-side scalar values for IsolineItem re-submission.
+    pub(crate) iso_scalars: Vec<f32>,
+    iso_grid_resolution: u32,
+    iso_contour_count: usize,
+    iso_line_color: [f32; 4],
+    iso_line_width: f32,
+    iso_show_surface_color: bool,
+    iso_depth_bias: f32,
+    pub(crate) iso_built: bool,
+
+    // --- Showcase 15 ---
+    pub(crate) pc_built: bool,
+    pc_sub_mode: PcSubMode,
+    pc_point_size: f32,
+    pc_colormap: BuiltinColormap,
+    pc_scalar_range_manual: bool,
+    pc_scalar_range: (f32, f32),
+    pc_glyph_type: GlyphType,
+    pc_glyph_scale: f32,
+    pc_glyph_magnitude_scale: bool,
+    /// CPU-side point cloud positions (generated once, submitted every frame).
+    pub(crate) pc_cloud_positions: Vec<[f32; 3]>,
+    /// CPU-side point cloud scalar values (one per point).
+    pub(crate) pc_cloud_scalars: Vec<f32>,
+    /// CPU-side vector field base positions.
+    pub(crate) pc_field_positions: Vec<[f32; 3]>,
+    /// CPU-side vector field direction+magnitude vectors.
+    pub(crate) pc_field_vectors: Vec<[f32; 3]>,
+
+    // --- Showcase 16 ---
+    pub(crate) stream_built: bool,
+    stream_use_tubes: bool,
+    stream_tube_radius: f32,
+    stream_line_width: f32,
+    stream_color_by_speed: bool,
+    stream_colormap: BuiltinColormap,
+    /// Flat RGBA color used when `stream_color_by_speed` is false, and as tube color.
+    stream_flat_color: [f32; 4],
+    stream_seed_count: usize,
+    stream_step_size: f32,
+    /// CPU-side streamline paths (one `Vec<[f32;3]>` per seed).
+    pub(crate) stream_paths: Vec<Vec<[f32; 3]>>,
+    /// Per-vertex speed values parallel to `stream_paths`.
+    pub(crate) stream_scalars: Vec<Vec<f32>>,
+
+    // --- Showcase 17 ---
+    pub(crate) vol_built: bool,
+    pub(crate) vol_volume_id: Option<VolumeId>,
+    pub(crate) vol_iso_mesh_index: Option<usize>,
+    /// CPU-side field kept for re-extraction on isovalue change.
+    pub(crate) vol_field: VolumeData,
+    vol_mode: showcase_17_volume::VolumeMode,
+    vol_isovalue: f32,
+    vol_color_lut: BuiltinColormap,
+    vol_opacity_scale: f32,
+    vol_threshold: (f32, f32),
+    vol_step_scale: f32,
+    vol_shading: bool,
+    vol_nan_on: bool,
+    vol_iso_material: Material,
+
+    // --- Showcase 18 ---
+    pub(crate) clipvol_scene: Scene,
+    pub(crate) clipvol_built: bool,
+    clipvol_sub_mode: showcase_18_clip_volumes::ClipVolSubMode,
+    clipvol_box_center: [f32; 3],
+    clipvol_box_half_extents: [f32; 3],
+    clipvol_box_yaw: f32,
+    clipvol_sphere_center: [f32; 3],
+    clipvol_sphere_radius: f32,
+    /// The clip plane used in interactive-plane sub-mode.
+    pub(crate) clipvol_plane: ClipPlane,
+    pub(crate) clipvol_plane_controller: ClipPlaneController,
+    clipvol_plane_axis: ClipAxis,
+    /// ActionFrame captured from the orbit controller each frame.
+    pub(crate) clipvol_action_frame: ActionFrame,
+    /// Pointer delta in viewport pixels, updated every frame.
+    pub(crate) clipvol_pointer_delta: glam::Vec2,
+    /// Whether the cursor is currently inside the viewport.
+    pub(crate) clipvol_cursor_in_viewport: bool,
+    /// True on the frame a primary drag starts (set in the event loop).
+    pub(crate) clipvol_drag_started: bool,
+    /// True while a primary drag is ongoing.
+    pub(crate) clipvol_dragging: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -558,6 +755,11 @@ impl eframe::App for App {
                     ShowcaseMode::Lights,
                     ShowcaseMode::ScalarFields,
                     ShowcaseMode::MultiViewport,
+                    ShowcaseMode::Isolines,
+                    ShowcaseMode::PointClouds,
+                    ShowcaseMode::Streamlines,
+                    ShowcaseMode::Volume,
+                    ShowcaseMode::ClipVolumes,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -608,9 +810,14 @@ impl eframe::App for App {
 
                 if let Some(pos) = i.pointer.interact_pos() {
                     let local = glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top());
+                    self.clipvol_pointer_delta = local - self.last_cursor_viewport;
                     self.last_cursor_viewport = local;
+                    self.clipvol_cursor_in_viewport = rect.contains(pos);
                     self.controller
                         .push_event(ViewportEvent::PointerMoved { position: local });
+                } else {
+                    self.clipvol_cursor_in_viewport = false;
+                    self.clipvol_pointer_delta = glam::Vec2::ZERO;
                 }
 
                 for event in &i.events {
@@ -738,13 +945,23 @@ impl eframe::App for App {
             }
 
             // ----- Apply / resolve orbit controller -----
-            if self.mode == ShowcaseMode::Interaction && self.gizmo_drag_active {
-                self.controller.resolve();
+            let suppress_orbit = (self.mode == ShowcaseMode::Interaction && self.gizmo_drag_active)
+                || (self.mode == ShowcaseMode::ClipVolumes
+                    && self.clipvol_sub_mode
+                        == showcase_18_clip_volumes::ClipVolSubMode::InteractivePlane
+                    && self.clipvol_plane_controller.is_active());
+            if suppress_orbit {
+                self.clipvol_action_frame = self.controller.resolve();
             } else {
-                self.controller.apply_to_camera(&mut self.camera);
+                self.clipvol_action_frame = self.controller.apply_to_camera(&mut self.camera);
             }
 
             self.camera.set_aspect_ratio(rect.width(), rect.height());
+
+            // ----- Clip plane controller drag state (Showcase 18) -----
+            self.clipvol_drag_started =
+                response.drag_started_by(egui::PointerButton::Primary);
+            self.clipvol_dragging = response.dragged_by(egui::PointerButton::Primary);
 
             // ----- Click-to-select -----
             // Only fires when the pointer was clicked (not dragged) and no gizmo drag ended.
@@ -817,7 +1034,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 13] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 18] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::Performance,
@@ -831,6 +1048,11 @@ impl App {
             ShowcaseMode::Lights,
             ShowcaseMode::ScalarFields,
             ShowcaseMode::MultiViewport,
+            ShowcaseMode::Isolines,
+            ShowcaseMode::PointClouds,
+            ShowcaseMode::Streamlines,
+            ShowcaseMode::Volume,
+            ShowcaseMode::ClipVolumes,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -864,6 +1086,11 @@ impl App {
             ShowcaseMode::Lights => !self.lights_built,
             ShowcaseMode::ScalarFields => !self.scalar_built,
             ShowcaseMode::MultiViewport => !self.mv_built || self.mv_viewports.is_none(),
+            ShowcaseMode::Isolines => !self.iso_built,
+            ShowcaseMode::PointClouds => !self.pc_built,
+            ShowcaseMode::Streamlines => !self.stream_built,
+            ShowcaseMode::Volume => !self.vol_built,
+            ShowcaseMode::ClipVolumes => !self.clipvol_built,
             _ => false,
         };
         if !needs {
@@ -978,6 +1205,56 @@ impl App {
                     self.build_mv_scene(renderer);
                 }
             }
+            ShowcaseMode::Isolines => {
+                self.build_iso_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 14.0,
+                    orientation: glam::Quat::from_rotation_z(0.3)
+                        * glam::Quat::from_rotation_x(0.8),
+                    ..Camera::default()
+                };
+            }
+            ShowcaseMode::PointClouds => {
+                self.build_pc_scene();
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 12.0,
+                    orientation: glam::Quat::from_rotation_z(0.6)
+                        * glam::Quat::from_rotation_x(1.1),
+                    ..Camera::default()
+                };
+            }
+            ShowcaseMode::Streamlines => {
+                self.build_stream_scene();
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 10.0,
+                    orientation: glam::Quat::from_rotation_z(0.5)
+                        * glam::Quat::from_rotation_x(1.0),
+                    ..Camera::default()
+                };
+            }
+            ShowcaseMode::Volume => {
+                self.build_volume_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 12.0,
+                    orientation: glam::Quat::from_rotation_z(0.6)
+                        * glam::Quat::from_rotation_x(1.1),
+                    ..Camera::default()
+                };
+            }
+            ShowcaseMode::ClipVolumes => {
+                self.build_clipvol_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 14.0,
+                    orientation: glam::Quat::from_rotation_z(0.6)
+                        * glam::Quat::from_rotation_x(1.1),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -1006,6 +1283,11 @@ impl App {
             ShowcaseMode::Lights => self.controls_lights(ui),
             ShowcaseMode::ScalarFields => self.controls_scalar_fields(ui),
             ShowcaseMode::MultiViewport => self.controls_mv(ui),
+            ShowcaseMode::Isolines => self.controls_isolines(ui),
+            ShowcaseMode::PointClouds => self.controls_point_clouds(ui),
+            ShowcaseMode::Streamlines => self.controls_streamlines(ui),
+            ShowcaseMode::Volume => self.controls_volume(ui, frame),
+            ShowcaseMode::ClipVolumes => self.controls_clipvol(ui),
         }
     }
 
@@ -1817,6 +2099,60 @@ impl App {
             }
         });
     }
+
+    fn controls_isolines(&mut self, ui: &mut egui::Ui) {
+        ui.label("Mesh resolution:");
+        let res_resp = ui.add(
+            egui::Slider::new(&mut self.iso_grid_resolution, 16..=256)
+                .text("quads/side")
+                .logarithmic(true),
+        );
+        if res_resp.drag_stopped() || res_resp.lost_focus() {
+            self.iso_built = false;
+        }
+
+        ui.separator();
+        ui.label("Contour levels:");
+        ui.add(egui::Slider::new(&mut self.iso_contour_count, 2..=20).text("levels"));
+
+        ui.separator();
+
+        ui.label("Line color:");
+        let mut color = egui::Color32::from_rgba_unmultiplied(
+            (self.iso_line_color[0] * 255.0) as u8,
+            (self.iso_line_color[1] * 255.0) as u8,
+            (self.iso_line_color[2] * 255.0) as u8,
+            (self.iso_line_color[3] * 255.0) as u8,
+        );
+        if ui.color_edit_button_srgba(&mut color).changed() {
+            let [r, g, b, a] = color.to_array();
+            self.iso_line_color = [
+                r as f32 / 255.0,
+                g as f32 / 255.0,
+                b as f32 / 255.0,
+                a as f32 / 255.0,
+            ];
+        }
+
+        ui.separator();
+
+        ui.label("Line width (px):");
+        ui.add(egui::Slider::new(&mut self.iso_line_width, 0.5..=5.0).step_by(0.25));
+
+        ui.separator();
+
+        ui.checkbox(&mut self.iso_show_surface_color, "Surface scalar coloring");
+        ui.label("(grey when off, wave-colored when on)");
+
+        ui.separator();
+
+        ui.label("Depth bias:");
+        ui.add(
+            egui::Slider::new(&mut self.iso_depth_bias, 0.0..=0.05)
+                .step_by(0.001)
+                .text("(z-fighting offset)"),
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2097,6 +2433,91 @@ impl App {
             ShowcaseMode::MultiViewport => {
                 unreachable!("MultiViewport is handled before build_frame_data")
             }
+            ShowcaseMode::Isolines => {
+                let mut items = self.iso_scene.collect_render_items(&Selection::new());
+                // Apply scalar coloring or flat grey depending on toggle.
+                if self.iso_show_surface_color {
+                    for item in items.iter_mut() {
+                        item.active_attribute = Some(AttributeRef {
+                            name: "wave".to_string(),
+                            kind: AttributeKind::Vertex,
+                        });
+                        item.colormap_id =
+                            Some(ColormapId(BuiltinColormap::Coolwarm as usize));
+                        item.two_sided = true;
+                    }
+                } else {
+                    for item in items.iter_mut() {
+                        item.two_sided = true;
+                    }
+                }
+                let sg = self.iso_scene.version();
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.5,
+                    sky_color: [1.0, 1.0, 1.0],
+                    ground_color: [1.0, 1.0, 1.0],
+                    ..LightingSettings::default()
+                };
+                (items, Some(BG_COLOR), lighting, sg, 0)
+            }
+
+            ShowcaseMode::PointClouds => {
+                let lighting = App::pc_lighting();
+                (App::pc_surface_items(), Some(BG_COLOR), lighting, 0, 0)
+            }
+
+            ShowcaseMode::Streamlines => {
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.5,
+                    sky_color: [1.0, 1.0, 1.0],
+                    ground_color: [1.0, 1.0, 1.0],
+                    ..LightingSettings::default()
+                };
+                (vec![], Some(BG_COLOR), lighting, 0, 0)
+            }
+
+            ShowcaseMode::Volume => {
+                // Isosurface mesh items go into surface_items when visible.
+                let surface_items = if self.vol_mode != showcase_17_volume::VolumeMode::VolumeOnly {
+                    self.make_iso_surface_item()
+                        .into_iter()
+                        .collect()
+                } else {
+                    vec![]
+                };
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.6,
+                    sky_color: [1.0, 1.0, 1.0],
+                    ground_color: [0.8, 0.8, 0.8],
+                    ..LightingSettings::default()
+                };
+                (surface_items, Some(BG_COLOR), lighting, 0, 0)
+            }
+
+            ShowcaseMode::ClipVolumes => {
+                let mut items = self.clipvol_scene.collect_render_items(&Selection::new());
+                for item in items.iter_mut() {
+                    item.two_sided = true;
+                }
+                let sg = self.clipvol_scene.version();
+                let lighting = LightingSettings {
+                    lights: vec![
+                        LightSource {
+                            kind: LightKind::Directional {
+                                direction: [0.5, 0.3, 1.2],
+                            },
+                            intensity: 1.8,
+                            ..LightSource::default()
+                        },
+                    ],
+                    hemisphere_intensity: 0.4,
+                    sky_color: [1.0, 1.0, 1.0],
+                    ground_color: [0.8, 0.8, 0.8],
+                    ..LightingSettings::default()
+                };
+                (items, Some(BG_COLOR), lighting, sg, 0)
+            }
+
             ShowcaseMode::ScalarFields => {
                 const ATTR_NAMES: [&str; 3] = ["height", "wave", "distance"];
                 let mut items = self
@@ -2193,6 +2614,80 @@ impl App {
         fd.interaction.xray_selected = adv_xray;
         fd.scene.generation = scene_gen;
         fd.interaction.selection_generation = sel_gen;
+
+        // Volume item (Showcase 17) — submitted every frame when in volume mode.
+        if self.mode == ShowcaseMode::Volume
+            && self.vol_built
+            && self.vol_mode != showcase_17_volume::VolumeMode::IsosurfaceOnly
+        {
+            if let Some(vol_item) = self.make_volume_item() {
+                fd.scene.volumes.push(vol_item);
+            }
+        }
+
+        // Clip volume (Showcase 18) — set every frame, update interactive plane controller.
+        if self.mode == ShowcaseMode::ClipVolumes && self.clipvol_built {
+            fd.effects.clip_volume = self.make_clipvol();
+            if self.clipvol_sub_mode
+                == showcase_18_clip_volumes::ClipVolSubMode::InteractivePlane
+            {
+                let vp_size = glam::Vec2::new(w, h);
+                if let Some(overlay) = self.update_clipvol_controller(vp_size) {
+                    fd.interaction.clip_plane_overlays.push(overlay);
+                }
+            }
+        }
+
+        // Streamline / tube items (Showcase 16) — submitted every frame.
+        if self.mode == ShowcaseMode::Streamlines && self.stream_built {
+            if self.stream_use_tubes {
+                fd.scene.streamtube_items.push(self.make_stream_tube_item());
+            } else {
+                fd.scene.polylines.push(self.make_stream_polyline_item());
+            }
+        }
+
+        // Point cloud / glyph items (Showcase 15) — submitted every frame.
+        if self.mode == ShowcaseMode::PointClouds && self.pc_built {
+            use crate::PcSubMode;
+            match self.pc_sub_mode {
+                PcSubMode::PointCloud => {
+                    fd.scene.point_clouds.push(self.make_pc_point_cloud_item());
+                }
+                PcSubMode::VectorField => {
+                    fd.scene.glyphs.push(self.make_pc_glyph_item());
+                }
+            }
+        }
+
+        // Isoline items (Showcase 14) — submitted every frame with current settings.
+        if self.mode == ShowcaseMode::Isolines && self.iso_built {
+            let scalar_min = self
+                .iso_scalars
+                .iter()
+                .cloned()
+                .fold(f32::INFINITY, f32::min);
+            let scalar_max = self
+                .iso_scalars
+                .iter()
+                .cloned()
+                .fold(f32::NEG_INFINITY, f32::max);
+            let range = scalar_max - scalar_min;
+            let isovalues: Vec<f32> = (0..self.iso_contour_count)
+                .map(|i| {
+                    scalar_min + range * (i as f32 + 1.0) / (self.iso_contour_count as f32 + 1.0)
+                })
+                .collect();
+            let mut iso_item = IsolineItem::default();
+            iso_item.positions = self.iso_positions.clone();
+            iso_item.indices = self.iso_indices.clone();
+            iso_item.scalars = self.iso_scalars.clone();
+            iso_item.isovalues = isovalues;
+            iso_item.color = self.iso_line_color;
+            iso_item.line_width = self.iso_line_width;
+            iso_item.depth_bias = self.iso_depth_bias;
+            fd.scene.isolines.push(iso_item);
+        }
 
         // Post-process settings (Showcases 6–8).
         // Note: the full HDR pipeline uses renderer.render() which requires direct
