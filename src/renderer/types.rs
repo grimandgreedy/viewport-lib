@@ -1597,18 +1597,19 @@ macro_rules! emit_scivis_draw_calls {
             }
         }
 
-        // Polyline pass (stream tracers — rendered after point clouds and glyphs).
+        // Polyline pass — screen-space thick lines via instanced quad expansion.
+        // Each segment instance is drawn as 6 vertices (2 triangles).
         if !$polyline_gpu_data.is_empty() {
             if let Some(ref pipeline) = resources.polyline_pipeline {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for pl in $polyline_gpu_data.iter() {
+                    if pl.segment_count == 0 {
+                        continue;
+                    }
                     render_pass.set_bind_group(1, &pl.bind_group, &[]);
                     render_pass.set_vertex_buffer(0, pl.vertex_buffer.slice(..));
-                    // Draw each individual streamline strip separately.
-                    for range in &pl.strip_ranges {
-                        render_pass.draw(range.clone(), 0..1);
-                    }
+                    render_pass.draw(0..6, 0..pl.segment_count);
                 }
             }
         }
@@ -1628,20 +1629,20 @@ macro_rules! emit_scivis_draw_calls {
             }
         }
 
-        // Streamtube pass (SciVis Phase M — instanced cylinders along polyline strips).
+        // Streamtube pass (SciVis Phase M — connected tube mesh per strip set).
         if !$streamtube_gpu_data.is_empty() {
             if let Some(ref pipeline) = resources.streamtube_pipeline {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for tube in $streamtube_gpu_data.iter() {
+                    if tube.index_count == 0 { continue; }
                     render_pass.set_bind_group(1, &tube.uniform_bind_group, &[]);
-                    render_pass.set_bind_group(2, &tube.instance_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, tube.mesh_vertex_buffer.slice(..));
+                    render_pass.set_vertex_buffer(0, tube.vertex_buffer.slice(..));
                     render_pass.set_index_buffer(
-                        tube.mesh_index_buffer.slice(..),
+                        tube.index_buffer.slice(..),
                         wgpu::IndexFormat::Uint32,
                     );
-                    render_pass.draw_indexed(0..tube.mesh_index_count, 0, 0..tube.instance_count);
+                    render_pass.draw_indexed(0..tube.index_count, 0, 0..1);
                 }
             }
         }

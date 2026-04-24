@@ -656,13 +656,14 @@ impl ViewportRenderer {
         // SciVis Phase M8 — polyline GPU data upload.
         // ------------------------------------------------------------------
         self.polyline_gpu_data.clear();
+        let vp_size = frame.camera.viewport_size;
         if !frame.scene.polylines.is_empty() {
             resources.ensure_polyline_pipeline(device);
             for item in &frame.scene.polylines {
                 if item.positions.is_empty() {
                     continue;
                 }
-                let gpu_data = resources.upload_polyline(device, queue, item);
+                let gpu_data = resources.upload_polyline(device, queue, item, vp_size);
                 self.polyline_gpu_data.push(gpu_data);
             }
         }
@@ -690,7 +691,7 @@ impl ViewportRenderer {
                     line_width: item.line_width,
                     id: 0,
                 };
-                let gpu_data = resources.upload_polyline(device, queue, &polyline);
+                let gpu_data = resources.upload_polyline(device, queue, &polyline, vp_size);
                 self.polyline_gpu_data.push(gpu_data);
             }
         }
@@ -706,7 +707,7 @@ impl ViewportRenderer {
                     continue;
                 }
                 let gpu_data = resources.upload_streamtube(device, queue, item);
-                if gpu_data.instance_count > 0 {
+                if gpu_data.index_count > 0 {
                     self.streamtube_gpu_data.push(gpu_data);
                 }
             }

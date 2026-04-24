@@ -751,14 +751,10 @@ pub struct PointCloudGpuData {
 
 /// Per-frame GPU data for one polyline item, created in `prepare()`.
 pub struct PolylineGpuData {
-    /// Interleaved vertex buffer: `[x, y, z, scalar]` per vertex (16 bytes).
+    /// Instance buffer: `[xa, ya, za, xb, yb, zb, scalar_a, scalar_b]` per segment (32 bytes).
     pub(crate) vertex_buffer: wgpu::Buffer,
-    /// Number of vertices in the concatenated buffer.
-    #[allow(dead_code)]
-    pub(crate) vertex_count: u32,
-    /// Byte-offset ranges for each individual strip (streamline) in the vertex buffer.
-    /// Each range is in *vertex* units (not bytes): `start..end` for `draw(start..end, 0..1)`.
-    pub(crate) strip_ranges: Vec<std::ops::Range<u32>>,
+    /// Number of line segments (instances).  Draw call: `draw(0..6, 0..segment_count)`.
+    pub(crate) segment_count: u32,
     /// Bind group (group 1): uniform + LUT texture + sampler.
     pub(crate) bind_group: wgpu::BindGroup,
     // Keep the uniform buffer alive for the lifetime of this struct.
@@ -787,23 +783,20 @@ pub struct GlyphGpuData {
 }
 
 /// Per-frame GPU data for one streamtube item, created in `prepare()`.
+///
+/// The connected tube mesh (vertices + indices) is generated CPU-side for the
+/// entire item (all strips) and uploaded as a single owned buffer pair.
 pub struct StreamtubeGpuData {
-    /// Vertex buffer for the cylinder base mesh (borrowed from cached mesh).
-    /// Safety: the mesh lives as long as `ViewportGpuResources`.
-    pub(crate) mesh_vertex_buffer: &'static wgpu::Buffer,
-    /// Index buffer for the cylinder base mesh.
-    pub(crate) mesh_index_buffer: &'static wgpu::Buffer,
-    /// Number of mesh indices.
-    pub(crate) mesh_index_count: u32,
-    /// Number of cylinder segment instances.
-    pub(crate) instance_count: u32,
+    /// Owned vertex buffer for the connected tube mesh (world-space positions + normals).
+    pub(crate) vertex_buffer: wgpu::Buffer,
+    /// Owned index buffer for the connected tube mesh.
+    pub(crate) index_buffer: wgpu::Buffer,
+    /// Number of indices to draw.
+    pub(crate) index_count: u32,
     /// Bind group (group 1): tube uniform (color, radius).
     pub(crate) uniform_bind_group: wgpu::BindGroup,
-    /// Bind group (group 2): per-instance storage buffer.
-    pub(crate) instance_bind_group: wgpu::BindGroup,
-    // Keep buffers alive.
+    // Keep uniform buffer alive.
     pub(crate) _uniform_buf: wgpu::Buffer,
-    pub(crate) _instance_buf: wgpu::Buffer,
 }
 
 /// Per-frame GPU data for one volume item, created in `prepare()`.
@@ -1259,10 +1252,6 @@ pub struct ViewportGpuResources {
     pub(crate) streamtube_pipeline: Option<wgpu::RenderPipeline>,
     /// Bind group layout for streamtube uniforms (group 1).
     pub(crate) streamtube_bgl: Option<wgpu::BindGroupLayout>,
-    /// Bind group layout for streamtube instance storage (group 2).
-    pub(crate) streamtube_instance_bgl: Option<wgpu::BindGroupLayout>,
-    /// Cached 8-sided cylinder mesh used for all streamtube instances.
-    pub(crate) streamtube_cylinder_mesh: Option<GlyphBaseMesh>,
 
     // --- SciVis Phase D: volume rendering (lazily created) ---
     /// Uploaded 3D volume textures. Index = VolumeId value.

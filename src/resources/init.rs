@@ -1826,8 +1826,6 @@ impl ViewportGpuResources {
             polyline_bgl: None,
             streamtube_pipeline: None,
             streamtube_bgl: None,
-            streamtube_instance_bgl: None,
-            streamtube_cylinder_mesh: None,
             compute_filter_pipeline: None,
             compute_filter_bgl: None,
             oit_accum_texture: None,

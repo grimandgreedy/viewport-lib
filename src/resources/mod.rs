@@ -17,7 +17,7 @@ mod volumes;
 
 pub use self::extra_impls::{ComputeFilterResult, lerp_attributes};
 use self::extra_impls::{
-    build_glyph_arrow, build_glyph_sphere, build_streamtube_cylinder, build_unit_cube,
+    build_glyph_arrow, build_glyph_sphere, build_unit_cube,
     generate_edge_indices,
 };
 pub use self::types::{

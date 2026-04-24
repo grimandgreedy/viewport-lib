@@ -280,7 +280,7 @@ impl ViewportGpuResources {
         }
     }
 
-    /// Lazily create the polyline render pipeline (LineStrip topology).
+    /// Lazily create the polyline render pipeline (instanced TriangleList — screen-space thick lines).
     ///
     /// No-op if already created. Called from `prepare()` when `frame.scene.polylines` is non-empty.
     pub(crate) fn ensure_polyline_pipeline(&mut self, device: &wgpu::Device) {
@@ -331,20 +331,27 @@ impl ViewportGpuResources {
             push_constant_ranges: &[],
         });
 
-        let pl_vertex_layout = wgpu::VertexBufferLayout {
-            array_stride: 16,
-            step_mode: wgpu::VertexStepMode::Vertex,
+        // Instance buffer layout (64 bytes per segment):
+        //   offset  0: pos_a    vec3  — segment start (world space)
+        //   offset 12: pos_b    vec3  — segment end   (world space)
+        //   offset 24: prev_pos vec3  — point before pos_a (for miter at A); equals pos_a if strip start
+        //   offset 36: next_pos vec3  — point after  pos_b (for miter at B); equals pos_b if strip end
+        //   offset 48: scalar_a f32
+        //   offset 52: scalar_b f32
+        //   offset 56: has_prev u32   — 1 = prev_pos is valid (interior join at A), 0 = square cap
+        //   offset 60: has_next u32   — 1 = next_pos is valid (interior join at B), 0 = square cap
+        let pl_instance_layout = wgpu::VertexBufferLayout {
+            array_stride: 64,
+            step_mode: wgpu::VertexStepMode::Instance,
             attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: 12,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32,
-                },
+                wgpu::VertexAttribute { offset:  0, shader_location: 0, format: wgpu::VertexFormat::Float32x3 }, // pos_a
+                wgpu::VertexAttribute { offset: 12, shader_location: 1, format: wgpu::VertexFormat::Float32x3 }, // pos_b
+                wgpu::VertexAttribute { offset: 24, shader_location: 2, format: wgpu::VertexFormat::Float32x3 }, // prev_pos
+                wgpu::VertexAttribute { offset: 36, shader_location: 3, format: wgpu::VertexFormat::Float32x3 }, // next_pos
+                wgpu::VertexAttribute { offset: 48, shader_location: 4, format: wgpu::VertexFormat::Float32   }, // scalar_a
+                wgpu::VertexAttribute { offset: 52, shader_location: 5, format: wgpu::VertexFormat::Float32   }, // scalar_b
+                wgpu::VertexAttribute { offset: 56, shader_location: 6, format: wgpu::VertexFormat::Uint32    }, // has_prev
+                wgpu::VertexAttribute { offset: 60, shader_location: 7, format: wgpu::VertexFormat::Uint32    }, // has_next
             ],
         };
 
@@ -354,7 +361,7 @@ impl ViewportGpuResources {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[pl_vertex_layout],
+                buffers: &[pl_instance_layout],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -368,8 +375,7 @@ impl ViewportGpuResources {
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineStrip,
-                strip_index_format: None,
+                topology: wgpu::PrimitiveTopology::TriangleList,
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -393,41 +399,89 @@ impl ViewportGpuResources {
 
     /// Upload one [`PolylineItem`] to the GPU and return draw data.
     ///
-    /// Called from `prepare()` for each non-empty item in `frame.scene.polylines`.
+    /// Converts the strip-based point list into a flat segment-instance buffer
+    /// suitable for the screen-space thick-line pipeline with miter joints.
+    ///
+    /// Each consecutive pair of points in a strip becomes one 64-byte instance:
+    /// `[pos_a, pos_b, prev_pos, next_pos, scalar_a, scalar_b, has_prev, has_next]`
+    ///
+    /// `prev_pos`/`next_pos` are the adjacent points used to compute miter join
+    /// directions at each endpoint. At strip endpoints (no adjacent point), the
+    /// endpoint itself is repeated and `has_prev`/`has_next` = 0, which tells the
+    /// shader to use a square cap instead of a miter.
+    ///
+    /// `viewport_size` is `[width_px, height_px]` and is baked into the per-item
+    /// uniform so the vertex shader can compute correct pixel offsets.
     pub(crate) fn upload_polyline(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         item: &crate::renderer::PolylineItem,
+        viewport_size: [f32; 2],
     ) -> PolylineGpuData {
-        let vertex_count = item.positions.len() as u32;
-
-        let mut raw_verts: Vec<f32> = Vec::with_capacity(item.positions.len() * 4);
-        for (i, pos) in item.positions.iter().enumerate() {
-            raw_verts.push(pos[0]);
-            raw_verts.push(pos[1]);
-            raw_verts.push(pos[2]);
-            raw_verts.push(item.scalars.get(i).copied().unwrap_or(0.0));
+        // Build the segment instance buffer (64 bytes per segment).
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct SegInstance {
+            pos_a:    [f32; 3],
+            pos_b:    [f32; 3],
+            prev_pos: [f32; 3],
+            next_pos: [f32; 3],
+            scalar_a: f32,
+            scalar_b: f32,
+            has_prev: u32,
+            has_next: u32,
         }
-        let vert_bytes: &[u8] = bytemuck::cast_slice(&raw_verts);
+
+        let mut instances: Vec<SegInstance> = Vec::new();
+
+        let emit_strip = |instances: &mut Vec<SegInstance>,
+                          positions: &[[f32; 3]],
+                          scalars: &[f32],
+                          offset: usize,
+                          len: usize| {
+            let end = (offset + len).min(positions.len());
+            for i in offset..end.saturating_sub(1) {
+                let j = i + 1;
+                let has_prev = i > offset;
+                let has_next = j + 1 < end;
+                instances.push(SegInstance {
+                    pos_a:    positions[i],
+                    pos_b:    positions[j],
+                    prev_pos: if has_prev { positions[i - 1] } else { positions[i] },
+                    next_pos: if has_next { positions[j + 1] } else { positions[j] },
+                    scalar_a: scalars.get(i).copied().unwrap_or(0.0),
+                    scalar_b: scalars.get(j).copied().unwrap_or(0.0),
+                    has_prev: has_prev as u32,
+                    has_next: has_next as u32,
+                });
+            }
+        };
+
+        if item.strip_lengths.is_empty() {
+            emit_strip(&mut instances, &item.positions, &item.scalars,
+                       0, item.positions.len());
+        } else {
+            let mut offset = 0usize;
+            for &len in &item.strip_lengths {
+                emit_strip(&mut instances, &item.positions, &item.scalars,
+                           offset, len as usize);
+                offset += len as usize;
+            }
+        }
+
+        let seg_count = instances.len() as u32;
+
+        // Allocate instance buffer (min 64 bytes so wgpu doesn't complain on empty).
+        let seg_bytes: &[u8] = bytemuck::cast_slice(&instances);
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("polyline_vertex_buf"),
-            size: vert_bytes.len().max(16) as u64,
+            size: seg_bytes.len().max(64) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        queue.write_buffer(&vertex_buffer, 0, vert_bytes);
-
-        let mut strip_ranges: Vec<std::ops::Range<u32>> = Vec::new();
-        let mut offset: u32 = 0;
-        for &len in &item.strip_lengths {
-            if len >= 2 {
-                strip_ranges.push(offset..offset + len);
-            }
-            offset += len;
-        }
-        if item.strip_lengths.is_empty() && vertex_count >= 2 {
-            strip_ranges.push(0..vertex_count);
+        if !seg_bytes.is_empty() {
+            queue.write_buffer(&vertex_buffer, 0, seg_bytes);
         }
 
         let (has_scalar, scalar_min, scalar_max) = if !item.scalars.is_empty() {
@@ -448,12 +502,14 @@ impl ViewportGpuResources {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct PolylineUniform {
-            default_color: [f32; 4],
-            line_width: f32,
-            scalar_min: f32,
-            scalar_max: f32,
-            has_scalar: u32,
-            _pad: [f32; 4],
+            default_color:   [f32; 4],  // offset  0
+            line_width:      f32,       // offset 16
+            scalar_min:      f32,       // offset 20
+            scalar_max:      f32,       // offset 24
+            has_scalar:      u32,       // offset 28
+            viewport_width:  f32,       // offset 32
+            viewport_height: f32,       // offset 36
+            _pad:            [f32; 2],  // offset 40  (total 48 bytes)
         }
         let uniform_data = PolylineUniform {
             default_color: item.default_color,
@@ -461,7 +517,9 @@ impl ViewportGpuResources {
             scalar_min,
             scalar_max,
             has_scalar,
-            _pad: [0.0; 4],
+            viewport_width:  viewport_size[0].max(1.0),
+            viewport_height: viewport_size[1].max(1.0),
+            _pad: [0.0; 2],
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("polyline_uniform_buf"),
@@ -508,8 +566,7 @@ impl ViewportGpuResources {
 
         PolylineGpuData {
             vertex_buffer,
-            vertex_count,
-            strip_ranges,
+            segment_count: seg_count,
             bind_group,
             _uniform_buf: uniform_buf,
         }
@@ -862,7 +919,7 @@ impl ViewportGpuResources {
         }
     }
 
-    /// Lazily create the streamtube render pipeline (instanced cylinder TriangleList).
+    /// Lazily create the streamtube render pipeline (connected tube mesh, TriangleList).
     ///
     /// No-op if already created. Called from `prepare()` when `frame.scene.streamtube_items`
     /// is non-empty.
@@ -885,21 +942,6 @@ impl ViewportGpuResources {
             }],
         });
 
-        let streamtube_instance_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("streamtube_instance_bgl"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("streamtube_shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/streamtube.wgsl").into()),
@@ -907,11 +949,7 @@ impl ViewportGpuResources {
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("streamtube_pipeline_layout"),
-            bind_group_layouts: &[
-                &self.camera_bind_group_layout,
-                &streamtube_bgl,
-                &streamtube_instance_bgl,
-            ],
+            bind_group_layouts: &[&self.camera_bind_group_layout, &streamtube_bgl],
             push_constant_ranges: &[],
         });
 
@@ -955,120 +993,205 @@ impl ViewportGpuResources {
         });
 
         self.streamtube_bgl = Some(streamtube_bgl);
-        self.streamtube_instance_bgl = Some(streamtube_instance_bgl);
         self.streamtube_pipeline = Some(pipeline);
     }
 
     /// Upload one [`StreamtubeItem`] to the GPU and return draw data.
     ///
-    /// Converts each consecutive point pair in each strip into one cylinder instance.
-    /// The cylinder base mesh is cached in `streamtube_cylinder_mesh` and created on
-    /// first call.  Returns a [`StreamtubeGpuData`] with `instance_count = 0` when
-    /// the item has no renderable segments.
+    /// Generates a connected tube mesh CPU-side using a parallel-transport frame along
+    /// each polyline strip, then uploads the result as a single owned vertex+index buffer.
+    /// Adjacent rings are joined by quads (2 triangles each) giving a smooth, seamless tube
+    /// without the z-fighting or inter-segment gaps that plagued the old instanced approach.
     pub(crate) fn upload_streamtube(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         item: &crate::renderer::StreamtubeItem,
     ) -> StreamtubeGpuData {
-        if self.streamtube_cylinder_mesh.is_none() {
-            let (verts, indices) = build_streamtube_cylinder();
+        const SIDES: usize = 12; // tube cross-section resolution
 
-            let vbuf = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("streamtube_cylinder_vbuf"),
-                size: (std::mem::size_of::<Vertex>() * verts.len()).max(64) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: true,
-            });
-            vbuf.slice(..)
-                .get_mapped_range_mut()
-                .copy_from_slice(bytemuck::cast_slice(&verts));
-            vbuf.unmap();
+        let radius = item.radius.max(f32::EPSILON);
 
-            let ibuf = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("streamtube_cylinder_ibuf"),
-                size: (std::mem::size_of::<u32>() * indices.len()).max(12) as u64,
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: true,
-            });
-            ibuf.slice(..)
-                .get_mapped_range_mut()
-                .copy_from_slice(bytemuck::cast_slice(&indices));
-            ibuf.unmap();
+        let mut verts: Vec<Vertex>  = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
 
-            self.streamtube_cylinder_mesh = Some(GlyphBaseMesh {
-                vertex_buffer: vbuf,
-                index_buffer: ibuf,
-                index_count: indices.len() as u32,
-            });
-        }
-
-        let (mesh_vbuf, mesh_ibuf, mesh_idx_count) = {
-            let mesh = self
-                .streamtube_cylinder_mesh
-                .as_ref()
-                .expect("streamtube cylinder mesh created above");
-            let vbuf: &'static wgpu::Buffer = unsafe { &*(&mesh.vertex_buffer as *const _) };
-            let ibuf: &'static wgpu::Buffer = unsafe { &*(&mesh.index_buffer as *const _) };
-            (vbuf, ibuf, mesh.index_count)
-        };
-
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct StreamtubeInstance {
-            position: [f32; 3],
-            half_len: f32,
-            direction: [f32; 3],
-            _pad: f32,
-        }
-
-        let mut instances: Vec<StreamtubeInstance> = Vec::new();
         let positions = &item.positions;
         let mut strip_start = 0usize;
-        for &len in &item.strip_lengths {
-            let len = len as usize;
-            let strip_end = (strip_start + len).min(positions.len());
-            for i in strip_start..strip_end.saturating_sub(1) {
-                let a = glam::Vec3::from(positions[i]);
-                let b = glam::Vec3::from(positions[i + 1]);
-                let seg = b - a;
-                let seg_len = seg.length();
-                if seg_len < f32::EPSILON {
-                    continue;
-                }
-                instances.push(StreamtubeInstance {
-                    position: ((a + b) * 0.5).to_array(),
-                    half_len: seg_len * 0.5,
-                    direction: (seg / seg_len).to_array(),
-                    _pad: 0.0,
-                });
+
+        for &strip_len in &item.strip_lengths {
+            let strip_len = strip_len as usize;
+            let strip_end = (strip_start + strip_len).min(positions.len());
+            let pts: Vec<glam::Vec3> = positions[strip_start..strip_end]
+                .iter()
+                .map(|&p| glam::Vec3::from(p))
+                .collect();
+            strip_start += strip_len;
+
+            if pts.len() < 2 {
+                continue;
             }
-            strip_start += len;
+
+            // ---- Parallel transport frame ----------------------------------------
+            // Seed: find an initial tangent and an arbitrary perpendicular.
+            let t0 = (pts[1] - pts[0]).normalize_or_zero();
+            if t0.length_squared() < 1e-10 {
+                continue;
+            }
+            // Choose a reference vector not parallel to t0.
+            let ref_v = if t0.x.abs() < 0.9 {
+                glam::Vec3::X
+            } else {
+                glam::Vec3::Y
+            };
+            let mut u = t0.cross(ref_v).normalize(); // initial "up"
+
+            // Emit rings for each point, transporting the frame forward.
+            let ring_base = verts.len() as u32;
+            let n_rings = pts.len();
+
+            for (k, &pt) in pts.iter().enumerate() {
+                // Tangent at this point (forward difference, except at the last point).
+                let tangent = if k + 1 < pts.len() {
+                    (pts[k + 1] - pt).normalize_or_zero()
+                } else {
+                    (pt - pts[k - 1]).normalize_or_zero()
+                };
+
+                // Transport u: project out the component along the new tangent.
+                if k > 0 {
+                    let t_prev = (pts[k] - pts[k - 1]).normalize_or_zero();
+                    // Rodrigues rotation: rotate u by the same angle that t_prev -> tangent.
+                    let axis = t_prev.cross(tangent);
+                    let sin_a = axis.length().min(1.0);
+                    if sin_a > 1e-6 {
+                        let cos_a = t_prev.dot(tangent).clamp(-1.0, 1.0);
+                        let ax = axis / sin_a;
+                        // Rodrigues: u' = u cos(a) + (ax×u) sin(a) + ax(ax·u)(1−cos(a))
+                        u = u * cos_a
+                            + ax.cross(u) * sin_a
+                            + ax * ax.dot(u) * (1.0 - cos_a);
+                        u = u.normalize_or_zero();
+                    }
+                }
+
+                let v = tangent.cross(u).normalize_or_zero();
+
+                // Emit SIDES vertices around the ring.
+                for s in 0..SIDES {
+                    let theta = 2.0 * std::f32::consts::PI * (s as f32) / (SIDES as f32);
+                    let nx = theta.cos() * u.x + theta.sin() * v.x;
+                    let ny = theta.cos() * u.y + theta.sin() * v.y;
+                    let nz = theta.cos() * u.z + theta.sin() * v.z;
+                    let normal = glam::Vec3::new(nx, ny, nz);
+                    let world_pos = pt + normal * radius;
+                    verts.push(Vertex {
+                        position: world_pos.to_array(),
+                        normal:   normal.to_array(),
+                        color:    [1.0, 1.0, 1.0, 1.0], // overridden by uniform in shader
+                        uv:       [0.0, 0.0],
+                        tangent:  [1.0, 0.0, 0.0, 1.0],
+                    });
+                }
+
+                // Emit quad strip between ring k-1 and ring k.
+                // Winding: outward-facing CCW (right-hand rule gives outward normal).
+                // Verified: T1=(r0+s, r0+s1, r1+s) has normal·Y > 0 for s=0 on Z-axis tube.
+                if k > 0 {
+                    let r0 = ring_base + ((k - 1) * SIDES) as u32;
+                    let r1 = ring_base + (k       * SIDES) as u32;
+                    for s in 0..SIDES {
+                        let s1 = (s + 1) % SIDES;
+                        indices.push(r0 + s as u32);
+                        indices.push(r0 + s1 as u32);
+                        indices.push(r1 + s as u32);
+
+                        indices.push(r0 + s1 as u32);
+                        indices.push(r1 + s1 as u32);
+                        indices.push(r1 + s as u32);
+                    }
+                }
+            }
+
+            // End cap (flat fan at last ring, facing forward = outward at tube end).
+            // CCW from the forward direction: (center, s, s1).
+            {
+                let last_ring = ring_base + ((n_rings - 1) * SIDES) as u32;
+                let tangent = (pts[n_rings - 1] - pts[n_rings - 2]).normalize_or_zero();
+                let cap_center_idx = verts.len() as u32;
+                verts.push(Vertex {
+                    position: pts[n_rings - 1].to_array(),
+                    normal:   tangent.to_array(),
+                    color:    [1.0, 1.0, 1.0, 1.0],
+                    uv:       [0.0, 0.0],
+                    tangent:  [1.0, 0.0, 0.0, 1.0],
+                });
+                for s in 0..SIDES {
+                    let s1 = (s + 1) % SIDES;
+                    indices.push(cap_center_idx);
+                    indices.push(last_ring + s as u32);
+                    indices.push(last_ring + s1 as u32);
+                }
+            }
+
+            // Start cap (flat fan at first ring, facing backward = outward at tube start).
+            // CCW from the backward direction = CW from forward = (center, s1, s).
+            {
+                let tangent = (pts[0] - pts[1]).normalize_or_zero();
+                let cap_center_idx = verts.len() as u32;
+                verts.push(Vertex {
+                    position: pts[0].to_array(),
+                    normal:   tangent.to_array(),
+                    color:    [1.0, 1.0, 1.0, 1.0],
+                    uv:       [0.0, 0.0],
+                    tangent:  [1.0, 0.0, 0.0, 1.0],
+                });
+                for s in 0..SIDES {
+                    let s1 = (s + 1) % SIDES;
+                    indices.push(cap_center_idx);
+                    indices.push(ring_base + s1 as u32);
+                    indices.push(ring_base + s as u32);
+                }
+            }
         }
 
-        let instance_count = instances.len() as u32;
+        // Upload vertex + index buffers.
+        let vert_bytes: &[u8] = bytemuck::cast_slice(&verts);
+        let idx_bytes:  &[u8] = bytemuck::cast_slice(&indices);
 
-        let instance_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("streamtube_instance_buf"),
-            size: (std::mem::size_of::<StreamtubeInstance>() * instances.len().max(1)) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("streamtube_vbuf"),
+            size: vert_bytes.len().max(std::mem::size_of::<Vertex>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        if !instances.is_empty() {
-            queue.write_buffer(&instance_buf, 0, bytemuck::cast_slice(&instances));
+        if !vert_bytes.is_empty() {
+            queue.write_buffer(&vertex_buffer, 0, vert_bytes);
         }
 
+        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("streamtube_ibuf"),
+            size: idx_bytes.len().max(12) as u64,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        if !idx_bytes.is_empty() {
+            queue.write_buffer(&index_buffer, 0, idx_bytes);
+        }
+
+        let index_count = indices.len() as u32;
+
+        // Uniform buffer: color + radius.
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct StreamtubeUniform {
-            color: [f32; 4],
+            color:  [f32; 4],
             radius: f32,
-            _pad: [f32; 7],
+            _pad:   [f32; 7],
         }
         let uniform_data = StreamtubeUniform {
-            color: item.color,
-            radius: item.radius.max(f32::EPSILON),
-            _pad: [0.0; 7],
+            color:  item.color,
+            radius,
+            _pad:   [0.0; 7],
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("streamtube_uniform_buf"),
@@ -1078,41 +1201,25 @@ impl ViewportGpuResources {
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
-        let bgl1 = self
+        let bgl = self
             .streamtube_bgl
             .as_ref()
             .expect("ensure_streamtube_pipeline not called");
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("streamtube_uniform_bg"),
-            layout: bgl1,
+            layout: bgl,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: uniform_buf.as_entire_binding(),
             }],
         });
 
-        let bgl2 = self
-            .streamtube_instance_bgl
-            .as_ref()
-            .expect("ensure_streamtube_pipeline not called");
-        let instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("streamtube_instance_bg"),
-            layout: bgl2,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: instance_buf.as_entire_binding(),
-            }],
-        });
-
         StreamtubeGpuData {
-            mesh_vertex_buffer: mesh_vbuf,
-            mesh_index_buffer: mesh_ibuf,
-            mesh_index_count: mesh_idx_count,
-            instance_count,
+            vertex_buffer,
+            index_buffer,
+            index_count,
             uniform_bind_group,
-            instance_bind_group,
             _uniform_buf: uniform_buf,
-            _instance_buf: instance_buf,
         }
     }
 }
