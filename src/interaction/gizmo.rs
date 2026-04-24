@@ -31,6 +31,46 @@ pub enum PivotMode {
     Cursor3D(glam::Vec3),
 }
 
+impl PivotMode {
+    /// Advance to the next mode in the cycle.
+    ///
+    /// Cycle order: `SelectionCentroid` → `IndividualOrigins` → `MedianPoint` → `WorldOrigin` → …
+    ///
+    /// `Cursor3D` is excluded from the cycle (it requires an explicit position) and
+    /// falls back to `SelectionCentroid`.
+    pub fn cycle_next(self) -> Self {
+        match self {
+            PivotMode::SelectionCentroid => PivotMode::IndividualOrigins,
+            PivotMode::IndividualOrigins => PivotMode::MedianPoint,
+            PivotMode::MedianPoint => PivotMode::WorldOrigin,
+            PivotMode::WorldOrigin => PivotMode::SelectionCentroid,
+            PivotMode::Cursor3D(_) => PivotMode::SelectionCentroid,
+        }
+    }
+
+    /// Step back to the previous mode in the cycle.
+    pub fn cycle_prev(self) -> Self {
+        match self {
+            PivotMode::SelectionCentroid => PivotMode::WorldOrigin,
+            PivotMode::IndividualOrigins => PivotMode::SelectionCentroid,
+            PivotMode::MedianPoint => PivotMode::IndividualOrigins,
+            PivotMode::WorldOrigin => PivotMode::MedianPoint,
+            PivotMode::Cursor3D(_) => PivotMode::SelectionCentroid,
+        }
+    }
+
+    /// Short human-readable label for HUD display.
+    pub fn label(self) -> &'static str {
+        match self {
+            PivotMode::SelectionCentroid => "Selection Centroid",
+            PivotMode::IndividualOrigins => "Individual Origins",
+            PivotMode::MedianPoint => "Median Point",
+            PivotMode::WorldOrigin => "World Origin",
+            PivotMode::Cursor3D(_) => "3D Cursor",
+        }
+    }
+}
+
 /// Compute the gizmo center based on the given `PivotMode`, selection, and position resolver.
 ///
 /// Returns `None` if the selection is empty or positions are unavailable.
@@ -124,6 +164,20 @@ impl Gizmo {
             drag_start_mouse: None,
             pivot_mode: PivotMode::SelectionCentroid,
         }
+    }
+
+    /// Advance the pivot mode to the next in the cycle.
+    ///
+    /// Call this when [`crate::interaction::input::Action::CyclePivotModeForward`] fires.
+    pub fn cycle_pivot_forward(&mut self) {
+        self.pivot_mode = self.pivot_mode.cycle_next();
+    }
+
+    /// Step the pivot mode back to the previous in the cycle.
+    ///
+    /// Call this when [`crate::interaction::input::Action::CyclePivotModeBackward`] fires.
+    pub fn cycle_pivot_backward(&mut self) {
+        self.pivot_mode = self.pivot_mode.cycle_prev();
     }
 
     /// Resolve the three axis directions based on the current space and the
@@ -1360,6 +1414,77 @@ mod tests {
     #[test]
     fn test_gizmo_pivot_mode_field_defaults_to_selection_centroid() {
         let g = Gizmo::new();
+        assert!(matches!(g.pivot_mode, PivotMode::SelectionCentroid));
+    }
+
+    // --- Pivot cycling tests ---
+
+    #[test]
+    fn test_cycle_next_full_round_trip() {
+        let start = PivotMode::SelectionCentroid;
+        let after_one = start.cycle_next();
+        assert!(matches!(after_one, PivotMode::IndividualOrigins));
+        let after_two = after_one.cycle_next();
+        assert!(matches!(after_two, PivotMode::MedianPoint));
+        let after_three = after_two.cycle_next();
+        assert!(matches!(after_three, PivotMode::WorldOrigin));
+        let wrapped = after_three.cycle_next();
+        assert!(matches!(wrapped, PivotMode::SelectionCentroid));
+    }
+
+    #[test]
+    fn test_cycle_prev_full_round_trip() {
+        let start = PivotMode::SelectionCentroid;
+        let after_one = start.cycle_prev();
+        assert!(matches!(after_one, PivotMode::WorldOrigin));
+        let after_two = after_one.cycle_prev();
+        assert!(matches!(after_two, PivotMode::MedianPoint));
+        let after_three = after_two.cycle_prev();
+        assert!(matches!(after_three, PivotMode::IndividualOrigins));
+        let wrapped = after_three.cycle_prev();
+        assert!(matches!(wrapped, PivotMode::SelectionCentroid));
+    }
+
+    #[test]
+    fn test_cycle_next_and_prev_are_inverses() {
+        for mode in [
+            PivotMode::SelectionCentroid,
+            PivotMode::IndividualOrigins,
+            PivotMode::MedianPoint,
+            PivotMode::WorldOrigin,
+        ] {
+            assert_eq!(mode.cycle_next().cycle_prev(), mode);
+            assert_eq!(mode.cycle_prev().cycle_next(), mode);
+        }
+    }
+
+    #[test]
+    fn test_cursor3d_falls_back_to_selection_centroid_on_cycle() {
+        let cursor = PivotMode::Cursor3D(glam::Vec3::ONE);
+        assert!(matches!(cursor.cycle_next(), PivotMode::SelectionCentroid));
+        assert!(matches!(cursor.cycle_prev(), PivotMode::SelectionCentroid));
+    }
+
+    #[test]
+    fn test_label_returns_non_empty_str() {
+        for mode in [
+            PivotMode::SelectionCentroid,
+            PivotMode::IndividualOrigins,
+            PivotMode::MedianPoint,
+            PivotMode::WorldOrigin,
+            PivotMode::Cursor3D(glam::Vec3::ZERO),
+        ] {
+            assert!(!mode.label().is_empty());
+        }
+    }
+
+    #[test]
+    fn test_gizmo_cycle_pivot_forward_and_backward() {
+        let mut g = Gizmo::new();
+        assert!(matches!(g.pivot_mode, PivotMode::SelectionCentroid));
+        g.cycle_pivot_forward();
+        assert!(matches!(g.pivot_mode, PivotMode::IndividualOrigins));
+        g.cycle_pivot_backward();
         assert!(matches!(g.pivot_mode, PivotMode::SelectionCentroid));
     }
 }

@@ -89,6 +89,10 @@ pub enum Action {
     // -- Gizmo --
     /// Toggle gizmo between World and Local coordinate space.
     ToggleGizmoSpace,
+    /// Cycle the pivot mode forward (Selection Centroid → Individual Origins → Median Point → World Origin → …).
+    CyclePivotModeForward,
+    /// Cycle the pivot mode backward (… → World Origin → Median Point → Individual Origins → Selection Centroid).
+    CyclePivotModeBackward,
 
     // -- Scene object shortcuts --
     /// Shift+A: open the radial "Add Object" menu.

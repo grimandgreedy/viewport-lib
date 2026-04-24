@@ -114,6 +114,16 @@ pub enum KeyCode {
     Backtick,
     /// Backspace key.
     Backspace,
+    /// Comma key.
+    Comma,
+    /// Period/full-stop key.
+    Period,
+    /// Left square bracket `[` key.
+    LeftBracket,
+    /// Right square bracket `]` key.
+    RightBracket,
+    /// Forward-slash `/` key.
+    Slash,
 }
 
 /// Mouse buttons.

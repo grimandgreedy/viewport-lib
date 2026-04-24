@@ -323,6 +323,22 @@ pub fn viewport_all_bindings() -> Vec<ViewportBinding> {
         },
     ));
 
+    // -- Pivot mode cycling (normal + manipulation mode) --
+    bindings.push(ViewportBinding::new(
+        Action::CyclePivotModeForward,
+        ViewportGesture::KeyPress {
+            key: KeyCode::LeftBracket,
+            modifiers: none,
+        },
+    ));
+    bindings.push(ViewportBinding::new(
+        Action::CyclePivotModeBackward,
+        ViewportGesture::KeyPress {
+            key: KeyCode::RightBracket,
+            modifiers: none,
+        },
+    ));
+
     // -- Global: undo/redo --
     bindings.push(ViewportBinding::new(
         Action::Redo,

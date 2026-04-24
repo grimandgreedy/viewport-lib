@@ -124,6 +124,17 @@ pub fn default_bindings() -> Vec<Binding> {
             key_press(KeyCode::Backtick, Modifiers::NONE),
             normal,
         ),
+        // -- Pivot mode cycling --
+        Binding::in_modes(
+            Action::CyclePivotModeForward,
+            key_press(KeyCode::LeftBracket, Modifiers::NONE),
+            &[InputMode::Normal, InputMode::Manipulating],
+        ),
+        Binding::in_modes(
+            Action::CyclePivotModeBackward,
+            key_press(KeyCode::RightBracket, Modifiers::NONE),
+            &[InputMode::Normal, InputMode::Manipulating],
+        ),
         // -- Object manipulation --
         Binding::in_modes(
             Action::BeginMove,
