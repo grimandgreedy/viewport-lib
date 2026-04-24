@@ -235,6 +235,17 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
+                // binding 7: matcap texture (FRAGMENT, filterable 2D)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -1373,6 +1384,7 @@ impl ViewportGpuResources {
             &fallback_texture.sampler,
             &fallback_lut_view,
             &fallback_scalar_buf,
+            &fallback_texture.view,
             &cube_verts,
             &cube_indices,
         );
@@ -1705,6 +1717,12 @@ impl ViewportGpuResources {
             material_sampler,
             material_bind_groups: std::collections::HashMap::new(),
             textures: Vec::new(),
+            matcap_textures: Vec::new(),
+            matcap_views: Vec::new(),
+            matcap_sampler: None,
+            fallback_matcap_view: None,
+            matcaps_initialized: false,
+            builtin_matcap_ids: None,
             fallback_textures_uploaded: false,
             fxaa_texture: None,
             fxaa_view: None,

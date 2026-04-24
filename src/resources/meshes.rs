@@ -19,6 +19,7 @@ impl ViewportGpuResources {
             &self.material_sampler,
             &self.fallback_lut_view,
             &self.fallback_scalar_buf,
+            &self.fallback_texture.view,
             vertices,
             indices,
         );
@@ -89,6 +90,7 @@ impl ViewportGpuResources {
             &self.material_sampler,
             &self.fallback_lut_view,
             &self.fallback_scalar_buf,
+            &self.fallback_texture.view,
             &vertices,
             &data.indices,
             Some(&normal_line_verts),
@@ -176,6 +178,7 @@ impl ViewportGpuResources {
             &self.material_sampler,
             &self.fallback_lut_view,
             &self.fallback_scalar_buf,
+            &self.fallback_texture.view,
             &vertices,
             &data.indices,
             Some(&normal_line_verts),
@@ -442,6 +445,7 @@ impl ViewportGpuResources {
         fallback_sampler: &wgpu::Sampler,
         fallback_lut_view: &wgpu::TextureView,
         fallback_scalar_buf: &wgpu::Buffer,
+        fallback_matcap_view: &wgpu::TextureView,
         vertices: &[Vertex],
         indices: &[u32],
     ) -> GpuMesh {
@@ -454,6 +458,7 @@ impl ViewportGpuResources {
             fallback_sampler,
             fallback_lut_view,
             fallback_scalar_buf,
+            fallback_matcap_view,
             vertices,
             indices,
             None,
@@ -469,6 +474,7 @@ impl ViewportGpuResources {
         fallback_sampler: &wgpu::Sampler,
         fallback_lut_view: &wgpu::TextureView,
         fallback_scalar_buf: &wgpu::Buffer,
+        fallback_matcap_view: &wgpu::TextureView,
         vertices: &[Vertex],
         indices: &[u32],
         normal_line_verts: Option<&[Vertex]>,
@@ -537,7 +543,7 @@ impl ViewportGpuResources {
             _pad_scalar: 0,
             nan_color: [0.0, 0.0, 0.0, 0.0],
             use_nan_color: 0,
-            _pad_nan: [0; 3],
+            use_matcap: 0, matcap_blendable: 0, _pad2: 0,
         };
         let object_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
@@ -583,6 +589,10 @@ impl ViewportGpuResources {
                     binding: 6,
                     resource: fallback_scalar_buf.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(fallback_matcap_view),
+                },
             ],
         });
 
@@ -607,7 +617,7 @@ impl ViewportGpuResources {
             _pad_scalar: 0,
             nan_color: [0.0, 0.0, 0.0, 0.0],
             use_nan_color: 0,
-            _pad_nan: [0; 3],
+            use_matcap: 0, matcap_blendable: 0, _pad2: 0,
         };
         let normal_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),
@@ -653,6 +663,10 @@ impl ViewportGpuResources {
                     binding: 6,
                     resource: fallback_scalar_buf.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(fallback_matcap_view),
+                },
             ],
         });
 
@@ -691,7 +705,7 @@ impl ViewportGpuResources {
             normal_line_count,
             object_uniform_buf,
             object_bind_group,
-            last_tex_key: (u64::MAX, u64::MAX, u64::MAX, u64::MAX, u64::MAX),
+            last_tex_key: (u64::MAX, u64::MAX, u64::MAX, u64::MAX, u64::MAX, u64::MAX),
             normal_uniform_buf,
             normal_bind_group,
             aabb,

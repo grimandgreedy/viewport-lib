@@ -177,7 +177,7 @@ pub use resources::colormap_data::{
 };
 pub use resources::mesh_store::MeshId;
 pub use resources::{
-    AttributeData, AttributeKind, AttributeRef, BuiltinColormap, CameraUniform, ClipVolumeUniform,
-    ColormapId, ComputeFilterResult, LightUniform, LightsUniform, MeshData, SingleLightUniform,
-    ViewportGpuResources, VolumeId, lerp_attributes,
+    AttributeData, AttributeKind, AttributeRef, BuiltinColormap, BuiltinMatcap, CameraUniform,
+    ClipVolumeUniform, ColormapId, ComputeFilterResult, LightUniform, LightsUniform, MatcapId,
+    MeshData, SingleLightUniform, ViewportGpuResources, VolumeId, lerp_attributes,
 };

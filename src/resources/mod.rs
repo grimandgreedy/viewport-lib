@@ -1,5 +1,7 @@
 /// Built-in colormap LUT data.
 pub mod colormap_data;
+/// Built-in matcap texture data (procedurally generated).
+pub mod matcap_data;
 /// IBL precomputation and environment map upload.
 pub mod environment;
 mod extra_impls;
@@ -21,10 +23,10 @@ use self::extra_impls::{
     generate_edge_indices,
 };
 pub use self::types::{
-    AttributeData, AttributeKind, AttributeRef, BuiltinColormap, CameraUniform, ClipVolumeUniform,
-    ColormapId, GpuMesh, GpuTexture, LightUniform, LightsUniform, MeshData, OverlayVertex,
-    PointCloudGpuData, PolylineGpuData, SingleLightUniform, Vertex, ViewportGpuResources,
-    VolumeGpuData, VolumeId,
+    AttributeData, AttributeKind, AttributeRef, BuiltinColormap, BuiltinMatcap, CameraUniform,
+    ClipVolumeUniform, ColormapId, GpuMesh, GpuTexture, LightUniform, LightsUniform, MatcapId,
+    MeshData, OverlayVertex, PointCloudGpuData, PolylineGpuData, SingleLightUniform, Vertex,
+    ViewportGpuResources, VolumeGpuData, VolumeId,
 };
 pub(crate) use self::types::{
     BloomUniform, ClipPlanesUniform, ContactShadowUniform, GlyphBaseMesh, GlyphGpuData,

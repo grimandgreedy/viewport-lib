@@ -37,6 +37,13 @@ pub struct Material {
     /// When true, `metallic` and `roughness` drive the GGX BRDF.
     /// PBR outputs linear HDR values; enable `post_process.enabled` for correct tone mapping.
     pub use_pbr: bool,
+    /// Optional matcap texture identifier. When set, matcap shading replaces
+    /// Blinn-Phong/PBR. Default None.
+    ///
+    /// Obtain a `MatcapId` from [`ViewportGpuResources::builtin_matcap_id`] or
+    /// [`ViewportGpuResources::upload_matcap`].  Blendable matcaps (alpha-channel)
+    /// tint the result with `base_color`; static matcaps override color entirely.
+    pub matcap_id: Option<crate::resources::MatcapId>,
 }
 
 impl Default for Material {
@@ -54,6 +61,7 @@ impl Default for Material {
             normal_map_id: None,
             ao_map_id: None,
             use_pbr: false,
+            matcap_id: None,
         }
     }
 }

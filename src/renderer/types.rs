@@ -768,6 +768,7 @@ impl RenderCamera {
             forward: self.forward,
             _pad1: 0.0,
             inv_view_proj: vp.inverse().to_cols_array_2d(),
+            view: self.view.to_cols_array_2d(),
         }
     }
 

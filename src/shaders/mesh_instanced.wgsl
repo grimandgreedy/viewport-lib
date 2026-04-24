@@ -377,7 +377,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
     if !clip_volume_test(in.world_pos) { discard; }
 
-    if inst.wireframe != 0u { return vec4<f32>(0.08, 0.08, 0.08, 1.0); }
+    if inst.wireframe != 0u { return vec4<f32>(0.75, 0.75, 0.75, 1.0); }
 
     var tex_color = vec4<f32>(1.0);
     if inst.has_texture == 1u { tex_color = textureSample(obj_texture, obj_sampler, in.uv); }

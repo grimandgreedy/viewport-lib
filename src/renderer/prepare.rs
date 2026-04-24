@@ -26,8 +26,9 @@ impl ViewportRenderer {
             self.compute_filter_results.clear();
         }
 
-        // Ensure built-in colormaps are uploaded on first frame.
+        // Ensure built-in colormaps and matcaps are uploaded on first frame.
         self.resources.ensure_colormaps_initialized(device, queue);
+        self.resources.ensure_matcaps_initialized(device, queue);
 
         let resources = &mut self.resources;
         let lighting = scene_fx.lighting;
@@ -385,10 +386,12 @@ impl ViewportRenderer {
         // (both bypass the instanced path).
         let has_scalar_items = scene_items.iter().any(|i| i.active_attribute.is_some());
         let has_two_sided_items = scene_items.iter().any(|i| i.two_sided);
+        let has_matcap_items = scene_items.iter().any(|i| i.material.matcap_id.is_some());
         if !self.use_instancing
             || frame.viewport.wireframe_mode
             || has_scalar_items
             || has_two_sided_items
+            || has_matcap_items
         {
             for item in scene_items {
                 if resources
@@ -439,7 +442,9 @@ impl ViewportRenderer {
                     _pad_scalar: 0,
                     nan_color: item.nan_color.unwrap_or([0.0; 4]),
                     use_nan_color: if item.nan_color.is_some() { 1 } else { 0 },
-                    _pad_nan: [0; 3],
+                    use_matcap: if m.matcap_id.is_some() { 1 } else { 0 },
+                    matcap_blendable: m.matcap_id.map_or(0, |id| if id.blendable { 1 } else { 0 }),
+                    _pad2: 0,
                 };
 
                 let normal_obj_uniform = ObjectUniform {
@@ -463,7 +468,9 @@ impl ViewportRenderer {
                     _pad_scalar: 0,
                     nan_color: [0.0; 4],
                     use_nan_color: 0,
-                    _pad_nan: [0; 3],
+                    use_matcap: 0,
+                    matcap_blendable: 0,
+                    _pad2: 0,
                 };
 
                 // Write uniform data — use get() to read buffer references, then drop.
@@ -484,7 +491,7 @@ impl ViewportRenderer {
                     );
                 } // mesh borrow dropped here
 
-                // Rebuild the object bind group if material/attribute/LUT changed.
+                // Rebuild the object bind group if material/attribute/LUT/matcap changed.
                 resources.update_mesh_texture_bind_group(
                     device,
                     item.mesh_index,
@@ -493,6 +500,7 @@ impl ViewportRenderer {
                     item.material.ao_map_id,
                     item.colormap_id,
                     item.active_attribute.as_ref().map(|a| a.name.as_str()),
+                    item.material.matcap_id,
                 );
             }
         }
@@ -1172,7 +1180,7 @@ impl ViewportRenderer {
                     _pad_scalar: 0,
                     nan_color: [0.0; 4],
                     use_nan_color: 0,
-                    _pad_nan: [0; 3],
+                    use_matcap: 0, matcap_blendable: 0, _pad2: 0,
                 };
                 let stencil_buf = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("outline_stencil_object_uniform_buf"),
@@ -1233,6 +1241,12 @@ impl ViewportRenderer {
                         wgpu::BindGroupEntry {
                             binding: 6,
                             resource: resources.fallback_scalar_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 7,
+                            resource: wgpu::BindingResource::TextureView(
+                                &resources.fallback_texture.view,
+                            ),
                         },
                     ],
                 });

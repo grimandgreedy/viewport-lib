@@ -284,6 +284,7 @@ impl ViewportGpuResources {
         ao_map_id: Option<u64>,
         lut_id: Option<ColormapId>,
         active_attr: Option<&str>,
+        matcap_id: Option<crate::resources::MatcapId>,
     ) {
         let attr_hash = active_attr
             .map(|name| {
@@ -300,6 +301,7 @@ impl ViewportGpuResources {
             ao_map_id.unwrap_or(u64::MAX),
             lut_id.map(|id| id.0 as u64).unwrap_or(u64::MAX),
             attr_hash,
+            matcap_id.map(|id| id.index as u64).unwrap_or(u64::MAX),
         );
 
         {
@@ -346,6 +348,15 @@ impl ViewportGpuResources {
             None => &self.fallback_scalar_buf,
         };
 
+        // Resolve matcap texture view — fallback to 1×1 white when no matcap active.
+        let matcap_view: &wgpu::TextureView = match matcap_id {
+            Some(id) if id.index < self.matcap_views.len() => &self.matcap_views[id.index],
+            _ => self
+                .fallback_matcap_view
+                .as_ref()
+                .unwrap_or(&self.fallback_texture.view),
+        };
+
         mesh.object_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("object_bind_group"),
             layout: &self.object_bind_group_layout,
@@ -377,6 +388,10 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: scalar_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(matcap_view),
                 },
             ],
         });
@@ -487,5 +502,124 @@ impl ViewportGpuResources {
         );
         self.builtin_colormap_ids = Some([viridis, plasma, greyscale, coolwarm, rainbow]);
         self.colormaps_initialized = true;
+    }
+
+    // -----------------------------------------------------------------------
+    // Matcap texture API
+    // -----------------------------------------------------------------------
+
+    /// Upload a 256×256 RGBA matcap texture and return its `MatcapId`.
+    ///
+    /// `rgba_data` must be exactly `256 * 256 * 4 = 262_144` bytes.
+    /// Set `blendable = true` for matcaps whose alpha channel tints the base
+    /// geometry color; `false` for static matcaps that fully replace the color.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
+    /// if `rgba_data` has the wrong length.
+    pub fn upload_matcap(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        rgba_data: &[u8],
+        blendable: bool,
+    ) -> crate::error::ViewportResult<crate::resources::MatcapId> {
+        let (width, height) = (256u32, 256u32);
+        let expected = (width * height * 4) as usize;
+        if rgba_data.len() != expected {
+            return Err(crate::error::ViewportError::InvalidTextureData {
+                expected,
+                actual: rgba_data.len(),
+            });
+        }
+
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("matcap_texture"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            rgba_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        );
+
+        // Ensure the shared clamp sampler is created.
+        if self.matcap_sampler.is_none() {
+            self.matcap_sampler = Some(device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("matcap_sampler"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            }));
+        }
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let index = self.matcap_textures.len();
+        self.matcap_textures.push(texture);
+        self.matcap_views.push(view);
+
+        // Lazily initialise the fallback matcap view to binding 7 of the
+        // first uploaded texture (a plain white 1×1 is fine as fallback).
+        if self.fallback_matcap_view.is_none() {
+            self.fallback_matcap_view = Some(
+                self.fallback_texture
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default()),
+            );
+        }
+
+        tracing::debug!(matcap_index = index, blendable, "matcap uploaded");
+        Ok(crate::resources::MatcapId { index, blendable })
+    }
+
+    /// Return the `MatcapId` for a built-in preset.
+    ///
+    /// Panics if called before the renderer has run at least one prepare pass
+    /// (which calls [`Self::ensure_matcaps_initialized`] automatically).
+    pub fn builtin_matcap_id(&self, preset: crate::resources::BuiltinMatcap) -> crate::resources::MatcapId {
+        self.builtin_matcap_ids
+            .expect("call ensure_matcaps_initialized (or run one prepare frame) before using built-in matcaps")
+            [preset as usize]
+    }
+
+    /// Upload the eight built-in matcaps to the GPU if not already done.
+    ///
+    /// Called automatically by `ViewportRenderer::prepare()`. Safe to call
+    /// multiple times — no-op after first invocation.
+    pub fn ensure_matcaps_initialized(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if self.matcaps_initialized {
+            return;
+        }
+        use crate::resources::matcap_data;
+        let clay    = self.upload_matcap(device, queue, &matcap_data::clay(),    true).unwrap();
+        let wax     = self.upload_matcap(device, queue, &matcap_data::wax(),     true).unwrap();
+        let candy   = self.upload_matcap(device, queue, &matcap_data::candy(),   true).unwrap();
+        let flat    = self.upload_matcap(device, queue, &matcap_data::flat(),    true).unwrap();
+        let ceramic = self.upload_matcap(device, queue, &matcap_data::ceramic(), false).unwrap();
+        let jade    = self.upload_matcap(device, queue, &matcap_data::jade(),    false).unwrap();
+        let mud     = self.upload_matcap(device, queue, &matcap_data::mud(),     false).unwrap();
+        let normal  = self.upload_matcap(device, queue, &matcap_data::normal(),  false).unwrap();
+        self.builtin_matcap_ids = Some([clay, wax, candy, flat, ceramic, jade, mud, normal]);
+        self.matcaps_initialized = true;
     }
 }

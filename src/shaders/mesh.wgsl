@@ -27,6 +27,7 @@ struct Camera {
     forward: vec3<f32>,
     _pad1: f32,
     inv_view_proj: mat4x4<f32>,
+    view: mat4x4<f32>,
 };
 
 // Single light entry — 128 bytes.
@@ -101,9 +102,9 @@ struct Object {
     _pad_scalar: u32,
     nan_color: vec4<f32>,    // offset 144
     use_nan_color: u32,      // offset 160
-    _pad_nan0: u32,
-    _pad_nan1: u32,
-    _pad_nan2: u32,
+    use_matcap: u32,         // offset 164
+    matcap_blendable: u32,   // offset 168
+    _pad2: u32,              // offset 172
 };
 
 struct ClipVolumeUB {
@@ -164,6 +165,7 @@ fn clip_volume_test(p: vec3<f32>) -> bool {
 @group(1) @binding(4) var ao_map: texture_2d<f32>;
 @group(1) @binding(5) var lut_texture: texture_2d<f32>;
 @group(1) @binding(6) var<storage, read> scalar_buffer: array<f32>;
+@group(1) @binding(7) var matcap_texture: texture_2d<f32>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -498,7 +500,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 
     // Wireframe mode: override color to gray, no lighting.
     if object.wireframe != 0u {
-        return vec4<f32>(0.08, 0.08, 0.08, 1.0);
+        return vec4<f32>(0.75, 0.75, 0.75, 1.0);
     }
 
     // Sample texture if one is assigned; fallback texture is 1x1 white (neutral multiply).
@@ -546,6 +548,30 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     var ao_factor = 1.0;
     if object.has_ao_map != 0u {
         ao_factor = textureSample(ao_map, obj_sampler, in.uv).r;
+    }
+
+    // Matcap shading — replaces the Blinn-Phong / PBR path.
+    // The matcap texture encodes material appearance as a sphere-space lookup.
+    // UV is derived from the view-space normal (x,y components).
+    if object.use_matcap != 0u {
+        // Transform world-space shading normal to view space (rotation only, w=0).
+        let view_normal = normalize((camera.view * vec4<f32>(N, 0.0)).xyz);
+        // Map view-space normal XY to UV.
+        // Convention: -ny*0.5+0.5 so that normals pointing UP map to v=0 (top of
+        // texture) which is where built-in matcaps place the bright region.
+        let matcap_uv = vec2<f32>(
+            view_normal.x * 0.5 + 0.5,
+            -view_normal.y * 0.5 + 0.5,
+        );
+        let mc = textureSample(matcap_texture, obj_sampler, matcap_uv);
+        if object.matcap_blendable != 0u {
+            // Blendable: RGB is the matcap color; A tints the base geometry color.
+            let blended = clamp(mc.rgb + mc.a * base_color, vec3<f32>(0.0), vec3<f32>(1.0));
+            return vec4<f32>(blended, obj_color.a);
+        } else {
+            // Static: matcap RGB fully overrides the object color.
+            return vec4<f32>(mc.rgb, obj_color.a);
+        }
     }
 
     // Use the geometric fragment normal for shadowing so the receiver test

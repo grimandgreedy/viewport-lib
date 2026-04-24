@@ -88,9 +88,9 @@ struct Object {
     _pad_scalar: u32,
     nan_color: vec4<f32>,    // offset 144
     use_nan_color: u32,      // offset 160
-    _pad_nan0: u32,
-    _pad_nan1: u32,
-    _pad_nan2: u32,
+    use_matcap: u32,         // offset 164
+    matcap_blendable: u32,   // offset 168
+    _pad2: u32,              // offset 172
 };
 
 struct ClipVolumeUB {

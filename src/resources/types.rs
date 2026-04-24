@@ -15,6 +15,44 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ColormapId(pub usize);
 
+/// Identifies a matcap texture uploaded to the GPU.
+///
+/// Obtained from [`ViewportGpuResources::upload_matcap`] or
+/// [`ViewportGpuResources::builtin_matcap_id`].
+/// The `blendable` flag controls whether the alpha channel tints the base
+/// geometry color (`true`) or the matcap fully replaces the object color (`false`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MatcapId {
+    /// Index into the GPU matcap texture store.
+    pub(crate) index: usize,
+    /// Whether the alpha channel blends with base geometry color.
+    pub blendable: bool,
+}
+
+/// Built-in matcap presets bundled with viewport-lib.
+///
+/// Pass to [`ViewportGpuResources::builtin_matcap_id`] after the renderer
+/// has been prepared for at least one frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuiltinMatcap {
+    /// Warm orange-brown with soft top-left lighting.  Blendable.
+    Clay = 0,
+    /// Peach tone with wide soft specular, skin-like.  Blendable.
+    Wax = 1,
+    /// Vivid hue-cycling sphere, colorful.  Blendable.
+    Candy = 2,
+    /// Neutral gray Lambertian shading.  Blendable.
+    Flat = 3,
+    /// Clean white with sharp specular highlight.  Static.
+    Ceramic = 4,
+    /// Deep translucent green stone.  Static.
+    Jade = 5,
+    /// Dark brownish rough surface.  Static.
+    Mud = 6,
+    /// View-space normal visualization (R=nx, G=ny, B=nz).  Static.
+    Normal = 7,
+}
+
 /// Identifies a 3D volume texture uploaded to the GPU.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VolumeId(pub(crate) usize);
@@ -197,6 +235,10 @@ pub struct CameraUniform {
     pub _pad1: f32,
     /// Inverse view-projection matrix (for reconstructing world-space rays, e.g. skybox).
     pub inv_view_proj: [[f32; 4]; 4],
+    /// View matrix (world → camera space, column-major).
+    ///
+    /// Used by the matcap shader to transform world-space normals to view space.
+    pub view: [[f32; 4]; 4],
 }
 
 /// GPU-side per-light uniform (one entry in the `LightsUniform` array).
@@ -330,9 +372,11 @@ pub(crate) struct ObjectUniform {
     pub(crate) scalar_min: f32,      //   4 bytes, offset 132
     pub(crate) scalar_max: f32,      //   4 bytes, offset 136
     pub(crate) _pad_scalar: u32,     //   4 bytes, offset 140
-    pub(crate) nan_color: [f32; 4],  //  16 bytes, offset 144
-    pub(crate) use_nan_color: u32,   //   4 bytes, offset 160
-    pub(crate) _pad_nan: [u32; 3],   //  12 bytes, offset 164
+    pub(crate) nan_color: [f32; 4],       //  16 bytes, offset 144
+    pub(crate) use_nan_color: u32,        //   4 bytes, offset 160
+    pub(crate) use_matcap: u32,           //   4 bytes, offset 164
+    pub(crate) matcap_blendable: u32,     //   4 bytes, offset 168
+    pub(crate) _pad2: u32,               //   4 bytes, offset 172
 }
 
 const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 176);
@@ -700,9 +744,9 @@ pub struct GpuMesh {
     /// Texture views are the fallback 1×1 textures by default; rebuilt when material
     /// texture assignment changes (tracked via `last_tex_key`).
     pub object_bind_group: wgpu::BindGroup,
-    /// Last texture/attribute key `(albedo_id, normal_map_id, ao_map_id, lut_id, attr_name_hash)`
+    /// Last texture/attribute key `(albedo_id, normal_map_id, ao_map_id, lut_id, attr_name_hash, matcap_id)`
     /// used to build `object_bind_group`. `u64::MAX` = fallback / none for that slot.
-    pub(crate) last_tex_key: (u64, u64, u64, u64, u64),
+    pub(crate) last_tex_key: (u64, u64, u64, u64, u64, u64),
     /// Per-named-attribute GPU storage buffers (f32 per vertex, STORAGE usage).
     pub attribute_buffers: std::collections::HashMap<String, wgpu::Buffer>,
     /// Scalar range `(min, max)` per attribute, computed at upload time.
@@ -1024,6 +1068,20 @@ pub struct ViewportGpuResources {
     pub(crate) material_bind_groups: std::collections::HashMap<(u64, u64, u64), wgpu::BindGroup>,
     /// User-uploaded textures, indexed by `texture_id` in Material.
     pub textures: Vec<GpuTexture>,
+
+    // --- Matcap texture system ---
+    /// Matcap textures (256×256 RGBA), indexed by `MatcapId::index`.
+    pub(crate) matcap_textures: Vec<wgpu::Texture>,
+    /// Texture views for each uploaded matcap.
+    pub(crate) matcap_views: Vec<wgpu::TextureView>,
+    /// Linear-clamp sampler shared by all matcap texture lookups.
+    pub(crate) matcap_sampler: Option<wgpu::Sampler>,
+    /// Fallback 1×1 white view bound to binding 7 when no matcap is active.
+    pub(crate) fallback_matcap_view: Option<wgpu::TextureView>,
+    /// Whether built-in matcaps have been uploaded to the GPU.
+    pub(crate) matcaps_initialized: bool,
+    /// `MatcapId` for each built-in preset, populated by `ensure_matcaps_initialized`.
+    pub(crate) builtin_matcap_ids: Option<[MatcapId; 8]>,
 
     /// Whether fallback normal map / AO map pixels have been uploaded.
     pub(crate) fallback_textures_uploaded: bool,
