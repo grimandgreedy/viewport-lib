@@ -412,7 +412,9 @@ impl ViewportRenderer {
                         .iter()
                         .filter(|item| {
                             item.visible
-                                && (item.active_attribute.is_some() || item.two_sided)
+                                && (item.active_attribute.is_some()
+                                    || item.two_sided
+                                    || item.material.matcap_id.is_some())
                                 && resources
                                     .mesh_store
                                     .get(crate::resources::mesh_store::MeshId(item.mesh_index))
@@ -572,16 +574,36 @@ impl ViewportRenderer {
                             // mesh.object_bind_group (group 1) already carries the object uniform
                             // and the correct texture views.
                             render_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
-                            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                            let is_face_attr =
+                                item.active_attribute.as_ref().map_or(false, |a| {
+                                    matches!(
+                                        a.kind,
+                                        crate::resources::AttributeKind::Face
+                                            | crate::resources::AttributeKind::FaceColor
+                                    )
+                                });
                             if frame.viewport.wireframe_mode {
                                 render_pass.set_pipeline(wf_pl);
+                                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 render_pass.set_index_buffer(
                                     mesh.edge_index_buffer.slice(..),
                                     wgpu::IndexFormat::Uint32,
                                 );
                                 render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
+                            } else if is_face_attr {
+                                if let Some(ref fvb) = mesh.face_vertex_buffer {
+                                    let pl = if item.material.opacity < 1.0 {
+                                        trans_pl
+                                    } else {
+                                        solid_pl
+                                    };
+                                    render_pass.set_pipeline(pl);
+                                    render_pass.set_vertex_buffer(0, fvb.slice(..));
+                                    render_pass.draw(0..mesh.index_count, 0..1);
+                                }
                             } else if item.material.opacity < 1.0 {
                                 render_pass.set_pipeline(trans_pl);
+                                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 render_pass.set_index_buffer(
                                     mesh.index_buffer.slice(..),
                                     wgpu::IndexFormat::Uint32,
@@ -589,6 +611,7 @@ impl ViewportRenderer {
                                 render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                             } else {
                                 render_pass.set_pipeline(solid_pl);
+                                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 render_pass.set_index_buffer(
                                     mesh.index_buffer.slice(..),
                                     wgpu::IndexFormat::Uint32,

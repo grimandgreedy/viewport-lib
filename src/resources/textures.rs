@@ -344,8 +344,17 @@ impl ViewportGpuResources {
             Some(name) => mesh
                 .attribute_buffers
                 .get(name)
+                .or_else(|| mesh.face_attribute_buffers.get(name))
                 .unwrap_or(&self.fallback_scalar_buf),
             None => &self.fallback_scalar_buf,
+        };
+
+        let face_color_buf: &wgpu::Buffer = match active_attr {
+            Some(name) => mesh
+                .face_color_buffers
+                .get(name)
+                .unwrap_or(&self.fallback_face_color_buf),
+            None => &self.fallback_face_color_buf,
         };
 
         // Resolve matcap texture view — fallback to 1×1 white when no matcap active.
@@ -392,6 +401,10 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: wgpu::BindingResource::TextureView(matcap_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: face_color_buf.as_entire_binding(),
                 },
             ],
         });

@@ -289,6 +289,17 @@ fn probe_scalar(hit: &mut PickHit, binding: &ProbeBinding<'_>) {
                 }
             }
         }
+        AttributeKind::Face => {
+            // Face attribute: one value per triangle — direct lookup (no averaging).
+            if let AttributeData::Face(data) = binding.attribute_data {
+                if let Some(&val) = data.get(tri_idx) {
+                    hit.scalar_value = Some(val);
+                }
+            }
+        }
+        AttributeKind::FaceColor => {
+            // FaceColor attribute: no scalar value to report.
+        }
         AttributeKind::Vertex => {
             // Vertex attribute: barycentric interpolation from triangle corners.
             if let AttributeData::Vertex(data) = binding.attribute_data {

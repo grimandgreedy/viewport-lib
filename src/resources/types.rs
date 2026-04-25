@@ -64,6 +64,12 @@ pub enum AttributeKind {
     Vertex,
     /// One value per triangle (cell). Averaged to vertices at upload time.
     Cell,
+    /// One value per triangle. NOT averaged — rendered flat via vertex duplication.
+    /// Colormapped through the active LUT just like `Vertex`.
+    Face,
+    /// One RGBA color per triangle. NOT averaged — rendered flat via vertex duplication.
+    /// Bypasses the colormap; the per-face color is used directly.
+    FaceColor,
 }
 
 /// Reference to a named scalar attribute on a mesh.
@@ -71,7 +77,7 @@ pub enum AttributeKind {
 pub struct AttributeRef {
     /// Name of the attribute as stored in `MeshData::attributes`.
     pub name: String,
-    /// Whether the attribute is per-vertex or per-cell.
+    /// Whether the attribute is per-vertex, per-cell, or per-face.
     pub kind: AttributeKind,
 }
 
@@ -82,6 +88,10 @@ pub enum AttributeData {
     Vertex(Vec<f32>),
     /// One `f32` per triangle (cell). Averaged to vertices at upload.
     Cell(Vec<f32>),
+    /// One `f32` per triangle. Not averaged; stored in a non-indexed expanded buffer.
+    Face(Vec<f32>),
+    /// One `[r, g, b, a]` per triangle. Not averaged; stored in a non-indexed expanded buffer.
+    FaceColor(Vec<[f32; 4]>),
 }
 
 /// Built-in colormap presets.
@@ -376,10 +386,12 @@ pub(crate) struct ObjectUniform {
     pub(crate) use_nan_color: u32,        //   4 bytes, offset 160
     pub(crate) use_matcap: u32,           //   4 bytes, offset 164
     pub(crate) matcap_blendable: u32,     //   4 bytes, offset 168
-    pub(crate) _pad2: u32,               //   4 bytes, offset 172
+    pub(crate) _pad2: u32,                //   4 bytes, offset 172
+    pub(crate) use_face_color: u32,       //   4 bytes, offset 176
+    pub(crate) _pad3: [u32; 3],           //  12 bytes, offset 180
 }
 
-const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 176);
+const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 192);
 
 /// Per-instance GPU data for instanced rendering. Matches the WGSL `InstanceData` struct.
 ///
@@ -751,6 +763,13 @@ pub struct GpuMesh {
     pub attribute_buffers: std::collections::HashMap<String, wgpu::Buffer>,
     /// Scalar range `(min, max)` per attribute, computed at upload time.
     pub attribute_ranges: std::collections::HashMap<String, (f32, f32)>,
+    /// Non-indexed vertex buffer containing 3×N expanded vertices for face-attribute rendering.
+    /// `None` if no `Face` or `FaceColor` attributes exist for this mesh.
+    pub face_vertex_buffer: Option<wgpu::Buffer>,
+    /// Named face scalar buffers: 3N `f32` entries (value replicated for all 3 vertices of each tri).
+    pub face_attribute_buffers: std::collections::HashMap<String, wgpu::Buffer>,
+    /// Named face color buffers: 3N `[f32; 4]` entries (color replicated for all 3 vertices of each tri).
+    pub face_color_buffers: std::collections::HashMap<String, wgpu::Buffer>,
     /// Uniform buffer for normal-line rendering: always has selected=0, wireframe=0.
     /// Updated each frame in prepare() with the object's model matrix only.
     pub normal_uniform_buf: wgpu::Buffer,
@@ -1275,6 +1294,8 @@ pub struct ViewportGpuResources {
     pub(crate) fallback_lut_view: wgpu::TextureView,
     /// Fallback 4-byte zero storage buffer (bound when no scalar attribute is active).
     pub(crate) fallback_scalar_buf: wgpu::Buffer,
+    /// Fallback 16-byte zero storage buffer (bound to binding 8 when no face color attribute is active).
+    pub(crate) fallback_face_color_buf: wgpu::Buffer,
     /// IDs of built-in preset colormaps, in BuiltinColormap discriminant order.
     /// `None` until `ensure_colormaps_initialized()` has been called.
     pub(crate) builtin_colormap_ids: Option<[ColormapId; 5]>,

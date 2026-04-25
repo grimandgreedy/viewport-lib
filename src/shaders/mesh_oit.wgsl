@@ -91,6 +91,10 @@ struct Object {
     use_matcap: u32,         // offset 164
     matcap_blendable: u32,   // offset 168
     _pad2: u32,              // offset 172
+    use_face_color: u32,     // offset 176
+    _pad3a: u32,             // offset 180
+    _pad3b: u32,             // offset 184
+    _pad3c: u32,             // offset 188
 };
 
 struct ClipVolumeUB {
@@ -151,6 +155,7 @@ fn clip_volume_test(p: vec3<f32>) -> bool {
 @group(1) @binding(4) var ao_map: texture_2d<f32>;
 @group(1) @binding(5) var lut_texture: texture_2d<f32>;
 @group(1) @binding(6) var<storage, read> scalar_buffer: array<f32>;
+@group(1) @binding(8) var<storage, read> face_color_buffer: array<vec4<f32>>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -170,6 +175,7 @@ struct VertexOut {
     @location(4) world_tangent:  vec4<f32>,
     @location(5) scalar_val:     f32,
     @location(6) is_nan_scalar:  f32,
+    @location(7) face_color:     vec4<f32>,
 };
 
 struct OitOut {
@@ -201,6 +207,13 @@ fn vs_main(in: VertexIn) -> VertexOut {
     let sv_bits = bitcast<u32>(raw_scalar);
     let sv_is_nan = has_attr && (sv_bits & 0x7F800000u) == 0x7F800000u && (sv_bits & 0x007FFFFFu) != 0u;
     out.is_nan_scalar = select(0.0, 1.0, sv_is_nan);
+    let fc_len = arrayLength(&face_color_buffer);
+    let fc_idx = min(idx, select(0u, fc_len - 1u, fc_len > 0u));
+    out.face_color = select(
+        vec4<f32>(1.0),
+        face_color_buffer[fc_idx],
+        object.use_face_color != 0u && fc_len > 0u,
+    );
     return out;
 }
 
@@ -402,6 +415,20 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
         object.color.a   * in.color.a   * tex_color.a,
     );
     var base_color = obj_color.rgb;
+
+    // Per-face RGBA color: use directly, bypassing all lighting and colormap logic.
+    if object.use_face_color != 0u {
+        var fc = in.face_color;
+        if object.selected != 0u {
+            fc = mix(fc, vec4<f32>(1.0, 0.55, 0.1, 1.0), 0.35);
+        }
+        let alpha = fc.a * object.color.a;
+        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
+        var oit_out: OitOut;
+        oit_out.accum  = vec4<f32>(fc.rgb * alpha, alpha) * w;
+        oit_out.reveal = alpha;
+        return oit_out;
+    }
 
     // Scalar attribute colour override.
     if object.has_attribute != 0u {

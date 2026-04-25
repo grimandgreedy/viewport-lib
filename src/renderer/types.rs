@@ -1389,16 +1389,30 @@ macro_rules! emit_draw_calls {
 
                         // mesh.object_bind_group (group 1) already carries the object uniform
                         // and the correct texture views — updated in prepare() if material changed.
-                        render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        let is_face_attr = item.active_attribute.as_ref().map_or(false, |a| {
+                            matches!(
+                                a.kind,
+                                crate::resources::AttributeKind::Face
+                                    | crate::resources::AttributeKind::FaceColor
+                            )
+                        });
 
                         if frame.viewport.wireframe_mode {
                             render_pass.set_pipeline(&resources.wireframe_pipeline);
+                            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             render_pass.set_index_buffer(
                                 mesh.edge_index_buffer.slice(..),
                                 wgpu::IndexFormat::Uint32,
                             );
                             render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
+                        } else if is_face_attr {
+                            if let Some(ref fvb) = mesh.face_vertex_buffer {
+                                render_pass.set_pipeline($pipeline);
+                                render_pass.set_vertex_buffer(0, fvb.slice(..));
+                                render_pass.draw(0..mesh.index_count, 0..1);
+                            }
                         } else {
+                            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             // Phase G: check for a compute-filtered index buffer override.
                             let filter_result = compute_filter_results
                                 .iter()

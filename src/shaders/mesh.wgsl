@@ -80,7 +80,7 @@ struct ShadowAtlas {
     atlas_rects: array<vec4<f32>, 8>,     // 128 bytes
 };
 
-// Per-object uniform — 176 bytes.
+// Per-object uniform — 192 bytes.
 struct Object {
     model: mat4x4<f32>,
     color: vec4<f32>,
@@ -105,6 +105,10 @@ struct Object {
     use_matcap: u32,         // offset 164
     matcap_blendable: u32,   // offset 168
     _pad2: u32,              // offset 172
+    use_face_color: u32,     // offset 176
+    _pad3a: u32,             // offset 180
+    _pad3b: u32,             // offset 184
+    _pad3c: u32,             // offset 188
 };
 
 struct ClipVolumeUB {
@@ -166,6 +170,7 @@ fn clip_volume_test(p: vec3<f32>) -> bool {
 @group(1) @binding(5) var lut_texture: texture_2d<f32>;
 @group(1) @binding(6) var<storage, read> scalar_buffer: array<f32>;
 @group(1) @binding(7) var matcap_texture: texture_2d<f32>;
+@group(1) @binding(8) var<storage, read> face_color_buffer: array<vec4<f32>>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -187,6 +192,7 @@ struct VertexOut {
     // 1.0 if the source scalar vertex value was NaN, 0.0 otherwise.
     // Detected in vs_main before interpolation can corrupt the NaN bit pattern.
     @location(6) is_nan_scalar:  f32,
+    @location(7) face_color:     vec4<f32>,
 };
 
 @vertex
@@ -215,6 +221,15 @@ fn vs_main(in: VertexIn) -> VertexOut {
     let sv_bits = bitcast<u32>(raw_scalar);
     let sv_is_nan = has_attr && (sv_bits & 0x7F800000u) == 0x7F800000u && (sv_bits & 0x007FFFFFu) != 0u;
     out.is_nan_scalar = select(0.0, 1.0, sv_is_nan);
+    // Per-face RGBA color (FaceColor attribute kind). Indexed by vertex_index which
+    // equals the sequential draw invocation counter for non-indexed face draws.
+    let fc_len = arrayLength(&face_color_buffer);
+    let fc_idx = min(idx, select(0u, fc_len - 1u, fc_len > 0u));
+    out.face_color = select(
+        vec4<f32>(1.0),
+        face_color_buffer[fc_idx],
+        object.use_face_color != 0u && fc_len > 0u,
+    );
     return out;
 }
 
@@ -551,6 +566,15 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
 
     // Matcap shading — replaces the Blinn-Phong / PBR path.
+    // Per-face RGBA color: use directly, bypassing all lighting and colormap logic.
+    if object.use_face_color != 0u {
+        var fc = in.face_color;
+        if object.selected != 0u {
+            fc = mix(fc, vec4<f32>(1.0, 0.55, 0.1, 1.0), 0.35);
+        }
+        return vec4<f32>(fc.rgb, fc.a * object.color.a);
+    }
+
     // The matcap texture encodes material appearance as a sphere-space lookup.
     // UV is derived from the view-space normal (x,y components).
     if object.use_matcap != 0u {
@@ -559,9 +583,15 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         // Map view-space normal XY to UV.
         // Convention: -ny*0.5+0.5 so that normals pointing UP map to v=0 (top of
         // texture) which is where built-in matcaps place the bright region.
+        //
+        // Clamp the XY radius to 0.99 to stay just inside the matcap disc.
+        // At grazing angles (silhouette) |view_normal.xy| → 1, which samples the
+        // transparent black border of the matcap image, producing a dark dotted band.
+        let mc_len = length(view_normal.xy);
+        let mc_scale = select(1.0, 0.99 / mc_len, mc_len > 0.99);
         let matcap_uv = vec2<f32>(
-            view_normal.x * 0.5 + 0.5,
-            -view_normal.y * 0.5 + 0.5,
+            view_normal.x * mc_scale * 0.5 + 0.5,
+            -view_normal.y * mc_scale * 0.5 + 0.5,
         );
         let mc = textureSample(matcap_texture, obj_sampler, matcap_uv);
         if object.matcap_blendable != 0u {

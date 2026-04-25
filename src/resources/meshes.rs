@@ -20,6 +20,7 @@ impl ViewportGpuResources {
             &self.fallback_lut_view,
             &self.fallback_scalar_buf,
             &self.fallback_texture.view,
+            &self.fallback_face_color_buf,
             vertices,
             indices,
         );
@@ -91,16 +92,28 @@ impl ViewportGpuResources {
             &self.fallback_lut_view,
             &self.fallback_scalar_buf,
             &self.fallback_texture.view,
+            &self.fallback_face_color_buf,
             &vertices,
             &data.indices,
             Some(&normal_line_verts),
         );
         mesh.cpu_positions = Some(data.positions.clone());
         mesh.cpu_indices = Some(data.indices.clone());
-        let (attr_bufs, attr_ranges) =
-            Self::upload_attributes(device, &data.attributes, &data.positions, &data.indices);
+        let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_color_bufs) =
+            Self::upload_attributes(
+                device,
+                &data.attributes,
+                &data.positions,
+                &data.normals,
+                &data.indices,
+                data.uvs.as_deref(),
+                tangent_slice,
+            );
         mesh.attribute_buffers = attr_bufs;
         mesh.attribute_ranges = attr_ranges;
+        mesh.face_vertex_buffer = face_vbuf;
+        mesh.face_attribute_buffers = face_attr_bufs;
+        mesh.face_color_buffers = face_color_bufs;
         let id = self.mesh_store.insert(mesh);
         tracing::debug!(
             mesh_index = id.index(),
@@ -179,16 +192,28 @@ impl ViewportGpuResources {
             &self.fallback_lut_view,
             &self.fallback_scalar_buf,
             &self.fallback_texture.view,
+            &self.fallback_face_color_buf,
             &vertices,
             &data.indices,
             Some(&normal_line_verts),
         );
         new_mesh.cpu_positions = Some(data.positions.clone());
         new_mesh.cpu_indices = Some(data.indices.clone());
-        let (attr_bufs, attr_ranges) =
-            Self::upload_attributes(device, &data.attributes, &data.positions, &data.indices);
+        let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_color_bufs) =
+            Self::upload_attributes(
+                device,
+                &data.attributes,
+                &data.positions,
+                &data.normals,
+                &data.indices,
+                data.uvs.as_deref(),
+                tangent_slice,
+            );
         new_mesh.attribute_buffers = attr_bufs;
         new_mesh.attribute_ranges = attr_ranges;
+        new_mesh.face_vertex_buffer = face_vbuf;
+        new_mesh.face_attribute_buffers = face_attr_bufs;
+        new_mesh.face_color_buffers = face_color_bufs;
         let _ = self.mesh_store.replace(mesh_id, new_mesh);
         tracing::debug!(
             mesh_index,
@@ -218,46 +243,191 @@ impl ViewportGpuResources {
             .remove(crate::resources::mesh_store::MeshId(index))
     }
 
-    /// Upload per-vertex and per-cell scalar attributes to GPU storage buffers.
+    /// Upload per-vertex, per-cell, per-face scalar, and per-face color attributes to GPU buffers.
     ///
-    /// Returns `(attribute_buffers, attribute_ranges)` — maps from attribute name to GPU buffer
-    /// and to the (min, max) scalar range computed at upload time.
+    /// Returns `(attribute_buffers, attribute_ranges, face_vertex_buffer, face_attribute_buffers,
+    /// face_color_buffers)`.
+    ///
+    /// - `attribute_buffers`: per-vertex storage buffers for `Vertex` and `Cell` kinds.
+    /// - `attribute_ranges`: `(min, max)` per attribute name (all scalar kinds).
+    /// - `face_vertex_buffer`: non-indexed 3N-vertex buffer (built once if any `Face`/`FaceColor` attr exists).
+    /// - `face_attribute_buffers`: per-face scalar storage buffers (3N `f32` entries, replicated).
+    /// - `face_color_buffers`: per-face color storage buffers (3N `[f32;4]` entries, replicated).
     fn upload_attributes(
         device: &wgpu::Device,
         attributes: &std::collections::HashMap<String, AttributeData>,
         positions: &[[f32; 3]],
+        normals: &[[f32; 3]],
         indices: &[u32],
+        uvs: Option<&[[f32; 2]]>,
+        tangents: Option<&[[f32; 4]]>,
     ) -> (
         std::collections::HashMap<String, wgpu::Buffer>,
         std::collections::HashMap<String, (f32, f32)>,
+        Option<wgpu::Buffer>,
+        std::collections::HashMap<String, wgpu::Buffer>,
+        std::collections::HashMap<String, wgpu::Buffer>,
     ) {
         let mut bufs = std::collections::HashMap::new();
         let mut ranges = std::collections::HashMap::new();
+        let mut face_attr_bufs: std::collections::HashMap<String, wgpu::Buffer> =
+            std::collections::HashMap::new();
+        let mut face_color_bufs: std::collections::HashMap<String, wgpu::Buffer> =
+            std::collections::HashMap::new();
+        let mut face_vbuf: Option<wgpu::Buffer> = None;
+
+        let n_tris = indices.len() / 3;
+
         for (name, attr_data) in attributes {
-            let scalars: Vec<f32> = match attr_data {
-                AttributeData::Vertex(v) => v.clone(),
-                AttributeData::Cell(c) => Self::expand_cell_to_vertex(c, positions, indices),
-            };
-            if scalars.is_empty() {
-                continue;
+            match attr_data {
+                AttributeData::Vertex(v) => {
+                    let scalars = v.clone();
+                    if scalars.is_empty() {
+                        continue;
+                    }
+                    let min = scalars.iter().cloned().fold(f32::INFINITY, f32::min);
+                    let max = scalars.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                    let buf = Self::create_storage_buffer_f32(device, &format!("attr_{name}"), &scalars);
+                    bufs.insert(name.clone(), buf);
+                    ranges.insert(name.clone(), (min, max));
+                }
+                AttributeData::Cell(c) => {
+                    let scalars = Self::expand_cell_to_vertex(c, positions, indices);
+                    if scalars.is_empty() {
+                        continue;
+                    }
+                    let min = scalars.iter().cloned().fold(f32::INFINITY, f32::min);
+                    let max = scalars.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                    let buf = Self::create_storage_buffer_f32(device, &format!("attr_{name}"), &scalars);
+                    bufs.insert(name.clone(), buf);
+                    ranges.insert(name.clone(), (min, max));
+                }
+                AttributeData::Face(f) => {
+                    // Build the shared face vertex buffer on first Face/FaceColor attribute.
+                    if face_vbuf.is_none() {
+                        face_vbuf = Some(Self::build_face_vertex_buffer(
+                            device, positions, normals, indices, uvs, tangents,
+                        ));
+                    }
+                    let expanded = Self::expand_face_scalars_to_3n(f, n_tris);
+                    if expanded.is_empty() {
+                        continue;
+                    }
+                    let min = expanded.iter().cloned().fold(f32::INFINITY, f32::min);
+                    let max = expanded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                    let buf = Self::create_storage_buffer_f32(
+                        device, &format!("face_attr_{name}"), &expanded,
+                    );
+                    face_attr_bufs.insert(name.clone(), buf);
+                    ranges.insert(name.clone(), (min, max));
+                }
+                AttributeData::FaceColor(colors) => {
+                    // Build the shared face vertex buffer on first Face/FaceColor attribute.
+                    if face_vbuf.is_none() {
+                        face_vbuf = Some(Self::build_face_vertex_buffer(
+                            device, positions, normals, indices, uvs, tangents,
+                        ));
+                    }
+                    let expanded = Self::expand_face_colors_to_3n(colors, n_tris);
+                    if expanded.is_empty() {
+                        continue;
+                    }
+                    let byte_len = std::mem::size_of::<[f32; 4]>() * expanded.len();
+                    let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some(&format!("face_color_{name}")),
+                        size: byte_len as u64,
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: true,
+                    });
+                    {
+                        let mut view = buf.slice(..).get_mapped_range_mut();
+                        view.copy_from_slice(bytemuck::cast_slice(&expanded));
+                    }
+                    buf.unmap();
+                    face_color_bufs.insert(name.clone(), buf);
+                }
             }
-            let min = scalars.iter().cloned().fold(f32::INFINITY, f32::min);
-            let max = scalars.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-            let buf = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(&format!("attr_{name}")),
-                size: (std::mem::size_of::<f32>() * scalars.len()) as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: true,
-            });
-            {
-                let mut view = buf.slice(..).get_mapped_range_mut();
-                view.copy_from_slice(bytemuck::cast_slice(&scalars));
-            }
-            buf.unmap();
-            bufs.insert(name.clone(), buf);
-            ranges.insert(name.clone(), (min, max));
         }
-        (bufs, ranges)
+        (bufs, ranges, face_vbuf, face_attr_bufs, face_color_bufs)
+    }
+
+    /// Allocate and fill a STORAGE buffer from a slice of `f32` values.
+    fn create_storage_buffer_f32(device: &wgpu::Device, label: &str, data: &[f32]) -> wgpu::Buffer {
+        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: (std::mem::size_of::<f32>() * data.len()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        {
+            let mut view = buf.slice(..).get_mapped_range_mut();
+            view.copy_from_slice(bytemuck::cast_slice(data));
+        }
+        buf.unmap();
+        buf
+    }
+
+    /// Build a non-indexed 3N-vertex buffer: one vertex per triangle corner, geometry only.
+    fn build_face_vertex_buffer(
+        device: &wgpu::Device,
+        positions: &[[f32; 3]],
+        normals: &[[f32; 3]],
+        indices: &[u32],
+        uvs: Option<&[[f32; 2]]>,
+        tangents: Option<&[[f32; 4]]>,
+    ) -> wgpu::Buffer {
+        let n_tris = indices.len() / 3;
+        let mut verts: Vec<Vertex> = Vec::with_capacity(n_tris * 3);
+        for tri in indices.chunks(3) {
+            for &vi in tri {
+                let vi = vi as usize;
+                let uv = uvs.and_then(|u| u.get(vi)).copied().unwrap_or([0.0, 0.0]);
+                let tangent = tangents.and_then(|t| t.get(vi)).copied().unwrap_or([0.0, 0.0, 0.0, 1.0]);
+                verts.push(Vertex {
+                    position: positions.get(vi).copied().unwrap_or([0.0, 0.0, 0.0]),
+                    normal: normals.get(vi).copied().unwrap_or([0.0, 1.0, 0.0]),
+                    color: [1.0, 1.0, 1.0, 1.0],
+                    uv,
+                    tangent,
+                });
+            }
+        }
+        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("face_vertex_buf"),
+            size: (std::mem::size_of::<Vertex>() * verts.len().max(1)) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        {
+            let mut view = buf.slice(..).get_mapped_range_mut();
+            view.copy_from_slice(bytemuck::cast_slice(&verts));
+        }
+        buf.unmap();
+        buf
+    }
+
+    /// Expand N face scalar values to 3N by repeating each value three times.
+    fn expand_face_scalars_to_3n(values: &[f32], n_tris: usize) -> Vec<f32> {
+        let mut out = Vec::with_capacity(n_tris * 3);
+        for i in 0..n_tris {
+            let v = values.get(i).copied().unwrap_or(0.0);
+            out.push(v);
+            out.push(v);
+            out.push(v);
+        }
+        out
+    }
+
+    /// Expand N face RGBA colors to 3N by repeating each color three times.
+    fn expand_face_colors_to_3n(colors: &[[f32; 4]], n_tris: usize) -> Vec<[f32; 4]> {
+        let mut out = Vec::with_capacity(n_tris * 3);
+        for i in 0..n_tris {
+            let c = colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]);
+            out.push(c);
+            out.push(c);
+            out.push(c);
+        }
+        out
     }
 
     /// Expand per-cell (per-triangle) scalar values to per-vertex by averaging contributions.
@@ -446,6 +616,7 @@ impl ViewportGpuResources {
         fallback_lut_view: &wgpu::TextureView,
         fallback_scalar_buf: &wgpu::Buffer,
         fallback_matcap_view: &wgpu::TextureView,
+        fallback_face_color_buf: &wgpu::Buffer,
         vertices: &[Vertex],
         indices: &[u32],
     ) -> GpuMesh {
@@ -459,6 +630,7 @@ impl ViewportGpuResources {
             fallback_lut_view,
             fallback_scalar_buf,
             fallback_matcap_view,
+            fallback_face_color_buf,
             vertices,
             indices,
             None,
@@ -475,6 +647,7 @@ impl ViewportGpuResources {
         fallback_lut_view: &wgpu::TextureView,
         fallback_scalar_buf: &wgpu::Buffer,
         fallback_matcap_view: &wgpu::TextureView,
+        fallback_face_color_buf: &wgpu::Buffer,
         vertices: &[Vertex],
         indices: &[u32],
         normal_line_verts: Option<&[Vertex]>,
@@ -544,6 +717,7 @@ impl ViewportGpuResources {
             nan_color: [0.0, 0.0, 0.0, 0.0],
             use_nan_color: 0,
             use_matcap: 0, matcap_blendable: 0, _pad2: 0,
+            use_face_color: 0, _pad3: [0; 3],
         };
         let object_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
@@ -593,6 +767,10 @@ impl ViewportGpuResources {
                     binding: 7,
                     resource: wgpu::BindingResource::TextureView(fallback_matcap_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: fallback_face_color_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -618,6 +796,7 @@ impl ViewportGpuResources {
             nan_color: [0.0, 0.0, 0.0, 0.0],
             use_nan_color: 0,
             use_matcap: 0, matcap_blendable: 0, _pad2: 0,
+            use_face_color: 0, _pad3: [0; 3],
         };
         let normal_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),
@@ -667,6 +846,10 @@ impl ViewportGpuResources {
                     binding: 7,
                     resource: wgpu::BindingResource::TextureView(fallback_matcap_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: fallback_face_color_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -713,6 +896,9 @@ impl ViewportGpuResources {
             cpu_indices: None,
             attribute_buffers: std::collections::HashMap::new(),
             attribute_ranges: std::collections::HashMap::new(),
+            face_vertex_buffer: None,
+            face_attribute_buffers: std::collections::HashMap::new(),
+            face_color_buffers: std::collections::HashMap::new(),
         }
     }
 }

@@ -445,6 +445,11 @@ impl ViewportRenderer {
                     use_matcap: if m.matcap_id.is_some() { 1 } else { 0 },
                     matcap_blendable: m.matcap_id.map_or(0, |id| if id.blendable { 1 } else { 0 }),
                     _pad2: 0,
+                    use_face_color: u32::from(
+                        item.active_attribute.as_ref()
+                            .map_or(false, |a| a.kind == crate::resources::AttributeKind::FaceColor)
+                    ),
+                    _pad3: [0; 3],
                 };
 
                 let normal_obj_uniform = ObjectUniform {
@@ -471,6 +476,8 @@ impl ViewportRenderer {
                     use_matcap: 0,
                     matcap_blendable: 0,
                     _pad2: 0,
+                    use_face_color: 0,
+                    _pad3: [0; 3],
                 };
 
                 // Write uniform data — use get() to read buffer references, then drop.
@@ -524,6 +531,7 @@ impl ViewportRenderer {
                         item.visible
                             && item.active_attribute.is_none()
                             && !item.two_sided
+                            && item.material.matcap_id.is_none()
                             && resources
                                 .mesh_store
                                 .get(crate::resources::mesh_store::MeshId(item.mesh_index))
@@ -1181,6 +1189,7 @@ impl ViewportRenderer {
                     nan_color: [0.0; 4],
                     use_nan_color: 0,
                     use_matcap: 0, matcap_blendable: 0, _pad2: 0,
+                    use_face_color: 0, _pad3: [0; 3],
                 };
                 let stencil_buf = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("outline_stencil_object_uniform_buf"),
@@ -1247,6 +1256,10 @@ impl ViewportRenderer {
                             resource: wgpu::BindingResource::TextureView(
                                 &resources.fallback_texture.view,
                             ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 8,
+                            resource: resources.fallback_face_color_buf.as_entire_binding(),
                         },
                     ],
                 });
