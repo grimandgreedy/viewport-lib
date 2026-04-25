@@ -88,11 +88,7 @@ impl App {
             })
             .collect();
 
-        let grey_mat = Material {
-            base_color: [0.8, 0.8, 0.8],
-            roughness: 0.5,
-            ..Material::default()
-        };
+        let grey_mat = { let mut m = Material::from_color([0.8, 0.8, 0.8]); m.roughness = 0.5; m };
 
         // ---- Mesh 0: Vertex attribute (interpolated) ----
         let mut mesh0 = viewport_lib::primitives::sphere(2.0, 48, 24);
@@ -139,11 +135,7 @@ impl App {
             "FaceColor (direct RGBA)",
             Some(MeshId::from_index(idx2)),
             glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)),
-            Material {
-                base_color: [1.0, 1.0, 1.0],
-                roughness: 0.5,
-                ..Material::default()
-            },
+            { let mut m = Material::from_color([1.0, 1.0, 1.0]); m.roughness = 0.5; m },
         );
 
         self.face_mesh_indices = [idx0, idx1, idx2];

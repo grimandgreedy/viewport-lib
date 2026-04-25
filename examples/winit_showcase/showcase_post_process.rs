@@ -9,7 +9,6 @@ impl AppState {
     pub(crate) fn build_pp_scene(&mut self) {
         self.pp_scene = viewport_lib::scene::Scene::new();
 
-        // Ground plane - wide flat slab so boxes cast contact shadows onto it.
         let m = self.upload_box();
         self.pp_scene.add_named(
             "Ground",
@@ -19,28 +18,15 @@ impl AppState {
                 glam::Quat::IDENTITY,
                 glam::Vec3::new(0.0, -0.575, 0.0),
             ),
-            Material {
-                base_color: [0.6, 0.6, 0.6],
-                use_pbr: true,
-                metallic: 0.0,
-                roughness: 0.9,
-                ..Material::default()
-            },
+            Material::pbr([0.6, 0.6, 0.6], 0.0, 0.9),
         );
 
-        // Four boxes sitting on the ground, close together so sides occlude each other.
         let m = self.upload_box();
         self.pp_scene.add_named(
             "Gold (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(-1.2, 0.0, -1.2)),
-            Material {
-                base_color: [1.0, 0.78, 0.2],
-                use_pbr: true,
-                metallic: 0.95,
-                roughness: 0.05,
-                ..Material::default()
-            },
+            Material::pbr([1.0, 0.78, 0.2], 0.95, 0.05),
         );
 
         let m = self.upload_box();
@@ -48,13 +34,7 @@ impl AppState {
             "Brushed Steel (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(1.2, 0.0, -1.2)),
-            Material {
-                base_color: [0.82, 0.82, 0.86],
-                use_pbr: true,
-                metallic: 0.75,
-                roughness: 0.35,
-                ..Material::default()
-            },
+            Material::pbr([0.82, 0.82, 0.86], 0.75, 0.35),
         );
 
         let m = self.upload_box();
@@ -62,13 +42,7 @@ impl AppState {
             "Chrome (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(-1.2, 0.0, 1.2)),
-            Material {
-                base_color: [0.9, 0.9, 0.95],
-                use_pbr: true,
-                metallic: 1.0,
-                roughness: 0.02,
-                ..Material::default()
-            },
+            Material::pbr([0.9, 0.9, 0.95], 1.0, 0.02),
         );
 
         let m = self.upload_box();
@@ -76,16 +50,9 @@ impl AppState {
             "Ceramic (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(1.2, 0.0, 1.2)),
-            Material {
-                base_color: [0.85, 0.7, 0.6],
-                use_pbr: true,
-                metallic: 0.0,
-                roughness: 0.9,
-                ..Material::default()
-            },
+            Material::pbr([0.85, 0.7, 0.6], 0.0, 0.9),
         );
 
-        // Sphere added for comparing curved-surface lighting against the boxes.
         let sphere = make_uv_sphere(32, 16, 0.6);
         let sphere_idx = self
             .renderer
@@ -97,16 +64,9 @@ impl AppState {
             "Sphere Test",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(3.0, 0.1, 0.0)),
-            Material {
-                base_color: [0.85, 0.45, 0.35],
-                use_pbr: true,
-                metallic: 0.0,
-                roughness: 0.55,
-                ..Material::default()
-            },
+            Material::pbr([0.85, 0.45, 0.35], 0.0, 0.55),
         );
 
-        // Tall central pillar - creates strong occlusion between itself and the surrounding boxes.
         let m = self.upload_box();
         self.pp_scene.add_named(
             "Pillar",
@@ -116,13 +76,7 @@ impl AppState {
                 glam::Quat::IDENTITY,
                 glam::Vec3::new(0.0, 1.0, 0.0),
             ),
-            Material {
-                base_color: [0.7, 0.7, 0.75],
-                use_pbr: true,
-                metallic: 0.1,
-                roughness: 0.7,
-                ..Material::default()
-            },
+            Material::pbr([0.7, 0.7, 0.75], 0.1, 0.7),
         );
 
         self.pp_built = true;

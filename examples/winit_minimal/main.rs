@@ -143,10 +143,7 @@ impl ApplicationHandler for App {
             let mut item = SceneRenderItem::default();
             item.mesh_index = mesh_index;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
-            item.material = Material {
-                base_color: color,
-                ..Material::default()
-            };
+            item.material = Material::from_color(color);
             item.two_sided = true;
             item
         };

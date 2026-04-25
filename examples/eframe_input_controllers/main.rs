@@ -483,10 +483,7 @@ impl eframe::App for App {
                             let mut item = SceneRenderItem::default();
                             item.mesh_index = obj.mesh;
                             item.model = obj.model.to_cols_array_2d();
-                            item.material = Material {
-                                base_color: obj.color,
-                                ..Material::default()
-                            };
+                            item.material = Material::from_color(obj.color);
                             item
                         })
                         .collect()
@@ -639,10 +636,7 @@ impl eframe::App for App {
                             let mut item = SceneRenderItem::default();
                             item.mesh_index = obj.mesh;
                             item.model = obj.model.to_cols_array_2d();
-                            item.material = Material {
-                                base_color: obj.color,
-                                ..Material::default()
-                            };
+                            item.material = Material::from_color(obj.color);
                             item.selected = self.selection.contains(i as u64);
                             item
                         })

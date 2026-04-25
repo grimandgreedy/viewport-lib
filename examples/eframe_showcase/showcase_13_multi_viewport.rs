@@ -62,10 +62,7 @@ impl App {
         for (i, ((pos, color), name)) in positions.iter().zip(&colors).zip(&names).enumerate() {
             let mesh = self.upload_box(renderer);
             let transform = glam::Mat4::from_translation(glam::Vec3::from(*pos));
-            let mat = Material {
-                base_color: *color,
-                ..Material::default()
-            };
+            let mat = Material::from_color(*color);
             let id = self.mv_scene.add_named(name, Some(mesh), transform, mat);
             if i == 0 {
                 self.mv_selection.select_one(id);

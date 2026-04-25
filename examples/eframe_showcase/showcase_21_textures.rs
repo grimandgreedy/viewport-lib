@@ -43,12 +43,7 @@ impl App {
                 glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_6),
                 glam::Vec3::new(0.0, 2.0, 0.0),
             ),
-            Material {
-                texture_id: Some(gauss_tex),
-                ambient: 0.5,
-                diffuse: 0.6,
-                ..Material::default()
-            },
+            { let mut m = Material::default(); m.texture_id = Some(gauss_tex); m.ambient = 0.5; m.diffuse = 0.6; m },
         );
         // (two_sided set in build_frame_data via texture_plane_node)
 
@@ -67,14 +62,7 @@ impl App {
             "Checker Sphere",
             Some(viewport_lib::MeshId::from_index(sphere_id)),
             glam::Mat4::from_translation(glam::Vec3::new(-4.0, 0.0, 0.0)),
-            Material {
-                texture_id: Some(checker_tex),
-                ambient: 0.3,
-                diffuse: 0.8,
-                specular: 0.4,
-                shininess: 32.0,
-                ..Material::default()
-            },
+            { let mut m = Material::default(); m.texture_id = Some(checker_tex); m.ambient = 0.3; m.diffuse = 0.8; m.specular = 0.4; m.shininess = 32.0; m },
         );
 
         // --- Color-gradient on a cube ---
@@ -92,12 +80,7 @@ impl App {
             "Gradient Cube",
             Some(viewport_lib::MeshId::from_index(cube_id)),
             glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)),
-            Material {
-                texture_id: Some(gradient_tex),
-                ambient: 0.3,
-                diffuse: 0.8,
-                ..Material::default()
-            },
+            { let mut m = Material::default(); m.texture_id = Some(gradient_tex); m.ambient = 0.3; m.diffuse = 0.8; m },
         );
 
         // --- Stripe pattern on a torus ---
@@ -115,14 +98,7 @@ impl App {
             "Stripe Torus",
             Some(viewport_lib::MeshId::from_index(torus_id)),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, -4.0, 0.0)),
-            Material {
-                texture_id: Some(stripes_tex),
-                ambient: 0.3,
-                diffuse: 0.8,
-                specular: 0.6,
-                shininess: 64.0,
-                ..Material::default()
-            },
+            { let mut m = Material::default(); m.texture_id = Some(stripes_tex); m.ambient = 0.3; m.diffuse = 0.8; m.specular = 0.6; m.shininess = 64.0; m },
         );
 
         self.texture_built = true;

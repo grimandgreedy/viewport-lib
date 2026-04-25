@@ -28,10 +28,7 @@ fn item(mesh_index: usize, x: f32, y: f32, z: f32, color: [f32; 3]) -> SceneRend
     let mut s = SceneRenderItem::default();
     s.mesh_index = mesh_index;
     s.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
-    s.material = Material {
-        base_color: color,
-        ..Material::default()
-    };
+    s.material = Material::from_color(color);
     s.two_sided = true;
     s
 }

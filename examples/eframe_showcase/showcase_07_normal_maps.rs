@@ -37,14 +37,11 @@ impl App {
             "Sphere (Normal Map + AO)",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(-1.5, 0.0, 0.0)),
-            Material {
-                base_color: [0.8, 0.6, 0.4],
-                use_pbr: true,
-                metallic: 0.0,
-                roughness: 0.5,
-                normal_map_id: Some(nm_id),
-                ao_map_id: Some(ao_id),
-                ..Material::default()
+            {
+                let mut mat = Material::pbr([0.8, 0.6, 0.4], 0.0, 0.5);
+                mat.normal_map_id = Some(nm_id);
+                mat.ao_map_id = Some(ao_id);
+                mat
             },
         );
         self.nm_node = Some(nm_node);
@@ -56,10 +53,7 @@ impl App {
             "Sphere (No Normal Map)",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)),
-            Material {
-                base_color: [0.8, 0.6, 0.4],
-                ..Material::default()
-            },
+            Material::from_color([0.8, 0.6, 0.4]),
         );
 
         let box_mesh = make_box_with_uvs(1.4, 1.4, 1.4);
@@ -87,14 +81,11 @@ impl App {
             "Cube (Tile Normal Map + AO)",
             Some(box_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 2.2)),
-            Material {
-                base_color: [0.75, 0.78, 0.82],
-                use_pbr: true,
-                metallic: 0.1,
-                roughness: 0.7,
-                normal_map_id: Some(tile_nm_id),
-                ao_map_id: Some(tile_ao_id),
-                ..Material::default()
+            {
+                let mut mat = Material::pbr([0.75, 0.78, 0.82], 0.1, 0.7);
+                mat.normal_map_id = Some(tile_nm_id);
+                mat.ao_map_id = Some(tile_ao_id);
+                mat
             },
         );
         self.nm_cube_node = Some(cube_node);

@@ -34,10 +34,7 @@ impl App {
                     );
                     let transform = glam::Mat4::from_translation(pos);
                     let color = colors[count as usize % colors.len()];
-                    let mat = Material {
-                        base_color: color,
-                        ..Material::default()
-                    };
+                    let mat = Material::from_color(color);
                     let name = format!("Perf {count}");
                     self.perf_scene.add_named(&name, Some(mesh), transform, mat);
                     count += 1;

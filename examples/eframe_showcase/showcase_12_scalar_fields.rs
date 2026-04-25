@@ -36,11 +36,7 @@ impl App {
             "Sphere",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(-6.0, 0.0, 0.0)),
-            Material {
-                base_color: [0.8, 0.8, 0.8],
-                roughness: 0.5,
-                ..Material::default()
-            },
+            { let mut m = Material::from_color([0.8, 0.8, 0.8]); m.roughness = 0.5; m },
         );
         self.scalar_node_ids[0] = sphere_node;
         self.scalar_pick_positions[0] = sphere.positions.clone();
@@ -58,11 +54,7 @@ impl App {
             "Wave Grid",
             Some(wave_id),
             glam::Mat4::IDENTITY,
-            Material {
-                base_color: [0.8, 0.8, 0.8],
-                roughness: 0.5,
-                ..Material::default()
-            },
+            { let mut m = Material::from_color([0.8, 0.8, 0.8]); m.roughness = 0.5; m },
         );
         self.scalar_node_ids[1] = wave_node;
         self.scalar_pick_positions[1] = wave_mesh.positions.clone();
@@ -80,11 +72,7 @@ impl App {
             "Distance Box",
             Some(box_id),
             glam::Mat4::from_translation(glam::Vec3::new(6.0, 0.0, 0.0)),
-            Material {
-                base_color: [0.8, 0.8, 0.8],
-                roughness: 0.5,
-                ..Material::default()
-            },
+            { let mut m = Material::from_color([0.8, 0.8, 0.8]); m.roughness = 0.5; m },
         );
         self.scalar_node_ids[2] = box_node;
         self.scalar_pick_positions[2] = box_mesh.positions.clone();

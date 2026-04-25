@@ -27,10 +27,7 @@ impl App {
                     "Marker",
                     Some(id),
                     glam::Mat4::from_translation(pos),
-                    Material {
-                        base_color: color,
-                        ..Material::default()
-                    },
+                    Material::from_color(color),
                 );
             };
 

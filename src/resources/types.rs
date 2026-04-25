@@ -345,7 +345,7 @@ pub type LightUniform = LightsUniform;
 
 /// Per-object uniform: world transform, material properties, selection state, and wireframe mode.
 ///
-/// Layout (128 bytes, 16-byte aligned):
+/// Layout (192 bytes, 16-byte aligned):
 /// - model:          [[f32;4];4] = 64 bytes  offset   0
 /// - color:           [f32;4]   = 16 bytes  offset  64  (base_color.xyz + opacity)
 /// - selected:         u32      =  4 bytes  offset  80
@@ -360,7 +360,20 @@ pub type LightUniform = LightsUniform;
 /// - roughness:        f32      =  4 bytes  offset 116
 /// - has_normal_map:   u32      =  4 bytes  offset 120
 /// - has_ao_map:       u32      =  4 bytes  offset 124
-/// Total: 128 bytes
+/// - has_attribute:    u32      =  4 bytes  offset 128
+/// - scalar_min:       f32      =  4 bytes  offset 132
+/// - scalar_max:       f32      =  4 bytes  offset 136
+/// - _pad_scalar:      u32      =  4 bytes  offset 140
+/// - nan_color:       [f32;4]   = 16 bytes  offset 144
+/// - use_nan_color:    u32      =  4 bytes  offset 160
+/// - use_matcap:       u32      =  4 bytes  offset 164
+/// - matcap_blendable: u32      =  4 bytes  offset 168
+/// - _pad2:            u32      =  4 bytes  offset 172
+/// - use_face_color:   u32      =  4 bytes  offset 176
+/// - uv_vis_mode:      u32      =  4 bytes  offset 180  (0=off 1=checker 2=grid 3=localcheck 4=localrad)
+/// - uv_vis_scale:     f32      =  4 bytes  offset 184
+/// - _pad3:            u32      =  4 bytes  offset 188
+/// Total: 192 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ObjectUniform {
@@ -388,7 +401,9 @@ pub(crate) struct ObjectUniform {
     pub(crate) matcap_blendable: u32,     //   4 bytes, offset 168
     pub(crate) _pad2: u32,                //   4 bytes, offset 172
     pub(crate) use_face_color: u32,       //   4 bytes, offset 176
-    pub(crate) _pad3: [u32; 3],           //  12 bytes, offset 180
+    pub(crate) uv_vis_mode: u32,          //   4 bytes, offset 180
+    pub(crate) uv_vis_scale: f32,         //   4 bytes, offset 184
+    pub(crate) _pad3: u32,                //   4 bytes, offset 188
 }
 
 const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 192);
@@ -509,19 +524,17 @@ pub struct ClipVolumeUniform {
 // Total: 4 + 12 + 4*4 + 4*4 + 4*4 + 4*4 + 4*4 + 4*4 = 16 + 7*16 = 16 + 112 = 128 bytes
 
 impl ClipVolumeUniform {
-    /// Build a `ClipVolumeUniform` from a [`crate::renderer::ClipVolume`] value.
-    pub fn from_clip_volume(v: &crate::renderer::ClipVolume) -> Self {
+    /// Build a `ClipVolumeUniform` from a [`crate::renderer::ClipShape`] value.
+    /// Returns a zeroed (None / volume_type=0) uniform for `ClipShape::Plane`.
+    pub fn from_clip_shape(shape: &crate::renderer::ClipShape) -> Self {
         let mut u: Self = bytemuck::Zeroable::zeroed();
-        match v {
-            crate::renderer::ClipVolume::None => {
-                u.volume_type = 0;
-            }
-            crate::renderer::ClipVolume::Plane { normal, distance } => {
+        match shape {
+            crate::renderer::ClipShape::Plane { normal, distance, .. } => {
                 u.volume_type = 1;
                 u.plane_normal = *normal;
                 u.plane_dist = *distance;
             }
-            crate::renderer::ClipVolume::Box {
+            crate::renderer::ClipShape::Box {
                 center,
                 half_extents,
                 orientation,
@@ -533,7 +546,7 @@ impl ClipVolumeUniform {
                 u.box_col1 = orientation[1];
                 u.box_col2 = orientation[2];
             }
-            crate::renderer::ClipVolume::Sphere { center, radius } => {
+            crate::renderer::ClipShape::Sphere { center, radius } => {
                 u.volume_type = 3;
                 u.sphere_center = *center;
                 u.sphere_radius = *radius;
@@ -672,6 +685,30 @@ pub(crate) struct OverlayUniform {
     pub(crate) model: [[f32; 4]; 4],
     pub(crate) color: [f32; 4], // RGBA with alpha for transparency
 }
+
+/// Uniform buffer layout for the full-screen ground plane shader.
+///
+/// Matches `GroundPlaneUniform` in `ground_plane.wgsl` exactly (256 bytes, 16-byte aligned).
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct GroundPlaneUniform {
+    pub view_proj:      [[f32; 4]; 4], // offset   0, 64 bytes
+    pub cam_right:      [f32; 4],      // offset  64, 16 bytes
+    pub cam_up:         [f32; 4],      // offset  80, 16 bytes
+    pub cam_back:       [f32; 4],      // offset  96, 16 bytes
+    pub eye_pos:        [f32; 3],      // offset 112, 12 bytes
+    pub height:         f32,           // offset 124,  4 bytes
+    pub color:          [f32; 4],      // offset 128, 16 bytes
+    pub shadow_color:   [f32; 4],      // offset 144, 16 bytes
+    pub light_vp:       [[f32; 4]; 4], // offset 160, 64 bytes
+    pub tan_half_fov:   f32,           // offset 224,  4 bytes
+    pub aspect:         f32,           // offset 228,  4 bytes
+    pub tile_size:      f32,           // offset 232,  4 bytes
+    pub shadow_bias:    f32,           // offset 236,  4 bytes
+    pub mode:           u32,           // offset 240,  4 bytes
+    pub shadow_opacity: f32,           // offset 244,  4 bytes
+    pub _pad:           [f32; 2],      // offset 248,  8 bytes
+}                                      // total  256 bytes
 
 /// Uniform buffer layout for the full-screen analytical grid shader.
 ///
@@ -1410,6 +1447,16 @@ pub struct ViewportGpuResources {
     pub(crate) ibl_skybox_texture: Option<wgpu::Texture>,
     /// Skybox fullscreen render pipeline (renders equirect environment as background).
     pub(crate) skybox_pipeline: wgpu::RenderPipeline,
+
+    // --- Ground plane ---
+    /// Full-screen ground plane render pipeline (alpha blending, LessEqual depth).
+    pub(crate) ground_plane_pipeline: wgpu::RenderPipeline,
+    /// Bind group layout for the ground plane (binding 0: uniform, 1: shadow depth, 2: comparison sampler).
+    pub(crate) ground_plane_bgl: wgpu::BindGroupLayout,
+    /// Uniform buffer for GroundPlaneUniform (256 bytes, written each frame in prepare()).
+    pub(crate) ground_plane_uniform_buf: wgpu::Buffer,
+    /// Bind group for the ground plane pass (rebuilt when shadow atlas changes).
+    pub(crate) ground_plane_bind_group: wgpu::BindGroup,
 
     // --- Phase K: GPU object-ID picking (lazily created) ---
     /// Render pipeline that outputs flat u32 object IDs to R32Uint + R32Float targets.

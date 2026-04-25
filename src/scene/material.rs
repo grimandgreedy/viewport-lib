@@ -1,7 +1,49 @@
+/// Procedural UV visualization mode for parameterization inspection.
+///
+/// When set on a [`Material`], the mesh fragment shader ignores the albedo texture and
+/// renders a procedural pattern driven by the mesh UV coordinates instead. Useful for
+/// inspecting UV distortion, seams, and parameterization quality without needing a texture.
+///
+/// Requires the mesh to have UV coordinates. Has no effect if the mesh lacks UVs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamVisMode {
+    /// Alternating black/white squares tiled in UV space.
+    Checker = 1,
+    /// Thin grid lines at UV integer boundaries.
+    Grid = 2,
+    /// Polar checkerboard centred at UV (0.5, 0.5) — reveals rotational consistency.
+    LocalChecker = 3,
+    /// Concentric rings centred at UV (0.5, 0.5) — reveals radial distortion.
+    LocalRadial = 4,
+}
+
+/// UV parameterization visualization settings.
+///
+/// Attach to [`Material::param_vis`] to enable procedural UV pattern rendering.
+/// The `scale` controls tile frequency — higher values produce more, smaller tiles.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParamVis {
+    /// Which procedural pattern to render.
+    pub mode: ParamVisMode,
+    /// Tile frequency multiplier. Default 8.0 — produces 8 checker squares per UV unit.
+    pub scale: f32,
+}
+
+impl Default for ParamVis {
+    fn default() -> Self {
+        Self { mode: ParamVisMode::Checker, scale: 8.0 }
+    }
+}
+
 /// Per-object material properties for Blinn-Phong and PBR shading.
 ///
 /// Materials carry all shading parameters that were previously global in `LightingSettings`.
 /// Each `SceneRenderItem` now has its own `Material`, enabling per-object visual distinction.
+///
+/// This struct is `#[non_exhaustive]`: construct via [`Material::default`],
+/// [`Material::from_color`], or spread syntax (`..Default::default()`). This allows new
+/// fields to be added in future phases without breaking downstream code.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Material {
     /// Base diffuse color [r, g, b] in linear 0..1 range. Default [0.7, 0.7, 0.7].
@@ -44,6 +86,15 @@ pub struct Material {
     /// [`ViewportGpuResources::upload_matcap`].  Blendable matcaps (alpha-channel)
     /// tint the result with `base_color`; static matcaps override color entirely.
     pub matcap_id: Option<crate::resources::MatcapId>,
+    /// UV parameterization visualization. When set, replaces albedo/lighting with a
+    /// procedural pattern in UV space — useful for inspecting parameterization quality.
+    ///
+    /// Requires UV coordinates on the mesh. Default None (standard shading).
+    pub param_vis: Option<ParamVis>,
+    /// Render with back-face culling disabled so both sides are shaded.
+    ///
+    /// Useful for single-sided geometry like planes and open surfaces. Default false.
+    pub two_sided: bool,
 }
 
 impl Default for Material {
@@ -62,18 +113,34 @@ impl Default for Material {
             ao_map_id: None,
             use_pbr: false,
             matcap_id: None,
+            param_vis: None,
+            two_sided: false,
         }
     }
 }
 
 impl Material {
-    /// Reproduce pre-Phase-2 appearance from a plain color.
-    ///
-    /// All other material parameters take their defaults, preserving the previous
-    /// Blinn-Phong shading for objects that only had a color override.
+    /// Construct from a plain color, all other parameters at their defaults.
     pub fn from_color(color: [f32; 3]) -> Self {
         Self {
             base_color: color,
+            ..Default::default()
+        }
+    }
+
+    /// Construct a Cook-Torrance PBR material.
+    ///
+    /// - `metallic`: 0.0 = dielectric, 1.0 = full metal
+    /// - `roughness`: 0.0 = mirror, 1.0 = fully rough
+    ///
+    /// All other parameters take their defaults. Enable post-processing
+    /// (`PostProcessSettings::enabled = true`) for correct HDR tone mapping.
+    pub fn pbr(base_color: [f32; 3], metallic: f32, roughness: f32) -> Self {
+        Self {
+            base_color,
+            use_pbr: true,
+            metallic,
+            roughness,
             ..Default::default()
         }
     }

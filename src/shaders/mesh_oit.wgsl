@@ -92,8 +92,8 @@ struct Object {
     matcap_blendable: u32,   // offset 168
     _pad2: u32,              // offset 172
     use_face_color: u32,     // offset 176
-    _pad3a: u32,             // offset 180
-    _pad3b: u32,             // offset 184
+    uv_vis_mode: u32,        // offset 180 — 0=off 1=checker 2=grid 3=localcheck 4=localrad
+    uv_vis_scale: f32,       // offset 184 — tile frequency multiplier
     _pad3c: u32,             // offset 188
 };
 
@@ -391,6 +391,35 @@ fn pbr_light_contrib(
     return (kD * base_color / 3.14159265 + specular) * radiance * NdotL;
 }
 
+// UV parameterization visualization — procedural RGB color from UV coordinates.
+// Matches the implementation in mesh.wgsl exactly.
+fn param_vis_color(uv: vec2<f32>, mode: u32, scale: f32) -> vec3<f32> {
+    let col_a      = vec3<f32>(0.85, 0.85, 0.85);
+    let col_b      = vec3<f32>(0.2,  0.2,  0.2);
+    let line_col   = vec3<f32>(0.1,  0.1,  0.1);
+    let bg_col     = vec3<f32>(0.85, 0.85, 0.85);
+    let line_width = 0.05f;
+    let su = uv.x * scale;
+    let sv = uv.y * scale;
+    if mode == 1u {
+        let p = (i32(floor(su)) + i32(floor(sv))) & 1;
+        return select(col_a, col_b, p != 0);
+    } else if mode == 2u {
+        let on_line = fract(su) < line_width || fract(sv) < line_width;
+        return select(bg_col, line_col, on_line);
+    } else if mode == 3u {
+        let d      = uv - vec2<f32>(0.5);
+        let r      = length(d) * scale * 2.0;
+        let theta  = atan2(d.y, d.x);
+        let ring   = i32(floor(r)) & 1;
+        let sector = i32(floor(theta * 4.0 / 3.14159265 + 8.0)) & 1;
+        return select(col_a, col_b, (ring ^ sector) != 0);
+    } else {
+        let r = length(uv - vec2<f32>(0.5)) * scale * 2.0;
+        return select(col_a, col_b, (i32(floor(r)) & 1) != 0);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // OIT fragment shader — writes to accum + reveal targets.
 // ---------------------------------------------------------------------------
@@ -451,6 +480,17 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
             0.0, 1.0,
         );
         base_color = textureSampleLevel(lut_texture, obj_sampler, vec2<f32>(t, 0.5), 0.0).rgb;
+    }
+
+    // UV parameterization visualization: procedural pattern replaces all lighting.
+    if object.uv_vis_mode != 0u {
+        let vis   = param_vis_color(in.uv, object.uv_vis_mode, object.uv_vis_scale);
+        let alpha = obj_color.a;
+        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
+        var oit_out: OitOut;
+        oit_out.accum  = vec4<f32>(vis * alpha, alpha) * w;
+        oit_out.reveal = alpha;
+        return oit_out;
     }
 
     // Shading normal.

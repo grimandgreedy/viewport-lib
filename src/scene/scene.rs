@@ -6,6 +6,7 @@
 //! The renderer itself remains stateless.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::interaction::selection::{NodeId, Selection};
 use crate::renderer::SceneRenderItem;
@@ -197,9 +198,20 @@ pub struct Scene {
     version: u64,
 }
 
+/// Global monotonic clock for scene versions.
+///
+/// Each `Scene::new()` draws an initial offset from this counter so that two
+/// distinct scenes can never share the same `version()` value, even when they
+/// have been mutated the same number of times.  The renderer's batch cache
+/// therefore correctly invalidates when the active scene changes.
+static SCENE_VERSION_CLOCK: AtomicU64 = AtomicU64::new(0);
+
 impl Scene {
     /// Create an empty scene with a default layer.
     pub fn new() -> Self {
+        // Reserve a block of 2^20 (~1 M) version slots per scene so that
+        // wrapping_add(1) mutations stay within this scene's unique range.
+        let base = SCENE_VERSION_CLOCK.fetch_add(1 << 20, Ordering::Relaxed);
         Self {
             nodes: HashMap::new(),
             roots: Vec::new(),
@@ -215,7 +227,7 @@ impl Scene {
             next_layer_id: 1,
             groups: Vec::new(),
             next_group_id: 0,
-            version: 0,
+            version: base,
         }
     }
 
@@ -671,7 +683,7 @@ impl Scene {
                 scalar_range: None,
                 colormap_id: None,
                 nan_color: None,
-                two_sided: false,
+                two_sided: node.material.two_sided,
                 pick_id: node.id,
             });
         }
@@ -739,7 +751,7 @@ impl Scene {
                 scalar_range: None,
                 colormap_id: None,
                 nan_color: None,
-                two_sided: false,
+                two_sided: node.material.two_sided,
                 pick_id: node.id,
             });
         }

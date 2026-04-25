@@ -23,12 +23,7 @@ impl App {
             "Ground",
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.05)),
-            Material {
-                base_color: [0.45, 0.45, 0.48],
-                roughness: 0.9,
-                metallic: 0.0,
-                ..Material::default()
-            },
+            { let mut m = Material::from_color([0.45, 0.45, 0.48]); m.roughness = 0.9; m },
         );
 
         // 3×3 grid of spheres.
@@ -49,12 +44,7 @@ impl App {
                     &name,
                     Some(sphere_id),
                     glam::Mat4::from_translation(glam::Vec3::new(x, y, z)),
-                    Material {
-                        base_color: [0.92, 0.92, 0.92],
-                        roughness: 0.35,
-                        metallic: 0.0,
-                        ..Material::default()
-                    },
+                    { let mut m = Material::from_color([0.92, 0.92, 0.92]); m.roughness = 0.35; m },
                 );
             }
         }

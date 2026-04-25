@@ -33,11 +33,7 @@ impl App {
             "Wave Grid",
             Some(mesh_id),
             glam::Mat4::IDENTITY,
-            Material {
-                base_color: [0.6, 0.65, 0.7],
-                roughness: 0.6,
-                ..Material::default()
-            },
+            { let mut m = Material::from_color([0.6, 0.65, 0.7]); m.roughness = 0.6; m },
         );
 
         self.iso_built = true;

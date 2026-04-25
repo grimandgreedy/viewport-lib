@@ -61,11 +61,7 @@ impl App {
 
             let sphere_id = upload_sphere(renderer, &self.device);
             let matcap_id = renderer.resources().builtin_matcap_id(*preset);
-            let mat = Material {
-                base_color: self.matcap_blendable_color,
-                matcap_id: Some(matcap_id),
-                ..Material::default()
-            };
+            let mat = { let mut m = Material::from_color(self.matcap_blendable_color); m.matcap_id = Some(matcap_id); m };
             let node_id = self.matcap_scene.add_named(
                 *label,
                 Some(sphere_id),
@@ -88,10 +84,7 @@ impl App {
             "Custom",
             Some(custom_sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, -3.5, 0.0)),
-            Material {
-                matcap_id: Some(custom_id),
-                ..Material::default()
-            },
+            { let mut m = Material::default(); m.matcap_id = Some(custom_id); m },
         );
         self.matcap_custom_node = Some(custom_node);
 
@@ -109,10 +102,7 @@ impl App {
         if let Some(node_id) = self.matcap_custom_node {
             self.matcap_scene.set_material(
                 node_id,
-                Material {
-                    matcap_id: Some(id),
-                    ..Material::default()
-                },
+                { let mut m = Material::default(); m.matcap_id = Some(id); m },
             );
         }
     }
@@ -126,11 +116,7 @@ impl App {
             let matcap_id = renderer.resources().builtin_matcap_id(*preset);
             self.matcap_scene.set_material(
                 self.matcap_builtin_node_ids[i],
-                Material {
-                    base_color: self.matcap_blendable_color,
-                    matcap_id: Some(matcap_id),
-                    ..Material::default()
-                },
+                { let mut m = Material::from_color(self.matcap_blendable_color); m.matcap_id = Some(matcap_id); m },
             );
         }
     }

@@ -439,27 +439,9 @@ impl AppState {
 fn material_preset(index: usize) -> Material {
     match index % 4 {
         0 => Material::default(),
-        1 => Material {
-            base_color: [0.8, 0.2, 0.2],
-            specular: 0.8,
-            shininess: 64.0,
-            ambient: 0.1,
-            ..Material::default()
-        },
-        2 => Material {
-            base_color: [0.2, 0.4, 0.9],
-            opacity: 0.5,
-            specular: 0.9,
-            shininess: 128.0,
-            ..Material::default()
-        },
-        3 => Material {
-            base_color: [0.3, 0.7, 0.3],
-            specular: 0.1,
-            shininess: 8.0,
-            diffuse: 0.9,
-            ..Material::default()
-        },
+        1 => { let mut m = Material::from_color([0.8, 0.2, 0.2]); m.specular = 0.8; m.shininess = 64.0; m.ambient = 0.1; m },
+        2 => { let mut m = Material::from_color([0.2, 0.4, 0.9]); m.opacity = 0.5; m.specular = 0.9; m.shininess = 128.0; m },
+        3 => { let mut m = Material::from_color([0.3, 0.7, 0.3]); m.specular = 0.1; m.shininess = 8.0; m.diffuse = 0.9; m },
         _ => unreachable!(),
     }
 }

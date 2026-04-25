@@ -9,19 +9,12 @@ impl AppState {
         self.adv_scene = viewport_lib::scene::Scene::new();
         self.adv_selection.clear();
 
-        // PBR boxes - right side (x > 0). Clip plane at x=0 keeps these visible.
         let m = self.upload_box();
         let id = self.adv_scene.add_named(
             "Gold (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(2.5, 0.0, -1.5)),
-            Material {
-                base_color: [1.0, 0.78, 0.2],
-                use_pbr: true,
-                metallic: 0.95,
-                roughness: 0.05,
-                ..Material::default()
-            },
+            Material::pbr([1.0, 0.78, 0.2], 0.95, 0.05),
         );
         self.adv_selection.select_one(id);
 
@@ -30,26 +23,19 @@ impl AppState {
             "Brushed Steel (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(2.5, 0.0, 1.5)),
-            Material {
-                base_color: [0.82, 0.82, 0.86],
-                use_pbr: true,
-                metallic: 0.75,
-                roughness: 0.35,
-                ..Material::default()
-            },
+            Material::pbr([0.82, 0.82, 0.86], 0.75, 0.35),
         );
 
-        // Blinn-Phong boxes - left side (x < 0). Clip plane clips these out.
         let m = self.upload_box();
         self.adv_scene.add_named(
             "Shiny Blue (Blinn-Phong)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(-2.5, 0.0, -1.5)),
-            Material {
-                base_color: [0.2, 0.4, 0.9],
-                specular: 0.9,
-                shininess: 128.0,
-                ..Material::default()
+            {
+                let mut mat = Material::from_color([0.2, 0.4, 0.9]);
+                mat.specular = 0.9;
+                mat.shininess = 128.0;
+                mat
             },
         );
 
@@ -58,16 +44,15 @@ impl AppState {
             "Matte Green (Blinn-Phong)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(-2.5, 0.0, 1.5)),
-            Material {
-                base_color: [0.2, 0.7, 0.3],
-                specular: 0.05,
-                diffuse: 0.95,
-                shininess: 4.0,
-                ..Material::default()
+            {
+                let mut mat = Material::from_color([0.2, 0.7, 0.3]);
+                mat.specular = 0.05;
+                mat.diffuse = 0.95;
+                mat.shininess = 4.0;
+                mat
             },
         );
 
-        // Occluder wall - used to demonstrate x-ray.
         let m = self.upload_box();
         self.adv_scene.add_named(
             "Wall (occluder)",
@@ -77,22 +62,15 @@ impl AppState {
                 glam::Quat::IDENTITY,
                 glam::Vec3::new(0.0, 0.25, 3.5),
             ),
-            Material {
-                base_color: [0.55, 0.55, 0.55],
-                ..Material::default()
-            },
+            Material::from_color([0.55, 0.55, 0.55]),
         );
 
-        // Hidden box behind wall - select it and enable x-ray to see it through the wall.
         let m = self.upload_box();
         self.adv_scene.add_named(
             "Hidden Magenta (x-ray target)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 5.5)),
-            Material {
-                base_color: [0.9, 0.3, 0.7],
-                ..Material::default()
-            },
+            Material::from_color([0.9, 0.3, 0.7]),
         );
 
         self.adv_built = true;
