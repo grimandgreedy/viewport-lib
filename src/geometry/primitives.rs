@@ -45,10 +45,16 @@ pub fn cube(size: f32) -> MeshData {
         })
         .collect();
 
+    // Each face gets [0,0] [1,0] [1,1] [0,1] UVs.
+    let uvs: Vec<[f32; 2]> = (0..6)
+        .flat_map(|_| [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
+        .collect();
+
     MeshData {
         positions,
         normals,
         indices,
+        uvs: Some(uvs),
         ..MeshData::default()
     }
 }
@@ -64,6 +70,7 @@ pub fn sphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
 
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
     let sector_step = 2.0 * std::f32::consts::PI / sectors as f32;
@@ -80,6 +87,7 @@ pub fn sphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
             let y = xy * sector_angle.sin();
             positions.push([x, y, z]);
             normals.push([x / radius, y / radius, z / radius]);
+            uvs.push([j as f32 / sectors as f32, i as f32 / stacks as f32]);
         }
     }
 
@@ -104,6 +112,7 @@ pub fn sphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
         positions,
         normals,
         indices,
+        uvs: Some(uvs),
         ..MeshData::default()
     }
 }
@@ -122,12 +131,14 @@ pub fn plane(width: f32, depth: f32) -> MeshData {
         [-hw, 0.0, hd],
     ];
     let normals = vec![[0.0, 1.0, 0.0]; 4];
+    let uvs = vec![[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]];
     let indices = vec![0, 2, 1, 0, 3, 2];
 
     MeshData {
         positions,
         normals,
         indices,
+        uvs: Some(uvs),
         ..MeshData::default()
     }
 }
@@ -422,6 +433,7 @@ pub fn torus(major_radius: f32, minor_radius: f32, sectors: u32, stacks: u32) ->
 
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
     for i in 0..=stacks {
@@ -446,6 +458,7 @@ pub fn torus(major_radius: f32, minor_radius: f32, sectors: u32, stacks: u32) ->
                 cz + minor_radius * nz,
             ]);
             normals.push([nx, ny, nz]);
+            uvs.push([j as f32 / sectors as f32, i as f32 / stacks as f32]);
         }
     }
 
@@ -469,6 +482,7 @@ pub fn torus(major_radius: f32, minor_radius: f32, sectors: u32, stacks: u32) ->
         positions,
         normals,
         indices,
+        uvs: Some(uvs),
         ..MeshData::default()
     }
 }
