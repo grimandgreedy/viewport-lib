@@ -63,6 +63,17 @@
 //!   - `ViewPreset::preferred_projection()` switches ortho/persp automatically
 //!   - Explicit projection radio + per-frame FOV slider (perspective only)
 //!
+//! ## Showcase 19 — Matcap Shading
+//!
+//! ## Showcase 20 — Per-Face Attributes
+//!   - Left:   Vertex attribute (Gouraud-interpolated scalar, colormapped)
+//!   - Centre: Face attribute (flat per-triangle scalar, same data — no interpolation)
+//!   - Right:  FaceColor attribute (direct per-face RGBA, no colormap)
+//!   - Opacity slider on the FaceColor object exercises the OIT blending path
+//!   - All eight built-in matcap presets (Clay/Wax/Candy/Flat blendable; Ceramic/Jade/Mud/Normal static)
+//!   - Base-color picker shows how blendable presets tint with `base_color`
+//!   - Custom procedural matcap uploaded via `upload_matcap()` with a user-controlled hue
+//!
 //! ## Common Camera Controls
 //!   - Left-drag or Middle-drag: Orbit
 //!   - Right-drag or Shift+Middle-drag: Pan
@@ -70,11 +81,11 @@
 
 use eframe::egui;
 use viewport_lib::{
-    AnnotationLabel, AttributeKind, AttributeRef, BuiltinColormap, ButtonState, Camera,
-    CameraAnimator, CameraFrame, ClipAxis, ClipPlane, ClipPlaneController,
+    AnnotationLabel, AttributeKind, AttributeRef, BuiltinColormap, ButtonState,
+    Camera, CameraAnimator, CameraFrame, ClipAxis, ClipPlane, ClipPlaneController,
     ColormapId, Easing, FrameData, FrameStats, Gizmo, GizmoAxis, GizmoMode, GizmoSpace,
-    GlyphType, LightKind, LightSource, LightingSettings, Material, MeshData, MeshId, NodeId,
-    OrbitCameraController, PickAccelerator, PostProcessSettings, Projection, RenderCamera,
+    GlyphType, LightKind, LightSource, LightingSettings, Material, MatcapId, MeshData, MeshId,
+    NodeId, OrbitCameraController, PickAccelerator, PostProcessSettings, Projection, RenderCamera,
     SceneFrame, SceneRenderItem, ScrollUnits, Selection, ShadowFilter, SnapConfig, ViewPreset,
     ViewportContext, ViewportEvent, ViewportRenderer, VolumeData, VolumeId,
     geometry::isoline::IsolineItem,
@@ -102,6 +113,9 @@ mod showcase_15_point_clouds;
 mod showcase_16_streamlines;
 mod showcase_17_volume;
 mod showcase_18_clip_volumes;
+mod showcase_19_matcap;
+mod showcase_20_face_attributes;
+mod showcase_21_textures;
 mod viewport_callback;
 
 const BG_COLOR: [f32; 4] = [0.08, 0.08, 0.10, 1.0];
@@ -389,6 +403,25 @@ fn main() -> eframe::Result {
                 clipvol_cursor_in_viewport: false,
                 clipvol_drag_started: false,
                 clipvol_dragging: false,
+                matcap_scene: Scene::new(),
+                matcap_built: false,
+
+                matcap_builtin_node_ids: [0u64; 8],
+                matcap_custom_node: None,
+                matcap_custom_id: None,
+                matcap_blendable_color: [0.7, 0.7, 0.7],
+                matcap_custom_hue: 200.0,
+
+                face_scene: Scene::new(),
+                face_built: false,
+
+                texture_scene: Scene::new(),
+                texture_built: false,
+                texture_plane_node: 0,
+                face_mesh_indices: [0; 3],
+                face_node_ids: [0; 3],
+                face_colormap: BuiltinColormap::Viridis,
+                face_opacity: 1.0,
             }))
         }),
     )
@@ -425,6 +458,9 @@ enum ShowcaseMode {
     Streamlines,
     Volume,
     ClipVolumes,
+    Matcap,
+    FaceAttributes,
+    Textures,
 }
 
 impl ShowcaseMode {
@@ -448,6 +484,9 @@ impl ShowcaseMode {
             Self::Streamlines => "16: Streamlines & Tubes",
             Self::Volume => "17: Volume & Isosurface",
             Self::ClipVolumes => "18: Clip Volumes",
+            Self::Matcap => "19: Matcap Shading",
+            Self::FaceAttributes => "20: Face Attributes",
+            Self::Textures => "21: Textures",
         }
     }
 }
@@ -696,6 +735,34 @@ pub(crate) struct App {
     pub(crate) clipvol_drag_started: bool,
     /// True while a primary drag is ongoing.
     pub(crate) clipvol_dragging: bool,
+
+    // --- Showcase 19 ---
+    pub(crate) matcap_scene: Scene,
+    pub(crate) matcap_built: bool,
+
+    // --- Showcase 20 ---
+    pub(crate) face_scene: Scene,
+    pub(crate) face_built: bool,
+
+    // --- Showcase 21 ---
+    pub(crate) texture_scene: Scene,
+    pub(crate) texture_built: bool,
+    pub(crate) texture_plane_node: NodeId,
+    /// Mesh upload indices for the three face-attribute spheres.
+    pub(crate) face_mesh_indices: [usize; 3],
+    /// Node IDs for the three face-attribute spheres.
+    pub(crate) face_node_ids: [NodeId; 3],
+    face_colormap: BuiltinColormap,
+    /// Opacity for the FaceColor object (tests OIT path when < 1.0).
+    face_opacity: f32,
+    /// NodeId for each of the 8 built-in preset spheres (matches BUILTIN_PRESETS order).
+    pub(crate) matcap_builtin_node_ids: [NodeId; 8],
+    pub(crate) matcap_custom_node: Option<NodeId>,
+    pub(crate) matcap_custom_id: Option<MatcapId>,
+    /// Base color applied to blendable matcap spheres.
+    pub(crate) matcap_blendable_color: [f32; 3],
+    /// Hue (0..360) for the custom matcap.
+    pub(crate) matcap_custom_hue: f32,
 }
 
 // ---------------------------------------------------------------------------
@@ -739,7 +806,7 @@ impl eframe::App for App {
 
         // ---- Top panel: mode switching ----
         egui::TopBottomPanel::top("mode_panel").show(ctx, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label("Showcase:");
                 for mode in [
                     ShowcaseMode::Basic,
@@ -760,6 +827,9 @@ impl eframe::App for App {
                     ShowcaseMode::Streamlines,
                     ShowcaseMode::Volume,
                     ShowcaseMode::ClipVolumes,
+                    ShowcaseMode::Matcap,
+                    ShowcaseMode::FaceAttributes,
+                    ShowcaseMode::Textures,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1034,7 +1104,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 18] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 21] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::Performance,
@@ -1053,6 +1123,9 @@ impl App {
             ShowcaseMode::Streamlines,
             ShowcaseMode::Volume,
             ShowcaseMode::ClipVolumes,
+            ShowcaseMode::Matcap,
+            ShowcaseMode::FaceAttributes,
+            ShowcaseMode::Textures,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1091,6 +1164,9 @@ impl App {
             ShowcaseMode::Streamlines => !self.stream_built,
             ShowcaseMode::Volume => !self.vol_built,
             ShowcaseMode::ClipVolumes => !self.clipvol_built,
+            ShowcaseMode::Matcap => !self.matcap_built,
+            ShowcaseMode::FaceAttributes => !self.face_built,
+            ShowcaseMode::Textures => !self.texture_built,
             _ => false,
         };
         if !needs {
@@ -1255,6 +1331,29 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::Textures => {
+                self.build_texture_scene(renderer);
+            }
+            ShowcaseMode::Matcap => {
+                self.build_matcap_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::new(0.0, 0.0, -0.5),
+                    distance: 14.0,
+                    orientation: glam::Quat::from_rotation_z(0.3)
+                        * glam::Quat::from_rotation_x(0.9),
+                    ..Camera::default()
+                };
+            }
+            ShowcaseMode::FaceAttributes => {
+                self.build_face_attr_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 16.0,
+                    orientation: glam::Quat::from_rotation_z(0.5)
+                        * glam::Quat::from_rotation_x(1.1),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -1288,6 +1387,9 @@ impl App {
             ShowcaseMode::Streamlines => self.controls_streamlines(ui),
             ShowcaseMode::Volume => self.controls_volume(ui, frame),
             ShowcaseMode::ClipVolumes => self.controls_clipvol(ui),
+            ShowcaseMode::Matcap => self.controls_matcap(ui, frame),
+            ShowcaseMode::FaceAttributes => self.controls_face_attr(ui),
+            ShowcaseMode::Textures => self.controls_textures(ui),
         }
     }
 
@@ -2560,6 +2662,79 @@ impl App {
                     sg,
                     self.scalar_selection.version(),
                 )
+            }
+
+            ShowcaseMode::Matcap => {
+                let items = self.matcap_scene.collect_render_items(&Selection::new());
+                let sg = self.matcap_scene.version();
+                // Lighting is not used by matcap-shaded objects, but we still
+                // need minimal settings for the framework.
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.5,
+                    sky_color: [1.0, 1.0, 1.0],
+                    ground_color: [1.0, 1.0, 1.0],
+                    ..LightingSettings::default()
+                };
+                (items, Some(BG_COLOR), lighting, sg, 0)
+            }
+
+            ShowcaseMode::Textures => {
+                let mut items = self.texture_scene.collect_render_items(&Selection::new());
+                let plane_node = self.texture_plane_node;
+                if let Some(item) = items.iter_mut().find(|i| i.pick_id == plane_node) {
+                    item.two_sided = true;
+                }
+                let sg = self.texture_scene.version();
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.4,
+                    sky_color: [1.0, 1.0, 1.0],
+                    ground_color: [0.3, 0.3, 0.3],
+                    ..LightingSettings::default()
+                };
+                (items, Some(BG_COLOR), lighting, sg, 0)
+            }
+
+            ShowcaseMode::FaceAttributes => {
+                let mut items = self.face_scene.collect_render_items(&Selection::new());
+                let colormap_id = ColormapId(self.face_colormap as usize);
+
+                // Node 0: Vertex attribute (interpolated)
+                // scalar_range left as None — renderer auto-detects from attribute_ranges.
+                if let Some(item) = items.iter_mut().find(|i| i.pick_id == self.face_node_ids[0]) {
+                    item.active_attribute = Some(AttributeRef {
+                        name: "scalar".to_string(),
+                        kind: AttributeKind::Vertex,
+                    });
+                    item.colormap_id = Some(colormap_id);
+                }
+
+                // Node 1: Face attribute (flat per-triangle)
+                // scalar_range left as None — renderer auto-detects from attribute_ranges.
+                if let Some(item) = items.iter_mut().find(|i| i.pick_id == self.face_node_ids[1]) {
+                    item.active_attribute = Some(AttributeRef {
+                        name: "scalar".to_string(),
+                        kind: AttributeKind::Face,
+                    });
+                    item.colormap_id = Some(colormap_id);
+                }
+
+                // Node 2: FaceColor attribute (direct RGBA, no colormap)
+                if let Some(item) = items.iter_mut().find(|i| i.pick_id == self.face_node_ids[2]) {
+                    item.active_attribute = Some(AttributeRef {
+                        name: "color".to_string(),
+                        kind: AttributeKind::FaceColor,
+                    });
+                    item.material.opacity = self.face_opacity;
+                }
+
+                let sg = self.face_scene.version();
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.4,
+                    sky_color: [1.0, 1.0, 1.0],
+                    ground_color: [1.0, 1.0, 1.0],
+                    ..LightingSettings::default()
+                };
+                (items, Some(BG_COLOR), lighting, sg, 0)
             }
         };
 
