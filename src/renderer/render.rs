@@ -24,7 +24,7 @@ impl ViewportRenderer {
         );
         emit_scivis_draw_calls!(
             &self.resources,
-            render_pass,
+            &mut *render_pass,
             &self.point_cloud_gpu_data,
             &self.glyph_gpu_data,
             &self.polyline_gpu_data,
@@ -32,6 +32,16 @@ impl ViewportRenderer {
             &self.streamtube_gpu_data,
             camera_bg
         );
+        // Phase 10B — screen-space image overlays (always on top, no depth test).
+        if !self.screen_image_gpu_data.is_empty() {
+            if let Some(pipeline) = &self.resources.screen_image_pipeline {
+                render_pass.set_pipeline(pipeline);
+                for gpu in &self.screen_image_gpu_data {
+                    render_pass.set_bind_group(0, &gpu.bind_group, &[]);
+                    render_pass.draw(0..6, 0..1);
+                }
+            }
+        }
     }
 
     /// Issue draw calls into a render pass with any lifetime.
@@ -57,7 +67,7 @@ impl ViewportRenderer {
         );
         emit_scivis_draw_calls!(
             &self.resources,
-            render_pass,
+            &mut *render_pass,
             &self.point_cloud_gpu_data,
             &self.glyph_gpu_data,
             &self.polyline_gpu_data,
@@ -65,6 +75,16 @@ impl ViewportRenderer {
             &self.streamtube_gpu_data,
             camera_bg
         );
+        // Phase 10B — screen-space image overlays (always on top, no depth test).
+        if !self.screen_image_gpu_data.is_empty() {
+            if let Some(pipeline) = &self.resources.screen_image_pipeline {
+                render_pass.set_pipeline(pipeline);
+                for gpu in &self.screen_image_gpu_data {
+                    render_pass.set_bind_group(0, &gpu.bind_group, &[]);
+                    render_pass.draw(0..6, 0..1);
+                }
+            }
+        }
     }
 
     /// High-level HDR render for a single viewport identified by `id`.
@@ -143,7 +163,8 @@ impl ViewportRenderer {
         let h = frame.camera.viewport_size[1] as u32;
 
         // Ensure per-viewport HDR targets. Provides a depth buffer for both LDR and HDR paths.
-        self.ensure_viewport_hdr(device, queue, vp_idx, w.max(1), h.max(1));
+        let ssaa_factor = frame.effects.post_process.ssaa_factor.max(1);
+        self.ensure_viewport_hdr(device, queue, vp_idx, w.max(1), h.max(1), ssaa_factor);
 
         if !frame.effects.post_process.enabled {
             // LDR fallback: render directly to output_view.
@@ -203,6 +224,16 @@ impl ViewportRenderer {
                     &self.streamtube_gpu_data,
                     camera_bg
                 );
+                // Phase 10B — screen-space image overlays (always on top).
+                if !self.screen_image_gpu_data.is_empty() {
+                    if let Some(pipeline) = &self.resources.screen_image_pipeline {
+                        render_pass.set_pipeline(pipeline);
+                        for gpu in &self.screen_image_gpu_data {
+                            render_pass.set_bind_group(0, &gpu.bind_group, &[]);
+                            render_pass.draw(0..6, 0..1);
+                        }
+                    }
+                }
             }
             return encoder.finish();
         }
@@ -356,8 +387,20 @@ impl ViewportRenderer {
         // HDR scene pass: render geometry into the HDR texture.
         // -----------------------------------------------------------------------
         {
-            let hdr_view = &slot_hdr.hdr_view;
-            let hdr_depth_view = &slot_hdr.hdr_depth_view;
+            // Use SSAA target if enabled, otherwise render directly to hdr_texture.
+            let use_ssaa = ssaa_factor > 1
+                && slot_hdr.ssaa_color_view.is_some()
+                && slot_hdr.ssaa_depth_view.is_some();
+            let scene_color_view = if use_ssaa {
+                slot_hdr.ssaa_color_view.as_ref().unwrap()
+            } else {
+                &slot_hdr.hdr_view
+            };
+            let scene_depth_view = if use_ssaa {
+                slot_hdr.ssaa_depth_view.as_ref().unwrap()
+            } else {
+                &slot_hdr.hdr_depth_view
+            };
 
             let clear_wgpu = wgpu::Color {
                 r: hdr_clear_rgb[0] as f64,
@@ -369,7 +412,7 @@ impl ViewportRenderer {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("hdr_scene_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: hdr_view,
+                    view: scene_color_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(clear_wgpu),
@@ -378,7 +421,7 @@ impl ViewportRenderer {
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: hdr_depth_view,
+                    view: scene_depth_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -414,6 +457,7 @@ impl ViewportRenderer {
                             item.visible
                                 && (item.active_attribute.is_some()
                                     || item.two_sided
+                                    || item.material.is_two_sided()
                                     || item.material.matcap_id.is_some())
                                 && resources
                                     .mesh_store
@@ -509,7 +553,7 @@ impl ViewportRenderer {
                             else {
                                 continue;
                             };
-                            let pipeline = if item.two_sided {
+                            let pipeline = if item.two_sided || item.material.is_two_sided() {
                                 hdr_solid_two_sided
                             } else {
                                 hdr_solid
@@ -635,7 +679,7 @@ impl ViewportRenderer {
                         &resources.hdr_wireframe_pipeline,
                     ) {
                         for item in &opaque {
-                            let solid_pl = if item.two_sided {
+                            let solid_pl = if item.two_sided || item.material.is_two_sided() {
                                 hdr_solid_two_sided
                             } else {
                                 hdr_solid
@@ -677,6 +721,37 @@ impl ViewportRenderer {
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 render_pass.set_pipeline(&resources.skybox_pipeline);
                 render_pass.draw(0..3, 0..1);
+            }
+        }
+
+        // -----------------------------------------------------------------------
+        // SSAA resolve pass: downsample supersampled scene → hdr_texture.
+        // Only runs when ssaa_factor > 1 and the resolve pipeline is available.
+        // -----------------------------------------------------------------------
+        if ssaa_factor > 1 {
+            let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+            if let (Some(pipeline), Some(bg)) = (
+                &self.resources.ssaa_resolve_pipeline,
+                &slot_hdr.ssaa_resolve_bind_group,
+            ) {
+                let mut resolve_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("ssaa_resolve_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &slot_hdr.hdr_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                resolve_pass.set_pipeline(pipeline);
+                resolve_pass.set_bind_group(0, bg, &[]);
+                resolve_pass.draw(0..3, 0..1);
             }
         }
 
@@ -1309,6 +1384,41 @@ impl ViewportRenderer {
                 axes_pass.set_pipeline(&self.resources.axes_pipeline);
                 axes_pass.set_vertex_buffer(0, slot.axes_vertex_buffer.slice(..));
                 axes_pass.draw(0..slot.axes_vertex_count, 0..1);
+            }
+        }
+
+        // Phase 10B — screen-space image overlay pass (HDR path).
+        // Drawn after axes so overlays are always on top of everything.
+        if !self.screen_image_gpu_data.is_empty() {
+            if let Some(pipeline) = &self.resources.screen_image_pipeline {
+                let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+                let mut img_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("screen_image_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: output_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &slot_hdr.hdr_depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Discard,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                img_pass.set_pipeline(pipeline);
+                for gpu in &self.screen_image_gpu_data {
+                    img_pass.set_bind_group(0, &gpu.bind_group, &[]);
+                    img_pass.draw(0..6, 0..1);
+                }
             }
         }
 

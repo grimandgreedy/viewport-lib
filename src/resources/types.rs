@@ -345,68 +345,70 @@ pub type LightUniform = LightsUniform;
 
 /// Per-object uniform: world transform, material properties, selection state, and wireframe mode.
 ///
-/// Layout (192 bytes, 16-byte aligned):
-/// - model:          [[f32;4];4] = 64 bytes  offset   0
-/// - color:           [f32;4]   = 16 bytes  offset  64  (base_color.xyz + opacity)
-/// - selected:         u32      =  4 bytes  offset  80
-/// - wireframe:        u32      =  4 bytes  offset  84
-/// - ambient:          f32      =  4 bytes  offset  88
-/// - diffuse:          f32      =  4 bytes  offset  92
-/// - specular:         f32      =  4 bytes  offset  96
-/// - shininess:        f32      =  4 bytes  offset 100
-/// - has_texture:      u32      =  4 bytes  offset 104
-/// - use_pbr:          u32      =  4 bytes  offset 108
-/// - metallic:         f32      =  4 bytes  offset 112
-/// - roughness:        f32      =  4 bytes  offset 116
-/// - has_normal_map:   u32      =  4 bytes  offset 120
-/// - has_ao_map:       u32      =  4 bytes  offset 124
-/// - has_attribute:    u32      =  4 bytes  offset 128
-/// - scalar_min:       f32      =  4 bytes  offset 132
-/// - scalar_max:       f32      =  4 bytes  offset 136
-/// - _pad_scalar:      u32      =  4 bytes  offset 140
-/// - nan_color:       [f32;4]   = 16 bytes  offset 144
-/// - use_nan_color:    u32      =  4 bytes  offset 160
-/// - use_matcap:       u32      =  4 bytes  offset 164
-/// - matcap_blendable: u32      =  4 bytes  offset 168
-/// - _pad2:            u32      =  4 bytes  offset 172
-/// - use_face_color:   u32      =  4 bytes  offset 176
-/// - uv_vis_mode:      u32      =  4 bytes  offset 180  (0=off 1=checker 2=grid 3=localcheck 4=localrad)
-/// - uv_vis_scale:     f32      =  4 bytes  offset 184
-/// - _pad3:            u32      =  4 bytes  offset 188
-/// Total: 192 bytes
+/// Layout (208 bytes, 16-byte aligned):
+/// - model:           [[f32;4];4] = 64 bytes  offset   0
+/// - color:            [f32;4]   = 16 bytes  offset  64  (base_color.xyz + opacity)
+/// - selected:          u32      =  4 bytes  offset  80
+/// - wireframe:         u32      =  4 bytes  offset  84
+/// - ambient:           f32      =  4 bytes  offset  88
+/// - diffuse:           f32      =  4 bytes  offset  92
+/// - specular:          f32      =  4 bytes  offset  96
+/// - shininess:         f32      =  4 bytes  offset 100
+/// - has_texture:       u32      =  4 bytes  offset 104
+/// - use_pbr:           u32      =  4 bytes  offset 108
+/// - metallic:          f32      =  4 bytes  offset 112
+/// - roughness:         f32      =  4 bytes  offset 116
+/// - has_normal_map:    u32      =  4 bytes  offset 120
+/// - has_ao_map:        u32      =  4 bytes  offset 124
+/// - has_attribute:     u32      =  4 bytes  offset 128
+/// - scalar_min:        f32      =  4 bytes  offset 132
+/// - scalar_max:        f32      =  4 bytes  offset 136
+/// - _pad_scalar:       u32      =  4 bytes  offset 140
+/// - nan_color:        [f32;4]   = 16 bytes  offset 144
+/// - use_nan_color:     u32      =  4 bytes  offset 160
+/// - use_matcap:        u32      =  4 bytes  offset 164
+/// - matcap_blendable:  u32      =  4 bytes  offset 168
+/// - _pad2:             u32      =  4 bytes  offset 172
+/// - use_face_color:    u32      =  4 bytes  offset 176
+/// - uv_vis_mode:       u32      =  4 bytes  offset 180  (0=off 1=checker 2=grid 3=localcheck 4=localrad)
+/// - uv_vis_scale:      f32      =  4 bytes  offset 184
+/// - backface_policy:   u32      =  4 bytes  offset 188  (0=Cull 1=Identical 2=DifferentColor)
+/// - backface_color:   [f32;4]   = 16 bytes  offset 192
+/// Total: 208 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ObjectUniform {
-    pub(crate) model: [[f32; 4]; 4], //  64 bytes, offset   0
-    pub(crate) color: [f32; 4],      //  16 bytes, offset  64
-    pub(crate) selected: u32,        //   4 bytes, offset  80
-    pub(crate) wireframe: u32,       //   4 bytes, offset  84
-    pub(crate) ambient: f32,         //   4 bytes, offset  88
-    pub(crate) diffuse: f32,         //   4 bytes, offset  92
-    pub(crate) specular: f32,        //   4 bytes, offset  96
-    pub(crate) shininess: f32,       //   4 bytes, offset 100
-    pub(crate) has_texture: u32,     //   4 bytes, offset 104
-    pub(crate) use_pbr: u32,         //   4 bytes, offset 108
-    pub(crate) metallic: f32,        //   4 bytes, offset 112
-    pub(crate) roughness: f32,       //   4 bytes, offset 116
-    pub(crate) has_normal_map: u32,  //   4 bytes, offset 120
-    pub(crate) has_ao_map: u32,      //   4 bytes, offset 124
-    pub(crate) has_attribute: u32,   //   4 bytes, offset 128
-    pub(crate) scalar_min: f32,      //   4 bytes, offset 132
-    pub(crate) scalar_max: f32,      //   4 bytes, offset 136
-    pub(crate) _pad_scalar: u32,     //   4 bytes, offset 140
-    pub(crate) nan_color: [f32; 4],       //  16 bytes, offset 144
-    pub(crate) use_nan_color: u32,        //   4 bytes, offset 160
-    pub(crate) use_matcap: u32,           //   4 bytes, offset 164
-    pub(crate) matcap_blendable: u32,     //   4 bytes, offset 168
-    pub(crate) _pad2: u32,                //   4 bytes, offset 172
-    pub(crate) use_face_color: u32,       //   4 bytes, offset 176
-    pub(crate) uv_vis_mode: u32,          //   4 bytes, offset 180
-    pub(crate) uv_vis_scale: f32,         //   4 bytes, offset 184
-    pub(crate) _pad3: u32,                //   4 bytes, offset 188
+    pub(crate) model: [[f32; 4]; 4],        //  64 bytes, offset   0
+    pub(crate) color: [f32; 4],             //  16 bytes, offset  64
+    pub(crate) selected: u32,               //   4 bytes, offset  80
+    pub(crate) wireframe: u32,              //   4 bytes, offset  84
+    pub(crate) ambient: f32,                //   4 bytes, offset  88
+    pub(crate) diffuse: f32,                //   4 bytes, offset  92
+    pub(crate) specular: f32,               //   4 bytes, offset  96
+    pub(crate) shininess: f32,              //   4 bytes, offset 100
+    pub(crate) has_texture: u32,            //   4 bytes, offset 104
+    pub(crate) use_pbr: u32,                //   4 bytes, offset 108
+    pub(crate) metallic: f32,              //   4 bytes, offset 112
+    pub(crate) roughness: f32,             //   4 bytes, offset 116
+    pub(crate) has_normal_map: u32,        //   4 bytes, offset 120
+    pub(crate) has_ao_map: u32,            //   4 bytes, offset 124
+    pub(crate) has_attribute: u32,         //   4 bytes, offset 128
+    pub(crate) scalar_min: f32,            //   4 bytes, offset 132
+    pub(crate) scalar_max: f32,            //   4 bytes, offset 136
+    pub(crate) _pad_scalar: u32,           //   4 bytes, offset 140
+    pub(crate) nan_color: [f32; 4],        //  16 bytes, offset 144
+    pub(crate) use_nan_color: u32,         //   4 bytes, offset 160
+    pub(crate) use_matcap: u32,            //   4 bytes, offset 164
+    pub(crate) matcap_blendable: u32,      //   4 bytes, offset 168
+    pub(crate) _pad2: u32,                 //   4 bytes, offset 172
+    pub(crate) use_face_color: u32,        //   4 bytes, offset 176
+    pub(crate) uv_vis_mode: u32,           //   4 bytes, offset 180
+    pub(crate) uv_vis_scale: f32,          //   4 bytes, offset 184
+    pub(crate) backface_policy: u32,       //   4 bytes, offset 188  (0=Cull 1=Identical 2=DifferentColor)
+    pub(crate) backface_color: [f32; 4],   //  16 bytes, offset 192
 }
 
-const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 192);
+const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 208);
 
 /// Per-instance GPU data for instanced rendering. Matches the WGSL `InstanceData` struct.
 ///
@@ -861,6 +863,16 @@ pub struct PolylineGpuData {
     pub(crate) _uniform_buf: wgpu::Buffer,
 }
 
+/// Per-frame GPU data for one screen-space image overlay, created in `prepare()` (Phase 10B).
+pub struct ScreenImageGpuData {
+    /// Uniform buffer: `ScreenImageUniform` (32 bytes) with NDC extents and alpha.
+    pub(crate) uniform_buf: wgpu::Buffer,
+    /// Uploaded RGBA8 texture for this image (recreated each frame).
+    pub(crate) _texture: wgpu::Texture,
+    /// Bind group (group 0): uniform + texture + sampler.
+    pub(crate) bind_group: wgpu::BindGroup,
+}
+
 /// Per-frame GPU data for one glyph item, created in `prepare()`.
 pub struct GlyphGpuData {
     /// Vertex buffer for the glyph base mesh (borrowed from cached `GlyphBaseMesh`).
@@ -957,6 +969,20 @@ pub(crate) struct ViewportHdrState {
     // --- FXAA ---
     pub fxaa_texture: wgpu::Texture,
     pub fxaa_view: wgpu::TextureView,
+
+    // --- SSAA (allocated when ssaa_factor > 1) ---
+    /// Supersampled color render target. `None` when ssaa_factor == 1.
+    pub ssaa_color_texture: Option<wgpu::Texture>,
+    pub ssaa_color_view: Option<wgpu::TextureView>,
+    /// Supersampled depth render target. `None` when ssaa_factor == 1.
+    pub ssaa_depth_texture: Option<wgpu::Texture>,
+    pub ssaa_depth_view: Option<wgpu::TextureView>,
+    /// Bind group for the SSAA resolve pass (reads ssaa_color_texture). `None` when ssaa_factor == 1.
+    pub ssaa_resolve_bind_group: Option<wgpu::BindGroup>,
+    /// Uniform buffer holding the ssaa_factor value for the resolve shader.
+    pub ssaa_uniform_buf: Option<wgpu::Buffer>,
+    /// The ssaa_factor this state was created with (1 = no SSAA).
+    pub ssaa_factor: u32,
 
     // --- OIT (lazily allocated when transparent geometry is present) ---
     pub oit_accum_texture: Option<wgpu::Texture>,
@@ -1147,6 +1173,8 @@ pub struct ViewportGpuResources {
     pub(crate) fxaa_view: Option<wgpu::TextureView>,
     pub(crate) fxaa_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) fxaa_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) ssaa_resolve_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) ssaa_resolve_bgl: Option<wgpu::BindGroupLayout>,
     pub(crate) fxaa_bind_group: Option<wgpu::BindGroup>,
     /// Linear-clamp sampler shared by the FXAA pass (stored for recreating per-viewport bind groups).
     pub(crate) fxaa_sampler: Option<wgpu::Sampler>,
@@ -1457,6 +1485,12 @@ pub struct ViewportGpuResources {
     pub(crate) ground_plane_uniform_buf: wgpu::Buffer,
     /// Bind group for the ground plane pass (rebuilt when shadow atlas changes).
     pub(crate) ground_plane_bind_group: wgpu::BindGroup,
+
+    // --- Phase 10B: Screen-space image overlays (lazily created) ---
+    /// Render pipeline for screen-space image quads. None until first screen image is submitted.
+    pub(crate) screen_image_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for the screen image pipeline (group 0: uniform + texture + sampler).
+    pub(crate) screen_image_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- Phase K: GPU object-ID picking (lazily created) ---
     /// Render pipeline that outputs flat u32 object IDs to R32Uint + R32Float targets.

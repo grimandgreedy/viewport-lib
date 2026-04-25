@@ -47,7 +47,7 @@ pub mod viewport_input;
 pub use action::Action;
 pub use binding::{ActivationMode, Binding, KeyCode, Modifiers, MouseButton, Trigger, TriggerKind};
 pub use defaults::default_bindings;
-pub use mode::InputMode;
+pub use mode::{InputMode, NavigationMode};
 pub use query::{ActionState, FrameInput};
 
 // New pipeline re-exports

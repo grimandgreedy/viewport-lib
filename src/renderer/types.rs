@@ -171,6 +171,13 @@ pub struct PostProcessSettings {
     pub bloom_intensity: f32,
     /// Enable FXAA (Fast Approximate Anti-Aliasing) fullscreen pass. Requires `enabled = true`.
     pub fxaa: bool,
+    /// Supersampling anti-aliasing factor. 1 = off, 2 = 2×, 4 = 4×.
+    ///
+    /// When `> 1`, scene geometry is rendered at `ssaa_factor × resolution` and downsampled
+    /// before post-processing. Produces sharper edges than FXAA at the cost of rendering
+    /// `ssaa_factor²` times more pixels. Intended for offline/screenshot use, not interactive
+    /// rendering. Requires `enabled = true`.
+    pub ssaa_factor: u32,
     /// Enable screen-space contact shadows (thin shadows at object-ground contact). Requires `enabled = true`.
     pub contact_shadows: bool,
     /// Maximum ray-march distance in view space. Default: 0.5.
@@ -192,6 +199,7 @@ impl Default for PostProcessSettings {
             bloom_threshold: 1.0,
             bloom_intensity: 0.1,
             fxaa: false,
+            ssaa_factor: 1,
             contact_shadows: false,
             contact_shadow_max_distance: 0.5,
             contact_shadow_steps: 16,
@@ -685,6 +693,233 @@ impl Default for StreamtubeItem {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 10A — Camera frustum wireframe
+// ---------------------------------------------------------------------------
+
+/// A renderable camera frustum wireframe item.
+///
+/// Converted to [`PolylineItem`] geometry in `prepare.rs` (no new GPU pipeline).
+/// The frustum is drawn as near quad + far quad + 4 lateral edges, with an
+/// optional image-plane quad at a configurable depth.
+///
+/// Use [`CameraFrustumItem::camera_target`] to get a fly-to target that frames
+/// the frustum from a comfortable standoff distance.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct CameraFrustumItem {
+    /// View-to-world transform (the camera's world-space pose).
+    ///
+    /// Pass `camera.view_matrix().inverse().to_cols_array_2d()` for the current
+    /// viewport camera, or any other camera-world transform.
+    pub pose: [[f32; 4]; 4],
+    /// Vertical field of view in radians.
+    pub fov_y: f32,
+    /// Viewport aspect ratio (width / height).
+    pub aspect: f32,
+    /// Near clip distance (world units).
+    pub near: f32,
+    /// Far clip distance (world units).
+    pub far: f32,
+    /// RGBA line color. Default: `[0.8, 0.8, 0.9, 1.0]` (light blue-grey).
+    pub color: [f32; 4],
+    /// Screen-space line width in pixels. Default: `2.0`.
+    pub line_width: f32,
+    /// If `Some(d)`, draw a closed quad at depth `d` (world units) inside the frustum.
+    /// Useful to visualise the image plane of a camera.
+    pub image_plane_depth: Option<f32>,
+}
+
+impl Default for CameraFrustumItem {
+    fn default() -> Self {
+        Self {
+            pose: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            fov_y: std::f32::consts::FRAC_PI_4,
+            aspect: 16.0 / 9.0,
+            near: 0.1,
+            far: 10.0,
+            color: [0.8, 0.8, 0.9, 1.0],
+            line_width: 2.0,
+            image_plane_depth: None,
+        }
+    }
+}
+
+impl CameraFrustumItem {
+    /// Compute the world-space corners of a frustum plane at depth `d`.
+    ///
+    /// Returns `[top_left, top_right, bottom_right, bottom_left]` in world space.
+    fn plane_corners(&self, d: f32) -> [[f32; 3]; 4] {
+        let half_h = (self.fov_y * 0.5).tan() * d;
+        let half_w = half_h * self.aspect;
+        let pose = glam::Mat4::from_cols_array_2d(&self.pose);
+        let corners_cam = [
+            glam::vec3(-half_w,  half_h, -d),
+            glam::vec3( half_w,  half_h, -d),
+            glam::vec3( half_w, -half_h, -d),
+            glam::vec3(-half_w, -half_h, -d),
+        ];
+        corners_cam.map(|c| {
+            let w = pose.transform_point3(c);
+            [w.x, w.y, w.z]
+        })
+    }
+
+    /// Convert this frustum into a [`PolylineItem`] for the polyline pipeline.
+    ///
+    /// Produces: near quad strip (5 verts), far quad strip (5 verts),
+    /// 4 lateral edge strips (2 verts each), and optionally an image-plane
+    /// quad strip (5 verts).
+    pub(crate) fn to_polyline(&self) -> PolylineItem {
+        let near = self.plane_corners(self.near);
+        let far  = self.plane_corners(self.far);
+
+        let mut positions: Vec<[f32; 3]> = Vec::new();
+        let mut strip_lengths: Vec<u32>  = Vec::new();
+
+        // Near quad (closed loop: TL→TR→BR→BL→TL)
+        positions.extend_from_slice(&[near[0], near[1], near[2], near[3], near[0]]);
+        strip_lengths.push(5);
+
+        // Far quad
+        positions.extend_from_slice(&[far[0], far[1], far[2], far[3], far[0]]);
+        strip_lengths.push(5);
+
+        // Lateral edges (near corner → far corner, for each of 4 corners)
+        for i in 0..4 {
+            positions.extend_from_slice(&[near[i], far[i]]);
+            strip_lengths.push(2);
+        }
+
+        // Optional image-plane quad
+        if let Some(d) = self.image_plane_depth {
+            let ip = self.plane_corners(d);
+            positions.extend_from_slice(&[ip[0], ip[1], ip[2], ip[3], ip[0]]);
+            strip_lengths.push(5);
+        }
+
+        PolylineItem {
+            positions,
+            strip_lengths,
+            default_color: self.color,
+            line_width: self.line_width,
+            ..PolylineItem::default()
+        }
+    }
+
+    /// Compute a [`crate::camera::CameraTarget`] that frames this frustum.
+    ///
+    /// `standoff_factor` controls how far back the viewing camera sits relative
+    /// to the frustum diagonal (2.5 is a comfortable default). The returned
+    /// orientation faces the frustum from its front (along the frustum's +Z axis).
+    ///
+    /// Feed the result directly into [`crate::camera::CameraAnimator::fly_to`]:
+    ///
+    /// ```rust,ignore
+    /// let t = frustum.camera_target(2.5);
+    /// animator.fly_to(&camera, t.center, t.distance, t.orientation, 1.0);
+    /// ```
+    pub fn camera_target(&self, standoff_factor: f32) -> crate::camera::CameraTarget {
+        let near = self.plane_corners(self.near);
+        let far  = self.plane_corners(self.far);
+
+        // World-space center: midpoint of all 8 corners.
+        let mut sum = glam::Vec3::ZERO;
+        for c in near.iter().chain(far.iter()) {
+            sum += glam::Vec3::from(*c);
+        }
+        let center = sum / 8.0;
+
+        // Distance: half-diagonal of the frustum bounding box, scaled by standoff.
+        let mut max_dist_sq: f32 = 0.0;
+        for c in near.iter().chain(far.iter()) {
+            let d = (glam::Vec3::from(*c) - center).length_squared();
+            if d > max_dist_sq { max_dist_sq = d; }
+        }
+        let distance = max_dist_sq.sqrt() * standoff_factor;
+
+        // Orientation: look from camera +Z axis (frustum's back) toward center.
+        let pose = glam::Mat4::from_cols_array_2d(&self.pose);
+        // Frustum's world-space forward (into scene) is -Z of the camera frame.
+        // We want to view the frustum from the +Z side (behind the camera).
+        let cam_z_world = pose.transform_vector3(glam::Vec3::Z); // frustum's +Z (back)
+        let eye = center + cam_z_world.normalize() * distance;
+        let forward = (center - eye).normalize();
+        // Build orientation quaternion: look along `forward` with world-up hint.
+        let up_hint = if forward.dot(glam::Vec3::Z).abs() > 0.99 {
+            glam::Vec3::Y
+        } else {
+            glam::Vec3::Z
+        };
+        let right = forward.cross(up_hint).normalize();
+        let up    = right.cross(forward).normalize();
+        let rot   = glam::Mat3::from_cols(right, up, -forward);
+        let orientation = glam::Quat::from_mat3(&rot);
+
+        crate::camera::CameraTarget { center, distance, orientation }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 10B — Screen-space image overlays
+// ---------------------------------------------------------------------------
+
+/// Anchor corner for a [`ScreenImageItem`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ImageAnchor {
+    /// Top-left corner of the viewport (default).
+    #[default]
+    TopLeft,
+    /// Top-right corner of the viewport.
+    TopRight,
+    /// Bottom-left corner of the viewport.
+    BottomLeft,
+    /// Bottom-right corner of the viewport.
+    BottomRight,
+    /// Centered in the viewport.
+    Center,
+}
+
+/// A floating screen-space RGBA image rendered as a viewport overlay.
+///
+/// The image is drawn after all 3D geometry (no depth test) and anchored to
+/// one of the viewport corners or the center.
+///
+/// `depth_composite: true` is reserved for a future phase; set it to `false`.
+#[non_exhaustive]
+#[derive(Clone)]
+pub struct ScreenImageItem {
+    /// RGBA8 pixel data, row-major, top-to-bottom.
+    pub pixels: Vec<[u8; 4]>,
+    /// Image width in pixels.
+    pub width: u32,
+    /// Image height in pixels.
+    pub height: u32,
+    /// Which corner (or center) of the viewport to anchor the image to.
+    pub anchor: ImageAnchor,
+    /// Scale factor relative to natural pixel size (`1.0` = one pixel per screen pixel).
+    pub scale: f32,
+    /// Overall opacity multiplier applied on top of per-pixel alpha. Default: `1.0`.
+    pub alpha: f32,
+    /// Reserved — must be `false` in Phase 10.
+    pub depth_composite: bool,
+}
+
+impl Default for ScreenImageItem {
+    fn default() -> Self {
+        Self {
+            pixels: Vec::new(),
+            width: 0,
+            height: 0,
+            anchor: ImageAnchor::TopLeft,
+            scale: 1.0,
+            alpha: 1.0,
+            depth_composite: false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Phase G — GPU compute filter types
 // ---------------------------------------------------------------------------
 
@@ -937,6 +1172,10 @@ pub struct SceneFrame {
     pub isolines: Vec<crate::geometry::isoline::IsolineItem>,
     /// Streamtube items to render this frame.
     pub streamtube_items: Vec<StreamtubeItem>,
+    /// Camera frustum wireframe items to render this frame (Phase 10).
+    pub camera_frustums: Vec<CameraFrustumItem>,
+    /// Screen-space image overlay items to render this frame (Phase 10).
+    pub screen_images: Vec<ScreenImageItem>,
 }
 
 impl Default for SceneFrame {
@@ -950,6 +1189,8 @@ impl Default for SceneFrame {
             volumes: Vec::new(),
             isolines: Vec::new(),
             streamtube_items: Vec::new(),
+            camera_frustums: Vec::new(),
+            screen_images: Vec::new(),
         }
     }
 }
@@ -1334,6 +1575,7 @@ macro_rules! emit_draw_calls {
                             item.visible
                                 && (item.active_attribute.is_some()
                                     || item.two_sided
+                                    || item.material.is_two_sided()
                                     || item.material.param_vis.is_some())
                                 && resources
                                     .mesh_store
@@ -1426,7 +1668,7 @@ macro_rules! emit_draw_calls {
                             };
                             let pipeline = if item.material.opacity < 1.0 {
                                 &resources.transparent_pipeline
-                            } else if item.two_sided {
+                            } else if item.two_sided || item.material.is_two_sided() {
                                 &resources.solid_two_sided_pipeline
                             } else {
                                 &resources.solid_pipeline
@@ -1535,7 +1777,7 @@ macro_rules! emit_draw_calls {
                 }
 
                 for item in &opaque {
-                    let pl = if item.two_sided {
+                    let pl = if item.two_sided || item.material.is_two_sided() {
                         &resources.solid_two_sided_pipeline
                     } else {
                         &resources.solid_pipeline

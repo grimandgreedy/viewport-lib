@@ -92,9 +92,10 @@ struct Object {
     matcap_blendable: u32,   // offset 168
     _pad2: u32,              // offset 172
     use_face_color: u32,     // offset 176
-    uv_vis_mode: u32,        // offset 180 — 0=off 1=checker 2=grid 3=localcheck 4=localrad
-    uv_vis_scale: f32,       // offset 184 — tile frequency multiplier
-    _pad3c: u32,             // offset 188
+    uv_vis_mode: u32,           // offset 180 — 0=off 1=checker 2=grid 3=localcheck 4=localrad
+    uv_vis_scale: f32,          // offset 184 — tile frequency multiplier
+    backface_policy: u32,       // offset 188 — 0=Cull 1=Identical 2=DifferentColor
+    backface_color: vec4<f32>,  // offset 192
 };
 
 struct ClipVolumeUB {
@@ -424,7 +425,7 @@ fn param_vis_color(uv: vec2<f32>, mode: u32, scale: f32) -> vec3<f32> {
 // OIT fragment shader — writes to accum + reveal targets.
 // ---------------------------------------------------------------------------
 @fragment
-fn fs_oit_main(in: VertexOut) -> OitOut {
+fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
     // Section view clipping.
     for (var i = 0u; i < clip_planes.count; i++) {
         let plane = clip_planes.planes[i];
@@ -506,6 +507,12 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
         N = normalize(TBN * ts_normal);
     } else {
         N = normalize(in.world_normal);
+    }
+
+    // BackfacePolicy::DifferentColor: flip normal and override base_color for back faces.
+    if object.backface_policy == 2u && !is_front {
+        N = -N;
+        base_color = object.backface_color.rgb;
     }
 
     var ao_factor = 1.0;

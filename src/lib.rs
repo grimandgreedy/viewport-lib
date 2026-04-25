@@ -112,7 +112,7 @@ pub use camera::frustum::{CullStats, Frustum};
 pub use camera::view_preset::ViewPreset;
 
 pub use scene::aabb::Aabb;
-pub use scene::material::{Material, ParamVis, ParamVisMode};
+pub use scene::material::{BackfacePolicy, Material, ParamVis, ParamVisMode};
 pub use scene::scene::{Group, GroupId, Layer, LayerId, Scene, SceneNode};
 pub use scene::traits::{RenderMode, ViewportObject};
 
@@ -129,7 +129,7 @@ pub use interaction::gizmo::{
 };
 pub use interaction::input::{
     Action, ActionState, Binding, FrameInput, InputMode, InputSystem, KeyCode, Modifiers,
-    MouseButton,
+    MouseButton, NavigationMode,
 };
 // New input pipeline — re-exported at crate root for convenience.
 pub use interaction::input::{
@@ -165,12 +165,12 @@ pub use widgets::axes_indicator::AxisView;
 pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::FrameStats;
 pub use renderer::{
-    CameraFrame, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind, EffectsFrame,
-    EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode,
-    InteractionFrame, LightKind, LightSource, LightingSettings, PointCloudItem, PointRenderMode,
-    PolylineItem, PostProcessSettings, RenderCamera, SceneEffects, SceneFrame, SceneRenderItem,
-    ShadowFilter, StreamtubeItem, SurfaceSubmission, ToneMapping, ViewportEffects, ViewportFrame,
-    ViewportId, ViewportRenderer, VolumeItem,
+    CameraFrame, CameraFrustumItem, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
+    EffectsFrame, EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane,
+    GroundPlaneMode, ImageAnchor, InteractionFrame, LightKind, LightSource, LightingSettings,
+    PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings, RenderCamera, SceneEffects,
+    SceneFrame, SceneRenderItem, ScreenImageItem, ShadowFilter, StreamtubeItem, SurfaceSubmission,
+    ToneMapping, ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer, VolumeItem,
 };
 pub use renderer::{ScalarBar, ScalarBarAnchor, ScalarBarOrientation};
 

@@ -35,6 +35,32 @@ impl Default for ParamVis {
     }
 }
 
+/// Controls how back faces of a mesh are rendered.
+///
+/// Use [`BackfacePolicy::Cull`] (the default) to hide back faces, [`BackfacePolicy::Identical`]
+/// to show them with the same shading as front faces, or [`BackfacePolicy::DifferentColor`]
+/// to shade back faces in a distinct color — useful for spotting mesh orientation errors or
+/// highlighting the interior of open surfaces.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BackfacePolicy {
+    /// Back faces are culled (invisible). Default.
+    Cull,
+    /// Back faces are visible and shaded identically to front faces.
+    Identical,
+    /// Back faces are visible and shaded in the given RGB color (linear 0..1).
+    ///
+    /// Front faces receive normal shading; back faces receive Blinn-Phong shading
+    /// with the supplied color and the same ambient/diffuse/specular coefficients.
+    /// The normal is flipped so lighting is computed from the back-face perspective.
+    DifferentColor([f32; 3]),
+}
+
+impl Default for BackfacePolicy {
+    fn default() -> Self {
+        BackfacePolicy::Cull
+    }
+}
+
 /// Per-object material properties for Blinn-Phong and PBR shading.
 ///
 /// Materials carry all shading parameters that were previously global in `LightingSettings`.
@@ -91,10 +117,12 @@ pub struct Material {
     ///
     /// Requires UV coordinates on the mesh. Default None (standard shading).
     pub param_vis: Option<ParamVis>,
-    /// Render with back-face culling disabled so both sides are shaded.
+    /// Back-face rendering policy. Default [`BackfacePolicy::Cull`] (back faces hidden).
     ///
-    /// Useful for single-sided geometry like planes and open surfaces. Default false.
-    pub two_sided: bool,
+    /// Use [`BackfacePolicy::Identical`] for single-sided geometry like planes and open
+    /// surfaces. Use [`BackfacePolicy::DifferentColor`] to highlight back faces in a
+    /// distinct color — helpful for diagnosing mesh orientation errors.
+    pub backface_policy: BackfacePolicy,
 }
 
 impl Default for Material {
@@ -114,12 +142,17 @@ impl Default for Material {
             use_pbr: false,
             matcap_id: None,
             param_vis: None,
-            two_sided: false,
+            backface_policy: BackfacePolicy::Cull,
         }
     }
 }
 
 impl Material {
+    /// Returns `true` if the backface policy makes back faces visible (`Identical` or `DifferentColor`).
+    pub fn is_two_sided(&self) -> bool {
+        matches!(self.backface_policy, BackfacePolicy::Identical | BackfacePolicy::DifferentColor(_))
+    }
+
     /// Construct from a plain color, all other parameters at their defaults.
     pub fn from_color(color: [f32; 3]) -> Self {
         Self {

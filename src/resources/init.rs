@@ -1892,6 +1892,8 @@ impl ViewportGpuResources {
             fxaa_pipeline: None,
             fxaa_bgl: None,
             fxaa_bind_group: None,
+            ssaa_resolve_pipeline: None,
+            ssaa_resolve_bgl: None,
             fxaa_sampler: None,
             clip_planes_uniform_buf,
             clip_volume_uniform_buf,
@@ -2039,6 +2041,8 @@ impl ViewportGpuResources {
             pick_pipeline: None,
             pick_bind_group_layout_1: None,
             pick_camera_bgl: None,
+            screen_image_pipeline: None,
+            screen_image_bgl: None,
         }
     }
 }

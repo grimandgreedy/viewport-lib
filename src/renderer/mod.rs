@@ -14,12 +14,13 @@ mod shadows;
 pub mod stats;
 
 pub use self::types::{
-    CameraFrame, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind, EffectsFrame,
-    EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode,
-    InteractionFrame, LightKind, LightSource, LightingSettings, PointCloudItem, PointRenderMode,
-    PolylineItem, PostProcessSettings, RenderCamera, ScalarBar, ScalarBarAnchor,
-    ScalarBarOrientation, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, StreamtubeItem,
-    SurfaceSubmission, ToneMapping, ViewportEffects, ViewportFrame, VolumeItem,
+    CameraFrame, CameraFrustumItem, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
+    EffectsFrame, EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane,
+    GroundPlaneMode, ImageAnchor, InteractionFrame, LightKind, LightSource, LightingSettings,
+    PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings, RenderCamera, ScalarBar,
+    ScalarBarAnchor, ScalarBarOrientation, SceneEffects, SceneFrame, SceneRenderItem,
+    ScreenImageItem, ShadowFilter, StreamtubeItem, SurfaceSubmission, ToneMapping, ViewportEffects,
+    ViewportFrame, VolumeItem,
 };
 pub(crate) use self::types::ClipPlane;
 
@@ -151,6 +152,8 @@ pub struct ViewportRenderer {
     volume_gpu_data: Vec<crate::resources::VolumeGpuData>,
     /// Per-frame streamtube GPU data, rebuilt in prepare(), consumed in paint().
     streamtube_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
+    /// Per-frame screen-image GPU data, rebuilt in prepare(), consumed in paint() (Phase 10B).
+    screen_image_gpu_data: Vec<crate::resources::ScreenImageGpuData>,
     /// Per-viewport GPU state slots.
     ///
     /// Indexed by `FrameData::camera.viewport_index`. Each slot owns independent
@@ -201,6 +204,7 @@ impl ViewportRenderer {
             polyline_gpu_data: Vec::new(),
             volume_gpu_data: Vec::new(),
             streamtube_gpu_data: Vec::new(),
+            screen_image_gpu_data: Vec::new(),
             viewport_slots: Vec::new(),
             compute_filter_results: Vec::new(),
             last_cascade0_shadow_mat: glam::Mat4::IDENTITY,
@@ -612,6 +616,7 @@ impl ViewportRenderer {
         viewport_index: usize,
         w: u32,
         h: u32,
+        ssaa_factor: u32,
     ) {
         let format = self.resources.target_format;
         // Ensure shared infrastructure (pipelines, BGLs, samplers) exists.
@@ -622,12 +627,12 @@ impl ViewportRenderer {
         // Create or resize the per-viewport HDR state.
         let needs_create = match &slot.hdr {
             None => true,
-            Some(h_state) => h_state.size != [w, h],
+            Some(h_state) => h_state.size != [w, h] || h_state.ssaa_factor != ssaa_factor,
         };
         if needs_create {
             slot.hdr = Some(
                 self.resources
-                    .create_hdr_viewport_state(device, queue, format, w, h),
+                    .create_hdr_viewport_state(device, queue, format, w, h, ssaa_factor),
             );
         }
     }

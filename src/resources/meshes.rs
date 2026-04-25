@@ -717,7 +717,8 @@ impl ViewportGpuResources {
             nan_color: [0.0, 0.0, 0.0, 0.0],
             use_nan_color: 0,
             use_matcap: 0, matcap_blendable: 0, _pad2: 0,
-            use_face_color: 0, uv_vis_mode: 0, uv_vis_scale: 8.0, _pad3: 0,
+            use_face_color: 0, uv_vis_mode: 0, uv_vis_scale: 8.0,
+            backface_policy: 0, backface_color: [0.0; 4],
         };
         let object_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
@@ -796,7 +797,8 @@ impl ViewportGpuResources {
             nan_color: [0.0, 0.0, 0.0, 0.0],
             use_nan_color: 0,
             use_matcap: 0, matcap_blendable: 0, _pad2: 0,
-            use_face_color: 0, uv_vis_mode: 0, uv_vis_scale: 8.0, _pad3: 0,
+            use_face_color: 0, uv_vis_mode: 0, uv_vis_scale: 8.0,
+            backface_policy: 0, backface_color: [0.0; 4],
         };
         let normal_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),

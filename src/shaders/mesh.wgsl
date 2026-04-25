@@ -80,7 +80,7 @@ struct ShadowAtlas {
     atlas_rects: array<vec4<f32>, 8>,     // 128 bytes
 };
 
-// Per-object uniform — 192 bytes.
+// Per-object uniform — 208 bytes.
 struct Object {
     model: mat4x4<f32>,
     color: vec4<f32>,
@@ -100,15 +100,16 @@ struct Object {
     scalar_min: f32,
     scalar_max: f32,
     _pad_scalar: u32,
-    nan_color: vec4<f32>,    // offset 144
-    use_nan_color: u32,      // offset 160
-    use_matcap: u32,         // offset 164
-    matcap_blendable: u32,   // offset 168
-    _pad2: u32,              // offset 172
-    use_face_color: u32,     // offset 176
-    uv_vis_mode: u32,        // offset 180 — 0=off 1=checker 2=grid 3=localcheck 4=localrad
-    uv_vis_scale: f32,       // offset 184 — tile frequency multiplier
-    _pad3c: u32,             // offset 188
+    nan_color: vec4<f32>,       // offset 144
+    use_nan_color: u32,         // offset 160
+    use_matcap: u32,            // offset 164
+    matcap_blendable: u32,      // offset 168
+    _pad2: u32,                 // offset 172
+    use_face_color: u32,        // offset 176
+    uv_vis_mode: u32,           // offset 180 — 0=off 1=checker 2=grid 3=localcheck 4=localrad
+    uv_vis_scale: f32,          // offset 184 — tile frequency multiplier
+    backface_policy: u32,       // offset 188 — 0=Cull 1=Identical 2=DifferentColor
+    backface_color: vec4<f32>,  // offset 192
 };
 
 struct ClipVolumeUB {
@@ -537,7 +538,7 @@ fn param_vis_color(uv: vec2<f32>, mode: u32, scale: f32) -> vec3<f32> {
 }
 
 @fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
     // Section view: discard fragment if it falls on the clipped side of any plane.
     for (var i = 0u; i < clip_planes.count; i++) {
         let plane = clip_planes.planes[i];
@@ -591,6 +592,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         N = normalize(TBN * ts_normal);
     } else {
         N = normalize(in.world_normal);
+    }
+
+    // BackfacePolicy::DifferentColor: flip shading normal and override base_color for back faces.
+    // This runs before matcap/uv_vis/PBR so all downstream lighting paths use the substituted values.
+    if object.backface_policy == 2u && !is_front {
+        N = -N;
+        base_color = object.backface_color.rgb;
     }
 
     // AO factor from AO map.

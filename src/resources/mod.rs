@@ -25,8 +25,8 @@ use self::extra_impls::{
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColormap, BuiltinMatcap, CameraUniform,
     ClipVolumeUniform, ColormapId, GpuMesh, GpuTexture, LightUniform, LightsUniform, MatcapId,
-    MeshData, OverlayVertex, PointCloudGpuData, PolylineGpuData, SingleLightUniform, Vertex,
-    ViewportGpuResources, VolumeGpuData, VolumeId,
+    MeshData, OverlayVertex, PointCloudGpuData, PolylineGpuData, ScreenImageGpuData,
+    SingleLightUniform, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
 };
 pub(crate) use self::types::{
     BloomUniform, ClipPlanesUniform, ContactShadowUniform, GlyphBaseMesh, GlyphGpuData,

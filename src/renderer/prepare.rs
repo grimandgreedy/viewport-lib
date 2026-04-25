@@ -387,7 +387,7 @@ impl ViewportRenderer {
         // and for any items with active scalar attributes or two-sided materials
         // (both bypass the instanced path).
         let has_scalar_items = scene_items.iter().any(|i| i.active_attribute.is_some());
-        let has_two_sided_items = scene_items.iter().any(|i| i.two_sided);
+        let has_two_sided_items = scene_items.iter().any(|i| i.two_sided || i.material.is_two_sided());
         let has_matcap_items = scene_items.iter().any(|i| i.material.matcap_id.is_some());
         let has_param_vis_items = scene_items.iter().any(|i| i.material.param_vis.is_some());
         if !self.use_instancing
@@ -455,7 +455,15 @@ impl ViewportRenderer {
                     ),
                     uv_vis_mode: m.param_vis.map_or(0, |pv| pv.mode as u32),
                     uv_vis_scale: m.param_vis.map_or(8.0, |pv| pv.scale),
-                    _pad3: 0,
+                    backface_policy: match m.backface_policy {
+                        crate::scene::material::BackfacePolicy::Cull => 0,
+                        crate::scene::material::BackfacePolicy::Identical => 1,
+                        crate::scene::material::BackfacePolicy::DifferentColor(_) => 2,
+                    },
+                    backface_color: match m.backface_policy {
+                        crate::scene::material::BackfacePolicy::DifferentColor(c) => [c[0], c[1], c[2], 1.0],
+                        _ => [0.0; 4],
+                    },
                 };
 
                 let normal_obj_uniform = ObjectUniform {
@@ -485,7 +493,8 @@ impl ViewportRenderer {
                     use_face_color: 0,
                     uv_vis_mode: 0,
                     uv_vis_scale: 8.0,
-                    _pad3: 0,
+                    backface_policy: 0,
+                    backface_color: [0.0; 4],
                 };
 
                 // Write uniform data — use get() to read buffer references, then drop.
@@ -539,6 +548,7 @@ impl ViewportRenderer {
                         item.visible
                             && item.active_attribute.is_none()
                             && !item.two_sided
+                            && !item.material.is_two_sided()
                             && item.material.matcap_id.is_none()
                             && item.material.param_vis.is_none()
                             && resources
@@ -718,6 +728,37 @@ impl ViewportRenderer {
                 };
                 let gpu_data = resources.upload_polyline(device, queue, &polyline, vp_size);
                 self.polyline_gpu_data.push(gpu_data);
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Phase 10A — camera frustum wireframes (converted to polylines).
+        // ------------------------------------------------------------------
+        if !frame.scene.camera_frustums.is_empty() {
+            resources.ensure_polyline_pipeline(device);
+            for item in &frame.scene.camera_frustums {
+                let polyline = item.to_polyline();
+                if !polyline.positions.is_empty() {
+                    let gpu_data = resources.upload_polyline(device, queue, &polyline, vp_size);
+                    self.polyline_gpu_data.push(gpu_data);
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Phase 10B — screen-space image overlays.
+        // ------------------------------------------------------------------
+        self.screen_image_gpu_data.clear();
+        if !frame.scene.screen_images.is_empty() {
+            resources.ensure_screen_image_pipeline(device);
+            let vp_w = vp_size[0];
+            let vp_h = vp_size[1];
+            for item in &frame.scene.screen_images {
+                if item.width == 0 || item.height == 0 || item.pixels.is_empty() {
+                    continue;
+                }
+                let gpu = resources.upload_screen_image(device, queue, item, vp_w, vp_h);
+                self.screen_image_gpu_data.push(gpu);
             }
         }
 
@@ -1277,7 +1318,8 @@ impl ViewportRenderer {
                     nan_color: [0.0; 4],
                     use_nan_color: 0,
                     use_matcap: 0, matcap_blendable: 0, _pad2: 0,
-                    use_face_color: 0, uv_vis_mode: 0, uv_vis_scale: 8.0, _pad3: 0,
+                    use_face_color: 0, uv_vis_mode: 0, uv_vis_scale: 8.0,
+                    backface_policy: 0, backface_color: [0.0; 4],
                 };
                 let stencil_buf = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("outline_stencil_object_uniform_buf"),
@@ -1375,7 +1417,7 @@ impl ViewportRenderer {
                 });
                 outline_object_buffers.push(OutlineObjectBuffers {
                     mesh_index: item.mesh_index,
-                    two_sided: item.two_sided,
+                    two_sided: item.two_sided || item.material.is_two_sided(),
                     _stencil_uniform_buf: stencil_buf,
                     stencil_bind_group: stencil_bg,
                     _outline_uniform_buf: buf,
@@ -1627,7 +1669,7 @@ impl ViewportRenderer {
             let h = frame.camera.viewport_size[1] as u32;
 
             // Ensure per-viewport HDR state exists (provides outline color + depth views).
-            self.ensure_viewport_hdr(device, queue, vp_idx, w.max(1), h.max(1));
+            self.ensure_viewport_hdr(device, queue, vp_idx, w.max(1), h.max(1), frame.effects.post_process.ssaa_factor.max(1));
 
             // Extract raw pointers for slot fields needed inside the render pass
             // alongside &self.resources borrows (borrow-checker trick: slot and resources
