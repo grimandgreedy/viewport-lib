@@ -110,7 +110,7 @@ pub use camera::frustum::{CullStats, Frustum};
 pub use camera::view_preset::ViewPreset;
 
 pub use scene::aabb::Aabb;
-pub use scene::material::Material;
+pub use scene::material::{Material, ParamVis, ParamVisMode};
 pub use scene::scene::{Group, GroupId, Layer, LayerId, Scene, SceneNode};
 pub use scene::traits::{RenderMode, ViewportObject};
 
@@ -145,7 +145,7 @@ pub use interaction::manipulation::{
 
 pub use interaction::clip_plane::{
     ClipAxis, ClipPlaneContext, ClipPlaneController, ClipPlaneDelta, ClipPlaneHit,
-    ClipPlaneOverlay, ClipPlaneResult, ClipPlaneSessionKind, hit_test_normal_handle,
+    ClipPlaneResult, ClipPlaneSessionKind, hit_test_normal_handle,
     hit_test_plane_quad, plane_from_axis_preset, project_drag_onto_normal, ray_plane_intersection,
     snap_plane_distance,
 };
@@ -163,12 +163,12 @@ pub use widgets::axes_indicator::AxisView;
 pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::FrameStats;
 pub use renderer::{
-    CameraFrame, ClipPlane, ClipVolume, ComputeFilterItem, ComputeFilterKind, EffectsFrame,
-    EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, InteractionFrame, LightKind,
-    LightSource, LightingSettings, PointCloudItem, PointRenderMode, PolylineItem,
-    PostProcessSettings, RenderCamera, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter,
-    StreamtubeItem, SurfaceSubmission, ToneMapping, ViewportEffects, ViewportFrame, ViewportId,
-    ViewportRenderer, VolumeItem,
+    CameraFrame, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind, EffectsFrame,
+    EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode,
+    InteractionFrame, LightKind, LightSource, LightingSettings, PointCloudItem, PointRenderMode,
+    PolylineItem, PostProcessSettings, RenderCamera, SceneEffects, SceneFrame, SceneRenderItem,
+    ShadowFilter, StreamtubeItem, SurfaceSubmission, ToneMapping, ViewportEffects, ViewportFrame,
+    ViewportId, ViewportRenderer, VolumeItem,
 };
 pub use renderer::{ScalarBar, ScalarBarAnchor, ScalarBarOrientation};
 

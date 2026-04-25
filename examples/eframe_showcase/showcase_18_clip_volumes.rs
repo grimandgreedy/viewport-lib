@@ -1,21 +1,24 @@
-//! Showcase 18: Clip Volumes & Interactive Clip Plane
+//! Showcase 18: Clip Objects & Gizmo
 //!
-//! Demonstrates `ClipVolume::Box` and `ClipVolume::Sphere` on `EffectsFrame`, and
-//! the `ClipPlaneController` interactive drag tool. A dense UV sphere (high vertex
-//! count) makes the clip cross-section visually rich.
+//! Demonstrates `ClipObject` with box, sphere, and interactive plane shapes on
+//! `EffectsFrame`. A dense UV sphere (high vertex count) makes the clip cross-section
+//! visually rich. Setting `ClipObject::color` causes the lib to draw the clip boundary
+//! automatically — a wireframe outline for box/sphere, a fill quad for plane.
 //!
 //! Sub-modes (radio):
-//! - Box clip  — oriented box; center / half-extents / yaw sliders.
+//! - Box clip   — oriented box; center / half-extents / yaw sliders.
 //! - Sphere clip — sphere; center / radius sliders.
-//! - Interactive plane — a `ClipPlaneController` driven by mouse drag on the handle.
+//! - Interactive plane — a plane dragged via the gizmo.
 //!
 //! Common controls:
 //! - Sub-mode selector radio buttons.
+//! - Gizmo mode (Translate / Rotate / Scale).
+//! - Show overlay checkbox.
 
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    ClipAxis, ClipPlaneContext, ClipPlaneResult, ClipVolume, Material, MeshId,
+    ClipAxis, ClipObject, ClipShape, GizmoMode, Material, MeshId,
     ViewportRenderer, plane_from_axis_preset,
     scene::Scene,
 };
@@ -53,12 +56,7 @@ impl App {
             "Sphere",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.0)),
-            Material {
-                base_color: [0.55, 0.72, 0.95],
-                roughness: 0.3,
-                metallic: 0.1,
-                ..Material::default()
-            },
+            { let mut m = Material::from_color([0.55, 0.72, 0.95]); m.roughness = 0.3; m.metallic = 0.1; m },
         );
 
         // Ground plane.
@@ -72,12 +70,7 @@ impl App {
             "Ground",
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -3.05)),
-            Material {
-                base_color: [0.38, 0.38, 0.40],
-                roughness: 0.9,
-                metallic: 0.0,
-                ..Material::default()
-            },
+            { let mut m = Material::from_color([0.38, 0.38, 0.40]); m.roughness = 0.9; m },
         );
 
         self.clipvol_built = true;
@@ -97,12 +90,17 @@ impl App {
                 .clicked()
             {
                 self.clipvol_sub_mode = ClipVolSubMode::BoxClip;
+                // Scale is valid for box; keep mode as-is.
             }
             if ui
                 .radio(self.clipvol_sub_mode == ClipVolSubMode::SphereClip, "Sphere")
                 .clicked()
             {
                 self.clipvol_sub_mode = ClipVolSubMode::SphereClip;
+                // Sphere has no Rotate mode.
+                if self.clipvol_gizmo.mode == GizmoMode::Rotate {
+                    self.clipvol_gizmo.mode = GizmoMode::Translate;
+                }
             }
             if ui
                 .radio(
@@ -112,8 +110,44 @@ impl App {
                 .clicked()
             {
                 self.clipvol_sub_mode = ClipVolSubMode::InteractivePlane;
+                // Plane has no Scale mode.
+                if self.clipvol_gizmo.mode == GizmoMode::Scale {
+                    self.clipvol_gizmo.mode = GizmoMode::Translate;
+                }
             }
         });
+
+        ui.separator();
+
+        // ----- Gizmo mode + overlay -----
+        ui.label("Gizmo:");
+        ui.horizontal(|ui| {
+            if ui
+                .radio(self.clipvol_gizmo.mode == GizmoMode::Translate, "Translate")
+                .clicked()
+            {
+                self.clipvol_gizmo.mode = GizmoMode::Translate;
+            }
+            let can_rotate = self.clipvol_sub_mode != ClipVolSubMode::SphereClip;
+            ui.add_enabled_ui(can_rotate, |ui| {
+                if ui
+                    .radio(self.clipvol_gizmo.mode == GizmoMode::Rotate, "Rotate")
+                    .clicked()
+                {
+                    self.clipvol_gizmo.mode = GizmoMode::Rotate;
+                }
+            });
+            let can_scale = self.clipvol_sub_mode != ClipVolSubMode::InteractivePlane;
+            ui.add_enabled_ui(can_scale, |ui| {
+                if ui
+                    .radio(self.clipvol_gizmo.mode == GizmoMode::Scale, "Scale")
+                    .clicked()
+                {
+                    self.clipvol_gizmo.mode = GizmoMode::Scale;
+                }
+            });
+        });
+        ui.checkbox(&mut self.clipvol_show_overlay, "Show overlay");
 
         ui.separator();
 
@@ -198,35 +232,45 @@ impl App {
             ] {
                 if ui.button(label).clicked() {
                     self.clipvol_plane_axis = axis;
-                    let dist = self.clipvol_plane.distance;
+                    let dist = if let ClipShape::Plane { distance, .. } = self.clipvol_plane.shape {
+                        distance
+                    } else {
+                        0.0
+                    };
+                    let prev_color = self.clipvol_plane.color;
                     self.clipvol_plane = plane_from_axis_preset(axis, dist);
-                    self.clipvol_plane_controller.reset();
+                    self.clipvol_plane.color = prev_color;
                 }
             }
         });
 
         ui.separator();
         ui.label("Offset:");
+        let mut dist = if let ClipShape::Plane { distance, .. } = self.clipvol_plane.shape {
+            distance
+        } else {
+            0.0
+        };
         if ui
-            .add(egui::Slider::new(&mut self.clipvol_plane.distance, -6.0..=6.0).step_by(0.05))
+            .add(egui::Slider::new(&mut dist, -6.0..=6.0).step_by(0.05))
             .changed()
         {
-            self.clipvol_plane_controller.reset();
+            if let ClipShape::Plane { ref mut distance, .. } = self.clipvol_plane.shape {
+                *distance = dist;
+            }
         }
 
         if ui.button("Flip Normal").clicked() {
-            self.clipvol_plane.normal[0] = -self.clipvol_plane.normal[0];
-            self.clipvol_plane.normal[1] = -self.clipvol_plane.normal[1];
-            self.clipvol_plane.normal[2] = -self.clipvol_plane.normal[2];
-            self.clipvol_plane.distance = -self.clipvol_plane.distance;
-            self.clipvol_plane_controller.reset();
+            if let ClipShape::Plane { ref mut normal, ref mut distance, .. } = self.clipvol_plane.shape {
+                normal[0] = -normal[0];
+                normal[1] = -normal[1];
+                normal[2] = -normal[2];
+                *distance = -*distance;
+            }
         }
 
         ui.separator();
-        ui.weak("Drag the plane handle in the viewport.\nDrag arrow tip to tilt.");
-        if self.clipvol_plane_controller.is_active() {
-            ui.label("Dragging…");
-        }
+        ui.weak("Use the gizmo in the viewport to reposition or rotate the plane.");
     }
 }
 
@@ -235,78 +279,44 @@ impl App {
 // ---------------------------------------------------------------------------
 
 impl App {
-    /// Build the `ClipVolume` for the current sub-mode.
-    pub(crate) fn make_clipvol(&self) -> ClipVolume {
+    /// Build a `ClipObject` for the current sub-mode (box/sphere/plane).
+    pub(crate) fn make_clip_object(&self) -> Option<ClipObject> {
+        let overlay_color: Option<[f32; 4]> = if self.clipvol_show_overlay {
+            Some([0.45, 0.82, 1.0, 1.0])
+        } else {
+            None
+        };
+
         match self.clipvol_sub_mode {
             ClipVolSubMode::BoxClip => {
                 let yaw_rad = self.clipvol_box_yaw.to_radians();
                 let cos_y = yaw_rad.cos();
                 let sin_y = yaw_rad.sin();
-                // Rotation around Z axis (yaw in XY plane).
                 let orient = [
                     [cos_y, sin_y, 0.0],
                     [-sin_y, cos_y, 0.0],
                     [0.0, 0.0, 1.0],
                 ];
-                ClipVolume::Box {
-                    center: self.clipvol_box_center,
-                    half_extents: self.clipvol_box_half_extents,
-                    orientation: orient,
-                }
+                Some({
+                    let mut co = ClipObject::box_shape(self.clipvol_box_center, self.clipvol_box_half_extents, orient);
+                    co.color = overlay_color;
+                    co
+                })
             }
-            ClipVolSubMode::SphereClip => ClipVolume::Sphere {
-                center: self.clipvol_sphere_center,
-                radius: self.clipvol_sphere_radius,
-            },
-            // The ClipPlaneController places its visual handle at `normal * distance`
-            // and the overlay center follows the same convention.  ClipVolume::Plane
-            // keeps fragments where `dot(p, normal) + distance >= 0`, whose surface
-            // is at `normal * (-distance)` — the opposite side.  Negate so the clip
-            // surface lands at the same world position as the visible handle.
-            ClipVolSubMode::InteractivePlane => ClipVolume::Plane {
-                normal: self.clipvol_plane.normal,
-                distance: -self.clipvol_plane.distance,
-            },
-        }
-    }
-
-    /// Update the `ClipPlaneController` for one frame (interactive plane sub-mode).
-    ///
-    /// Returns the overlay to push into `InteractionFrame::clip_plane_overlays`.
-    pub(crate) fn update_clipvol_controller(
-        &mut self,
-        viewport_size: glam::Vec2,
-    ) -> Option<viewport_lib::ClipPlaneOverlay> {
-        let ctx = ClipPlaneContext {
-            plane: self.clipvol_plane,
-            camera: self.camera.clone(),
-            viewport_size,
-            cursor_viewport: if self.clipvol_cursor_in_viewport {
-                Some(self.last_cursor_viewport)
-            } else {
-                None
-            },
-            pointer_delta: self.clipvol_pointer_delta,
-            drag_started: self.clipvol_drag_started,
-            dragging: self.clipvol_dragging,
-            clicked: false,
-            plane_extent: 4.5,
-        };
-        match self
-            .clipvol_plane_controller
-            .update(&self.clipvol_action_frame, ctx.clone())
-        {
-            ClipPlaneResult::Update(delta) => {
-                self.clipvol_plane.distance += delta.distance_delta;
-                if let Some(n) = delta.normal_override {
-                    self.clipvol_plane.normal = n;
-                }
+            ClipVolSubMode::SphereClip => Some({
+                let mut co = ClipObject::sphere(self.clipvol_sphere_center, self.clipvol_sphere_radius);
+                co.color = overlay_color;
+                co
+            }),
+            ClipVolSubMode::InteractivePlane => {
+                let mut co = self.clipvol_plane;
+                co.color = if self.clipvol_show_overlay {
+                    Some([0.45, 0.82, 1.0, 0.5])
+                } else {
+                    None
+                };
+                Some(co)
             }
-            ClipPlaneResult::Cancel => {}
-            ClipPlaneResult::Commit => {}
-            ClipPlaneResult::None => {}
         }
-
-        self.clipvol_plane_controller.overlay(&ctx)
     }
 }

@@ -14,13 +14,14 @@ mod shadows;
 pub mod stats;
 
 pub use self::types::{
-    CameraFrame, ClipPlane, ClipVolume, ComputeFilterItem, ComputeFilterKind, EffectsFrame,
-    EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, InteractionFrame, LightKind,
-    LightSource, LightingSettings, PointCloudItem, PointRenderMode, PolylineItem,
-    PostProcessSettings, RenderCamera, ScalarBar, ScalarBarAnchor, ScalarBarOrientation,
-    SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, StreamtubeItem, SurfaceSubmission,
-    ToneMapping, ViewportEffects, ViewportFrame, VolumeItem,
+    CameraFrame, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind, EffectsFrame,
+    EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode,
+    InteractionFrame, LightKind, LightSource, LightingSettings, PointCloudItem, PointRenderMode,
+    PolylineItem, PostProcessSettings, RenderCamera, ScalarBar, ScalarBarAnchor,
+    ScalarBarOrientation, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, StreamtubeItem,
+    SurfaceSubmission, ToneMapping, ViewportEffects, ViewportFrame, VolumeItem,
 };
+pub(crate) use self::types::ClipPlane;
 
 /// An opaque handle to a per-viewport GPU state slot.
 ///
@@ -163,6 +164,9 @@ pub struct ViewportRenderer {
     /// Consumed during `paint()` to override the mesh's default index buffer.
     /// Cleared and rebuilt each frame.
     compute_filter_results: Vec<crate::resources::ComputeFilterResult>,
+    /// Cascade-0 light-space view-projection matrix from the last shadow prepare.
+    /// Cached here so `prepare_viewport_internal` can copy it into the ground plane uniform.
+    last_cascade0_shadow_mat: glam::Mat4,
 }
 
 impl ViewportRenderer {
@@ -199,6 +203,7 @@ impl ViewportRenderer {
             streamtube_gpu_data: Vec::new(),
             viewport_slots: Vec::new(),
             compute_filter_results: Vec::new(),
+            last_cascade0_shadow_mat: glam::Mat4::IDENTITY,
         }
     }
 

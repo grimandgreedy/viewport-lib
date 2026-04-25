@@ -1,4 +1,4 @@
-use super::types::{SceneEffects, ViewportEffects};
+use super::types::{ClipShape, SceneEffects, ViewportEffects};
 use super::*;
 
 impl ViewportRenderer {
@@ -315,6 +315,8 @@ impl ViewportRenderer {
         // The primary shadow matrix is still stored in lights[0].light_view_proj for
         // backward compat with the non-instanced shadow pass uniform.
         let _primary_shadow_mat = cascade_view_projs[0];
+        // Cache for ground plane ShadowOnly mode.
+        self.last_cascade0_shadow_mat = cascade_view_projs[0];
 
         // Upload lights uniform.
         // IBL fields from environment map settings.
@@ -387,11 +389,13 @@ impl ViewportRenderer {
         let has_scalar_items = scene_items.iter().any(|i| i.active_attribute.is_some());
         let has_two_sided_items = scene_items.iter().any(|i| i.two_sided);
         let has_matcap_items = scene_items.iter().any(|i| i.material.matcap_id.is_some());
+        let has_param_vis_items = scene_items.iter().any(|i| i.material.param_vis.is_some());
         if !self.use_instancing
             || frame.viewport.wireframe_mode
             || has_scalar_items
             || has_two_sided_items
             || has_matcap_items
+            || has_param_vis_items
         {
             for item in scene_items {
                 if resources
@@ -449,7 +453,9 @@ impl ViewportRenderer {
                         item.active_attribute.as_ref()
                             .map_or(false, |a| a.kind == crate::resources::AttributeKind::FaceColor)
                     ),
-                    _pad3: [0; 3],
+                    uv_vis_mode: m.param_vis.map_or(0, |pv| pv.mode as u32),
+                    uv_vis_scale: m.param_vis.map_or(8.0, |pv| pv.scale),
+                    _pad3: 0,
                 };
 
                 let normal_obj_uniform = ObjectUniform {
@@ -477,7 +483,9 @@ impl ViewportRenderer {
                     matcap_blendable: 0,
                     _pad2: 0,
                     use_face_color: 0,
-                    _pad3: [0; 3],
+                    uv_vis_mode: 0,
+                    uv_vis_scale: 8.0,
+                    _pad3: 0,
                 };
 
                 // Write uniform data — use get() to read buffer references, then drop.
@@ -532,6 +540,7 @@ impl ViewportRenderer {
                             && item.active_attribute.is_none()
                             && !item.two_sided
                             && item.material.matcap_id.is_none()
+                            && item.material.param_vis.is_none()
                             && resources
                                 .mesh_store
                                 .get(crate::resources::mesh_store::MeshId(item.mesh_index))
@@ -737,9 +746,28 @@ impl ViewportRenderer {
         self.volume_gpu_data.clear();
         if !frame.scene.volumes.is_empty() {
             resources.ensure_volume_pipeline(device);
+            // Extract ClipPlane structs from clip_objects for volume cap fill support.
+            let clip_planes_for_vol: Vec<crate::renderer::types::ClipPlane> = frame
+                .effects
+                .clip_objects
+                .iter()
+                .filter(|o| o.enabled)
+                .filter_map(|o| {
+                    if let ClipShape::Plane { normal, distance, cap_color } = o.shape {
+                        Some(crate::renderer::types::ClipPlane {
+                            normal,
+                            distance,
+                            enabled: true,
+                            cap_color,
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect();
             for item in &frame.scene.volumes {
                 let gpu =
-                    resources.upload_volume_frame(device, queue, item, &frame.effects.clip_planes);
+                    resources.upload_volume_frame(device, queue, item, &clip_planes_for_vol);
                 self.volume_gpu_data.push(gpu);
             }
         }
@@ -978,22 +1006,45 @@ impl ViewportRenderer {
             SurfaceSubmission::Flat(items) => items,
         };
 
+        // Capture before the resources mutable borrow so it's accessible inside the block.
+        let gp_cascade0_mat = self.last_cascade0_shadow_mat.to_cols_array_2d();
+
         {
             let resources = &mut self.resources;
 
-            // Upload clip planes uniform to per-viewport slot buffer (binding 4).
+            // Upload clip planes + clip volume uniforms from clip_objects.
             {
                 let mut planes = [[0.0f32; 4]; 6];
                 let mut count = 0u32;
-                for plane in viewport_fx.clip_planes.iter().filter(|p| p.enabled).take(6) {
-                    planes[count as usize] = [
-                        plane.normal[0],
-                        plane.normal[1],
-                        plane.normal[2],
-                        plane.distance,
-                    ];
-                    count += 1;
+                let mut clip_vol_uniform: ClipVolumeUniform = bytemuck::Zeroable::zeroed(); // volume_type=0
+
+                for obj in viewport_fx.clip_objects.iter().filter(|o| o.enabled) {
+                    match obj.shape {
+                        ClipShape::Plane { normal, distance, .. } if count < 6 => {
+                            planes[count as usize] = [normal[0], normal[1], normal[2], distance];
+                            count += 1;
+                        }
+                        ClipShape::Box { center, half_extents, orientation }
+                            if clip_vol_uniform.volume_type == 0 =>
+                        {
+                            clip_vol_uniform.volume_type = 2;
+                            clip_vol_uniform.box_center = center;
+                            clip_vol_uniform.box_half_extents = half_extents;
+                            clip_vol_uniform.box_col0 = orientation[0];
+                            clip_vol_uniform.box_col1 = orientation[1];
+                            clip_vol_uniform.box_col2 = orientation[2];
+                        }
+                        ClipShape::Sphere { center, radius }
+                            if clip_vol_uniform.volume_type == 0 =>
+                        {
+                            clip_vol_uniform.volume_type = 3;
+                            clip_vol_uniform.sphere_center = center;
+                            clip_vol_uniform.sphere_radius = radius;
+                        }
+                        _ => {}
+                    }
                 }
+
                 let clip_uniform = ClipPlanesUniform {
                     planes,
                     count,
@@ -1008,25 +1059,18 @@ impl ViewportRenderer {
                         0,
                         bytemuck::cast_slice(&[clip_uniform]),
                     );
-                }
-                // Also write to shared buffer for legacy single-viewport callers.
-                queue.write_buffer(
-                    &resources.clip_planes_uniform_buf,
-                    0,
-                    bytemuck::cast_slice(&[clip_uniform]),
-                );
-            }
-
-            // Upload clip volume uniform to per-viewport slot buffer (binding 6).
-            {
-                let clip_vol_uniform = ClipVolumeUniform::from_clip_volume(viewport_fx.clip_volume);
-                if let Some(slot) = self.viewport_slots.get(frame.camera.viewport_index) {
                     queue.write_buffer(
                         &slot.clip_volume_buf,
                         0,
                         bytemuck::cast_slice(&[clip_vol_uniform]),
                     );
                 }
+                // Also write to shared buffers for legacy single-viewport callers.
+                queue.write_buffer(
+                    &resources.clip_planes_uniform_buf,
+                    0,
+                    bytemuck::cast_slice(&[clip_uniform]),
+                );
                 queue.write_buffer(
                     &resources.clip_volume_uniform_buf,
                     0,
@@ -1148,6 +1192,50 @@ impl ViewportRenderer {
                     );
                 }
             }
+            // ------------------------------------------------------------------
+            // Ground plane uniform upload.
+            // ------------------------------------------------------------------
+            {
+                let gp = &viewport_fx.ground_plane;
+                let mode_u32: u32 = match gp.mode {
+                    crate::renderer::types::GroundPlaneMode::None => 0,
+                    crate::renderer::types::GroundPlaneMode::ShadowOnly => 1,
+                    crate::renderer::types::GroundPlaneMode::Tile => 2,
+                    crate::renderer::types::GroundPlaneMode::SolidColor => 3,
+                };
+                let orient = frame.camera.render_camera.orientation;
+                let right = orient * glam::Vec3::X;
+                let up = orient * glam::Vec3::Y;
+                let back = orient * glam::Vec3::Z;
+                let aspect = frame.camera.viewport_size[0]
+                    / frame.camera.viewport_size[1].max(1.0);
+                let tan_half_fov = (frame.camera.render_camera.fov / 2.0).tan();
+                let vp = frame.camera.render_camera.view_proj().to_cols_array_2d();
+                let gp_uniform = crate::resources::GroundPlaneUniform {
+                    view_proj: vp,
+                    cam_right: [right.x, right.y, right.z, 0.0],
+                    cam_up: [up.x, up.y, up.z, 0.0],
+                    cam_back: [back.x, back.y, back.z, 0.0],
+                    eye_pos: frame.camera.render_camera.eye_position,
+                    height: gp.height,
+                    color: gp.color,
+                    shadow_color: gp.shadow_color,
+                    light_vp: gp_cascade0_mat,
+                    tan_half_fov,
+                    aspect,
+                    tile_size: gp.tile_size,
+                    shadow_bias: 0.002,
+                    mode: mode_u32,
+                    shadow_opacity: gp.shadow_opacity,
+                    _pad: [0.0; 2],
+                };
+                queue.write_buffer(
+                    &resources.ground_plane_uniform_buf,
+                    0,
+                    bytemuck::cast_slice(&[gp_uniform]),
+                );
+            }
+
         } // `resources` mutable borrow dropped here.
 
         // ------------------------------------------------------------------
@@ -1189,7 +1277,7 @@ impl ViewportRenderer {
                     nan_color: [0.0; 4],
                     use_nan_color: 0,
                     use_matcap: 0, matcap_blendable: 0, _pad2: 0,
-                    use_face_color: 0, _pad3: [0; 3],
+                    use_face_color: 0, uv_vis_mode: 0, uv_vis_scale: 8.0, _pad3: 0,
                 };
                 let stencil_buf = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("outline_stencil_object_uniform_buf"),
@@ -1335,57 +1423,106 @@ impl ViewportRenderer {
             constraint_line_buffers.push(self.resources.create_constraint_overlay(device, overlay));
         }
 
-        // Clip plane overlays.
+        // Clip plane overlays — generated automatically from clip_objects with a color set.
         let mut clip_plane_fill_buffers = Vec::new();
         let mut clip_plane_line_buffers = Vec::new();
-        for overlay in &frame.interaction.clip_plane_overlays {
-            clip_plane_fill_buffers.push(
-                self.resources
-                    .create_clip_plane_fill_overlay(device, overlay),
-            );
-            clip_plane_line_buffers.push(
-                self.resources
-                    .create_clip_plane_line_overlay(device, overlay),
-            );
+        for obj in viewport_fx.clip_objects.iter().filter(|o| o.enabled) {
+            let Some(base_color) = obj.color else { continue };
+            if let ClipShape::Plane { normal, distance, .. } = obj.shape {
+                let n = glam::Vec3::from(normal);
+                // Shader plane equation: dot(p, n) + distance = 0, so the plane
+                // sits at -n * distance from the origin.
+                let center = n * (-distance);
+                let active = obj.active;
+                let hovered = obj.hovered || active;
+
+                let fill_color = if active {
+                    [base_color[0] * 0.5, base_color[1] * 0.5, base_color[2] * 0.5, base_color[3] * 0.5]
+                } else if hovered {
+                    [base_color[0] * 0.8, base_color[1] * 0.8, base_color[2] * 0.8, base_color[3] * 0.6]
+                } else {
+                    [base_color[0] * 0.5, base_color[1] * 0.5, base_color[2] * 0.5, base_color[3] * 0.3]
+                };
+                let border_color = if active {
+                    [base_color[0], base_color[1], base_color[2], 0.9]
+                } else if hovered {
+                    [base_color[0], base_color[1], base_color[2], 0.8]
+                } else {
+                    [base_color[0] * 0.9, base_color[1] * 0.9, base_color[2] * 0.9, 0.6]
+                };
+
+                let overlay = crate::interaction::clip_plane::ClipPlaneOverlay {
+                    center,
+                    normal: n,
+                    extent: obj.extent,
+                    fill_color,
+                    border_color,
+                    hovered,
+                    active,
+                };
+                clip_plane_fill_buffers.push(
+                    self.resources.create_clip_plane_fill_overlay(device, &overlay),
+                );
+                clip_plane_line_buffers.push(
+                    self.resources.create_clip_plane_line_overlay(device, &overlay),
+                );
+            } else {
+                // Box/Sphere: generate wireframe polyline.
+                // ensure_polyline_pipeline must be called before upload_polyline; it is a
+                // no-op if already initialised, so calling it here is always safe.
+                self.resources.ensure_polyline_pipeline(device);
+                match obj.shape {
+                    ClipShape::Box { center, half_extents, orientation } => {
+                        let polyline = clip_box_outline(center, half_extents, orientation, base_color);
+                        let vp_size = frame.camera.viewport_size;
+                        let gpu = self.resources.upload_polyline(device, queue, &polyline, vp_size);
+                        self.polyline_gpu_data.push(gpu);
+                    }
+                    ClipShape::Sphere { center, radius } => {
+                        let polyline = clip_sphere_outline(center, radius, base_color);
+                        let vp_size = frame.camera.viewport_size;
+                        let gpu = self.resources.upload_polyline(device, queue, &polyline, vp_size);
+                        self.polyline_gpu_data.push(gpu);
+                    }
+                    _ => {}
+                }
+            }
         }
 
         // Cap geometry for section-view cross-section fill.
         let mut cap_buffers = Vec::new();
         if viewport_fx.cap_fill_enabled {
-            let active_planes: Vec<_> = viewport_fx
-                .clip_planes
-                .iter()
-                .filter(|p| p.enabled)
-                .collect();
-            for plane in &active_planes {
-                let plane_n = glam::Vec3::from(plane.normal);
-                for item in scene_items.iter().filter(|i| i.visible) {
-                    let Some(mesh) = self
-                        .resources
-                        .mesh_store
-                        .get(crate::resources::mesh_store::MeshId(item.mesh_index))
-                    else {
-                        continue;
-                    };
-                    let model = glam::Mat4::from_cols_array_2d(&item.model);
-                    let world_aabb = mesh.aabb.transformed(&model);
-                    if !world_aabb.intersects_plane(plane_n, plane.distance) {
-                        continue;
-                    }
-                    let (Some(pos), Some(idx)) = (&mesh.cpu_positions, &mesh.cpu_indices) else {
-                        continue;
-                    };
-                    if let Some(cap) = crate::geometry::cap_geometry::generate_cap_mesh(
-                        pos,
-                        idx,
-                        &model,
-                        plane_n,
-                        plane.distance,
-                    ) {
-                        let bc = item.material.base_color;
-                        let color = plane.cap_color.unwrap_or([bc[0], bc[1], bc[2], 1.0]);
-                        let buf = self.resources.upload_cap_geometry(device, &cap, color);
-                        cap_buffers.push(buf);
+            for obj in viewport_fx.clip_objects.iter().filter(|o| o.enabled) {
+                if let ClipShape::Plane { normal, distance, cap_color } = obj.shape {
+                    let plane_n = glam::Vec3::from(normal);
+                    for item in scene_items.iter().filter(|i| i.visible) {
+                        let Some(mesh) = self
+                            .resources
+                            .mesh_store
+                            .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                        else {
+                            continue;
+                        };
+                        let model = glam::Mat4::from_cols_array_2d(&item.model);
+                        let world_aabb = mesh.aabb.transformed(&model);
+                        if !world_aabb.intersects_plane(plane_n, distance) {
+                            continue;
+                        }
+                        let (Some(pos), Some(idx)) = (&mesh.cpu_positions, &mesh.cpu_indices) else {
+                            continue;
+                        };
+                        if let Some(cap) = crate::geometry::cap_geometry::generate_cap_mesh(
+                            pos,
+                            idx,
+                            &model,
+                            plane_n,
+                            distance,
+                        ) {
+                            let bc = item.material.base_color;
+                            let color = cap_color.unwrap_or([bc[0], bc[1], bc[2], 1.0]);
+                            let buf = self.resources.upload_cap_geometry(device, &cap, color);
+                            cap_buffers.push(buf);
+                        }
                     }
                 }
             }
@@ -1593,4 +1730,82 @@ impl ViewportRenderer {
         self.prepare_scene_internal(device, queue, frame, &scene_fx);
         self.prepare_viewport_internal(device, queue, frame, &viewport_fx);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Clip boundary wireframe helpers (used by prepare_viewport_internal)
+// ---------------------------------------------------------------------------
+
+/// Wireframe outline for a clip box (12 edges as 2-point polyline strips).
+fn clip_box_outline(
+    center: [f32; 3],
+    half: [f32; 3],
+    orientation: [[f32; 3]; 3],
+    color: [f32; 4],
+) -> PolylineItem {
+    let ax = glam::Vec3::from(orientation[0]) * half[0];
+    let ay = glam::Vec3::from(orientation[1]) * half[1];
+    let az = glam::Vec3::from(orientation[2]) * half[2];
+    let c = glam::Vec3::from(center);
+
+    let corners = [
+        c - ax - ay - az,
+        c + ax - ay - az,
+        c + ax + ay - az,
+        c - ax + ay - az,
+        c - ax - ay + az,
+        c + ax - ay + az,
+        c + ax + ay + az,
+        c - ax + ay + az,
+    ];
+    let edges: [(usize, usize); 12] = [
+        (0, 1), (1, 2), (2, 3), (3, 0), // bottom face
+        (4, 5), (5, 6), (6, 7), (7, 4), // top face
+        (0, 4), (1, 5), (2, 6), (3, 7), // verticals
+    ];
+
+    let mut positions = Vec::with_capacity(24);
+    let mut strip_lengths = Vec::with_capacity(12);
+    for (a, b) in edges {
+        positions.push(corners[a].to_array());
+        positions.push(corners[b].to_array());
+        strip_lengths.push(2u32);
+    }
+
+    let mut item = PolylineItem::default();
+    item.positions = positions;
+    item.strip_lengths = strip_lengths;
+    item.default_color = color;
+    item.line_width = 2.0;
+    item
+}
+
+/// Wireframe outline for a clip sphere (three great circles).
+fn clip_sphere_outline(center: [f32; 3], radius: f32, color: [f32; 4]) -> PolylineItem {
+    let c = glam::Vec3::from(center);
+    let segs = 64usize;
+    let mut positions = Vec::with_capacity((segs + 1) * 3);
+    let mut strip_lengths = Vec::with_capacity(3);
+
+    for axis in 0..3usize {
+        let start = positions.len();
+        for i in 0..=segs {
+            let t = i as f32 / segs as f32 * std::f32::consts::TAU;
+            let (s, cs) = t.sin_cos();
+            let p = c + match axis {
+                0 => glam::Vec3::new(cs * radius, s * radius, 0.0),
+                1 => glam::Vec3::new(cs * radius, 0.0, s * radius),
+                _ => glam::Vec3::new(0.0, cs * radius, s * radius),
+            };
+            positions.push(p.to_array());
+        }
+        strip_lengths.push((positions.len() - start) as u32);
+    }
+
+    let mut item = PolylineItem::default();
+    item.positions = positions;
+    item.strip_lengths = strip_lengths;
+    item.default_color = color;
+    item.line_width = 2.0;
+    item
 }

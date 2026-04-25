@@ -40,7 +40,7 @@
 use crate::camera::camera::Camera;
 use crate::interaction::input::{Action, ActionFrame};
 use crate::interaction::snap::snap_value;
-use crate::renderer::ClipPlane;
+use crate::renderer::{ClipObject, ClipShape};
 
 // ---------------------------------------------------------------------------
 // Phase 1: Solver functions
@@ -105,20 +105,18 @@ pub enum ClipAxis {
     Z,
 }
 
-/// Construct a [`ClipPlane`] from an axis preset and a distance from the origin.
+/// Construct a [`ClipObject`] from an axis preset and a distance from the origin.
 ///
 /// Convenience for the common case of axis-aligned section planes.
-pub fn plane_from_axis_preset(axis: ClipAxis, distance: f32) -> ClipPlane {
+pub fn plane_from_axis_preset(axis: ClipAxis, distance: f32) -> ClipObject {
     let normal = match axis {
         ClipAxis::X => [1.0, 0.0, 0.0],
         ClipAxis::Y => [0.0, 1.0, 0.0],
         ClipAxis::Z => [0.0, 0.0, 1.0],
     };
-    ClipPlane {
-        normal,
-        distance,
-        enabled: true,
-        cap_color: None,
+    ClipObject {
+        shape: ClipShape::Plane { normal, distance, cap_color: None },
+        ..ClipObject::default()
     }
 }
 
@@ -153,12 +151,11 @@ pub fn ray_plane_intersection(
 
 /// Visual data for rendering a clip plane handle in the viewport.
 ///
-/// This is data only — the renderer draws fill, border, and normal-indicator
-/// geometry from these fields. Populate `InteractionFrame::clip_plane_overlays`
-/// with one entry per visible plane each frame.
+/// This is internal data used by the renderer. It is constructed automatically
+/// from [`ClipObject`]s that have a `color` set. Not part of the public API.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct ClipPlaneOverlay {
+pub(crate) struct ClipPlaneOverlay {
     /// World-space center of the plane quad (`normal * distance`).
     pub center: glam::Vec3,
     /// Unit normal of the plane.
@@ -316,8 +313,8 @@ pub struct ClipPlaneDelta {
 /// Everything the clip plane controller needs to run one frame.
 #[derive(Clone)]
 pub struct ClipPlaneContext {
-    /// The clip plane being manipulated.
-    pub plane: ClipPlane,
+    /// The clip object being manipulated (must be a `ClipShape::Plane` variant).
+    pub plane: ClipObject,
     /// Current camera state.
     pub camera: Camera,
     /// Viewport size in pixels.
@@ -341,8 +338,10 @@ pub struct ClipPlaneContext {
 /// Internal per-session state.
 struct ClipPlaneSession {
     kind: ClipPlaneSessionKind,
-    /// Plane state at session start, used to restore on Cancel.
-    original_plane: ClipPlane,
+    /// Normal at session start, used to restore on Cancel.
+    original_normal: [f32; 3],
+    /// Distance at session start, used to restore on Cancel.
+    original_distance: f32,
     /// Cursor position when the drag began.
     cursor_anchor: Option<glam::Vec2>,
     /// Cumulative cursor displacement used on the previous frame (for stable deltas).
@@ -409,8 +408,8 @@ impl ClipPlaneController {
 
             let delta = match session.kind {
                 ClipPlaneSessionKind::Distance => {
-                    let normal = glam::Vec3::from(session.original_plane.normal);
-                    let plane_point = normal * session.original_plane.distance;
+                    let normal = glam::Vec3::from(session.original_normal);
+                    let plane_point = normal * session.original_distance;
                     let distance_delta = project_drag_onto_normal(
                         pointer_delta,
                         normal,
@@ -444,8 +443,14 @@ impl ClipPlaneController {
             let ray_dir =
                 unproject_cursor_to_ray(cursor, &ctx.camera, view_proj, ctx.viewport_size);
 
-            let plane_normal = glam::Vec3::from(ctx.plane.normal);
-            let plane_center = plane_normal * ctx.plane.distance;
+            let (plane_normal_arr, plane_dist) =
+                if let ClipShape::Plane { normal, distance, .. } = ctx.plane.shape {
+                    (normal, distance)
+                } else {
+                    return ClipPlaneResult::None;
+                };
+            let plane_normal = glam::Vec3::from(plane_normal_arr);
+            let plane_center = plane_normal * plane_dist;
             let handle_length = ctx.plane_extent * 0.4;
             let handle_radius = ctx.plane_extent * 0.04;
 
@@ -483,7 +488,8 @@ impl ClipPlaneController {
                 };
                 self.session = Some(ClipPlaneSession {
                     kind,
-                    original_plane: ctx.plane,
+                    original_normal: plane_normal_arr,
+                    original_distance: plane_dist,
                     cursor_anchor: ctx.cursor_viewport,
                     cursor_last_total: glam::Vec2::ZERO,
                 });
@@ -501,14 +507,20 @@ impl ClipPlaneController {
 
     /// Returns the visual overlay for the current controller state.
     ///
-    /// Returns `None` if `ctx.plane.enabled` is false.
-    /// Pass the returned value into `InteractionFrame::clip_plane_overlays`.
-    pub fn overlay(&self, ctx: &ClipPlaneContext) -> Option<ClipPlaneOverlay> {
+    /// Returns `None` if the plane is not enabled or the shape is not a Plane variant.
+    /// Used internally by the renderer when the `ClipObject` has a color set.
+    pub(crate) fn overlay(&self, ctx: &ClipPlaneContext) -> Option<ClipPlaneOverlay> {
         if !ctx.plane.enabled {
             return None;
         }
-        let normal = glam::Vec3::from(ctx.plane.normal);
-        let center = normal * ctx.plane.distance;
+        let (normal_arr, distance) =
+            if let ClipShape::Plane { normal, distance, .. } = ctx.plane.shape {
+                (normal, distance)
+            } else {
+                return None;
+            };
+        let normal = glam::Vec3::from(normal_arr);
+        let center = normal * distance;
         let active = self.is_active();
         let hovered = self.hovered || active;
 
@@ -538,19 +550,27 @@ impl ClipPlaneController {
         })
     }
 
+    /// Returns `true` when the handle is being hovered.
+    pub fn is_hovered(&self) -> bool {
+        self.hovered
+    }
+
     /// Force-begin a distance drag session (e.g. from a UI button or keyboard shortcut).
     ///
-    /// No-op if a session is already active.
-    pub fn begin_distance(&mut self, plane: ClipPlane) {
+    /// No-op if a session is already active or the object is not a `Plane` variant.
+    pub fn begin_distance(&mut self, obj: &ClipObject) {
         if self.session.is_some() {
             return;
         }
-        self.session = Some(ClipPlaneSession {
-            kind: ClipPlaneSessionKind::Distance,
-            original_plane: plane,
-            cursor_anchor: None,
-            cursor_last_total: glam::Vec2::ZERO,
-        });
+        if let ClipShape::Plane { normal, distance, .. } = obj.shape {
+            self.session = Some(ClipPlaneSession {
+                kind: ClipPlaneSessionKind::Distance,
+                original_normal: normal,
+                original_distance: distance,
+                cursor_anchor: None,
+                cursor_last_total: glam::Vec2::ZERO,
+            });
+        }
     }
 
     /// Force-cancel any active session without emitting [`ClipPlaneResult::Cancel`].
@@ -609,12 +629,15 @@ mod tests {
         Camera::default()
     }
 
-    fn default_plane() -> ClipPlane {
-        ClipPlane {
-            normal: [0.0, 1.0, 0.0],
-            distance: 0.0,
+    fn default_plane() -> ClipObject {
+        ClipObject {
+            shape: ClipShape::Plane {
+                normal: [0.0, 1.0, 0.0],
+                distance: 0.0,
+                cap_color: None,
+            },
             enabled: true,
-            cap_color: None,
+            ..ClipObject::default()
         }
     }
 
@@ -649,22 +672,34 @@ mod tests {
     #[test]
     fn plane_from_axis_preset_x() {
         let p = plane_from_axis_preset(ClipAxis::X, 3.0);
-        assert_eq!(p.normal, [1.0, 0.0, 0.0]);
-        assert!((p.distance - 3.0).abs() < 1e-6);
+        if let ClipShape::Plane { normal, distance, .. } = p.shape {
+            assert_eq!(normal, [1.0, 0.0, 0.0]);
+            assert!((distance - 3.0).abs() < 1e-6);
+        } else {
+            panic!("expected Plane shape");
+        }
         assert!(p.enabled);
     }
 
     #[test]
     fn plane_from_axis_preset_y() {
         let p = plane_from_axis_preset(ClipAxis::Y, -2.0);
-        assert_eq!(p.normal, [0.0, 1.0, 0.0]);
-        assert!((p.distance - (-2.0)).abs() < 1e-6);
+        if let ClipShape::Plane { normal, distance, .. } = p.shape {
+            assert_eq!(normal, [0.0, 1.0, 0.0]);
+            assert!((distance - (-2.0)).abs() < 1e-6);
+        } else {
+            panic!("expected Plane shape");
+        }
     }
 
     #[test]
     fn plane_from_axis_preset_z() {
         let p = plane_from_axis_preset(ClipAxis::Z, 0.5);
-        assert_eq!(p.normal, [0.0, 0.0, 1.0]);
+        if let ClipShape::Plane { normal, .. } = p.shape {
+            assert_eq!(normal, [0.0, 0.0, 1.0]);
+        } else {
+            panic!("expected Plane shape");
+        }
     }
 
     #[test]
@@ -764,14 +799,14 @@ mod tests {
     #[test]
     fn controller_begin_distance_activates() {
         let mut ctrl = ClipPlaneController::new();
-        ctrl.begin_distance(default_plane());
+        ctrl.begin_distance(&default_plane());
         assert!(ctrl.is_active());
     }
 
     #[test]
     fn controller_reset_clears_session() {
         let mut ctrl = ClipPlaneController::new();
-        ctrl.begin_distance(default_plane());
+        ctrl.begin_distance(&default_plane());
         ctrl.reset();
         assert!(!ctrl.is_active());
     }
@@ -779,14 +814,14 @@ mod tests {
     #[test]
     fn controller_begin_distance_no_op_when_active() {
         let mut ctrl = ClipPlaneController::new();
-        ctrl.begin_distance(default_plane());
+        ctrl.begin_distance(&default_plane());
         // Second call is a no-op.
-        ctrl.begin_distance(ClipPlane {
-            normal: [1.0, 0.0, 0.0],
-            distance: 5.0,
+        let other = ClipObject {
+            shape: ClipShape::Plane { normal: [1.0, 0.0, 0.0], distance: 5.0, cap_color: None },
             enabled: true,
-            cap_color: None,
-        });
+            ..ClipObject::default()
+        };
+        ctrl.begin_distance(&other);
         // Still in the first session's plane.
         assert!(ctrl.is_active());
     }
@@ -802,7 +837,7 @@ mod tests {
     #[test]
     fn controller_escape_cancels_active_session() {
         let mut ctrl = ClipPlaneController::new();
-        ctrl.begin_distance(default_plane());
+        ctrl.begin_distance(&default_plane());
 
         let mut frame = ActionFrame::default();
         frame
@@ -819,7 +854,7 @@ mod tests {
     #[test]
     fn controller_drag_release_commits() {
         let mut ctrl = ClipPlaneController::new();
-        ctrl.begin_distance(default_plane());
+        ctrl.begin_distance(&default_plane());
         // dragging = false → commit
         let result = ctrl.update(&ActionFrame::default(), idle_ctx());
         assert_eq!(result, ClipPlaneResult::Commit);
@@ -837,6 +872,7 @@ mod tests {
     #[test]
     fn controller_overlay_some_when_enabled() {
         let ctrl = ClipPlaneController::new();
+        // overlay() is pub(crate), accessible within the crate
         assert!(ctrl.overlay(&idle_ctx()).is_some());
     }
 }

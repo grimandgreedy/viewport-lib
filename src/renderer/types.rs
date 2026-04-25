@@ -4,7 +4,6 @@
 //! that take raw `wgpu` types. GUI framework adapters (e.g. the egui
 //! `CallbackTrait` impl in the application crate) delegate to these methods.
 
-use crate::interaction::clip_plane::ClipPlaneOverlay;
 use crate::interaction::gizmo::{GizmoAxis, GizmoMode};
 use crate::interaction::snap::ConstraintOverlay;
 use crate::resources::{CameraUniform, ColormapId};
@@ -36,8 +35,11 @@ pub(crate) struct InstancedBatch {
 /// A world-space half-space clipping plane for section views.
 ///
 /// A fragment at world position `p` is discarded if `dot(p, normal) + distance < 0`.
+///
+/// This type is kept `pub(crate)` for internal use by `ClipPlaneController` session
+/// storage and `volumes.rs` cap fill. Public API uses [`ClipObject`] instead.
 #[derive(Clone, Copy, Debug)]
-pub struct ClipPlane {
+pub(crate) struct ClipPlane {
     /// Unit normal of the clip plane (pointing into the preserved half-space).
     pub normal: [f32; 3],
     /// Signed distance from the origin along `normal`.
@@ -48,55 +50,86 @@ pub struct ClipPlane {
     pub cap_color: Option<[f32; 4]>,
 }
 
-/// A volumetric clip region applied as an additional clipping test on top of any
-/// existing [`ClipPlane`]s.  Fragments outside the volume are discarded.
-///
-/// The default value is [`ClipVolume::None`] which adds zero overhead.
-///
-/// This is a separate, independent mechanism from the half-space `clip_planes`
-/// field on [`FrameData`].  When both are active a fragment must pass **both**
-/// the clip-plane loop **and** the clip-volume test.
+/// The shape of a [`ClipObject`].
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ClipVolume {
-    /// No clip volume — all fragments pass (default, zero GPU overhead).
-    None,
-    /// Half-space plane: `dot(p, normal) + distance >= 0` is the kept region.
-    ///
-    /// This reproduces the existing `ClipPlane` behavior at the single-volume
-    /// level and is useful when a caller wants to express both the plane and
-    /// box/sphere regions through the same uniform path.
+pub enum ClipShape {
+    /// Half-space plane — fragments where `dot(p, normal) + distance >= 0` are kept.
     Plane {
         /// Unit normal pointing into the preserved half-space.
         normal: [f32; 3],
-        /// Signed distance from the origin along `normal`.
+        /// Signed distance from origin along `normal`.
         distance: f32,
+        /// Cap fill color override. `None` = use the clipped mesh's base_color.
+        cap_color: Option<[f32; 4]>,
     },
-    /// Axis-aligned or oriented box region: fragments inside the box are kept.
-    ///
-    /// `orientation` is a 3×3 rotation matrix stored as three column vectors
-    /// (each `[f32; 3]`).  For an axis-aligned box use the identity.
+    /// Oriented box — fragments inside the box are kept.
     Box {
-        /// Box center in world space.
         center: [f32; 3],
-        /// Half-extents (per-axis radius) of the box.
         half_extents: [f32; 3],
-        /// Rotation matrix columns: `orientation[0]` = local X axis in world
-        /// space, `orientation[1]` = local Y, `orientation[2]` = local Z.
+        /// 3×3 rotation matrix columns.
         orientation: [[f32; 3]; 3],
     },
-    /// Sphere region: fragments inside the sphere are kept.
+    /// Sphere — fragments inside the sphere are kept.
     Sphere {
-        /// Sphere center in world space.
         center: [f32; 3],
-        /// Sphere radius in world units.
         radius: f32,
     },
 }
 
-impl Default for ClipVolume {
+/// A clip object — defines a clipping region and optional visual boundary rendering.
+///
+/// Push into `EffectsFrame::clip_objects` each frame. Up to 6 `Plane` variants are
+/// supported simultaneously; only the first `Box` or `Sphere` variant takes effect
+/// (subsequent ones are silently ignored).
+///
+/// Set `color` to `Some(rgba)` to have the renderer draw the clip boundary automatically.
+/// For planes this produces a semi-transparent fill quad + border; for box/sphere, a
+/// wireframe outline. Leave `color` as `None` for silent clipping with no visual.
+///
+/// The `hovered` and `active` flags are written by `ClipPlaneController` and read by
+/// the renderer to vary the plane overlay appearance (brighter when hovered, tinted when active).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ClipObject {
+    pub shape: ClipShape,
+    /// RGBA boundary color. `None` = no visual drawn.
+    pub color: Option<[f32; 4]>,
+    /// Whether this object is active. Disabled objects are ignored entirely.
+    pub enabled: bool,
+    /// Visual and hit-test half-extent for `Plane` shapes (world units). Default `4.5`.
+    pub extent: f32,
+    /// Hover state — set by `ClipPlaneController`, read by renderer.
+    pub hovered: bool,
+    /// Active drag state — set by `ClipPlaneController`, read by renderer.
+    pub active: bool,
+}
+
+impl Default for ClipObject {
     fn default() -> Self {
-        ClipVolume::None
+        Self {
+            shape: ClipShape::Plane { normal: [0.0, 0.0, 1.0], distance: 0.0, cap_color: None },
+            color: None,
+            enabled: true,
+            extent: 4.5,
+            hovered: false,
+            active: false,
+        }
+    }
+}
+
+impl ClipObject {
+    /// Create a half-space plane clip object.
+    pub fn plane(normal: [f32; 3], distance: f32) -> Self {
+        Self { shape: ClipShape::Plane { normal, distance, cap_color: None }, ..Default::default() }
+    }
+    /// Create an oriented box clip object.
+    pub fn box_shape(center: [f32; 3], half_extents: [f32; 3], orientation: [[f32; 3]; 3]) -> Self {
+        Self { shape: ClipShape::Box { center, half_extents, orientation }, ..Default::default() }
+    }
+    /// Create a sphere clip object.
+    pub fn sphere(center: [f32; 3], radius: f32) -> Self {
+        Self { shape: ClipShape::Sphere { center, radius }, ..Default::default() }
     }
 }
 
@@ -994,12 +1027,6 @@ pub struct InteractionFrame {
     pub gizmo_space_orientation: glam::Quat,
     /// Constraint guide lines to render this frame.
     pub constraint_overlays: Vec<ConstraintOverlay>,
-    /// Clip plane handle overlays to render this frame.
-    ///
-    /// Each entry produces a semi-transparent quad fill, a border outline, and
-    /// a normal-axis indicator in the viewport. Populate by calling
-    /// [`ClipPlaneController::overlay`] and pushing the result.
-    pub clip_plane_overlays: Vec<ClipPlaneOverlay>,
     /// Draw a stencil-outline ring around selected objects. Default: false.
     pub outline_selected: bool,
     /// RGBA color of the selection outline ring. Default: orange [1.0, 0.5, 0.0, 1.0].
@@ -1021,7 +1048,6 @@ impl Default for InteractionFrame {
             gizmo_hovered: GizmoAxis::None,
             gizmo_space_orientation: glam::Quat::IDENTITY,
             constraint_overlays: Vec::new(),
-            clip_plane_overlays: Vec::new(),
             outline_selected: false,
             outline_color: [1.0, 0.5, 0.0, 1.0],
             outline_width_px: 4.0,
@@ -1033,6 +1059,53 @@ impl Default for InteractionFrame {
 
 /// Environment map configuration for IBL (image-based lighting) and skybox.
 ///
+/// Ground plane rendering mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GroundPlaneMode {
+    /// No ground plane rendered (default, zero overhead).
+    #[default]
+    None,
+    /// Invisible plane that receives and displays shadows only.
+    ShadowOnly,
+    /// Procedural checkerboard tile pattern.
+    Tile,
+    /// Flat solid color.
+    SolidColor,
+}
+
+/// Ground plane configuration for the viewport.
+///
+/// Renders a large horizontal plane at a configurable world-space Z height.
+/// Provides spatial grounding without explicit scene geometry.
+#[derive(Clone, Debug)]
+pub struct GroundPlane {
+    /// Rendering mode. Default: `None` (plane not drawn).
+    pub mode: GroundPlaneMode,
+    /// World-space Z coordinate of the ground plane. Default: `0.0`.
+    pub height: f32,
+    /// Ground color for `Tile` and `SolidColor` modes. Default: `[0.3, 0.3, 0.3, 1.0]`.
+    pub color: [f32; 4],
+    /// Checker tile size in world units (`Tile` mode). Default: `1.0`.
+    pub tile_size: f32,
+    /// Shadow tint color (`ShadowOnly` mode). Default: `[0.0, 0.0, 0.0, 1.0]`.
+    pub shadow_color: [f32; 4],
+    /// Maximum shadow opacity (`ShadowOnly` mode). `0.0` = transparent, `1.0` = fully opaque. Default: `0.5`.
+    pub shadow_opacity: f32,
+}
+
+impl Default for GroundPlane {
+    fn default() -> Self {
+        Self {
+            mode: GroundPlaneMode::None,
+            height: 0.0,
+            color: [0.3, 0.3, 0.3, 1.0],
+            tile_size: 1.0,
+            shadow_color: [0.0, 0.0, 0.0, 1.0],
+            shadow_opacity: 0.5,
+        }
+    }
+}
+
 /// When set on `EffectsFrame::environment`, the renderer uses the environment
 /// map for PBR ambient lighting (irradiance + specular) and optionally renders
 /// it as the scene background (skybox).
@@ -1067,30 +1140,31 @@ impl Default for EnvironmentMap {
 pub struct EffectsFrame {
     /// Per-frame lighting configuration.
     pub lighting: LightingSettings,
-    /// Active section-view clip planes. Max 6. Default: empty (no clipping).
-    pub clip_planes: Vec<ClipPlane>,
+    /// Active clip objects (planes, boxes, spheres). Max 6 planes + 1 box/sphere.
+    /// Default: empty (no clipping).
+    pub clip_objects: Vec<ClipObject>,
     /// Whether to render filled caps at clip plane cross-sections. Default: true.
     pub cap_fill_enabled: bool,
     /// Optional post-processing settings. Default: disabled.
     pub post_process: PostProcessSettings,
     /// GPU compute filter items dispatched before the render pass.
     pub compute_filter_items: Vec<ComputeFilterItem>,
-    /// Optional volumetric clip region. Default: ClipVolume::None (zero overhead).
-    pub clip_volume: ClipVolume,
     /// Optional environment map for IBL and skybox. Default: None.
     pub environment: Option<EnvironmentMap>,
+    /// Ground plane configuration. Default: mode = None (not drawn, zero overhead).
+    pub ground_plane: GroundPlane,
 }
 
 impl Default for EffectsFrame {
     fn default() -> Self {
         Self {
             lighting: LightingSettings::default(),
-            clip_planes: Vec::new(),
+            clip_objects: Vec::new(),
             cap_fill_enabled: true,
             post_process: PostProcessSettings::default(),
             compute_filter_items: Vec::new(),
-            clip_volume: ClipVolume::None,
             environment: None,
+            ground_plane: GroundPlane::default(),
         }
     }
 }
@@ -1116,7 +1190,7 @@ pub struct SceneEffects<'a> {
 
 /// Per-viewport effects for one frame, consumed by [`ViewportRenderer::prepare_viewport`].
 ///
-/// Groups the clip planes, clip volume, and post-processing settings that differ
+/// Groups the clip objects and post-processing settings that differ
 /// per viewport. Construct directly or obtain via [`EffectsFrame::split`].
 ///
 /// # Multi-viewport usage
@@ -1124,14 +1198,14 @@ pub struct SceneEffects<'a> {
 /// Scene-global effects are passed once via [`SceneEffects`] in
 /// [`ViewportRenderer::prepare_scene`].
 pub struct ViewportEffects<'a> {
-    /// Active section-view clip planes.
-    pub clip_planes: &'a [ClipPlane],
-    /// Optional volumetric clip region.
-    pub clip_volume: &'a ClipVolume,
+    /// Active clip objects (planes, boxes, spheres).
+    pub clip_objects: &'a [ClipObject],
     /// Whether to render filled caps at clip plane cross-sections.
     pub cap_fill_enabled: bool,
     /// Optional post-processing settings (tone mapping, bloom, SSAO).
     pub post_process: &'a PostProcessSettings,
+    /// Ground plane configuration for this viewport.
+    pub ground_plane: &'a GroundPlane,
 }
 
 impl EffectsFrame {
@@ -1151,10 +1225,10 @@ impl EffectsFrame {
                 compute_filter_items: &self.compute_filter_items,
             },
             ViewportEffects {
-                clip_planes: &self.clip_planes,
-                clip_volume: &self.clip_volume,
+                clip_objects: &self.clip_objects,
                 cap_fill_enabled: self.cap_fill_enabled,
                 post_process: &self.post_process,
+                ground_plane: &self.ground_plane,
             },
         )
     }
@@ -1240,13 +1314,27 @@ macro_rules! emit_draw_calls {
             render_pass.set_bind_group(0, camera_bg, &[]);
         }
 
+        // Ground plane pass — drawn after grid, before scene geometry.
+        // Uses its own bind group (group 0: uniform + shadow atlas + sampler).
+        if !matches!(
+            frame.effects.ground_plane.mode,
+            crate::renderer::types::GroundPlaneMode::None
+        ) {
+            render_pass.set_pipeline(&resources.ground_plane_pipeline);
+            render_pass.set_bind_group(0, &resources.ground_plane_bind_group, &[]);
+            render_pass.draw(0..3, 0..1);
+            render_pass.set_bind_group(0, camera_bg, &[]);
+        }
+
             if !scene_items.is_empty() {
                 if use_instancing && !batches.is_empty() {
                     let excluded_items: Vec<&SceneRenderItem> = scene_items
                         .iter()
                         .filter(|item| {
                             item.visible
-                                && (item.active_attribute.is_some() || item.two_sided)
+                                && (item.active_attribute.is_some()
+                                    || item.two_sided
+                                    || item.material.param_vis.is_some())
                                 && resources
                                     .mesh_store
                                     .get(crate::resources::mesh_store::MeshId(item.mesh_index))

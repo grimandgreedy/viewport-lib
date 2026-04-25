@@ -82,15 +82,15 @@
 use eframe::egui;
 use viewport_lib::{
     AnnotationLabel, AttributeKind, AttributeRef, BuiltinColormap, ButtonState,
-    Camera, CameraAnimator, CameraFrame, ClipAxis, ClipPlane, ClipPlaneController,
+    Camera, CameraAnimator, CameraFrame, ClipAxis, ClipObject,
     ColormapId, Easing, FrameData, FrameStats, Gizmo, GizmoAxis, GizmoMode, GizmoSpace,
-    GlyphType, LightKind, LightSource, LightingSettings, Material, MatcapId, MeshData, MeshId,
-    NodeId, OrbitCameraController, PickAccelerator, PostProcessSettings, Projection, RenderCamera,
-    SceneFrame, SceneRenderItem, ScrollUnits, Selection, ShadowFilter, SnapConfig, ViewPreset,
-    ViewportContext, ViewportEvent, ViewportRenderer, VolumeData, VolumeId,
+    GlyphType, GroundPlane, GroundPlaneMode, LightKind, LightSource, LightingSettings, Material,
+    MatcapId, MeshData, MeshId, NodeId, OrbitCameraController, PickAccelerator,
+    PostProcessSettings, Projection, RenderCamera, SceneFrame, SceneRenderItem, ScrollUnits,
+    Selection, ShadowFilter, SnapConfig, ViewPreset, ViewportContext, ViewportEvent,
+    ViewportRenderer, VolumeData, VolumeId,
     geometry::isoline::IsolineItem,
     gizmo::{self, compute_gizmo_scale},
-    interaction::input::ActionFrame,
     scene::{LayerId, Scene},
 };
 
@@ -116,6 +116,8 @@ mod showcase_18_clip_volumes;
 mod showcase_19_matcap;
 mod showcase_20_face_attributes;
 mod showcase_21_textures;
+mod showcase_22_parameterization;
+mod showcase_23_ground_plane;
 mod viewport_callback;
 
 const BG_COLOR: [f32; 4] = [0.08, 0.08, 0.10, 1.0];
@@ -376,12 +378,7 @@ fn main() -> eframe::Result {
                 vol_step_scale: 1.0,
                 vol_shading: true,
                 vol_nan_on: false,
-                vol_iso_material: Material {
-                    base_color: [0.6, 0.8, 1.0],
-                    roughness: 0.4,
-                    metallic: 0.0,
-                    ..Material::default()
-                },
+                vol_iso_material: { let mut m = Material::from_color([0.6, 0.8, 1.0]); m.roughness = 0.4; m },
                 clipvol_scene: Scene::new(),
                 clipvol_built: false,
                 clipvol_sub_mode: showcase_18_clip_volumes::ClipVolSubMode::BoxClip,
@@ -390,19 +387,17 @@ fn main() -> eframe::Result {
                 clipvol_box_yaw: 0.0,
                 clipvol_sphere_center: [0.0; 3],
                 clipvol_sphere_radius: 2.8,
-                clipvol_plane: ClipPlane {
-                    normal: [0.0, 0.0, 1.0],
-                    distance: 0.0,
-                    enabled: true,
-                    cap_color: None,
+                clipvol_plane: {
+                    let mut co = ClipObject::plane([0.0, 0.0, 1.0], 0.0);
+                    co.color = Some([0.45, 0.82, 1.0, 0.5]);
+                    co
                 },
-                clipvol_plane_controller: ClipPlaneController::new(),
                 clipvol_plane_axis: ClipAxis::Z,
-                clipvol_action_frame: ActionFrame::default(),
-                clipvol_pointer_delta: glam::Vec2::ZERO,
-                clipvol_cursor_in_viewport: false,
-                clipvol_drag_started: false,
-                clipvol_dragging: false,
+                clipvol_gizmo: Gizmo::new(),
+                clipvol_gizmo_center: None,
+                clipvol_gizmo_scale: 1.0,
+                clipvol_gizmo_drag_active: false,
+                clipvol_show_overlay: true,
                 matcap_scene: Scene::new(),
                 matcap_built: false,
 
@@ -422,6 +417,21 @@ fn main() -> eframe::Result {
                 face_node_ids: [0; 3],
                 face_colormap: BuiltinColormap::Viridis,
                 face_opacity: 1.0,
+
+                param_vis_scene: Scene::new(),
+                param_vis_built: false,
+                param_vis_node_ids: [0u64; 16],
+                param_vis_scale: 8.0,
+                param_vis_on: true,
+
+                gp_scene: Scene::new(),
+                gp_built: false,
+                gp_mode: showcase_23_ground_plane::GpMode::Tile,
+                gp_height: 0.0,
+                gp_color: [0.3, 0.3, 0.3, 1.0],
+                gp_tile_size: 1.0,
+                gp_shadow_color: [0.0, 0.0, 0.0, 1.0],
+                gp_shadow_opacity: 0.5,
             }))
         }),
     )
@@ -461,6 +471,8 @@ enum ShowcaseMode {
     Matcap,
     FaceAttributes,
     Textures,
+    ParamVis,
+    GroundPlane,
 }
 
 impl ShowcaseMode {
@@ -487,6 +499,8 @@ impl ShowcaseMode {
             Self::Matcap => "19: Matcap Shading",
             Self::FaceAttributes => "20: Face Attributes",
             Self::Textures => "21: Textures",
+            Self::ParamVis => "22: UV Parameterization",
+            Self::GroundPlane => "23: Ground Plane",
         }
     }
 }
@@ -721,20 +735,19 @@ pub(crate) struct App {
     clipvol_box_yaw: f32,
     clipvol_sphere_center: [f32; 3],
     clipvol_sphere_radius: f32,
-    /// The clip plane used in interactive-plane sub-mode.
-    pub(crate) clipvol_plane: ClipPlane,
-    pub(crate) clipvol_plane_controller: ClipPlaneController,
+    /// The clip object used in interactive-plane sub-mode.
+    pub(crate) clipvol_plane: ClipObject,
     clipvol_plane_axis: ClipAxis,
-    /// ActionFrame captured from the orbit controller each frame.
-    pub(crate) clipvol_action_frame: ActionFrame,
-    /// Pointer delta in viewport pixels, updated every frame.
-    pub(crate) clipvol_pointer_delta: glam::Vec2,
-    /// Whether the cursor is currently inside the viewport.
-    pub(crate) clipvol_cursor_in_viewport: bool,
-    /// True on the frame a primary drag starts (set in the event loop).
-    pub(crate) clipvol_drag_started: bool,
-    /// True while a primary drag is ongoing.
-    pub(crate) clipvol_dragging: bool,
+    /// Gizmo state for clip volume manipulation.
+    clipvol_gizmo: Gizmo,
+    /// Cached gizmo center for hit-testing (updated end of each frame).
+    clipvol_gizmo_center: Option<glam::Vec3>,
+    /// Gizmo screen-space scale (updated end of each frame).
+    clipvol_gizmo_scale: f32,
+    /// True while a gizmo drag is in progress (suppresses orbit).
+    clipvol_gizmo_drag_active: bool,
+    /// Whether to show the clip object overlay (wireframe / fill quad).
+    clipvol_show_overlay: bool,
 
     // --- Showcase 19 ---
     pub(crate) matcap_scene: Scene,
@@ -748,6 +761,24 @@ pub(crate) struct App {
     pub(crate) texture_scene: Scene,
     pub(crate) texture_built: bool,
     pub(crate) texture_plane_node: NodeId,
+
+    // --- Showcase 22 ---
+    pub(crate) param_vis_scene: Scene,
+    pub(crate) param_vis_built: bool,
+    /// Node IDs for the 16 param-vis objects (4 modes × 4 mesh types: sphere/cube/torus/plane).
+    pub(crate) param_vis_node_ids: [NodeId; 16],
+    param_vis_scale: f32,
+    param_vis_on: bool,
+    // --- Showcase 23 ---
+    pub(crate) gp_scene: Scene,
+    pub(crate) gp_built: bool,
+    gp_mode: showcase_23_ground_plane::GpMode,
+    gp_height: f32,
+    gp_color: [f32; 4],
+    gp_tile_size: f32,
+    gp_shadow_color: [f32; 4],
+    gp_shadow_opacity: f32,
+
     /// Mesh upload indices for the three face-attribute spheres.
     pub(crate) face_mesh_indices: [usize; 3],
     /// Node IDs for the three face-attribute spheres.
@@ -830,6 +861,8 @@ impl eframe::App for App {
                     ShowcaseMode::Matcap,
                     ShowcaseMode::FaceAttributes,
                     ShowcaseMode::Textures,
+                    ShowcaseMode::ParamVis,
+                    ShowcaseMode::GroundPlane,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -880,14 +913,9 @@ impl eframe::App for App {
 
                 if let Some(pos) = i.pointer.interact_pos() {
                     let local = glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top());
-                    self.clipvol_pointer_delta = local - self.last_cursor_viewport;
                     self.last_cursor_viewport = local;
-                    self.clipvol_cursor_in_viewport = rect.contains(pos);
                     self.controller
                         .push_event(ViewportEvent::PointerMoved { position: local });
-                } else {
-                    self.clipvol_cursor_in_viewport = false;
-                    self.clipvol_pointer_delta = glam::Vec2::ZERO;
                 }
 
                 for event in &i.events {
@@ -961,6 +989,48 @@ impl eframe::App for App {
                                 self.interact_gizmo.active_axis = GizmoAxis::None;
                             }
 
+                            // Clip-vol gizmo — start drag.
+                            if self.mode == ShowcaseMode::ClipVolumes
+                                && *button == egui::PointerButton::Primary
+                                && *pressed
+                            {
+                                let local =
+                                    glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top());
+                                if let Some(center) = self.clipvol_gizmo_center {
+                                    let w = rect.width();
+                                    let h = rect.height();
+                                    let vp_inv = self.camera.view_proj_matrix().inverse();
+                                    let (ray_origin, ray_dir) =
+                                        viewport_lib::picking::screen_to_ray(
+                                            local,
+                                            glam::Vec2::new(w, h),
+                                            vp_inv,
+                                        );
+                                    let orient = self.clipvol_gizmo_orient();
+                                    let hit = self.clipvol_gizmo.hit_test_oriented(
+                                        ray_origin,
+                                        ray_dir,
+                                        center,
+                                        self.clipvol_gizmo_scale,
+                                        orient,
+                                    );
+                                    if hit != GizmoAxis::None {
+                                        self.clipvol_gizmo.active_axis = hit;
+                                        self.clipvol_gizmo_drag_active = true;
+                                    }
+                                }
+                            }
+
+                            // Clip-vol gizmo — end drag.
+                            if self.mode == ShowcaseMode::ClipVolumes
+                                && *button == egui::PointerButton::Primary
+                                && !pressed
+                                && self.clipvol_gizmo_drag_active
+                            {
+                                self.clipvol_gizmo_drag_active = false;
+                                self.clipvol_gizmo.active_axis = GizmoAxis::None;
+                            }
+
                             let state = if *pressed {
                                 ButtonState::Pressed
                             } else {
@@ -1004,6 +1074,19 @@ impl eframe::App for App {
                 }
             }
 
+            // ----- Clip-vol gizmo drag (Showcase 18) -----
+            if self.mode == ShowcaseMode::ClipVolumes
+                && self.clipvol_gizmo_drag_active
+                && response.dragged()
+            {
+                let drag_delta = response.drag_delta();
+                let dx = drag_delta.x;
+                let dy = drag_delta.y;
+                if dx.abs() > 0.001 || dy.abs() > 0.001 {
+                    self.apply_clipvol_gizmo_drag(dx, dy, rect.width(), rect.height());
+                }
+            }
+
             // ----- Advance camera animator (Showcases 4 and 10) -----
             if self.mode == ShowcaseMode::Interaction {
                 let dt = ctx.input(|i| i.stable_dt.min(1.0 / 30.0));
@@ -1016,22 +1099,14 @@ impl eframe::App for App {
 
             // ----- Apply / resolve orbit controller -----
             let suppress_orbit = (self.mode == ShowcaseMode::Interaction && self.gizmo_drag_active)
-                || (self.mode == ShowcaseMode::ClipVolumes
-                    && self.clipvol_sub_mode
-                        == showcase_18_clip_volumes::ClipVolSubMode::InteractivePlane
-                    && self.clipvol_plane_controller.is_active());
+                || (self.mode == ShowcaseMode::ClipVolumes && self.clipvol_gizmo_drag_active);
             if suppress_orbit {
-                self.clipvol_action_frame = self.controller.resolve();
+                self.controller.resolve();
             } else {
-                self.clipvol_action_frame = self.controller.apply_to_camera(&mut self.camera);
+                self.controller.apply_to_camera(&mut self.camera);
             }
 
             self.camera.set_aspect_ratio(rect.width(), rect.height());
-
-            // ----- Clip plane controller drag state (Showcase 18) -----
-            self.clipvol_drag_started =
-                response.drag_started_by(egui::PointerButton::Primary);
-            self.clipvol_dragging = response.dragged_by(egui::PointerButton::Primary);
 
             // ----- Click-to-select -----
             // Only fires when the pointer was clicked (not dragged) and no gizmo drag ended.
@@ -1055,6 +1130,17 @@ impl eframe::App for App {
                     });
                 if let Some(center) = self.interact_gizmo_center {
                     self.interact_gizmo_scale = compute_gizmo_scale(
+                        center,
+                        self.camera.eye_position(),
+                        self.camera.fov_y,
+                        rect.height(),
+                    );
+                }
+            }
+            if self.mode == ShowcaseMode::ClipVolumes && self.clipvol_built {
+                self.clipvol_gizmo_center = self.clip_gizmo_center();
+                if let Some(center) = self.clipvol_gizmo_center {
+                    self.clipvol_gizmo_scale = compute_gizmo_scale(
                         center,
                         self.camera.eye_position(),
                         self.camera.fov_y,
@@ -1104,7 +1190,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 21] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 23] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::Performance,
@@ -1126,6 +1212,8 @@ impl App {
             ShowcaseMode::Matcap,
             ShowcaseMode::FaceAttributes,
             ShowcaseMode::Textures,
+            ShowcaseMode::ParamVis,
+            ShowcaseMode::GroundPlane,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1167,6 +1255,8 @@ impl App {
             ShowcaseMode::Matcap => !self.matcap_built,
             ShowcaseMode::FaceAttributes => !self.face_built,
             ShowcaseMode::Textures => !self.texture_built,
+            ShowcaseMode::ParamVis => !self.param_vis_built,
+            ShowcaseMode::GroundPlane => !self.gp_built,
             _ => false,
         };
         if !needs {
@@ -1334,6 +1424,16 @@ impl App {
             ShowcaseMode::Textures => {
                 self.build_texture_scene(renderer);
             }
+            ShowcaseMode::ParamVis => {
+                self.build_param_vis_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 22.0,
+                    orientation: glam::Quat::from_rotation_z(0.3)
+                        * glam::Quat::from_rotation_x(1.1),
+                    ..Camera::default()
+                };
+            }
             ShowcaseMode::Matcap => {
                 self.build_matcap_scene(renderer);
                 self.camera = Camera {
@@ -1351,6 +1451,16 @@ impl App {
                     distance: 16.0,
                     orientation: glam::Quat::from_rotation_z(0.5)
                         * glam::Quat::from_rotation_x(1.1),
+                    ..Camera::default()
+                };
+            }
+            ShowcaseMode::GroundPlane => {
+                self.build_ground_plane_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::new(0.0, 0.0, 1.0),
+                    distance: 14.0,
+                    orientation: glam::Quat::from_rotation_z(0.4)
+                        * glam::Quat::from_rotation_x(1.0),
                     ..Camera::default()
                 };
             }
@@ -1390,6 +1500,8 @@ impl App {
             ShowcaseMode::Matcap => self.controls_matcap(ui, frame),
             ShowcaseMode::FaceAttributes => self.controls_face_attr(ui),
             ShowcaseMode::Textures => self.controls_textures(ui),
+            ShowcaseMode::ParamVis => self.controls_param_vis(ui),
+            ShowcaseMode::GroundPlane => self.controls_ground_plane(ui),
         }
     }
 
@@ -2263,7 +2375,7 @@ impl App {
 
 impl App {
     fn build_frame_data(&mut self, w: f32, h: f32, frame: &eframe::Frame) -> FrameData {
-        let mut adv_clip_planes: Vec<ClipPlane> = vec![];
+        let mut adv_clip_objects: Vec<ClipObject> = vec![];
         let mut adv_outline = false;
         let mut adv_xray = false;
         let mut perf_outline = false;
@@ -2368,12 +2480,7 @@ impl App {
             ShowcaseMode::Advanced => {
                 let items = self.adv_scene.collect_render_items(&self.adv_selection);
                 if self.adv_clip_enabled {
-                    adv_clip_planes.push(ClipPlane {
-                        normal: [1.0, 0.0, 0.0],
-                        distance: 0.0,
-                        enabled: true,
-                        cap_color: None,
-                    });
+                    adv_clip_objects.push(ClipObject::plane([1.0, 0.0, 0.0], 0.0));
                 }
                 adv_outline = self.adv_outline_on && !self.adv_selection.is_empty();
                 adv_xray = self.adv_xray_on && !self.adv_selection.is_empty();
@@ -2429,12 +2536,7 @@ impl App {
             ShowcaseMode::NormalMaps => {
                 let items = self.nm_scene.collect_render_items(&Selection::new());
                 if self.nm_clip_enabled {
-                    adv_clip_planes.push(ClipPlane {
-                        normal: [1.0, 0.0, 0.0],
-                        distance: 0.0,
-                        enabled: true,
-                        cap_color: None,
-                    });
+                    adv_clip_objects.push(ClipObject::plane([1.0, 0.0, 0.0], 0.0));
                 }
                 let lighting = LightingSettings {
                     lights: vec![
@@ -2598,6 +2700,8 @@ impl App {
 
             ShowcaseMode::ClipVolumes => {
                 let mut items = self.clipvol_scene.collect_render_items(&Selection::new());
+                // Two-sided on all sub-modes: makes the sphere and ground plane visible
+                // from the inside when clipped, showing the cut cross-section surface.
                 for item in items.iter_mut() {
                     item.two_sided = true;
                 }
@@ -2694,6 +2798,36 @@ impl App {
                 (items, Some(BG_COLOR), lighting, sg, 0)
             }
 
+            ShowcaseMode::ParamVis => {
+                let items = self.param_vis_scene.collect_render_items(&Selection::new());
+                let sg = self.param_vis_scene.version();
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.5,
+                    sky_color: [1.0, 1.0, 1.0],
+                    ground_color: [1.0, 1.0, 1.0],
+                    ..LightingSettings::default()
+                };
+                (items, Some(BG_COLOR), lighting, sg, 0)
+            }
+
+            ShowcaseMode::GroundPlane => {
+                let items = self.gp_scene.collect_render_items(&Selection::new());
+                let sg = self.gp_scene.version();
+                let lighting = LightingSettings {
+                    lights: vec![LightSource {
+                        kind: LightKind::Directional { direction: [0.4, 0.6, 1.0] },
+                        intensity: 1.5,
+                        ..LightSource::default()
+                    }],
+                    shadows_enabled: true,
+                    hemisphere_intensity: 0.3,
+                    sky_color: [1.0, 1.0, 1.0],
+                    ground_color: [0.3, 0.3, 0.3],
+                    ..LightingSettings::default()
+                };
+                (items, Some(BG_COLOR), lighting, sg, 0)
+            }
+
             ShowcaseMode::FaceAttributes => {
                 let mut items = self.face_scene.collect_render_items(&Selection::new());
                 let colormap_id = ColormapId(self.face_colormap as usize);
@@ -2738,8 +2872,8 @@ impl App {
             }
         };
 
-        // Gizmo matrices for Interaction mode.
-        let (gizmo_model, gizmo_mode, gizmo_space_orient) =
+        // Gizmo matrices for Interaction and ClipVolumes modes.
+        let (gizmo_model, gizmo_mode, gizmo_space_orient, gizmo_hovered) =
             if self.mode == ShowcaseMode::Interaction {
                 let center = self.interact_gizmo_center;
                 let model = center.map(|c| {
@@ -2754,16 +2888,31 @@ impl App {
                     &self.interact_selection,
                     &self.interact_scene,
                 );
-                (model, self.interact_gizmo.mode, orient)
+                let hovered = if self.interact_gizmo.active_axis != GizmoAxis::None {
+                    self.interact_gizmo.active_axis
+                } else {
+                    self.interact_gizmo.hovered_axis
+                };
+                (model, self.interact_gizmo.mode, orient, hovered)
+            } else if self.mode == ShowcaseMode::ClipVolumes && self.clipvol_built {
+                let center = self.clipvol_gizmo_center;
+                let orient = self.clipvol_gizmo_orient();
+                let model = center.map(|c| {
+                    glam::Mat4::from_scale_rotation_translation(
+                        glam::Vec3::splat(self.clipvol_gizmo_scale),
+                        glam::Quat::IDENTITY,
+                        c,
+                    )
+                });
+                let hovered = if self.clipvol_gizmo.active_axis != GizmoAxis::None {
+                    self.clipvol_gizmo.active_axis
+                } else {
+                    self.clipvol_gizmo.hovered_axis
+                };
+                (model, self.clipvol_gizmo.mode, orient, hovered)
             } else {
-                (None, GizmoMode::Translate, glam::Quat::IDENTITY)
+                (None, GizmoMode::Translate, glam::Quat::IDENTITY, GizmoAxis::None)
             };
-
-        let gizmo_hovered = if self.interact_gizmo.active_axis != GizmoAxis::None {
-            self.interact_gizmo.active_axis
-        } else {
-            self.interact_gizmo.hovered_axis
-        };
 
         let mut fd = FrameData::new(
             CameraFrame::from_camera(&self.camera, [w, h]),
@@ -2773,7 +2922,25 @@ impl App {
         fd.viewport.show_grid = false;
         fd.viewport.show_axes_indicator = true;
         fd.viewport.background_color = bg_color;
-        fd.effects.clip_planes = adv_clip_planes;
+
+        // Ground plane (Showcase 23).
+        if self.mode == ShowcaseMode::GroundPlane {
+            use showcase_23_ground_plane::GpMode;
+            fd.effects.ground_plane = GroundPlane {
+                mode: match self.gp_mode {
+                    GpMode::None => GroundPlaneMode::None,
+                    GpMode::ShadowOnly => GroundPlaneMode::ShadowOnly,
+                    GpMode::Tile => GroundPlaneMode::Tile,
+                    GpMode::SolidColor => GroundPlaneMode::SolidColor,
+                },
+                height: self.gp_height,
+                color: self.gp_color,
+                tile_size: self.gp_tile_size,
+                shadow_color: self.gp_shadow_color,
+                shadow_opacity: self.gp_shadow_opacity,
+            };
+        }
+        fd.effects.clip_objects = adv_clip_objects;
         fd.interaction.gizmo_model = gizmo_model;
         fd.interaction.gizmo_mode = gizmo_mode;
         fd.interaction.gizmo_hovered = gizmo_hovered;
@@ -2800,16 +2967,10 @@ impl App {
             }
         }
 
-        // Clip volume (Showcase 18) — set every frame, update interactive plane controller.
+        // Clip volume (Showcase 18) — set every frame from current state.
         if self.mode == ShowcaseMode::ClipVolumes && self.clipvol_built {
-            fd.effects.clip_volume = self.make_clipvol();
-            if self.clipvol_sub_mode
-                == showcase_18_clip_volumes::ClipVolSubMode::InteractivePlane
-            {
-                let vp_size = glam::Vec2::new(w, h);
-                if let Some(overlay) = self.update_clipvol_controller(vp_size) {
-                    fd.interaction.clip_plane_overlays.push(overlay);
-                }
+            if let Some(clip_obj) = self.make_clip_object() {
+                fd.effects.clip_objects.push(clip_obj);
             }
         }
 
@@ -3267,6 +3428,207 @@ impl App {
 }
 
 // ---------------------------------------------------------------------------
+// Clip-vol gizmo helpers (Showcase 18)
+// ---------------------------------------------------------------------------
+
+impl App {
+    /// Compute the world-space gizmo center for the active clip sub-mode.
+    pub(crate) fn clip_gizmo_center(&self) -> Option<glam::Vec3> {
+        use showcase_18_clip_volumes::ClipVolSubMode;
+        use viewport_lib::ClipShape;
+        match self.clipvol_sub_mode {
+            ClipVolSubMode::BoxClip => Some(glam::Vec3::from(self.clipvol_box_center)),
+            ClipVolSubMode::SphereClip => Some(glam::Vec3::from(self.clipvol_sphere_center)),
+            ClipVolSubMode::InteractivePlane => {
+                if let ClipShape::Plane { normal, distance, .. } = self.clipvol_plane.shape {
+                    // Shader clips where dot(p, n) + distance < 0, so the plane
+                    // sits at -normal * distance from the origin.
+                    Some(glam::Vec3::from(normal) * (-distance))
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// Compute the gizmo orientation quaternion for the active clip sub-mode.
+    pub(crate) fn clipvol_gizmo_orient(&self) -> glam::Quat {
+        use showcase_18_clip_volumes::ClipVolSubMode;
+        use viewport_lib::ClipShape;
+        match self.clipvol_sub_mode {
+            ClipVolSubMode::BoxClip => {
+                glam::Quat::from_rotation_z(self.clipvol_box_yaw.to_radians())
+            }
+            ClipVolSubMode::SphereClip => glam::Quat::IDENTITY,
+            ClipVolSubMode::InteractivePlane => {
+                if let ClipShape::Plane { normal, .. } = self.clipvol_plane.shape {
+                    let n = glam::Vec3::from(normal).normalize_or_zero();
+                    if n.length_squared() > 0.001 {
+                        glam::Quat::from_rotation_arc(glam::Vec3::Z, n)
+                    } else {
+                        glam::Quat::IDENTITY
+                    }
+                } else {
+                    glam::Quat::IDENTITY
+                }
+            }
+        }
+    }
+
+    fn apply_clipvol_gizmo_drag(&mut self, dx: f32, dy: f32, w: f32, h: f32) {
+        use showcase_18_clip_volumes::ClipVolSubMode;
+        use viewport_lib::ClipShape;
+
+        let Some(center) = self.clipvol_gizmo_center else {
+            return;
+        };
+        let drag_delta = glam::Vec2::new(dx, dy);
+        let viewport_size = glam::Vec2::new(w, h);
+        let vp = self.camera.view_proj_matrix();
+        let view = self.camera.view_matrix();
+        let axis = self.clipvol_gizmo.active_axis;
+        let orient = self.clipvol_gizmo_orient();
+
+        let axis_dir = |a: GizmoAxis| -> glam::Vec3 {
+            let base = match a {
+                GizmoAxis::X => glam::Vec3::X,
+                GizmoAxis::Y => glam::Vec3::Y,
+                GizmoAxis::Z => glam::Vec3::Z,
+                _ => glam::Vec3::X,
+            };
+            orient * base
+        };
+
+        match self.clipvol_gizmo.mode {
+            GizmoMode::Translate => {
+                let delta = match axis {
+                    GizmoAxis::X | GizmoAxis::Y | GizmoAxis::Z => {
+                        let dir = axis_dir(axis);
+                        let amount = gizmo::project_drag_onto_axis(
+                            drag_delta, dir, vp, center, viewport_size,
+                        );
+                        dir * amount
+                    }
+                    GizmoAxis::XY => gizmo::project_drag_onto_plane(
+                        drag_delta, orient * glam::Vec3::X, orient * glam::Vec3::Y,
+                        vp, center, viewport_size,
+                    ),
+                    GizmoAxis::XZ => gizmo::project_drag_onto_plane(
+                        drag_delta, orient * glam::Vec3::X, orient * glam::Vec3::Z,
+                        vp, center, viewport_size,
+                    ),
+                    GizmoAxis::YZ => gizmo::project_drag_onto_plane(
+                        drag_delta, orient * glam::Vec3::Y, orient * glam::Vec3::Z,
+                        vp, center, viewport_size,
+                    ),
+                    GizmoAxis::Screen => gizmo::project_drag_onto_screen_plane(
+                        drag_delta, self.camera.right(), self.camera.up(),
+                        vp, center, viewport_size,
+                    ),
+                    _ => glam::Vec3::ZERO,
+                };
+                match self.clipvol_sub_mode {
+                    ClipVolSubMode::BoxClip => {
+                        self.clipvol_box_center[0] += delta.x;
+                        self.clipvol_box_center[1] += delta.y;
+                        self.clipvol_box_center[2] += delta.z;
+                    }
+                    ClipVolSubMode::SphereClip => {
+                        self.clipvol_sphere_center[0] += delta.x;
+                        self.clipvol_sphere_center[1] += delta.y;
+                        self.clipvol_sphere_center[2] += delta.z;
+                    }
+                    ClipVolSubMode::InteractivePlane => {
+                        if let ClipShape::Plane { ref mut distance, ref normal, .. } =
+                            self.clipvol_plane.shape
+                        {
+                            let n = glam::Vec3::from(*normal).normalize_or_zero();
+                            // Plane sits at -normal*distance; moving by delta means
+                            // new_distance = distance - delta.dot(n).
+                            *distance -= delta.dot(n);
+                        }
+                    }
+                }
+            }
+
+            GizmoMode::Rotate => {
+                let angle = match axis {
+                    GizmoAxis::X | GizmoAxis::Y | GizmoAxis::Z => {
+                        let dir = axis_dir(axis);
+                        gizmo::project_drag_onto_rotation(drag_delta, dir, view)
+                    }
+                    _ => 0.0,
+                };
+                if angle.abs() > 1e-6 {
+                    match self.clipvol_sub_mode {
+                        ClipVolSubMode::BoxClip => {
+                            self.clipvol_box_yaw += angle.to_degrees();
+                        }
+                        ClipVolSubMode::InteractivePlane => {
+                            if let ClipShape::Plane { ref mut normal, ref mut distance, .. } =
+                                self.clipvol_plane.shape
+                            {
+                                let n = glam::Vec3::from(*normal);
+                                let rot_axis = axis_dir(axis);
+                                let rot = glam::Quat::from_axis_angle(rot_axis, angle);
+                                let new_n = (rot * n).normalize_or_zero();
+                                // Plane sits at anchor = -n * distance. Keep the anchor
+                                // fixed: new anchor = -new_n * new_distance = -n * distance
+                                // → new_distance = -(-n * distance).dot(new_n) / |new_n|²
+                                //                = (n * distance).dot(new_n)
+                                let anchor = n * (-*distance);
+                                *distance = -(anchor.dot(new_n));
+                                *normal = new_n.to_array();
+                            }
+                        }
+                        ClipVolSubMode::SphereClip => {}
+                    }
+                }
+            }
+
+            GizmoMode::Scale => {
+                let amount = match axis {
+                    GizmoAxis::X | GizmoAxis::Y | GizmoAxis::Z => {
+                        let dir = axis_dir(axis);
+                        gizmo::project_drag_onto_axis(drag_delta, dir, vp, center, viewport_size)
+                    }
+                    _ => 0.0,
+                };
+                if amount.abs() > 1e-6 {
+                    match self.clipvol_sub_mode {
+                        ClipVolSubMode::BoxClip => {
+                            let scale = 1.0 + amount;
+                            match axis {
+                                GizmoAxis::X => {
+                                    self.clipvol_box_half_extents[0] =
+                                        (self.clipvol_box_half_extents[0] * scale).max(0.1);
+                                }
+                                GizmoAxis::Y => {
+                                    self.clipvol_box_half_extents[1] =
+                                        (self.clipvol_box_half_extents[1] * scale).max(0.1);
+                                }
+                                GizmoAxis::Z => {
+                                    self.clipvol_box_half_extents[2] =
+                                        (self.clipvol_box_half_extents[2] * scale).max(0.1);
+                                }
+                                _ => {}
+                            }
+                        }
+                        ClipVolSubMode::SphereClip => {
+                            self.clipvol_sphere_radius =
+                                (self.clipvol_sphere_radius + amount).max(0.1);
+                        }
+                        ClipVolSubMode::InteractivePlane => {}
+                    }
+                }
+            }
+
+            _ => {}
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Shared mesh upload helper
 // ---------------------------------------------------------------------------
 
@@ -3288,27 +3650,9 @@ impl App {
 fn material_preset(index: usize) -> Material {
     match index % 4 {
         0 => Material::default(),
-        1 => Material {
-            base_color: [0.8, 0.2, 0.2],
-            specular: 0.8,
-            shininess: 64.0,
-            ambient: 0.1,
-            ..Material::default()
-        },
-        2 => Material {
-            base_color: [0.2, 0.4, 0.9],
-            opacity: 0.5,
-            specular: 0.9,
-            shininess: 128.0,
-            ..Material::default()
-        },
-        3 => Material {
-            base_color: [0.3, 0.7, 0.3],
-            specular: 0.1,
-            shininess: 8.0,
-            diffuse: 0.9,
-            ..Material::default()
-        },
+        1 => { let mut m = Material::from_color([0.8, 0.2, 0.2]); m.specular = 0.8; m.shininess = 64.0; m.ambient = 0.1; m },
+        2 => { let mut m = Material::from_color([0.2, 0.4, 0.9]); m.opacity = 0.5; m.specular = 0.9; m.shininess = 128.0; m },
+        3 => { let mut m = Material::from_color([0.3, 0.7, 0.3]); m.specular = 0.1; m.shininess = 8.0; m.diffuse = 0.9; m },
         _ => unreachable!(),
     }
 }
