@@ -76,6 +76,8 @@ pub mod renderer;
 pub mod resources;
 /// Scene graph, material, traits, and AABB.
 pub mod scene;
+/// On-surface vector quantities (intrinsic vectors, Whitney one-forms).
+pub mod quantities;
 /// Axes orientation indicator.
 pub mod widgets;
 
@@ -171,6 +173,10 @@ pub use renderer::{
     ViewportId, ViewportRenderer, VolumeItem,
 };
 pub use renderer::{ScalarBar, ScalarBarAnchor, ScalarBarOrientation};
+
+pub use quantities::{
+    edge_one_form_to_glyphs, face_intrinsic_to_glyphs, vertex_intrinsic_to_glyphs,
+};
 
 pub use resources::colormap_data::{
     export_paraview_xml_colormap, lerp_colormap_lut, parse_paraview_xml_colormap,

@@ -118,6 +118,7 @@ mod showcase_20_face_attributes;
 mod showcase_21_textures;
 mod showcase_22_parameterization;
 mod showcase_23_ground_plane;
+mod showcase_25_surface_vectors;
 mod viewport_callback;
 
 const BG_COLOR: [f32; 4] = [0.08, 0.08, 0.10, 1.0];
@@ -432,6 +433,18 @@ fn main() -> eframe::Result {
                 gp_tile_size: 1.0,
                 gp_shadow_color: [0.0, 0.0, 0.0, 1.0],
                 gp_shadow_opacity: 0.5,
+
+                sv_built: false,
+                sv_mode: showcase_25_surface_vectors::SvMode::VertexIntrinsic,
+                sv_scale: 0.15,
+                sv_mesh_index: [0; 3],
+                sv_positions: [Vec::new(), Vec::new(), Vec::new()],
+                sv_normals: [Vec::new(), Vec::new(), Vec::new()],
+                sv_tangents: [None, None, None],
+                sv_indices: [Vec::new(), Vec::new(), Vec::new()],
+                sv_vertex_vecs: Vec::new(),
+                sv_face_vecs: Vec::new(),
+                sv_edge_vals: Vec::new(),
             }))
         }),
     )
@@ -473,6 +486,7 @@ enum ShowcaseMode {
     Textures,
     ParamVis,
     GroundPlane,
+    SurfaceVectors,
 }
 
 impl ShowcaseMode {
@@ -501,6 +515,7 @@ impl ShowcaseMode {
             Self::Textures => "21: Textures",
             Self::ParamVis => "22: UV Parameterization",
             Self::GroundPlane => "23: Ground Plane",
+            Self::SurfaceVectors => "25: Surface Vectors",
         }
     }
 }
@@ -779,6 +794,27 @@ pub(crate) struct App {
     gp_shadow_color: [f32; 4],
     gp_shadow_opacity: f32,
 
+    // --- Showcase 25 ---
+    pub(crate) sv_built: bool,
+    sv_mode: showcase_25_surface_vectors::SvMode,
+    sv_scale: f32,
+    /// Mesh upload indices: [sphere, torus, plane].
+    pub(crate) sv_mesh_index: [usize; 3],
+    /// CPU-side positions for each mesh.
+    pub(crate) sv_positions: [Vec<[f32; 3]>; 3],
+    /// CPU-side normals for each mesh.
+    pub(crate) sv_normals: [Vec<[f32; 3]>; 3],
+    /// CPU-side explicit tangents (sphere only; others None).
+    pub(crate) sv_tangents: [Option<Vec<[f32; 4]>>; 3],
+    /// CPU-side indices for each mesh.
+    pub(crate) sv_indices: [Vec<u32>; 3],
+    /// Per-vertex intrinsic 2D vectors (sphere / vertex mode).
+    pub(crate) sv_vertex_vecs: Vec<[f32; 2]>,
+    /// Per-face intrinsic 2D vectors (torus / face mode).
+    pub(crate) sv_face_vecs: Vec<[f32; 2]>,
+    /// Per-directed-edge one-form values (plane / edge mode).
+    pub(crate) sv_edge_vals: Vec<f32>,
+
     /// Mesh upload indices for the three face-attribute spheres.
     pub(crate) face_mesh_indices: [usize; 3],
     /// Node IDs for the three face-attribute spheres.
@@ -863,6 +899,7 @@ impl eframe::App for App {
                     ShowcaseMode::Textures,
                     ShowcaseMode::ParamVis,
                     ShowcaseMode::GroundPlane,
+                    ShowcaseMode::SurfaceVectors,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1190,7 +1227,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 23] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 24] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::Performance,
@@ -1214,6 +1251,7 @@ impl App {
             ShowcaseMode::Textures,
             ShowcaseMode::ParamVis,
             ShowcaseMode::GroundPlane,
+            ShowcaseMode::SurfaceVectors,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1257,6 +1295,7 @@ impl App {
             ShowcaseMode::Textures => !self.texture_built,
             ShowcaseMode::ParamVis => !self.param_vis_built,
             ShowcaseMode::GroundPlane => !self.gp_built,
+            ShowcaseMode::SurfaceVectors => !self.sv_built,
             _ => false,
         };
         if !needs {
@@ -1464,6 +1503,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::SurfaceVectors => {
+                self.build_sv_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 6.0,
+                    orientation: glam::Quat::from_rotation_z(0.6)
+                        * glam::Quat::from_rotation_x(1.1),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -1502,6 +1551,7 @@ impl App {
             ShowcaseMode::Textures => self.controls_textures(ui),
             ShowcaseMode::ParamVis => self.controls_param_vis(ui),
             ShowcaseMode::GroundPlane => self.controls_ground_plane(ui),
+            ShowcaseMode::SurfaceVectors => self.controls_surface_vectors(ui),
         }
     }
 
@@ -2870,6 +2920,15 @@ impl App {
                 };
                 (items, Some(BG_COLOR), lighting, sg, 0)
             }
+
+            ShowcaseMode::SurfaceVectors => {
+                let surface_item = if self.sv_built {
+                    vec![self.sv_surface_item()]
+                } else {
+                    vec![]
+                };
+                (surface_item, Some(BG_COLOR), App::sv_lighting(), 0, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -2981,6 +3040,11 @@ impl App {
             } else {
                 fd.scene.polylines.push(self.make_stream_polyline_item());
             }
+        }
+
+        // Surface vector glyphs (Showcase 25) — submitted every frame.
+        if self.mode == ShowcaseMode::SurfaceVectors && self.sv_built {
+            fd.scene.glyphs.push(self.sv_glyph_item());
         }
 
         // Point cloud / glyph items (Showcase 15) — submitted every frame.
