@@ -1168,6 +1168,141 @@ impl ViewportGpuResources {
         });
 
         // ------------------------------------------------------------------
+        // Ground plane pipeline
+        //
+        // Full-screen ray-march approach (same as grid).  The fragment shader
+        // intersects the camera ray with a horizontal plane at a configurable
+        // Z height, then renders one of four modes: None (skipped), ShadowOnly,
+        // Tile, SolidColor.  Uses @builtin(frag_depth) for depth occlusion.
+        // ------------------------------------------------------------------
+        let ground_plane_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("ground_plane_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/ground_plane.wgsl").into(),
+            ),
+        });
+        let ground_plane_bgl =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("ground_plane_bgl"),
+                entries: &[
+                    // binding 0: GroundPlaneUniform
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 1: shadow atlas (depth texture)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // binding 2: shadow comparison sampler
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                        count: None,
+                    },
+                    // binding 3: shadow atlas info (cascade matrices, splits, atlas rects)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let ground_plane_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("ground_plane_pipeline_layout"),
+                bind_group_layouts: &[&ground_plane_bgl],
+                push_constant_ranges: &[],
+            });
+        let ground_plane_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("ground_plane_pipeline"),
+                layout: Some(&ground_plane_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &ground_plane_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &ground_plane_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            });
+        let ground_plane_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ground_plane_uniform_buf"),
+            size: std::mem::size_of::<GroundPlaneUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let ground_plane_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ground_plane_bind_group"),
+            layout: &ground_plane_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: ground_plane_uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&shadow_map_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: shadow_info_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        // ------------------------------------------------------------------
         // Axes indicator pipeline (screen-space, no camera, no depth)
         // ------------------------------------------------------------------
         let axes_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1727,6 +1862,10 @@ impl ViewportGpuResources {
             grid_uniform_buf,
             grid_bind_group,
             grid_bind_group_layout: grid_bgl,
+            ground_plane_pipeline,
+            ground_plane_bgl,
+            ground_plane_uniform_buf,
+            ground_plane_bind_group,
             overlay_bind_group_layout: overlay_bgl,
             constraint_line_buffers: Vec::new(),
             axes_pipeline,

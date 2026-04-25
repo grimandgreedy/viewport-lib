@@ -30,7 +30,7 @@ pub use self::types::{
 };
 pub(crate) use self::types::{
     BloomUniform, ClipPlanesUniform, ContactShadowUniform, GlyphBaseMesh, GlyphGpuData,
-    GridUniform, InstanceData, ObjectUniform, OutlineObjectBuffers, OutlineUniform, OverlayUniform,
+    GridUniform, GroundPlaneUniform, InstanceData, ObjectUniform, OutlineObjectBuffers, OutlineUniform, OverlayUniform,
     PickInstance, SHADOW_ATLAS_SIZE, ShadowAtlasUniform, SsaoUniform, StreamtubeGpuData,
     ToneMapUniform, ViewportHdrState,
 };
