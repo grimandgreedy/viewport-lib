@@ -54,7 +54,7 @@
 use std::sync::Arc;
 
 use viewport_lib::{
-    Camera, CameraAnimator, CameraFrame, ClipPlane, Easing, FrameData, FrameStats, Gizmo,
+    Camera, CameraAnimator, CameraFrame, ClipObject, Easing, FrameData, FrameStats, Gizmo,
     GizmoAxis, GizmoMode, GizmoSpace, LightKind, LightSource, LightingSettings, Material, MeshData,
     MeshId, NodeId, PickAccelerator, PostProcessSettings, Projection, RenderCamera, SceneFrame,
     SceneRenderItem, Selection, ShadowFilter, SnapConfig, ToneMapping, ViewPreset,
@@ -1963,7 +1963,7 @@ impl ApplicationHandler for App {
 
                 state.camera.set_aspect_ratio(w, h);
 
-                let mut adv_clip_planes: Vec<ClipPlane> = vec![];
+                let mut adv_clip_planes: Vec<ClipObject> = vec![];
                 let mut adv_outline = false;
                 let mut adv_xray = false;
 
@@ -2041,12 +2041,7 @@ impl ApplicationHandler for App {
                     ShowcaseMode::Advanced => {
                         let items = state.adv_scene.collect_render_items(&state.adv_selection);
                         if state.adv_clip_enabled {
-                            adv_clip_planes.push(ClipPlane {
-                                normal: [1.0, 0.0, 0.0],
-                                distance: 0.0,
-                                enabled: true,
-                                cap_color: None,
-                            });
+                            adv_clip_planes.push(ClipObject::plane([1.0, 0.0, 0.0], 0.0));
                         }
                         adv_outline = state.adv_outline_on && !state.adv_selection.is_empty();
                         adv_xray = state.adv_xray_on && !state.adv_selection.is_empty();
@@ -2085,12 +2080,7 @@ impl ApplicationHandler for App {
                     ShowcaseMode::NormalMaps => {
                         let items = state.nm_scene.collect_render_items(&Selection::new());
                         if state.nm_clip_enabled {
-                            adv_clip_planes.push(ClipPlane {
-                                normal: [1.0, 0.0, 0.0],
-                                distance: 0.0,
-                                enabled: true,
-                                cap_color: None,
-                            });
+                            adv_clip_planes.push(ClipObject::plane([1.0, 0.0, 0.0], 0.0));
                         }
                         (
                             items,
@@ -2252,7 +2242,7 @@ impl ApplicationHandler for App {
                 frame_data.viewport.show_grid = true;
                 frame_data.viewport.show_axes_indicator = true;
                 frame_data.viewport.background_color = bg_color;
-                frame_data.effects.clip_planes = adv_clip_planes;
+                frame_data.effects.clip_objects = adv_clip_planes;
                 frame_data.interaction.outline_selected = adv_outline;
                 frame_data.interaction.xray_selected = adv_xray;
                 frame_data.scene.generation = scene_gen;

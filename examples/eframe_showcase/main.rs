@@ -118,7 +118,10 @@ mod showcase_20_face_attributes;
 mod showcase_21_textures;
 mod showcase_22_parameterization;
 mod showcase_23_ground_plane;
+mod hdr_viewport_callback;
+mod showcase_24_surface_appearance;
 mod showcase_25_surface_vectors;
+mod showcase_27_auxiliary;
 mod viewport_callback;
 
 const BG_COLOR: [f32; 4] = [0.08, 0.08, 0.10, 1.0];
@@ -152,6 +155,10 @@ fn main() -> eframe::Result {
                 .write()
                 .callback_resources
                 .insert(renderer);
+
+            // HDR blit resources (used by Showcase 24 and any other mode that
+            // needs the full post-processing pipeline via HdrViewportCallback).
+            hdr_viewport_callback::init_hdr_blit_resources(wgpu_render_state, format);
 
             // Pre-upload box meshes for Showcase 1 (4 independent slots).
             let box_mesh = unit_box_mesh();
@@ -434,6 +441,12 @@ fn main() -> eframe::Result {
                 gp_shadow_color: [0.0, 0.0, 0.0, 1.0],
                 gp_shadow_opacity: 0.5,
 
+                sa_built: false,
+                sa_scene: Scene::new(),
+                sa_ssaa_factor: 1,
+                sa_clip_on: true,
+                sa_node_ids: [0; 3],
+
                 sv_built: false,
                 sv_mode: showcase_25_surface_vectors::SvMode::VertexIntrinsic,
                 sv_scale: 0.15,
@@ -445,6 +458,11 @@ fn main() -> eframe::Result {
                 sv_vertex_vecs: Vec::new(),
                 sv_face_vecs: Vec::new(),
                 sv_edge_vals: Vec::new(),
+
+                aux_built: false,
+                aux_frustums: Vec::new(),
+                aux_img_alpha: 1.0,
+                aux_img_scale: 1.0,
             }))
         }),
     )
@@ -486,7 +504,9 @@ enum ShowcaseMode {
     Textures,
     ParamVis,
     GroundPlane,
+    SurfaceAppearance,
     SurfaceVectors,
+    Auxiliary,
 }
 
 impl ShowcaseMode {
@@ -515,7 +535,9 @@ impl ShowcaseMode {
             Self::Textures => "21: Textures",
             Self::ParamVis => "22: UV Parameterization",
             Self::GroundPlane => "23: Ground Plane",
+            Self::SurfaceAppearance => "24: Surface Appearance",
             Self::SurfaceVectors => "25: Surface Vectors",
+            Self::Auxiliary => "27: Auxiliary Structures",
         }
     }
 }
@@ -794,6 +816,13 @@ pub(crate) struct App {
     gp_shadow_color: [f32; 4],
     gp_shadow_opacity: f32,
 
+    // --- Showcase 24 ---
+    pub(crate) sa_built: bool,
+    pub(crate) sa_scene: Scene,
+    sa_ssaa_factor: u32,
+    sa_clip_on: bool,
+    pub(crate) sa_node_ids: [NodeId; 3],
+
     // --- Showcase 25 ---
     pub(crate) sv_built: bool,
     sv_mode: showcase_25_surface_vectors::SvMode,
@@ -814,6 +843,12 @@ pub(crate) struct App {
     pub(crate) sv_face_vecs: Vec<[f32; 2]>,
     /// Per-directed-edge one-form values (plane / edge mode).
     pub(crate) sv_edge_vals: Vec<f32>,
+
+    // --- Showcase 27 ---
+    pub(crate) aux_built: bool,
+    pub(crate) aux_frustums: Vec<viewport_lib::CameraFrustumItem>,
+    aux_img_alpha: f32,
+    aux_img_scale: f32,
 
     /// Mesh upload indices for the three face-attribute spheres.
     pub(crate) face_mesh_indices: [usize; 3],
@@ -899,7 +934,9 @@ impl eframe::App for App {
                     ShowcaseMode::Textures,
                     ShowcaseMode::ParamVis,
                     ShowcaseMode::GroundPlane,
+                    ShowcaseMode::SurfaceAppearance,
                     ShowcaseMode::SurfaceVectors,
+                    ShowcaseMode::Auxiliary,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1129,7 +1166,7 @@ impl eframe::App for App {
                 let dt = ctx.input(|i| i.stable_dt.min(1.0 / 30.0));
                 self.interact_animator.update(dt, &mut self.camera);
             }
-            if self.mode == ShowcaseMode::CameraTools {
+            if self.mode == ShowcaseMode::CameraTools || self.mode == ShowcaseMode::Auxiliary {
                 let dt = ctx.input(|i| i.stable_dt.min(1.0 / 30.0));
                 self.cam_animator.update(dt, &mut self.camera);
             }
@@ -1187,11 +1224,23 @@ impl eframe::App for App {
             }
 
             // ----- Schedule paint callback -----
-            ui.painter()
-                .add(eframe::egui_wgpu::Callback::new_paint_callback(
-                    rect,
-                    viewport_callback::ViewportCallback { frame: frame_data },
-                ));
+            // Showcase 24 uses the HDR path so SSAA and post-processing work.
+            if self.mode == ShowcaseMode::SurfaceAppearance {
+                ui.painter()
+                    .add(eframe::egui_wgpu::Callback::new_paint_callback(
+                        rect,
+                        hdr_viewport_callback::HdrViewportCallback {
+                            frame: frame_data,
+                            viewport_size: [rect.width() as u32, rect.height() as u32],
+                        },
+                    ));
+            } else {
+                ui.painter()
+                    .add(eframe::egui_wgpu::Callback::new_paint_callback(
+                        rect,
+                        viewport_callback::ViewportCallback { frame: frame_data },
+                    ));
+            }
 
             // ----- Annotation labels drawn on top of the 3-D viewport -----
             if self.mode == ShowcaseMode::Annotation {
@@ -1214,7 +1263,9 @@ impl eframe::App for App {
             if self.mode == ShowcaseMode::Interaction && self.interact_animator.is_animating() {
                 ctx.request_repaint();
             }
-            if self.mode == ShowcaseMode::CameraTools && self.cam_animator.is_animating() {
+            if (self.mode == ShowcaseMode::CameraTools || self.mode == ShowcaseMode::Auxiliary)
+                && self.cam_animator.is_animating()
+            {
                 ctx.request_repaint();
             }
         });
@@ -1227,7 +1278,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 24] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 26] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::Performance,
@@ -1251,7 +1302,9 @@ impl App {
             ShowcaseMode::Textures,
             ShowcaseMode::ParamVis,
             ShowcaseMode::GroundPlane,
+            ShowcaseMode::SurfaceAppearance,
             ShowcaseMode::SurfaceVectors,
+            ShowcaseMode::Auxiliary,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1295,7 +1348,9 @@ impl App {
             ShowcaseMode::Textures => !self.texture_built,
             ShowcaseMode::ParamVis => !self.param_vis_built,
             ShowcaseMode::GroundPlane => !self.gp_built,
+            ShowcaseMode::SurfaceAppearance => !self.sa_built,
             ShowcaseMode::SurfaceVectors => !self.sv_built,
+            ShowcaseMode::Auxiliary => !self.aux_built,
             _ => false,
         };
         if !needs {
@@ -1503,6 +1558,18 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::SurfaceAppearance => {
+                self.build_sa_scene(renderer);
+                self.camera = Camera {
+                    // Pull back so both the front spheres and the background
+                    // SSAA stress-grid are fully visible.
+                    center: glam::Vec3::new(0.0, 0.0, -1.5),
+                    distance: 16.0,
+                    orientation: glam::Quat::from_rotation_z(0.4)
+                        * glam::Quat::from_rotation_x(1.0),
+                    ..Camera::default()
+                };
+            }
             ShowcaseMode::SurfaceVectors => {
                 self.build_sv_scene(renderer);
                 self.camera = Camera {
@@ -1510,6 +1577,16 @@ impl App {
                     distance: 6.0,
                     orientation: glam::Quat::from_rotation_z(0.6)
                         * glam::Quat::from_rotation_x(1.1),
+                    ..Camera::default()
+                };
+            }
+            ShowcaseMode::Auxiliary => {
+                self.build_aux_scene();
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 12.0,
+                    orientation: glam::Quat::from_rotation_z(0.3)
+                        * glam::Quat::from_rotation_x(1.0),
                     ..Camera::default()
                 };
             }
@@ -1551,7 +1628,9 @@ impl App {
             ShowcaseMode::Textures => self.controls_textures(ui),
             ShowcaseMode::ParamVis => self.controls_param_vis(ui),
             ShowcaseMode::GroundPlane => self.controls_ground_plane(ui),
+            ShowcaseMode::SurfaceAppearance => self.controls_surface_appearance(ui),
             ShowcaseMode::SurfaceVectors => self.controls_surface_vectors(ui),
+            ShowcaseMode::Auxiliary => self.controls_aux(ui),
         }
     }
 
@@ -2921,6 +3000,12 @@ impl App {
                 (items, Some(BG_COLOR), lighting, sg, 0)
             }
 
+            ShowcaseMode::SurfaceAppearance => {
+                let items = self.sa_scene_items();
+                let sg = self.sa_scene.version();
+                (items, Some(BG_COLOR), App::sa_lighting(), sg, 0)
+            }
+
             ShowcaseMode::SurfaceVectors => {
                 let surface_item = if self.sv_built {
                     vec![self.sv_surface_item()]
@@ -2928,6 +3013,10 @@ impl App {
                     vec![]
                 };
                 (surface_item, Some(BG_COLOR), App::sv_lighting(), 0, 0)
+            }
+
+            ShowcaseMode::Auxiliary => {
+                (vec![], Some(BG_COLOR), LightingSettings::default(), 0, 0)
             }
         };
 
@@ -2999,6 +3088,10 @@ impl App {
                 shadow_opacity: self.gp_shadow_opacity,
             };
         }
+        // Clip objects for Showcase 24 (Surface Appearance).
+        if self.mode == ShowcaseMode::SurfaceAppearance {
+            adv_clip_objects.extend(self.sa_clip_objects());
+        }
         fd.effects.clip_objects = adv_clip_objects;
         fd.interaction.gizmo_model = gizmo_model;
         fd.interaction.gizmo_mode = gizmo_mode;
@@ -3045,6 +3138,12 @@ impl App {
         // Surface vector glyphs (Showcase 25) — submitted every frame.
         if self.mode == ShowcaseMode::SurfaceVectors && self.sv_built {
             fd.scene.glyphs.push(self.sv_glyph_item());
+        }
+
+        // Auxiliary frustums and screen images (Showcase 27) — submitted every frame.
+        if self.mode == ShowcaseMode::Auxiliary && self.aux_built {
+            fd.scene.camera_frustums = self.aux_frustums.clone();
+            self.aux_push_screen_images(&mut fd);
         }
 
         // Point cloud / glyph items (Showcase 15) — submitted every frame.
@@ -3115,6 +3214,9 @@ impl App {
                     enabled: false,
                     ..PostProcessSettings::default()
                 };
+            }
+            ShowcaseMode::SurfaceAppearance => {
+                fd.effects.post_process = self.sa_post_process();
             }
             _ => {}
         }

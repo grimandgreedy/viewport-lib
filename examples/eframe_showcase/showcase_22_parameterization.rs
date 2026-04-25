@@ -16,7 +16,10 @@
 use crate::App;
 use crate::geometry::{make_box_with_uvs, make_uv_sphere};
 use eframe::egui;
-use viewport_lib::{Material, MeshData, MeshId, ParamVis, ParamVisMode, ViewportRenderer, scene::Scene};
+use viewport_lib::{
+    Material, MeshData, MeshId, ParamVis, ParamVisMode, ViewportRenderer,
+    scene::{material::BackfacePolicy, Scene},
+};
 
 /// One entry per `ParamVisMode` variant (column order).
 const MODES: [(ParamVisMode, &str); 4] = [
@@ -77,7 +80,7 @@ impl App {
                 let mat = {
                     let mut m = Material::pbr(color, 0.0, 0.4);
                     m.param_vis = Some(ParamVis { mode: *mode, scale });
-                    m.two_sided = two_sided;
+                    m.backface_policy = if two_sided { BackfacePolicy::Identical } else { BackfacePolicy::Cull };
                     m
                 };
                 let node_id = scene.add_named(
@@ -131,7 +134,7 @@ impl App {
                     } else {
                         None
                     };
-                    m.two_sided = two_sided;
+                    m.backface_policy = if two_sided { BackfacePolicy::Identical } else { BackfacePolicy::Cull };
                     m
                 };
                 self.param_vis_scene
