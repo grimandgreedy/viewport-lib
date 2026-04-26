@@ -2,23 +2,23 @@
 //!
 //! Demonstrates UV-mapped image textures uploaded via `upload_texture`.
 //!
-//! Layout (Z-up):
-//!   Centre      (0, 0, 0):    Plane (two-sided) : Carl Friedrich Gauss portrait
-//!   Left        (-4, 0, 0):   UV sphere : procedural checkerboard
-//!   Right       (+4, 0, 0):   Cube : procedural color-gradient per face
-//!   Front       (0, -4, 0):   Torus : procedural stripe pattern
+//! Layout (Z-up, 2x2 grid in X-Z plane at Y=0):
+//!   Back-left   (-3, 0, +3):  Plane (two-sided) : Percy photo
+//!   Back-right  (+3, 0, +3):  UV sphere : procedural checkerboard
+//!   Front-left  (-3, 0, -3):  Cube : procedural color-gradient per face
+//!   Front-right (+3, 0, -3):  Torus : procedural stripe pattern
 //!
-//! The Gauss portrait is stored as pre-converted raw RGBA bytes alongside this
+//! The Percy photo is stored as pre-converted raw RGBA bytes alongside this
 //! file, so no image-parsing dependency or build script is required.
 
 use crate::App;
 use eframe::egui;
 use viewport_lib::{Material, ViewportRenderer, scene::Scene};
 
-// Gauss portrait : pre-converted to raw RGBA (1500 × 1000).
-const GAUSS_WIDTH: u32 = 1500;
-const GAUSS_HEIGHT: u32 = 1000;
-const GAUSS_RGBA: &[u8] = include_bytes!("carlgauss.rgba");
+// Percy photo : pre-converted to raw RGBA (2203 × 2009).
+const PERCY_WIDTH: u32 = 2203;
+const PERCY_HEIGHT: u32 = 2009;
+const PERCY_RGBA: &[u8] = include_bytes!("percy.rgba");
 
 impl App {
     pub(crate) fn build_texture_scene(&mut self, renderer: &mut ViewportRenderer) {
@@ -26,38 +26,35 @@ impl App {
 
         let res = renderer.resources_mut();
 
-        // --- Gauss portrait on a plane ---
-        let gauss_tex = res
+        // --- Percy photo on a plane ---
+        let percy_tex = res
             .upload_texture(
                 &self.device,
                 &self.queue,
-                GAUSS_WIDTH,
-                GAUSS_HEIGHT,
-                GAUSS_RGBA,
+                PERCY_WIDTH,
+                PERCY_HEIGHT,
+                PERCY_RGBA,
             )
-            .expect("gauss texture upload");
+            .expect("percy texture upload");
 
-        let plane = viewport_lib::geometry::primitives::plane(3.0, 2.0);
+        let plane = viewport_lib::geometry::primitives::plane(4.5, 4.5 * PERCY_HEIGHT as f32 / PERCY_WIDTH as f32);
         let plane_id = res
             .upload_mesh_data(&self.device, &plane)
             .expect("plane mesh upload");
 
         self.texture_plane_node = self.texture_scene.add_named(
-            "Gauss Plane",
+            "Percy Plane",
             Some(viewport_lib::MeshId::from_index(plane_id)),
-            glam::Mat4::from_rotation_translation(
-                glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_6),
-                glam::Vec3::new(0.0, 2.0, 0.0),
-            ),
+            glam::Mat4::from_translation(glam::Vec3::new(-3.0, 0.0, 3.0)),
             {
                 let mut m = Material::default();
-                m.texture_id = Some(gauss_tex);
-                m.ambient = 0.5;
-                m.diffuse = 0.6;
+                m.texture_id = Some(percy_tex);
+                m.ambient = 0.9;
+                m.diffuse = 0.4;
                 m
             },
         );
-        // (two_sided set in build_frame_data via texture_plane_node)
+        // (two-sided set in build_frame_data via texture_plane_node)
 
         // --- Checkerboard on a sphere ---
         let checker = make_checkerboard(256, 8, [220, 220, 220, 255], [40, 40, 40, 255]);
@@ -65,7 +62,7 @@ impl App {
             .upload_texture(&self.device, &self.queue, 256, 256, &checker)
             .expect("checker texture upload");
 
-        let sphere = viewport_lib::geometry::primitives::sphere(1.2, 48, 24);
+        let sphere = viewport_lib::geometry::primitives::sphere(1.8, 48, 24);
         let sphere_id = res
             .upload_mesh_data(&self.device, &sphere)
             .expect("sphere mesh upload");
@@ -73,7 +70,7 @@ impl App {
         self.texture_scene.add_named(
             "Checker Sphere",
             Some(viewport_lib::MeshId::from_index(sphere_id)),
-            glam::Mat4::from_translation(glam::Vec3::new(-4.0, 0.0, 0.0)),
+            glam::Mat4::from_translation(glam::Vec3::new(3.0, 0.0, 3.0)),
             {
                 let mut m = Material::default();
                 m.texture_id = Some(checker_tex);
@@ -91,7 +88,7 @@ impl App {
             .upload_texture(&self.device, &self.queue, 256, 256, &gradient)
             .expect("gradient texture upload");
 
-        let cube = viewport_lib::geometry::primitives::cube(2.0);
+        let cube = viewport_lib::geometry::primitives::cube(3.0);
         let cube_id = res
             .upload_mesh_data(&self.device, &cube)
             .expect("cube mesh upload");
@@ -99,7 +96,7 @@ impl App {
         self.texture_scene.add_named(
             "Gradient Cube",
             Some(viewport_lib::MeshId::from_index(cube_id)),
-            glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)),
+            glam::Mat4::from_translation(glam::Vec3::new(-3.0, 0.0, -3.0)),
             {
                 let mut m = Material::default();
                 m.texture_id = Some(gradient_tex);
@@ -123,7 +120,7 @@ impl App {
         self.texture_scene.add_named(
             "Stripe Torus",
             Some(viewport_lib::MeshId::from_index(torus_id)),
-            glam::Mat4::from_translation(glam::Vec3::new(0.0, -4.0, 0.0)),
+            glam::Mat4::from_translation(glam::Vec3::new(3.0, 0.0, -3.0)),
             {
                 let mut m = Material::default();
                 m.texture_id = Some(stripes_tex);
@@ -140,13 +137,13 @@ impl App {
 
     pub(crate) fn controls_textures(&mut self, ui: &mut egui::Ui) {
         ui.label("UV-mapped image textures on four primitives:");
-        ui.label("  Centre:  plane : Carl Friedrich Gauss (1777–1855)");
+        ui.label("  Back-left:  plane : Percy photo");
         ui.label("  Left:    sphere : procedural checkerboard");
         ui.label("  Right:   cube : procedural color gradient");
         ui.label("  Front:   torus : procedural stripes");
         ui.separator();
         ui.label("Textures are uploaded as raw RGBA via upload_texture().");
-        ui.label("The portrait is stored as pre-converted raw RGBA bytes.");
+        ui.label("The photo is stored as pre-converted raw RGBA bytes.");
     }
 }
 

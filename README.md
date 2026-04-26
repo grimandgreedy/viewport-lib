@@ -5,11 +5,11 @@
 <table>
   <tr>
     <td><img src="assets/demo1.png" alt="demo 1" /></td>
-    <td><img src="assets/demo2.png" alt="demo 2" /></td>
+    <td><img src="assets/demo7.png" alt="demo 2" /></td>
   </tr>
   <tr>
     <td><img src="assets/demo3.png" alt="demo 3" /></td>
-    <td><img src="assets/demo4.png" alt="demo 4" /></td>
+    <td><img src="assets/demo10.png" alt="demo 4" /></td>
   </tr>
 </table>
 

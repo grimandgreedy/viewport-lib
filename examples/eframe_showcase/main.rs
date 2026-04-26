@@ -124,7 +124,7 @@ mod showcase_26_volume_mesh;
 mod showcase_27_auxiliary;
 mod viewport_callback;
 
-const BG_COLOR: [f32; 4] = [0.08, 0.08, 0.10, 1.0];
+const BG_COLOR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -978,7 +978,14 @@ impl eframe::App for App {
             });
 
         // ---- Central panel: 3-D viewport ----
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.fill(egui::Color32::from_rgba_unmultiplied(
+                (BG_COLOR[0] * 255.0) as u8,
+                (BG_COLOR[1] * 255.0) as u8,
+                (BG_COLOR[2] * 255.0) as u8,
+                255,
+            )))
+            .show(ctx, |ui| {
             let available = ui.available_size();
             let (rect, response) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
 
@@ -2949,9 +2956,9 @@ impl App {
                 }
                 let sg = self.texture_scene.version();
                 let lighting = LightingSettings {
-                    hemisphere_intensity: 0.4,
+                    hemisphere_intensity: 1.5,
                     sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [0.3, 0.3, 0.3],
+                    ground_color: [0.8, 0.8, 0.8],
                     ..LightingSettings::default()
                 };
                 (items, Some(BG_COLOR), lighting, sg, 0)
