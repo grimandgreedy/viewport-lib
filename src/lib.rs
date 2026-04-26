@@ -167,9 +167,10 @@ pub use renderer::{
     CameraFrame, CameraFrustumItem, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane,
     GroundPlaneMode, ImageAnchor, InteractionFrame, LightKind, LightSource, LightingSettings,
-    PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings, RenderCamera, SceneEffects,
-    SceneFrame, SceneRenderItem, ScreenImageItem, ShadowFilter, StreamtubeItem, SurfaceSubmission,
-    ToneMapping, ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer, VolumeItem,
+    PickId, PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings, RenderCamera,
+    SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem, ShadowFilter, StreamtubeItem,
+    SurfaceSubmission, ToneMapping, ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer,
+    VolumeItem,
 };
 pub use renderer::{ScalarBar, ScalarBarAnchor, ScalarBarOrientation};
 

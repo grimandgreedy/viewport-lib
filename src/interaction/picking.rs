@@ -69,9 +69,9 @@ pub struct GpuPickHit {
     ///
     /// Matches the `SceneRenderItem::pick_id` set by the application.
     /// Map to a domain object using whatever id-to-object registry the app
-    /// maintains. A value of `0` is never returned (non-pickable surfaces are
-    /// excluded from the pick pass).
-    pub object_id: u64,
+    /// maintains. [`crate::renderer::PickId::NONE`] is never returned
+    /// (non-pickable surfaces are excluded from the pick pass).
+    pub object_id: crate::renderer::PickId,
     /// Clip-space depth value in `[0, 1]` at the picked pixel.
     /// `0.0` = near plane, `1.0` = far plane.
     ///

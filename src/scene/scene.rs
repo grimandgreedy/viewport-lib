@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::interaction::selection::{NodeId, Selection};
-use crate::renderer::SceneRenderItem;
+use crate::renderer::{PickId, SceneRenderItem};
 use crate::resources::mesh_store::MeshId;
 use crate::scene::material::Material;
 use crate::scene::traits::ViewportObject;
@@ -684,7 +684,7 @@ impl Scene {
                 colormap_id: None,
                 nan_color: None,
                 two_sided: node.material.is_two_sided(),
-                pick_id: node.id,
+                pick_id: PickId(node.id),
             });
         }
         items
@@ -752,7 +752,7 @@ impl Scene {
                 colormap_id: None,
                 nan_color: None,
                 two_sided: node.material.is_two_sided(),
-                pick_id: node.id,
+                pick_id: PickId(node.id),
             });
         }
         (items, stats)

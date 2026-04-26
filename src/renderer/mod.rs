@@ -18,8 +18,8 @@ pub use self::types::{
     CameraFrame, CameraFrustumItem, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane,
     GroundPlaneMode, ImageAnchor, InteractionFrame, LightKind, LightSource, LightingSettings,
-    PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings, RenderCamera, ScalarBar,
-    ScalarBarAnchor, ScalarBarOrientation, SceneEffects, SceneFrame, SceneRenderItem,
+    PickId, PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings, RenderCamera,
+    ScalarBar, ScalarBarAnchor, ScalarBarOrientation, SceneEffects, SceneFrame, SceneRenderItem,
     ScreenImageItem, ShadowFilter, StreamtubeItem, SurfaceSubmission, ToneMapping, ViewportEffects,
     ViewportFrame, VolumeItem,
 };

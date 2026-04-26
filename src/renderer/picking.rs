@@ -58,7 +58,7 @@ impl ViewportRenderer {
         // Clear value 0 means "no hit" (or non-pickable surface).
         let pickable_items: Vec<&SceneRenderItem> = scene_items
             .iter()
-            .filter(|item| item.visible && item.pick_id != 0)
+            .filter(|item| item.visible && item.pick_id != PickId::NONE)
             .collect();
 
         let pick_instances: Vec<PickInstance> = pickable_items
@@ -70,7 +70,7 @@ impl ViewportRenderer {
                     model_c1: m[1],
                     model_c2: m[2],
                     model_c3: m[3],
-                    object_id: item.pick_id as u32,
+                    object_id: item.pick_id.0 as u32,
                     _pad: [0; 3],
                 }
             })
@@ -358,7 +358,7 @@ impl ViewportRenderer {
         }
 
         Some(crate::interaction::picking::GpuPickHit {
-            object_id: object_id as u64,
+            object_id: PickId(object_id as u64),
             depth,
         })
     }

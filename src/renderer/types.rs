@@ -360,6 +360,27 @@ impl Default for LightingSettings {
 // Per-frame data types
 // ---------------------------------------------------------------------------
 
+/// Typed GPU pick identifier for a renderable surface.
+///
+/// The renderer includes a surface in the GPU pick pass only when its `pick_id`
+/// is not [`PickId::NONE`]. Helper geometry, transient previews, and any surface
+/// that should be invisible to clicks should use `PickId::NONE` (the default).
+///
+/// Application code owns pick identity: IDs do not need to come from the scene
+/// graph. Any nonzero `u64` that the application can map back to a domain object
+/// is a valid `PickId`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PickId(pub u64);
+
+impl PickId {
+    /// Sentinel value meaning "not pickable".
+    ///
+    /// Surfaces with `pick_id == PickId::NONE` are excluded from the GPU pick
+    /// pass. This is the default value for [`SceneRenderItem::pick_id`].
+    pub const NONE: Self = Self(0);
+}
+
 /// Per-object render data for one frame.
 #[derive(Clone)]
 #[non_exhaustive]
@@ -390,13 +411,13 @@ pub struct SceneRenderItem {
     /// can orbit under. Opaque geometry with this flag uses the
     /// `solid_two_sided_pipeline` instead of `solid_pipeline`.
     pub two_sided: bool,
-    /// GPU pick identifier for this surface. `0` = not pickable.
+    /// GPU pick identifier for this surface. [`PickId::NONE`] = not pickable.
     ///
-    /// The renderer only includes surfaces with a nonzero `pick_id` in the GPU
+    /// The renderer only includes surfaces with a nonzero pick ID in the GPU
     /// pick pass. Set a nonzero value for any surface the user should be able to
     /// click to select. Helper geometry and transient previews that should not
-    /// participate in picking should leave this at the default `0`.
-    pub pick_id: u64,
+    /// participate in picking should leave this at the default [`PickId::NONE`].
+    pub pick_id: PickId,
 }
 
 impl Default for SceneRenderItem {
@@ -413,7 +434,7 @@ impl Default for SceneRenderItem {
             colormap_id: None,
             nan_color: None,
             two_sided: false,
-            pick_id: 0,
+            pick_id: PickId::NONE,
         }
     }
 }

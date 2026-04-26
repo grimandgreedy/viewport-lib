@@ -88,9 +88,9 @@ use viewport_lib::{
     Gizmo, GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace, GlyphType, GroundPlane, GroundPlaneMode,
     KeyCode, LightKind, LightSource, LightingSettings, ManipResult, ManipulationContext,
     ManipulationController, MatcapId, Material, MeshData, MeshId, NodeId, OrbitCameraController,
-    PickAccelerator, PostProcessSettings, Projection, RenderCamera, SceneFrame, SceneRenderItem,
-    ScrollUnits, Selection, ShadowFilter, ViewPreset, ViewportContext, ViewportEvent,
-    ViewportRenderer, VolumeData, VolumeId,
+    PickAccelerator, PickId, PostProcessSettings, Projection, RenderCamera, SceneFrame,
+    SceneRenderItem, ScrollUnits, Selection, ShadowFilter, ViewPreset, ViewportContext,
+    ViewportEvent, ViewportRenderer, VolumeData, VolumeId,
     geometry::isoline::IsolineItem,
     gizmo::{self, compute_gizmo_scale},
     scene::{LayerId, Scene},
@@ -3052,7 +3052,7 @@ impl App {
                 let colormap_id = viewport_lib::ColormapId(self.scalar_colormap as usize);
                 let active_node_id = self.scalar_node_ids[self.scalar_active_object];
                 let wave_node_id = self.scalar_node_ids[1];
-                if let Some(item) = items.iter_mut().find(|item| item.pick_id == active_node_id) {
+                if let Some(item) = items.iter_mut().find(|item| item.pick_id == PickId(active_node_id)) {
                     item.active_attribute = Some(viewport_lib::AttributeRef {
                         name: ATTR_NAMES[self.scalar_active_object].to_string(),
                         kind: viewport_lib::AttributeKind::Vertex,
@@ -3069,7 +3069,7 @@ impl App {
                         None
                     };
                 }
-                if let Some(item) = items.iter_mut().find(|item| item.pick_id == wave_node_id) {
+                if let Some(item) = items.iter_mut().find(|item| item.pick_id == PickId(wave_node_id)) {
                     item.two_sided = true;
                 }
                 let sg = self.scalar_scene.version();
@@ -3105,7 +3105,7 @@ impl App {
             ShowcaseMode::Textures => {
                 let mut items = self.texture_scene.collect_render_items(&Selection::new());
                 let plane_node = self.texture_plane_node;
-                if let Some(item) = items.iter_mut().find(|i| i.pick_id == plane_node) {
+                if let Some(item) = items.iter_mut().find(|i| i.pick_id == PickId(plane_node)) {
                     item.two_sided = true;
                 }
                 let sg = self.texture_scene.version();
@@ -3158,7 +3158,7 @@ impl App {
                 // scalar_range left as None : renderer auto-detects from attribute_ranges.
                 if let Some(item) = items
                     .iter_mut()
-                    .find(|i| i.pick_id == self.face_node_ids[0])
+                    .find(|i| i.pick_id == PickId(self.face_node_ids[0]))
                 {
                     item.active_attribute = Some(AttributeRef {
                         name: "scalar".to_string(),
@@ -3171,7 +3171,7 @@ impl App {
                 // scalar_range left as None : renderer auto-detects from attribute_ranges.
                 if let Some(item) = items
                     .iter_mut()
-                    .find(|i| i.pick_id == self.face_node_ids[1])
+                    .find(|i| i.pick_id == PickId(self.face_node_ids[1]))
                 {
                     item.active_attribute = Some(AttributeRef {
                         name: "scalar".to_string(),
@@ -3183,7 +3183,7 @@ impl App {
                 // Node 2: FaceColor attribute (direct RGBA, no colormap)
                 if let Some(item) = items
                     .iter_mut()
-                    .find(|i| i.pick_id == self.face_node_ids[2])
+                    .find(|i| i.pick_id == PickId(self.face_node_ids[2]))
                 {
                     item.active_attribute = Some(AttributeRef {
                         name: "color".to_string(),
