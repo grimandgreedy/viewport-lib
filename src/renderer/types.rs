@@ -1707,6 +1707,20 @@ macro_rules! emit_draw_calls {
                             render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                         }
                     }
+
+                    // Normal visualization lines for instanced items.
+                    for item in scene_items {
+                        if !item.visible || !item.show_normals { continue; }
+                        let Some(mesh) = resources.mesh_store.get(crate::resources::mesh_store::MeshId(item.mesh_index)) else { continue };
+                        if let Some(ref nl_buf) = mesh.normal_line_buffer {
+                            if mesh.normal_line_count > 0 {
+                                render_pass.set_pipeline(&resources.wireframe_pipeline);
+                                render_pass.set_bind_group(1, &mesh.normal_bind_group, &[]);
+                                render_pass.set_vertex_buffer(0, nl_buf.slice(..));
+                                render_pass.draw(0..mesh.normal_line_count, 0..1);
+                            }
+                        }
+                    }
             } else {
                 // --- Per-object draw path (original) ---
                 let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
