@@ -16,3 +16,8 @@ book/build/
 *.swo
 *.user
 *.qtc.user
+
+
+docs/
+settings.local.json
+CLAUDE.md

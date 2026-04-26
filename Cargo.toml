@@ -1,6 +1,6 @@
 [package]
 name = "viewport-lib"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 description = "3D viewport rendering library"
 readme = "README.md"
@@ -55,6 +55,10 @@ name = "winit-viewport"
 path = "examples/winit_viewport/main.rs"
 
 [[example]]
+name = "winit-minimal"
+path = "examples/winit_minimal/main.rs"
+
+[[example]]
 name = "winit-primitives"
 path = "examples/winit_primitives/main.rs"
 
@@ -63,8 +67,28 @@ name = "winit-showcase"
 path = "examples/winit_showcase/main.rs"
 
 [[example]]
+name = "eframe-minimal"
+path = "examples/eframe_minimal/main.rs"
+
+[[example]]
+name = "eframe-primitives"
+path = "examples/eframe_primitives/main.rs"
+
+[[example]]
 name = "eframe-viewport"
 path = "examples/eframe_viewport/main.rs"
+
+[[example]]
+name = "eframe-input-controllers"
+path = "examples/eframe_input_controllers/main.rs"
+
+[[example]]
+name = "eframe-showcase"
+path = "examples/eframe_showcase/main.rs"
+
+[[example]]
+name = "winit-multi-viewport"
+path = "examples/winit_multi_viewport/main.rs"
 
 [[example]]
 name = "gtk4-viewport"
