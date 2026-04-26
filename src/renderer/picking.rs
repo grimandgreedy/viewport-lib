@@ -2,25 +2,25 @@ use super::*;
 
 impl ViewportRenderer {
     // -----------------------------------------------------------------------
-    // Phase K — GPU object-ID picking
+    // Phase K : GPU object-ID picking
     // -----------------------------------------------------------------------
 
     /// GPU object-ID pick: renders the scene to an offscreen `R32Uint` texture
     /// and reads back the single pixel under `cursor`.
     ///
-    /// This is O(1) in mesh complexity — every object is rendered with a flat
+    /// This is O(1) in mesh complexity : every object is rendered with a flat
     /// `u32` ID, and only one pixel is read back. For triangle-level queries
     /// (barycentric scalar probe, exact world position), use the CPU
     /// [`crate::interaction::picking::pick_scene`] path instead.
     ///
-    /// The pipeline is lazily initialized on first call — zero overhead when
+    /// The pipeline is lazily initialized on first call : zero overhead when
     /// this method is never invoked.
     ///
     /// # Arguments
-    /// * `device` — wgpu device
-    /// * `queue` — wgpu queue
-    /// * `cursor` — cursor position in viewport-local pixels (top-left origin)
-    /// * `frame` — current grouped frame data (camera, scene surfaces, viewport size)
+    /// * `device` : wgpu device
+    /// * `queue` : wgpu queue
+    /// * `cursor` : cursor position in viewport-local pixels (top-left origin)
+    /// * `frame` : current grouped frame data (camera, scene surfaces, viewport size)
     ///
     /// # Returns
     /// `Some(GpuPickHit)` if an object is under the cursor, `None` if empty space.

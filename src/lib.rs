@@ -1,5 +1,5 @@
 #![warn(missing_docs)]
-//! `viewport-lib` — a 3D viewport library for `wgpu` applications.
+//! `viewport-lib` : a 3D viewport library for `wgpu` applications.
 //!
 //! Built on `wgpu` and `glam`, with no required UI toolkit. The crate provides
 //! the renderer, camera, picking, and interaction pieces; host applications keep
@@ -43,7 +43,7 @@
 //! renderer.prepare_viewport(&device, &queue, vp_top,   &frame_top);
 //! renderer.prepare_viewport(&device, &queue, vp_front, &frame_front);
 //!
-//! // 4a. LDR path — single render pass with viewport/scissor rects.
+//! // 4a. LDR path : single render pass with viewport/scissor rects.
 //! let mut rp = encoder.begin_render_pass(...);
 //! rp.set_viewport(0.0, 0.0, half_w, half_h, 0.0, 1.0);
 //! renderer.paint_viewport(&mut rp, vp_persp, &frame_persp);
@@ -51,7 +51,7 @@
 //! renderer.paint_viewport(&mut rp, vp_top, &frame_top);
 //! // ...
 //!
-//! // 4b. HDR path — one command buffer per viewport, each into its own texture.
+//! // 4b. HDR path : one command buffer per viewport, each into its own texture.
 //! let cmd0 = renderer.render_viewport(&device, &queue, &view0, vp_persp, &frame_persp);
 //! let cmd1 = renderer.render_viewport(&device, &queue, &view1, vp_top,   &frame_top);
 //! queue.submit([cmd0, cmd1]);
@@ -70,19 +70,19 @@ pub mod camera;
 pub mod geometry;
 /// Gizmo, snap, selection, annotation, picking, and input.
 pub mod interaction;
+/// On-surface vector quantities (intrinsic vectors, Whitney one-forms).
+pub mod quantities;
 /// Main viewport renderer wrapping all GPU resources.
 pub mod renderer;
 /// GPU resource container (pipelines, buffers, bind groups).
 pub mod resources;
 /// Scene graph, material, traits, and AABB.
 pub mod scene;
-/// On-surface vector quantities (intrinsic vectors, Whitney one-forms).
-pub mod quantities;
 /// Axes orientation indicator.
 pub mod widgets;
 
 // ---------------------------------------------------------------------------
-// Module re-exports — preserve old `viewport_lib::foo::Bar` paths.
+// Module re-exports : preserve old `viewport_lib::foo::Bar` paths.
 // ---------------------------------------------------------------------------
 
 pub use geometry::bvh;
@@ -101,7 +101,7 @@ pub use scene::traits;
 pub use widgets::axes_indicator;
 
 // ---------------------------------------------------------------------------
-// Flat re-exports — these form the public crate API.
+// Flat re-exports : these form the public crate API.
 // ---------------------------------------------------------------------------
 
 pub use error::{ViewportError, ViewportResult};
@@ -131,7 +131,7 @@ pub use interaction::input::{
     Action, ActionState, Binding, FrameInput, InputMode, InputSystem, KeyCode, Modifiers,
     MouseButton, NavigationMode,
 };
-// New input pipeline — re-exported at crate root for convenience.
+// New input pipeline : re-exported at crate root for convenience.
 pub use interaction::input::{
     ActionFrame, BindingPreset, ButtonState, ModifiersMatch, NavigationActions,
     OrbitCameraController, ResolvedActionState, ScrollUnits, ViewportBinding, ViewportContext,
@@ -146,10 +146,9 @@ pub use interaction::manipulation::{
 };
 
 pub use interaction::clip_plane::{
-    ClipAxis, ClipPlaneContext, ClipPlaneController, ClipPlaneDelta, ClipPlaneHit,
-    ClipPlaneResult, ClipPlaneSessionKind, hit_test_normal_handle,
-    hit_test_plane_quad, plane_from_axis_preset, project_drag_onto_normal, ray_plane_intersection,
-    snap_plane_distance,
+    ClipAxis, ClipPlaneContext, ClipPlaneController, ClipPlaneDelta, ClipPlaneHit, ClipPlaneResult,
+    ClipPlaneSessionKind, hit_test_normal_handle, hit_test_plane_quad, plane_from_axis_preset,
+    project_drag_onto_normal, ray_plane_intersection, snap_plane_distance,
 };
 pub use interaction::picking::{
     GpuPickHit, PickHit, ProbeBinding, RectPickResult, pick_rect,
@@ -182,9 +181,9 @@ pub use resources::colormap_data::{
     export_paraview_xml_colormap, lerp_colormap_lut, parse_paraview_xml_colormap,
 };
 pub use resources::mesh_store::MeshId;
+pub use resources::volume_mesh::{TET_SENTINEL, VolumeMeshData};
 pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColormap, BuiltinMatcap, CameraUniform,
     ClipVolumeUniform, ColormapId, ComputeFilterResult, LightUniform, LightsUniform, MatcapId,
     MeshData, SingleLightUniform, ViewportGpuResources, VolumeId, lerp_attributes,
 };
-pub use resources::volume_mesh::{TET_SENTINEL, VolumeMeshData};

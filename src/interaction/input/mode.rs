@@ -27,11 +27,11 @@ pub enum NavigationMode {
     Arcball,
     /// Yaw around the world Z axis; pitch clamped to ±89°.
     ///
-    /// The up vector always stays vertical — the camera cannot roll or go
+    /// The up vector always stays vertical : the camera cannot roll or go
     /// upside-down. Preferred by users who expect a fixed-up-axis orbit
     /// (common in scientific / CAD applications).
     Turntable,
-    /// Pan only — no rotation, no center-aimed zoom.
+    /// Pan only : no rotation, no center-aimed zoom.
     ///
     /// Drag translates the orbit center in the camera plane. Scroll still
     /// adjusts the zoom level. Intended for 2D data inspection where orbit

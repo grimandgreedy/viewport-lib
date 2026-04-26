@@ -1,4 +1,4 @@
-//! Showcase 5: Advanced Rendering — build method.
+//! Showcase 5: Advanced Rendering : build method.
 
 use crate::App;
 use viewport_lib::{Material, ViewportRenderer};

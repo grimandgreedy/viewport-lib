@@ -143,7 +143,7 @@ fn assemble_loops(segments: &[[glam::Vec3; 2]]) -> Vec<Vec<glam::Vec3>> {
                 }
             }
             if !found {
-                break; // Open chain — force-close below
+                break; // Open chain : force-close below
             }
         }
 
@@ -256,7 +256,7 @@ fn ear_clip(pts: &[[f32; 2]]) -> Vec<[usize; 3]> {
         }
 
         if !found_ear {
-            // Degenerate polygon — bail with what we have
+            // Degenerate polygon : bail with what we have
             break;
         }
     }
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn test_generate_cap_mesh_box() {
-        // A unit cube — 12 triangles
+        // A unit cube : 12 triangles
         let positions = vec![
             // Front face (z=0.5)
             [-0.5, -0.5, 0.5],

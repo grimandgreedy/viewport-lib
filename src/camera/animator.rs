@@ -12,9 +12,9 @@ use crate::camera::camera::{Camera, Projection};
 pub enum Easing {
     /// Constant velocity (t).
     Linear,
-    /// Decelerates near the end — feels natural for camera snapping.
+    /// Decelerates near the end : feels natural for camera snapping.
     EaseOutCubic,
-    /// Accelerates then decelerates — smooth for longer transitions.
+    /// Accelerates then decelerates : smooth for longer transitions.
     EaseInOutCubic,
 }
 
@@ -200,7 +200,7 @@ impl CameraAnimator {
         duration: f32,
         easing: Easing,
     ) {
-        // Zero out velocities — the flight takes over.
+        // Zero out velocities : the flight takes over.
         self.orbit_velocity = glam::Vec2::ZERO;
         self.pan_velocity = glam::Vec2::ZERO;
         self.zoom_velocity = 0.0;
@@ -315,7 +315,7 @@ mod tests {
         let mut cam = default_camera();
         anim.apply_orbit(0.5, 0.3);
         assert!(anim.is_animating());
-        // Run many frames — velocity should decay to zero.
+        // Run many frames : velocity should decay to zero.
         for _ in 0..300 {
             anim.update(1.0 / 60.0, &mut cam);
         }
@@ -384,7 +384,7 @@ mod tests {
         for _ in 0..5 {
             anim.update(1.0 / 60.0, &mut cam);
         }
-        // Apply user input — should cancel the flight.
+        // Apply user input : should cancel the flight.
         anim.apply_orbit(0.1, 0.0);
         // The flight should be gone.
         anim.update(1.0 / 60.0, &mut cam);

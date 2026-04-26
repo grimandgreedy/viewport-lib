@@ -1,4 +1,4 @@
-//! Showcase 9: Annotation Labels — build and render methods.
+//! Showcase 9: Annotation Labels : build and render methods.
 //!
 //! Unlike the winit showcase (which only projects labels to title-bar coordinates),
 //! the eframe version draws annotation text directly on the viewport using the egui

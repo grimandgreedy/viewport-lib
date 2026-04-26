@@ -4,7 +4,7 @@
 //! contour strips rendered on top via the `SceneFrame::isolines` pipeline.
 //!
 //! The mesh is built once and uploaded. `IsolineItem`s are re-submitted each
-//! frame with the current slider/color/width settings — no re-upload needed.
+//! frame with the current slider/color/width settings : no re-upload needed.
 
 use crate::App;
 use viewport_lib::{AttributeData, Material, MeshData, MeshId, scene::Scene};
@@ -29,12 +29,12 @@ impl App {
         let mesh_id = MeshId::from_index(mesh_idx);
         self.iso_mesh_index = mesh_idx;
 
-        self.iso_scene.add_named(
-            "Wave Grid",
-            Some(mesh_id),
-            glam::Mat4::IDENTITY,
-            { let mut m = Material::from_color([0.6, 0.65, 0.7]); m.roughness = 0.6; m },
-        );
+        self.iso_scene
+            .add_named("Wave Grid", Some(mesh_id), glam::Mat4::IDENTITY, {
+                let mut m = Material::from_color([0.6, 0.65, 0.7]);
+                m.roughness = 0.6;
+                m
+            });
 
         self.iso_built = true;
     }

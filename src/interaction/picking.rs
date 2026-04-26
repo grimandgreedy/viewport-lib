@@ -9,7 +9,7 @@ use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
 
 // ---------------------------------------------------------------------------
-// PickHit — rich hit result
+// PickHit : rich hit result
 // ---------------------------------------------------------------------------
 
 /// Result of a successful ray-cast pick against a scene object.
@@ -21,7 +21,7 @@ use parry3d::query::{Ray, RayCast};
 pub struct PickHit {
     /// The object/node ID of the hit.
     pub id: u64,
-    /// Typed sub-object reference — the authoritative source for sub-object identity.
+    /// Typed sub-object reference : the authoritative source for sub-object identity.
     ///
     /// `Some(SubObjectRef::Face(i))` for mesh picks; `Some(SubObjectRef::Point(i))` for
     /// point cloud picks; `None` when no specific sub-object could be identified.
@@ -31,15 +31,15 @@ pub struct PickHit {
     /// Surface normal at the hit point, in world space.
     pub normal: glam::Vec3,
     /// Which triangle was hit (from parry3d `FeatureId::Face`).
-    /// `u32::MAX` if the feature was not a face (edge/vertex hit — rare for TriMesh).
+    /// `u32::MAX` if the feature was not a face (edge/vertex hit : rare for TriMesh).
     ///
-    /// **Deprecated** — use [`sub_object`](Self::sub_object) instead.
+    /// **Deprecated** : use [`sub_object`](Self::sub_object) instead.
     #[deprecated(since = "0.5.0", note = "use `sub_object` instead")]
     pub triangle_index: u32,
     /// Index of the hit point within a [`crate::renderer::PointCloudItem`].
     /// `None` for mesh picks; set when a point cloud item is hit.
     ///
-    /// **Deprecated** — use [`sub_object`](Self::sub_object) instead.
+    /// **Deprecated** : use [`sub_object`](Self::sub_object) instead.
     #[deprecated(since = "0.5.0", note = "use `sub_object` instead")]
     pub point_index: Option<u32>,
     /// Interpolated scalar attribute value at the hit point.
@@ -52,12 +52,12 @@ pub struct PickHit {
 }
 
 // ---------------------------------------------------------------------------
-// GpuPickHit — GPU object-ID pick result
+// GpuPickHit : GPU object-ID pick result
 // ---------------------------------------------------------------------------
 
 /// Result of a GPU object-ID pick pass.
 ///
-/// Lighter than [`PickHit`] — carries only the object identifier and the
+/// Lighter than [`PickHit`] : carries only the object identifier and the
 /// clip-space depth value at the picked pixel. World position can be
 /// reconstructed from `depth` + the inverse view-projection matrix if needed.
 ///
@@ -92,9 +92,9 @@ pub struct GpuPickHit {
 /// Returns (origin, direction) both as glam::Vec3.
 ///
 /// # Arguments
-/// * `screen_pos` — mouse position relative to viewport rect top-left
-/// * `viewport_size` — viewport width and height in pixels
-/// * `view_proj_inv` — inverse of (proj * view)
+/// * `screen_pos` : mouse position relative to viewport rect top-left
+/// * `viewport_size` : viewport width and height in pixels
+/// * `view_proj_inv` : inverse of (proj * view)
 pub fn screen_to_ray(
     screen_pos: glam::Vec2,
     viewport_size: glam::Vec2,
@@ -112,10 +112,10 @@ pub fn screen_to_ray(
 /// nearest hit, or `None` if nothing was hit.
 ///
 /// # Arguments
-/// * `ray_origin` — world-space ray origin
-/// * `ray_dir` — world-space ray direction (normalized)
-/// * `objects` — slice of trait objects implementing ViewportObject
-/// * `mesh_lookup` — lookup table: CPU-side positions and indices by mesh_id
+/// * `ray_origin` : world-space ray origin
+/// * `ray_dir` : world-space ray direction (normalized)
+/// * `objects` : slice of trait objects implementing ViewportObject
+/// * `mesh_lookup` : lookup table: CPU-side positions and indices by mesh_id
 pub fn pick_scene(
     ray_origin: glam::Vec3,
     ray_dir: glam::Vec3,
@@ -218,7 +218,7 @@ pub fn pick_scene_nodes(
 }
 
 // ---------------------------------------------------------------------------
-// Probe-aware picking — scalar value at hit point
+// Probe-aware picking : scalar value at hit point
 // ---------------------------------------------------------------------------
 
 /// Per-object attribute binding for probe-aware picking.
@@ -253,7 +253,7 @@ fn barycentric(p: glam::Vec3, a: glam::Vec3, b: glam::Vec3, c: glam::Vec3) -> (f
     let d21 = v2.dot(v1);
     let denom = d00 * d11 - d01 * d01;
     if denom.abs() < 1e-12 {
-        // Degenerate triangle — return equal weights.
+        // Degenerate triangle : return equal weights.
         return (1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0);
     }
     let inv = 1.0 / denom;
@@ -282,7 +282,7 @@ fn probe_scalar(hit: &mut PickHit, binding: &ProbeBinding<'_>) {
 
     match binding.attribute_ref.kind {
         AttributeKind::Cell => {
-            // Cell attribute: one value per triangle — use directly.
+            // Cell attribute: one value per triangle : use directly.
             if let AttributeData::Cell(data) = binding.attribute_data {
                 if let Some(&val) = data.get(tri_idx) {
                     hit.scalar_value = Some(val);
@@ -290,7 +290,7 @@ fn probe_scalar(hit: &mut PickHit, binding: &ProbeBinding<'_>) {
             }
         }
         AttributeKind::Face => {
-            // Face attribute: one value per triangle — direct lookup (no averaging).
+            // Face attribute: one value per triangle : direct lookup (no averaging).
             if let AttributeData::Face(data) = binding.attribute_data {
                 if let Some(&val) = data.get(tri_idx) {
                     hit.scalar_value = Some(val);
@@ -387,7 +387,7 @@ pub fn pick_scene_accelerated_with_probe(
 }
 
 // ---------------------------------------------------------------------------
-// RectPickResult — rubber-band / sub-object selection
+// RectPickResult : rubber-band / sub-object selection
 // ---------------------------------------------------------------------------
 
 /// Result of a rectangular (rubber-band) pick.
@@ -402,7 +402,7 @@ pub struct RectPickResult {
     ///
     /// Key = object identifier (`mesh_index` cast to `u64` for scene items,
     /// [`crate::renderer::PointCloudItem::id`] for point clouds).
-    /// Value = [`SubObjectRef`]s inside the rect — `Face` for mesh triangles,
+    /// Value = [`SubObjectRef`]s inside the rect : `Face` for mesh triangles,
     /// `Point` for point cloud points.
     pub hits: std::collections::HashMap<u64, Vec<SubObjectRef>>,
 }
@@ -426,16 +426,16 @@ impl RectPickResult {
 /// rectangle defined by `rect_min`..`rect_max` (viewport-local pixels, top-left
 /// origin).
 ///
-/// This is a **pure CPU** operation — no GPU readback is required.
+/// This is a **pure CPU** operation : no GPU readback is required.
 ///
 /// # Arguments
-/// * `rect_min` — top-left corner of the selection rect in viewport pixels
-/// * `rect_max` — bottom-right corner of the selection rect in viewport pixels
-/// * `scene_items` — visible scene render items for this frame
-/// * `mesh_lookup` — CPU-side mesh data keyed by `SceneRenderItem::mesh_index`
-/// * `point_clouds` — point cloud items for this frame
-/// * `view_proj` — combined view × projection matrix
-/// * `viewport_size` — viewport width × height in pixels
+/// * `rect_min` : top-left corner of the selection rect in viewport pixels
+/// * `rect_max` : bottom-right corner of the selection rect in viewport pixels
+/// * `scene_items` : visible scene render items for this frame
+/// * `mesh_lookup` : CPU-side mesh data keyed by `SceneRenderItem::mesh_index`
+/// * `point_clouds` : point cloud items for this frame
+/// * `view_proj` : combined view × projection matrix
+/// * `viewport_size` : viewport width × height in pixels
 pub fn pick_rect(
     rect_min: glam::Vec2,
     rect_max: glam::Vec2,
@@ -491,7 +491,7 @@ pub fn pick_rect(
 
             let clip = mvp * centroid.extend(1.0);
             if clip.w <= 0.0 {
-                // Behind the camera — skip.
+                // Behind the camera : skip.
                 continue;
             }
             let ndc = glam::Vec2::new(clip.x / clip.w, clip.y / clip.w);
@@ -563,7 +563,7 @@ pub fn box_select(
         }
         let pos = obj.position();
         let clip = view_proj * pos.extend(1.0);
-        // Behind the camera — skip.
+        // Behind the camera : skip.
         if clip.w <= 0.0 {
             continue;
         }
@@ -907,7 +907,7 @@ mod tests {
         let mut mesh_lookup = HashMap::new();
         mesh_lookup.insert(1u64, (positions.clone(), indices.clone()));
 
-        // 12 triangles in a unit cube — assign each a scalar.
+        // 12 triangles in a unit cube : assign each a scalar.
         let num_triangles = indices.len() / 3;
         let cell_scalars: Vec<f32> = (0..num_triangles).map(|i| (i as f32) * 10.0).collect();
 
@@ -964,7 +964,7 @@ mod tests {
         };
         let objects: Vec<&dyn ViewportObject> = vec![&obj];
 
-        // No probe bindings — scalar_value should remain None.
+        // No probe bindings : scalar_value should remain None.
         let result = pick_scene_with_probe(
             glam::Vec3::new(0.0, 0.0, 5.0),
             glam::Vec3::new(0.0, 0.0, -1.0),

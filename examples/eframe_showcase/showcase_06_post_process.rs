@@ -1,4 +1,4 @@
-//! Showcase 6: Post-Processing — build method.
+//! Showcase 6: Post-Processing : build method.
 //!
 //! Note: the full HDR pipeline (`renderer.render()`) requires direct access to the
 //! surface texture view, which is not available via eframe's paint callback.

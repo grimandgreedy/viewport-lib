@@ -1,4 +1,4 @@
-// fxaa.wgsl — FXAA (Fast Approximate Anti-Aliasing) fullscreen post-process pass.
+// fxaa.wgsl : FXAA (Fast Approximate Anti-Aliasing) fullscreen post-process pass.
 //
 // Renders a fullscreen triangle, reads from the tone-mapped LDR texture, and
 // applies luminance-based edge detection and sub-pixel blending to reduce aliasing.

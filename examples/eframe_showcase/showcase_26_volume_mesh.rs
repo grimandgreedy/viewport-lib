@@ -1,16 +1,16 @@
 //! Showcase 26: Unstructured Volume Meshes
 //!
-//! Demonstrates Phase 9 — `VolumeMeshData` topology processing.
+//! Demonstrates Phase 9 : `VolumeMeshData` topology processing.
 //!
 //! A 3×3×3 structured grid of cells is projected onto a sphere.  The renderer
-//! sees only the **boundary surface** — interior faces shared by two cells are
+//! sees only the **boundary surface** : interior faces shared by two cells are
 //! discarded automatically by [`upload_volume_mesh_data`].  Per-cell scalars
 //! and colors are remapped to the boundary faces so the existing Phase 2
 //! face-coloring path applies colormaps cell-by-cell with no new GPU work.
 //!
 //! ## Two modes
-//! - **Hex sphere** — 27 hexahedral cells; boundary = 54 quads = 108 triangles.
-//! - **Tet sphere** — same grid split into 6 tets per cube (Freudenthal) → 162 tets;
+//! - **Hex sphere** : 27 hexahedral cells; boundary = 54 quads = 108 triangles.
+//! - **Tet sphere** : same grid split into 6 tets per cube (Freudenthal) -> 162 tets;
 //!   boundary = 54 triangles (much coarser faceting, making tet structure clear).
 //!
 //! ## Scalar fields
@@ -21,13 +21,13 @@
 //! ## What to notice
 //! Switching between Hex and Tet shows different faceting on the same sphere:
 //! hexes produce quad-faceted surfaces, tets produce a coarser triangular mesh.
-//! Both render via the same surface pipeline — Phase 9 adds zero GPU complexity.
+//! Both render via the same surface pipeline : Phase 9 adds zero GPU complexity.
 
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    AttributeKind, AttributeRef, BuiltinColormap, ColormapId, LightingSettings,
-    SceneRenderItem, TET_SENTINEL, ViewportRenderer, VolumeMeshData,
+    AttributeKind, AttributeRef, BuiltinColormap, ColormapId, LightingSettings, SceneRenderItem,
+    TET_SENTINEL, ViewportRenderer, VolumeMeshData,
 };
 
 // ---------------------------------------------------------------------------
@@ -70,7 +70,7 @@ pub(crate) enum VmField {
 // Grid geometry
 // ---------------------------------------------------------------------------
 
-const GRID_N: usize = 3; // cells per axis → GRID_N+1 vertices per axis
+const GRID_N: usize = 3; // cells per axis -> GRID_N+1 vertices per axis
 const GRID_V: usize = GRID_N + 1; // 4 vertices per axis
 const SPHERE_R: f32 = 2.0; // sphere radius after projection
 
@@ -84,7 +84,7 @@ fn vid(ix: usize, iy: usize, iz: usize) -> u32 {
 /// then project each vertex onto the sphere of radius `SPHERE_R`.
 ///
 /// Vertices are placed at –1.5, –0.5, 0.5, 1.5 on each axis (half-step
-/// offset), so no vertex falls at the origin — safe for normalization.
+/// offset), so no vertex falls at the origin : safe for normalization.
 fn sphere_vertex_positions() -> Vec<[f32; 3]> {
     let mut pos = Vec::with_capacity(GRID_V * GRID_V * GRID_V);
     for iz in 0..GRID_V {
@@ -159,14 +159,14 @@ fn build_hex_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
         for iy in 0..GRID_N {
             for ix in 0..GRID_N {
                 cells.push([
-                    vid(ix,     iy,     iz    ),
-                    vid(ix + 1, iy,     iz    ),
-                    vid(ix + 1, iy,     iz + 1),
-                    vid(ix,     iy,     iz + 1),
-                    vid(ix,     iy + 1, iz    ),
-                    vid(ix + 1, iy + 1, iz    ),
+                    vid(ix, iy, iz),
+                    vid(ix + 1, iy, iz),
+                    vid(ix + 1, iy, iz + 1),
+                    vid(ix, iy, iz + 1),
+                    vid(ix, iy + 1, iz),
+                    vid(ix + 1, iy + 1, iz),
                     vid(ix + 1, iy + 1, iz + 1),
-                    vid(ix,     iy + 1, iz + 1),
+                    vid(ix, iy + 1, iz + 1),
                 ]);
 
                 let [cx, cy, cz] = cell_centroid_raw(ix, iy, iz);
@@ -176,14 +176,14 @@ fn build_hex_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
                 let s = SPHERE_R / raw_len;
                 let py = cy * s;
 
-                // Latitude: –1 (south pole) to +1 (north pole) → 0..1
+                // Latitude: –1 (south pole) to +1 (north pole) -> 0..1
                 lat_scalars.push(py / SPHERE_R * 0.5 + 0.5);
 
-                // Longitude: azimuthal angle in [0, 2π] → 0..1
+                // Longitude: azimuthal angle in [0, 2π] -> 0..1
                 let lon = (cz).atan2(cx) / std::f32::consts::TAU + 0.5;
                 lon_scalars.push(lon);
 
-                // Radial: original distance before projection → 0..1 (min √0.75 ≈ 0.87)
+                // Radial: original distance before projection -> 0..1 (min √0.75 ≈ 0.87)
                 radial_scalars.push(raw_len);
 
                 // Direct colour: hue from longitude sector, saturation by latitude
@@ -196,9 +196,12 @@ fn build_hex_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
     let mut data = VolumeMeshData::default();
     data.positions = positions.to_vec();
     data.cells = cells;
-    data.cell_scalars.insert("latitude".to_string(), lat_scalars);
-    data.cell_scalars.insert("longitude".to_string(), lon_scalars);
-    data.cell_scalars.insert("radial".to_string(), radial_scalars);
+    data.cell_scalars
+        .insert("latitude".to_string(), lat_scalars);
+    data.cell_scalars
+        .insert("longitude".to_string(), lon_scalars);
+    data.cell_scalars
+        .insert("radial".to_string(), radial_scalars);
     data.cell_colors.insert("direct".to_string(), direct_colors);
     data
 }
@@ -210,7 +213,7 @@ fn build_hex_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
 // Each cube is split into 6 tets using the Freudenthal (body-diagonal) decomposition.
 // This is a *conforming* subdivision: all three axis-aligned shared faces between
 // adjacent cubes produce identical triangulations, so no gaps appear at boundaries.
-// The six tets share the main diagonal v[0]→v[6].
+// The six tets share the main diagonal v[0]->v[6].
 
 const TET_LOCAL: [[usize; 4]; 6] = [
     [0, 1, 5, 6], // xyz
@@ -233,14 +236,14 @@ fn build_tet_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
         for iy in 0..GRID_N {
             for ix in 0..GRID_N {
                 let cube_verts = [
-                    vid(ix,     iy,     iz    ),
-                    vid(ix + 1, iy,     iz    ),
-                    vid(ix + 1, iy,     iz + 1),
-                    vid(ix,     iy,     iz + 1),
-                    vid(ix,     iy + 1, iz    ),
-                    vid(ix + 1, iy + 1, iz    ),
+                    vid(ix, iy, iz),
+                    vid(ix + 1, iy, iz),
+                    vid(ix + 1, iy, iz + 1),
+                    vid(ix, iy, iz + 1),
+                    vid(ix, iy + 1, iz),
+                    vid(ix + 1, iy + 1, iz),
                     vid(ix + 1, iy + 1, iz + 1),
-                    vid(ix,     iy + 1, iz + 1),
+                    vid(ix, iy + 1, iz + 1),
                 ];
 
                 let [cx, cy, cz] = cell_centroid_raw(ix, iy, iz);
@@ -259,7 +262,10 @@ fn build_tet_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
                         cube_verts[tet[1]],
                         cube_verts[tet[2]],
                         cube_verts[tet[3]],
-                        TET_SENTINEL, TET_SENTINEL, TET_SENTINEL, TET_SENTINEL,
+                        TET_SENTINEL,
+                        TET_SENTINEL,
+                        TET_SENTINEL,
+                        TET_SENTINEL,
                     ]);
                     lat_scalars.push(lat);
                     lon_scalars.push(lon);
@@ -273,9 +279,12 @@ fn build_tet_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
     let mut data = VolumeMeshData::default();
     data.positions = positions.to_vec();
     data.cells = cells;
-    data.cell_scalars.insert("latitude".to_string(), lat_scalars);
-    data.cell_scalars.insert("longitude".to_string(), lon_scalars);
-    data.cell_scalars.insert("radial".to_string(), radial_scalars);
+    data.cell_scalars
+        .insert("latitude".to_string(), lat_scalars);
+    data.cell_scalars
+        .insert("longitude".to_string(), lon_scalars);
+    data.cell_scalars
+        .insert("radial".to_string(), radial_scalars);
     data.cell_colors.insert("direct".to_string(), direct_colors);
     data
 }
@@ -377,9 +386,9 @@ impl App {
         ui.separator();
         ui.label("Field:");
         for (field, label) in [
-            (VmField::Latitude,    "Latitude (scalar)"),
-            (VmField::Longitude,   "Longitude (scalar)"),
-            (VmField::Radial,      "Radial distance (scalar)"),
+            (VmField::Latitude, "Latitude (scalar)"),
+            (VmField::Longitude, "Longitude (scalar)"),
+            (VmField::Radial, "Radial distance (scalar)"),
             (VmField::DirectColor, "Direct cell colors (RGBA)"),
         ] {
             ui.radio_value(&mut self.vm_field, field, label);

@@ -3,10 +3,10 @@
 //! Demonstrates UV-mapped image textures uploaded via `upload_texture`.
 //!
 //! Layout (Z-up):
-//!   Centre      (0, 0, 0):    Plane (two-sided) — Carl Friedrich Gauss portrait
-//!   Left        (-4, 0, 0):   UV sphere — procedural checkerboard
-//!   Right       (+4, 0, 0):   Cube — procedural color-gradient per face
-//!   Front       (0, -4, 0):   Torus — procedural stripe pattern
+//!   Centre      (0, 0, 0):    Plane (two-sided) : Carl Friedrich Gauss portrait
+//!   Left        (-4, 0, 0):   UV sphere : procedural checkerboard
+//!   Right       (+4, 0, 0):   Cube : procedural color-gradient per face
+//!   Front       (0, -4, 0):   Torus : procedural stripe pattern
 //!
 //! The Gauss portrait is stored as pre-converted raw RGBA bytes alongside this
 //! file, so no image-parsing dependency or build script is required.
@@ -15,7 +15,7 @@ use crate::App;
 use eframe::egui;
 use viewport_lib::{Material, ViewportRenderer, scene::Scene};
 
-// Gauss portrait — pre-converted to raw RGBA (1500 × 1000).
+// Gauss portrait : pre-converted to raw RGBA (1500 × 1000).
 const GAUSS_WIDTH: u32 = 1500;
 const GAUSS_HEIGHT: u32 = 1000;
 const GAUSS_RGBA: &[u8] = include_bytes!("carlgauss.rgba");
@@ -28,7 +28,13 @@ impl App {
 
         // --- Gauss portrait on a plane ---
         let gauss_tex = res
-            .upload_texture(&self.device, &self.queue, GAUSS_WIDTH, GAUSS_HEIGHT, GAUSS_RGBA)
+            .upload_texture(
+                &self.device,
+                &self.queue,
+                GAUSS_WIDTH,
+                GAUSS_HEIGHT,
+                GAUSS_RGBA,
+            )
             .expect("gauss texture upload");
 
         let plane = viewport_lib::geometry::primitives::plane(3.0, 2.0);
@@ -43,7 +49,13 @@ impl App {
                 glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_6),
                 glam::Vec3::new(0.0, 2.0, 0.0),
             ),
-            { let mut m = Material::default(); m.texture_id = Some(gauss_tex); m.ambient = 0.5; m.diffuse = 0.6; m },
+            {
+                let mut m = Material::default();
+                m.texture_id = Some(gauss_tex);
+                m.ambient = 0.5;
+                m.diffuse = 0.6;
+                m
+            },
         );
         // (two_sided set in build_frame_data via texture_plane_node)
 
@@ -62,7 +74,15 @@ impl App {
             "Checker Sphere",
             Some(viewport_lib::MeshId::from_index(sphere_id)),
             glam::Mat4::from_translation(glam::Vec3::new(-4.0, 0.0, 0.0)),
-            { let mut m = Material::default(); m.texture_id = Some(checker_tex); m.ambient = 0.3; m.diffuse = 0.8; m.specular = 0.4; m.shininess = 32.0; m },
+            {
+                let mut m = Material::default();
+                m.texture_id = Some(checker_tex);
+                m.ambient = 0.3;
+                m.diffuse = 0.8;
+                m.specular = 0.4;
+                m.shininess = 32.0;
+                m
+            },
         );
 
         // --- Color-gradient on a cube ---
@@ -80,7 +100,13 @@ impl App {
             "Gradient Cube",
             Some(viewport_lib::MeshId::from_index(cube_id)),
             glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)),
-            { let mut m = Material::default(); m.texture_id = Some(gradient_tex); m.ambient = 0.3; m.diffuse = 0.8; m },
+            {
+                let mut m = Material::default();
+                m.texture_id = Some(gradient_tex);
+                m.ambient = 0.3;
+                m.diffuse = 0.8;
+                m
+            },
         );
 
         // --- Stripe pattern on a torus ---
@@ -98,7 +124,15 @@ impl App {
             "Stripe Torus",
             Some(viewport_lib::MeshId::from_index(torus_id)),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, -4.0, 0.0)),
-            { let mut m = Material::default(); m.texture_id = Some(stripes_tex); m.ambient = 0.3; m.diffuse = 0.8; m.specular = 0.6; m.shininess = 64.0; m },
+            {
+                let mut m = Material::default();
+                m.texture_id = Some(stripes_tex);
+                m.ambient = 0.3;
+                m.diffuse = 0.8;
+                m.specular = 0.6;
+                m.shininess = 64.0;
+                m
+            },
         );
 
         self.texture_built = true;
@@ -106,10 +140,10 @@ impl App {
 
     pub(crate) fn controls_textures(&mut self, ui: &mut egui::Ui) {
         ui.label("UV-mapped image textures on four primitives:");
-        ui.label("  Centre:  plane — Carl Friedrich Gauss (1777–1855)");
-        ui.label("  Left:    sphere — procedural checkerboard");
-        ui.label("  Right:   cube — procedural color gradient");
-        ui.label("  Front:   torus — procedural stripes");
+        ui.label("  Centre:  plane : Carl Friedrich Gauss (1777–1855)");
+        ui.label("  Left:    sphere : procedural checkerboard");
+        ui.label("  Right:   cube : procedural color gradient");
+        ui.label("  Front:   torus : procedural stripes");
         ui.separator();
         ui.label("Textures are uploaded as raw RGBA via upload_texture().");
         ui.label("The portrait is stored as pre-converted raw RGBA bytes.");

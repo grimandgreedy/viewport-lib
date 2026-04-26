@@ -154,7 +154,7 @@ pub fn validate_shader_hashes(expected: &[(&str, u64)]) -> ShaderValidation {
                     shader = %name,
                     expected = %exp_hash,
                     actual = %cur_hash,
-                    "shader hash mismatch — shader may have been modified unexpectedly"
+                    "shader hash mismatch : shader may have been modified unexpectedly"
                 );
                 mismatched.push(name.to_string());
             }

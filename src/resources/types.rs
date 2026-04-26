@@ -4,7 +4,7 @@
 /// uniform buffers, and bind groups.
 
 // ---------------------------------------------------------------------------
-// MeshData — CPU-side mesh representation
+// MeshData : CPU-side mesh representation
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -64,10 +64,10 @@ pub enum AttributeKind {
     Vertex,
     /// One value per triangle (cell). Averaged to vertices at upload time.
     Cell,
-    /// One value per triangle. NOT averaged — rendered flat via vertex duplication.
+    /// One value per triangle. NOT averaged : rendered flat via vertex duplication.
     /// Colormapped through the active LUT just like `Vertex`.
     Face,
-    /// One RGBA color per triangle. NOT averaged — rendered flat via vertex duplication.
+    /// One RGBA color per triangle. NOT averaged : rendered flat via vertex duplication.
     /// Bypasses the colormap; the per-face color is used directly.
     FaceColor,
 }
@@ -97,15 +97,15 @@ pub enum AttributeData {
 /// Built-in colormap presets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinColormap {
-    /// Viridis — perceptually uniform.
+    /// Viridis : perceptually uniform.
     Viridis = 0,
-    /// Plasma — perceptually uniform, brighter.
+    /// Plasma : perceptually uniform, brighter.
     Plasma = 1,
-    /// Greyscale — linear black->white.
+    /// Greyscale : linear black->white.
     Greyscale = 2,
-    /// Coolwarm — diverging blue->white->red.
+    /// Coolwarm : diverging blue->white->red.
     Coolwarm = 3,
-    /// Rainbow — HSV hue sweep 240°->0°.
+    /// Rainbow : HSV hue sweep 240°->0°.
     Rainbow = 4,
 }
 
@@ -159,11 +159,11 @@ impl MeshData {
 /// Per-vertex data: position, normal, base color, UV coordinates, tangent.
 ///
 /// Layout (64 bytes, 4-byte aligned):
-/// - position: [f32; 3]  — offset  0, 12 bytes
-/// - normal:   [f32; 3]  — offset 12, 12 bytes
-/// - color:    [f32; 4]  — offset 24, 16 bytes
-/// - uv:       [f32; 2]  — offset 40,  8 bytes
-/// - tangent:  [f32; 4]  — offset 48, 16 bytes  (xyz=tangent direction, w=handedness ±1)
+/// - position: [f32; 3]  : offset  0, 12 bytes
+/// - normal:   [f32; 3]  : offset 12, 12 bytes
+/// - color:    [f32; 4]  : offset 24, 16 bytes
+/// - uv:       [f32; 2]  : offset 40,  8 bytes
+/// - tangent:  [f32; 4]  : offset 48, 16 bytes  (xyz=tangent direction, w=handedness ±1)
 ///
 /// `tangent.w` is the bitangent handedness. Reconstruct bitangent as:
 /// `bitangent = cross(normal, tangent.xyz) * tangent.w`
@@ -189,31 +189,31 @@ impl Vertex {
             array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
-                // location 0: position (vec3f) — offset 0
+                // location 0: position (vec3f) : offset 0
                 wgpu::VertexAttribute {
                     offset: 0,
                     shader_location: 0,
                     format: wgpu::VertexFormat::Float32x3,
                 },
-                // location 1: normal (vec3f) — offset 12
+                // location 1: normal (vec3f) : offset 12
                 wgpu::VertexAttribute {
                     offset: 12,
                     shader_location: 1,
                     format: wgpu::VertexFormat::Float32x3,
                 },
-                // location 2: color (vec4f) — offset 24
+                // location 2: color (vec4f) : offset 24
                 wgpu::VertexAttribute {
                     offset: 24,
                     shader_location: 2,
                     format: wgpu::VertexFormat::Float32x4,
                 },
-                // location 3: uv (vec2f) — offset 40
+                // location 3: uv (vec2f) : offset 40
                 wgpu::VertexAttribute {
                     offset: 40,
                     shader_location: 3,
                     format: wgpu::VertexFormat::Float32x2,
                 },
-                // location 4: tangent (vec4f) — offset 48
+                // location 4: tangent (vec4f) : offset 48
                 wgpu::VertexAttribute {
                     offset: 48,
                     shader_location: 4,
@@ -229,7 +229,7 @@ pub(crate) const SHADOW_ATLAS_SIZE: u32 = 4096;
 
 /// Per-frame camera uniform: view-projection and eye position.
 ///
-/// GPU uniform struct — must remain 16-byte aligned (`#[repr(C)]`).
+/// GPU uniform struct : must remain 16-byte aligned (`#[repr(C)]`).
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CameraUniform {
@@ -245,7 +245,7 @@ pub struct CameraUniform {
     pub _pad1: f32,
     /// Inverse view-projection matrix (for reconstructing world-space rays, e.g. skybox).
     pub inv_view_proj: [[f32; 4]; 4],
-    /// View matrix (world → camera space, column-major).
+    /// View matrix (world -> camera space, column-major).
     ///
     /// Used by the matcap shader to transform world-space normals to view space.
     pub view: [[f32; 4]; 4],
@@ -288,12 +288,12 @@ pub struct SingleLightUniform {
     pub inner_angle: f32, //  4 bytes, offset 100
     /// Cosine of the outer cone half-angle (spot lights; smooth falloff edge).
     pub outer_angle: f32, //  4 bytes, offset 104
-    /// Alignment padding — bridges 4-byte gap to align `spot_direction` to offset 112.
+    /// Alignment padding : bridges 4-byte gap to align `spot_direction` to offset 112.
     pub _pad_align: u32, //  4 bytes, offset 108 (aligns spot_direction to 112)
     /// World-space unit direction the spot cone points toward.
     pub spot_direction: [f32; 3], // 12 bytes, offset 112
     /// Tail padding to reach 144-byte struct size.
-    pub _pad: [f32; 5], // 20 bytes, offset 124 — total 144
+    pub _pad: [f32; 5], // 20 bytes, offset 124 : total 144
 }
 
 /// GPU-side lights uniform (binding 3 of group 0). Supports up to 8 light sources.
@@ -340,7 +340,7 @@ pub struct LightsUniform {
     pub show_skybox: u32, // 4 bytes
 }
 
-/// Alias kept for backward compatibility — existing app code imports `LightUniform`.
+/// Alias kept for backward compatibility : existing app code imports `LightUniform`.
 pub type LightUniform = LightsUniform;
 
 /// Per-object uniform: world transform, material properties, selection state, and wireframe mode.
@@ -378,34 +378,34 @@ pub type LightUniform = LightsUniform;
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ObjectUniform {
-    pub(crate) model: [[f32; 4]; 4],        //  64 bytes, offset   0
-    pub(crate) color: [f32; 4],             //  16 bytes, offset  64
-    pub(crate) selected: u32,               //   4 bytes, offset  80
-    pub(crate) wireframe: u32,              //   4 bytes, offset  84
-    pub(crate) ambient: f32,                //   4 bytes, offset  88
-    pub(crate) diffuse: f32,                //   4 bytes, offset  92
-    pub(crate) specular: f32,               //   4 bytes, offset  96
-    pub(crate) shininess: f32,              //   4 bytes, offset 100
-    pub(crate) has_texture: u32,            //   4 bytes, offset 104
-    pub(crate) use_pbr: u32,                //   4 bytes, offset 108
-    pub(crate) metallic: f32,              //   4 bytes, offset 112
-    pub(crate) roughness: f32,             //   4 bytes, offset 116
-    pub(crate) has_normal_map: u32,        //   4 bytes, offset 120
-    pub(crate) has_ao_map: u32,            //   4 bytes, offset 124
-    pub(crate) has_attribute: u32,         //   4 bytes, offset 128
-    pub(crate) scalar_min: f32,            //   4 bytes, offset 132
-    pub(crate) scalar_max: f32,            //   4 bytes, offset 136
-    pub(crate) _pad_scalar: u32,           //   4 bytes, offset 140
-    pub(crate) nan_color: [f32; 4],        //  16 bytes, offset 144
-    pub(crate) use_nan_color: u32,         //   4 bytes, offset 160
-    pub(crate) use_matcap: u32,            //   4 bytes, offset 164
-    pub(crate) matcap_blendable: u32,      //   4 bytes, offset 168
-    pub(crate) _pad2: u32,                 //   4 bytes, offset 172
-    pub(crate) use_face_color: u32,        //   4 bytes, offset 176
-    pub(crate) uv_vis_mode: u32,           //   4 bytes, offset 180
-    pub(crate) uv_vis_scale: f32,          //   4 bytes, offset 184
-    pub(crate) backface_policy: u32,       //   4 bytes, offset 188  (0=Cull 1=Identical 2=DifferentColor)
-    pub(crate) backface_color: [f32; 4],   //  16 bytes, offset 192
+    pub(crate) model: [[f32; 4]; 4],     //  64 bytes, offset   0
+    pub(crate) color: [f32; 4],          //  16 bytes, offset  64
+    pub(crate) selected: u32,            //   4 bytes, offset  80
+    pub(crate) wireframe: u32,           //   4 bytes, offset  84
+    pub(crate) ambient: f32,             //   4 bytes, offset  88
+    pub(crate) diffuse: f32,             //   4 bytes, offset  92
+    pub(crate) specular: f32,            //   4 bytes, offset  96
+    pub(crate) shininess: f32,           //   4 bytes, offset 100
+    pub(crate) has_texture: u32,         //   4 bytes, offset 104
+    pub(crate) use_pbr: u32,             //   4 bytes, offset 108
+    pub(crate) metallic: f32,            //   4 bytes, offset 112
+    pub(crate) roughness: f32,           //   4 bytes, offset 116
+    pub(crate) has_normal_map: u32,      //   4 bytes, offset 120
+    pub(crate) has_ao_map: u32,          //   4 bytes, offset 124
+    pub(crate) has_attribute: u32,       //   4 bytes, offset 128
+    pub(crate) scalar_min: f32,          //   4 bytes, offset 132
+    pub(crate) scalar_max: f32,          //   4 bytes, offset 136
+    pub(crate) _pad_scalar: u32,         //   4 bytes, offset 140
+    pub(crate) nan_color: [f32; 4],      //  16 bytes, offset 144
+    pub(crate) use_nan_color: u32,       //   4 bytes, offset 160
+    pub(crate) use_matcap: u32,          //   4 bytes, offset 164
+    pub(crate) matcap_blendable: u32,    //   4 bytes, offset 168
+    pub(crate) _pad2: u32,               //   4 bytes, offset 172
+    pub(crate) use_face_color: u32,      //   4 bytes, offset 176
+    pub(crate) uv_vis_mode: u32,         //   4 bytes, offset 180
+    pub(crate) uv_vis_scale: f32,        //   4 bytes, offset 184
+    pub(crate) backface_policy: u32, //   4 bytes, offset 188  (0=Cull 1=Identical 2=DifferentColor)
+    pub(crate) backface_color: [f32; 4], //  16 bytes, offset 192
 }
 
 const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 208);
@@ -434,7 +434,7 @@ pub(crate) struct InstanceData {
 
 /// Per-instance GPU data for the object-ID pick pass (Phase K).
 ///
-/// Stores only the model matrix and a sentinel object ID — none of the material
+/// Stores only the model matrix and a sentinel object ID : none of the material
 /// fields needed by the full [`InstanceData`] struct.
 ///
 /// Layout (80 bytes):
@@ -474,7 +474,7 @@ pub(crate) struct ClipPlanesUniform {
     pub(crate) viewport_height: f32,  //   4 bytes
 }
 
-/// Clip volume uniform — 128 bytes, bound at group 0 binding 6.
+/// Clip volume uniform : 128 bytes, bound at group 0 binding 6.
 ///
 /// Exported for testing (size validation) and for downstream crates that may
 /// need to construct the uniform directly (e.g. headless compute tools).
@@ -531,7 +531,9 @@ impl ClipVolumeUniform {
     pub fn from_clip_shape(shape: &crate::renderer::ClipShape) -> Self {
         let mut u: Self = bytemuck::Zeroable::zeroed();
         match shape {
-            crate::renderer::ClipShape::Plane { normal, distance, .. } => {
+            crate::renderer::ClipShape::Plane {
+                normal, distance, ..
+            } => {
                 u.volume_type = 1;
                 u.plane_normal = *normal;
                 u.plane_dist = *distance;
@@ -611,8 +613,8 @@ pub(crate) struct BloomUniform {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct SsaoUniform {
-    pub(crate) inv_proj: [[f32; 4]; 4], // 64 bytes — NDC->view
-    pub(crate) proj: [[f32; 4]; 4],     // 64 bytes — view->clip (for re-projection)
+    pub(crate) inv_proj: [[f32; 4]; 4], // 64 bytes : NDC->view
+    pub(crate) proj: [[f32; 4]; 4],     // 64 bytes : view->clip (for re-projection)
     pub(crate) radius: f32,
     pub(crate) bias: f32,
     pub(crate) _pad: [f32; 2],
@@ -657,7 +659,7 @@ pub(crate) struct ContactShadowUniform {
 /// Per-vertex data for overlay rendering: position only (no normal/color in vertex).
 ///
 /// Color is provided via the OverlayUniform rather than per-vertex to keep
-/// the buffer minimal — all vertices of a single overlay quad share the same color.
+/// the buffer minimal : all vertices of a single overlay quad share the same color.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct OverlayVertex {
@@ -694,23 +696,23 @@ pub(crate) struct OverlayUniform {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct GroundPlaneUniform {
-    pub view_proj:      [[f32; 4]; 4], // offset   0, 64 bytes
-    pub cam_right:      [f32; 4],      // offset  64, 16 bytes
-    pub cam_up:         [f32; 4],      // offset  80, 16 bytes
-    pub cam_back:       [f32; 4],      // offset  96, 16 bytes
-    pub eye_pos:        [f32; 3],      // offset 112, 12 bytes
-    pub height:         f32,           // offset 124,  4 bytes
-    pub color:          [f32; 4],      // offset 128, 16 bytes
-    pub shadow_color:   [f32; 4],      // offset 144, 16 bytes
-    pub light_vp:       [[f32; 4]; 4], // offset 160, 64 bytes
-    pub tan_half_fov:   f32,           // offset 224,  4 bytes
-    pub aspect:         f32,           // offset 228,  4 bytes
-    pub tile_size:      f32,           // offset 232,  4 bytes
-    pub shadow_bias:    f32,           // offset 236,  4 bytes
-    pub mode:           u32,           // offset 240,  4 bytes
-    pub shadow_opacity: f32,           // offset 244,  4 bytes
-    pub _pad:           [f32; 2],      // offset 248,  8 bytes
-}                                      // total  256 bytes
+    pub view_proj: [[f32; 4]; 4], // offset   0, 64 bytes
+    pub cam_right: [f32; 4],      // offset  64, 16 bytes
+    pub cam_up: [f32; 4],         // offset  80, 16 bytes
+    pub cam_back: [f32; 4],       // offset  96, 16 bytes
+    pub eye_pos: [f32; 3],        // offset 112, 12 bytes
+    pub height: f32,              // offset 124,  4 bytes
+    pub color: [f32; 4],          // offset 128, 16 bytes
+    pub shadow_color: [f32; 4],   // offset 144, 16 bytes
+    pub light_vp: [[f32; 4]; 4],  // offset 160, 64 bytes
+    pub tan_half_fov: f32,        // offset 224,  4 bytes
+    pub aspect: f32,              // offset 228,  4 bytes
+    pub tile_size: f32,           // offset 232,  4 bytes
+    pub shadow_bias: f32,         // offset 236,  4 bytes
+    pub mode: u32,                // offset 240,  4 bytes
+    pub shadow_opacity: f32,      // offset 244,  4 bytes
+    pub _pad: [f32; 2],           // offset 248,  8 bytes
+} // total  256 bytes
 
 /// Uniform buffer layout for the full-screen analytical grid shader.
 ///
@@ -727,7 +729,7 @@ pub(crate) struct GridUniform {
     /// Used to rotate the analytical camera-space ray direction into world space,
     /// bypassing the ill-conditioned inv(view_proj) at large camera distances.
     pub cam_to_world: [[f32; 4]; 3], // offset  64, 48 bytes
-    /// tan(fov_y / 2) — scales NDC x/y to camera-space ray direction.
+    /// tan(fov_y / 2) : scales NDC x/y to camera-space ray direction.
     pub tan_half_fov: f32, // offset 112,  4 bytes
     /// Viewport aspect ratio (width / height).
     pub aspect: f32, // offset 116,  4 bytes
@@ -812,7 +814,7 @@ pub struct GpuMesh {
     /// Uniform buffer for normal-line rendering: always has selected=0, wireframe=0.
     /// Updated each frame in prepare() with the object's model matrix only.
     pub normal_uniform_buf: wgpu::Buffer,
-    /// Bind group referencing `normal_uniform_buf` — used when drawing normal lines.
+    /// Bind group referencing `normal_uniform_buf` : used when drawing normal lines.
     pub normal_bind_group: wgpu::BindGroup,
     /// Local-space axis-aligned bounding box computed from vertex positions at upload time.
     pub aabb: crate::scene::aabb::Aabb,
@@ -823,7 +825,7 @@ pub struct GpuMesh {
 }
 
 // ---------------------------------------------------------------------------
-// SciVis Phase B — GPU data types for point cloud and glyph renderers
+// SciVis Phase B : GPU data types for point cloud and glyph renderers
 // ---------------------------------------------------------------------------
 
 /// Cached GPU vertex + index buffers for a glyph base mesh (arrow, sphere, cube).
@@ -876,7 +878,7 @@ pub struct ScreenImageGpuData {
 /// Per-frame GPU data for one glyph item, created in `prepare()`.
 pub struct GlyphGpuData {
     /// Vertex buffer for the glyph base mesh (borrowed from cached `GlyphBaseMesh`).
-    /// We keep a reference via raw pointer — `ViewportGpuResources` owns the mesh.
+    /// We keep a reference via raw pointer : `ViewportGpuResources` owns the mesh.
     /// Safety: the mesh lives as long as `ViewportGpuResources`.
     pub(crate) mesh_vertex_buffer: &'static wgpu::Buffer,
     /// Index buffer for the glyph base mesh.
@@ -1081,7 +1083,7 @@ pub struct ViewportGpuResources {
     pub(crate) shadow_atlas_size: u32,
 
     // --- Gizmo resources ---
-    /// Gizmo render pipeline (TriangleList, depth_compare Always — always on top).
+    /// Gizmo render pipeline (TriangleList, depth_compare Always : always on top).
     pub gizmo_pipeline: wgpu::RenderPipeline,
     /// Gizmo vertex buffer (3 axis arrows, regenerated when hovered axis changes).
     pub gizmo_vertex_buffer: wgpu::Buffer,
@@ -1093,17 +1095,17 @@ pub struct ViewportGpuResources {
     pub gizmo_uniform_buf: wgpu::Buffer,
     /// Bind group for gizmo uniform (group 1).
     pub gizmo_bind_group: wgpu::BindGroup,
-    /// Bind group layout for gizmo uniforms — stored so per-viewport gizmo bind groups can be created.
+    /// Bind group layout for gizmo uniforms : stored so per-viewport gizmo bind groups can be created.
     pub(crate) gizmo_bind_group_layout: wgpu::BindGroupLayout,
 
     // --- Overlay resources ---
-    /// Overlay render pipeline (TriangleList with alpha blending — for semi-transparent BC quads).
+    /// Overlay render pipeline (TriangleList with alpha blending : for semi-transparent BC quads).
     pub overlay_pipeline: wgpu::RenderPipeline,
     /// Overlay wireframe pipeline (LineList, no alpha blending needed).
     pub overlay_line_pipeline: wgpu::RenderPipeline,
-    /// Full-screen analytical grid pipeline (no vertex buffer — positions hardcoded in shader).
+    /// Full-screen analytical grid pipeline (no vertex buffer : positions hardcoded in shader).
     pub grid_pipeline: wgpu::RenderPipeline,
-    /// Uniform buffer for the grid shader (GridUniform — written every frame in prepare()).
+    /// Uniform buffer for the grid shader (GridUniform : written every frame in prepare()).
     pub grid_uniform_buf: wgpu::Buffer,
     /// Bind group for the grid uniform (group 0, single binding).
     pub grid_bind_group: wgpu::BindGroup,
@@ -1259,7 +1261,7 @@ pub struct ViewportGpuResources {
     /// HDR depth+stencil texture (Depth24PlusStencil8, viewport-sized, single-sample).
     pub(crate) hdr_depth_texture: Option<wgpu::Texture>,
     pub(crate) hdr_depth_view: Option<wgpu::TextureView>,
-    /// Depth-only view of hdr_depth_texture (for SSAO binding — depth aspect only).
+    /// Depth-only view of hdr_depth_texture (for SSAO binding : depth aspect only).
     pub(crate) hdr_depth_only_view: Option<wgpu::TextureView>,
     /// Last HDR target size [w, h]. Used to detect resize.
     pub(crate) hdr_size: [u32; 2],
@@ -1417,7 +1419,7 @@ pub struct ViewportGpuResources {
     /// Bind group layout for the compute filter shader (group 0). None until first use.
     pub(crate) compute_filter_bgl: Option<wgpu::BindGroupLayout>,
 
-    // --- Phase J: Order-independent transparency (OIT) — lazily created ---
+    // --- Phase J: Order-independent transparency (OIT) : lazily created ---
     // These fields are superseded by ViewportHdrState.oit_* but kept for ensure_oit_targets compat.
     #[allow(dead_code)]
     /// Weighted-blended accumulation texture (Rgba16Float, viewport-sized).
@@ -1457,7 +1459,7 @@ pub struct ViewportGpuResources {
     pub(crate) ibl_fallback_texture: wgpu::Texture,
     /// View of ibl_fallback_texture.
     pub(crate) ibl_fallback_view: wgpu::TextureView,
-    /// Fallback 1×1 BRDF LUT (black — placeholder, never sampled due to `ibl_enabled` guard).
+    /// Fallback 1×1 BRDF LUT (black : placeholder, never sampled due to `ibl_enabled` guard).
     #[allow(dead_code)]
     pub(crate) ibl_fallback_brdf_texture: wgpu::Texture,
     pub(crate) ibl_fallback_brdf_view: wgpu::TextureView,

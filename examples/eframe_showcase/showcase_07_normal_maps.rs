@@ -1,4 +1,4 @@
-//! Showcase 7: Normal Maps + AO Maps — build method.
+//! Showcase 7: Normal Maps + AO Maps : build method.
 
 use crate::App;
 use crate::geometry::{

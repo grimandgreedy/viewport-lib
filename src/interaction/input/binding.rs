@@ -3,7 +3,7 @@
 use super::action::Action;
 use super::mode::InputMode;
 
-/// Modifier key state — exact-match semantics (all must match).
+/// Modifier key state : exact-match semantics (all must match).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Modifiers {
@@ -48,7 +48,7 @@ impl Modifiers {
     };
 }
 
-/// Keyboard key codes — subset covering keys used in the default bindings.
+/// Keyboard key codes : subset covering keys used in the default bindings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum KeyCode {

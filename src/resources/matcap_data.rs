@@ -55,14 +55,14 @@ fn generate<F: Fn(f32, f32, f32) -> [u8; 4]>(f: F) -> Vec<u8> {
     for y in 0..SIZE {
         for x in 0..SIZE {
             // Map pixel center to UV, then to view-space normal.
-            // Convention: y=0 → ny=+1 (up-facing normals, top of image = bright).
+            // Convention: y=0 -> ny=+1 (up-facing normals, top of image = bright).
             let u = (x as f32 + 0.5) / SIZE as f32; // [0, 1]
-            let v = (y as f32 + 0.5) / SIZE as f32; // [0, 1], v=0 → top
+            let v = (y as f32 + 0.5) / SIZE as f32; // [0, 1], v=0 -> top
             let nx = u * 2.0 - 1.0;
-            let ny = 1.0 - v * 2.0; // flip: v=0 → ny=+1, v=1 → ny=-1
+            let ny = 1.0 - v * 2.0; // flip: v=0 -> ny=+1, v=1 -> ny=-1
             let r2 = nx * nx + ny * ny;
             if r2 > 1.0 {
-                // Outside the unit disc — no valid normal.
+                // Outside the unit disc : no valid normal.
                 data.extend_from_slice(&[0, 0, 0, 0]);
             } else {
                 let nz = (1.0 - r2).sqrt();
@@ -77,7 +77,7 @@ fn generate<F: Fn(f32, f32, f32) -> [u8; 4]>(f: F) -> Vec<u8> {
 // Built-in matcap generators
 // ---------------------------------------------------------------------------
 
-/// Clay — warm orange-brown, RGBA blendable.
+/// Clay : warm orange-brown, RGBA blendable.
 ///
 /// A single warm directional light from upper-left plus a cool fill from the right.
 /// Alpha encodes how strongly the matcap tints the underlying geometry color.
@@ -93,7 +93,11 @@ pub fn clay() -> Vec<u8> {
         (0.6 / len, -0.2 / len, 0.3 / len)
     };
 
-    let base = [srgb_to_linear(0.78), srgb_to_linear(0.47), srgb_to_linear(0.26)];
+    let base = [
+        srgb_to_linear(0.78),
+        srgb_to_linear(0.47),
+        srgb_to_linear(0.26),
+    ];
     let fill_color = [
         srgb_to_linear(0.45),
         srgb_to_linear(0.58),
@@ -109,19 +113,23 @@ pub fn clay() -> Vec<u8> {
         let r = base[0] * (ambient + d * 0.75) + fill_color[0] * fd + s;
         let g = base[1] * (ambient + d * 0.75) + fill_color[1] * fd + s;
         let b = base[2] * (ambient + d * 0.75) + fill_color[2] * fd + s;
-        // Alpha: blend weight — tints base geometry color at ~60 %
+        // Alpha: blend weight : tints base geometry color at ~60 %
         let a = 0.58_f32;
         [to_u8(r), to_u8(g), to_u8(b), to_u8(a)]
     })
 }
 
-/// Wax — warm peach with a wide soft specular, RGBA blendable.
+/// Wax : warm peach with a wide soft specular, RGBA blendable.
 pub fn wax() -> Vec<u8> {
     let (lx, ly, lz) = {
         let len = (0.3f32 * 0.3 + 1.0 * 1.0 + 0.5 * 0.5).sqrt();
         (0.3 / len, 1.0 / len, 0.5 / len)
     };
-    let base = [srgb_to_linear(0.95), srgb_to_linear(0.78), srgb_to_linear(0.65)];
+    let base = [
+        srgb_to_linear(0.95),
+        srgb_to_linear(0.78),
+        srgb_to_linear(0.65),
+    ];
 
     generate(|nx, ny, nz| {
         let d = diffuse(nx, ny, nz, lx, ly, lz);
@@ -136,7 +144,7 @@ pub fn wax() -> Vec<u8> {
     })
 }
 
-/// Candy — vivid colorful gradient, RGBA blendable.
+/// Candy : vivid colorful gradient, RGBA blendable.
 ///
 /// Cycles through hue as a function of the upper hemisphere angle, giving
 /// a rainbow-sphere appearance that blends with geometry color.
@@ -155,7 +163,7 @@ pub fn candy() -> Vec<u8> {
         let angle = nx.atan2(nz) / std::f32::consts::PI; // -1..+1
         let hue = (angle * 0.5 + 0.5 + ny * 0.12).fract(); // 0..1
 
-        // HSV → RGB for vivid hue
+        // HSV -> RGB for vivid hue
         let h6 = hue * 6.0;
         let i = h6.floor() as u32 % 6;
         let f = h6 - h6.floor();
@@ -178,7 +186,7 @@ pub fn candy() -> Vec<u8> {
     })
 }
 
-/// Flat — neutral gray Lambertian, RGBA blendable.
+/// Flat : neutral gray Lambertian, RGBA blendable.
 ///
 /// Simple diffuse-only shading, no specular, no color contribution.  The alpha
 /// channel controls how strongly the lighting gradient blends onto geometry.
@@ -194,13 +202,17 @@ pub fn flat() -> Vec<u8> {
     })
 }
 
-/// Ceramic — clean white with sharp specular, RGB static.
+/// Ceramic : clean white with sharp specular, RGB static.
 pub fn ceramic() -> Vec<u8> {
     let (lx, ly, lz) = {
         let len = (-0.2f32 * -0.2 + 0.85 * 0.85 + 0.5 * 0.5).sqrt();
         (-0.2 / len, 0.85 / len, 0.5 / len)
     };
-    let base = [srgb_to_linear(0.94), srgb_to_linear(0.95), srgb_to_linear(0.97)];
+    let base = [
+        srgb_to_linear(0.94),
+        srgb_to_linear(0.95),
+        srgb_to_linear(0.97),
+    ];
 
     generate(|nx, ny, nz| {
         let d = diffuse(nx, ny, nz, lx, ly, lz);
@@ -213,15 +225,27 @@ pub fn ceramic() -> Vec<u8> {
     })
 }
 
-/// Jade — deep translucent green, RGB static.
+/// Jade : deep translucent green, RGB static.
 pub fn jade() -> Vec<u8> {
     let (lx, ly, lz) = {
         let len = (0.3f32 * 0.3 + 0.9 * 0.9 + 0.4 * 0.4).sqrt();
         (0.3 / len, 0.9 / len, 0.4 / len)
     };
-    let surface = [srgb_to_linear(0.15), srgb_to_linear(0.58), srgb_to_linear(0.36)];
-    let deep = [srgb_to_linear(0.04), srgb_to_linear(0.28), srgb_to_linear(0.18)];
-    let highlight = [srgb_to_linear(0.72), srgb_to_linear(0.90), srgb_to_linear(0.70)];
+    let surface = [
+        srgb_to_linear(0.15),
+        srgb_to_linear(0.58),
+        srgb_to_linear(0.36),
+    ];
+    let deep = [
+        srgb_to_linear(0.04),
+        srgb_to_linear(0.28),
+        srgb_to_linear(0.18),
+    ];
+    let highlight = [
+        srgb_to_linear(0.72),
+        srgb_to_linear(0.90),
+        srgb_to_linear(0.70),
+    ];
 
     generate(|nx, ny, nz| {
         let d = diffuse(nx, ny, nz, lx, ly, lz);
@@ -237,14 +261,22 @@ pub fn jade() -> Vec<u8> {
     })
 }
 
-/// Mud — dark brownish, low specular, rough look, RGB static.
+/// Mud : dark brownish, low specular, rough look, RGB static.
 pub fn mud() -> Vec<u8> {
     let (lx, ly, lz) = {
         let len = (0.1f32 * 0.1 + 0.8 * 0.8 + 0.3 * 0.3).sqrt();
         (0.1 / len, 0.8 / len, 0.3 / len)
     };
-    let base = [srgb_to_linear(0.32), srgb_to_linear(0.20), srgb_to_linear(0.10)];
-    let dark = [srgb_to_linear(0.08), srgb_to_linear(0.05), srgb_to_linear(0.02)];
+    let base = [
+        srgb_to_linear(0.32),
+        srgb_to_linear(0.20),
+        srgb_to_linear(0.10),
+    ];
+    let dark = [
+        srgb_to_linear(0.08),
+        srgb_to_linear(0.05),
+        srgb_to_linear(0.02),
+    ];
 
     generate(|nx, ny, nz| {
         let d = diffuse(nx, ny, nz, lx, ly, lz);
@@ -261,9 +293,9 @@ pub fn mud() -> Vec<u8> {
     })
 }
 
-/// Normal — view-space normal visualization, RGB static.
+/// Normal : view-space normal visualization, RGB static.
 ///
-/// R = nx mapped [−1, 1] → [0, 1], G = ny, B = nz.
+/// R = nx mapped [−1, 1] -> [0, 1], G = ny, B = nz.
 pub fn normal() -> Vec<u8> {
     generate(|nx, ny, nz| {
         let r = nx * 0.5 + 0.5;

@@ -53,7 +53,7 @@ impl eframe::egui_wgpu::CallbackTrait for MultiViewportCallback {
             let hw2 = fw - hw;
             let hh2 = fh - hh;
 
-            // (x, y, w, h) in physical pixels — order: TL, TR, BL, BR.
+            // (x, y, w, h) in physical pixels : order: TL, TR, BL, BR.
             let quads: [(u32, u32, u32, u32); 4] = [
                 (fx, fy, hw, hh),
                 (fx + hw, fy, hw2, hh),

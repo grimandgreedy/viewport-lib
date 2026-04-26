@@ -16,8 +16,7 @@ impl App {
     /// Generates stream paths from the current seed count and integration step.
     /// The result is stored in `stream_paths` and `stream_scalars` (per-vertex speed).
     pub(crate) fn build_stream_scene(&mut self) {
-        let (paths, scalars) =
-            integrate_streamlines(self.stream_seed_count, self.stream_step_size);
+        let (paths, scalars) = integrate_streamlines(self.stream_seed_count, self.stream_step_size);
         self.stream_paths = paths;
         self.stream_scalars = scalars;
         self.stream_built = true;
@@ -30,16 +29,10 @@ impl App {
     pub(crate) fn controls_streamlines(&mut self, ui: &mut egui::Ui) {
         ui.label("Render mode:");
         ui.horizontal(|ui| {
-            if ui
-                .radio(!self.stream_use_tubes, "Polylines")
-                .clicked()
-            {
+            if ui.radio(!self.stream_use_tubes, "Polylines").clicked() {
                 self.stream_use_tubes = false;
             }
-            if ui
-                .radio(self.stream_use_tubes, "Tubes")
-                .clicked()
-            {
+            if ui.radio(self.stream_use_tubes, "Tubes").clicked() {
                 self.stream_use_tubes = true;
             }
         });
@@ -63,10 +56,7 @@ impl App {
             {
                 self.stream_color_by_speed = false;
             }
-            if ui
-                .radio(self.stream_color_by_speed, "Speed")
-                .clicked()
-            {
+            if ui.radio(self.stream_color_by_speed, "Speed").clicked() {
                 self.stream_color_by_speed = true;
             }
         });
@@ -100,13 +90,11 @@ impl App {
 
         ui.separator();
         ui.label("Seed count:");
-        let seed_response = ui.add(
-            egui::Slider::new(&mut self.stream_seed_count, 8..=64).step_by(4.0),
-        );
+        let seed_response =
+            ui.add(egui::Slider::new(&mut self.stream_seed_count, 8..=64).step_by(4.0));
         ui.label("Integration step:");
-        let step_response = ui.add(
-            egui::Slider::new(&mut self.stream_step_size, 0.02..=0.2).step_by(0.01),
-        );
+        let step_response =
+            ui.add(egui::Slider::new(&mut self.stream_step_size, 0.02..=0.2).step_by(0.01));
 
         // Regenerate paths when seed or step sliders are released.
         if seed_response.drag_stopped() || step_response.drag_stopped() {
@@ -120,7 +108,8 @@ impl App {
 
     /// Build a `PolylineItem` from cached stream paths and current control state.
     pub(crate) fn make_stream_polyline_item(&self) -> PolylineItem {
-        let (positions, strip_lengths, scalars) = flatten_paths(&self.stream_paths, &self.stream_scalars);
+        let (positions, strip_lengths, scalars) =
+            flatten_paths(&self.stream_paths, &self.stream_scalars);
         let mut item = PolylineItem::default();
         item.positions = positions;
         item.strip_lengths = strip_lengths;
@@ -136,7 +125,8 @@ impl App {
 
     /// Build a `StreamtubeItem` from cached stream paths and current control state.
     pub(crate) fn make_stream_tube_item(&self) -> StreamtubeItem {
-        let (positions, strip_lengths, _scalars) = flatten_paths(&self.stream_paths, &self.stream_scalars);
+        let (positions, strip_lengths, _scalars) =
+            flatten_paths(&self.stream_paths, &self.stream_scalars);
         let mut item = StreamtubeItem::default();
         item.positions = positions;
         item.strip_lengths = strip_lengths;
@@ -159,10 +149,7 @@ impl App {
 /// Returns `(paths, scalars)` where each `paths[i]` is the list of 3-D
 /// positions for streamline `i`, and `scalars[i]` holds the per-vertex speed
 /// (magnitude of the velocity vector at that point).
-fn integrate_streamlines(
-    seed_count: usize,
-    step_size: f32,
-) -> (Vec<Vec<[f32; 3]>>, Vec<Vec<f32>>) {
+fn integrate_streamlines(seed_count: usize, step_size: f32) -> (Vec<Vec<[f32; 3]>>, Vec<Vec<f32>>) {
     use std::f32::consts::TAU;
 
     let mut paths: Vec<Vec<[f32; 3]>> = Vec::with_capacity(seed_count);

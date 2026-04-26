@@ -1,6 +1,6 @@
 //! BVH-accelerated picking with TriMesh caching.
 //!
-//! Provides `PickAccelerator` — a binary bounding volume hierarchy built from
+//! Provides `PickAccelerator` : a binary bounding volume hierarchy built from
 //! scene objects' world-space AABBs. Ray queries traverse the BVH to quickly
 //! reject non-intersecting subtrees, then test leaf objects with cached
 //! `parry3d::TriMesh` instances.
@@ -226,7 +226,7 @@ impl PickAccelerator {
 
                 #[allow(deprecated)]
                 let hit = crate::interaction::picking::PickHit {
-                    id: 0, // placeholder — caller fills in actual node_id
+                    id: 0, // placeholder : caller fills in actual node_id
                     sub_object,
                     triangle_index,
                     world_pos,
@@ -512,7 +512,7 @@ mod tests {
         let mut mesh_lookup = HashMap::new();
         mesh_lookup.insert(0u64, (positions, indices));
 
-        // First pick — builds TriMesh.
+        // First pick : builds TriMesh.
         let _ = accel.pick(
             glam::Vec3::new(0.0, 0.0, 5.0),
             glam::Vec3::new(0.0, 0.0, -1.0),
@@ -520,7 +520,7 @@ mod tests {
         );
         assert_eq!(accel.trimesh_cache_len(), 1);
 
-        // Second pick — should reuse cached TriMesh (cache len stays 1).
+        // Second pick : should reuse cached TriMesh (cache len stays 1).
         let _ = accel.pick(
             glam::Vec3::new(0.0, 0.0, 5.0),
             glam::Vec3::new(0.0, 0.0, -1.0),

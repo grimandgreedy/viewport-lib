@@ -87,10 +87,10 @@ impl Default for AnnotationLabel {
 ///
 /// # Arguments
 ///
-/// * `pos` — World-space position to project.
-/// * `view` — Camera view matrix (world -> view space).
-/// * `proj` — Camera projection matrix (view space -> clip space).
-/// * `viewport_size` — Viewport dimensions in physical pixels `[width, height]`.
+/// * `pos` : World-space position to project.
+/// * `view` : Camera view matrix (world -> view space).
+/// * `proj` : Camera projection matrix (view space -> clip space).
+/// * `viewport_size` : Viewport dimensions in physical pixels `[width, height]`.
 ///
 /// # Returns
 ///
@@ -146,8 +146,8 @@ pub fn world_to_screen(
 ///
 /// # Arguments
 ///
-/// * `pos` — World-space position to project.
-/// * `frame` — Current frame data containing camera matrices and viewport dimensions.
+/// * `pos` : World-space position to project.
+/// * `frame` : Current frame data containing camera matrices and viewport dimensions.
 ///
 /// # Returns
 ///
@@ -176,12 +176,12 @@ pub fn world_to_screen_from_frame(pos: glam::Vec3, frame: &FrameData) -> Option<
 ///
 /// # Arguments
 ///
-/// * `painter` — An egui painter whose clip rect covers the viewport.
-/// * `labels` — Slice of labels to draw.
-/// * `view` — Camera view matrix.
-/// * `proj` — Camera projection matrix.
-/// * `viewport_size` — Viewport in physical pixels `[width, height]`.
-/// * `_clip_rect` — Viewport rectangle (egui clips automatically; passed for explicitness).
+/// * `painter` : An egui painter whose clip rect covers the viewport.
+/// * `labels` : Slice of labels to draw.
+/// * `view` : Camera view matrix.
+/// * `proj` : Camera projection matrix.
+/// * `viewport_size` : Viewport in physical pixels `[width, height]`.
+/// * `_clip_rect` : Viewport rectangle (egui clips automatically; passed for explicitness).
 ///
 /// # Feature
 ///

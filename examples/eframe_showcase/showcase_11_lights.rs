@@ -1,6 +1,6 @@
-//! Showcase 11: Lights — build method.
+//! Showcase 11: Lights : build method.
 //!
-//! A flat ground plane plus a 3×3 grid of white spheres — neutral surfaces that make
+//! A flat ground plane plus a 3×3 grid of white spheres : neutral surfaces that make
 //! light color, cone angle, and attenuation directly visible.
 
 use crate::App;
@@ -12,7 +12,7 @@ impl App {
     pub(crate) fn build_lights_scene(&mut self, renderer: &mut ViewportRenderer) {
         self.lights_scene = Scene::new();
 
-        // Ground plane — thin slab, Z-up.
+        // Ground plane : thin slab, Z-up.
         let ground_mesh = make_box_with_uvs(16.0, 16.0, 0.1);
         let ground_idx = renderer
             .resources_mut()
@@ -23,7 +23,11 @@ impl App {
             "Ground",
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.05)),
-            { let mut m = Material::from_color([0.45, 0.45, 0.48]); m.roughness = 0.9; m },
+            {
+                let mut m = Material::from_color([0.45, 0.45, 0.48]);
+                m.roughness = 0.9;
+                m
+            },
         );
 
         // 3×3 grid of spheres.
@@ -44,7 +48,11 @@ impl App {
                     &name,
                     Some(sphere_id),
                     glam::Mat4::from_translation(glam::Vec3::new(x, y, z)),
-                    { let mut m = Material::from_color([0.92, 0.92, 0.92]); m.roughness = 0.35; m },
+                    {
+                        let mut m = Material::from_color([0.92, 0.92, 0.92]);
+                        m.roughness = 0.35;
+                        m
+                    },
                 );
             }
         }

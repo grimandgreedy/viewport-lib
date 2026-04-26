@@ -4,7 +4,7 @@
 // A second R32Float target captures the clip-space depth value so the caller
 // can reconstruct world position without an additional depth-texture copy.
 //
-// No lighting, no textures — just position transform + flat ID output.
+// No lighting, no textures : just position transform + flat ID output.
 
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -31,7 +31,7 @@ struct PickInstance {
 struct VertexIn {
     @location(0) position: vec3<f32>,
     // Other vertex attributes (normal, color, uv, tangent) are present in the
-    // buffer but ignored — the 64-byte stride handles them automatically.
+    // buffer but ignored : the 64-byte stride handles them automatically.
 };
 
 struct VertexOut {

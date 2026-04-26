@@ -3,12 +3,12 @@
 //! Demonstrates `ClipObject` with box, sphere, and interactive plane shapes on
 //! `EffectsFrame`. A dense UV sphere (high vertex count) makes the clip cross-section
 //! visually rich. Setting `ClipObject::color` causes the lib to draw the clip boundary
-//! automatically — a wireframe outline for box/sphere, a fill quad for plane.
+//! automatically : a wireframe outline for box/sphere, a fill quad for plane.
 //!
 //! Sub-modes (radio):
-//! - Box clip   — oriented box; center / half-extents / yaw sliders.
-//! - Sphere clip — sphere; center / radius sliders.
-//! - Interactive plane — a plane dragged via the gizmo.
+//! - Box clip   : oriented box; center / half-extents / yaw sliders.
+//! - Sphere clip : sphere; center / radius sliders.
+//! - Interactive plane : a plane dragged via the gizmo.
 //!
 //! Common controls:
 //! - Sub-mode selector radio buttons.
@@ -18,9 +18,8 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    ClipAxis, ClipObject, ClipShape, GizmoMode, Material, MeshId,
-    ViewportRenderer, plane_from_axis_preset,
-    scene::Scene,
+    ClipAxis, ClipObject, ClipShape, GizmoMode, Material, MeshId, ViewportRenderer,
+    plane_from_axis_preset, scene::Scene,
 };
 
 // ---------------------------------------------------------------------------
@@ -45,7 +44,7 @@ impl App {
     pub(crate) fn build_clipvol_scene(&mut self, renderer: &mut ViewportRenderer) {
         self.clipvol_scene = Scene::new();
 
-        // Dense sphere — many vertices make the clip cross-section visually rich.
+        // Dense sphere : many vertices make the clip cross-section visually rich.
         let sphere_mesh = viewport_lib::primitives::sphere(3.0, 48, 24);
         let sphere_idx = renderer
             .resources_mut()
@@ -56,7 +55,12 @@ impl App {
             "Sphere",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.0)),
-            { let mut m = Material::from_color([0.55, 0.72, 0.95]); m.roughness = 0.3; m.metallic = 0.1; m },
+            {
+                let mut m = Material::from_color([0.55, 0.72, 0.95]);
+                m.roughness = 0.3;
+                m.metallic = 0.1;
+                m
+            },
         );
 
         // Ground plane.
@@ -70,7 +74,11 @@ impl App {
             "Ground",
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -3.05)),
-            { let mut m = Material::from_color([0.38, 0.38, 0.40]); m.roughness = 0.9; m },
+            {
+                let mut m = Material::from_color([0.38, 0.38, 0.40]);
+                m.roughness = 0.9;
+                m
+            },
         );
 
         self.clipvol_built = true;
@@ -93,7 +101,10 @@ impl App {
                 // Scale is valid for box; keep mode as-is.
             }
             if ui
-                .radio(self.clipvol_sub_mode == ClipVolSubMode::SphereClip, "Sphere")
+                .radio(
+                    self.clipvol_sub_mode == ClipVolSubMode::SphereClip,
+                    "Sphere",
+                )
                 .clicked()
             {
                 self.clipvol_sub_mode = ClipVolSubMode::SphereClip;
@@ -213,10 +224,7 @@ impl App {
 
         ui.separator();
         ui.label("Radius:");
-        ui.add(
-            egui::Slider::new(&mut self.clipvol_sphere_radius, 0.5..=8.0)
-                .step_by(0.1),
-        );
+        ui.add(egui::Slider::new(&mut self.clipvol_sphere_radius, 0.5..=8.0).step_by(0.1));
 
         ui.separator();
         ui.weak("Only fragments inside the sphere are kept.");
@@ -225,11 +233,7 @@ impl App {
     fn controls_clipvol_plane(&mut self, ui: &mut egui::Ui) {
         ui.label("Axis preset:");
         ui.horizontal(|ui| {
-            for (label, axis) in [
-                ("X", ClipAxis::X),
-                ("Y", ClipAxis::Y),
-                ("Z", ClipAxis::Z),
-            ] {
+            for (label, axis) in [("X", ClipAxis::X), ("Y", ClipAxis::Y), ("Z", ClipAxis::Z)] {
                 if ui.button(label).clicked() {
                     self.clipvol_plane_axis = axis;
                     let dist = if let ClipShape::Plane { distance, .. } = self.clipvol_plane.shape {
@@ -255,13 +259,21 @@ impl App {
             .add(egui::Slider::new(&mut dist, -6.0..=6.0).step_by(0.05))
             .changed()
         {
-            if let ClipShape::Plane { ref mut distance, .. } = self.clipvol_plane.shape {
+            if let ClipShape::Plane {
+                ref mut distance, ..
+            } = self.clipvol_plane.shape
+            {
                 *distance = dist;
             }
         }
 
         if ui.button("Flip Normal").clicked() {
-            if let ClipShape::Plane { ref mut normal, ref mut distance, .. } = self.clipvol_plane.shape {
+            if let ClipShape::Plane {
+                ref mut normal,
+                ref mut distance,
+                ..
+            } = self.clipvol_plane.shape
+            {
                 normal[0] = -normal[0];
                 normal[1] = -normal[1];
                 normal[2] = -normal[2];
@@ -292,19 +304,20 @@ impl App {
                 let yaw_rad = self.clipvol_box_yaw.to_radians();
                 let cos_y = yaw_rad.cos();
                 let sin_y = yaw_rad.sin();
-                let orient = [
-                    [cos_y, sin_y, 0.0],
-                    [-sin_y, cos_y, 0.0],
-                    [0.0, 0.0, 1.0],
-                ];
+                let orient = [[cos_y, sin_y, 0.0], [-sin_y, cos_y, 0.0], [0.0, 0.0, 1.0]];
                 Some({
-                    let mut co = ClipObject::box_shape(self.clipvol_box_center, self.clipvol_box_half_extents, orient);
+                    let mut co = ClipObject::box_shape(
+                        self.clipvol_box_center,
+                        self.clipvol_box_half_extents,
+                        orient,
+                    );
                     co.color = overlay_color;
                     co
                 })
             }
             ClipVolSubMode::SphereClip => Some({
-                let mut co = ClipObject::sphere(self.clipvol_sphere_center, self.clipvol_sphere_radius);
+                let mut co =
+                    ClipObject::sphere(self.clipvol_sphere_center, self.clipvol_sphere_radius);
                 co.color = overlay_color;
                 co
             }),

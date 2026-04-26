@@ -1,4 +1,4 @@
-// skybox.wgsl — fullscreen equirectangular environment map background.
+// skybox.wgsl : fullscreen equirectangular environment map background.
 // Renders a fullscreen triangle, reconstructs world-space ray from inverse VP,
 // and samples the equirect skybox texture.
 

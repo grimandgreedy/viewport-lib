@@ -1,4 +1,4 @@
-//! Unstructured volume mesh processing — tet and hex cell topologies.
+//! Unstructured volume mesh processing : tet and hex cell topologies.
 //!
 //! Converts volumetric cell connectivity into a standard [`MeshData`] by
 //! extracting boundary faces (faces shared by exactly one cell) and computing
@@ -54,7 +54,7 @@ pub struct VolumeMeshData {
     /// Vertex positions in local space.
     pub positions: Vec<[f32; 3]>,
 
-    /// Cell connectivity — exactly 8 indices per cell.
+    /// Cell connectivity : exactly 8 indices per cell.
     ///
     /// Tets: first 4 indices are the tet vertices; indices `[4..8]` must be
     /// [`TET_SENTINEL`].  Hexes: all 8 indices are valid.
@@ -107,12 +107,12 @@ const TET_FACES: [[usize; 3]; 4] = [
 //
 // Six quad faces.  Verified to produce outward normals (from-cell CCW):
 //
-//   bottom (-Y): [0,1,2,3]  — normal = (1,0,0)×(1,0,1) = (0,-1,0) ✓
-//   top    (+Y): [4,7,6,5]  — normal = (0,0,1)×(1,0,1) = (0,+1,0) ✓
-//   front  (-Z): [0,4,5,1]  — normal = (0,1,0)×(1,1,0) = (0,0,-1) ✓
-//   back   (+Z): [2,6,7,3]  — normal = (0,1,0)×(-1,1,0)= (0,0,+1) ✓
-//   left   (-X): [0,3,7,4]  — normal = (0,0,1)×(0,1,1) = (-1,0,0) ✓
-//   right  (+X): [1,5,6,2]  — normal = (0,1,0)×(0,1,1) = (+1,0,0) ✓
+//   bottom (-Y): [0,1,2,3]  : normal = (1,0,0)×(1,0,1) = (0,-1,0) ✓
+//   top    (+Y): [4,7,6,5]  : normal = (0,0,1)×(1,0,1) = (0,+1,0) ✓
+//   front  (-Z): [0,4,5,1]  : normal = (0,1,0)×(1,1,0) = (0,0,-1) ✓
+//   back   (+Z): [2,6,7,3]  : normal = (0,1,0)×(-1,1,0)= (0,0,+1) ✓
+//   left   (-X): [0,3,7,4]  : normal = (0,0,1)×(0,1,1) = (-1,0,0) ✓
+//   right  (+X): [1,5,6,2]  : normal = (0,1,0)×(0,1,1) = (+1,0,0) ✓
 //
 // The geometric winding-correction step acts as a safety net in case any
 // cell is degenerate or oriented unexpectedly.
@@ -176,7 +176,9 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> MeshData {
                 let mut c = [0.0f32; 3];
                 for &vi in &cell[0..4] {
                     let p = data.positions[vi as usize];
-                    c[0] += p[0]; c[1] += p[1]; c[2] += p[2];
+                    c[0] += p[0];
+                    c[1] += p[1];
+                    c[2] += p[2];
                 }
                 [c[0] / 4.0, c[1] / 4.0, c[2] / 4.0]
             };
@@ -201,19 +203,16 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> MeshData {
                 let mut c = [0.0f32; 3];
                 for &vi in cell.iter() {
                     let p = data.positions[vi as usize];
-                    c[0] += p[0]; c[1] += p[1]; c[2] += p[2];
+                    c[0] += p[0];
+                    c[1] += p[1];
+                    c[2] += p[2];
                 }
                 [c[0] / 8.0, c[1] / 8.0, c[2] / 8.0]
             };
 
             // 6 quad faces, each split into 2 triangles
             for quad in &HEX_FACES {
-                let v: [u32; 4] = [
-                    cell[quad[0]],
-                    cell[quad[1]],
-                    cell[quad[2]],
-                    cell[quad[3]],
-                ];
+                let v: [u32; 4] = [cell[quad[0]], cell[quad[1]], cell[quad[2]], cell[quad[3]]];
                 // tri 0: v0, v1, v2
                 {
                     let key = face_key(v[0], v[1], v[2]);
@@ -339,7 +338,11 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> MeshData {
         .map(|n| {
             let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
             if len > 1e-12 {
-                [(n[0] / len) as f32, (n[1] / len) as f32, (n[2] / len) as f32]
+                [
+                    (n[0] / len) as f32,
+                    (n[1] / len) as f32,
+                    (n[2] / len) as f32,
+                ]
             } else {
                 [0.0, 1.0, 0.0] // degenerate fallback
             }
@@ -350,7 +353,7 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> MeshData {
     normals.resize(n_verts, [0.0, 1.0, 0.0]);
 
     // ---------------------------------------------------------------------------
-    // Build per-cell → per-face attribute remapping
+    // Build per-cell -> per-face attribute remapping
     // ---------------------------------------------------------------------------
 
     let mut attributes: HashMap<String, AttributeData> = HashMap::new();
@@ -397,7 +400,16 @@ mod tests {
                 [0.5, 1.0, 0.0],
                 [0.5, 0.5, 1.0],
             ],
-            cells: vec![[0, 1, 2, 3, TET_SENTINEL, TET_SENTINEL, TET_SENTINEL, TET_SENTINEL]],
+            cells: vec![[
+                0,
+                1,
+                2,
+                3,
+                TET_SENTINEL,
+                TET_SENTINEL,
+                TET_SENTINEL,
+                TET_SENTINEL,
+            ]],
             ..Default::default()
         }
     }
@@ -414,8 +426,26 @@ mod tests {
                 [0.5, 0.5, -1.0],
             ],
             cells: vec![
-                [0, 1, 2, 3, TET_SENTINEL, TET_SENTINEL, TET_SENTINEL, TET_SENTINEL],
-                [0, 2, 1, 4, TET_SENTINEL, TET_SENTINEL, TET_SENTINEL, TET_SENTINEL],
+                [
+                    0,
+                    1,
+                    2,
+                    3,
+                    TET_SENTINEL,
+                    TET_SENTINEL,
+                    TET_SENTINEL,
+                    TET_SENTINEL,
+                ],
+                [
+                    0,
+                    2,
+                    1,
+                    4,
+                    TET_SENTINEL,
+                    TET_SENTINEL,
+                    TET_SENTINEL,
+                    TET_SENTINEL,
+                ],
             ],
             ..Default::default()
         }
@@ -442,7 +472,11 @@ mod tests {
     fn single_tet_has_four_boundary_faces() {
         let data = single_tet();
         let mesh = extract_boundary_faces(&data);
-        assert_eq!(mesh.indices.len(), 4 * 3, "single tet → 4 boundary triangles");
+        assert_eq!(
+            mesh.indices.len(),
+            4 * 3,
+            "single tet -> 4 boundary triangles"
+        );
     }
 
     #[test]
@@ -454,7 +488,7 @@ mod tests {
         assert_eq!(
             mesh.indices.len(),
             6 * 3,
-            "two tets sharing a face → 6 boundary triangles"
+            "two tets sharing a face -> 6 boundary triangles"
         );
     }
 
@@ -463,7 +497,11 @@ mod tests {
         let data = single_hex();
         let mesh = extract_boundary_faces(&data);
         // 6 quad faces × 2 triangles each = 12
-        assert_eq!(mesh.indices.len(), 12 * 3, "single hex → 12 boundary triangles");
+        assert_eq!(
+            mesh.indices.len(),
+            12 * 3,
+            "single hex -> 12 boundary triangles"
+        );
     }
 
     #[test]

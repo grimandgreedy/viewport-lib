@@ -1,9 +1,9 @@
-//! Showcase 12: Scalar Fields & Colormaps — build and overlay methods.
+//! Showcase 12: Scalar Fields & Colormaps : build and overlay methods.
 //!
 //! Three objects each carrying a different procedural scalar attribute:
-//!   Object 0 — Sphere,    attribute "height"   (world Z of each vertex, 0..1 range)
-//!   Object 1 — Wave Grid, attribute "wave"      (sine-derived 2-D wave, -1..1 range)
-//!   Object 2 — Box,       attribute "distance"  (distance from center, with NaN below 0.3)
+//!   Object 0 : Sphere,    attribute "height"   (world Z of each vertex, 0..1 range)
+//!   Object 1 : Wave Grid, attribute "wave"      (sine-derived 2-D wave, -1..1 range)
+//!   Object 2 : Box,       attribute "distance"  (distance from center, with NaN below 0.3)
 
 use crate::App;
 use viewport_lib::{
@@ -21,7 +21,7 @@ impl App {
         let height_scalars: Vec<f32> = sphere
             .positions
             .iter()
-            .map(|p| (p[2] + 3.0) / 6.0) // normalize z from [-3,3] → [0,1]
+            .map(|p| (p[2] + 3.0) / 6.0) // normalize z from [-3,3] -> [0,1]
             .collect();
         sphere.attributes.insert(
             "height".to_string(),
@@ -36,7 +36,11 @@ impl App {
             "Sphere",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(-6.0, 0.0, 0.0)),
-            { let mut m = Material::from_color([0.8, 0.8, 0.8]); m.roughness = 0.5; m },
+            {
+                let mut m = Material::from_color([0.8, 0.8, 0.8]);
+                m.roughness = 0.5;
+                m
+            },
         );
         self.scalar_node_ids[0] = sphere_node;
         self.scalar_pick_positions[0] = sphere.positions.clone();
@@ -50,12 +54,13 @@ impl App {
             .upload_mesh_data(&self.device, &wave_mesh)
             .expect("scalar wave mesh");
         let wave_id = MeshId::from_index(wave_idx);
-        let wave_node = self.scalar_scene.add_named(
-            "Wave Grid",
-            Some(wave_id),
-            glam::Mat4::IDENTITY,
-            { let mut m = Material::from_color([0.8, 0.8, 0.8]); m.roughness = 0.5; m },
-        );
+        let wave_node =
+            self.scalar_scene
+                .add_named("Wave Grid", Some(wave_id), glam::Mat4::IDENTITY, {
+                    let mut m = Material::from_color([0.8, 0.8, 0.8]);
+                    m.roughness = 0.5;
+                    m
+                });
         self.scalar_node_ids[1] = wave_node;
         self.scalar_pick_positions[1] = wave_mesh.positions.clone();
         self.scalar_pick_indices[1] = wave_mesh.indices.clone();
@@ -72,7 +77,11 @@ impl App {
             "Distance Box",
             Some(box_id),
             glam::Mat4::from_translation(glam::Vec3::new(6.0, 0.0, 0.0)),
-            { let mut m = Material::from_color([0.8, 0.8, 0.8]); m.roughness = 0.5; m },
+            {
+                let mut m = Material::from_color([0.8, 0.8, 0.8]);
+                m.roughness = 0.5;
+                m
+            },
         );
         self.scalar_node_ids[2] = box_node;
         self.scalar_pick_positions[2] = box_mesh.positions.clone();

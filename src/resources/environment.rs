@@ -1,9 +1,9 @@
 //! CPU-side IBL precomputation and environment map upload.
 //!
 //! Produces:
-//! - **Irradiance map** (64×32 equirect) — diffuse hemisphere integral.
-//! - **Prefiltered specular map** (128×64 equirect, 5 mip levels) — split-sum approximation.
-//! - **BRDF integration LUT** (128×128) — Schlick-GGX split-sum second integral.
+//! - **Irradiance map** (64×32 equirect) : diffuse hemisphere integral.
+//! - **Prefiltered specular map** (128×64 equirect, 5 mip levels) : split-sum approximation.
+//! - **BRDF integration LUT** (128×128) : Schlick-GGX split-sum second integral.
 //!
 //! All textures are Rgba16Float for HDR correctness.
 //!
@@ -22,7 +22,7 @@ use std::f32::consts::PI;
 ///
 /// `pixels` is row-major RGBA f32 (4 floats per pixel), `width`×`height`.
 /// After this call, the camera bind groups must be rebuilt so shaders see the
-/// new textures — call `rebuild_camera_bind_groups` on the renderer.
+/// new textures : call `rebuild_camera_bind_groups` on the renderer.
 ///
 /// **Performance:** This performs heavy CPU-side precomputation (irradiance
 /// convolution, GGX specular prefilter, BRDF LUT). Call during asset loading
@@ -118,7 +118,7 @@ fn upload_rgba16f(
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    // Convert f32 → f16 for upload.
+    // Convert f32 -> f16 for upload.
     let half_data: Vec<u16> = pixels.iter().map(|&f| f32_to_f16(f)).collect();
     queue.write_texture(
         wgpu::TexelCopyTextureInfo {
@@ -490,7 +490,7 @@ fn f32_to_f16(value: f32) -> u16 {
     let bits = value.to_bits();
     let sign = (bits >> 16) & 0x8000;
 
-    // NaN → f16 NaN (preserve sign, quiet NaN).
+    // NaN -> f16 NaN (preserve sign, quiet NaN).
     if (bits & 0x7FFF_FFFF) > 0x7F80_0000 {
         return (sign | 0x7E00) as u16;
     }
@@ -499,15 +499,15 @@ fn f32_to_f16(value: f32) -> u16 {
     let mantissa = bits & 0x7F_FFFF;
 
     if exp > 15 {
-        // Overflow → infinity.
+        // Overflow -> infinity.
         (sign | 0x7C00) as u16
     } else if exp < -14 {
-        // Underflow → flush to zero (denormals ignored for simplicity).
+        // Underflow -> flush to zero (denormals ignored for simplicity).
         sign as u16
     } else {
         let rounded = mantissa + 0x0000_1000; // round to nearest
         if rounded & 0x0080_0000 != 0 {
-            // Mantissa overflow — carry into exponent.
+            // Mantissa overflow : carry into exponent.
             let new_exp = (exp + 16) as u32;
             if new_exp > 30 {
                 return (sign | 0x7C00) as u16; // overflow to infinity

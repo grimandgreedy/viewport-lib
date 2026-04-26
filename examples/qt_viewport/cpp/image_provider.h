@@ -45,7 +45,7 @@ private:
     QMutex m_mutex;
 };
 
-/// Global singleton pointer — set in main() before the QML engine loads.
+/// Global singleton pointer : set in main() before the QML engine loads.
 /// This is the simplest way to share the provider between Rust and QML.
 inline ViewportImageProvider* g_viewport_provider = nullptr;
 

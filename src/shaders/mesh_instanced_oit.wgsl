@@ -2,8 +2,8 @@
 //
 // Identical to mesh_instanced.wgsl except the fragment shader outputs two
 // weighted-blended OIT targets instead of a single HDR color:
-//   @location(0) accum  — Rgba16Float accumulation buffer
-//   @location(1) reveal — R8Unorm   reveal (transmittance) buffer
+//   @location(0) accum  : Rgba16Float accumulation buffer
+//   @location(1) reveal : R8Unorm   reveal (transmittance) buffer
 //
 // Group 0: Camera + shadow atlas + lights + clip planes (unchanged from mesh_instanced.wgsl).
 // Group 1: Instance storage buffer + albedo + sampler + normal map + AO map.
@@ -201,7 +201,7 @@ fn G_Smith(NdotV: f32, NdotL: f32, roughness: f32) -> f32 {
 fn F_Schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
     return F0 + (vec3<f32>(1.0) - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
-// IBL helpers — canonical source: mesh.wgsl
+// IBL helpers : canonical source: mesh.wgsl
 // Keep in sync with: mesh.wgsl, mesh_instanced.wgsl, mesh_oit.wgsl
 const IBL_PI: f32 = 3.14159265;
 fn dir_to_equirect_uv(dir: vec3<f32>, rotation: f32) -> vec2<f32> {
@@ -253,7 +253,7 @@ fn pbr_light_contrib(
 }
 
 // ---------------------------------------------------------------------------
-// OIT fragment shader — weighted blended output
+// OIT fragment shader : weighted blended output
 // ---------------------------------------------------------------------------
 @fragment
 fn fs_oit_main(in: VertexOut) -> OitOut {

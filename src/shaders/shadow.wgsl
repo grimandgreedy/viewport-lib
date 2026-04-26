@@ -1,8 +1,8 @@
-// Shadow depth pass — renders scene from the light's point of view.
+// Shadow depth pass : renders scene from the light's point of view.
 //
 // Depth-only: no fragment shader needed. The GPU writes depth automatically.
 // Group 0: Light uniform (light-space view-projection matrix).
-// Group 1: Object uniform (model matrix — reuses the same object bind group as the main pass).
+// Group 1: Object uniform (model matrix : reuses the same object bind group as the main pass).
 
 struct Light {
     view_proj: mat4x4<f32>,

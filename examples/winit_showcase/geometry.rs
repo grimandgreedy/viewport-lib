@@ -118,7 +118,7 @@ pub fn make_brick_ao_map(w: u32, h: u32) -> Vec<u8> {
             let by = (v * 4.0).fract();
 
             // Distance from the nearest edge, in both axes (0 = at edge, 0.5 = at centre).
-            // Using min(dx, dy) means AO darkens near ALL four edges of a brick equally —
+            // Using min(dx, dy) means AO darkens near ALL four edges of a brick equally :
             // no purely horizontal bands for the UV pole to amplify into a pinwheel.
             let dx = 0.5 - (bx - 0.5).abs();
             let dy = 0.5 - (by - 0.5).abs();

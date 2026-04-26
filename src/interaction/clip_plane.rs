@@ -89,7 +89,7 @@ pub fn project_drag_onto_normal(
 
 /// Snap a distance value to the nearest grid increment.
 ///
-/// Wraps [`snap_value`] — named separately for discoverability.
+/// Wraps [`snap_value`] : named separately for discoverability.
 pub fn snap_plane_distance(distance: f32, increment: f32) -> f32 {
     snap_value(distance, increment)
 }
@@ -115,7 +115,11 @@ pub fn plane_from_axis_preset(axis: ClipAxis, distance: f32) -> ClipObject {
         ClipAxis::Z => [0.0, 0.0, 1.0],
     };
     ClipObject {
-        shape: ClipShape::Plane { normal, distance, cap_color: None },
+        shape: ClipShape::Plane {
+            normal,
+            distance,
+            cap_color: None,
+        },
         ..ClipObject::default()
     }
 }
@@ -293,7 +297,7 @@ pub enum ClipPlaneSessionKind {
 pub enum ClipPlaneResult {
     /// No interaction this frame.
     None,
-    /// Active session produced a delta — apply to the clip plane.
+    /// Active session produced a delta : apply to the clip plane.
     Update(ClipPlaneDelta),
     /// Session completed (mouse release). Apply and finalise.
     Commit,
@@ -371,11 +375,11 @@ impl ClipPlaneController {
     /// Drive the controller for one frame.
     ///
     /// Priority order:
-    /// 1. Cancel (Escape) → [`ClipPlaneResult::Cancel`]
-    /// 2. Mouse release (dragging → false) → [`ClipPlaneResult::Commit`]
-    /// 3. Compute delta from cursor movement → [`ClipPlaneResult::Update`]
-    /// 4. If idle and drag started: hit-test the handle → begin session
-    /// 5. Otherwise → [`ClipPlaneResult::None`]
+    /// 1. Cancel (Escape) -> [`ClipPlaneResult::Cancel`]
+    /// 2. Mouse release (dragging -> false) -> [`ClipPlaneResult::Commit`]
+    /// 3. Compute delta from cursor movement -> [`ClipPlaneResult::Update`]
+    /// 4. If idle and drag started: hit-test the handle -> begin session
+    /// 5. Otherwise -> [`ClipPlaneResult::None`]
     pub fn update(&mut self, frame: &ActionFrame, ctx: ClipPlaneContext) -> ClipPlaneResult {
         if let Some(ref mut session) = self.session {
             // 1. Cancel.
@@ -423,7 +427,7 @@ impl ClipPlaneController {
                     }
                 }
                 ClipPlaneSessionKind::Orient => {
-                    // Orient session deferred per plan — emit zero delta.
+                    // Orient session deferred per plan : emit zero delta.
                     ClipPlaneDelta {
                         distance_delta: 0.0,
                         normal_override: None,
@@ -434,7 +438,7 @@ impl ClipPlaneController {
             return ClipPlaneResult::Update(delta);
         }
 
-        // No active session — update hover state and check for a new drag.
+        // No active session : update hover state and check for a new drag.
         self.hovered = false;
 
         if let Some(cursor) = ctx.cursor_viewport {
@@ -443,12 +447,14 @@ impl ClipPlaneController {
             let ray_dir =
                 unproject_cursor_to_ray(cursor, &ctx.camera, view_proj, ctx.viewport_size);
 
-            let (plane_normal_arr, plane_dist) =
-                if let ClipShape::Plane { normal, distance, .. } = ctx.plane.shape {
-                    (normal, distance)
-                } else {
-                    return ClipPlaneResult::None;
-                };
+            let (plane_normal_arr, plane_dist) = if let ClipShape::Plane {
+                normal, distance, ..
+            } = ctx.plane.shape
+            {
+                (normal, distance)
+            } else {
+                return ClipPlaneResult::None;
+            };
             let plane_normal = glam::Vec3::from(plane_normal_arr);
             let plane_center = plane_normal * plane_dist;
             let handle_length = ctx.plane_extent * 0.4;
@@ -480,7 +486,7 @@ impl ClipPlaneController {
             let is_hit = hit != ClipPlaneHit::None;
             self.hovered = is_hit;
 
-            // 4. Drag start on a hit → begin session.
+            // 4. Drag start on a hit -> begin session.
             if ctx.drag_started && is_hit {
                 let kind = match hit {
                     ClipPlaneHit::NormalHandle { .. } => ClipPlaneSessionKind::Orient,
@@ -513,12 +519,14 @@ impl ClipPlaneController {
         if !ctx.plane.enabled {
             return None;
         }
-        let (normal_arr, distance) =
-            if let ClipShape::Plane { normal, distance, .. } = ctx.plane.shape {
-                (normal, distance)
-            } else {
-                return None;
-            };
+        let (normal_arr, distance) = if let ClipShape::Plane {
+            normal, distance, ..
+        } = ctx.plane.shape
+        {
+            (normal, distance)
+        } else {
+            return None;
+        };
         let normal = glam::Vec3::from(normal_arr);
         let center = normal * distance;
         let active = self.is_active();
@@ -562,7 +570,10 @@ impl ClipPlaneController {
         if self.session.is_some() {
             return;
         }
-        if let ClipShape::Plane { normal, distance, .. } = obj.shape {
+        if let ClipShape::Plane {
+            normal, distance, ..
+        } = obj.shape
+        {
             self.session = Some(ClipPlaneSession {
                 kind: ClipPlaneSessionKind::Distance,
                 original_normal: normal,
@@ -672,7 +683,10 @@ mod tests {
     #[test]
     fn plane_from_axis_preset_x() {
         let p = plane_from_axis_preset(ClipAxis::X, 3.0);
-        if let ClipShape::Plane { normal, distance, .. } = p.shape {
+        if let ClipShape::Plane {
+            normal, distance, ..
+        } = p.shape
+        {
             assert_eq!(normal, [1.0, 0.0, 0.0]);
             assert!((distance - 3.0).abs() < 1e-6);
         } else {
@@ -684,7 +698,10 @@ mod tests {
     #[test]
     fn plane_from_axis_preset_y() {
         let p = plane_from_axis_preset(ClipAxis::Y, -2.0);
-        if let ClipShape::Plane { normal, distance, .. } = p.shape {
+        if let ClipShape::Plane {
+            normal, distance, ..
+        } = p.shape
+        {
             assert_eq!(normal, [0.0, 1.0, 0.0]);
             assert!((distance - (-2.0)).abs() < 1e-6);
         } else {
@@ -722,7 +739,7 @@ mod tests {
 
     #[test]
     fn ray_plane_intersection_behind_returns_none() {
-        // plane at y=0, ray at y=5 pointing up (+y) — intersection is behind origin
+        // plane at y=0, ray at y=5 pointing up (+y) : intersection is behind origin
         let origin = glam::Vec3::new(0.0, 5.0, 0.0);
         let dir = glam::Vec3::new(0.0, 1.0, 0.0);
         assert!(ray_plane_intersection(origin, dir, glam::Vec3::Y, 0.0).is_none());
@@ -817,7 +834,11 @@ mod tests {
         ctrl.begin_distance(&default_plane());
         // Second call is a no-op.
         let other = ClipObject {
-            shape: ClipShape::Plane { normal: [1.0, 0.0, 0.0], distance: 5.0, cap_color: None },
+            shape: ClipShape::Plane {
+                normal: [1.0, 0.0, 0.0],
+                distance: 5.0,
+                cap_color: None,
+            },
             enabled: true,
             ..ClipObject::default()
         };
@@ -855,7 +876,7 @@ mod tests {
     fn controller_drag_release_commits() {
         let mut ctrl = ClipPlaneController::new();
         ctrl.begin_distance(&default_plane());
-        // dragging = false → commit
+        // dragging = false -> commit
         let result = ctrl.update(&ActionFrame::default(), idle_ctx());
         assert_eq!(result, ClipPlaneResult::Commit);
         assert!(!ctrl.is_active());

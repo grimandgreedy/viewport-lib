@@ -13,13 +13,13 @@ use crate::interaction::gizmo::{GizmoAxis, project_drag_onto_axis};
 /// `cursor_viewport` is `None`.
 ///
 /// # Arguments
-/// * `cursor_viewport` — current cursor position in viewport-local pixels (Y-down).
-/// * `pointer_delta` — mouse movement since last frame in pixels.
-/// * `gizmo_center` — world-space rotation pivot.
-/// * `axis_world` — world-space rotation axis (unit vector).
-/// * `view_proj` — camera view-projection matrix.
-/// * `viewport_size` — viewport dimensions in pixels.
-/// * `camera_view` — camera view matrix (used to orient the angle sign).
+/// * `cursor_viewport` : current cursor position in viewport-local pixels (Y-down).
+/// * `pointer_delta` : mouse movement since last frame in pixels.
+/// * `gizmo_center` : world-space rotation pivot.
+/// * `axis_world` : world-space rotation axis (unit vector).
+/// * `view_proj` : camera view-projection matrix.
+/// * `viewport_size` : viewport dimensions in pixels.
+/// * `camera_view` : camera view matrix (used to orient the angle sign).
 pub fn angular_rotation_from_cursor(
     cursor_viewport: Option<glam::Vec2>,
     pointer_delta: glam::Vec2,
@@ -60,7 +60,7 @@ pub fn angular_rotation_from_cursor(
     // In a look_at_rh view matrix, camera +Z points backward (away from scene),
     // so axis_z_cam > 0 means the axis points toward the camera.
     // For a toward-camera axis, RH positive rotation = CCW from camera = CCW visual.
-    // In Y-down screen space, CCW visual → negative cross2d → negative screen_angle,
+    // In Y-down screen space, CCW visual -> negative cross2d -> negative screen_angle,
     // so we negate to recover the positive world angle.
     let axis_z_cam = (camera_view * axis_world.extend(0.0)).z;
     if axis_z_cam >= 0.0 {
@@ -73,12 +73,12 @@ pub fn angular_rotation_from_cursor(
 /// Compute the world-space translation vector from a pointer delta given an axis constraint.
 ///
 /// # Arguments
-/// * `pointer_delta` — mouse movement in pixels since last frame.
-/// * `axis` — optional axis constraint. `None` = free camera-plane movement.
-/// * `exclude_axis` — if `true`, `axis` names the axis to *exclude*; movement is in the perpendicular plane.
-/// * `gizmo_center` — world-space pivot (used for axis projection).
-/// * `camera` — current camera (provides right, up, distance, fov_y).
-/// * `viewport_size` — viewport dimensions in pixels.
+/// * `pointer_delta` : mouse movement in pixels since last frame.
+/// * `axis` : optional axis constraint. `None` = free camera-plane movement.
+/// * `exclude_axis` : if `true`, `axis` names the axis to *exclude*; movement is in the perpendicular plane.
+/// * `gizmo_center` : world-space pivot (used for axis projection).
+/// * `camera` : current camera (provides right, up, distance, fov_y).
+/// * `viewport_size` : viewport dimensions in pixels.
 pub fn constrained_translation(
     pointer_delta: glam::Vec2,
     axis: Option<GizmoAxis>,
@@ -132,12 +132,12 @@ pub fn constrained_translation(
 /// All returned scale factors are clamped to `>= 0.001`.
 ///
 /// # Arguments
-/// * `pointer_delta` — mouse movement in pixels since last frame.
-/// * `axis` — optional axis constraint. `None` = uniform scale.
-/// * `exclude_axis` — if `true`, `axis` names the axis to hold at 1.0; the other two axes scale uniformly.
-/// * `position` — world-space object position (used for axis projection onto screen).
-/// * `view_proj` — camera view-projection matrix.
-/// * `viewport_size` — viewport dimensions in pixels.
+/// * `pointer_delta` : mouse movement in pixels since last frame.
+/// * `axis` : optional axis constraint. `None` = uniform scale.
+/// * `exclude_axis` : if `true`, `axis` names the axis to hold at 1.0; the other two axes scale uniformly.
+/// * `position` : world-space object position (used for axis projection onto screen).
+/// * `view_proj` : camera view-projection matrix.
+/// * `viewport_size` : viewport dimensions in pixels.
 pub fn constrained_scale(
     pointer_delta: glam::Vec2,
     axis: Option<GizmoAxis>,

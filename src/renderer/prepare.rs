@@ -7,7 +7,7 @@ impl ViewportRenderer {
     /// Call once per frame before any `prepare_viewport_internal` calls.
     ///
     /// Reads `scene_fx` for lighting, IBL, and compute filters.  Still reads
-    /// `frame.camera` for shadow cascade computation (Phase 1 coupling — see
+    /// `frame.camera` for shadow cascade computation (Phase 1 coupling : see
     /// multi-viewport-plan.md § shadow strategy; decoupled in Phase 2).
     pub(super) fn prepare_scene_internal(
         &mut self,
@@ -16,7 +16,7 @@ impl ViewportRenderer {
         frame: &FrameData,
         scene_fx: &SceneEffects<'_>,
     ) {
-        // Phase G — GPU compute filtering.
+        // Phase G : GPU compute filtering.
         // Dispatch before the render pass. Completely skipped when list is empty (zero overhead).
         if !scene_fx.compute_filter_items.is_empty() {
             self.compute_filter_results =
@@ -190,7 +190,7 @@ impl ViewportRenderer {
 
         // -------------------------------------------------------------------
         // Compute CSM cascade matrices for lights[0] (directional).
-        // Phase 1 note: uses frame.camera — see multi-viewport-plan.md § shadow strategy.
+        // Phase 1 note: uses frame.camera : see multi-viewport-plan.md § shadow strategy.
         // -------------------------------------------------------------------
         let cascade_count = lighting.shadow_cascade_count.clamp(1, 4) as usize;
         let atlas_res = lighting.shadow_atlas_resolution.max(64);
@@ -383,11 +383,13 @@ impl ViewportRenderer {
             self.last_scene_items_count = usize::MAX;
         }
 
-        // Per-object uniform writes — needed for the non-instanced path, wireframe mode,
+        // Per-object uniform writes : needed for the non-instanced path, wireframe mode,
         // and for any items with active scalar attributes or two-sided materials
         // (both bypass the instanced path).
         let has_scalar_items = scene_items.iter().any(|i| i.active_attribute.is_some());
-        let has_two_sided_items = scene_items.iter().any(|i| i.two_sided || i.material.is_two_sided());
+        let has_two_sided_items = scene_items
+            .iter()
+            .any(|i| i.two_sided || i.material.is_two_sided());
         let has_matcap_items = scene_items.iter().any(|i| i.material.matcap_id.is_some());
         let has_param_vis_items = scene_items.iter().any(|i| i.material.param_vis.is_some());
         if !self.use_instancing
@@ -449,10 +451,9 @@ impl ViewportRenderer {
                     use_matcap: if m.matcap_id.is_some() { 1 } else { 0 },
                     matcap_blendable: m.matcap_id.map_or(0, |id| if id.blendable { 1 } else { 0 }),
                     _pad2: 0,
-                    use_face_color: u32::from(
-                        item.active_attribute.as_ref()
-                            .map_or(false, |a| a.kind == crate::resources::AttributeKind::FaceColor)
-                    ),
+                    use_face_color: u32::from(item.active_attribute.as_ref().map_or(false, |a| {
+                        a.kind == crate::resources::AttributeKind::FaceColor
+                    })),
                     uv_vis_mode: m.param_vis.map_or(0, |pv| pv.mode as u32),
                     uv_vis_scale: m.param_vis.map_or(8.0, |pv| pv.scale),
                     backface_policy: match m.backface_policy {
@@ -461,7 +462,9 @@ impl ViewportRenderer {
                         crate::scene::material::BackfacePolicy::DifferentColor(_) => 2,
                     },
                     backface_color: match m.backface_policy {
-                        crate::scene::material::BackfacePolicy::DifferentColor(c) => [c[0], c[1], c[2], 1.0],
+                        crate::scene::material::BackfacePolicy::DifferentColor(c) => {
+                            [c[0], c[1], c[2], 1.0]
+                        }
                         _ => [0.0; 4],
                     },
                 };
@@ -497,7 +500,7 @@ impl ViewportRenderer {
                     backface_color: [0.0; 4],
                 };
 
-                // Write uniform data — use get() to read buffer references, then drop.
+                // Write uniform data : use get() to read buffer references, then drop.
                 {
                     let mesh = resources
                         .mesh_store
@@ -533,7 +536,7 @@ impl ViewportRenderer {
             resources.ensure_instanced_pipelines(device);
 
             // Generation-based cache: skip batch rebuild and GPU upload when nothing changed.
-            // Phase 2: wireframe_mode removed from cache key — wireframe rendering
+            // Phase 2: wireframe_mode removed from cache key : wireframe rendering
             // uses the per-object wireframe_pipeline, not the instanced path, so
             // instance data is now viewport-agnostic.
             let cache_valid = frame.scene.generation == self.last_scene_generation
@@ -541,7 +544,7 @@ impl ViewportRenderer {
                 && scene_items.len() == self.last_scene_items_count;
 
             if !cache_valid {
-                // Cache miss — rebuild batches and upload instance data.
+                // Cache miss : rebuild batches and upload instance data.
                 let mut sorted_items: Vec<&SceneRenderItem> = scene_items
                     .iter()
                     .filter(|item| {
@@ -600,7 +603,7 @@ impl ViewportRenderer {
                                         m.opacity,
                                     ],
                                     selected: if item.selected { 1 } else { 0 },
-                                    wireframe: 0, // Phase 2: always 0 — wireframe uses per-object pipeline
+                                    wireframe: 0, // Phase 2: always 0 : wireframe uses per-object pipeline
                                     ambient: m.ambient,
                                     diffuse: m.diffuse,
                                     specular: m.specular,
@@ -661,7 +664,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // SciVis Phase B — point cloud and glyph GPU data upload.
+        // SciVis Phase B : point cloud and glyph GPU data upload.
         // ------------------------------------------------------------------
         self.point_cloud_gpu_data.clear();
         if !frame.scene.point_clouds.is_empty() {
@@ -688,7 +691,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // SciVis Phase M8 — polyline GPU data upload.
+        // SciVis Phase M8 : polyline GPU data upload.
         // ------------------------------------------------------------------
         self.polyline_gpu_data.clear();
         let vp_size = frame.camera.viewport_size;
@@ -704,7 +707,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // SciVis Phase L — isoline extraction and upload via polyline pipeline.
+        // SciVis Phase L : isoline extraction and upload via polyline pipeline.
         // ------------------------------------------------------------------
         if !frame.scene.isolines.is_empty() {
             resources.ensure_polyline_pipeline(device);
@@ -732,7 +735,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // Phase 10A — camera frustum wireframes (converted to polylines).
+        // Phase 10A : camera frustum wireframes (converted to polylines).
         // ------------------------------------------------------------------
         if !frame.scene.camera_frustums.is_empty() {
             resources.ensure_polyline_pipeline(device);
@@ -746,7 +749,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // Phase 10B — screen-space image overlays.
+        // Phase 10B : screen-space image overlays.
         // ------------------------------------------------------------------
         self.screen_image_gpu_data.clear();
         if !frame.scene.screen_images.is_empty() {
@@ -763,7 +766,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // SciVis Phase M — streamtube GPU data upload.
+        // SciVis Phase M : streamtube GPU data upload.
         // ------------------------------------------------------------------
         self.streamtube_gpu_data.clear();
         if !frame.scene.streamtube_items.is_empty() {
@@ -780,7 +783,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // SciVis Phase D — volume GPU data upload.
+        // SciVis Phase D : volume GPU data upload.
         // Phase 1 note: clip_planes are per-viewport but passed here for culling.
         // Fix in Phase 2/3: upload clip-plane-agnostic data; apply planes in shader.
         // ------------------------------------------------------------------
@@ -794,7 +797,12 @@ impl ViewportRenderer {
                 .iter()
                 .filter(|o| o.enabled)
                 .filter_map(|o| {
-                    if let ClipShape::Plane { normal, distance, cap_color } = o.shape {
+                    if let ClipShape::Plane {
+                        normal,
+                        distance,
+                        cap_color,
+                    } = o.shape
+                    {
                         Some(crate::renderer::types::ClipPlane {
                             normal,
                             distance,
@@ -807,8 +815,7 @@ impl ViewportRenderer {
                 })
                 .collect();
             for item in &frame.scene.volumes {
-                let gpu =
-                    resources.upload_volume_frame(device, queue, item, &clip_planes_for_vol);
+                let gpu = resources.upload_volume_frame(device, queue, item, &clip_planes_for_vol);
                 self.volume_gpu_data.push(gpu);
             }
         }
@@ -862,7 +869,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // Shadow depth pass — CSM: render each cascade into its atlas tile.
+        // Shadow depth pass : CSM: render each cascade into its atlas tile.
         // ------------------------------------------------------------------
         if lighting.shadows_enabled && !scene_items.is_empty() {
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -1061,13 +1068,17 @@ impl ViewportRenderer {
 
                 for obj in viewport_fx.clip_objects.iter().filter(|o| o.enabled) {
                     match obj.shape {
-                        ClipShape::Plane { normal, distance, .. } if count < 6 => {
+                        ClipShape::Plane {
+                            normal, distance, ..
+                        } if count < 6 => {
                             planes[count as usize] = [normal[0], normal[1], normal[2], distance];
                             count += 1;
                         }
-                        ClipShape::Box { center, half_extents, orientation }
-                            if clip_vol_uniform.volume_type == 0 =>
-                        {
+                        ClipShape::Box {
+                            center,
+                            half_extents,
+                            orientation,
+                        } if clip_vol_uniform.volume_type == 0 => {
                             clip_vol_uniform.volume_type = 2;
                             clip_vol_uniform.box_center = center;
                             clip_vol_uniform.box_half_extents = half_extents;
@@ -1132,7 +1143,7 @@ impl ViewportRenderer {
                 queue.write_buffer(&slot.camera_buf, 0, bytemuck::cast_slice(&[camera_uniform]));
             }
 
-            // Upload grid uniform (full-screen analytical shader — no vertex buffers needed).
+            // Upload grid uniform (full-screen analytical shader : no vertex buffers needed).
             if frame.viewport.show_grid {
                 let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
                 if !eye.is_finite() {
@@ -1248,8 +1259,7 @@ impl ViewportRenderer {
                 let right = orient * glam::Vec3::X;
                 let up = orient * glam::Vec3::Y;
                 let back = orient * glam::Vec3::Z;
-                let aspect = frame.camera.viewport_size[0]
-                    / frame.camera.viewport_size[1].max(1.0);
+                let aspect = frame.camera.viewport_size[0] / frame.camera.viewport_size[1].max(1.0);
                 let tan_half_fov = (frame.camera.render_camera.fov / 2.0).tan();
                 let vp = frame.camera.render_camera.view_proj().to_cols_array_2d();
                 let gp_uniform = crate::resources::GroundPlaneUniform {
@@ -1276,7 +1286,6 @@ impl ViewportRenderer {
                     bytemuck::cast_slice(&[gp_uniform]),
                 );
             }
-
         } // `resources` mutable borrow dropped here.
 
         // ------------------------------------------------------------------
@@ -1317,9 +1326,14 @@ impl ViewportRenderer {
                     _pad_scalar: 0,
                     nan_color: [0.0; 4],
                     use_nan_color: 0,
-                    use_matcap: 0, matcap_blendable: 0, _pad2: 0,
-                    use_face_color: 0, uv_vis_mode: 0, uv_vis_scale: 8.0,
-                    backface_policy: 0, backface_color: [0.0; 4],
+                    use_matcap: 0,
+                    matcap_blendable: 0,
+                    _pad2: 0,
+                    use_face_color: 0,
+                    uv_vis_mode: 0,
+                    uv_vis_scale: 8.0,
+                    backface_policy: 0,
+                    backface_color: [0.0; 4],
                 };
                 let stencil_buf = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("outline_stencil_object_uniform_buf"),
@@ -1465,12 +1479,17 @@ impl ViewportRenderer {
             constraint_line_buffers.push(self.resources.create_constraint_overlay(device, overlay));
         }
 
-        // Clip plane overlays — generated automatically from clip_objects with a color set.
+        // Clip plane overlays : generated automatically from clip_objects with a color set.
         let mut clip_plane_fill_buffers = Vec::new();
         let mut clip_plane_line_buffers = Vec::new();
         for obj in viewport_fx.clip_objects.iter().filter(|o| o.enabled) {
-            let Some(base_color) = obj.color else { continue };
-            if let ClipShape::Plane { normal, distance, .. } = obj.shape {
+            let Some(base_color) = obj.color else {
+                continue;
+            };
+            if let ClipShape::Plane {
+                normal, distance, ..
+            } = obj.shape
+            {
                 let n = glam::Vec3::from(normal);
                 // Shader plane equation: dot(p, n) + distance = 0, so the plane
                 // sits at -n * distance from the origin.
@@ -1479,18 +1498,38 @@ impl ViewportRenderer {
                 let hovered = obj.hovered || active;
 
                 let fill_color = if active {
-                    [base_color[0] * 0.5, base_color[1] * 0.5, base_color[2] * 0.5, base_color[3] * 0.5]
+                    [
+                        base_color[0] * 0.5,
+                        base_color[1] * 0.5,
+                        base_color[2] * 0.5,
+                        base_color[3] * 0.5,
+                    ]
                 } else if hovered {
-                    [base_color[0] * 0.8, base_color[1] * 0.8, base_color[2] * 0.8, base_color[3] * 0.6]
+                    [
+                        base_color[0] * 0.8,
+                        base_color[1] * 0.8,
+                        base_color[2] * 0.8,
+                        base_color[3] * 0.6,
+                    ]
                 } else {
-                    [base_color[0] * 0.5, base_color[1] * 0.5, base_color[2] * 0.5, base_color[3] * 0.3]
+                    [
+                        base_color[0] * 0.5,
+                        base_color[1] * 0.5,
+                        base_color[2] * 0.5,
+                        base_color[3] * 0.3,
+                    ]
                 };
                 let border_color = if active {
                     [base_color[0], base_color[1], base_color[2], 0.9]
                 } else if hovered {
                     [base_color[0], base_color[1], base_color[2], 0.8]
                 } else {
-                    [base_color[0] * 0.9, base_color[1] * 0.9, base_color[2] * 0.9, 0.6]
+                    [
+                        base_color[0] * 0.9,
+                        base_color[1] * 0.9,
+                        base_color[2] * 0.9,
+                        0.6,
+                    ]
                 };
 
                 let overlay = crate::interaction::clip_plane::ClipPlaneOverlay {
@@ -1503,10 +1542,12 @@ impl ViewportRenderer {
                     active,
                 };
                 clip_plane_fill_buffers.push(
-                    self.resources.create_clip_plane_fill_overlay(device, &overlay),
+                    self.resources
+                        .create_clip_plane_fill_overlay(device, &overlay),
                 );
                 clip_plane_line_buffers.push(
-                    self.resources.create_clip_plane_line_overlay(device, &overlay),
+                    self.resources
+                        .create_clip_plane_line_overlay(device, &overlay),
                 );
             } else {
                 // Box/Sphere: generate wireframe polyline.
@@ -1514,16 +1555,25 @@ impl ViewportRenderer {
                 // no-op if already initialised, so calling it here is always safe.
                 self.resources.ensure_polyline_pipeline(device);
                 match obj.shape {
-                    ClipShape::Box { center, half_extents, orientation } => {
-                        let polyline = clip_box_outline(center, half_extents, orientation, base_color);
+                    ClipShape::Box {
+                        center,
+                        half_extents,
+                        orientation,
+                    } => {
+                        let polyline =
+                            clip_box_outline(center, half_extents, orientation, base_color);
                         let vp_size = frame.camera.viewport_size;
-                        let gpu = self.resources.upload_polyline(device, queue, &polyline, vp_size);
+                        let gpu = self
+                            .resources
+                            .upload_polyline(device, queue, &polyline, vp_size);
                         self.polyline_gpu_data.push(gpu);
                     }
                     ClipShape::Sphere { center, radius } => {
                         let polyline = clip_sphere_outline(center, radius, base_color);
                         let vp_size = frame.camera.viewport_size;
-                        let gpu = self.resources.upload_polyline(device, queue, &polyline, vp_size);
+                        let gpu = self
+                            .resources
+                            .upload_polyline(device, queue, &polyline, vp_size);
                         self.polyline_gpu_data.push(gpu);
                     }
                     _ => {}
@@ -1535,7 +1585,12 @@ impl ViewportRenderer {
         let mut cap_buffers = Vec::new();
         if viewport_fx.cap_fill_enabled {
             for obj in viewport_fx.clip_objects.iter().filter(|o| o.enabled) {
-                if let ClipShape::Plane { normal, distance, cap_color } = obj.shape {
+                if let ClipShape::Plane {
+                    normal,
+                    distance,
+                    cap_color,
+                } = obj.shape
+                {
                     let plane_n = glam::Vec3::from(normal);
                     for item in scene_items.iter().filter(|i| i.visible) {
                         let Some(mesh) = self
@@ -1550,15 +1605,12 @@ impl ViewportRenderer {
                         if !world_aabb.intersects_plane(plane_n, distance) {
                             continue;
                         }
-                        let (Some(pos), Some(idx)) = (&mesh.cpu_positions, &mesh.cpu_indices) else {
+                        let (Some(pos), Some(idx)) = (&mesh.cpu_positions, &mesh.cpu_indices)
+                        else {
                             continue;
                         };
                         if let Some(cap) = crate::geometry::cap_geometry::generate_cap_mesh(
-                            pos,
-                            idx,
-                            &model,
-                            plane_n,
-                            distance,
+                            pos, idx, &model, plane_n, distance,
                         ) {
                             let bc = item.material.base_color;
                             let color = cap_color.unwrap_or([bc[0], bc[1], bc[2], 1.0]);
@@ -1655,7 +1707,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // Outline offscreen pass — render stencil-based outline ring into a
+        // Outline offscreen pass : render stencil-based outline ring into a
         // dedicated RGBA texture so the paint() path can composite it later.
         //
         // Uses the per-viewport camera bind group and per-viewport HDR views.
@@ -1669,7 +1721,14 @@ impl ViewportRenderer {
             let h = frame.camera.viewport_size[1] as u32;
 
             // Ensure per-viewport HDR state exists (provides outline color + depth views).
-            self.ensure_viewport_hdr(device, queue, vp_idx, w.max(1), h.max(1), frame.effects.post_process.ssaa_factor.max(1));
+            self.ensure_viewport_hdr(
+                device,
+                queue,
+                vp_idx,
+                w.max(1),
+                h.max(1),
+                frame.effects.post_process.ssaa_factor.max(1),
+            );
 
             // Extract raw pointers for slot fields needed inside the render pass
             // alongside &self.resources borrows (borrow-checker trick: slot and resources
@@ -1801,9 +1860,18 @@ fn clip_box_outline(
         c - ax + ay + az,
     ];
     let edges: [(usize, usize); 12] = [
-        (0, 1), (1, 2), (2, 3), (3, 0), // bottom face
-        (4, 5), (5, 6), (6, 7), (7, 4), // top face
-        (0, 4), (1, 5), (2, 6), (3, 7), // verticals
+        (0, 1),
+        (1, 2),
+        (2, 3),
+        (3, 0), // bottom face
+        (4, 5),
+        (5, 6),
+        (6, 7),
+        (7, 4), // top face
+        (0, 4),
+        (1, 5),
+        (2, 6),
+        (3, 7), // verticals
     ];
 
     let mut positions = Vec::with_capacity(24);

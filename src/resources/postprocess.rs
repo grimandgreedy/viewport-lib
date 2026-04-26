@@ -1152,7 +1152,7 @@ impl ViewportGpuResources {
         let ao_placeholder_view = self.ao_placeholder_view.as_ref().unwrap();
         let cs_placeholder_view = self.cs_placeholder_view.as_ref().unwrap();
 
-        // Contact shadow bind group — reads depth + uniform.
+        // Contact shadow bind group : reads depth + uniform.
         let cs_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("contact_shadow_bg"),
             layout: &cs_bgl,
@@ -1985,7 +1985,7 @@ impl ViewportGpuResources {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 3: Per-viewport HDR state — shared infrastructure
+    // Phase 3: Per-viewport HDR state : shared infrastructure
     // -----------------------------------------------------------------------
 
     /// Create all shared HDR/post-process infrastructure (BGLs, pipelines,
@@ -3250,43 +3250,42 @@ impl ViewportGpuResources {
         });
         let ssaa_resolve_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ssaa_resolve_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/ssaa_resolve.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/ssaa_resolve.wgsl").into()),
         });
         let ssaa_resolve_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ssaa_resolve_layout"),
             bind_group_layouts: &[&ssaa_resolve_bgl],
             push_constant_ranges: &[],
         });
-        let ssaa_resolve_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("ssaa_resolve_pipeline"),
-            layout: Some(&ssaa_resolve_layout),
-            vertex: wgpu::VertexState {
-                module: &ssaa_resolve_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &ssaa_resolve_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        let ssaa_resolve_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("ssaa_resolve_pipeline"),
+                layout: Some(&ssaa_resolve_layout),
+                vertex: wgpu::VertexState {
+                    module: &ssaa_resolve_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &ssaa_resolve_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
         self.ssaa_resolve_bgl = Some(ssaa_resolve_bgl);
         self.ssaa_resolve_pipeline = Some(ssaa_resolve_pipeline);
 
@@ -3844,14 +3843,21 @@ impl ViewportGpuResources {
         let _ = oit_composite_bg_placeholder; // will not use the placeholder - OIT is Option<>
 
         // --- SSAA targets (allocated when ssaa_factor > 1) ---
-        let (ssaa_color_texture, ssaa_color_view, ssaa_depth_texture, ssaa_depth_view,
-             ssaa_resolve_bind_group, ssaa_uniform_buf) = if ssaa_factor > 1 {
+        let (
+            ssaa_color_texture,
+            ssaa_color_view,
+            ssaa_depth_texture,
+            ssaa_depth_view,
+            ssaa_resolve_bind_group,
+            ssaa_uniform_buf,
+        ) = if ssaa_factor > 1 {
             let sw = w * ssaa_factor;
             let sh = h * ssaa_factor;
             let ssaa_color_tex = make_tex(
                 "ssaa_color_texture",
                 wgpu::TextureFormat::Rgba16Float,
-                sw, sh,
+                sw,
+                sh,
                 wgpu::TextureUsages::empty(),
             );
             let ssaa_color_view =
@@ -3859,20 +3865,23 @@ impl ViewportGpuResources {
             let ssaa_depth_tex = make_tex(
                 "ssaa_depth_texture",
                 wgpu::TextureFormat::Depth24PlusStencil8,
-                sw, sh,
+                sw,
+                sh,
                 wgpu::TextureUsages::empty(),
             );
             let ssaa_depth_view =
                 ssaa_depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
             // Build the resolve bind group if the pipeline is available.
-            let (ssaa_resolve_bg, ssaa_ubuf) = if let (Some(bgl), Some(nearest)) = (
-                &self.ssaa_resolve_bgl,
-                &self.pp_nearest_sampler,
-            ) {
+            let (ssaa_resolve_bg, ssaa_ubuf) = if let (Some(bgl), Some(nearest)) =
+                (&self.ssaa_resolve_bgl, &self.pp_nearest_sampler)
+            {
                 #[repr(C)]
                 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-                struct SsaaUniformData { factor: u32, _pad: [u32; 3] }
+                struct SsaaUniformData {
+                    factor: u32,
+                    _pad: [u32; 3],
+                }
                 let ubuf = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("ssaa_uniform_buf"),
                     size: std::mem::size_of::<SsaaUniformData>() as u64,
@@ -3882,7 +3891,10 @@ impl ViewportGpuResources {
                 queue.write_buffer(
                     &ubuf,
                     0,
-                    bytemuck::cast_slice(&[SsaaUniformData { factor: ssaa_factor, _pad: [0; 3] }]),
+                    bytemuck::cast_slice(&[SsaaUniformData {
+                        factor: ssaa_factor,
+                        _pad: [0; 3],
+                    }]),
                 );
                 let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("ssaa_resolve_bg"),
@@ -3907,8 +3919,14 @@ impl ViewportGpuResources {
                 (None, None)
             };
 
-            (Some(ssaa_color_tex), Some(ssaa_color_view), Some(ssaa_depth_tex),
-             Some(ssaa_depth_view), ssaa_resolve_bg, ssaa_ubuf)
+            (
+                Some(ssaa_color_tex),
+                Some(ssaa_color_view),
+                Some(ssaa_depth_tex),
+                Some(ssaa_depth_view),
+                ssaa_resolve_bg,
+                ssaa_ubuf,
+            )
         } else {
             (None, None, None, None, None, None)
         };

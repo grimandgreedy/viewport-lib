@@ -34,16 +34,16 @@ Whichever gui library you choose to use (`winit`, `eframe`, `Iced`, `Slint`, etc
 
 The `examples/` directory contains working integrations for several GUI frameworks.
 
-- **winit-viewport**: the most basic setup: raw `winit` + `wgpu` with no GUI framework. Start here if you want to understand the minimal integration.
-- **eframe-viewport**: a straightforward example of embedding the viewport inside an `egui`/`eframe` application using `egui_wgpu` callback resources.
-- **winit-showcase**: several more advanced rendering options across multiple showcases.
-- **winit-primitives**: demonstrates the built-in geometry primitives.
+- **eframe-showcase**: run this first: demonstrates many of the viewport's built-in capabilities across multiple showcases (not exhaustive).
+- **eframe-minimal**: the simplest integration: start here if you want to understand the minimal setup.
+- **eframe-primitives**: demonstrates the built-in geometry primitives.
+- **winit-viewport**: raw `winit` + `wgpu` with no GUI framework, for when you want full control.
 
-Other examples: `iced-viewport`, `slint-viewport`, `gtk4-viewport`, `qt-viewport`
+Other examples: `eframe-viewport`, `eframe-input-controllers`, `winit-showcase`, `winit-primitives`, `winit-multi-viewport`, `iced-viewport`, `slint-viewport`, `gtk4-viewport`
 
 Run examples with:
 ```
-cargo run --release --example winit-viewport
+cargo run --release --example eframe-showcase
 ```
 
 ## Quick start
@@ -51,7 +51,7 @@ cargo run --release --example winit-viewport
 In a typical app you will need to use both the renderer (to build and submit a `FrameData`) and the input handler to define and handle keys and events.
 
 ### Rendering
-```
+```rust
 use glam::{Mat4, vec3};
 use viewport_lib::{
     Camera,
@@ -87,7 +87,7 @@ renderer.prepare(&device, &queue, &fd);
 
 ### Input handling
 
-`OrbitCameraController` is one of the available built-in controllers. You can also build your own controller directly on top of `ViewportInput` and `ViewportBinding` if you need different navigation behaviour - but OrbinCameraController is a good starting point. Push events each frame, then call `apply_to_camera` to orbit/pan/zoom and get back an `ActionFrame` for the rest of your input logic.
+`OrbitCameraController` is one of the available built-in controllers. You can also build your own controller directly on top of `ViewportInput` and `ViewportBinding` if you need different navigation behaviour - but OrbitCameraController is a good starting point. Push events each frame, then call `apply_to_camera` to orbit/pan/zoom and get back an `ActionFrame` for the rest of your input logic.
 
 ```rust
 use viewport_lib::{BindingPreset, ManipulationContext, ManipulationController, ManipResult, OrbitCameraController, ViewportContext, ViewportEvent};

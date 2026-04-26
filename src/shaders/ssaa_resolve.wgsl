@@ -1,7 +1,7 @@
-// SSAA resolve pass — box-filter downsample from an N× supersampled texture to native resolution.
+// SSAA resolve pass : box-filter downsample from an N× supersampled texture to native resolution.
 //
 // Group 0, binding 0: ssaa_texture (Rgba16Float, w*factor × h*factor)
-// Group 0, binding 1: sampler (nearest — we do the averaging manually)
+// Group 0, binding 1: sampler (nearest : we do the averaging manually)
 // Group 0, binding 2: uniform { factor: u32, _pad: [u32;3] }
 //
 // The vertex shader emits a fullscreen triangle. The fragment shader reads

@@ -17,10 +17,7 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
-    BuiltinColormap, ColormapId, VolumeData, VolumeItem,
-    extract_isosurface,
-};
+use viewport_lib::{BuiltinColormap, ColormapId, VolumeData, VolumeItem, extract_isosurface};
 
 // ---------------------------------------------------------------------------
 // Volume mode enum
@@ -42,16 +39,16 @@ impl App {
     ///
     /// Generates a 64³ scalar field (sum of Gaussian blobs), uploads it to the
     /// GPU as a volume texture, and runs an initial isosurface extraction.
-    pub(crate) fn build_volume_scene(
-        &mut self,
-        renderer: &mut viewport_lib::ViewportRenderer,
-    ) {
+    pub(crate) fn build_volume_scene(&mut self, renderer: &mut viewport_lib::ViewportRenderer) {
         let field = make_gaussian_field(64);
 
         // Upload the 3D texture.
-        let vol_id = renderer
-            .resources_mut()
-            .upload_volume(&self.device, &self.queue, &field.data, field.dims);
+        let vol_id = renderer.resources_mut().upload_volume(
+            &self.device,
+            &self.queue,
+            &field.data,
+            field.dims,
+        );
         self.vol_volume_id = Some(vol_id);
         self.vol_field = field;
 
@@ -69,13 +66,10 @@ impl App {
     }
 
     /// Re-extract and re-upload the isosurface after an isovalue change.
-    pub(crate) fn rebuild_isosurface(
-        &mut self,
-        renderer: &mut viewport_lib::ViewportRenderer,
-    ) {
+    pub(crate) fn rebuild_isosurface(&mut self, renderer: &mut viewport_lib::ViewportRenderer) {
         let iso_mesh = extract_isosurface(&self.vol_field, self.vol_isovalue);
         if iso_mesh.positions.is_empty() {
-            // No surface at this isovalue — clear the index so nothing is drawn.
+            // No surface at this isovalue : clear the index so nothing is drawn.
             self.vol_iso_mesh_index = None;
             return;
         }
@@ -124,11 +118,9 @@ impl App {
 
         ui.separator();
 
-        // Isovalue — re-extract only on slider release to avoid GPU stalls.
+        // Isovalue : re-extract only on slider release to avoid GPU stalls.
         ui.label("Isovalue:");
-        let iso_resp = ui.add(
-            egui::Slider::new(&mut self.vol_isovalue, 0.01..=0.99).step_by(0.01),
-        );
+        let iso_resp = ui.add(egui::Slider::new(&mut self.vol_isovalue, 0.01..=0.99).step_by(0.01));
         if iso_resp.drag_stopped() || iso_resp.lost_focus() {
             let rs = frame.wgpu_render_state().expect("wgpu required");
             let mut guard = rs.renderer.write();
@@ -151,10 +143,7 @@ impl App {
                 (BuiltinColormap::Rainbow, "Rainbow"),
                 (BuiltinColormap::Greyscale, "Greyscale"),
             ] {
-                if ui
-                    .radio(self.vol_color_lut == preset, label)
-                    .clicked()
-                {
+                if ui.radio(self.vol_color_lut == preset, label).clicked() {
                     self.vol_color_lut = preset;
                 }
             }
@@ -179,15 +168,16 @@ impl App {
         if self.vol_mode != VolumeMode::VolumeOnly {
             ui.separator();
             ui.label("Isosurface colour:");
-            if ui.color_edit_button_rgb(&mut self.vol_iso_material.base_color).changed() {}
+            if ui
+                .color_edit_button_rgb(&mut self.vol_iso_material.base_color)
+                .changed()
+            {}
             ui.label("Roughness:");
             ui.add(
                 egui::Slider::new(&mut self.vol_iso_material.roughness, 0.0..=1.0).step_by(0.05),
             );
             ui.label("Metallic:");
-            ui.add(
-                egui::Slider::new(&mut self.vol_iso_material.metallic, 0.0..=1.0).step_by(0.05),
-            );
+            ui.add(egui::Slider::new(&mut self.vol_iso_material.metallic, 0.0..=1.0).step_by(0.05));
         }
     }
 

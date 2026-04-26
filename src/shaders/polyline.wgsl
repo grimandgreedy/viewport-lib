@@ -1,4 +1,4 @@
-// Polyline shader for the 3D viewport — screen-space thick lines with miter joints.
+// Polyline shader for the 3D viewport : screen-space thick lines with miter joints.
 //
 // Each draw call covers all segments for one polyline item.  The vertex buffer
 // is stepped per-instance (one entry per segment); 6 vertices are drawn per
@@ -16,14 +16,14 @@
 //          + LUT sampler.
 //
 // Instance input (per segment, VertexStepMode::Instance, 64 bytes):
-//   location 0 — pos_a    vec3   segment start (world space)
-//   location 1 — pos_b    vec3   segment end   (world space)
-//   location 2 — prev_pos vec3   point before A (== pos_a if strip start)
-//   location 3 — next_pos vec3   point after  B (== pos_b if strip end)
-//   location 4 — scalar_a f32    scalar at A
-//   location 5 — scalar_b f32    scalar at B
-//   location 6 — has_prev u32    1 = interior join at A, 0 = square cap
-//   location 7 — has_next u32    1 = interior join at B, 0 = square cap
+//   location 0 : pos_a    vec3   segment start (world space)
+//   location 1 : pos_b    vec3   segment end   (world space)
+//   location 2 : prev_pos vec3   point before A (== pos_a if strip start)
+//   location 3 : next_pos vec3   point after  B (== pos_b if strip end)
+//   location 4 : scalar_a f32    scalar at A
+//   location 5 : scalar_b f32    scalar at B
+//   location 6 : has_prev u32    1 = interior join at A, 0 = square cap
+//   location 7 : has_next u32    1 = interior join at B, 0 = square cap
 
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -39,16 +39,16 @@ struct ClipPlanes {
     viewport_height: f32,
 };
 
-// Polyline per-item uniform — 48 bytes.
+// Polyline per-item uniform : 48 bytes.
 struct PolylineUniform {
-    default_color:   vec4<f32>,  // offset  0 — 16 bytes
-    line_width:      f32,        // offset 16 —  4 bytes (screen pixels)
-    scalar_min:      f32,        // offset 20 —  4 bytes
-    scalar_max:      f32,        // offset 24 —  4 bytes
-    has_scalar:      u32,        // offset 28 —  4 bytes
-    viewport_width:  f32,        // offset 32 —  4 bytes
-    viewport_height: f32,        // offset 36 —  4 bytes
-    _pad:            vec2<f32>,  // offset 40 —  8 bytes
+    default_color:   vec4<f32>,  // offset  0 : 16 bytes
+    line_width:      f32,        // offset 16 :  4 bytes (screen pixels)
+    scalar_min:      f32,        // offset 20 :  4 bytes
+    scalar_max:      f32,        // offset 24 :  4 bytes
+    has_scalar:      u32,        // offset 28 :  4 bytes
+    viewport_width:  f32,        // offset 32 :  4 bytes
+    viewport_height: f32,        // offset 36 :  4 bytes
+    _pad:            vec2<f32>,  // offset 40 :  8 bytes
 };                               // total 48 bytes
 
 struct ClipVolumeUB {
@@ -140,7 +140,7 @@ fn miter_extrusion(dir_in: vec2<f32>, dir_out: vec2<f32>) -> vec2<f32> {
     return bisect / cos_half;
 }
 
-// Corner layout — 6 vertices per segment (TriangleList):
+// Corner layout : 6 vertices per segment (TriangleList):
 //   Triangle 0: v0=A-left,  v1=B-left,  v2=A-right
 //   Triangle 1: v3=B-left,  v4=B-right, v5=A-right
 //

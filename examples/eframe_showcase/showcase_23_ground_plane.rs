@@ -1,20 +1,17 @@
 //! Showcase 23: Ground Plane.
 //!
 //! Demonstrates all four ground-plane modes:
-//!   - None       — plane disabled (zero overhead)
-//!   - ShadowOnly — invisible plane that receives and displays shadows
-//!   - Tile       — procedural checkerboard
-//!   - SolidColor — flat-colored plane
+//!   - None       : plane disabled (zero overhead)
+//!   - ShadowOnly : invisible plane that receives and displays shadows
+//!   - Tile       : procedural checkerboard
+//!   - SolidColor : flat-colored plane
 //!
 //! Layout: three spheres at y = -3, 0, +3 (along X-axis), floating at Z = 1.5
 //! above a ground plane at Z = 0.
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
-    Material, MeshId, ViewportRenderer,
-    scene::Scene,
-};
+use viewport_lib::{Material, MeshId, ViewportRenderer, scene::Scene};
 
 impl App {
     pub(crate) fn build_ground_plane_scene(&mut self, renderer: &mut ViewportRenderer) {
@@ -30,9 +27,9 @@ impl App {
 
         // Three spheres in a row along X.
         let positions: [(f32, &str, [f32; 3]); 3] = [
-            (-3.5, "Left",   [0.8, 0.3, 0.3]),
-            ( 0.0, "Centre", [0.3, 0.7, 0.3]),
-            ( 3.5, "Right",  [0.3, 0.4, 0.8]),
+            (-3.5, "Left", [0.8, 0.3, 0.3]),
+            (0.0, "Centre", [0.3, 0.7, 0.3]),
+            (3.5, "Right", [0.3, 0.4, 0.8]),
         ];
 
         for (x, name, color) in positions {
@@ -54,9 +51,9 @@ impl App {
         ui.label("Ground plane mode:");
         ui.horizontal_wrapped(|ui| {
             for (label, mode) in [
-                ("None",       GpMode::None),
+                ("None", GpMode::None),
                 ("ShadowOnly", GpMode::ShadowOnly),
-                ("Tile",       GpMode::Tile),
+                ("Tile", GpMode::Tile),
                 ("SolidColor", GpMode::SolidColor),
             ] {
                 if ui.selectable_label(self.gp_mode == mode, label).clicked() {

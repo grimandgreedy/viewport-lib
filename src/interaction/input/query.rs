@@ -29,7 +29,7 @@ pub struct FrameInput {
     /// Whether the input area (viewport) is hovered.
     pub hovered: bool,
     /// Ctrl+scroll orbit delta in logical pixels (x = yaw, y = pitch).
-    /// Read from raw MouseWheel events to preserve 2D direction — smooth_scroll_delta
+    /// Read from raw MouseWheel events to preserve 2D direction : smooth_scroll_delta
     /// loses directional data when modifiers are held.
     pub ctrl_scroll_orbit_delta: glam::Vec2,
     /// Shift+scroll pan delta in logical pixels (x = right, y = up).

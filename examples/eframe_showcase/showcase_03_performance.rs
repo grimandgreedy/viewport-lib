@@ -1,4 +1,4 @@
-//! Showcase 3: Performance at Scale — build method.
+//! Showcase 3: Performance at Scale : build method.
 
 use crate::App;
 use viewport_lib::{Material, PickAccelerator, ViewportRenderer, scene::Scene};
@@ -22,7 +22,7 @@ impl App {
             [0.5, 0.3, 0.9],
         ];
 
-        let (nx, ny, nz) = (100, 100, 100);
+        let (nx, ny, nz) = (50, 50, 50);
         let mut count = 0u32;
         for y in 0..ny {
             for z in 0..nz {

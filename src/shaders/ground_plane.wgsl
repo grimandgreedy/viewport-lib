@@ -1,8 +1,8 @@
-// Ground plane shader — full-screen ray-march approach (no vertex buffer).
+// Ground plane shader : full-screen ray-march approach (no vertex buffer).
 //
 // Intersects the camera ray with a horizontal plane at a configurable Z height,
 // then outputs one of four modes:
-//   0 = None        (never reached — draw call is skipped)
+//   0 = None        (never reached : draw call is skipped)
 //   1 = ShadowOnly  (invisible plane; shows shadow tint only where shadowed)
 //   2 = Tile        (procedural checker pattern)
 //   3 = SolidColor  (flat solid color)
@@ -11,15 +11,15 @@
 // Alpha blending is always enabled; ShadowOnly uses partial alpha, others use alpha=1.
 
 struct GroundPlaneUniform {
-    view_proj:      mat4x4<f32>,  // offset   0, 64 bytes — for clip-space depth output
-    cam_right:      vec4<f32>,    // offset  64, 16 bytes — camera right axis (world space)
-    cam_up:         vec4<f32>,    // offset  80, 16 bytes — camera up axis (world space)
-    cam_back:       vec4<f32>,    // offset  96, 16 bytes — camera back axis (world space, = -forward)
+    view_proj:      mat4x4<f32>,  // offset   0, 64 bytes : for clip-space depth output
+    cam_right:      vec4<f32>,    // offset  64, 16 bytes : camera right axis (world space)
+    cam_up:         vec4<f32>,    // offset  80, 16 bytes : camera up axis (world space)
+    cam_back:       vec4<f32>,    // offset  96, 16 bytes : camera back axis (world space, = -forward)
     eye_pos:        vec3<f32>,    // offset 112, 12 bytes
-    height:         f32,          // offset 124,  4 bytes — ground plane Z coordinate
-    color:          vec4<f32>,    // offset 128, 16 bytes — Tile / SolidColor output color
-    shadow_color:   vec4<f32>,    // offset 144, 16 bytes — ShadowOnly tint color
-    light_vp:       mat4x4<f32>, // offset 160, 64 bytes — cascade 0 light-space view-proj
+    height:         f32,          // offset 124,  4 bytes : ground plane Z coordinate
+    color:          vec4<f32>,    // offset 128, 16 bytes : Tile / SolidColor output color
+    shadow_color:   vec4<f32>,    // offset 144, 16 bytes : ShadowOnly tint color
+    light_vp:       mat4x4<f32>, // offset 160, 64 bytes : cascade 0 light-space view-proj
     tan_half_fov:   f32,          // offset 224,  4 bytes
     aspect:         f32,          // offset 228,  4 bytes
     tile_size:      f32,          // offset 232,  4 bytes
@@ -29,7 +29,7 @@ struct GroundPlaneUniform {
     _pad:           vec2<f32>,    // offset 248,  8 bytes
 } // total 256 bytes
 
-// Shadow atlas uniform — matches the mesh shader's ShadowAtlas struct exactly.
+// Shadow atlas uniform : matches the mesh shader's ShadowAtlas struct exactly.
 struct ShadowAtlas {
     cascade_vp:       array<mat4x4<f32>, 4>,  // 256 bytes
     cascade_splits:   vec4<f32>,               //  16 bytes
@@ -68,7 +68,7 @@ struct FragOut {
 
 @fragment
 fn fs_main(in: VertexOutput) -> FragOut {
-    // Never render from below the ground plane — the plane is one-sided.
+    // Never render from below the ground plane : the plane is one-sided.
     if gp.eye_pos.z < gp.height { discard; }
 
     // Reconstruct world-space ray direction from NDC.
@@ -93,7 +93,7 @@ fn fs_main(in: VertexOutput) -> FragOut {
     let hit_clip = gp.view_proj * vec4<f32>(hit, 1.0);
     let frag_depth = clamp(hit_clip.z / hit_clip.w, 0.0, 1.0);
 
-    // Horizon fade — prevents razor-thin aliasing at grazing angles.
+    // Horizon fade : prevents razor-thin aliasing at grazing angles.
     let angle_sin = abs(ray_dir.z) / length(ray_dir);
     let fade = smoothstep(0.01, 0.08, angle_sin);
     if fade < 0.001 { discard; }
@@ -102,7 +102,7 @@ fn fs_main(in: VertexOutput) -> FragOut {
 
     if gp.mode == 2u {
         // ------------------------------------------------------------------
-        // Tile — checkerboard in world-space XY with screen-space LOD.
+        // Tile : checkerboard in world-space XY with screen-space LOD.
         // ------------------------------------------------------------------
         // Compute a uniform pixel_world estimate based on the camera nadir (the point directly
         // below the camera).  fwidth(in.ndc) is constant across the screen because NDC is a
@@ -113,7 +113,7 @@ fn fs_main(in: VertexOutput) -> FragOut {
         let nadir_px_world = max(ndc_fw.x * gp.aspect, ndc_fw.y) * eye_height * gp.tan_half_fov;
 
         // Smooth power-of-2 LOD: target ~64 screen pixels per tile.
-        // scale is based purely on screen-space zoom — tile_size is NOT in the denominator.
+        // scale is based purely on screen-space zoom : tile_size is NOT in the denominator.
         // n is therefore zoom-driven only; multiplying by tile_size afterwards means a
         // tile_size=2 plane always has tiles 2× larger on screen than tile_size=1,
         // at every zoom level, instead of converging to the same apparent size.
@@ -134,14 +134,14 @@ fn fs_main(in: VertexOutput) -> FragOut {
         // Standard 2-tone fine checker.
         let b_fine_std = mix(0.6, 1.0, f32(p_f));
         // 4-tone fine checker: coarse parity pre-emphasises cells that survive the next
-        // LOD step — analogous to major grid lines being brighter than minor ones.
+        // LOD step : analogous to major grid lines being brighter than minor ones.
         let b_fine_emph = 0.55 + f32(p_f) * 0.30 + f32(p_c) * 0.15;
         // Coarse level: standard 2-tone.
         let b_coarse = mix(0.6, 1.0, f32(p_c));
 
         // Two separate curves, both late in the octave:
-        //   emphasis_blend — fades the fine pattern from 2-tone to 4-tone.
-        //   lod_blend      — then quickly crossfades fine to coarse.
+        //   emphasis_blend : fades the fine pattern from 2-tone to 4-tone.
+        //   lod_blend      : then quickly crossfades fine to coarse.
         let emphasis_blend = smoothstep(0.6, 0.82, frac);
         let lod_blend      = smoothstep(0.82, 0.97, frac);
 
@@ -159,7 +159,7 @@ fn fs_main(in: VertexOutput) -> FragOut {
 
     } else if gp.mode == 1u {
         // ------------------------------------------------------------------
-        // ShadowOnly — sample shadow atlas with correct cascade selection.
+        // ShadowOnly : sample shadow atlas with correct cascade selection.
         //
         // Mirrors the mesh shader's cascade-selection logic exactly:
         //   1. Camera-forward distance selects cascade index.
@@ -184,7 +184,7 @@ fn fs_main(in: VertexOutput) -> FragOut {
         let light_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(hit, 1.0);
         let ndc        = light_clip.xyz / light_clip.w;
 
-        // NDC → tile UV [0,1]  (Y negated: NDC Y+ up, texture V=0 at top).
+        // NDC -> tile UV [0,1]  (Y negated: NDC Y+ up, texture V=0 at top).
         let tile_uv = vec2<f32>(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
 
         // Out-of-range check (same as mesh shader).
@@ -217,7 +217,7 @@ fn fs_main(in: VertexOutput) -> FragOut {
             }
         }
         let shadow_factor = shadow_sum / 9.0;
-        // shadow_factor == 1.0 → lit, 0.0 → fully in shadow.
+        // shadow_factor == 1.0 -> lit, 0.0 -> fully in shadow.
         let shadow_alpha = (1.0 - shadow_factor) * gp.shadow_opacity * fade;
         if shadow_alpha < 0.005 { discard; }
         out_color = vec4<f32>(gp.shadow_color.rgb, shadow_alpha);

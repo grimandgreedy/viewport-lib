@@ -1,4 +1,4 @@
-// bloom_threshold.wgsl — extract bright pixels above a luminance threshold.
+// bloom_threshold.wgsl : extract bright pixels above a luminance threshold.
 
 struct BloomUniform {
     threshold:  f32,

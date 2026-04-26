@@ -40,7 +40,7 @@ pub fn tangents_from_explicit(
 
 /// Compute per-face tangent frames for a triangle mesh.
 ///
-/// The tangent is aligned with the first edge of each triangle (v0→v1), projected
+/// The tangent is aligned with the first edge of each triangle (v0->v1), projected
 /// onto the face plane. The bitangent completes the right-handed frame with the
 /// face normal.
 ///

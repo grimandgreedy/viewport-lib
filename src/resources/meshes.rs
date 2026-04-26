@@ -306,7 +306,8 @@ impl ViewportGpuResources {
                     }
                     let min = scalars.iter().cloned().fold(f32::INFINITY, f32::min);
                     let max = scalars.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                    let buf = Self::create_storage_buffer_f32(device, &format!("attr_{name}"), &scalars);
+                    let buf =
+                        Self::create_storage_buffer_f32(device, &format!("attr_{name}"), &scalars);
                     bufs.insert(name.clone(), buf);
                     ranges.insert(name.clone(), (min, max));
                 }
@@ -317,7 +318,8 @@ impl ViewportGpuResources {
                     }
                     let min = scalars.iter().cloned().fold(f32::INFINITY, f32::min);
                     let max = scalars.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                    let buf = Self::create_storage_buffer_f32(device, &format!("attr_{name}"), &scalars);
+                    let buf =
+                        Self::create_storage_buffer_f32(device, &format!("attr_{name}"), &scalars);
                     bufs.insert(name.clone(), buf);
                     ranges.insert(name.clone(), (min, max));
                 }
@@ -335,7 +337,9 @@ impl ViewportGpuResources {
                     let min = expanded.iter().cloned().fold(f32::INFINITY, f32::min);
                     let max = expanded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
                     let buf = Self::create_storage_buffer_f32(
-                        device, &format!("face_attr_{name}"), &expanded,
+                        device,
+                        &format!("face_attr_{name}"),
+                        &expanded,
                     );
                     face_attr_bufs.insert(name.clone(), buf);
                     ranges.insert(name.clone(), (min, max));
@@ -401,7 +405,10 @@ impl ViewportGpuResources {
             for &vi in tri {
                 let vi = vi as usize;
                 let uv = uvs.and_then(|u| u.get(vi)).copied().unwrap_or([0.0, 0.0]);
-                let tangent = tangents.and_then(|t| t.get(vi)).copied().unwrap_or([0.0, 0.0, 0.0, 1.0]);
+                let tangent = tangents
+                    .and_then(|t| t.get(vi))
+                    .copied()
+                    .unwrap_or([0.0, 0.0, 0.0, 1.0]);
                 verts.push(Vertex {
                     position: positions.get(vi).copied().unwrap_or([0.0, 0.0, 0.0]),
                     normal: normals.get(vi).copied().unwrap_or([0.0, 1.0, 0.0]),
@@ -735,9 +742,14 @@ impl ViewportGpuResources {
             _pad_scalar: 0,
             nan_color: [0.0, 0.0, 0.0, 0.0],
             use_nan_color: 0,
-            use_matcap: 0, matcap_blendable: 0, _pad2: 0,
-            use_face_color: 0, uv_vis_mode: 0, uv_vis_scale: 8.0,
-            backface_policy: 0, backface_color: [0.0; 4],
+            use_matcap: 0,
+            matcap_blendable: 0,
+            _pad2: 0,
+            use_face_color: 0,
+            uv_vis_mode: 0,
+            uv_vis_scale: 8.0,
+            backface_policy: 0,
+            backface_color: [0.0; 4],
         };
         let object_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
@@ -815,9 +827,14 @@ impl ViewportGpuResources {
             _pad_scalar: 0,
             nan_color: [0.0, 0.0, 0.0, 0.0],
             use_nan_color: 0,
-            use_matcap: 0, matcap_blendable: 0, _pad2: 0,
-            use_face_color: 0, uv_vis_mode: 0, uv_vis_scale: 8.0,
-            backface_policy: 0, backface_color: [0.0; 4],
+            use_matcap: 0,
+            matcap_blendable: 0,
+            _pad2: 0,
+            use_face_color: 0,
+            uv_vis_mode: 0,
+            uv_vis_scale: 8.0,
+            backface_policy: 0,
+            backface_color: [0.0; 4],
         };
         let normal_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),

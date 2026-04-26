@@ -55,7 +55,7 @@ pub enum Action {
     ConstrainY,
     /// Constrain transform to the Z axis.
     ConstrainZ,
-    /// Shift+X/Y/Z — exclude that axis, operate in the perpendicular plane.
+    /// Shift+X/Y/Z : exclude that axis, operate in the perpendicular plane.
     ExcludeX,
     /// Exclude the Y axis; operate in the XZ plane.
     ExcludeY,
@@ -89,9 +89,9 @@ pub enum Action {
     // -- Gizmo --
     /// Toggle gizmo between World and Local coordinate space.
     ToggleGizmoSpace,
-    /// Cycle the pivot mode forward (Selection Centroid → Individual Origins → Median Point → World Origin → …).
+    /// Cycle the pivot mode forward (Selection Centroid -> Individual Origins -> Median Point -> World Origin -> …).
     CyclePivotModeForward,
-    /// Cycle the pivot mode backward (… → World Origin → Median Point → Individual Origins → Selection Centroid).
+    /// Cycle the pivot mode backward (… -> World Origin -> Median Point -> Individual Origins -> Selection Centroid).
     CyclePivotModeBackward,
 
     // -- Scene object shortcuts --

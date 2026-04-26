@@ -1,4 +1,4 @@
-//! Showcase 13: Multi-Viewport — build, update, and controls.
+//! Showcase 13: Multi-Viewport : build, update, and controls.
 //!
 //! Renders the same scene from four independent cameras in a 2×2 quad layout:
 //!
@@ -332,7 +332,7 @@ impl App {
             fd.scene.generation = scene_gen;
             fd.interaction.selection_generation = sel_gen;
 
-            // Gizmo — appears in every viewport with its own screen-space scale.
+            // Gizmo : appears in every viewport with its own screen-space scale.
             if let Some(center) = gizmo_center {
                 let scale = gizmo_scales[i];
                 fd.interaction.gizmo_model = Some(glam::Mat4::from_scale_rotation_translation(
@@ -494,10 +494,10 @@ impl App {
         ui.label("Click empty: Deselect");
         ui.separator();
         ui.weak("Quad layout");
-        ui.label("TL — Perspective (orbit)");
-        ui.label("TR — Top (ortho, −Z)");
-        ui.label("BL — Front (ortho, −Y)");
-        ui.label("BR — Right (ortho, −X)");
+        ui.label("TL : Perspective (orbit)");
+        ui.label("TR : Top (ortho, −Z)");
+        ui.label("BL : Front (ortho, −Y)");
+        ui.label("BR : Right (ortho, −X)");
     }
 }
 

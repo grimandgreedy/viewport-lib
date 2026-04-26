@@ -1,4 +1,4 @@
-//! egui wgpu paint callback — thin adapter that delegates to `ViewportRenderer`.
+//! egui wgpu paint callback : thin adapter that delegates to `ViewportRenderer`.
 
 use viewport_lib::{FrameData, ViewportRenderer};
 

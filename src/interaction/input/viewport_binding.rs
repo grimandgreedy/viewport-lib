@@ -6,7 +6,7 @@ use super::binding::{KeyCode, Modifiers, MouseButton};
 /// Modifier matching policy for viewport gestures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModifiersMatch {
-    /// All specified modifier bits must match exactly — no extras.
+    /// All specified modifier bits must match exactly : no extras.
     Exact(Modifiers),
     /// All specified modifier bits must be set; extras are allowed.
     Contains(Modifiers),
@@ -30,7 +30,7 @@ impl ModifiersMatch {
     }
 }
 
-/// A viewport gesture — the richer gesture vocabulary used by the new pipeline.
+/// A viewport gesture : the richer gesture vocabulary used by the new pipeline.
 #[derive(Debug, Clone)]
 pub enum ViewportGesture {
     /// A mouse drag with a specific button and modifier policy.
@@ -54,14 +54,14 @@ pub enum ViewportGesture {
         /// Required modifier state.
         modifiers: ModifiersMatch,
     },
-    /// A single key press — fires once on the initial press, not on repeat.
+    /// A single key press : fires once on the initial press, not on repeat.
     KeyPress {
         /// The key that must be pressed.
         key: KeyCode,
         /// Required modifier state.
         modifiers: ModifiersMatch,
     },
-    /// A key held down — fires every frame while the key is held.
+    /// A key held down : fires every frame while the key is held.
     KeyHold {
         /// The key that must be held.
         key: KeyCode,

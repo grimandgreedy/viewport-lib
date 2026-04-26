@@ -950,9 +950,9 @@ mod tests {
     #[test]
     fn test_collect_culled_filters_offscreen() {
         let mut scene = Scene::new();
-        // Object at origin — should be visible.
+        // Object at origin : should be visible.
         let visible_id = scene.add(Some(MeshId(0)), glam::Mat4::IDENTITY, Material::default());
-        // Object far behind camera — should be culled.
+        // Object far behind camera : should be culled.
         let _behind = scene.add(
             Some(MeshId(1)),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 100.0)),

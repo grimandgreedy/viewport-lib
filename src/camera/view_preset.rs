@@ -9,17 +9,17 @@ use crate::camera::camera::Projection;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ViewPreset {
-    /// Front view — looking from +Y toward -Y, with Z up.
+    /// Front view : looking from +Y toward -Y, with Z up.
     Front,
-    /// Back view — looking from -Y toward +Y, with Z up.
+    /// Back view : looking from -Y toward +Y, with Z up.
     Back,
-    /// Left view — looking from -X toward +X, with Z up.
+    /// Left view : looking from -X toward +X, with Z up.
     Left,
-    /// Right view — looking from +X toward -X, with Z up.
+    /// Right view : looking from +X toward -X, with Z up.
     Right,
-    /// Top view — looking down along -Z from the +Z side, with Y forward.
+    /// Top view : looking down along -Z from the +Z side, with Y forward.
     Top,
-    /// Bottom view — looking up along +Z from the -Z side, with Y forward.
+    /// Bottom view : looking up along +Z from the -Z side, with Y forward.
     Bottom,
     /// True isometric view at 45° yaw (around Z) and ~35.26° pitch.
     Isometric,

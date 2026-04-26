@@ -12,22 +12,22 @@ use viewport_lib::{BuiltinMatcap, Material, MeshId, ViewportRenderer, scene::Sce
 
 /// All eight built-in presets with their display name and blendable flag.
 pub(crate) const BUILTIN_PRESETS: [(BuiltinMatcap, &str, bool); 8] = [
-    (BuiltinMatcap::Clay,    "Clay",    true),
-    (BuiltinMatcap::Wax,     "Wax",     true),
-    (BuiltinMatcap::Candy,   "Candy",   true),
-    (BuiltinMatcap::Flat,    "Flat",    true),
+    (BuiltinMatcap::Clay, "Clay", true),
+    (BuiltinMatcap::Wax, "Wax", true),
+    (BuiltinMatcap::Candy, "Candy", true),
+    (BuiltinMatcap::Flat, "Flat", true),
     (BuiltinMatcap::Ceramic, "Ceramic", false),
-    (BuiltinMatcap::Jade,    "Jade",    false),
-    (BuiltinMatcap::Mud,     "Mud",     false),
-    (BuiltinMatcap::Normal,  "Normal",  false),
+    (BuiltinMatcap::Jade, "Jade", false),
+    (BuiltinMatcap::Mud, "Mud", false),
+    (BuiltinMatcap::Normal, "Normal", false),
 ];
 
 impl App {
     /// Build Showcase 19: Matcap Shading demo.
     ///
     /// Layout:
-    ///   Top row    (z = +1.5): Clay · Wax · Candy · Flat           — blendable
-    ///   Bottom row (z = -1.5): Ceramic · Jade · Mud · Normal       — static
+    ///   Top row    (z = +1.5): Clay · Wax · Candy · Flat           : blendable
+    ///   Bottom row (z = -1.5): Ceramic · Jade · Mud · Normal       : static
     ///   Center-front (y = -3.5): Custom procedural matcap upload demo
     pub(crate) fn build_matcap_scene(&mut self, renderer: &mut ViewportRenderer) {
         self.matcap_scene = Scene::new();
@@ -61,7 +61,11 @@ impl App {
 
             let sphere_id = upload_sphere(renderer, &self.device);
             let matcap_id = renderer.resources().builtin_matcap_id(*preset);
-            let mat = { let mut m = Material::from_color(self.matcap_blendable_color); m.matcap_id = Some(matcap_id); m };
+            let mat = {
+                let mut m = Material::from_color(self.matcap_blendable_color);
+                m.matcap_id = Some(matcap_id);
+                m
+            };
             let node_id = self.matcap_scene.add_named(
                 *label,
                 Some(sphere_id),
@@ -84,7 +88,11 @@ impl App {
             "Custom",
             Some(custom_sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, -3.5, 0.0)),
-            { let mut m = Material::default(); m.matcap_id = Some(custom_id); m },
+            {
+                let mut m = Material::default();
+                m.matcap_id = Some(custom_id);
+                m
+            },
         );
         self.matcap_custom_node = Some(custom_node);
 
@@ -100,10 +108,11 @@ impl App {
             .expect("custom matcap re-upload");
         self.matcap_custom_id = Some(id);
         if let Some(node_id) = self.matcap_custom_node {
-            self.matcap_scene.set_material(
-                node_id,
-                { let mut m = Material::default(); m.matcap_id = Some(id); m },
-            );
+            self.matcap_scene.set_material(node_id, {
+                let mut m = Material::default();
+                m.matcap_id = Some(id);
+                m
+            });
         }
     }
 
@@ -114,10 +123,12 @@ impl App {
                 continue;
             }
             let matcap_id = renderer.resources().builtin_matcap_id(*preset);
-            self.matcap_scene.set_material(
-                self.matcap_builtin_node_ids[i],
-                { let mut m = Material::from_color(self.matcap_blendable_color); m.matcap_id = Some(matcap_id); m },
-            );
+            self.matcap_scene
+                .set_material(self.matcap_builtin_node_ids[i], {
+                    let mut m = Material::from_color(self.matcap_blendable_color);
+                    m.matcap_id = Some(matcap_id);
+                    m
+                });
         }
     }
 
@@ -131,9 +142,7 @@ impl App {
         ui.label("Blendable base color:");
         ui.horizontal(|ui| {
             let mut col = self.matcap_blendable_color;
-            let changed = ui
-                .color_edit_button_rgb(&mut col)
-                .changed();
+            let changed = ui.color_edit_button_rgb(&mut col).changed();
             if changed {
                 self.matcap_blendable_color = col;
                 let rs = frame.wgpu_render_state().expect("wgpu must be enabled");
@@ -150,9 +159,11 @@ impl App {
         ui.separator();
         ui.label("Custom matcap hue:");
         let hue_changed = ui
-            .add(egui::Slider::new(&mut self.matcap_custom_hue, 0.0..=360.0)
-                .suffix("°")
-                .step_by(1.0))
+            .add(
+                egui::Slider::new(&mut self.matcap_custom_hue, 0.0..=360.0)
+                    .suffix("°")
+                    .step_by(1.0),
+            )
             .changed();
         if ui.button("Rebuild custom matcap").clicked() || hue_changed {
             let rs = frame.wgpu_render_state().expect("wgpu must be enabled");

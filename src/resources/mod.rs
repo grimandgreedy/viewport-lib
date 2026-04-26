@@ -1,12 +1,12 @@
 /// Built-in colormap LUT data.
 pub mod colormap_data;
-/// Built-in matcap texture data (procedurally generated).
-pub mod matcap_data;
 /// IBL precomputation and environment map upload.
 pub mod environment;
 mod extra_impls;
 mod init;
 mod instancing;
+/// Built-in matcap texture data (procedurally generated).
+pub mod matcap_data;
 /// Slotted GPU mesh storage with free-list removal.
 pub mod mesh_store;
 mod meshes;
@@ -15,14 +15,13 @@ mod postprocess;
 mod scivis;
 mod textures;
 mod types;
-mod volumes;
 /// Unstructured volume mesh topology processing (tet / hex boundary extraction).
 pub mod volume_mesh;
+mod volumes;
 
 pub use self::extra_impls::{ComputeFilterResult, lerp_attributes};
 use self::extra_impls::{
-    build_glyph_arrow, build_glyph_sphere, build_unit_cube,
-    generate_edge_indices,
+    build_glyph_arrow, build_glyph_sphere, build_unit_cube, generate_edge_indices,
 };
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColormap, BuiltinMatcap, CameraUniform,
@@ -30,10 +29,10 @@ pub use self::types::{
     MeshData, OverlayVertex, PointCloudGpuData, PolylineGpuData, ScreenImageGpuData,
     SingleLightUniform, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
 };
-pub use self::volume_mesh::{TET_SENTINEL, VolumeMeshData};
 pub(crate) use self::types::{
     BloomUniform, ClipPlanesUniform, ContactShadowUniform, GlyphBaseMesh, GlyphGpuData,
-    GridUniform, GroundPlaneUniform, InstanceData, ObjectUniform, OutlineObjectBuffers, OutlineUniform, OverlayUniform,
-    PickInstance, SHADOW_ATLAS_SIZE, ShadowAtlasUniform, SsaoUniform, StreamtubeGpuData,
-    ToneMapUniform, ViewportHdrState,
+    GridUniform, GroundPlaneUniform, InstanceData, ObjectUniform, OutlineObjectBuffers,
+    OutlineUniform, OverlayUniform, PickInstance, SHADOW_ATLAS_SIZE, ShadowAtlasUniform,
+    SsaoUniform, StreamtubeGpuData, ToneMapUniform, ViewportHdrState,
 };
+pub use self::volume_mesh::{TET_SENTINEL, VolumeMeshData};

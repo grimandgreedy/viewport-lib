@@ -1,6 +1,6 @@
 // Gizmo shader for transform handles (translate / rotate / scale).
 //
-// Group 0: Camera uniform (view-projection matrix) — shared with mesh shader.
+// Group 0: Camera uniform (view-projection matrix) : shared with mesh shader.
 // Group 1: GizmoUniform (model matrix for positioning gizmo at selected object).
 //
 // Unlit: outputs vertex color directly with no lighting calculation.

@@ -9,21 +9,21 @@
 //! ```rust,ignore
 //! use viewport_lib::quantities::{vertex_intrinsic_to_glyphs, edge_one_form_to_glyphs};
 //!
-//! // Vertex intrinsic vectors — e.g. a tangential vortex field on a sphere.
+//! // Vertex intrinsic vectors : e.g. a tangential vortex field on a sphere.
 //! let glyph = vertex_intrinsic_to_glyphs(
 //!     &mesh.positions,
 //!     &mesh.normals,
 //!     mesh.tangents.as_deref(),
-//!     &intrinsic_vecs,   // &[[f32; 2]] — (u, v) per vertex
+//!     &intrinsic_vecs,   // &[[f32; 2]] : (u, v) per vertex
 //!     0.3,               // arrow scale
 //! );
 //! frame.scene.glyphs.push(glyph);
 //!
-//! // Edge one-forms — Whitney reconstruction per triangle.
+//! // Edge one-forms : Whitney reconstruction per triangle.
 //! let glyph = edge_one_form_to_glyphs(
 //!     &mesh.positions,
 //!     &mesh.indices,
-//!     &edge_values,      // &[f32] — 3 values per triangle (e01, e12, e20)
+//!     &edge_values,      // &[f32] : 3 values per triangle (e01, e12, e20)
 //!     0.3,
 //! );
 //! frame.scene.glyphs.push(glyph);

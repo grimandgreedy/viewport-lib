@@ -67,7 +67,7 @@ impl Aabb {
     }
 
     /// Returns true if the plane (defined by unit normal + signed distance)
-    /// intersects this AABB — i.e., the AABB spans both sides of the plane.
+    /// intersects this AABB : i.e., the AABB spans both sides of the plane.
     pub fn intersects_plane(&self, normal: glam::Vec3, distance: f32) -> bool {
         let center = self.center();
         let extents = self.half_extents();
@@ -152,9 +152,9 @@ mod tests {
     #[test]
     fn test_intersects_plane_outside() {
         let aabb = Aabb::from_positions(&unit_cube_positions());
-        // Plane at x=2.0 — entirely outside
+        // Plane at x=2.0 : entirely outside
         assert!(!aabb.intersects_plane(glam::Vec3::X, -2.0));
-        // Plane at x=-2.0 — entirely on other side
+        // Plane at x=-2.0 : entirely on other side
         assert!(!aabb.intersects_plane(glam::Vec3::X, 2.0));
     }
 

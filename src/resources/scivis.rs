@@ -280,7 +280,7 @@ impl ViewportGpuResources {
         }
     }
 
-    /// Lazily create the polyline render pipeline (instanced TriangleList — screen-space thick lines).
+    /// Lazily create the polyline render pipeline (instanced TriangleList : screen-space thick lines).
     ///
     /// No-op if already created. Called from `prepare()` when `frame.scene.polylines` is non-empty.
     pub(crate) fn ensure_polyline_pipeline(&mut self, device: &wgpu::Device) {
@@ -332,26 +332,58 @@ impl ViewportGpuResources {
         });
 
         // Instance buffer layout (64 bytes per segment):
-        //   offset  0: pos_a    vec3  — segment start (world space)
-        //   offset 12: pos_b    vec3  — segment end   (world space)
-        //   offset 24: prev_pos vec3  — point before pos_a (for miter at A); equals pos_a if strip start
-        //   offset 36: next_pos vec3  — point after  pos_b (for miter at B); equals pos_b if strip end
+        //   offset  0: pos_a    vec3  : segment start (world space)
+        //   offset 12: pos_b    vec3  : segment end   (world space)
+        //   offset 24: prev_pos vec3  : point before pos_a (for miter at A); equals pos_a if strip start
+        //   offset 36: next_pos vec3  : point after  pos_b (for miter at B); equals pos_b if strip end
         //   offset 48: scalar_a f32
         //   offset 52: scalar_b f32
-        //   offset 56: has_prev u32   — 1 = prev_pos is valid (interior join at A), 0 = square cap
-        //   offset 60: has_next u32   — 1 = next_pos is valid (interior join at B), 0 = square cap
+        //   offset 56: has_prev u32   : 1 = prev_pos is valid (interior join at A), 0 = square cap
+        //   offset 60: has_next u32   : 1 = next_pos is valid (interior join at B), 0 = square cap
         let pl_instance_layout = wgpu::VertexBufferLayout {
             array_stride: 64,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &[
-                wgpu::VertexAttribute { offset:  0, shader_location: 0, format: wgpu::VertexFormat::Float32x3 }, // pos_a
-                wgpu::VertexAttribute { offset: 12, shader_location: 1, format: wgpu::VertexFormat::Float32x3 }, // pos_b
-                wgpu::VertexAttribute { offset: 24, shader_location: 2, format: wgpu::VertexFormat::Float32x3 }, // prev_pos
-                wgpu::VertexAttribute { offset: 36, shader_location: 3, format: wgpu::VertexFormat::Float32x3 }, // next_pos
-                wgpu::VertexAttribute { offset: 48, shader_location: 4, format: wgpu::VertexFormat::Float32   }, // scalar_a
-                wgpu::VertexAttribute { offset: 52, shader_location: 5, format: wgpu::VertexFormat::Float32   }, // scalar_b
-                wgpu::VertexAttribute { offset: 56, shader_location: 6, format: wgpu::VertexFormat::Uint32    }, // has_prev
-                wgpu::VertexAttribute { offset: 60, shader_location: 7, format: wgpu::VertexFormat::Uint32    }, // has_next
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x3,
+                }, // pos_a
+                wgpu::VertexAttribute {
+                    offset: 12,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x3,
+                }, // pos_b
+                wgpu::VertexAttribute {
+                    offset: 24,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x3,
+                }, // prev_pos
+                wgpu::VertexAttribute {
+                    offset: 36,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32x3,
+                }, // next_pos
+                wgpu::VertexAttribute {
+                    offset: 48,
+                    shader_location: 4,
+                    format: wgpu::VertexFormat::Float32,
+                }, // scalar_a
+                wgpu::VertexAttribute {
+                    offset: 52,
+                    shader_location: 5,
+                    format: wgpu::VertexFormat::Float32,
+                }, // scalar_b
+                wgpu::VertexAttribute {
+                    offset: 56,
+                    shader_location: 6,
+                    format: wgpu::VertexFormat::Uint32,
+                }, // has_prev
+                wgpu::VertexAttribute {
+                    offset: 60,
+                    shader_location: 7,
+                    format: wgpu::VertexFormat::Uint32,
+                }, // has_next
             ],
         };
 
@@ -423,8 +455,8 @@ impl ViewportGpuResources {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct SegInstance {
-            pos_a:    [f32; 3],
-            pos_b:    [f32; 3],
+            pos_a: [f32; 3],
+            pos_b: [f32; 3],
             prev_pos: [f32; 3],
             next_pos: [f32; 3],
             scalar_a: f32,
@@ -446,10 +478,18 @@ impl ViewportGpuResources {
                 let has_prev = i > offset;
                 let has_next = j + 1 < end;
                 instances.push(SegInstance {
-                    pos_a:    positions[i],
-                    pos_b:    positions[j],
-                    prev_pos: if has_prev { positions[i - 1] } else { positions[i] },
-                    next_pos: if has_next { positions[j + 1] } else { positions[j] },
+                    pos_a: positions[i],
+                    pos_b: positions[j],
+                    prev_pos: if has_prev {
+                        positions[i - 1]
+                    } else {
+                        positions[i]
+                    },
+                    next_pos: if has_next {
+                        positions[j + 1]
+                    } else {
+                        positions[j]
+                    },
                     scalar_a: scalars.get(i).copied().unwrap_or(0.0),
                     scalar_b: scalars.get(j).copied().unwrap_or(0.0),
                     has_prev: has_prev as u32,
@@ -459,13 +499,23 @@ impl ViewportGpuResources {
         };
 
         if item.strip_lengths.is_empty() {
-            emit_strip(&mut instances, &item.positions, &item.scalars,
-                       0, item.positions.len());
+            emit_strip(
+                &mut instances,
+                &item.positions,
+                &item.scalars,
+                0,
+                item.positions.len(),
+            );
         } else {
             let mut offset = 0usize;
             for &len in &item.strip_lengths {
-                emit_strip(&mut instances, &item.positions, &item.scalars,
-                           offset, len as usize);
+                emit_strip(
+                    &mut instances,
+                    &item.positions,
+                    &item.scalars,
+                    offset,
+                    len as usize,
+                );
                 offset += len as usize;
             }
         }
@@ -502,14 +552,14 @@ impl ViewportGpuResources {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct PolylineUniform {
-            default_color:   [f32; 4],  // offset  0
-            line_width:      f32,       // offset 16
-            scalar_min:      f32,       // offset 20
-            scalar_max:      f32,       // offset 24
-            has_scalar:      u32,       // offset 28
-            viewport_width:  f32,       // offset 32
-            viewport_height: f32,       // offset 36
-            _pad:            [f32; 2],  // offset 40  (total 48 bytes)
+            default_color: [f32; 4], // offset  0
+            line_width: f32,         // offset 16
+            scalar_min: f32,         // offset 20
+            scalar_max: f32,         // offset 24
+            has_scalar: u32,         // offset 28
+            viewport_width: f32,     // offset 32
+            viewport_height: f32,    // offset 36
+            _pad: [f32; 2],          // offset 40  (total 48 bytes)
         }
         let uniform_data = PolylineUniform {
             default_color: item.default_color,
@@ -517,7 +567,7 @@ impl ViewportGpuResources {
             scalar_min,
             scalar_max,
             has_scalar,
-            viewport_width:  viewport_size[0].max(1.0),
+            viewport_width: viewport_size[0].max(1.0),
             viewport_height: viewport_size[1].max(1.0),
             _pad: [0.0; 2],
         };
@@ -1012,7 +1062,7 @@ impl ViewportGpuResources {
 
         let radius = item.radius.max(f32::EPSILON);
 
-        let mut verts: Vec<Vertex>  = Vec::new();
+        let mut verts: Vec<Vertex> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
 
         let positions = &item.positions;
@@ -1067,9 +1117,7 @@ impl ViewportGpuResources {
                         let cos_a = t_prev.dot(tangent).clamp(-1.0, 1.0);
                         let ax = axis / sin_a;
                         // Rodrigues: u' = u cos(a) + (ax×u) sin(a) + ax(ax·u)(1−cos(a))
-                        u = u * cos_a
-                            + ax.cross(u) * sin_a
-                            + ax * ax.dot(u) * (1.0 - cos_a);
+                        u = u * cos_a + ax.cross(u) * sin_a + ax * ax.dot(u) * (1.0 - cos_a);
                         u = u.normalize_or_zero();
                     }
                 }
@@ -1086,10 +1134,10 @@ impl ViewportGpuResources {
                     let world_pos = pt + normal * radius;
                     verts.push(Vertex {
                         position: world_pos.to_array(),
-                        normal:   normal.to_array(),
-                        color:    [1.0, 1.0, 1.0, 1.0], // overridden by uniform in shader
-                        uv:       [0.0, 0.0],
-                        tangent:  [1.0, 0.0, 0.0, 1.0],
+                        normal: normal.to_array(),
+                        color: [1.0, 1.0, 1.0, 1.0], // overridden by uniform in shader
+                        uv: [0.0, 0.0],
+                        tangent: [1.0, 0.0, 0.0, 1.0],
                     });
                 }
 
@@ -1098,7 +1146,7 @@ impl ViewportGpuResources {
                 // Verified: T1=(r0+s, r0+s1, r1+s) has normal·Y > 0 for s=0 on Z-axis tube.
                 if k > 0 {
                     let r0 = ring_base + ((k - 1) * SIDES) as u32;
-                    let r1 = ring_base + (k       * SIDES) as u32;
+                    let r1 = ring_base + (k * SIDES) as u32;
                     for s in 0..SIDES {
                         let s1 = (s + 1) % SIDES;
                         indices.push(r0 + s as u32);
@@ -1120,10 +1168,10 @@ impl ViewportGpuResources {
                 let cap_center_idx = verts.len() as u32;
                 verts.push(Vertex {
                     position: pts[n_rings - 1].to_array(),
-                    normal:   tangent.to_array(),
-                    color:    [1.0, 1.0, 1.0, 1.0],
-                    uv:       [0.0, 0.0],
-                    tangent:  [1.0, 0.0, 0.0, 1.0],
+                    normal: tangent.to_array(),
+                    color: [1.0, 1.0, 1.0, 1.0],
+                    uv: [0.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0, 1.0],
                 });
                 for s in 0..SIDES {
                     let s1 = (s + 1) % SIDES;
@@ -1140,10 +1188,10 @@ impl ViewportGpuResources {
                 let cap_center_idx = verts.len() as u32;
                 verts.push(Vertex {
                     position: pts[0].to_array(),
-                    normal:   tangent.to_array(),
-                    color:    [1.0, 1.0, 1.0, 1.0],
-                    uv:       [0.0, 0.0],
-                    tangent:  [1.0, 0.0, 0.0, 1.0],
+                    normal: tangent.to_array(),
+                    color: [1.0, 1.0, 1.0, 1.0],
+                    uv: [0.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0, 1.0],
                 });
                 for s in 0..SIDES {
                     let s1 = (s + 1) % SIDES;
@@ -1156,7 +1204,7 @@ impl ViewportGpuResources {
 
         // Upload vertex + index buffers.
         let vert_bytes: &[u8] = bytemuck::cast_slice(&verts);
-        let idx_bytes:  &[u8] = bytemuck::cast_slice(&indices);
+        let idx_bytes: &[u8] = bytemuck::cast_slice(&indices);
 
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("streamtube_vbuf"),
@@ -1184,14 +1232,14 @@ impl ViewportGpuResources {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct StreamtubeUniform {
-            color:  [f32; 4],
+            color: [f32; 4],
             radius: f32,
-            _pad:   [f32; 7],
+            _pad: [f32; 7],
         }
         let uniform_data = StreamtubeUniform {
-            color:  item.color,
+            color: item.color,
             radius,
-            _pad:   [0.0; 7],
+            _pad: [0.0; 7],
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("streamtube_uniform_buf"),
@@ -1224,7 +1272,7 @@ impl ViewportGpuResources {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 10B — screen-space image overlays
+    // Phase 10B : screen-space image overlays
     // -------------------------------------------------------------------------
 
     /// Lazily create the screen-space image render pipeline.
@@ -1238,9 +1286,7 @@ impl ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("screen_image_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/screen_image.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/screen_image.wgsl").into()),
         });
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1332,7 +1378,7 @@ impl ViewportGpuResources {
 
     /// Upload one [`ScreenImageItem`] to the GPU and return its per-frame GPU data.
     ///
-    /// Creates a new RGBA8Unorm texture each call — intended for per-frame data.
+    /// Creates a new RGBA8Unorm texture each call : intended for per-frame data.
     /// The returned [`ScreenImageGpuData`] is valid only for one frame.
     pub(crate) fn upload_screen_image(
         &self,
@@ -1398,30 +1444,10 @@ impl ViewportGpuResources {
         let img_h_ndc = 2.0 * item.height as f32 * item.scale / viewport_h.max(1.0);
 
         let (ndc_min_x, ndc_max_x, ndc_min_y, ndc_max_y) = match item.anchor {
-            ImageAnchor::TopLeft => (
-                -1.0,
-                -1.0 + img_w_ndc,
-                1.0 - img_h_ndc,
-                1.0,
-            ),
-            ImageAnchor::TopRight => (
-                1.0 - img_w_ndc,
-                1.0,
-                1.0 - img_h_ndc,
-                1.0,
-            ),
-            ImageAnchor::BottomLeft => (
-                -1.0,
-                -1.0 + img_w_ndc,
-                -1.0,
-                -1.0 + img_h_ndc,
-            ),
-            ImageAnchor::BottomRight => (
-                1.0 - img_w_ndc,
-                1.0,
-                -1.0,
-                -1.0 + img_h_ndc,
-            ),
+            ImageAnchor::TopLeft => (-1.0, -1.0 + img_w_ndc, 1.0 - img_h_ndc, 1.0),
+            ImageAnchor::TopRight => (1.0 - img_w_ndc, 1.0, 1.0 - img_h_ndc, 1.0),
+            ImageAnchor::BottomLeft => (-1.0, -1.0 + img_w_ndc, -1.0, -1.0 + img_h_ndc),
+            ImageAnchor::BottomRight => (1.0 - img_w_ndc, 1.0, -1.0, -1.0 + img_h_ndc),
             _ => (
                 -img_w_ndc * 0.5,
                 img_w_ndc * 0.5,

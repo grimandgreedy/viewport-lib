@@ -1,12 +1,12 @@
-//! Showcase 24: Surface Appearance — BackfacePolicy and SSAA.
+//! Showcase 24: Surface Appearance : BackfacePolicy and SSAA.
 //!
 //! ## BackfacePolicy
 //! Three spheres each use a different [`BackfacePolicy`]:
-//! - **Left — Cull** (default): back faces are invisible. The clipped interior is dark.
-//! - **Centre — Identical**: back faces are shaded the same as front faces.
-//! - **Right — DifferentColor**: back faces are shaded red, front faces gray.
+//! - **Left : Cull** (default): back faces are invisible. The clipped interior is dark.
+//! - **Centre : Identical**: back faces are shaded the same as front faces.
+//! - **Right : DifferentColor**: back faces are shaded red, front faces gray.
 //!
-//! Spheres use 10×5 tessellation so polygon facets are clearly visible —
+//! Spheres use 10×5 tessellation so polygon facets are clearly visible :
 //! the same geometry that makes SSAA's effect easy to see on silhouette edges.
 //!
 //! ## SSAA (Supersampling Anti-Aliasing)
@@ -21,9 +21,8 @@ use crate::App;
 use eframe::egui;
 use glam::Mat4;
 use viewport_lib::{
-    BackfacePolicy, ClipObject, LightingSettings, LightSource, Material, MeshId,
-    PostProcessSettings, SceneRenderItem, ViewportRenderer,
-    scene::Scene,
+    BackfacePolicy, ClipObject, LightSource, LightingSettings, Material, MeshId,
+    PostProcessSettings, SceneRenderItem, ViewportRenderer, scene::Scene,
 };
 
 // ---------------------------------------------------------------------------
@@ -45,18 +44,17 @@ impl App {
 
         self.sa_scene = Scene::new();
 
-        // Coarse sphere: 10 lon × 5 lat — clearly faceted silhouette edges.
+        // Coarse sphere: 10 lon × 5 lat : clearly faceted silhouette edges.
         // This makes aliasing visible at 1× and SSAA's improvement obvious at 4×.
         let sphere_coarse = primitives::sphere(1.2, 10, 5);
 
-        let upload_sphere =
-            |r: &mut ViewportRenderer, device: &eframe::wgpu::Device| -> MeshId {
-                MeshId::from_index(
-                    r.resources_mut()
-                        .upload_mesh_data(device, &sphere_coarse)
-                        .expect("sa sphere upload"),
-                )
-            };
+        let upload_sphere = |r: &mut ViewportRenderer, device: &eframe::wgpu::Device| -> MeshId {
+            MeshId::from_index(
+                r.resources_mut()
+                    .upload_mesh_data(device, &sphere_coarse)
+                    .expect("sa sphere upload"),
+            )
+        };
 
         // --- BackfacePolicy demo: three large spheres, clip plane reveals inside ---
 
@@ -130,7 +128,7 @@ impl App {
     // -------------------------------------------------------------------------
 
     pub(crate) fn controls_surface_appearance(&mut self, ui: &mut egui::Ui) {
-        ui.label("BackfacePolicy — front three spheres:");
+        ui.label("BackfacePolicy : front three spheres:");
         ui.indent("bp_desc", |ui| {
             ui.label("Left:   Cull (interior hidden)");
             ui.label("Centre: Identical (lit normally)");
@@ -143,7 +141,7 @@ impl App {
 
         ui.separator();
 
-        ui.label("SSAA — blue grid in the background:");
+        ui.label("SSAA : blue grid in the background:");
         ui.horizontal(|ui| {
             if ui.radio(self.sa_ssaa_factor == 1, "Off (1×)").clicked() {
                 self.sa_ssaa_factor = 1;
@@ -163,7 +161,8 @@ impl App {
     // -------------------------------------------------------------------------
 
     pub(crate) fn sa_scene_items(&mut self) -> Vec<SceneRenderItem> {
-        self.sa_scene.collect_render_items(&viewport_lib::Selection::new())
+        self.sa_scene
+            .collect_render_items(&viewport_lib::Selection::new())
     }
 
     pub(crate) fn sa_clip_objects(&self) -> Vec<ClipObject> {

@@ -36,7 +36,7 @@ pub fn greyscale_rgba() -> [[u8; 4]; 256] {
 // Viridis: Smith 2015 polynomial approximation
 // ---------------------------------------------------------------------------
 
-/// Viridis colormap — perceptually uniform, colorblind-friendly.
+/// Viridis colormap : perceptually uniform, colorblind-friendly.
 ///
 /// Uses the Smith 2015 polynomial approximation.
 pub fn viridis_rgba() -> [[u8; 4]; 256] {
@@ -61,7 +61,7 @@ pub fn viridis_rgba() -> [[u8; 4]; 256] {
 // Plasma: polynomial approximation
 // ---------------------------------------------------------------------------
 
-/// Plasma colormap — perceptually uniform, colorblind-friendly.
+/// Plasma colormap : perceptually uniform, colorblind-friendly.
 ///
 /// Uses a polynomial approximation of the Matplotlib plasma colormap.
 pub fn plasma_rgba() -> [[u8; 4]; 256] {

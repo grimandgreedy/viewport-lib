@@ -1,4 +1,4 @@
-//! Axes orientation indicator — a small XYZ gizmo rendered in the bottom-left
+//! Axes orientation indicator : a small XYZ gizmo rendered in the bottom-left
 //! corner of the viewport as screen-space GPU geometry.
 //!
 //! Provides:
@@ -228,15 +228,15 @@ pub fn hit_test(
         AxisView {
             orientation: glam::Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2) * front,
             axis_index: 0,
-        }, // X → Right view
+        }, // X -> Right view
         AxisView {
             orientation: front,
             axis_index: 1,
-        }, // Y → Front view
+        }, // Y -> Front view
         AxisView {
             orientation: glam::Quat::IDENTITY,
             axis_index: 2,
-        }, // Z → Top view
+        }, // Z -> Top view
     ];
 
     // Check front-to-back (reverse depth order) so frontmost wins.

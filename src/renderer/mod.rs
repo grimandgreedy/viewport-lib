@@ -1,4 +1,4 @@
-//! `ViewportRenderer` — the main entry point for the viewport library.
+//! `ViewportRenderer` : the main entry point for the viewport library.
 //!
 //! Wraps [`ViewportGpuResources`] and provides `prepare()` / `paint()` methods
 //! that take raw `wgpu` types. GUI framework adapters (e.g. the egui
@@ -13,6 +13,7 @@ pub mod shader_hashes;
 mod shadows;
 pub mod stats;
 
+pub(crate) use self::types::ClipPlane;
 pub use self::types::{
     CameraFrame, CameraFrustumItem, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane,
@@ -22,7 +23,6 @@ pub use self::types::{
     ScreenImageItem, ShadowFilter, StreamtubeItem, SurfaceSubmission, ToneMapping, ViewportEffects,
     ViewportFrame, VolumeItem,
 };
-pub(crate) use self::types::ClipPlane;
 
 /// An opaque handle to a per-viewport GPU state slot.
 ///
@@ -161,7 +161,7 @@ pub struct ViewportRenderer {
     /// shadow info, and grid. Slots are grown lazily in `prepare` via
     /// `ensure_viewport_slot`. There are at most 4 in the current UI.
     viewport_slots: Vec<ViewportSlot>,
-    /// Phase G — GPU compute filter results from the last `prepare()` call.
+    /// Phase G : GPU compute filter results from the last `prepare()` call.
     ///
     /// Each entry contains a compacted index buffer + count for one filtered mesh.
     /// Consumed during `paint()` to override the mesh's default index buffer.
@@ -448,7 +448,7 @@ impl ViewportRenderer {
     /// Release the heavy GPU texture memory (HDR targets, OIT, bloom, SSAO) held
     /// by `id`.
     ///
-    /// The slot index is not reclaimed — future calls with this `ViewportId` will
+    /// The slot index is not reclaimed : future calls with this `ViewportId` will
     /// lazily recreate the texture resources as needed.  This is useful when a
     /// viewport is hidden or minimised and you want to reduce VRAM pressure without
     /// invalidating the handle.
@@ -463,8 +463,8 @@ impl ViewportRenderer {
     ///
     /// `frame` provides the scene content (`frame.scene`) and the primary camera
     /// used for shadow cascade framing (`frame.camera`).  In a multi-viewport
-    /// setup use any one viewport's `FrameData` here — typically the perspective
-    /// view — as the shadow framing reference.
+    /// setup use any one viewport's `FrameData` here : typically the perspective
+    /// view : as the shadow framing reference.
     ///
     /// `scene_effects` carries the scene-global effects: lighting, environment
     /// map, and compute filters.  Obtain it by constructing [`SceneEffects`]
@@ -630,10 +630,14 @@ impl ViewportRenderer {
             Some(h_state) => h_state.size != [w, h] || h_state.ssaa_factor != ssaa_factor,
         };
         if needs_create {
-            slot.hdr = Some(
-                self.resources
-                    .create_hdr_viewport_state(device, queue, format, w, h, ssaa_factor),
-            );
+            slot.hdr = Some(self.resources.create_hdr_viewport_state(
+                device,
+                queue,
+                format,
+                w,
+                h,
+                ssaa_factor,
+            ));
         }
     }
 }

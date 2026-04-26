@@ -1,4 +1,4 @@
-// tone_map.wgsl — fullscreen post-process composite: tone mapping, bloom, SSAO, contact shadows.
+// tone_map.wgsl : fullscreen post-process composite: tone mapping, bloom, SSAO, contact shadows.
 // Renders a fullscreen triangle (no vertex buffer) using vertex_index.
 
 struct ToneMapUniform {

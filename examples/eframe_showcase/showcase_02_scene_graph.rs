@@ -1,4 +1,4 @@
-//! Showcase 2: Scene Graph + Materials — build method.
+//! Showcase 2: Scene Graph + Materials : build method.
 
 use crate::App;
 use viewport_lib::{Material, ViewportRenderer};

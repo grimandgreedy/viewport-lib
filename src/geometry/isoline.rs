@@ -7,7 +7,7 @@
 //! 2-point line segment.
 //!
 //! The extracted segments are returned in a form that can be passed directly to
-//! the existing [`crate::renderer::PolylineItem`] / polyline pipeline — no new
+//! the existing [`crate::renderer::PolylineItem`] / polyline pipeline : no new
 //! GPU pipeline or shader is needed.
 //!
 //! # Usage
@@ -88,9 +88,9 @@ impl Default for IsolineItem {
 ///
 /// Returns `(positions, strip_lengths)` suitable for constructing a
 /// [`crate::renderer::PolylineItem`]:
-/// - `positions` — world-space positions of every line-segment endpoint,
+/// - `positions` : world-space positions of every line-segment endpoint,
 ///   concatenated.
-/// - `strip_lengths` — number of vertices per strip.  Every segment is
+/// - `strip_lengths` : number of vertices per strip.  Every segment is
 ///   emitted as an independent 2-vertex strip, so each entry is `2`.
 ///
 /// If `item` has empty `positions`, `indices`, or `scalars` the function
@@ -105,7 +105,7 @@ pub fn extract_isolines(item: &IsolineItem) -> (Vec<[f32; 3]>, Vec<u32>) {
         return (Vec::new(), Vec::new());
     }
 
-    // Validate consistency — mismatched arrays are a caller bug; skip silently.
+    // Validate consistency : mismatched arrays are a caller bug; skip silently.
     if item.scalars.len() != item.positions.len() {
         return (Vec::new(), Vec::new());
     }
@@ -147,7 +147,7 @@ fn extract_for_isovalue(
         let i1 = item.indices[tri_idx * 3 + 1] as usize;
         let i2 = item.indices[tri_idx * 3 + 2] as usize;
 
-        // Bounds check — skip malformed index data.
+        // Bounds check : skip malformed index data.
         if i0 >= positions.len() || i1 >= positions.len() || i2 >= positions.len() {
             continue;
         }
@@ -217,7 +217,7 @@ fn extract_for_isovalue(
 /// is skipped.
 #[inline]
 fn edge_crossing(pa: glam::Vec3, pb: glam::Vec3, sa: f32, sb: f32, iso: f32) -> Option<glam::Vec3> {
-    // Skip if scalars are equal — no direction.
+    // Skip if scalars are equal : no direction.
     if (sb - sa).abs() < f32::EPSILON {
         return None;
     }

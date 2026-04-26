@@ -7,9 +7,9 @@
 //!
 //! For triangle `t` with vertex indices `(v0, v1, v2)` from the index buffer:
 //!
-//! - `edge_values[3 * t + 0]` — value on edge `v0 → v1`
-//! - `edge_values[3 * t + 1]` — value on edge `v1 → v2`
-//! - `edge_values[3 * t + 2]` — value on edge `v2 → v0`
+//! - `edge_values[3 * t + 0]` : value on edge `v0 -> v1`
+//! - `edge_values[3 * t + 1]` : value on edge `v1 -> v2`
+//! - `edge_values[3 * t + 2]` : value on edge `v2 -> v0`
 //!
 //! # Reconstruction formula
 //!
@@ -33,12 +33,12 @@ use crate::GlyphItem;
 ///
 /// # Arguments
 ///
-/// * `positions`    — vertex positions in world/local space
-/// * `indices`      — triangle index list (every 3 indices form one triangle)
-/// * `edge_values`  — one scalar per directed edge, in triangle-local order
+/// * `positions`    : vertex positions in world/local space
+/// * `indices`      : triangle index list (every 3 indices form one triangle)
+/// * `edge_values`  : one scalar per directed edge, in triangle-local order
 ///                    (see [module-level docs](self) for the convention).
 ///                    Length must be `3 × num_triangles`.
-/// * `scale`        — global arrow scale (see [`GlyphItem::scale`])
+/// * `scale`        : global arrow scale (see [`GlyphItem::scale`])
 ///
 /// Triangles whose `edge_values` slice is shorter than expected are skipped.
 pub fn edge_one_form_to_glyphs(

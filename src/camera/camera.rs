@@ -23,9 +23,9 @@ pub struct CameraTarget {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Projection {
-    /// Perspective projection — objects farther away appear smaller.
+    /// Perspective projection : objects farther away appear smaller.
     Perspective,
-    /// Orthographic projection — no foreshortening, parallel lines stay parallel.
+    /// Orthographic projection : no foreshortening, parallel lines stay parallel.
     Orthographic,
 }
 
@@ -51,7 +51,7 @@ pub struct Camera {
     pub orientation: glam::Quat,
     /// Vertical field of view in radians.
     pub fov_y: f32,
-    /// Viewport width / height ratio — updated each frame from viewport rect.
+    /// Viewport width / height ratio : updated each frame from viewport rect.
     pub aspect: f32,
     /// Near clipping plane distance.
     pub znear: f32,
@@ -89,7 +89,7 @@ impl Camera {
 
     /// Return the orbit target center in world space.
     ///
-    /// Forward-compatible accessor — equivalent to reading `self.center`.
+    /// Forward-compatible accessor : equivalent to reading `self.center`.
     pub fn center(&self) -> glam::Vec3 {
         self.center
     }
@@ -101,7 +101,7 @@ impl Camera {
 
     /// Return the camera distance (zoom).
     ///
-    /// Forward-compatible accessor — equivalent to reading `self.distance`.
+    /// Forward-compatible accessor : equivalent to reading `self.distance`.
     pub fn distance(&self) -> f32 {
         self.distance
     }
@@ -113,7 +113,7 @@ impl Camera {
 
     /// Return the camera orientation quaternion.
     ///
-    /// Forward-compatible accessor — equivalent to reading `self.orientation`.
+    /// Forward-compatible accessor : equivalent to reading `self.orientation`.
     pub fn orientation(&self) -> glam::Quat {
         self.orientation
     }

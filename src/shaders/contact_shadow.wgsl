@@ -1,4 +1,4 @@
-// contact_shadow.wgsl — screen-space ray march for contact shadows.
+// contact_shadow.wgsl : screen-space ray march for contact shadows.
 // Fullscreen triangle (no vertex buffer), same pattern as SSAO/tone_map.
 //
 // Input: depth buffer + uniform (inv_proj, proj, light_dir_view, params).
@@ -99,7 +99,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Self-shadow guard: the occluder must be meaningfully closer to the
         // camera than the *fragment* itself, not just the march position.
         // On convex surfaces (spheres), the march moves deeper each step while
-        // the depth buffer still shows the same surface at neighbouring UVs —
+        // the depth buffer still shows the same surface at neighbouring UVs :
         // depth_diff vs march_pos grows positive even though no real occluder
         // exists.  Requiring the sample to be > 0.05 m shallower than view_pos
         // rejects same-surface hits while keeping valid contact shadows (where
@@ -116,7 +116,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let depth_diff = sample_view_pos.z - march_pos.z;
         let min_depth = max(step_size * 1.0, 0.015);
         if depth_diff > min_depth && depth_diff < params.params.z {
-            // Occluded — shadowed.
+            // Occluded : shadowed.
             // Fade based on step distance and penetration depth to avoid hard
             // binary hits turning into visible grain on gently curved surfaces.
             let fade = 1.0 - (f32(i) / params.params.y);

@@ -1,4 +1,4 @@
-//! `ViewportRenderer` — the main entry point for the viewport library.
+//! `ViewportRenderer` : the main entry point for the viewport library.
 //!
 //! Wraps [`ViewportGpuResources`] and provides `prepare()` / `paint()` methods
 //! that take raw `wgpu` types. GUI framework adapters (e.g. the egui
@@ -54,7 +54,7 @@ pub(crate) struct ClipPlane {
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ClipShape {
-    /// Half-space plane — fragments where `dot(p, normal) + distance >= 0` are kept.
+    /// Half-space plane : fragments where `dot(p, normal) + distance >= 0` are kept.
     Plane {
         /// Unit normal pointing into the preserved half-space.
         normal: [f32; 3],
@@ -63,21 +63,18 @@ pub enum ClipShape {
         /// Cap fill color override. `None` = use the clipped mesh's base_color.
         cap_color: Option<[f32; 4]>,
     },
-    /// Oriented box — fragments inside the box are kept.
+    /// Oriented box : fragments inside the box are kept.
     Box {
         center: [f32; 3],
         half_extents: [f32; 3],
         /// 3×3 rotation matrix columns.
         orientation: [[f32; 3]; 3],
     },
-    /// Sphere — fragments inside the sphere are kept.
-    Sphere {
-        center: [f32; 3],
-        radius: f32,
-    },
+    /// Sphere : fragments inside the sphere are kept.
+    Sphere { center: [f32; 3], radius: f32 },
 }
 
-/// A clip object — defines a clipping region and optional visual boundary rendering.
+/// A clip object : defines a clipping region and optional visual boundary rendering.
 ///
 /// Push into `EffectsFrame::clip_objects` each frame. Up to 6 `Plane` variants are
 /// supported simultaneously; only the first `Box` or `Sphere` variant takes effect
@@ -99,16 +96,20 @@ pub struct ClipObject {
     pub enabled: bool,
     /// Visual and hit-test half-extent for `Plane` shapes (world units). Default `4.5`.
     pub extent: f32,
-    /// Hover state — set by `ClipPlaneController`, read by renderer.
+    /// Hover state : set by `ClipPlaneController`, read by renderer.
     pub hovered: bool,
-    /// Active drag state — set by `ClipPlaneController`, read by renderer.
+    /// Active drag state : set by `ClipPlaneController`, read by renderer.
     pub active: bool,
 }
 
 impl Default for ClipObject {
     fn default() -> Self {
         Self {
-            shape: ClipShape::Plane { normal: [0.0, 0.0, 1.0], distance: 0.0, cap_color: None },
+            shape: ClipShape::Plane {
+                normal: [0.0, 0.0, 1.0],
+                distance: 0.0,
+                cap_color: None,
+            },
             color: None,
             enabled: true,
             extent: 4.5,
@@ -121,15 +122,32 @@ impl Default for ClipObject {
 impl ClipObject {
     /// Create a half-space plane clip object.
     pub fn plane(normal: [f32; 3], distance: f32) -> Self {
-        Self { shape: ClipShape::Plane { normal, distance, cap_color: None }, ..Default::default() }
+        Self {
+            shape: ClipShape::Plane {
+                normal,
+                distance,
+                cap_color: None,
+            },
+            ..Default::default()
+        }
     }
     /// Create an oriented box clip object.
     pub fn box_shape(center: [f32; 3], half_extents: [f32; 3], orientation: [[f32; 3]; 3]) -> Self {
-        Self { shape: ClipShape::Box { center, half_extents, orientation }, ..Default::default() }
+        Self {
+            shape: ClipShape::Box {
+                center,
+                half_extents,
+                orientation,
+            },
+            ..Default::default()
+        }
     }
     /// Create a sphere clip object.
     pub fn sphere(center: [f32; 3], radius: f32) -> Self {
-        Self { shape: ClipShape::Sphere { center, radius }, ..Default::default() }
+        Self {
+            shape: ClipShape::Sphere { center, radius },
+            ..Default::default()
+        }
     }
 }
 
@@ -240,9 +258,9 @@ pub enum LightKind {
         direction: [f32; 3],
         /// Maximum range (world units).
         range: f32,
-        /// Inner cone half-angle (radians) — full intensity within this cone.
+        /// Inner cone half-angle (radians) : full intensity within this cone.
         inner_angle: f32,
-        /// Outer cone half-angle (radians) — light fades to zero at this angle.
+        /// Outer cone half-angle (radians) : light fades to zero at this angle.
         outer_angle: f32,
     },
 }
@@ -402,7 +420,7 @@ impl Default for SceneRenderItem {
 
 /// Scalar bar (colour legend) overlay descriptor.
 ///
-/// Not part of `FrameData` — the application draws scalar bars after `show_viewport()`
+/// Not part of `FrameData` : the application draws scalar bars after `show_viewport()`
 /// returns, using `egui::Painter` and the colormap data from
 /// [`ViewportGpuResources::get_colormap_rgba`](crate::resources::ViewportGpuResources::get_colormap_rgba).
 #[derive(Debug, Clone)]
@@ -444,7 +462,7 @@ pub enum ScalarBarOrientation {
 }
 
 // ---------------------------------------------------------------------------
-// SciVis Phase B — point cloud and glyph renderers
+// SciVis Phase B : point cloud and glyph renderers
 // ---------------------------------------------------------------------------
 
 /// Render mode for point cloud items.
@@ -654,7 +672,7 @@ impl Default for PolylineItem {
 }
 
 // ---------------------------------------------------------------------------
-// SciVis Phase M — streamtube renderer
+// SciVis Phase M : streamtube renderer
 // ---------------------------------------------------------------------------
 
 /// A streamtube item: polyline strips rendered as instanced 3D cylinder segments.
@@ -693,7 +711,7 @@ impl Default for StreamtubeItem {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 10A — Camera frustum wireframe
+// Phase 10A : Camera frustum wireframe
 // ---------------------------------------------------------------------------
 
 /// A renderable camera frustum wireframe item.
@@ -753,9 +771,9 @@ impl CameraFrustumItem {
         let half_w = half_h * self.aspect;
         let pose = glam::Mat4::from_cols_array_2d(&self.pose);
         let corners_cam = [
-            glam::vec3(-half_w,  half_h, -d),
-            glam::vec3( half_w,  half_h, -d),
-            glam::vec3( half_w, -half_h, -d),
+            glam::vec3(-half_w, half_h, -d),
+            glam::vec3(half_w, half_h, -d),
+            glam::vec3(half_w, -half_h, -d),
             glam::vec3(-half_w, -half_h, -d),
         ];
         corners_cam.map(|c| {
@@ -771,12 +789,12 @@ impl CameraFrustumItem {
     /// quad strip (5 verts).
     pub(crate) fn to_polyline(&self) -> PolylineItem {
         let near = self.plane_corners(self.near);
-        let far  = self.plane_corners(self.far);
+        let far = self.plane_corners(self.far);
 
         let mut positions: Vec<[f32; 3]> = Vec::new();
-        let mut strip_lengths: Vec<u32>  = Vec::new();
+        let mut strip_lengths: Vec<u32> = Vec::new();
 
-        // Near quad (closed loop: TL→TR→BR→BL→TL)
+        // Near quad (closed loop: TL->TR->BR->BL->TL)
         positions.extend_from_slice(&[near[0], near[1], near[2], near[3], near[0]]);
         strip_lengths.push(5);
 
@@ -784,7 +802,7 @@ impl CameraFrustumItem {
         positions.extend_from_slice(&[far[0], far[1], far[2], far[3], far[0]]);
         strip_lengths.push(5);
 
-        // Lateral edges (near corner → far corner, for each of 4 corners)
+        // Lateral edges (near corner -> far corner, for each of 4 corners)
         for i in 0..4 {
             positions.extend_from_slice(&[near[i], far[i]]);
             strip_lengths.push(2);
@@ -820,7 +838,7 @@ impl CameraFrustumItem {
     /// ```
     pub fn camera_target(&self, standoff_factor: f32) -> crate::camera::CameraTarget {
         let near = self.plane_corners(self.near);
-        let far  = self.plane_corners(self.far);
+        let far = self.plane_corners(self.far);
 
         // World-space center: midpoint of all 8 corners.
         let mut sum = glam::Vec3::ZERO;
@@ -833,7 +851,9 @@ impl CameraFrustumItem {
         let mut max_dist_sq: f32 = 0.0;
         for c in near.iter().chain(far.iter()) {
             let d = (glam::Vec3::from(*c) - center).length_squared();
-            if d > max_dist_sq { max_dist_sq = d; }
+            if d > max_dist_sq {
+                max_dist_sq = d;
+            }
         }
         let distance = max_dist_sq.sqrt() * standoff_factor;
 
@@ -851,16 +871,20 @@ impl CameraFrustumItem {
             glam::Vec3::Z
         };
         let right = forward.cross(up_hint).normalize();
-        let up    = right.cross(forward).normalize();
-        let rot   = glam::Mat3::from_cols(right, up, -forward);
+        let up = right.cross(forward).normalize();
+        let rot = glam::Mat3::from_cols(right, up, -forward);
         let orientation = glam::Quat::from_mat3(&rot);
 
-        crate::camera::CameraTarget { center, distance, orientation }
+        crate::camera::CameraTarget {
+            center,
+            distance,
+            orientation,
+        }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Phase 10B — Screen-space image overlays
+// Phase 10B : Screen-space image overlays
 // ---------------------------------------------------------------------------
 
 /// Anchor corner for a [`ScreenImageItem`].
@@ -901,7 +925,7 @@ pub struct ScreenImageItem {
     pub scale: f32,
     /// Overall opacity multiplier applied on top of per-pixel alpha. Default: `1.0`.
     pub alpha: f32,
-    /// Reserved — must be `false` in Phase 10.
+    /// Reserved : must be `false` in Phase 10.
     pub depth_composite: bool,
 }
 
@@ -920,7 +944,7 @@ impl Default for ScreenImageItem {
 }
 
 // ---------------------------------------------------------------------------
-// Phase G — GPU compute filter types
+// Phase G : GPU compute filter types
 // ---------------------------------------------------------------------------
 
 /// Whether a filter runs on CPU or GPU compute shader.
@@ -969,7 +993,7 @@ pub enum ComputeFilterKind {
     },
 }
 
-/// A GPU compute filter item — references an existing uploaded mesh.
+/// A GPU compute filter item : references an existing uploaded mesh.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct ComputeFilterItem {
@@ -1212,7 +1236,7 @@ impl SceneFrame {
 
 /// Viewport presentation settings for one frame.
 ///
-/// Groups background, grid, and axes indicator — the viewport chrome that is
+/// Groups background, grid, and axes indicator : the viewport chrome that is
 /// independent of world-space content.
 #[non_exhaustive]
 pub struct ViewportFrame {
@@ -1249,7 +1273,7 @@ impl Default for ViewportFrame {
 /// Interaction and selection visualization state for one frame.
 ///
 /// Groups the gizmo, selection overlays, constraint guides, outline, and
-/// x-ray state — everything that communicates selection and interaction
+/// x-ray state : everything that communicates selection and interaction
 /// feedback to the user.
 #[non_exhaustive]
 pub struct InteractionFrame {
@@ -1375,7 +1399,7 @@ impl Default for EnvironmentMap {
 /// Global rendering effects and modifiers for one frame.
 ///
 /// Groups lighting, clipping, post-processing, compute filtering, and clip
-/// volumes — effects that apply globally across the scene rather than to
+/// volumes : effects that apply globally across the scene rather than to
 /// individual objects.
 #[non_exhaustive]
 pub struct EffectsFrame {
@@ -1545,7 +1569,7 @@ macro_rules! emit_draw_calls {
 
         render_pass.set_bind_group(0, camera_bg, &[]);
 
-        // Grid pass — full-screen analytical shader drawn first so scene geometry
+        // Grid pass : full-screen analytical shader drawn first so scene geometry
         // occludes it. No vertex buffer; depth is written via @builtin(frag_depth).
         // Camera bind group is restored immediately after for subsequent passes.
         if frame.viewport.show_grid {
@@ -1555,7 +1579,7 @@ macro_rules! emit_draw_calls {
             render_pass.set_bind_group(0, camera_bg, &[]);
         }
 
-        // Ground plane pass — drawn after grid, before scene geometry.
+        // Ground plane pass : drawn after grid, before scene geometry.
         // Uses its own bind group (group 0: uniform + shadow atlas + sampler).
         if !matches!(
             frame.effects.ground_plane.mode,
@@ -1647,7 +1671,7 @@ macro_rules! emit_draw_calls {
 
                     // Wireframe mode fallback: draw per-object.
                     // mesh.object_bind_group (group 1) already contains the object uniform
-                    // and fallback textures — no separate group 2 needed.
+                    // and fallback textures : no separate group 2 needed.
                     if frame.viewport.wireframe_mode {
                         for item in scene_items {
                             if !item.visible { continue; }
@@ -1718,7 +1742,7 @@ macro_rules! emit_draw_calls {
                         render_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
 
                         // mesh.object_bind_group (group 1) already carries the object uniform
-                        // and the correct texture views — updated in prepare() if material changed.
+                        // and the correct texture views : updated in prepare() if material changed.
                         let is_face_attr = item.active_attribute.as_ref().map_or(false, |a| {
                             matches!(
                                 a.kind,
@@ -1942,7 +1966,7 @@ macro_rules! emit_scivis_draw_calls {
             }
         }
 
-        // Polyline pass — screen-space thick lines via instanced quad expansion.
+        // Polyline pass : screen-space thick lines via instanced quad expansion.
         // Each segment instance is drawn as 6 vertices (2 triangles).
         if !$polyline_gpu_data.is_empty() {
             if let Some(ref pipeline) = resources.polyline_pipeline {
@@ -1959,7 +1983,7 @@ macro_rules! emit_scivis_draw_calls {
             }
         }
 
-        // Volume pass (after glyphs — volumes are translucent, rendered last).
+        // Volume pass (after glyphs : volumes are translucent, rendered last).
         if !$volume_gpu_data.is_empty() {
             if let Some(ref pipeline) = resources.volume_pipeline {
                 render_pass.set_pipeline(pipeline);
@@ -1974,19 +1998,19 @@ macro_rules! emit_scivis_draw_calls {
             }
         }
 
-        // Streamtube pass (SciVis Phase M — connected tube mesh per strip set).
+        // Streamtube pass (SciVis Phase M : connected tube mesh per strip set).
         if !$streamtube_gpu_data.is_empty() {
             if let Some(ref pipeline) = resources.streamtube_pipeline {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for tube in $streamtube_gpu_data.iter() {
-                    if tube.index_count == 0 { continue; }
+                    if tube.index_count == 0 {
+                        continue;
+                    }
                     render_pass.set_bind_group(1, &tube.uniform_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, tube.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(
-                        tube.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    render_pass
+                        .set_index_buffer(tube.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..tube.index_count, 0, 0..1);
                 }
             }

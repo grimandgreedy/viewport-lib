@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 
-/// Node identifier — matches `ViewportObject::id()` return type.
+/// Node identifier : matches `ViewportObject::id()` return type.
 pub type NodeId = u64;
 
 /// A set of selected nodes with a primary (most recently selected) node.
@@ -108,7 +108,7 @@ impl Selection {
         self.selected.clear();
         self.primary = None;
         // Collect first so we can detect the empty-iterator case where extend()
-        // would still increment the version (which is correct — clearing is a mutation).
+        // would still increment the version (which is correct : clearing is a mutation).
         let ids: Vec<NodeId> = ids.into_iter().collect();
         if ids.is_empty() {
             self.version = self.version.wrapping_add(1);
@@ -168,7 +168,7 @@ impl Selection {
 
     /// Compute the difference between this selection and a previous one.
     ///
-    /// Returns `(added, removed)` — IDs that are in `self` but not `previous`,
+    /// Returns `(added, removed)` : IDs that are in `self` but not `previous`,
     /// and IDs that are in `previous` but not `self`.
     pub fn diff(&self, previous: &Selection) -> (Vec<NodeId>, Vec<NodeId>) {
         let added: Vec<NodeId> = self

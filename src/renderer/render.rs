@@ -32,7 +32,7 @@ impl ViewportRenderer {
             &self.streamtube_gpu_data,
             camera_bg
         );
-        // Phase 10B — screen-space image overlays (always on top, no depth test).
+        // Phase 10B : screen-space image overlays (always on top, no depth test).
         if !self.screen_image_gpu_data.is_empty() {
             if let Some(pipeline) = &self.resources.screen_image_pipeline {
                 render_pass.set_pipeline(pipeline);
@@ -75,7 +75,7 @@ impl ViewportRenderer {
             &self.streamtube_gpu_data,
             camera_bg
         );
-        // Phase 10B — screen-space image overlays (always on top, no depth test).
+        // Phase 10B : screen-space image overlays (always on top, no depth test).
         if !self.screen_image_gpu_data.is_empty() {
             if let Some(pipeline) = &self.resources.screen_image_pipeline {
                 render_pass.set_pipeline(pipeline);
@@ -224,7 +224,7 @@ impl ViewportRenderer {
                     &self.streamtube_gpu_data,
                     camera_bg
                 );
-                // Phase 10B — screen-space image overlays (always on top).
+                // Phase 10B : screen-space image overlays (always on top).
                 if !self.screen_image_gpu_data.is_empty() {
                     if let Some(pipeline) = &self.resources.screen_image_pipeline {
                         render_pass.set_pipeline(pipeline);
@@ -618,14 +618,13 @@ impl ViewportRenderer {
                             // mesh.object_bind_group (group 1) already carries the object uniform
                             // and the correct texture views.
                             render_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
-                            let is_face_attr =
-                                item.active_attribute.as_ref().map_or(false, |a| {
-                                    matches!(
-                                        a.kind,
-                                        crate::resources::AttributeKind::Face
-                                            | crate::resources::AttributeKind::FaceColor
-                                    )
-                                });
+                            let is_face_attr = item.active_attribute.as_ref().map_or(false, |a| {
+                                matches!(
+                                    a.kind,
+                                    crate::resources::AttributeKind::Face
+                                        | crate::resources::AttributeKind::FaceColor
+                                )
+                            });
                             if frame.viewport.wireframe_mode {
                                 render_pass.set_pipeline(wf_pl);
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
@@ -690,7 +689,7 @@ impl ViewportRenderer {
                 }
             }
 
-            // Cap fill pass (HDR path — section view cross-section fill).
+            // Cap fill pass (HDR path : section view cross-section fill).
             if !slot.cap_buffers.is_empty() {
                 if let Some(ref hdr_overlay) = resources.hdr_overlay_pipeline {
                     render_pass.set_pipeline(hdr_overlay);
@@ -716,7 +715,7 @@ impl ViewportRenderer {
                 camera_bg
             );
 
-            // Draw skybox last among opaques — only uncovered sky pixels pass depth == 1.0.
+            // Draw skybox last among opaques : only uncovered sky pixels pass depth == 1.0.
             if show_skybox {
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 render_pass.set_pipeline(&resources.skybox_pipeline);
@@ -725,7 +724,7 @@ impl ViewportRenderer {
         }
 
         // -----------------------------------------------------------------------
-        // SSAA resolve pass: downsample supersampled scene → hdr_texture.
+        // SSAA resolve pass: downsample supersampled scene -> hdr_texture.
         // Only runs when ssaa_factor > 1 and the resolve pipeline is available.
         // -----------------------------------------------------------------------
         if ssaa_factor > 1 {
@@ -1254,8 +1253,8 @@ impl ViewportRenderer {
         {
             let slot = &self.viewport_slots[vp_idx];
             let slot_hdr = slot.hdr.as_ref().unwrap();
-            let has_editor_overlays =
-                (frame.interaction.gizmo_model.is_some() && slot.gizmo_index_count > 0)
+            let has_editor_overlays = (frame.interaction.gizmo_model.is_some()
+                && slot.gizmo_index_count > 0)
                 || !slot.constraint_line_buffers.is_empty()
                 || !slot.clip_plane_fill_buffers.is_empty()
                 || !slot.clip_plane_line_buffers.is_empty()
@@ -1387,7 +1386,7 @@ impl ViewportRenderer {
             }
         }
 
-        // Phase 10B — screen-space image overlay pass (HDR path).
+        // Phase 10B : screen-space image overlay pass (HDR path).
         // Drawn after axes so overlays are always on top of everything.
         if !self.screen_image_gpu_data.is_empty() {
             if let Some(pipeline) = &self.resources.screen_image_pipeline {
@@ -1437,7 +1436,7 @@ impl ViewportRenderer {
     /// `width`/`height`).
     ///
     /// Returns `width * height * 4` bytes in RGBA8 layout. The caller encodes to
-    /// PNG/EXR independently — no image codec dependency in this crate.
+    /// PNG/EXR independently : no image codec dependency in this crate.
     pub fn render_offscreen(
         &mut self,
         device: &wgpu::Device,
@@ -1536,7 +1535,7 @@ impl ViewportRenderer {
             let mapped = staging_buf.slice(..).get_mapped_range();
             let data: &[u8] = &mapped;
             if padded_row == unpadded_row {
-                // No padding — copy entire slice directly.
+                // No padding : copy entire slice directly.
                 pixels.extend_from_slice(data);
             } else {
                 // Strip row padding.

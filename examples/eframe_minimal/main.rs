@@ -1,9 +1,9 @@
 //! Minimal viewport-lib example using eframe / egui.
 //!
 //! Navigation:
-//!   Left drag / Middle drag   — orbit
-//!   Right drag                — pan
-//!   Scroll                    — zoom
+//!   Left drag / Middle drag   : orbit
+//!   Right drag                : pan
+//!   Scroll                    : zoom
 
 mod viewport_callback;
 
@@ -16,7 +16,7 @@ use viewport_lib::{
 
 fn main() -> eframe::Result {
     eframe::run_native(
-        "viewport-lib — Minimal",
+        "viewport-lib : Minimal",
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 720.0]),
             depth_buffer: 24,

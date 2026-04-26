@@ -2,12 +2,12 @@
 //!
 //! Showcase modes are selected from the top panel (buttons 1–9).
 //!
-//! ## Showcase 1 — Rendering Basics
+//! ## Showcase 1 : Rendering Basics
 //!   - Directional / point light toggle
 //!   - Orthographic / perspective projection toggle
 //!   - Blinn-Phong lighting with specular highlights
 //!
-//! ## Showcase 2 — Scene Graph + Materials
+//! ## Showcase 2 : Scene Graph + Materials
 //!   - Cycle materials on selected nodes
 //!   - Toggle transparency / normal visualisation / hemisphere ambient
 //!   - Cycle background colour
@@ -15,59 +15,59 @@
 //!   - Remove selected node; toggle layer B visibility
 //!   - Click to select objects
 //!
-//! ## Showcase 3 — Performance at Scale
-//!   - 1 000 000 boxes (100×100×100 grid) sharing a single mesh — GPU instancing
+//! ## Showcase 3 : Performance at Scale
+//!   - 1 000 000 boxes (100×100×100 grid) sharing a single mesh : GPU instancing
 //!   - BVH-accelerated picking: click to select objects
 //!   - Live FrameStats in the side panel
 //!
-//! ## Showcase 4 — Professional Interaction
+//! ## Showcase 4 : Professional Interaction
 //!   - Smooth camera with exponential damping (orbit/pan/zoom inertia)
 //!   - Animated fly-to view presets (Front/Back/Left/Right/Top/Bottom/Isometric)
 //!   - Zoom-to-fit selection (or entire scene)
 //!   - Translate / Rotate / Scale gizmo with axis constraints
 //!   - Gizmo space toggle (World / Local)
-//!   - Snap configurations (off → 0.5 u translation → 15° rotation)
+//!   - Snap configurations (off -> 0.5 u translation -> 15° rotation)
 //!
-//! ## Showcase 5 — Advanced Rendering
+//! ## Showcase 5 : Advanced Rendering
 //!   - PBR vs Blinn-Phong comparison (left/right split)
 //!   - Section-view clip plane (clips x < 0)
 //!   - Selection outline (orange stencil ring)
 //!   - X-ray mode (selected objects visible through occluders)
 //!
-//! ## Showcase 6 — Post-Processing
+//! ## Showcase 6 : Post-Processing
 //!   - PBR scene with multiple material types
 //!   - Tone mapping selection (Reinhard / ACES / Khronos Neutral)
 //!   - Exposure, bloom, SSAO, FXAA toggles
-//!   (Note: full HDR pipeline requires direct surface access — not available in
+//!   (Note: full HDR pipeline requires direct surface access : not available in
 //!   the eframe callback model; settings are applied where supported by the LDR path.)
 //!
-//! ## Showcase 7 — Normal Maps + AO
+//! ## Showcase 7 : Normal Maps + AO
 //!   - Sphere with procedural brick normal map + AO vs plain reference sphere
 //!   - Cube with tile normal map + AO
 //!   - Toggle normal map / AO on/off; clip plane
 //!
-//! ## Showcase 8 — Shadows
+//! ## Showcase 8 : Shadows
 //!   - Cascaded shadow maps with PCF / PCSS filtering
 //!   - Cascade count control (1–4)
 //!   - Contact shadows toggle
 //!
-//! ## Showcase 9 — Annotation Labels
+//! ## Showcase 9 : Annotation Labels
 //!   - `world_to_screen` projection with on-screen text via egui painter
 //!   - Leader lines, anchor dots, semi-transparent text backgrounds
 //!   - Behind-camera labels are automatically culled
 //!
-//! ## Showcase 10 — Camera Tools
+//! ## Showcase 10 : Camera Tools
 //!   - Seven `ViewPreset` named views (Front/Back/Left/Right/Top/Bottom/Isometric)
 //!   - Animated fly-to transitions with selectable easing curve
 //!   - Animated / instant toggle to compare smooth vs snapped transitions
 //!   - `ViewPreset::preferred_projection()` switches ortho/persp automatically
 //!   - Explicit projection radio + per-frame FOV slider (perspective only)
 //!
-//! ## Showcase 19 — Matcap Shading
+//! ## Showcase 19 : Matcap Shading
 //!
-//! ## Showcase 20 — Per-Face Attributes
+//! ## Showcase 20 : Per-Face Attributes
 //!   - Left:   Vertex attribute (Gouraud-interpolated scalar, colormapped)
-//!   - Centre: Face attribute (flat per-triangle scalar, same data — no interpolation)
+//!   - Centre: Face attribute (flat per-triangle scalar, same data : no interpolation)
 //!   - Right:  FaceColor attribute (direct per-face RGBA, no colormap)
 //!   - Opacity slider on the FaceColor object exercises the OIT blending path
 //!   - All eight built-in matcap presets (Clay/Wax/Candy/Flat blendable; Ceramic/Jade/Mud/Normal static)
@@ -81,20 +81,20 @@
 
 use eframe::egui;
 use viewport_lib::{
-    AnnotationLabel, AttributeKind, AttributeRef, BuiltinColormap, ButtonState,
-    Camera, CameraAnimator, CameraFrame, ClipAxis, ClipObject,
-    ColormapId, Easing, FrameData, FrameStats, Gizmo, GizmoAxis, GizmoMode, GizmoSpace,
-    GlyphType, GroundPlane, GroundPlaneMode, LightKind, LightSource, LightingSettings, Material,
-    MatcapId, MeshData, MeshId, NodeId, OrbitCameraController, PickAccelerator,
-    PostProcessSettings, Projection, RenderCamera, SceneFrame, SceneRenderItem, ScrollUnits,
-    Selection, ShadowFilter, SnapConfig, ViewPreset, ViewportContext, ViewportEvent,
-    ViewportRenderer, VolumeData, VolumeId,
+    AnnotationLabel, AttributeKind, AttributeRef, BuiltinColormap, ButtonState, Camera,
+    CameraAnimator, CameraFrame, ClipAxis, ClipObject, ColormapId, Easing, FrameData, FrameStats,
+    Gizmo, GizmoAxis, GizmoMode, GizmoSpace, GlyphType, GroundPlane, GroundPlaneMode, LightKind,
+    LightSource, LightingSettings, MatcapId, Material, MeshData, MeshId, NodeId,
+    OrbitCameraController, PickAccelerator, PostProcessSettings, Projection, RenderCamera,
+    SceneFrame, SceneRenderItem, ScrollUnits, Selection, ShadowFilter, SnapConfig, ViewPreset,
+    ViewportContext, ViewportEvent, ViewportRenderer, VolumeData, VolumeId,
     geometry::isoline::IsolineItem,
     gizmo::{self, compute_gizmo_scale},
     scene::{LayerId, Scene},
 };
 
 mod geometry;
+mod hdr_viewport_callback;
 mod multi_viewport_callback;
 mod showcase_02_scene_graph;
 mod showcase_03_performance;
@@ -118,7 +118,6 @@ mod showcase_20_face_attributes;
 mod showcase_21_textures;
 mod showcase_22_parameterization;
 mod showcase_23_ground_plane;
-mod hdr_viewport_callback;
 mod showcase_24_surface_appearance;
 mod showcase_25_surface_vectors;
 mod showcase_26_volume_mesh;
@@ -133,7 +132,7 @@ const BG_COLOR: [f32; 4] = [0.08, 0.08, 0.10, 1.0];
 
 fn main() -> eframe::Result {
     eframe::run_native(
-        "viewport-lib — eframe Showcase",
+        "viewport-lib : eframe Showcase",
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 800.0]),
             depth_buffer: 24,
@@ -387,7 +386,11 @@ fn main() -> eframe::Result {
                 vol_step_scale: 1.0,
                 vol_shading: true,
                 vol_nan_on: false,
-                vol_iso_material: { let mut m = Material::from_color([0.6, 0.8, 1.0]); m.roughness = 0.4; m },
+                vol_iso_material: {
+                    let mut m = Material::from_color([0.6, 0.8, 1.0]);
+                    m.roughness = 0.4;
+                    m
+                },
                 clipvol_scene: Scene::new(),
                 clipvol_built: false,
                 clipvol_sub_mode: showcase_18_clip_volumes::ClipVolSubMode::BoxClip,
@@ -994,7 +997,7 @@ impl eframe::App for App {
 
             let was_gizmo_active = self.gizmo_drag_active;
 
-            // Translate egui events → ViewportEvents.
+            // Translate egui events -> ViewportEvents.
             ui.input(|i| {
                 let mods = viewport_lib::Modifiers {
                     alt: i.modifiers.alt,
@@ -1082,7 +1085,7 @@ impl eframe::App for App {
                                 self.interact_gizmo.active_axis = GizmoAxis::None;
                             }
 
-                            // Clip-vol gizmo — start drag.
+                            // Clip-vol gizmo : start drag.
                             if self.mode == ShowcaseMode::ClipVolumes
                                 && *button == egui::PointerButton::Primary
                                 && *pressed
@@ -1114,7 +1117,7 @@ impl eframe::App for App {
                                 }
                             }
 
-                            // Clip-vol gizmo — end drag.
+                            // Clip-vol gizmo : end drag.
                             if self.mode == ShowcaseMode::ClipVolumes
                                 && *button == egui::PointerButton::Primary
                                 && !pressed
@@ -2103,7 +2106,7 @@ impl App {
             } else {
                 "clipped"
             };
-            ui.label(format!("L{i}: \"{}\" — {status}", label.text));
+            ui.label(format!("L{i}: \"{}\" : {status}", label.text));
         }
     }
 
@@ -2807,8 +2810,7 @@ impl App {
                             name: "wave".to_string(),
                             kind: AttributeKind::Vertex,
                         });
-                        item.colormap_id =
-                            Some(ColormapId(BuiltinColormap::Coolwarm as usize));
+                        item.colormap_id = Some(ColormapId(BuiltinColormap::Coolwarm as usize));
                         item.two_sided = true;
                     }
                 } else {
@@ -2844,9 +2846,7 @@ impl App {
             ShowcaseMode::Volume => {
                 // Isosurface mesh items go into surface_items when visible.
                 let surface_items = if self.vol_mode != showcase_17_volume::VolumeMode::VolumeOnly {
-                    self.make_iso_surface_item()
-                        .into_iter()
-                        .collect()
+                    self.make_iso_surface_item().into_iter().collect()
                 } else {
                     vec![]
                 };
@@ -2868,15 +2868,13 @@ impl App {
                 }
                 let sg = self.clipvol_scene.version();
                 let lighting = LightingSettings {
-                    lights: vec![
-                        LightSource {
-                            kind: LightKind::Directional {
-                                direction: [0.5, 0.3, 1.2],
-                            },
-                            intensity: 1.8,
-                            ..LightSource::default()
+                    lights: vec![LightSource {
+                        kind: LightKind::Directional {
+                            direction: [0.5, 0.3, 1.2],
                         },
-                    ],
+                        intensity: 1.8,
+                        ..LightSource::default()
+                    }],
                     hemisphere_intensity: 0.4,
                     sky_color: [1.0, 1.0, 1.0],
                     ground_color: [0.8, 0.8, 0.8],
@@ -2976,7 +2974,9 @@ impl App {
                 let sg = self.gp_scene.version();
                 let lighting = LightingSettings {
                     lights: vec![LightSource {
-                        kind: LightKind::Directional { direction: [0.4, 0.6, 1.0] },
+                        kind: LightKind::Directional {
+                            direction: [0.4, 0.6, 1.0],
+                        },
                         intensity: 1.5,
                         ..LightSource::default()
                     }],
@@ -2994,8 +2994,11 @@ impl App {
                 let colormap_id = ColormapId(self.face_colormap as usize);
 
                 // Node 0: Vertex attribute (interpolated)
-                // scalar_range left as None — renderer auto-detects from attribute_ranges.
-                if let Some(item) = items.iter_mut().find(|i| i.pick_id == self.face_node_ids[0]) {
+                // scalar_range left as None : renderer auto-detects from attribute_ranges.
+                if let Some(item) = items
+                    .iter_mut()
+                    .find(|i| i.pick_id == self.face_node_ids[0])
+                {
                     item.active_attribute = Some(AttributeRef {
                         name: "scalar".to_string(),
                         kind: AttributeKind::Vertex,
@@ -3004,8 +3007,11 @@ impl App {
                 }
 
                 // Node 1: Face attribute (flat per-triangle)
-                // scalar_range left as None — renderer auto-detects from attribute_ranges.
-                if let Some(item) = items.iter_mut().find(|i| i.pick_id == self.face_node_ids[1]) {
+                // scalar_range left as None : renderer auto-detects from attribute_ranges.
+                if let Some(item) = items
+                    .iter_mut()
+                    .find(|i| i.pick_id == self.face_node_ids[1])
+                {
                     item.active_attribute = Some(AttributeRef {
                         name: "scalar".to_string(),
                         kind: AttributeKind::Face,
@@ -3014,7 +3020,10 @@ impl App {
                 }
 
                 // Node 2: FaceColor attribute (direct RGBA, no colormap)
-                if let Some(item) = items.iter_mut().find(|i| i.pick_id == self.face_node_ids[2]) {
+                if let Some(item) = items
+                    .iter_mut()
+                    .find(|i| i.pick_id == self.face_node_ids[2])
+                {
                     item.active_attribute = Some(AttributeRef {
                         name: "color".to_string(),
                         kind: AttributeKind::FaceColor,
@@ -3052,9 +3061,7 @@ impl App {
                 (items, Some(BG_COLOR), App::vm_lighting(), 0, 0)
             }
 
-            ShowcaseMode::Auxiliary => {
-                (vec![], Some(BG_COLOR), LightingSettings::default(), 0, 0)
-            }
+            ShowcaseMode::Auxiliary => (vec![], Some(BG_COLOR), LightingSettings::default(), 0, 0),
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -3096,7 +3103,12 @@ impl App {
                 };
                 (model, self.clipvol_gizmo.mode, orient, hovered)
             } else {
-                (None, GizmoMode::Translate, glam::Quat::IDENTITY, GizmoAxis::None)
+                (
+                    None,
+                    GizmoMode::Translate,
+                    glam::Quat::IDENTITY,
+                    GizmoAxis::None,
+                )
             };
 
         let mut fd = FrameData::new(
@@ -3146,7 +3158,7 @@ impl App {
         fd.scene.generation = scene_gen;
         fd.interaction.selection_generation = sel_gen;
 
-        // Volume item (Showcase 17) — submitted every frame when in volume mode.
+        // Volume item (Showcase 17) : submitted every frame when in volume mode.
         if self.mode == ShowcaseMode::Volume
             && self.vol_built
             && self.vol_mode != showcase_17_volume::VolumeMode::IsosurfaceOnly
@@ -3156,14 +3168,14 @@ impl App {
             }
         }
 
-        // Clip volume (Showcase 18) — set every frame from current state.
+        // Clip volume (Showcase 18) : set every frame from current state.
         if self.mode == ShowcaseMode::ClipVolumes && self.clipvol_built {
             if let Some(clip_obj) = self.make_clip_object() {
                 fd.effects.clip_objects.push(clip_obj);
             }
         }
 
-        // Streamline / tube items (Showcase 16) — submitted every frame.
+        // Streamline / tube items (Showcase 16) : submitted every frame.
         if self.mode == ShowcaseMode::Streamlines && self.stream_built {
             if self.stream_use_tubes {
                 fd.scene.streamtube_items.push(self.make_stream_tube_item());
@@ -3172,18 +3184,18 @@ impl App {
             }
         }
 
-        // Surface vector glyphs (Showcase 25) — submitted every frame.
+        // Surface vector glyphs (Showcase 25) : submitted every frame.
         if self.mode == ShowcaseMode::SurfaceVectors && self.sv_built {
             fd.scene.glyphs.push(self.sv_glyph_item());
         }
 
-        // Auxiliary frustums and screen images (Showcase 27) — submitted every frame.
+        // Auxiliary frustums and screen images (Showcase 27) : submitted every frame.
         if self.mode == ShowcaseMode::Auxiliary && self.aux_built {
             fd.scene.camera_frustums = self.aux_frustums.clone();
             self.aux_push_screen_images(&mut fd);
         }
 
-        // Point cloud / glyph items (Showcase 15) — submitted every frame.
+        // Point cloud / glyph items (Showcase 15) : submitted every frame.
         if self.mode == ShowcaseMode::PointClouds && self.pc_built {
             use crate::PcSubMode;
             match self.pc_sub_mode {
@@ -3196,7 +3208,7 @@ impl App {
             }
         }
 
-        // Isoline items (Showcase 14) — submitted every frame with current settings.
+        // Isoline items (Showcase 14) : submitted every frame with current settings.
         if self.mode == ShowcaseMode::Isolines && self.iso_built {
             let scalar_min = self
                 .iso_scalars
@@ -3590,7 +3602,7 @@ impl App {
     }
 
     fn zoom_to_fit_interact(&mut self) {
-        // Needs renderer resources for mesh AABBs — but we don't have frame here.
+        // Needs renderer resources for mesh AABBs : but we don't have frame here.
         // Fall back to fitting all node world positions.
         let mut min = glam::Vec3::splat(f32::INFINITY);
         let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
@@ -3643,7 +3655,10 @@ impl App {
             ClipVolSubMode::BoxClip => Some(glam::Vec3::from(self.clipvol_box_center)),
             ClipVolSubMode::SphereClip => Some(glam::Vec3::from(self.clipvol_sphere_center)),
             ClipVolSubMode::InteractivePlane => {
-                if let ClipShape::Plane { normal, distance, .. } = self.clipvol_plane.shape {
+                if let ClipShape::Plane {
+                    normal, distance, ..
+                } = self.clipvol_plane.shape
+                {
                     // Shader clips where dot(p, n) + distance < 0, so the plane
                     // sits at -normal * distance from the origin.
                     Some(glam::Vec3::from(normal) * (-distance))
@@ -3708,25 +3723,45 @@ impl App {
                     GizmoAxis::X | GizmoAxis::Y | GizmoAxis::Z => {
                         let dir = axis_dir(axis);
                         let amount = gizmo::project_drag_onto_axis(
-                            drag_delta, dir, vp, center, viewport_size,
+                            drag_delta,
+                            dir,
+                            vp,
+                            center,
+                            viewport_size,
                         );
                         dir * amount
                     }
                     GizmoAxis::XY => gizmo::project_drag_onto_plane(
-                        drag_delta, orient * glam::Vec3::X, orient * glam::Vec3::Y,
-                        vp, center, viewport_size,
+                        drag_delta,
+                        orient * glam::Vec3::X,
+                        orient * glam::Vec3::Y,
+                        vp,
+                        center,
+                        viewport_size,
                     ),
                     GizmoAxis::XZ => gizmo::project_drag_onto_plane(
-                        drag_delta, orient * glam::Vec3::X, orient * glam::Vec3::Z,
-                        vp, center, viewport_size,
+                        drag_delta,
+                        orient * glam::Vec3::X,
+                        orient * glam::Vec3::Z,
+                        vp,
+                        center,
+                        viewport_size,
                     ),
                     GizmoAxis::YZ => gizmo::project_drag_onto_plane(
-                        drag_delta, orient * glam::Vec3::Y, orient * glam::Vec3::Z,
-                        vp, center, viewport_size,
+                        drag_delta,
+                        orient * glam::Vec3::Y,
+                        orient * glam::Vec3::Z,
+                        vp,
+                        center,
+                        viewport_size,
                     ),
                     GizmoAxis::Screen => gizmo::project_drag_onto_screen_plane(
-                        drag_delta, self.camera.right(), self.camera.up(),
-                        vp, center, viewport_size,
+                        drag_delta,
+                        self.camera.right(),
+                        self.camera.up(),
+                        vp,
+                        center,
+                        viewport_size,
                     ),
                     _ => glam::Vec3::ZERO,
                 };
@@ -3742,8 +3777,11 @@ impl App {
                         self.clipvol_sphere_center[2] += delta.z;
                     }
                     ClipVolSubMode::InteractivePlane => {
-                        if let ClipShape::Plane { ref mut distance, ref normal, .. } =
-                            self.clipvol_plane.shape
+                        if let ClipShape::Plane {
+                            ref mut distance,
+                            ref normal,
+                            ..
+                        } = self.clipvol_plane.shape
                         {
                             let n = glam::Vec3::from(*normal).normalize_or_zero();
                             // Plane sits at -normal*distance; moving by delta means
@@ -3768,8 +3806,11 @@ impl App {
                             self.clipvol_box_yaw += angle.to_degrees();
                         }
                         ClipVolSubMode::InteractivePlane => {
-                            if let ClipShape::Plane { ref mut normal, ref mut distance, .. } =
-                                self.clipvol_plane.shape
+                            if let ClipShape::Plane {
+                                ref mut normal,
+                                ref mut distance,
+                                ..
+                            } = self.clipvol_plane.shape
                             {
                                 let n = glam::Vec3::from(*normal);
                                 let rot_axis = axis_dir(axis);
@@ -3777,7 +3818,7 @@ impl App {
                                 let new_n = (rot * n).normalize_or_zero();
                                 // Plane sits at anchor = -n * distance. Keep the anchor
                                 // fixed: new anchor = -new_n * new_distance = -n * distance
-                                // → new_distance = -(-n * distance).dot(new_n) / |new_n|²
+                                // -> new_distance = -(-n * distance).dot(new_n) / |new_n|²
                                 //                = (n * distance).dot(new_n)
                                 let anchor = n * (-*distance);
                                 *distance = -(anchor.dot(new_n));
@@ -3853,9 +3894,27 @@ impl App {
 fn material_preset(index: usize) -> Material {
     match index % 4 {
         0 => Material::default(),
-        1 => { let mut m = Material::from_color([0.8, 0.2, 0.2]); m.specular = 0.8; m.shininess = 64.0; m.ambient = 0.1; m },
-        2 => { let mut m = Material::from_color([0.2, 0.4, 0.9]); m.opacity = 0.5; m.specular = 0.9; m.shininess = 128.0; m },
-        3 => { let mut m = Material::from_color([0.3, 0.7, 0.3]); m.specular = 0.1; m.shininess = 8.0; m.diffuse = 0.9; m },
+        1 => {
+            let mut m = Material::from_color([0.8, 0.2, 0.2]);
+            m.specular = 0.8;
+            m.shininess = 64.0;
+            m.ambient = 0.1;
+            m
+        }
+        2 => {
+            let mut m = Material::from_color([0.2, 0.4, 0.9]);
+            m.opacity = 0.5;
+            m.specular = 0.9;
+            m.shininess = 128.0;
+            m
+        }
+        3 => {
+            let mut m = Material::from_color([0.3, 0.7, 0.3]);
+            m.specular = 0.1;
+            m.shininess = 8.0;
+            m.diffuse = 0.9;
+            m
+        }
         _ => unreachable!(),
     }
 }

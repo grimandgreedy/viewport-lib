@@ -49,14 +49,14 @@ impl ManipulationController {
     /// Drive the controller for one frame.
     ///
     /// Priority order:
-    /// 1. Confirm (Enter, or left-click while not a gizmo drag) → [`ManipResult::Commit`]
-    /// 2. Cancel (Escape) → [`ManipResult::Cancel`]
-    /// 3. Gizmo drag release → [`ManipResult::Commit`]
+    /// 1. Confirm (Enter, or left-click while not a gizmo drag) -> [`ManipResult::Commit`]
+    /// 2. Cancel (Escape) -> [`ManipResult::Cancel`]
+    /// 3. Gizmo drag release -> [`ManipResult::Commit`]
     /// 4. Update constraints and numeric input
     /// 5. Compute and return [`ManipResult::Update`]
-    /// 6. Gizmo drag start → begins session, returns [`ManipResult::None`] this frame
-    /// 7. G/R/S keys (when `selection_center` is `Some`) → begins session
-    /// 8. Otherwise → [`ManipResult::None`]
+    /// 6. Gizmo drag start -> begins session, returns [`ManipResult::None`] this frame
+    /// 7. G/R/S keys (when `selection_center` is `Some`) -> begins session
+    /// 8. Otherwise -> [`ManipResult::None`]
     pub fn update(&mut self, frame: &ActionFrame, ctx: ManipulationContext) -> ManipResult {
         if let Some(ref mut session) = self.session {
             // 1. Confirm: Enter key, or left-click when not a gizmo drag.
@@ -94,7 +94,7 @@ impl ManipulationController {
 
             // If the constraint changed, reset the cursor anchor so the next
             // frame's delta is computed relative to the current cursor position
-            // with the new constraint — and tell the app to restore its snapshot.
+            // with the new constraint : and tell the app to restore its snapshot.
             if session.axis != axis_before || session.exclude_axis != exclude_before {
                 session.cursor_anchor = ctx.cursor_viewport;
                 session.cursor_last_total = glam::Vec2::ZERO;
@@ -206,7 +206,7 @@ impl ManipulationController {
                         }
                     };
 
-                    // Convert cumulative → per-frame incremental so the app can keep
+                    // Convert cumulative -> per-frame incremental so the app can keep
                     // multiplying each frame as before.
                     let incr = (cumulative / session.last_scale_factor).max(0.001);
                     session.last_scale_factor = cumulative;
@@ -231,7 +231,7 @@ impl ManipulationController {
             return ManipResult::Update(delta);
         }
 
-        // No active session — check for session starts.
+        // No active session : check for session starts.
 
         // 6. Gizmo drag start.
         if ctx.drag_started {
@@ -449,7 +449,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Numeric parse test (deferred — Action enum lacks NumericDigit/Backspace/Tab)
+    // Numeric parse test (deferred : Action enum lacks NumericDigit/Backspace/Tab)
     // -----------------------------------------------------------------------
 
     #[test]
@@ -621,7 +621,7 @@ mod tests {
     #[test]
     fn controller_no_session_without_selection_center() {
         let mut ctrl = ManipulationController::new();
-        // No selection_center → G/R/S should not start a session.
+        // No selection_center -> G/R/S should not start a session.
         let mut frame = ActionFrame::default();
         frame.actions.insert(
             crate::interaction::input::Action::BeginMove,

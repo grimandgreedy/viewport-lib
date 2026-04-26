@@ -205,7 +205,7 @@ impl ViewportInput {
 
     /// Resolve accumulated events into an [`ActionFrame`].
     ///
-    /// This does NOT reset state — call [`begin_frame`](Self::begin_frame) for that.
+    /// This does NOT reset state : call [`begin_frame`](Self::begin_frame) for that.
     pub fn resolve(&self) -> ActionFrame {
         let mut orbit = glam::Vec2::ZERO;
         let mut pan = glam::Vec2::ZERO;

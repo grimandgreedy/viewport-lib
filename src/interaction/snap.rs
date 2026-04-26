@@ -1,6 +1,6 @@
 //! Pure-math snap helpers for gizmo transforms.
 //!
-//! All functions are stateless — the application wraps gizmo drag results with
+//! All functions are stateless : the application wraps gizmo drag results with
 //! these when snapping is enabled.
 
 /// Configuration for transform snapping.

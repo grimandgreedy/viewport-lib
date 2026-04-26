@@ -1,12 +1,12 @@
-//! Primitives showcase — every geometry primitive displayed in a single viewport.
+//! Primitives showcase : every geometry primitive displayed in a single viewport.
 //!
 //! Navigation:
-//!   Left drag         — orbit
-//!   Right drag        — pan
-//!   Middle drag       — orbit  |  Middle + Shift drag — pan
-//!   Scroll            — zoom
-//!   Ctrl  + Scroll    — orbit (yaw + pitch from scroll X / Y)
-//!   Shift + Scroll    — pan   (right / up from scroll X / Y)
+//!   Left drag         : orbit
+//!   Right drag        : pan
+//!   Middle drag       : orbit  |  Middle + Shift drag : pan
+//!   Scroll            : zoom
+//!   Ctrl  + Scroll    : orbit (yaw + pitch from scroll X / Y)
+//!   Shift + Scroll    : pan   (right / up from scroll X / Y)
 
 use std::sync::Arc;
 
@@ -93,7 +93,7 @@ impl ApplicationHandler for App {
             event_loop
                 .create_window(
                     WindowAttributes::default()
-                        .with_title("viewport-lib — Primitives Showcase")
+                        .with_title("viewport-lib : Primitives Showcase")
                         .with_inner_size(winit::dpi::LogicalSize::new(1280u32, 800u32)),
                 )
                 .expect("window"),
@@ -144,25 +144,25 @@ impl ApplicationHandler for App {
             };
         }
 
-        // Row 0 — basic solids
+        // Row 0 : basic solids
         let m_cube = mesh!(primitives::cube(1.0));
         let m_cuboid = mesh!(primitives::cuboid(2.0, 0.75, 1.0));
         let m_sphere = mesh!(primitives::sphere(0.6, 32, 16));
         let m_icosphere = mesh!(primitives::icosphere(0.6, 3));
 
-        // Row 1 — round / capped
+        // Row 1 : round / capped
         let m_ellipsoid = mesh!(primitives::ellipsoid(0.9, 0.5, 0.6, 28, 14));
         let m_hemisphere = mesh!(primitives::hemisphere(0.65, 32, 16));
         let m_cone = mesh!(primitives::cone(0.55, 1.1, 28));
         let m_cylinder = mesh!(primitives::cylinder(0.4, 1.1, 28));
 
-        // Row 2 — curved surfaces
+        // Row 2 : curved surfaces
         let m_capsule = mesh!(primitives::capsule(0.38, 1.4, 24, 16));
         let m_torus = mesh!(primitives::torus(0.55, 0.2, 40, 24));
         let m_disk = mesh!(primitives::disk(0.65, 40));
         let m_ring = mesh!(primitives::ring(0.3, 0.65, 48));
 
-        // Row 3 — flat / composite
+        // Row 3 : flat / composite
         let m_plane = mesh!(primitives::plane(1.8, 1.8));
         let m_grid_plane = mesh!(primitives::grid_plane(1.8, 1.8, 8, 8));
         let m_frustum = mesh!(primitives::frustum(
@@ -173,7 +173,7 @@ impl ApplicationHandler for App {
         ));
         let m_arrow = mesh!(primitives::arrow(0.07, 0.18, 0.28, 24));
 
-        // Row 4 — spring (two variants)
+        // Row 4 : spring (two variants)
         let m_spring_a = mesh!(primitives::spring(0.35, 0.08, 5.0, 14));
         let m_spring_b = mesh!(primitives::spring(0.28, 0.12, 3.0, 18));
 

@@ -1,6 +1,6 @@
 //! Showcase 15: Point Clouds & Glyphs
 //!
-//! Demonstrates `PointCloudItem` and `GlyphItem` — the two main primitive types
+//! Demonstrates `PointCloudItem` and `GlyphItem` : the two main primitive types
 //! for particle and vector-field data. No mesh upload or Scene graph is needed;
 //! items are submitted directly to `SceneFrame` each frame.
 //!
@@ -12,13 +12,16 @@
 
 use crate::{App, PcSubMode};
 use eframe::egui;
-use viewport_lib::{BuiltinColormap, ColormapId, GlyphItem, GlyphType, LightingSettings, PointCloudItem, SceneRenderItem};
+use viewport_lib::{
+    BuiltinColormap, ColormapId, GlyphItem, GlyphType, LightingSettings, PointCloudItem,
+    SceneRenderItem,
+};
 
 impl App {
     /// One-time setup for Showcase 15.
     ///
     /// Generates and caches CPU-side data for both sub-modes. No GPU upload is
-    /// required — `PointCloudItem` and `GlyphItem` are submitted directly to
+    /// required : `PointCloudItem` and `GlyphItem` are submitted directly to
     /// `SceneFrame` each frame.
     pub(crate) fn build_pc_scene(&mut self) {
         let (cloud_pos, cloud_scalars) = make_point_cloud(20_000);
@@ -113,10 +116,7 @@ impl App {
                 ui.label("Glyph scale:");
                 ui.add(egui::Slider::new(&mut self.pc_glyph_scale, 0.1..=3.0).step_by(0.05));
 
-                ui.checkbox(
-                    &mut self.pc_glyph_magnitude_scale,
-                    "Scale by magnitude",
-                );
+                ui.checkbox(&mut self.pc_glyph_magnitude_scale, "Scale by magnitude");
             }
         }
     }
@@ -171,7 +171,7 @@ impl App {
         }
     }
 
-    /// Surface items for Showcase 15 (none — all geometry is submitted as
+    /// Surface items for Showcase 15 (none : all geometry is submitted as
     /// point clouds or glyphs directly on `SceneFrame`).
     pub(crate) fn pc_surface_items() -> Vec<SceneRenderItem> {
         vec![]
@@ -185,7 +185,7 @@ impl App {
 /// Generate `count` points distributed on a noisy sphere shell.
 ///
 /// Returns `(positions, scalars)` where each scalar is the radial distance of
-/// that point — useful for demonstrating colormap coloring.
+/// that point : useful for demonstrating colormap coloring.
 fn make_point_cloud(count: usize) -> (Vec<[f32; 3]>, Vec<f32>) {
     use std::f32::consts::TAU;
 
@@ -216,7 +216,7 @@ fn make_point_cloud(count: usize) -> (Vec<[f32; 3]>, Vec<f32>) {
 /// Generate a 5×5×5 grid of outward-diverging vectors.
 ///
 /// Returns `(positions, vectors)` where each vector points away from the origin
-/// with length proportional to radial distance — a classic divergence demo.
+/// with length proportional to radial distance : a classic divergence demo.
 fn make_vector_field() -> (Vec<[f32; 3]>, Vec<[f32; 3]>) {
     let mut positions = Vec::new();
     let mut vectors = Vec::new();

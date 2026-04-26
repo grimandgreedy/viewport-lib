@@ -1,4 +1,4 @@
-//! Showcase 10: Camera Tools — build method.
+//! Showcase 10: Camera Tools : build method.
 //!
 //! Six coloured boxes arranged along the cardinal axes so that every named
 //! view preset shows a clearly different face of the layout:

@@ -1,4 +1,4 @@
-//! Multi-viewport example — quad-view CAD layout.
+//! Multi-viewport example : quad-view CAD layout.
 //!
 //! Shows how to use the split `prepare_scene` / `prepare_viewport` / `paint_viewport`
 //! API to render the same scene from four independent cameras in one frame:
@@ -185,7 +185,7 @@ impl ApplicationHandler for App {
             event_loop
                 .create_window(
                     WindowAttributes::default()
-                        .with_title("viewport-lib — Multi-Viewport (quad-view)")
+                        .with_title("viewport-lib : Multi-Viewport (quad-view)")
                         .with_inner_size(winit::dpi::LogicalSize::new(1200u32, 900u32)),
                 )
                 .expect("Failed to create window"),
@@ -240,7 +240,7 @@ impl ApplicationHandler for App {
         let vp2 = renderer.create_viewport(&device); // BottomLeft:  front (ortho)
         let vp3 = renderer.create_viewport(&device); // BottomRight: right (ortho)
 
-        // Perspective camera — standard orbit view.
+        // Perspective camera : standard orbit view.
         let cam_persp = Camera {
             center: glam::Vec3::ZERO,
             distance: 12.0,

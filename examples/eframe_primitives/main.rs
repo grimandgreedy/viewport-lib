@@ -1,9 +1,9 @@
-//! Primitives showcase — every geometry primitive displayed in a single viewport.
+//! Primitives showcase : every geometry primitive displayed in a single viewport.
 //!
 //! Navigation:
-//!   Left drag / Middle drag   — orbit
-//!   Right drag                — pan
-//!   Scroll                    — zoom
+//!   Left drag / Middle drag   : orbit
+//!   Right drag                : pan
+//!   Scroll                    : zoom
 
 mod viewport_callback;
 
@@ -16,7 +16,7 @@ use viewport_lib::{
 
 fn main() -> eframe::Result {
     eframe::run_native(
-        "viewport-lib — Primitives Showcase",
+        "viewport-lib : Primitives Showcase",
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 800.0]),
             depth_buffer: 24,
@@ -39,25 +39,25 @@ fn main() -> eframe::Result {
                 };
             }
 
-            // Row 0 — basic solids
+            // Row 0 : basic solids
             let m_cube = mesh!(primitives::cube(1.0));
             let m_cuboid = mesh!(primitives::cuboid(2.0, 0.75, 1.0));
             let m_sphere = mesh!(primitives::sphere(0.6, 32, 16));
             let m_icosphere = mesh!(primitives::icosphere(0.6, 3));
 
-            // Row 1 — round / capped
+            // Row 1 : round / capped
             let m_ellipsoid = mesh!(primitives::ellipsoid(0.9, 0.5, 0.6, 28, 14));
             let m_hemisphere = mesh!(primitives::hemisphere(0.65, 32, 16));
             let m_cone = mesh!(primitives::cone(0.55, 1.1, 28));
             let m_cylinder = mesh!(primitives::cylinder(0.4, 1.1, 28));
 
-            // Row 2 — curved surfaces
+            // Row 2 : curved surfaces
             let m_capsule = mesh!(primitives::capsule(0.38, 1.4, 24, 16));
             let m_torus = mesh!(primitives::torus(0.55, 0.2, 40, 24));
             let m_disk = mesh!(primitives::disk(0.65, 40));
             let m_ring = mesh!(primitives::ring(0.3, 0.65, 48));
 
-            // Row 3 — flat / composite
+            // Row 3 : flat / composite
             let m_plane = mesh!(primitives::plane(1.8, 1.8));
             let m_grid_plane = mesh!(primitives::grid_plane(1.8, 1.8, 8, 8));
             let m_frustum = mesh!(primitives::frustum(
@@ -68,7 +68,7 @@ fn main() -> eframe::Result {
             ));
             let m_arrow = mesh!(primitives::arrow(0.07, 0.18, 0.28, 24));
 
-            // Row 4 — spring variants
+            // Row 4 : spring variants
             let m_spring_a = mesh!(primitives::spring(0.35, 0.08, 5.0, 14));
             let m_spring_b = mesh!(primitives::spring(0.28, 0.12, 3.0, 18));
 

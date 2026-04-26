@@ -25,12 +25,12 @@ use crate::interaction::selection::NodeId;
 ///
 /// # Variants
 ///
-/// - [`Face`](SubObjectRef::Face) — triangular face, by index in the triangle list.
+/// - [`Face`](SubObjectRef::Face) : triangular face, by index in the triangle list.
 ///   Index `i` addresses vertices `indices[3i..3i+3]`.
-/// - [`Vertex`](SubObjectRef::Vertex) — mesh vertex, by position in the vertex buffer.
-/// - [`Edge`](SubObjectRef::Edge) — mesh edge (from parry3d `FeatureId::Edge`; rarely
+/// - [`Vertex`](SubObjectRef::Vertex) : mesh vertex, by position in the vertex buffer.
+/// - [`Edge`](SubObjectRef::Edge) : mesh edge (from parry3d `FeatureId::Edge`; rarely
 ///   produced by TriMesh ray casts in practice).
-/// - [`Point`](SubObjectRef::Point) — point in a point-cloud object, by index in the
+/// - [`Point`](SubObjectRef::Point) : point in a point-cloud object, by index in the
 ///   positions slice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

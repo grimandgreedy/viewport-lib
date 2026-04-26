@@ -292,28 +292,28 @@ impl ViewportGpuResources {
         // LineList vertices: each pair is one segment.
         // 4 border edges + 1 normal indicator = 10 vertices.
         let vertices: Vec<OverlayVertex> = vec![
-            // Edge 0→1
+            // Edge 0->1
             OverlayVertex {
                 position: c0.to_array(),
             },
             OverlayVertex {
                 position: c1.to_array(),
             },
-            // Edge 1→2
+            // Edge 1->2
             OverlayVertex {
                 position: c1.to_array(),
             },
             OverlayVertex {
                 position: c2.to_array(),
             },
-            // Edge 2→3
+            // Edge 2->3
             OverlayVertex {
                 position: c2.to_array(),
             },
             OverlayVertex {
                 position: c3.to_array(),
             },
-            // Edge 3→0
+            // Edge 3->0
             OverlayVertex {
                 position: c3.to_array(),
             },

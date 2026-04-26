@@ -1,11 +1,11 @@
-// Streamtube shader — connected tube mesh renderer.
+// Streamtube shader : connected tube mesh renderer.
 //
 // The CPU generates a full connected tube mesh (parallel-transport frame, SIDES=12)
 // with world-space positions and outward-facing normals baked in.  This shader
 // simply transforms the mesh into clip space and applies Blinn-Phong shading.
 //
 // Group 0: Camera uniform (view-projection, eye position) + ClipPlanes + ClipVolume.
-// Group 1: StreamtubeUniform — color (vec4) + radius (f32, unused here — mesh already scaled).
+// Group 1: StreamtubeUniform : color (vec4) + radius (f32, unused here : mesh already scaled).
 
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -108,7 +108,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
     if !clip_volume_test(in.world_pos) { discard; }
 
-    // Blinn-Phong shading — single directional key light.
+    // Blinn-Phong shading : single directional key light.
     let light_dir = normalize(vec3<f32>(0.3, 1.0, 0.5));
     let n         = normalize(in.world_nrm);
     let n_dot_l   = max(dot(n, light_dir), 0.0);

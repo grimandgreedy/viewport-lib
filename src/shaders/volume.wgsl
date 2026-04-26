@@ -136,7 +136,7 @@ fn clip_ray_plane(
     if abs(denom) < 1e-8 {
         // Ray parallel to plane.
         if num < 0.0 {
-            // Origin outside plane — no intersection.
+            // Origin outside plane : no intersection.
             return vec2<f32>(t_far + 1.0, t_far);
         }
         return vec2<f32>(t_near, t_far);

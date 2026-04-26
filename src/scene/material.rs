@@ -11,27 +11,30 @@ pub enum ParamVisMode {
     Checker = 1,
     /// Thin grid lines at UV integer boundaries.
     Grid = 2,
-    /// Polar checkerboard centred at UV (0.5, 0.5) — reveals rotational consistency.
+    /// Polar checkerboard centred at UV (0.5, 0.5) : reveals rotational consistency.
     LocalChecker = 3,
-    /// Concentric rings centred at UV (0.5, 0.5) — reveals radial distortion.
+    /// Concentric rings centred at UV (0.5, 0.5) : reveals radial distortion.
     LocalRadial = 4,
 }
 
 /// UV parameterization visualization settings.
 ///
 /// Attach to [`Material::param_vis`] to enable procedural UV pattern rendering.
-/// The `scale` controls tile frequency — higher values produce more, smaller tiles.
+/// The `scale` controls tile frequency : higher values produce more, smaller tiles.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ParamVis {
     /// Which procedural pattern to render.
     pub mode: ParamVisMode,
-    /// Tile frequency multiplier. Default 8.0 — produces 8 checker squares per UV unit.
+    /// Tile frequency multiplier. Default 8.0 : produces 8 checker squares per UV unit.
     pub scale: f32,
 }
 
 impl Default for ParamVis {
     fn default() -> Self {
-        Self { mode: ParamVisMode::Checker, scale: 8.0 }
+        Self {
+            mode: ParamVisMode::Checker,
+            scale: 8.0,
+        }
     }
 }
 
@@ -39,7 +42,7 @@ impl Default for ParamVis {
 ///
 /// Use [`BackfacePolicy::Cull`] (the default) to hide back faces, [`BackfacePolicy::Identical`]
 /// to show them with the same shading as front faces, or [`BackfacePolicy::DifferentColor`]
-/// to shade back faces in a distinct color — useful for spotting mesh orientation errors or
+/// to shade back faces in a distinct color : useful for spotting mesh orientation errors or
 /// highlighting the interior of open surfaces.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BackfacePolicy {
@@ -113,7 +116,7 @@ pub struct Material {
     /// tint the result with `base_color`; static matcaps override color entirely.
     pub matcap_id: Option<crate::resources::MatcapId>,
     /// UV parameterization visualization. When set, replaces albedo/lighting with a
-    /// procedural pattern in UV space — useful for inspecting parameterization quality.
+    /// procedural pattern in UV space : useful for inspecting parameterization quality.
     ///
     /// Requires UV coordinates on the mesh. Default None (standard shading).
     pub param_vis: Option<ParamVis>,
@@ -121,7 +124,7 @@ pub struct Material {
     ///
     /// Use [`BackfacePolicy::Identical`] for single-sided geometry like planes and open
     /// surfaces. Use [`BackfacePolicy::DifferentColor`] to highlight back faces in a
-    /// distinct color — helpful for diagnosing mesh orientation errors.
+    /// distinct color : helpful for diagnosing mesh orientation errors.
     pub backface_policy: BackfacePolicy,
 }
 
@@ -150,7 +153,10 @@ impl Default for Material {
 impl Material {
     /// Returns `true` if the backface policy makes back faces visible (`Identical` or `DifferentColor`).
     pub fn is_two_sided(&self) -> bool {
-        matches!(self.backface_policy, BackfacePolicy::Identical | BackfacePolicy::DifferentColor(_))
+        matches!(
+            self.backface_policy,
+            BackfacePolicy::Identical | BackfacePolicy::DifferentColor(_)
+        )
     }
 
     /// Construct from a plain color, all other parameters at their defaults.

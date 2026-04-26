@@ -47,10 +47,26 @@ impl AppState {
         let box_id = MeshId::from_index(box_idx);
 
         let object_data: &[(&str, glam::Vec3, [f32; 3])] = &[
-            ("Sphere Near", glam::Vec3::new(-1.5, 0.5,  1.0), [0.85, 0.35, 0.25]),
-            ("Box Near",    glam::Vec3::new( 1.5, 0.5,  1.0), [0.25, 0.55, 0.85]),
-            ("Sphere Mid",  glam::Vec3::new(-3.0, 0.5, -3.0), [0.8,  0.7,  0.3 ]),
-            ("Box Mid",     glam::Vec3::new( 3.0, 0.5, -3.0), [0.35, 0.75, 0.45]),
+            (
+                "Sphere Near",
+                glam::Vec3::new(-1.5, 0.5, 1.0),
+                [0.85, 0.35, 0.25],
+            ),
+            (
+                "Box Near",
+                glam::Vec3::new(1.5, 0.5, 1.0),
+                [0.25, 0.55, 0.85],
+            ),
+            (
+                "Sphere Mid",
+                glam::Vec3::new(-3.0, 0.5, -3.0),
+                [0.8, 0.7, 0.3],
+            ),
+            (
+                "Box Mid",
+                glam::Vec3::new(3.0, 0.5, -3.0),
+                [0.35, 0.75, 0.45],
+            ),
         ];
         for (name, pos, color) in object_data {
             let mesh_id = if *name == "Sphere Near" {

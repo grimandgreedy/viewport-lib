@@ -15,7 +15,7 @@
 //! then compare against a threshold. This avoids the parry3d dependency in the gizmo
 //! module itself (the gizmo vertices are already in gizmo-local space).
 
-/// Pivot point mode for the gizmo — determines where the transform center is.
+/// Pivot point mode for the gizmo : determines where the transform center is.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum PivotMode {
@@ -34,7 +34,7 @@ pub enum PivotMode {
 impl PivotMode {
     /// Advance to the next mode in the cycle.
     ///
-    /// Cycle order: `SelectionCentroid` → `IndividualOrigins` → `MedianPoint` → `WorldOrigin` → …
+    /// Cycle order: `SelectionCentroid` -> `IndividualOrigins` -> `MedianPoint` -> `WorldOrigin` -> …
     ///
     /// `Cursor3D` is excluded from the cycle (it requires an explicit position) and
     /// falls back to `SelectionCentroid`.
@@ -120,7 +120,7 @@ pub enum GizmoAxis {
     YZ,
     /// Screen-space handle (translate in the camera plane).
     Screen,
-    /// No axis — used when nothing is hovered or active.
+    /// No axis : used when nothing is hovered or active.
     None,
 }
 
@@ -133,7 +133,7 @@ pub enum GizmoSpace {
     Local,
 }
 
-/// Gizmo CPU state — lives in the host application, not a renderer state struct.
+/// Gizmo CPU state : lives in the host application, not a renderer state struct.
 ///
 /// Gizmo state is transient and must NOT be serialized.
 /// Note: the drag-start transform snapshot (for undo) is stored in the
@@ -149,7 +149,7 @@ pub struct Gizmo {
     pub active_axis: GizmoAxis,
     /// Mouse position (in viewport-local pixels) at drag start.
     pub drag_start_mouse: Option<glam::Vec2>,
-    /// Pivot point mode — determines the transform center for multi-selections.
+    /// Pivot point mode : determines the transform center for multi-selections.
     pub pivot_mode: PivotMode,
 }
 
@@ -201,10 +201,10 @@ impl Gizmo {
     ///
     /// # Arguments
     ///
-    /// * `ray_origin` — world-space origin of the picking ray
-    /// * `ray_dir` — world-space direction of the picking ray (normalized)
-    /// * `gizmo_center` — world-space position of the gizmo (== selected object position)
-    /// * `gizmo_scale` — world-space length of each axis arm
+    /// * `ray_origin` : world-space origin of the picking ray
+    /// * `ray_dir` : world-space direction of the picking ray (normalized)
+    /// * `gizmo_center` : world-space position of the gizmo (== selected object position)
+    /// * `gizmo_scale` : world-space length of each axis arm
     pub fn hit_test(
         &self,
         ray_origin: glam::Vec3,
@@ -541,7 +541,7 @@ pub(crate) fn build_gizmo_mesh(
 /// Arrow proportions in gizmo-local units.
 const SHAFT_RADIUS: f32 = 0.035;
 const SHAFT_LENGTH: f32 = 0.70;
-/// Major radius of the rotation rings — used in both mesh generation and hit testing.
+/// Major radius of the rotation rings : used in both mesh generation and hit testing.
 pub const ROTATION_RING_RADIUS: f32 = 0.85;
 const CONE_RADIUS: f32 = 0.09;
 const CONE_LENGTH: f32 = 0.30;
@@ -905,10 +905,10 @@ fn perpendicular_pair(axis: glam::Vec3) -> (glam::Vec3, glam::Vec3) {
 /// Compute the world-space scale for the gizmo so it appears at a consistent
 /// screen size regardless of camera distance.
 ///
-/// `gizmo_center_world` — position of the gizmo (selected object)
-/// `camera_eye` — camera eye position
-/// `fov_y` — camera vertical field of view (radians)
-/// `viewport_height` — viewport height in pixels
+/// `gizmo_center_world` : position of the gizmo (selected object)
+/// `camera_eye` : camera eye position
+/// `fov_y` : camera vertical field of view (radians)
+/// `viewport_height` : viewport height in pixels
 /// Target: gizmo should be approximately 100px tall on screen.
 pub fn compute_gizmo_scale(
     gizmo_center_world: glam::Vec3,
@@ -945,11 +945,11 @@ pub(crate) struct GizmoUniform {
 /// Returns the signed scalar amount to move along the axis.
 ///
 /// # Arguments
-/// * `drag_delta` — mouse movement in pixels since drag start (egui drag_delta())
-/// * `axis_world` — world-space axis direction (X, Y, or Z unit vector)
-/// * `view_proj` — camera view-projection matrix
-/// * `gizmo_center` — world-space gizmo center (selected object position)
-/// * `viewport_size` — viewport size in pixels
+/// * `drag_delta` : mouse movement in pixels since drag start (egui drag_delta())
+/// * `axis_world` : world-space axis direction (X, Y, or Z unit vector)
+/// * `view_proj` : camera view-projection matrix
+/// * `gizmo_center` : world-space gizmo center (selected object position)
+/// * `viewport_size` : viewport size in pixels
 pub fn project_drag_onto_axis(
     drag_delta: glam::Vec2,
     axis_world: glam::Vec3,
@@ -1247,7 +1247,7 @@ mod tests {
     fn test_build_mesh_translate_has_plane_quads() {
         let (verts, idxs) =
             build_gizmo_mesh(GizmoMode::Translate, GizmoAxis::None, glam::Quat::IDENTITY);
-        // Translate mode has arrows + plane quads + screen handle — substantially more geometry.
+        // Translate mode has arrows + plane quads + screen handle : substantially more geometry.
         assert!(
             verts.len() > 80,
             "translate mesh should have significant vertex count, got {}",

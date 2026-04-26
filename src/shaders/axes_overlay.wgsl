@@ -1,6 +1,6 @@
 // Screen-space axes indicator overlay.
 //
-// No camera transform — vertex positions are already in clip space (NDC).
+// No camera transform : vertex positions are already in clip space (NDC).
 // Per-vertex color with alpha blending for circle backgrounds.
 
 struct VertexIn {

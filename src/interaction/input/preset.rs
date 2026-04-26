@@ -12,13 +12,13 @@ use super::viewport_binding::{ModifiersMatch, ViewportBinding, ViewportGesture};
 pub enum BindingPreset {
     /// The canonical camera-navigation control scheme matching `examples/winit_primitives`.
     ///
-    /// - Left drag → Orbit
-    /// - Right drag → Pan
-    /// - Middle drag → Orbit
-    /// - Middle + Shift drag → Pan
-    /// - Scroll → Zoom
-    /// - Ctrl + Scroll → Orbit (two-axis)
-    /// - Shift + Scroll → Pan (two-axis)
+    /// - Left drag -> Orbit
+    /// - Right drag -> Pan
+    /// - Middle drag -> Orbit
+    /// - Middle + Shift drag -> Pan
+    /// - Scroll -> Zoom
+    /// - Ctrl + Scroll -> Orbit (two-axis)
+    /// - Shift + Scroll -> Pan (two-axis)
     ViewportPrimitives,
 
     /// Full binding set: camera navigation plus all keyboard shortcuts (normal
@@ -37,7 +37,7 @@ pub enum BindingPreset {
 /// This is the canonical reference control scheme, matching `examples/winit_primitives`.
 pub fn viewport_primitives_bindings() -> Vec<ViewportBinding> {
     vec![
-        // Left drag → Orbit (no modifiers)
+        // Left drag -> Orbit (no modifiers)
         ViewportBinding::new(
             Action::Orbit,
             ViewportGesture::Drag {
@@ -45,7 +45,7 @@ pub fn viewport_primitives_bindings() -> Vec<ViewportBinding> {
                 modifiers: ModifiersMatch::Exact(Modifiers::NONE),
             },
         ),
-        // Right drag → Pan (any modifiers, pan takes priority over orbit for right)
+        // Right drag -> Pan (any modifiers, pan takes priority over orbit for right)
         ViewportBinding::new(
             Action::Pan,
             ViewportGesture::Drag {
@@ -53,7 +53,7 @@ pub fn viewport_primitives_bindings() -> Vec<ViewportBinding> {
                 modifiers: ModifiersMatch::Any,
             },
         ),
-        // Middle drag + Shift → Pan
+        // Middle drag + Shift -> Pan
         ViewportBinding::new(
             Action::Pan,
             ViewportGesture::Drag {
@@ -61,7 +61,7 @@ pub fn viewport_primitives_bindings() -> Vec<ViewportBinding> {
                 modifiers: ModifiersMatch::Contains(Modifiers::SHIFT),
             },
         ),
-        // Middle drag (no shift) → Orbit
+        // Middle drag (no shift) -> Orbit
         ViewportBinding::new(
             Action::Orbit,
             ViewportGesture::Drag {
@@ -69,21 +69,21 @@ pub fn viewport_primitives_bindings() -> Vec<ViewportBinding> {
                 modifiers: ModifiersMatch::Exact(Modifiers::NONE),
             },
         ),
-        // Ctrl + Scroll → Orbit (two-axis)
+        // Ctrl + Scroll -> Orbit (two-axis)
         ViewportBinding::new(
             Action::Orbit,
             ViewportGesture::WheelXY {
                 modifiers: ModifiersMatch::Contains(Modifiers::CTRL),
             },
         ),
-        // Shift + Scroll → Pan (two-axis)
+        // Shift + Scroll -> Pan (two-axis)
         ViewportBinding::new(
             Action::Pan,
             ViewportGesture::WheelXY {
                 modifiers: ModifiersMatch::Contains(Modifiers::SHIFT),
             },
         ),
-        // Plain Scroll → Zoom
+        // Plain Scroll -> Zoom
         ViewportBinding::new(
             Action::Zoom,
             ViewportGesture::WheelY {
@@ -99,7 +99,7 @@ pub fn viewport_primitives_bindings() -> Vec<ViewportBinding> {
 /// normal-mode actions, fly-mode movement, manipulation constraints, and
 /// global actions (undo/redo).
 ///
-/// Consumers are responsible for applying mode awareness — key bindings for
+/// Consumers are responsible for applying mode awareness : key bindings for
 /// fly mode and manipulation mode are always present in the resolved
 /// [`crate::ActionFrame`], so callers should gate on the current [`crate::InputMode`].
 pub fn viewport_all_bindings() -> Vec<ViewportBinding> {

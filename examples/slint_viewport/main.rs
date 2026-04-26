@@ -32,7 +32,7 @@ slint::slint! {
         callback add-object();
         callback remove-object(int);
 
-        // Viewport input callbacks — raw input forwarded to OrbitCameraController.
+        // Viewport input callbacks : raw input forwarded to OrbitCameraController.
         callback pointer-pressed(float, float, int);   // x, y, button (1=left,2=right,3=middle)
         callback pointer-released(int);                // button
         callback pointer-moved(float, float);          // x, y (viewport-local)
@@ -214,7 +214,7 @@ fn main() {
         });
     }
 
-    // --- Viewport input callbacks — forward raw events to OrbitCameraController ---
+    // --- Viewport input callbacks : forward raw events to OrbitCameraController ---
     {
         let renderer = scene_renderer.clone();
         app.on_pointer_pressed(move |x, y, btn| {

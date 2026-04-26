@@ -54,7 +54,7 @@ pub struct OrbitCameraController {
     pub navigation_mode: NavigationMode,
     /// Movement speed for [`NavigationMode::FirstPerson`], in world units per frame.
     ///
-    /// Defaults to `0.1`. Scale this to match your scene — a value of `0.1` is
+    /// Defaults to `0.1`. Scale this to match your scene : a value of `0.1` is
     /// suitable for a scene with objects a few units across.
     pub fly_speed: f32,
     /// Sensitivity for drag-based orbit (radians per pixel).
@@ -115,8 +115,8 @@ impl OrbitCameraController {
     /// Begin a new frame.
     ///
     /// Resets per-frame accumulators and records viewport context (hover/focus
-    /// state and size). Call this at the **end** of each rendered frame — after
-    /// `apply_to_camera` — so the accumulator is ready for the next batch of
+    /// state and size). Call this at the **end** of each rendered frame : after
+    /// `apply_to_camera` : so the accumulator is ready for the next batch of
     /// events.
     ///
     /// Also call once immediately after construction to prime the accumulator.
@@ -137,7 +137,7 @@ impl OrbitCameraController {
     /// camera navigation.
     ///
     /// Use this when the caller needs to inspect actions but camera movement
-    /// should be suppressed — for example during gizmo manipulation or fly mode
+    /// should be suppressed : for example during gizmo manipulation or fly mode
     /// where the camera is driven by other logic.
     pub fn resolve(&self) -> ActionFrame {
         self.input.resolve()
@@ -263,14 +263,12 @@ impl OrbitCameraController {
 fn apply_turntable(camera: &mut Camera, yaw: f32, pitch: f32) {
     // Yaw: pre-multiply by a world-Z rotation (same as the yaw component of Camera::orbit).
     if yaw != 0.0 {
-        camera.orientation =
-            (glam::Quat::from_rotation_z(-yaw) * camera.orientation).normalize();
+        camera.orientation = (glam::Quat::from_rotation_z(-yaw) * camera.orientation).normalize();
     }
 
     if pitch != 0.0 {
         // Proposed orientation after applying pitch in camera-local space.
-        let proposed =
-            (camera.orientation * glam::Quat::from_rotation_x(-pitch)).normalize();
+        let proposed = (camera.orientation * glam::Quat::from_rotation_x(-pitch)).normalize();
 
         // The eye direction is `orientation * Z`. Its Z-component equals
         // sin(elevation_angle), so clamping it to sin(±89°) keeps the camera

@@ -30,7 +30,7 @@ struct Camera {
     view: mat4x4<f32>,
 };
 
-// Single light entry — 128 bytes.
+// Single light entry : 128 bytes.
 struct SingleLight {
     light_view_proj: mat4x4<f32>,  // 64 bytes (shadow matrix, lights[0] only)
     pos_or_dir: vec3<f32>,          // 12 bytes
@@ -60,7 +60,7 @@ struct Lights {
     show_skybox: u32,
 };
 
-// Clip planes uniform — 112 bytes.
+// Clip planes uniform : 112 bytes.
 struct ClipPlanes {
     planes: array<vec4<f32>, 6>,
     count: u32,
@@ -69,7 +69,7 @@ struct ClipPlanes {
     viewport_height: f32,
 };
 
-// Shadow atlas uniform — 416 bytes.
+// Shadow atlas uniform : 416 bytes.
 struct ShadowAtlas {
     cascade_vp: array<mat4x4<f32>, 4>,   // 256 bytes
     cascade_splits: vec4<f32>,            //  16 bytes
@@ -80,7 +80,7 @@ struct ShadowAtlas {
     atlas_rects: array<vec4<f32>, 8>,     // 128 bytes
 };
 
-// Per-object uniform — 208 bytes.
+// Per-object uniform : 208 bytes.
 struct Object {
     model: mat4x4<f32>,
     color: vec4<f32>,
@@ -106,9 +106,9 @@ struct Object {
     matcap_blendable: u32,      // offset 168
     _pad2: u32,                 // offset 172
     use_face_color: u32,        // offset 176
-    uv_vis_mode: u32,           // offset 180 — 0=off 1=checker 2=grid 3=localcheck 4=localrad
-    uv_vis_scale: f32,          // offset 184 — tile frequency multiplier
-    backface_policy: u32,       // offset 188 — 0=Cull 1=Identical 2=DifferentColor
+    uv_vis_mode: u32,           // offset 180 : 0=off 1=checker 2=grid 3=localcheck 4=localrad
+    uv_vis_scale: f32,          // offset 184 : tile frequency multiplier
+    backface_policy: u32,       // offset 188 : 0=Cull 1=Identical 2=DifferentColor
     backface_color: vec4<f32>,  // offset 192
 };
 
@@ -257,7 +257,7 @@ const POISSON_DISK: array<vec2<f32>, 32> = array<vec2<f32>, 32>(
 );
 
 // ---------------------------------------------------------------------------
-// CSM shadow sampling — selects cascade by eye distance, samples atlas tile
+// CSM shadow sampling : selects cascade by eye distance, samples atlas tile
 // ---------------------------------------------------------------------------
 fn sample_shadow_csm(
     world_pos: vec3<f32>,
@@ -278,7 +278,7 @@ fn sample_shadow_csm(
     cascade_idx = min(cascade_idx, shadow_atlas.cascade_count - 1u);
 
     // Project the actual surface position to get the correct shadow-map UV.
-    // We must NOT offset the UV — on curved surfaces the tangential component
+    // We must NOT offset the UV : on curved surfaces the tangential component
     // of the normal would shift the sample into a shallower shadow-map region
     // (closer to the light), causing MORE false shadows instead of fewer.
     let light_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(world_pos, 1.0);
@@ -313,7 +313,7 @@ fn sample_shadow_csm(
     let offset_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(offset_world, 1.0);
     let biased_depth = (offset_clip.xyz / offset_clip.w).z - lights_uniform.shadow_bias;
 
-    // Per-fragment Poisson disk rotation — breaks up the coherent square/blob
+    // Per-fragment Poisson disk rotation : breaks up the coherent square/blob
     // pattern that results from every pixel using the same disk orientation.
     // Uses world_pos.xz as seed so adjacent pixels get different rotations.
     let noise = fract(52.9829189 * fract(dot(world_pos.xz, vec2<f32>(0.06711056, 0.00583715))));
@@ -405,7 +405,7 @@ fn F_Schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
 }
 
 // ---------------------------------------------------------------------------
-// IBL helpers — equirectangular sampling
+// IBL helpers : equirectangular sampling
 // This is the CANONICAL copy. Keep in sync with:
 //   mesh_instanced.wgsl, mesh_oit.wgsl, mesh_instanced_oit.wgsl
 // ---------------------------------------------------------------------------
@@ -431,7 +431,7 @@ fn sample_ibl_irradiance(N: vec3<f32>, rotation: f32) -> vec3<f32> {
 /// Sample the prefiltered specular map at a roughness-derived mip level.
 fn sample_ibl_prefiltered(R: vec3<f32>, roughness: f32, rotation: f32) -> vec3<f32> {
     let uv = dir_to_equirect_uv(R, rotation);
-    let max_mip = 4.0; // 5 mip levels → max index 4
+    let max_mip = 4.0; // 5 mip levels -> max index 4
     let mip = roughness * max_mip;
     return textureSampleLevel(ibl_prefiltered, ibl_sampler, uv, mip).rgb;
 }
@@ -503,7 +503,7 @@ fn pbr_light_contrib(
     return (kD * base_color / 3.14159265 + specular) * radiance * NdotL;
 }
 
-// UV parameterization visualization — returns a procedural RGB color from UV coordinates.
+// UV parameterization visualization : returns a procedural RGB color from UV coordinates.
 // mode: 1=checker, 2=grid, 3=localcheck (polar checker), 4=localrad (concentric rings).
 // scale: tile frequency multiplier applied to uv before pattern evaluation.
 fn param_vis_color(uv: vec2<f32>, mode: u32, scale: f32) -> vec3<f32> {
@@ -607,7 +607,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         ao_factor = textureSample(ao_map, obj_sampler, in.uv).r;
     }
 
-    // Matcap shading — replaces the Blinn-Phong / PBR path.
+    // Matcap shading : replaces the Blinn-Phong / PBR path.
     // Per-face RGBA color: use directly, bypassing all lighting and colormap logic.
     if object.use_face_color != 0u {
         var fc = in.face_color;
@@ -627,7 +627,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         // texture) which is where built-in matcaps place the bright region.
         //
         // Clamp the XY radius to 0.99 to stay just inside the matcap disc.
-        // At grazing angles (silhouette) |view_normal.xy| → 1, which samples the
+        // At grazing angles (silhouette) |view_normal.xy| -> 1, which samples the
         // transparent black border of the matcap image, producing a dark dotted band.
         let mc_len = length(view_normal.xy);
         let mc_scale = select(1.0, 0.99 / mc_len, mc_len > 0.99);
@@ -701,7 +701,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
                 radiance = l.color * l.intensity * dist_falloff * dist_falloff * cone_att;
             }
 
-            // Shadow factor (lights[0] only) — CSM.
+            // Shadow factor (lights[0] only) : CSM.
             var shadow_factor = 1.0;
             if i == 0u && lights_uniform.shadows_enabled != 0u {
                 shadow_factor = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L);

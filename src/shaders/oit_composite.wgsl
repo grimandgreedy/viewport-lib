@@ -1,13 +1,13 @@
-// OIT composite shader — blends weighted-blended accum/reveal into the HDR buffer.
+// OIT composite shader : blends weighted-blended accum/reveal into the HDR buffer.
 //
 // Reads the accum (Rgba16Float) and reveal (R8Unorm) textures produced by the OIT
 // geometry pass and reconstructs the final composite color using the McGuire & Bavoil
 // formula, writing premultiplied alpha RGBA into the HDR color target.
 //
 // Group 0:
-//   binding 0 — accum_tex:  texture_2d<f32>   (Rgba16Float accumulation)
-//   binding 1 — reveal_tex: texture_2d<f32>   (R8Unorm reveal / transmittance)
-//   binding 2 — samp:       sampler           (linear, clamp-to-edge)
+//   binding 0 : accum_tex:  texture_2d<f32>   (Rgba16Float accumulation)
+//   binding 1 : reveal_tex: texture_2d<f32>   (R8Unorm reveal / transmittance)
+//   binding 2 : samp:       sampler           (linear, clamp-to-edge)
 
 @group(0) @binding(0) var accum_tex:  texture_2d<f32>;
 @group(0) @binding(1) var reveal_tex: texture_2d<f32>;
@@ -18,7 +18,7 @@ struct VertexOut {
     @location(0) uv: vec2<f32>,
 };
 
-// Fullscreen triangle — no vertex buffer required.
+// Fullscreen triangle : no vertex buffer required.
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
     let uv = vec2<f32>(

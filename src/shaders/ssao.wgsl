@@ -1,13 +1,13 @@
-// ssao.wgsl — screen-space ambient occlusion using hemisphere sampling.
+// ssao.wgsl : screen-space ambient occlusion using hemisphere sampling.
 // Reconstructs view-space position from depth, samples a rotated hemisphere kernel,
 // and estimates per-pixel ambient occlusion.
 
 struct SsaoUniform {
-    inv_proj: mat4x4<f32>,  // 64 bytes — NDC+depth -> view-space position (unproject)
-    proj:     mat4x4<f32>,  // 64 bytes — view-space -> clip (re-project samples)
-    radius:   f32,          //  4 bytes — hemisphere sample radius in view units
-    bias:     f32,          //  4 bytes — depth comparison bias (avoids self-occlusion)
-    _pad:     vec2<f32>,    //  8 bytes — alignment
+    inv_proj: mat4x4<f32>,  // 64 bytes : NDC+depth -> view-space position (unproject)
+    proj:     mat4x4<f32>,  // 64 bytes : view-space -> clip (re-project samples)
+    radius:   f32,          //  4 bytes : hemisphere sample radius in view units
+    bias:     f32,          //  4 bytes : depth comparison bias (avoids self-occlusion)
+    _pad:     vec2<f32>,    //  8 bytes : alignment
 }
 
 @group(0) @binding(0) var depth_tex:  texture_depth_2d;

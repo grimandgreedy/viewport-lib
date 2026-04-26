@@ -1,15 +1,15 @@
 //! Demonstrates the two built-in input presets.
 //!
-//! Press **1** — Camera only (`ViewportPrimitives`):
-//!   Left/Middle drag → Orbit  ·  Right drag → Pan  ·  Scroll → Zoom
-//!   Ctrl+Scroll → Orbit (two-axis)  ·  Shift+Scroll → Pan (two-axis)
+//! Press **1** : Camera only (`ViewportPrimitives`):
+//!   Left/Middle drag -> Orbit  ·  Right drag -> Pan  ·  Scroll -> Zoom
+//!   Ctrl+Scroll -> Orbit (two-axis)  ·  Shift+Scroll -> Pan (two-axis)
 //!
-//! Press **2** — Full controls (`ViewportAll`) + `ManipulationController`:
-//!   Ctrl+Scroll → Orbit  ·  Right drag → Pan  ·  Scroll → Zoom
-//!   Click → select  ·  Shift+Click → multi-select
+//! Press **2** : Full controls (`ViewportAll`) + `ManipulationController`:
+//!   Ctrl+Scroll -> Orbit  ·  Right drag -> Pan  ·  Scroll -> Zoom
+//!   Click -> select  ·  Shift+Click -> multi-select
 //!   G move  R rotate  S scale  ·  X/Y/Z constrain  ·  Shift+X/Y/Z exclude
-//!   Enter / left-click → confirm  ·  Esc → cancel
-//!   [ → cycle pivot forward  ·  ] → cycle pivot backward
+//!   Enter / left-click -> confirm  ·  Esc -> cancel
+//!   [ -> cycle pivot forward  ·  ] -> cycle pivot backward
 
 mod viewport_callback;
 
@@ -24,7 +24,7 @@ use viewport_lib::{
 
 fn main() -> eframe::Result {
     eframe::run_native(
-        "viewport-lib — Input Controllers",
+        "viewport-lib : Input Controllers",
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 600.0]),
             depth_buffer: 24,
@@ -60,9 +60,9 @@ fn main() -> eframe::Result {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
-    /// Camera navigation only — ViewportPrimitives preset.
+    /// Camera navigation only : ViewportPrimitives preset.
     Primitives,
-    /// Full controls + object manipulation — ViewportAll preset.
+    /// Full controls + object manipulation : ViewportAll preset.
     All,
 }
 
@@ -80,11 +80,20 @@ struct Object {
 impl Object {
     fn new(pos: glam::Vec3, mesh: usize, color: [f32; 3]) -> Self {
         let model = glam::Mat4::from_translation(pos);
-        Self { model, snapshot: model, mesh, color }
+        Self {
+            model,
+            snapshot: model,
+            mesh,
+            color,
+        }
     }
 
     fn position(&self) -> glam::Vec3 {
-        glam::Vec3::new(self.model.w_axis.x, self.model.w_axis.y, self.model.w_axis.z)
+        glam::Vec3::new(
+            self.model.w_axis.x,
+            self.model.w_axis.y,
+            self.model.w_axis.z,
+        )
     }
 
     fn save_snapshot(&mut self) {
@@ -145,9 +154,9 @@ impl App {
             ctrl_primitives: OrbitCameraController::viewport_primitives(),
             ctrl_all: OrbitCameraController::viewport_all(),
             objects: vec![
-                Object::new(glam::Vec3::new(-3.0, 0.0, 0.0), m_box,    [0.4, 0.6, 0.9]),
-                Object::new(glam::Vec3::new( 0.0, 0.0, 0.0), m_sphere, [0.9, 0.5, 0.2]),
-                Object::new(glam::Vec3::new( 3.0, 0.0, 0.0), m_box,    [0.3, 0.8, 0.4]),
+                Object::new(glam::Vec3::new(-3.0, 0.0, 0.0), m_box, [0.4, 0.6, 0.9]),
+                Object::new(glam::Vec3::new(0.0, 0.0, 0.0), m_sphere, [0.9, 0.5, 0.2]),
+                Object::new(glam::Vec3::new(3.0, 0.0, 0.0), m_box, [0.3, 0.8, 0.4]),
             ],
             selection: Selection::new(),
             gizmo: Gizmo::new(),
@@ -170,8 +179,8 @@ impl App {
     /// Apply a `TransformDelta` to all selected objects.
     ///
     /// Rotation and scale pivot depends on the current `PivotMode`:
-    /// - `IndividualOrigins` — each object transforms around its own centre.
-    /// - Everything else — all objects transform around the shared `gizmo_center`.
+    /// - `IndividualOrigins` : each object transforms around its own centre.
+    /// - Everything else : all objects transform around the shared `gizmo_center`.
     fn apply_delta(&mut self, delta: viewport_lib::TransformDelta) {
         let pivot_mode = self.gizmo.pivot_mode;
         let gizmo_center = self.gizmo_center.unwrap_or(glam::Vec3::ZERO);
@@ -238,11 +247,9 @@ impl App {
     }
 
     fn recompute_gizmo_center(&mut self) {
-        self.gizmo_center = gizmo_center_for_pivot(
-            &self.gizmo.pivot_mode,
-            &self.selection,
-            |id| Some(self.objects[id as usize].position()),
-        );
+        self.gizmo_center = gizmo_center_for_pivot(&self.gizmo.pivot_mode, &self.selection, |id| {
+            Some(self.objects[id as usize].position())
+        });
     }
 }
 
@@ -469,7 +476,7 @@ impl eframe::App for App {
                 .unwrap_or(glam::Vec2::ZERO);
 
             // ---------------------------------------------------------------
-            // Mode 1: camera only — three static boxes
+            // Mode 1: camera only : three static boxes
             // ---------------------------------------------------------------
             let scene_items: Vec<SceneRenderItem> = match self.mode {
                 Mode::Primitives => {
@@ -490,14 +497,14 @@ impl eframe::App for App {
                 }
 
                 // ---------------------------------------------------------------
-                // Mode 2: full controls — three selectable objects
+                // Mode 2: full controls : three selectable objects
                 // ---------------------------------------------------------------
                 Mode::All => {
                     let camera_view = self.camera.view_matrix();
                     let camera_proj = self.camera.proj_matrix();
                     let view_proj = camera_proj * camera_view;
 
-                    // Single action frame for the whole frame — resolve() or
+                    // Single action frame for the whole frame : resolve() or
                     // apply_to_camera() must only be called once per frame.
                     let action_frame = if self.manip.is_active() {
                         self.ctrl_all.resolve()
@@ -505,7 +512,7 @@ impl eframe::App for App {
                         self.ctrl_all.apply_to_camera(&mut self.camera)
                     };
 
-                    // Pivot mode cycling — check the action frame we already have.
+                    // Pivot mode cycling : check the action frame we already have.
                     let cycle_fwd = action_frame.is_active(Action::CyclePivotModeForward);
                     let cycle_bwd = action_frame.is_active(Action::CyclePivotModeBackward);
                     if cycle_fwd || cycle_bwd {
@@ -525,8 +532,7 @@ impl eframe::App for App {
                     }
 
                     // Update gizmo hover from the current cursor position.
-                    if let (Some(cursor), Some(center)) =
-                        (self.cursor_viewport, self.gizmo_center)
+                    if let (Some(cursor), Some(center)) = (self.cursor_viewport, self.gizmo_center)
                     {
                         if !self.manip.is_active() {
                             let ray_origin = self.camera.eye_position();
@@ -536,7 +542,8 @@ impl eframe::App for App {
                             let far = inv_vp.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
                             let ray_dir = (far - ray_origin).normalize_or(glam::Vec3::NEG_Z);
                             self.gizmo.hovered_axis =
-                                self.gizmo.hit_test(ray_origin, ray_dir, center, self.gizmo_scale);
+                                self.gizmo
+                                    .hit_test(ray_origin, ray_dir, center, self.gizmo_scale);
                         }
                     }
 
@@ -562,7 +569,7 @@ impl eframe::App for App {
 
                     match self.manip.update(&action_frame, manip_ctx) {
                         ManipResult::Update(delta) => {
-                            // Delta is incremental — accumulate, do NOT restore snapshot.
+                            // Delta is incremental : accumulate, do NOT restore snapshot.
                             self.apply_delta(delta);
                             self.recompute_gizmo_center();
                         }
@@ -579,12 +586,12 @@ impl eframe::App for App {
                         }
                         ManipResult::None => {
                             if self.manip.is_active() {
-                                // Session just started this frame — record its kind.
+                                // Session just started this frame : record its kind.
                                 if let Some(state) = self.manip.state() {
                                     self.active_manip_kind = state.kind;
                                 }
                             } else {
-                                // Idle — keep snapshot current so G/R/S starts clean.
+                                // Idle : keep snapshot current so G/R/S starts clean.
                                 self.save_snapshots();
                             }
                         }
@@ -649,10 +656,8 @@ impl eframe::App for App {
             let mut scene_frame = SceneFrame::from_surface_items(scene_items);
             scene_frame.generation = self.scene_generation;
 
-            let mut frame_data = FrameData::new(
-                CameraFrame::from_camera(&self.camera, [w, h]),
-                scene_frame,
-            );
+            let mut frame_data =
+                FrameData::new(CameraFrame::from_camera(&self.camera, [w, h]), scene_frame);
             frame_data.effects.lighting = LightingSettings::default();
             frame_data.viewport.show_grid = true;
             frame_data.viewport.show_axes_indicator = true;

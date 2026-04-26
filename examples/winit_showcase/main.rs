@@ -439,9 +439,27 @@ impl AppState {
 fn material_preset(index: usize) -> Material {
     match index % 4 {
         0 => Material::default(),
-        1 => { let mut m = Material::from_color([0.8, 0.2, 0.2]); m.specular = 0.8; m.shininess = 64.0; m.ambient = 0.1; m },
-        2 => { let mut m = Material::from_color([0.2, 0.4, 0.9]); m.opacity = 0.5; m.specular = 0.9; m.shininess = 128.0; m },
-        3 => { let mut m = Material::from_color([0.3, 0.7, 0.3]); m.specular = 0.1; m.shininess = 8.0; m.diffuse = 0.9; m },
+        1 => {
+            let mut m = Material::from_color([0.8, 0.2, 0.2]);
+            m.specular = 0.8;
+            m.shininess = 64.0;
+            m.ambient = 0.1;
+            m
+        }
+        2 => {
+            let mut m = Material::from_color([0.2, 0.4, 0.9]);
+            m.opacity = 0.5;
+            m.specular = 0.9;
+            m.shininess = 128.0;
+            m
+        }
+        3 => {
+            let mut m = Material::from_color([0.3, 0.7, 0.3]);
+            m.specular = 0.1;
+            m.shininess = 8.0;
+            m.diffuse = 0.9;
+            m
+        }
         _ => unreachable!(),
     }
 }
@@ -1905,7 +1923,7 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::PixelDelta(px) => (px.x as f32, px.y as f32),
                 };
                 if state.ctrl_held {
-                    // Ctrl + Scroll → orbit (two-axis, matching the controller preset).
+                    // Ctrl + Scroll -> orbit (two-axis, matching the controller preset).
                     if state.mode == ShowcaseMode::Interaction {
                         state.interact_animator.apply_orbit(
                             scroll_x * ANIM_ORBIT_SENSITIVITY,

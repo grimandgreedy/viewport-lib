@@ -1,4 +1,4 @@
-// Instanced shadow depth pass — renders scene from the light's POV using
+// Instanced shadow depth pass : renders scene from the light's POV using
 // per-instance model matrices from a storage buffer.
 //
 // Group 0: Light uniform (view-projection).

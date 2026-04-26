@@ -1,6 +1,6 @@
 // Full-screen analytical grid shader.
 //
-// No vertex buffer — triangle positions are hardcoded in vs_main (full-screen triangle).
+// No vertex buffer : triangle positions are hardcoded in vs_main (full-screen triangle).
 // The fragment shader unprojects each pixel to a world-space ray, intersects with the
 // horizontal grid plane z = grid_z (Z-up, XY ground plane), and writes both an
 // analytically anti-aliased grid color and the correct clip-space depth via
@@ -10,11 +10,11 @@
 // eliminating the clipping and mangle artifacts that line-primitive grids suffer from.
 
 struct GridUniform {
-    view_proj:    mat4x4<f32>,   // offset   0 — for clip-space depth output
-    cam_to_world: mat3x3<f32>,   // offset  64 — camera-to-world rotation (no translation)
-    tan_half_fov: f32,           // offset 112 — tan(fov_y/2)
-    aspect:       f32,           // offset 116 — viewport width/height
-    _pad_ivp:     vec2<f32>,     // offset 120 — padding
+    view_proj:    mat4x4<f32>,   // offset   0 : for clip-space depth output
+    cam_to_world: mat3x3<f32>,   // offset  64 : camera-to-world rotation (no translation)
+    tan_half_fov: f32,           // offset 112 : tan(fov_y/2)
+    aspect:       f32,           // offset 116 : viewport width/height
+    _pad_ivp:     vec2<f32>,     // offset 120 : padding
     eye_pos:      vec3<f32>,     // offset 128
     grid_z:       f32,           // offset 140
     spacing_minor: f32,          // offset 144
@@ -52,7 +52,7 @@ struct FragOut {
 fn fs_main(in: VertexOutput) -> FragOut {
     // Compute world-space ray direction analytically (no matrix inversion).
     // Camera-space direction: (nx * aspect * tan_half, ny * tan_half, -1).
-    // This is exact regardless of near/far planes — no ill-conditioning at large distances.
+    // This is exact regardless of near/far planes : no ill-conditioning at large distances.
     let dir_cam = vec3<f32>(
         in.ndc.x * grid.aspect * grid.tan_half_fov,
         in.ndc.y * grid.tan_half_fov,
@@ -73,7 +73,7 @@ fn fs_main(in: VertexOutput) -> FragOut {
     let hit_clip = grid.view_proj * vec4<f32>(hit, 1.0);
     let grid_depth = clamp(hit_clip.z / hit_clip.w, 0.0, 1.0);
 
-    // Horizon fade — |sin| of angle between ray and grid plane.
+    // Horizon fade : |sin| of angle between ray and grid plane.
     // 0 at horizon (ray parallel to XY plane), 1 looking straight down (along -Z).
     // Fades lines to transparent near the horizon to eliminate clipping artifacts.
     let angle_sin = abs(ray_dir.z) / length(ray_dir);

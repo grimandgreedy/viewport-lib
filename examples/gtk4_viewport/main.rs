@@ -163,12 +163,12 @@ fn build_ui(app: &gtk4::Application) {
         });
     }
 
-    // --- Viewport input handling —- forward raw events to OrbitCameraController ---
+    // --- Viewport input handling :- forward raw events to OrbitCameraController ---
     //
-    // EventControllerMotion  → PointerMoved / PointerLeft
-    // GestureClick (all btns) → MouseButton Pressed / Released
-    // EventControllerKey     → ModifiersChanged (shift tracking)
-    // EventControllerScroll  → Wheel
+    // EventControllerMotion  -> PointerMoved / PointerLeft
+    // GestureClick (all btns) -> MouseButton Pressed / Released
+    // EventControllerKey     -> ModifiersChanged (shift tracking)
+    // EventControllerScroll  -> Wheel
 
     // Motion: update cursor position for the controller.
     {

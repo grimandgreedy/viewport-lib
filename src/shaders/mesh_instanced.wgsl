@@ -292,7 +292,7 @@ fn sample_shadow_csm(
 }
 
 // ---------------------------------------------------------------------------
-// PBR BRDF helpers (Cook-Torrance) — mirrors mesh.wgsl
+// PBR BRDF helpers (Cook-Torrance) : mirrors mesh.wgsl
 // ---------------------------------------------------------------------------
 
 fn D_GGX(NdotH: f32, roughness: f32) -> f32 {
@@ -316,7 +316,7 @@ fn F_Schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
     return F0 + (vec3<f32>(1.0) - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
-// IBL helpers — canonical source: mesh.wgsl
+// IBL helpers : canonical source: mesh.wgsl
 // Keep in sync with: mesh.wgsl, mesh_oit.wgsl, mesh_instanced_oit.wgsl
 const IBL_PI: f32 = 3.14159265;
 fn dir_to_equirect_uv(dir: vec3<f32>, rotation: f32) -> vec2<f32> {

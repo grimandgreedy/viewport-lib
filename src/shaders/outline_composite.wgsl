@@ -1,4 +1,4 @@
-// outline_composite.wgsl — fullscreen blit that composites the offscreen outline
+// outline_composite.wgsl : fullscreen blit that composites the offscreen outline
 // texture onto the main render pass using alpha blending.
 // The outline texture contains the solid outline ring on a transparent background.
 

@@ -10,12 +10,12 @@
 //! The tangent frame is derived from the mesh normals (and optional explicit
 //! tangents) so that the coefficients are meaningful in surface-local coordinates.
 
-use crate::GlyphItem;
 use super::tangent_frames;
+use crate::GlyphItem;
 
 /// Convert vertex-indexed 2D intrinsic vectors to a [`GlyphItem`].
 ///
-/// Each entry in `vectors` is `[u, v]` — the components of the surface vector at
+/// Each entry in `vectors` is `[u, v]` : the components of the surface vector at
 /// the corresponding vertex expressed in the vertex tangent frame.
 ///
 /// The glyph base positions are the vertex positions; vectors are converted to
@@ -24,12 +24,12 @@ use super::tangent_frames;
 ///
 /// # Arguments
 ///
-/// * `positions` — vertex positions in world/local space
-/// * `normals`   — per-vertex normals (same length as `positions`)
-/// * `tangents`  — optional explicit tangents `[tx, ty, tz, w]`; when `None`,
+/// * `positions` : vertex positions in world/local space
+/// * `normals`   : per-vertex normals (same length as `positions`)
+/// * `tangents`  : optional explicit tangents `[tx, ty, tz, w]`; when `None`,
 ///                 a smooth frame is computed from the normals via Gram-Schmidt
-/// * `vectors`   — per-vertex intrinsic 2D vectors (same length as `positions`)
-/// * `scale`     — global arrow scale (see [`GlyphItem::scale`])
+/// * `vectors`   : per-vertex intrinsic 2D vectors (same length as `positions`)
+/// * `scale`     : global arrow scale (see [`GlyphItem::scale`])
 ///
 /// # Panics
 ///
@@ -47,7 +47,11 @@ pub fn vertex_intrinsic_to_glyphs(
         None => tangent_frames::compute_vertex_tangent_frames(normals),
     };
 
-    let n = positions.len().min(normals.len()).min(frames.len()).min(vectors.len());
+    let n = positions
+        .len()
+        .min(normals.len())
+        .min(frames.len())
+        .min(vectors.len());
 
     let mut glyph_positions = Vec::with_capacity(n);
     let mut glyph_vectors = Vec::with_capacity(n);
@@ -72,7 +76,7 @@ pub fn vertex_intrinsic_to_glyphs(
 
 /// Convert face-indexed 2D intrinsic vectors to a [`GlyphItem`].
 ///
-/// Each entry in `vectors` is `[u, v]` — the components of the surface vector at
+/// Each entry in `vectors` is `[u, v]` : the components of the surface vector at
 /// the corresponding triangle expressed in the face tangent frame.
 ///
 /// The glyph base positions are the face centroids; vectors are converted to
@@ -81,11 +85,11 @@ pub fn vertex_intrinsic_to_glyphs(
 ///
 /// # Arguments
 ///
-/// * `positions` — vertex positions in world/local space
-/// * `normals`   — per-vertex normals (used to orient faces consistently)
-/// * `indices`   — triangle index list (every 3 indices form one triangle)
-/// * `vectors`   — per-face intrinsic 2D vectors (one per triangle)
-/// * `scale`     — global arrow scale
+/// * `positions` : vertex positions in world/local space
+/// * `normals`   : per-vertex normals (used to orient faces consistently)
+/// * `indices`   : triangle index list (every 3 indices form one triangle)
+/// * `vectors`   : per-face intrinsic 2D vectors (one per triangle)
+/// * `scale`     : global arrow scale
 pub fn face_intrinsic_to_glyphs(
     positions: &[[f32; 3]],
     normals: &[[f32; 3]],
@@ -93,7 +97,7 @@ pub fn face_intrinsic_to_glyphs(
     vectors: &[[f32; 2]],
     scale: f32,
 ) -> GlyphItem {
-    let _ = normals; // reserved — may be used for consistent orientation later
+    let _ = normals; // reserved : may be used for consistent orientation later
     let num_tris = indices.len() / 3;
     let frames = tangent_frames::compute_face_tangent_frames(positions, indices);
 

@@ -286,8 +286,8 @@ impl shader::Program<Message> for SceneSnapshot {
     ///
     /// Because iced delivers one event per `update()` call (no explicit frame
     /// boundary), we call `begin_frame` + `apply_to_camera` around each event.
-    /// `begin_frame` only resets the per-frame drag/wheel accumulators — it
-    /// preserves `pointer_pos` and `button_held` — so delta computation remains
+    /// `begin_frame` only resets the per-frame drag/wheel accumulators : it
+    /// preserves `pointer_pos` and `button_held` : so delta computation remains
     /// correct across consecutive `PointerMoved` events.
     fn update(
         &self,

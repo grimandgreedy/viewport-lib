@@ -61,9 +61,9 @@ pub fn cube(size: f32) -> MeshData {
 
 /// UV sphere centered at the origin.
 ///
-/// `radius` — sphere radius.
-/// `sectors` — longitude subdivisions (minimum 3).
-/// `stacks` — latitude subdivisions (minimum 2).
+/// `radius` : sphere radius.
+/// `sectors` : longitude subdivisions (minimum 3).
+/// `stacks` : latitude subdivisions (minimum 2).
 pub fn sphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
     let sectors = sectors.max(3);
     let stacks = stacks.max(2);
@@ -119,7 +119,7 @@ pub fn sphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
 
 /// Flat XZ plane centered at the origin.
 ///
-/// `width` — extent along X. `depth` — extent along Z.
+/// `width` : extent along X. `depth` : extent along Z.
 pub fn plane(width: f32, depth: f32) -> MeshData {
     let hw = width / 2.0;
     let hd = depth / 2.0;
@@ -145,7 +145,7 @@ pub fn plane(width: f32, depth: f32) -> MeshData {
 
 /// Cylinder centered at the origin, axis along Y.
 ///
-/// `radius` — circle radius. `height` — total height. `sectors` — circumference subdivisions (minimum 3).
+/// `radius` : circle radius. `height` : total height. `sectors` : circumference subdivisions (minimum 3).
 pub fn cylinder(radius: f32, height: f32, sectors: u32) -> MeshData {
     let sectors = sectors.max(3);
     let half_h = height / 2.0;
@@ -218,7 +218,7 @@ pub fn cylinder(radius: f32, height: f32, sectors: u32) -> MeshData {
 
 /// Non-uniform box (cuboid) centered at the origin.
 ///
-/// `width` — X extent. `height` — Y extent. `depth` — Z extent.
+/// `width` : X extent. `height` : Y extent. `depth` : Z extent.
 pub fn cuboid(width: f32, height: f32, depth: f32) -> MeshData {
     let hw = width / 2.0;
     let hh = height / 2.0;
@@ -270,7 +270,7 @@ pub fn cuboid(width: f32, height: f32, depth: f32) -> MeshData {
 
 /// Cone with tip at +Y and base at −Y, centered at the origin.
 ///
-/// `radius` — base radius. `height` — total height. `sectors` — circumference subdivisions (minimum 3).
+/// `radius` : base radius. `height` : total height. `sectors` : circumference subdivisions (minimum 3).
 pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
     let sectors = sectors.max(3);
     let half_h = height / 2.0;
@@ -285,7 +285,7 @@ pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
-    // Side faces — one duplicated tip vertex per sector so each has the bisector normal.
+    // Side faces : one duplicated tip vertex per sector so each has the bisector normal.
     for j in 0..sectors {
         let a0 = j as f32 * step;
         let a1 = (j + 1) as f32 * step;
@@ -330,8 +330,8 @@ pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
 
 /// Capsule (cylinder body with hemispherical caps) centered at the origin, axis along Y.
 ///
-/// `radius` — sphere cap radius. `height` — total height (clamped so body ≥ 0).
-/// `sectors` — longitude subdivisions (minimum 3). `stacks` — latitude subdivisions (minimum 2).
+/// `radius` : sphere cap radius. `height` : total height (clamped so body ≥ 0).
+/// `sectors` : longitude subdivisions (minimum 3). `stacks` : latitude subdivisions (minimum 2).
 pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData {
     let sectors = sectors.max(3);
     let stacks = stacks.max(2);
@@ -423,10 +423,10 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
 
 /// Torus centered at the origin, lying in the XZ plane.
 ///
-/// `major_radius` — distance from the torus centre to the tube centre.
-/// `minor_radius` — radius of the tube.
-/// `sectors` — segments around the tube (minimum 3).
-/// `stacks` — segments around the torus ring (minimum 3).
+/// `major_radius` : distance from the torus centre to the tube centre.
+/// `minor_radius` : radius of the tube.
+/// `sectors` : segments around the tube (minimum 3).
+/// `stacks` : segments around the torus ring (minimum 3).
 pub fn torus(major_radius: f32, minor_radius: f32, sectors: u32, stacks: u32) -> MeshData {
     let sectors = sectors.max(3);
     let stacks = stacks.max(3);
@@ -489,7 +489,7 @@ pub fn torus(major_radius: f32, minor_radius: f32, sectors: u32, stacks: u32) ->
 
 /// Icosphere centered at the origin (better tessellation than UV sphere; no pole pinching).
 ///
-/// `radius` — sphere radius. `subdivisions` — refinement level (0 = raw icosahedron, 20 faces).
+/// `radius` : sphere radius. `subdivisions` : refinement level (0 = raw icosahedron, 20 faces).
 pub fn icosphere(radius: f32, subdivisions: u32) -> MeshData {
     let phi = (1.0 + 5.0f32.sqrt()) / 2.0;
     let norm = (1.0 + phi * phi).sqrt();
@@ -591,10 +591,10 @@ fn ico_midpoint(
 
 /// Arrow along +Y, centered at the origin (total length 1).
 ///
-/// `shaft_radius` — cylinder shaft radius.
-/// `head_radius` — cone head base radius.
-/// `head_fraction` — fraction of total length occupied by the cone head (clamped to 0.1–0.9).
-/// `sectors` — circumference subdivisions (minimum 3).
+/// `shaft_radius` : cylinder shaft radius.
+/// `head_radius` : cone head base radius.
+/// `head_fraction` : fraction of total length occupied by the cone head (clamped to 0.1–0.9).
+/// `sectors` : circumference subdivisions (minimum 3).
 pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u32) -> MeshData {
     let sectors = sectors.max(3);
     let head_fraction = head_fraction.clamp(0.1, 0.9);
@@ -687,7 +687,7 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
 
 /// Flat disk in the XZ plane, centered at the origin, normal pointing +Y.
 ///
-/// `radius` — disk radius. `sectors` — circumference subdivisions (minimum 3).
+/// `radius` : disk radius. `sectors` : circumference subdivisions (minimum 3).
 pub fn disk(radius: f32, sectors: u32) -> MeshData {
     let sectors = sectors.max(3);
     let step = std::f32::consts::TAU / sectors as f32;
@@ -718,8 +718,8 @@ pub fn disk(radius: f32, sectors: u32) -> MeshData {
 /// Camera frustum mesh for visualization.
 ///
 /// The camera sits at the origin looking along −Z.
-/// `fov_y` — vertical field of view in radians. `aspect` — width / height.
-/// `near`, `far` — clip plane distances (positive values).
+/// `fov_y` : vertical field of view in radians. `aspect` : width / height.
+/// `near`, `far` : clip plane distances (positive values).
 pub fn frustum(fov_y: f32, aspect: f32, near: f32, far: f32) -> MeshData {
     let half_h_n = near * (fov_y * 0.5).tan();
     let half_w_n = half_h_n * aspect;
@@ -784,8 +784,8 @@ pub fn frustum(fov_y: f32, aspect: f32, near: f32, far: f32) -> MeshData {
 
 /// Hemisphere (upper half of a UV sphere) centered at the origin, dome facing +Y.
 ///
-/// `radius` — sphere radius.
-/// `sectors` — longitude subdivisions (minimum 3). `stacks` — latitude subdivisions (minimum 1).
+/// `radius` : sphere radius.
+/// `sectors` : longitude subdivisions (minimum 3). `stacks` : latitude subdivisions (minimum 1).
 pub fn hemisphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
     let sectors = sectors.max(3);
     let stacks = stacks.max(1);
@@ -844,7 +844,7 @@ pub fn hemisphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
 
 /// Flat ring (annulus) in the XZ plane, centered at the origin, normal pointing +Y.
 ///
-/// `inner_radius` — inner edge. `outer_radius` — outer edge. `sectors` — circumference subdivisions (minimum 3).
+/// `inner_radius` : inner edge. `outer_radius` : outer edge. `sectors` : circumference subdivisions (minimum 3).
 pub fn ring(inner_radius: f32, outer_radius: f32, sectors: u32) -> MeshData {
     let sectors = sectors.max(3);
     let step = std::f32::consts::TAU / sectors as f32;
@@ -882,8 +882,8 @@ pub fn ring(inner_radius: f32, outer_radius: f32, sectors: u32) -> MeshData {
 
 /// Ellipsoid centered at the origin.
 ///
-/// `rx`, `ry`, `rz` — semi-axes along X, Y, Z.
-/// `sectors` — longitude subdivisions (minimum 3). `stacks` — latitude subdivisions (minimum 2).
+/// `rx`, `ry`, `rz` : semi-axes along X, Y, Z.
+/// `sectors` : longitude subdivisions (minimum 3). `stacks` : latitude subdivisions (minimum 2).
 pub fn ellipsoid(rx: f32, ry: f32, rz: f32, sectors: u32, stacks: u32) -> MeshData {
     let sectors = sectors.max(3);
     let stacks = stacks.max(2);
@@ -946,10 +946,10 @@ pub fn ellipsoid(rx: f32, ry: f32, rz: f32, sectors: u32, stacks: u32) -> MeshDa
 
 /// Helical spring centered at the origin, axis along Y.
 ///
-/// `radius` — distance from Y axis to tube centre.
-/// `coil_radius` — cross-section tube radius.
-/// `turns` — number of complete coil turns.
-/// `sectors` — tube cross-section subdivisions (minimum 3).
+/// `radius` : distance from Y axis to tube centre.
+/// `coil_radius` : cross-section tube radius.
+/// `turns` : number of complete coil turns.
+/// `sectors` : tube cross-section subdivisions (minimum 3).
 pub fn spring(radius: f32, coil_radius: f32, turns: f32, sectors: u32) -> MeshData {
     let sectors = sectors.max(3);
     let pitch = 2.5 * coil_radius; // height per turn; keeps coils from overlapping
@@ -1029,8 +1029,8 @@ pub fn spring(radius: f32, coil_radius: f32, turns: f32, sectors: u32) -> MeshDa
 
 /// Subdivided plane in the XZ plane, centered at the origin, normal pointing +Y.
 ///
-/// `width` — X extent. `depth` — Z extent.
-/// `cols` — column subdivisions (minimum 1). `rows` — row subdivisions (minimum 1).
+/// `width` : X extent. `depth` : Z extent.
+/// `cols` : column subdivisions (minimum 1). `rows` : row subdivisions (minimum 1).
 pub fn grid_plane(width: f32, depth: f32, cols: u32, rows: u32) -> MeshData {
     let cols = cols.max(1);
     let rows = rows.max(1);

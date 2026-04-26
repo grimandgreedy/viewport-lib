@@ -70,7 +70,7 @@ pub(super) fn compute_cascade_matrix(
     }
 
     // Expand near/far so shadow casters outside the camera frustum are captured.
-    // Keep modest — excessively large Z ranges inflate the shadow_bias world-space
+    // Keep modest : excessively large Z ranges inflate the shadow_bias world-space
     // equivalent and cause visible peter panning at contact points.
     min_ls.z -= 50.0;
     max_ls.z += 20.0;

@@ -65,7 +65,7 @@ impl Frustum {
     /// (meaning it should be culled / not drawn).
     pub fn cull_aabb(&self, aabb: &Aabb) -> bool {
         for plane in &self.planes {
-            // Find the "positive vertex" — the corner of the AABB most in the
+            // Find the "positive vertex" : the corner of the AABB most in the
             // direction of the plane normal. If even this vertex is behind the
             // plane, the entire AABB is outside.
             let p = glam::Vec3::new(
@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn test_cull_aabb_inside() {
         let frustum = Frustum::from_view_proj(&test_camera_vp());
-        // Box at origin — directly in front of camera at z=5 looking at origin.
+        // Box at origin : directly in front of camera at z=5 looking at origin.
         let aabb = Aabb {
             min: glam::Vec3::splat(-0.5),
             max: glam::Vec3::splat(0.5),
@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn test_cull_aabb_far_left() {
         let frustum = Frustum::from_view_proj(&test_camera_vp());
-        // Box far to the left — should be outside the left frustum plane.
+        // Box far to the left : should be outside the left frustum plane.
         let aabb = Aabb {
             min: glam::Vec3::new(-1000.0, -0.5, -0.5),
             max: glam::Vec3::new(-999.0, 0.5, 0.5),
@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn test_cull_aabb_straddling_near_plane() {
         let frustum = Frustum::from_view_proj(&test_camera_vp());
-        // Large box that straddles the frustum — should NOT be culled.
+        // Large box that straddles the frustum : should NOT be culled.
         let aabb = Aabb {
             min: glam::Vec3::splat(-2.0),
             max: glam::Vec3::splat(2.0),

@@ -1,4 +1,4 @@
-//! Showcase 4: Professional Interaction — build method.
+//! Showcase 4: Professional Interaction : build method.
 
 use crate::App;
 use viewport_lib::{Material, ViewportRenderer};

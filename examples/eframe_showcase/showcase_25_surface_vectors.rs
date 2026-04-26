@@ -2,11 +2,11 @@
 //!
 //! Demonstrates the three surface-vector APIs from `viewport_lib::quantities`:
 //!
-//! - **Vertex intrinsic vectors** — a tangential vortex field on a sphere, where
+//! - **Vertex intrinsic vectors** : a tangential vortex field on a sphere, where
 //!   each vertex carries a 2D `(u, v)` vector in its tangent frame.
-//! - **Face intrinsic vectors** — a face-level flow field on a torus, where each
+//! - **Face intrinsic vectors** : a face-level flow field on a torus, where each
 //!   triangle carries a 2D vector in its per-face tangent frame.
-//! - **Edge one-forms** — a diverging source field on a plane, reconstructed from
+//! - **Edge one-forms** : a diverging source field on a plane, reconstructed from
 //!   per-edge scalar values via Whitney form interpolation.
 //!
 //! All three modes produce a [`GlyphItem`] (arrows) submitted to
@@ -43,14 +43,14 @@ pub(crate) enum SvMode {
 //   sv_mode:         SvMode
 //   sv_scale:        f32
 //   sv_scene:        Scene
-//   sv_mesh_index:   [usize; 3]   — [sphere, torus, plane]
+//   sv_mesh_index:   [usize; 3]   : [sphere, torus, plane]
 //   sv_positions:    [Vec<[f32;3]>; 3]
 //   sv_normals:      [Vec<[f32;3]>; 3]
 //   sv_tangents:     [Option<Vec<[f32;4]>>; 3]
 //   sv_indices:      [Vec<u32>; 3]
-//   sv_vertex_vecs:  Vec<[f32; 2]>     — mode 0 data
-//   sv_face_vecs:    Vec<[f32; 2]>     — mode 1 data
-//   sv_edge_vals:    Vec<f32>          — mode 2 data
+//   sv_vertex_vecs:  Vec<[f32; 2]>     : mode 0 data
+//   sv_face_vecs:    Vec<[f32; 2]>     : mode 1 data
+//   sv_edge_vals:    Vec<f32>          : mode 2 data
 
 impl App {
     // -------------------------------------------------------------------------
@@ -80,8 +80,7 @@ impl App {
         // We project this 3D vector into the Gram-Schmidt tangent frame that
         // `vertex_intrinsic_to_glyphs` will use internally, so the API sees
         // the correct (u, v) coefficients.
-        let vertex_vecs =
-            make_sphere_vortex_intrinsic(&sphere.positions, &sphere.normals);
+        let vertex_vecs = make_sphere_vortex_intrinsic(&sphere.positions, &sphere.normals);
 
         // --- Torus (face intrinsic mode) -------------------------------------
         let torus = make_torus(1.2, 0.4, 48, 24);
@@ -103,10 +102,22 @@ impl App {
 
         // --- Store data -------------------------------------------------------
         self.sv_mesh_index = [sphere_idx, torus_idx, plane_idx];
-        self.sv_positions = [sv_positions[0].clone(), torus.positions.clone(), plane.positions.clone()];
-        self.sv_normals = [sv_normals[0].clone(), torus.normals.clone(), plane.normals.clone()];
+        self.sv_positions = [
+            sv_positions[0].clone(),
+            torus.positions.clone(),
+            plane.positions.clone(),
+        ];
+        self.sv_normals = [
+            sv_normals[0].clone(),
+            torus.normals.clone(),
+            plane.normals.clone(),
+        ];
         self.sv_tangents = [sv_tangents[0].clone(), None, None];
-        self.sv_indices = [sv_indices[0].clone(), torus.indices.clone(), plane.indices.clone()];
+        self.sv_indices = [
+            sv_indices[0].clone(),
+            torus.indices.clone(),
+            plane.indices.clone(),
+        ];
         self.sv_vertex_vecs = vertex_vecs;
         self.sv_face_vecs = face_vecs;
         self.sv_edge_vals = edge_vals;
@@ -214,10 +225,7 @@ impl App {
 /// We project it into the Gram-Schmidt tangent frame that the quantities API
 /// will use internally (when `tangents` is `None`), so the encoded `(u, v)`
 /// round-trips correctly through `vertex_intrinsic_to_glyphs`.
-fn make_sphere_vortex_intrinsic(
-    _positions: &[[f32; 3]],
-    normals: &[[f32; 3]],
-) -> Vec<[f32; 2]> {
+fn make_sphere_vortex_intrinsic(_positions: &[[f32; 3]], normals: &[[f32; 3]]) -> Vec<[f32; 2]> {
     use viewport_lib::quantities::tangent_frames::gram_schmidt_tangent;
 
     let up = glam::Vec3::Z;
@@ -297,8 +305,8 @@ fn make_torus(major_r: f32, minor_r: f32, major_segs: usize, minor_segs: usize) 
 /// Compute per-face intrinsic vectors for the torus: flow in the poloidal
 /// (tube-circle) direction at each triangle's centroid.
 fn make_torus_face_vectors(torus: &MeshData, major_r: f32) -> Vec<[f32; 2]> {
-    use viewport_lib::quantities::compute_face_tangent_frames;
     use glam::Vec3;
+    use viewport_lib::quantities::compute_face_tangent_frames;
 
     let num_tris = torus.indices.len() / 3;
     let frames = compute_face_tangent_frames(&torus.positions, &torus.indices);
@@ -347,7 +355,7 @@ fn make_torus_face_vectors(torus: &MeshData, major_r: f32) -> Vec<[f32; 2]> {
 /// encodes a diverging source field centred at the origin.
 ///
 /// Returns `(mesh, edge_values)` where `edge_values` has 3 entries per triangle
-/// in the order `(v0→v1, v1→v2, v2→v0)`.
+/// in the order `(v0->v1, v1->v2, v2->v0)`.
 fn make_plane_with_source_one_form(n: usize) -> (MeshData, Vec<f32>) {
     use glam::Vec3;
 
@@ -380,7 +388,7 @@ fn make_plane_with_source_one_form(n: usize) -> (MeshData, Vec<f32>) {
     }
 
     // One-form: the integral of the radial field F = (x, y, 0) over each edge is
-    //   w(i→j) = ∫ F·dl = 0.5 * (F(pi) + F(pj)) · (pj - pi)   (midpoint rule)
+    //   w(i->j) = ∫ F·dl = 0.5 * (F(pi) + F(pj)) · (pj - pi)   (midpoint rule)
     let num_tris = indices.len() / 3;
     let mut edge_values = Vec::with_capacity(3 * num_tris);
 
@@ -410,7 +418,7 @@ fn make_plane_with_source_one_form(n: usize) -> (MeshData, Vec<f32>) {
     (mesh, edge_values)
 }
 
-/// Line integral of the radial field F=(x,y,0) along the straight edge (p→q):
+/// Line integral of the radial field F=(x,y,0) along the straight edge (p->q):
 /// ∫₀¹ F(p + t(q-p))·(q-p) dt = 0.5 * (F(p)+F(q))·(q-p)
 fn edge_line_integral(p: glam::Vec3, q: glam::Vec3) -> f32 {
     let fp = glam::Vec3::new(p.x, p.y, 0.0);

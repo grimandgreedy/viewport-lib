@@ -106,7 +106,7 @@ impl ViewportGpuResources {
 
     /// Upload an RGBA texture as a normal map and return its texture ID.
     ///
-    /// Uses Rgba8Unorm format (not sRGB) so values are linear — required for correct
+    /// Uses Rgba8Unorm format (not sRGB) so values are linear : required for correct
     /// normal map decoding. `rgba_data` must be `width * height * 4` bytes.
     pub fn upload_normal_map(
         &mut self,
@@ -357,7 +357,7 @@ impl ViewportGpuResources {
             None => &self.fallback_face_color_buf,
         };
 
-        // Resolve matcap texture view — fallback to 1×1 white when no matcap active.
+        // Resolve matcap texture view : fallback to 1×1 white when no matcap active.
         let matcap_view: &wgpu::TextureView = match matcap_id {
             Some(id) if id.index < self.matcap_views.len() => &self.matcap_views[id.index],
             _ => self
@@ -483,7 +483,7 @@ impl ViewportGpuResources {
     /// Ensure built-in colormaps are uploaded to the GPU.
     ///
     /// Called automatically by `ViewportRenderer::prepare()` on the first frame.
-    /// Safe to call multiple times — no-op after first invocation.
+    /// Safe to call multiple times : no-op after first invocation.
     pub fn ensure_colormaps_initialized(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         if self.colormaps_initialized {
             return;
@@ -549,7 +549,11 @@ impl ViewportGpuResources {
 
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("matcap_texture"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -570,7 +574,11 @@ impl ViewportGpuResources {
                 bytes_per_row: Some(width * 4),
                 rows_per_image: Some(height),
             },
-            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
         );
 
         // Ensure the shared clamp sampler is created.
@@ -609,7 +617,10 @@ impl ViewportGpuResources {
     ///
     /// Panics if called before the renderer has run at least one prepare pass
     /// (which calls [`Self::ensure_matcaps_initialized`] automatically).
-    pub fn builtin_matcap_id(&self, preset: crate::resources::BuiltinMatcap) -> crate::resources::MatcapId {
+    pub fn builtin_matcap_id(
+        &self,
+        preset: crate::resources::BuiltinMatcap,
+    ) -> crate::resources::MatcapId {
         self.builtin_matcap_ids
             .expect("call ensure_matcaps_initialized (or run one prepare frame) before using built-in matcaps")
             [preset as usize]
@@ -618,20 +629,36 @@ impl ViewportGpuResources {
     /// Upload the eight built-in matcaps to the GPU if not already done.
     ///
     /// Called automatically by `ViewportRenderer::prepare()`. Safe to call
-    /// multiple times — no-op after first invocation.
+    /// multiple times : no-op after first invocation.
     pub fn ensure_matcaps_initialized(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         if self.matcaps_initialized {
             return;
         }
         use crate::resources::matcap_data;
-        let clay    = self.upload_matcap(device, queue, &matcap_data::clay(),    true).unwrap();
-        let wax     = self.upload_matcap(device, queue, &matcap_data::wax(),     true).unwrap();
-        let candy   = self.upload_matcap(device, queue, &matcap_data::candy(),   true).unwrap();
-        let flat    = self.upload_matcap(device, queue, &matcap_data::flat(),    true).unwrap();
-        let ceramic = self.upload_matcap(device, queue, &matcap_data::ceramic(), false).unwrap();
-        let jade    = self.upload_matcap(device, queue, &matcap_data::jade(),    false).unwrap();
-        let mud     = self.upload_matcap(device, queue, &matcap_data::mud(),     false).unwrap();
-        let normal  = self.upload_matcap(device, queue, &matcap_data::normal(),  false).unwrap();
+        let clay = self
+            .upload_matcap(device, queue, &matcap_data::clay(), true)
+            .unwrap();
+        let wax = self
+            .upload_matcap(device, queue, &matcap_data::wax(), true)
+            .unwrap();
+        let candy = self
+            .upload_matcap(device, queue, &matcap_data::candy(), true)
+            .unwrap();
+        let flat = self
+            .upload_matcap(device, queue, &matcap_data::flat(), true)
+            .unwrap();
+        let ceramic = self
+            .upload_matcap(device, queue, &matcap_data::ceramic(), false)
+            .unwrap();
+        let jade = self
+            .upload_matcap(device, queue, &matcap_data::jade(), false)
+            .unwrap();
+        let mud = self
+            .upload_matcap(device, queue, &matcap_data::mud(), false)
+            .unwrap();
+        let normal = self
+            .upload_matcap(device, queue, &matcap_data::normal(), false)
+            .unwrap();
         self.builtin_matcap_ids = Some([clay, wax, candy, flat, ceramic, jade, mud, normal]);
         self.matcaps_initialized = true;
     }

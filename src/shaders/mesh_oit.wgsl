@@ -1,9 +1,9 @@
-// OIT (order-independent transparency) mesh shader — McGuire & Bavoil weighted blended.
+// OIT (order-independent transparency) mesh shader : McGuire & Bavoil weighted blended.
 //
 // Identical to mesh.wgsl except for the fragment output: instead of writing a
 // single RGBA color to the HDR target, this shader writes to two targets:
-//   @location(0) accum  — Rgba16Float accumulation buffer
-//   @location(1) reveal — R8Unorm   reveal (transmittance) buffer
+//   @location(0) accum  : Rgba16Float accumulation buffer
+//   @location(1) reveal : R8Unorm   reveal (transmittance) buffer
 //
 // The weighted-blended OIT formula is applied after computing the fully-lit
 // color (same Blinn-Phong / Cook-Torrance path as mesh.wgsl).
@@ -92,9 +92,9 @@ struct Object {
     matcap_blendable: u32,   // offset 168
     _pad2: u32,              // offset 172
     use_face_color: u32,     // offset 176
-    uv_vis_mode: u32,           // offset 180 — 0=off 1=checker 2=grid 3=localcheck 4=localrad
-    uv_vis_scale: f32,          // offset 184 — tile frequency multiplier
-    backface_policy: u32,       // offset 188 — 0=Cull 1=Identical 2=DifferentColor
+    uv_vis_mode: u32,           // offset 180 : 0=off 1=checker 2=grid 3=localcheck 4=localrad
+    uv_vis_scale: f32,          // offset 184 : tile frequency multiplier
+    backface_policy: u32,       // offset 188 : 0=Cull 1=Identical 2=DifferentColor
     backface_color: vec4<f32>,  // offset 192
 };
 
@@ -219,7 +219,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
 }
 
 // ---------------------------------------------------------------------------
-// 32-sample Poisson disk (shadow sampling — identical to mesh.wgsl)
+// 32-sample Poisson disk (shadow sampling : identical to mesh.wgsl)
 // ---------------------------------------------------------------------------
 const POISSON_DISK: array<vec2<f32>, 32> = array<vec2<f32>, 32>(
     vec2<f32>(-0.94201624, -0.39906216), vec2<f32>( 0.94558609, -0.76890725),
@@ -322,7 +322,7 @@ fn sample_shadow_csm(
 }
 
 // ---------------------------------------------------------------------------
-// PBR BRDF helpers (Cook-Torrance) — identical to mesh.wgsl
+// PBR BRDF helpers (Cook-Torrance) : identical to mesh.wgsl
 // ---------------------------------------------------------------------------
 fn D_GGX(NdotH: f32, roughness: f32) -> f32 {
     let a = roughness * roughness;
@@ -341,7 +341,7 @@ fn G_Smith(NdotV: f32, NdotL: f32, roughness: f32) -> f32 {
 fn F_Schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
     return F0 + (vec3<f32>(1.0) - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
-// IBL helpers — canonical source: mesh.wgsl
+// IBL helpers : canonical source: mesh.wgsl
 // Keep in sync with: mesh.wgsl, mesh_instanced.wgsl, mesh_instanced_oit.wgsl
 const IBL_PI: f32 = 3.14159265;
 fn dir_to_equirect_uv(dir: vec3<f32>, rotation: f32) -> vec2<f32> {
@@ -392,7 +392,7 @@ fn pbr_light_contrib(
     return (kD * base_color / 3.14159265 + specular) * radiance * NdotL;
 }
 
-// UV parameterization visualization — procedural RGB color from UV coordinates.
+// UV parameterization visualization : procedural RGB color from UV coordinates.
 // Matches the implementation in mesh.wgsl exactly.
 fn param_vis_color(uv: vec2<f32>, mode: u32, scale: f32) -> vec3<f32> {
     let col_a      = vec3<f32>(0.85, 0.85, 0.85);
@@ -422,7 +422,7 @@ fn param_vis_color(uv: vec2<f32>, mode: u32, scale: f32) -> vec3<f32> {
 }
 
 // ---------------------------------------------------------------------------
-// OIT fragment shader — writes to accum + reveal targets.
+// OIT fragment shader : writes to accum + reveal targets.
 // ---------------------------------------------------------------------------
 @fragment
 fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {

@@ -1,6 +1,6 @@
 // Glyph (instanced vector field) shader for the 3D viewport.
 //
-// Group 0: Camera uniform (view-projection, eye position) — same layout as mesh.wgsl.
+// Group 0: Camera uniform (view-projection, eye position) : same layout as mesh.wgsl.
 //          + shadow/light uniforms (present in layout, not all used here)
 //          + ClipPlanes uniform (binding 4).
 // Group 1: Glyph uniform (global_scale, scale_by_magnitude, scalar mapping params, ...)
@@ -8,7 +8,7 @@
 // Group 2: Per-instance storage buffer
 //          (GlyphInstance: position vec3, pad, direction vec3, scalar f32).
 //
-// Vertex input: the glyph base mesh (position vec3, normal vec3 — using Vertex layout
+// Vertex input: the glyph base mesh (position vec3, normal vec3 : using Vertex layout
 //               locations 0 and 1 from the full Vertex struct).
 //
 // Each instance is oriented so the glyph local +Y axis aligns with the direction vector.
@@ -29,7 +29,7 @@ struct ClipPlanes {
     viewport_height: f32,
 };
 
-// Glyph uniform — 64 bytes.
+// Glyph uniform : 64 bytes.
 struct GlyphUniform {
     global_scale:       f32,    //  4 bytes
     scale_by_magnitude: u32,    //  4 bytes (1 = scale with magnitude)
@@ -39,10 +39,10 @@ struct GlyphUniform {
     mag_clamp_min:      f32,    //  4 bytes
     mag_clamp_max:      f32,    //  4 bytes
     has_mag_clamp:      u32,    //  4 bytes (1 = clamp magnitude to [min, max])
-    _pad:               array<vec4<f32>, 3>, // 48 bytes padding — total 80 bytes
+    _pad:               array<vec4<f32>, 3>, // 48 bytes padding : total 80 bytes
 };
 
-// Per-instance data — 32 bytes.
+// Per-instance data : 32 bytes.
 struct GlyphInstance {
     position:  vec3<f32>,   // 12 bytes
     _pad0:     f32,         //  4 bytes
@@ -104,7 +104,7 @@ struct VertexIn {
     // We only use position (location 0) and normal (location 1).
     @location(0) position: vec3<f32>,
     @location(1) normal:   vec3<f32>,
-    @location(2) color:    vec4<f32>,   // unused — here to match buffer stride
+    @location(2) color:    vec4<f32>,   // unused : here to match buffer stride
     @location(3) uv:       vec2<f32>,   // unused
     @location(4) tangent:  vec4<f32>,   // unused
     @builtin(instance_index) instance_index: u32,

@@ -45,16 +45,16 @@ impl Default for TransformDelta {
 pub enum ManipResult {
     /// No manipulation is active or no change this frame.
     None,
-    /// Active session produced a transform delta — apply to selected objects.
+    /// Active session produced a transform delta : apply to selected objects.
     Update(TransformDelta),
     /// Session completed (Enter or left-click). Apply and finalize.
     Commit,
     /// Session cancelled (Escape). Restore original transforms.
     Cancel,
-    /// Axis constraint changed this frame (e.g. free→X, X→Y, X→Shift+Z).
+    /// Axis constraint changed this frame (e.g. free->X, X->Y, X->Shift+Z).
     ///
     /// The app should restore selected objects to the transforms they had at
-    /// session start — the same restore it would perform on `Cancel` — but
+    /// session start : the same restore it would perform on `Cancel` : but
     /// **without** ending the session or clearing the undo snapshot.
     /// The controller has reset its cursor anchor so the next `Update` delta
     /// will be computed relative to the current cursor position with the new

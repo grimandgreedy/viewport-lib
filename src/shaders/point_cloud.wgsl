@@ -23,7 +23,7 @@ struct Camera {
     _pad:      f32,
 };
 
-// Clip planes uniform — must match mesh.wgsl group 0 binding 4.
+// Clip planes uniform : must match mesh.wgsl group 0 binding 4.
 struct ClipPlanes {
     planes: array<vec4<f32>, 6>,
     count:  u32,
@@ -32,7 +32,7 @@ struct ClipPlanes {
     viewport_height: f32,
 };
 
-// Point cloud per-item uniform — 128 bytes.
+// Point cloud per-item uniform : 128 bytes.
 struct PointCloudUniform {
     model:         mat4x4<f32>,   // 64 bytes
     default_color: vec4<f32>,     // 16 bytes
@@ -43,7 +43,7 @@ struct PointCloudUniform {
     has_colors:    u32,           //  4 bytes (1 = use color buffer)
     _pad0:         u32,           //  4 bytes \
     _pad1:         u32,           //  4 bytes  > explicit scalars: arrays<u32,N> banned in uniform
-    _pad2:         u32,           //  4 bytes /  — total 112 bytes
+    _pad2:         u32,           //  4 bytes /  : total 112 bytes
 };
 
 struct ClipVolumeUB {
@@ -145,7 +145,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     );
     out.world_pos = world_pos;
 
-    // Determine color — indexed by instance (= point index), not vertex.
+    // Determine color : indexed by instance (= point index), not vertex.
     let idx = in.instance_index;
 
     if pc_uniform.has_scalars != 0u {

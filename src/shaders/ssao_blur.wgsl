@@ -1,4 +1,4 @@
-// ssao_blur.wgsl — simple 4×4 box blur for the SSAO result.
+// ssao_blur.wgsl : simple 4×4 box blur for the SSAO result.
 // Smooths the noisy SSAO output without requiring per-sample blurring.
 
 @group(0) @binding(0) var ssao_tex:  texture_2d<f32>;

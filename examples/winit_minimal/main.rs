@@ -1,15 +1,15 @@
 //! Minimal viewport-lib example using winit + wgpu.
 //!
 //! Navigation:
-//!   Left drag / Middle drag   — orbit
-//!   Right drag                — pan
-//!   Scroll                    — zoom
+//!   Left drag / Middle drag   : orbit
+//!   Right drag                : pan
+//!   Scroll                    : zoom
 //!
 //! Object manipulation (click a primitive to select it):
-//!   G / R / S                 — grab / rotate / scale
-//!   X / Y / Z                 — constrain to axis
-//!   Enter or click            — confirm
-//!   Escape                    — cancel
+//!   G / R / S                 : grab / rotate / scale
+//!   X / Y / Z                 : constrain to axis
+//!   Enter or click            : confirm
+//!   Escape                    : cancel
 
 use std::sync::Arc;
 
@@ -87,7 +87,7 @@ impl ApplicationHandler for App {
             event_loop
                 .create_window(
                     WindowAttributes::default()
-                        .with_title("viewport-lib — Minimal")
+                        .with_title("viewport-lib : Minimal")
                         .with_inner_size(winit::dpi::LogicalSize::new(1280u32, 720u32)),
                 )
                 .expect("window"),
@@ -351,7 +351,7 @@ impl ApplicationHandler for App {
                     clicked: state.clicked_this_frame,
                 };
 
-                // Drive manipulation — suppress orbit while active.
+                // Drive manipulation : suppress orbit while active.
                 let action_frame = if state.manip.is_active() {
                     let frame = state.controller.resolve();
                     state.camera.set_aspect_ratio(w, h);

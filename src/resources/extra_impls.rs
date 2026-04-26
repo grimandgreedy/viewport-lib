@@ -216,7 +216,7 @@ pub(super) fn build_glyph_arrow() -> (Vec<Vertex>, Vec<u32>) {
         });
     }
 
-    // Cone tip vertex (normals averaged around tip — just point up).
+    // Cone tip vertex (normals averaged around tip : just point up).
     let cone_tip_v = verts.len() as u32;
     verts.push(Vertex {
         position: [0.0, cone_tip, 0.0],
@@ -389,7 +389,7 @@ pub(super) fn build_glyph_sphere() -> (Vec<Vertex>, Vec<u32>) {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Phase G — in-place attribute hot-swap
+// Phase G : in-place attribute hot-swap
 // ---------------------------------------------------------------------------
 
 impl ViewportGpuResources {
@@ -401,9 +401,9 @@ impl ViewportGpuResources {
     ///
     /// # Errors
     ///
-    /// - [`ViewportError::MeshSlotEmpty`](crate::error::ViewportError::MeshSlotEmpty) — `mesh_id` not found in the store.
-    /// - [`ViewportError::AttributeNotFound`](crate::error::ViewportError::AttributeNotFound) — `name` not present on the mesh.
-    /// - [`ViewportError::AttributeLengthMismatch`](crate::error::ViewportError::AttributeLengthMismatch) — `data.len()` differs from
+    /// - [`ViewportError::MeshSlotEmpty`](crate::error::ViewportError::MeshSlotEmpty) : `mesh_id` not found in the store.
+    /// - [`ViewportError::AttributeNotFound`](crate::error::ViewportError::AttributeNotFound) : `name` not present on the mesh.
+    /// - [`ViewportError::AttributeLengthMismatch`](crate::error::ViewportError::AttributeLengthMismatch) : `data.len()` differs from
     ///   the original upload (same-topology requirement).
     pub fn replace_attribute(
         &mut self,
@@ -552,7 +552,7 @@ impl ViewportGpuResources {
 }
 
 // ---------------------------------------------------------------------------
-// Phase G — GPU compute filter pipeline and dispatch
+// Phase G : GPU compute filter pipeline and dispatch
 // ---------------------------------------------------------------------------
 
 /// Output from a single GPU compute filter dispatch.
@@ -612,7 +612,7 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
-                // binding 3: scalars (f32 storage, read) — dummy for Clip
+                // binding 3: scalars (f32 storage, read) : dummy for Clip
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -986,7 +986,7 @@ impl ViewportGpuResources {
                 bind_group_layouts: &[bgl],
                 push_constant_ranges: &[],
             });
-            // Premultiplied alpha blend: One / OneMinusSrcAlpha — composites avg_color*(1-r) onto HDR.
+            // Premultiplied alpha blend: One / OneMinusSrcAlpha : composites avg_color*(1-r) onto HDR.
             let premul_blend = wgpu::BlendState {
                 color: wgpu::BlendComponent {
                     src_factor: wgpu::BlendFactor::One,
@@ -1289,7 +1289,7 @@ impl ViewportGpuResources {
             encoder.copy_buffer_to_buffer(&counter_buf, 0, &staging_buf, 0, 4);
             queue.submit(std::iter::once(encoder.finish()));
 
-            // Synchronous readback (v1 — acceptable; async readback can follow later).
+            // Synchronous readback (v1 : acceptable; async readback can follow later).
             let slice = staging_buf.slice(..);
             slice.map_async(wgpu::MapMode::Read, |_| {});
             let _ = device.poll(wgpu::PollType::Wait {
@@ -1320,7 +1320,7 @@ impl ViewportGpuResources {
     /// Lazily create the GPU pick pipeline and associated bind group layouts.
     ///
     /// No-op if already created. Called from `ViewportRenderer::pick_scene_gpu`
-    /// on first invocation — zero overhead when GPU picking is never used.
+    /// on first invocation : zero overhead when GPU picking is never used.
     pub(crate) fn ensure_pick_pipeline(&mut self, device: &wgpu::Device) {
         if self.pick_pipeline.is_some() {
             return;
@@ -1397,7 +1397,7 @@ impl ViewportGpuResources {
                     // location 0: R32Uint object ID
                     Some(wgpu::ColorTargetState {
                         format: wgpu::TextureFormat::R32Uint,
-                        blend: None, // replace — no blending for integer targets
+                        blend: None, // replace : no blending for integer targets
                         write_mask: wgpu::ColorWrites::ALL,
                     }),
                     // location 1: R32Float depth
@@ -1439,7 +1439,6 @@ impl ViewportGpuResources {
 // ---------------------------------------------------------------------------
 // Attribute interpolation utilities
 // ---------------------------------------------------------------------------
-
 
 /// Linearly interpolate between two attribute buffers element-wise.
 ///

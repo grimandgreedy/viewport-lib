@@ -1,7 +1,7 @@
 // Screen-space image overlay shader (Phase 10B).
 //
 // Renders a textured quad anchored to a viewport corner or center.
-// No vertex buffer — corners are generated from vertex_index (0-5).
+// No vertex buffer : corners are generated from vertex_index (0-5).
 // No depth test; drawn after all 3D content as a HUD overlay.
 
 struct ScreenImageUniform {

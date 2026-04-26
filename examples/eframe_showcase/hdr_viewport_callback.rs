@@ -1,4 +1,4 @@
-//! HDR viewport callback — renders through the full HDR pipeline into an
+//! HDR viewport callback : renders through the full HDR pipeline into an
 //! intermediate texture, then blits to the eframe render pass.
 //!
 //! The standard [`ViewportCallback`](super::viewport_callback::ViewportCallback)
@@ -24,7 +24,7 @@ use viewport_lib::{FrameData, ViewportRenderer};
 // Blit resources (stored once in callback_resources)
 // ---------------------------------------------------------------------------
 
-/// GPU resources for the HDR→surface blit pass.
+/// GPU resources for the HDR->surface blit pass.
 /// Stored in `callback_resources` under this type.
 pub struct HdrBlitResources {
     pub texture: wgpu::Texture,
@@ -76,9 +76,10 @@ impl HdrBlitResources {
             return;
         }
         self.texture = create_intermediate_texture(device, self.format, w, h);
-        self.blit_view = self.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.bind_group =
-            create_blit_bind_group(device, &self.bgl, &self.blit_view, &self.sampler);
+        self.blit_view = self
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        self.bind_group = create_blit_bind_group(device, &self.bgl, &self.blit_view, &self.sampler);
         self.size = [w, h];
     }
 }
@@ -91,7 +92,11 @@ fn create_intermediate_texture(
 ) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
         label: Some("hdr_intermediate_texture"),
-        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -206,11 +211,7 @@ pub fn init_hdr_blit_resources(
     format: wgpu::TextureFormat,
 ) {
     let res = HdrBlitResources::new(&render_state.device, format, 1, 1);
-    render_state
-        .renderer
-        .write()
-        .callback_resources
-        .insert(res);
+    render_state.renderer.write().callback_resources.insert(res);
 }
 
 // ---------------------------------------------------------------------------
@@ -233,7 +234,7 @@ impl egui_wgpu::CallbackTrait for HdrViewportCallback {
     ) -> Vec<wgpu::CommandBuffer> {
         let [w, h] = self.viewport_size;
 
-        // Step 1 — resize intermediate texture if needed.
+        // Step 1 : resize intermediate texture if needed.
         // Borrow scoped so it's fully released before we borrow the renderer.
         {
             let blit = callback_resources
@@ -242,16 +243,15 @@ impl egui_wgpu::CallbackTrait for HdrViewportCallback {
             blit.resize_if_needed(device, w, h);
         }
 
-        // Step 2 — create a fresh view into the (possibly resized) texture.
+        // Step 2 : create a fresh view into the (possibly resized) texture.
         // create_view() returns an owned handle; does not extend the borrow above.
         let render_view = {
-            let blit = callback_resources
-                .get::<HdrBlitResources>()
-                .unwrap();
-            blit.texture.create_view(&wgpu::TextureViewDescriptor::default())
+            let blit = callback_resources.get::<HdrBlitResources>().unwrap();
+            blit.texture
+                .create_view(&wgpu::TextureViewDescriptor::default())
         };
 
-        // Step 3 — render the full HDR frame into the intermediate texture.
+        // Step 3 : render the full HDR frame into the intermediate texture.
         // renderer.render() calls prepare() internally, so we don't call it
         // separately (unlike ViewportCallback).
         let cmd = callback_resources

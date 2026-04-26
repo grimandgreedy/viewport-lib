@@ -260,7 +260,7 @@ impl ViewportGpuResources {
             ],
         });
 
-        // Texture-only bind group layout — kept for the instanced pipeline (group 1 bindings
+        // Texture-only bind group layout : kept for the instanced pipeline (group 1 bindings
         // 1-4 are added alongside the storage buffer binding 0 in init_instanced_pipeline).
         // Also used as the standalone layout when creating material bind groups keyed by
         // texture combination for the instanced path.
@@ -548,7 +548,7 @@ impl ViewportGpuResources {
         });
 
         // Clip volume uniform buffer (binding 6 of camera bind group, 128 bytes).
-        // Initialized to volume_type=0 (None — no clip volume).
+        // Initialized to volume_type=0 (None : no clip volume).
         let clip_volume_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("clip_volume_uniform_buf"),
             size: std::mem::size_of::<ClipVolumeUniform>() as u64,
@@ -594,7 +594,7 @@ impl ViewportGpuResources {
 
         // ------------------------------------------------------------------
         // IBL fallback textures: 1×1 black (Rgba16Float) placeholder for all IBL slots,
-        // and a linear/repeat sampler. Never sampled — the `ibl_enabled` uniform guard
+        // and a linear/repeat sampler. Never sampled : the `ibl_enabled` uniform guard
         // prevents IBL calculations when no environment map is uploaded.
         // ------------------------------------------------------------------
         let ibl_fallback_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -614,7 +614,7 @@ impl ViewportGpuResources {
         let ibl_fallback_view =
             ibl_fallback_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // 1×1 black Rgba16Float — never actually sampled because the `ibl_enabled` guard
+        // 1×1 black Rgba16Float : never actually sampled because the `ibl_enabled` guard
         // in prepare.rs prevents IBL calculations when no environment map is uploaded.
         // Exists only to satisfy the bind group layout.
         let ibl_fallback_brdf_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -676,7 +676,7 @@ impl ViewportGpuResources {
                     binding: 6,
                     resource: clip_volume_uniform_buf.as_entire_binding(),
                 },
-                // IBL textures (bindings 7-11) — fallback until environment is uploaded.
+                // IBL textures (bindings 7-11) : fallback until environment is uploaded.
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: wgpu::BindingResource::TextureView(&ibl_fallback_view),
@@ -774,7 +774,7 @@ impl ViewportGpuResources {
             cache: None,
         });
 
-        // Shadow pass uniform buffer — 4 cascade slots × 256 bytes (wgpu dynamic-offset alignment).
+        // Shadow pass uniform buffer : 4 cascade slots × 256 bytes (wgpu dynamic-offset alignment).
         // Each slot holds one 4×4 matrix (64 bytes); the remaining 192 bytes per slot are padding.
         const SHADOW_SLOT_STRIDE: u64 = 256;
         let shadow_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -837,8 +837,8 @@ impl ViewportGpuResources {
 
         // ------------------------------------------------------------------
         // Gizmo render pipeline
-        // depth_compare: Always — gizmo always renders on top of scene (Pitfall 8).
-        // depth_write_enabled: false — do not corrupt depth buffer.
+        // depth_compare: Always : gizmo always renders on top of scene (Pitfall 8).
+        // depth_write_enabled: false : do not corrupt depth buffer.
         // ------------------------------------------------------------------
         let gizmo_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("gizmo_pipeline"),
@@ -919,7 +919,7 @@ impl ViewportGpuResources {
         gizmo_index_buffer.unmap();
 
         // ------------------------------------------------------------------
-        // Gizmo uniform buffer (model matrix — identity until first update)
+        // Gizmo uniform buffer (model matrix : identity until first update)
         // ------------------------------------------------------------------
         let gizmo_uniform = crate::interaction::gizmo::GizmoUniform {
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
@@ -983,9 +983,9 @@ impl ViewportGpuResources {
         // ------------------------------------------------------------------
         // Overlay render pipeline
         // TriangleList topology with alpha blending for semi-transparent quads.
-        // depth_write_enabled: false — do not corrupt depth buffer with overlays.
-        // depth_compare: Less — overlays respect depth (hidden by geometry in front).
-        // cull_mode: None — quads viewed from both sides.
+        // depth_write_enabled: false : do not corrupt depth buffer with overlays.
+        // depth_compare: Less : overlays respect depth (hidden by geometry in front).
+        // cull_mode: None : quads viewed from both sides.
         // ------------------------------------------------------------------
         let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("overlay_pipeline"),
@@ -1035,7 +1035,7 @@ impl ViewportGpuResources {
         // Overlay line pipeline (LineList)
         // Uses the same overlay shader + bind group layout as the triangle overlay.
         // No alpha blending needed for line overlays.
-        // depth_write_enabled: false — overlay lines don't corrupt depth buffer.
+        // depth_write_enabled: false : overlay lines don't corrupt depth buffer.
         // ------------------------------------------------------------------
         let overlay_line_pipeline =
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1119,7 +1119,7 @@ impl ViewportGpuResources {
             vertex: wgpu::VertexState {
                 module: &grid_shader,
                 entry_point: Some("vs_main"),
-                buffers: &[], // no vertex buffer — positions hardcoded in shader
+                buffers: &[], // no vertex buffer : positions hardcoded in shader
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -1144,7 +1144,7 @@ impl ViewportGpuResources {
                 bias: wgpu::DepthBiasState {
                     // Push grid depth slightly behind coplanar geometry to prevent
                     // z-fighting when object faces coincide with the grid plane.
-                    // 4 × the minimum representable Depth24 unit ≈ 2.4e-7 — invisible
+                    // 4 × the minimum representable Depth24 unit ≈ 2.4e-7 : invisible
                     // at any distance but reliably loses the depth test to geometry.
                     constant: 4,
                     slope_scale: 0.0,
@@ -1159,7 +1159,7 @@ impl ViewportGpuResources {
             multiview: None,
             cache: None,
         });
-        // Default-zero uniform — overwritten every frame in prepare().
+        // Default-zero uniform : overwritten every frame in prepare().
         let grid_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("grid_uniform_buf"),
             size: std::mem::size_of::<GridUniform>() as u64,
@@ -1185,56 +1185,53 @@ impl ViewportGpuResources {
         // ------------------------------------------------------------------
         let ground_plane_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ground_plane_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/ground_plane.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/ground_plane.wgsl").into()),
         });
-        let ground_plane_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("ground_plane_bgl"),
-                entries: &[
-                    // binding 0: GroundPlaneUniform
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+        let ground_plane_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ground_plane_bgl"),
+            entries: &[
+                // binding 0: GroundPlaneUniform
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    // binding 1: shadow atlas (depth texture)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Depth,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
+                    count: None,
+                },
+                // binding 1: shadow atlas (depth texture)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
-                    // binding 2: shadow comparison sampler
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                        count: None,
+                    count: None,
+                },
+                // binding 2: shadow comparison sampler
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+                // binding 3: shadow atlas info (cascade matrices, splits, atlas rects)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    // binding 3: shadow atlas info (cascade matrices, splits, atlas rects)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
+                    count: None,
+                },
+            ],
+        });
         let ground_plane_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("ground_plane_pipeline_layout"),
@@ -1377,7 +1374,7 @@ impl ViewportGpuResources {
         });
 
         // ------------------------------------------------------------------
-        // Shared material sampler (linear + repeat — reused for all material textures)
+        // Shared material sampler (linear + repeat : reused for all material textures)
         // ------------------------------------------------------------------
         let material_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("material_sampler"),
@@ -1390,7 +1387,7 @@ impl ViewportGpuResources {
         });
 
         // ------------------------------------------------------------------
-        // Fallback normal map: 1×1 [128, 128, 255, 255] — flat tangent-space normal
+        // Fallback normal map: 1×1 [128, 128, 255, 255] : flat tangent-space normal
         // ------------------------------------------------------------------
         let fallback_normal_map = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("fallback_normal_map"),
@@ -1410,7 +1407,7 @@ impl ViewportGpuResources {
             fallback_normal_map.create_view(&wgpu::TextureViewDescriptor::default());
 
         // ------------------------------------------------------------------
-        // Fallback AO map: 1×1 [255, 255, 255, 255] — no occlusion
+        // Fallback AO map: 1×1 [255, 255, 255, 255] : no occlusion
         // ------------------------------------------------------------------
         let fallback_ao_map = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("fallback_ao_map"),
@@ -1537,7 +1534,7 @@ impl ViewportGpuResources {
 
         // ------------------------------------------------------------------
         // Hardcoded unit cube mesh (test scene object)
-        // Created here — after fallback textures — so the combined bind group
+        // Created here : after fallback textures : so the combined bind group
         // can reference the fallback texture views at creation time.
         // ------------------------------------------------------------------
         let (cube_verts, cube_indices) = build_unit_cube();
@@ -1611,7 +1608,7 @@ impl ViewportGpuResources {
                     targets: &[Some(wgpu::ColorTargetState {
                         format: target_format,
                         blend: None,
-                        // Don't write color — stencil write pass is depth+stencil only.
+                        // Don't write color : stencil write pass is depth+stencil only.
                         write_mask: wgpu::ColorWrites::empty(),
                     })],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),

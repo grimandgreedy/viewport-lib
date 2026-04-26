@@ -2,13 +2,13 @@
 //!
 //! Demonstrates the two per-face rendering modes added in Phase 2:
 //!
-//!   Left   — `AttributeKind::Vertex`    smooth, Gouraud-interpolated scalar
-//!   Centre — `AttributeKind::Face`      flat per-triangle scalar, same data
-//!   Right  — `AttributeKind::FaceColor` direct per-face RGBA, no colormap
+//!   Left   : `AttributeKind::Vertex`    smooth, Gouraud-interpolated scalar
+//!   Centre : `AttributeKind::Face`      flat per-triangle scalar, same data
+//!   Right  : `AttributeKind::FaceColor` direct per-face RGBA, no colormap
 //!
 //! The left and centre objects carry the same scalar value (face-centroid Z
-//! normalised 0→1).  The visual difference—crisp flat facets on Face vs a
-//! smooth gradient on Vertex—is the whole point of the showcase.
+//! normalised 0->1).  The visual difference:crisp flat facets on Face vs a
+//! smooth gradient on Vertex:is the whole point of the showcase.
 //!
 //! The right object uses `FaceColor` with a hue-cycled rainbow to demonstrate
 //! that RGBA colours are applied directly without going through a colormap.
@@ -18,8 +18,7 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    AttributeData, BuiltinColormap, Material, MeshId, ViewportRenderer,
-    scene::Scene,
+    AttributeData, BuiltinColormap, Material, MeshId, ViewportRenderer, scene::Scene,
 };
 
 impl App {
@@ -42,11 +41,7 @@ impl App {
         //
         // Both Vertex and Face objects use the same underlying Z values, so
         // the renderer maps them to identical colormap extents automatically.
-        let vertex_scalars: Vec<f32> = ref_sphere
-            .positions
-            .iter()
-            .map(|p| p[2])
-            .collect();
+        let vertex_scalars: Vec<f32> = ref_sphere.positions.iter().map(|p| p[2]).collect();
 
         let face_scalars: Vec<f32> = (0..n_tris)
             .map(|fi| {
@@ -88,7 +83,11 @@ impl App {
             })
             .collect();
 
-        let grey_mat = { let mut m = Material::from_color([0.8, 0.8, 0.8]); m.roughness = 0.5; m };
+        let grey_mat = {
+            let mut m = Material::from_color([0.8, 0.8, 0.8]);
+            m.roughness = 0.5;
+            m
+        };
 
         // ---- Mesh 0: Vertex attribute (interpolated) ----
         let mut mesh0 = viewport_lib::primitives::sphere(2.0, 48, 24);
@@ -135,7 +134,11 @@ impl App {
             "FaceColor (direct RGBA)",
             Some(MeshId::from_index(idx2)),
             glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)),
-            { let mut m = Material::from_color([1.0, 1.0, 1.0]); m.roughness = 0.5; m },
+            {
+                let mut m = Material::from_color([1.0, 1.0, 1.0]);
+                m.roughness = 0.5;
+                m
+            },
         );
 
         self.face_mesh_indices = [idx0, idx1, idx2];
@@ -144,11 +147,11 @@ impl App {
     }
 
     pub(crate) fn controls_face_attr(&mut self, ui: &mut egui::Ui) {
-        ui.label("Three spheres — same geometry, three attribute kinds:");
+        ui.label("Three spheres : same geometry, three attribute kinds:");
         ui.add_space(2.0);
-        ui.label("  Left   — Vertex  (Gouraud-interpolated)");
-        ui.label("  Centre — Face    (flat per-triangle)");
-        ui.label("  Right  — FaceColor (direct RGBA, no colormap)");
+        ui.label("  Left   : Vertex  (Gouraud-interpolated)");
+        ui.label("  Centre : Face    (flat per-triangle)");
+        ui.label("  Right  : FaceColor (direct RGBA, no colormap)");
 
         ui.separator();
         ui.label("Colormap  (Vertex + Face objects):");
