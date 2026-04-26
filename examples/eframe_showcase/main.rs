@@ -447,7 +447,6 @@ fn main() -> eframe::Result {
                 sa_built: false,
                 sa_scene: Scene::new(),
                 sa_clip_on: true,
-                sa_node_ids: [0; 3],
 
                 sv_built: false,
                 sv_mode: showcase_25_surface_vectors::SvMode::VertexIntrinsic,
@@ -833,7 +832,6 @@ pub(crate) struct App {
     pub(crate) sa_built: bool,
     pub(crate) sa_scene: Scene,
     sa_clip_on: bool,
-    pub(crate) sa_node_ids: [NodeId; 3],
 
     // --- Showcase 25 ---
     pub(crate) sv_built: bool,
@@ -3208,6 +3206,10 @@ impl App {
         fd.effects.clip_objects = adv_clip_objects;
         if self.mode == ShowcaseMode::NormalMaps {
             fd.effects.cap_fill_enabled = self.nm_cap_fill;
+        }
+        // Showcase 24 exists to show back face policies : cap fill would hide them.
+        if self.mode == ShowcaseMode::SurfaceAppearance {
+            fd.effects.cap_fill_enabled = false;
         }
         fd.interaction.gizmo_model = gizmo_model;
         fd.interaction.gizmo_mode = gizmo_mode;

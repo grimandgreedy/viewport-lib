@@ -1,7 +1,12 @@
 //! Showcase 24: Surface Appearance : BackfacePolicy.
 //!
-//! Three spheres each use a different [`BackfacePolicy`].
-//! A clip plane (y = 0) slices all three to reveal the interior :
+//! Three rows of shapes each use a different [`BackfacePolicy`] per column:
+//! - **Top row : Toruses** clipped through the ring.
+//! - **Middle row : Spheres** clipped through the center.
+//! - **Bottom row : Cones** clipped through the middle.
+//! - **Bottom-most row : Springs** clipped through the coils.
+//!
+//! Columns:
 //! - **Left : Cull** (default): back faces are invisible. The clipped interior is hollow.
 //! - **Centre : Identical**: back faces are shaded the same as front faces.
 //! - **Right : DifferentColor**: back faces are shaded red, front faces gray.
@@ -14,6 +19,22 @@ use viewport_lib::{
     SceneRenderItem, ViewportRenderer, scene::Scene,
 };
 
+/// The three backface policies demonstrated in each column.
+const POLICIES: [(BackfacePolicy, &str); 3] = [
+    (BackfacePolicy::Cull, "Cull"),
+    (BackfacePolicy::Identical, "Identical"),
+    (BackfacePolicy::DifferentColor([1.0, 0.1, 0.1]), "DifferentColor"),
+];
+
+/// X positions for the three columns.
+const COL_X: [f32; 3] = [-3.0, 0.0, 3.0];
+
+fn make_material(policy: BackfacePolicy) -> Material {
+    let mut mat = Material::from_color([0.7, 0.7, 0.7]);
+    mat.backface_policy = policy;
+    mat
+}
+
 impl App {
     // -------------------------------------------------------------------------
     // One-time scene build
@@ -24,50 +45,76 @@ impl App {
 
         self.sa_scene = Scene::new();
 
-        // --- Large spheres : one per BackfacePolicy ---
-        let sphere_main = primitives::sphere(1.2, 32, 16);
-        let upload_main = |r: &mut ViewportRenderer, device: &eframe::wgpu::Device| -> MeshId {
-            MeshId::from_index(
-                r.resources_mut()
-                    .upload_mesh_data(device, &sphere_main)
-                    .expect("sa main sphere upload"),
-            )
-        };
+        // --- Top row : Toruses (z = +3) ---
+        let torus_z = 3.0;
+        let torus_mesh = primitives::torus(0.8, 0.35, 32, 16);
+        for (i, &(policy, label)) in POLICIES.iter().enumerate() {
+            let mesh_id = MeshId::from_index(
+                renderer
+                    .resources_mut()
+                    .upload_mesh_data(&self.device, &torus_mesh)
+                    .expect("sa torus upload"),
+            );
+            self.sa_scene.add_named(
+                &format!("Torus {label}"),
+                Some(mesh_id),
+                Mat4::from_translation(glam::Vec3::new(COL_X[i], 0.0, torus_z)),
+                make_material(policy),
+            );
+        }
 
-        // Left : Cull
-        let m0 = upload_main(renderer, &self.device);
-        let mut mat_cull = Material::from_color([0.7, 0.7, 0.7]);
-        mat_cull.backface_policy = BackfacePolicy::Cull;
-        let id0 = self.sa_scene.add_named(
-            "Cull",
-            Some(m0),
-            Mat4::from_translation(glam::Vec3::new(-3.0, 0.0, 0.0)),
-            mat_cull,
-        );
+        // --- Middle row : Spheres (z = 0) ---
+        let sphere_mesh = primitives::sphere(1.2, 32, 16);
+        for (i, &(policy, label)) in POLICIES.iter().enumerate() {
+            let mesh_id = MeshId::from_index(
+                renderer
+                    .resources_mut()
+                    .upload_mesh_data(&self.device, &sphere_mesh)
+                    .expect("sa sphere upload"),
+            );
+            self.sa_scene.add_named(
+                &format!("Sphere {label}"),
+                Some(mesh_id),
+                Mat4::from_translation(glam::Vec3::new(COL_X[i], 0.0, 0.0)),
+                make_material(policy),
+            );
+        }
 
-        // Centre : Identical
-        let m1 = upload_main(renderer, &self.device);
-        let mut mat_identical = Material::from_color([0.7, 0.7, 0.7]);
-        mat_identical.backface_policy = BackfacePolicy::Identical;
-        let id1 = self.sa_scene.add_named(
-            "Identical",
-            Some(m1),
-            Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.0)),
-            mat_identical,
-        );
+        // --- Bottom row : Cones (z = -3) ---
+        let cone_z = -3.0;
+        let cone_mesh = primitives::cone(0.9, 2.0, 32);
+        for (i, &(policy, label)) in POLICIES.iter().enumerate() {
+            let mesh_id = MeshId::from_index(
+                renderer
+                    .resources_mut()
+                    .upload_mesh_data(&self.device, &cone_mesh)
+                    .expect("sa cone upload"),
+            );
+            self.sa_scene.add_named(
+                &format!("Cone {label}"),
+                Some(mesh_id),
+                Mat4::from_translation(glam::Vec3::new(COL_X[i], 0.0, cone_z)),
+                make_material(policy),
+            );
+        }
 
-        // Right : DifferentColor
-        let m2 = upload_main(renderer, &self.device);
-        let mut mat_diff = Material::from_color([0.7, 0.7, 0.7]);
-        mat_diff.backface_policy = BackfacePolicy::DifferentColor([1.0, 0.1, 0.1]);
-        let id2 = self.sa_scene.add_named(
-            "DifferentColor",
-            Some(m2),
-            Mat4::from_translation(glam::Vec3::new(3.0, 0.0, 0.0)),
-            mat_diff,
-        );
-
-        self.sa_node_ids = [id0, id1, id2];
+        // --- Bottom-most row : Springs (z = -6) ---
+        let spring_z = -6.0;
+        let spring_mesh = primitives::spring(0.6, 0.2, 3.0, 16);
+        for (i, &(policy, label)) in POLICIES.iter().enumerate() {
+            let mesh_id = MeshId::from_index(
+                renderer
+                    .resources_mut()
+                    .upload_mesh_data(&self.device, &spring_mesh)
+                    .expect("sa spring upload"),
+            );
+            self.sa_scene.add_named(
+                &format!("Spring {label}"),
+                Some(mesh_id),
+                Mat4::from_translation(glam::Vec3::new(COL_X[i], 0.0, spring_z)),
+                make_material(policy),
+            );
+        }
 
         self.sa_built = true;
     }
@@ -84,9 +131,11 @@ impl App {
             ui.label("Right:  DifferentColor (red/orange)");
         });
         ui.separator();
+        ui.label("Toruses | Spheres | Cones | Springs (top to bottom)");
+        ui.separator();
 
         ui.checkbox(&mut self.sa_clip_on, "Clip plane (y = 0)");
-        ui.label("Slices all spheres to reveal\nhow each policy treats back faces.");
+        ui.label("Slices all shapes to reveal\nhow each policy treats back faces.");
     }
 
     // -------------------------------------------------------------------------
@@ -100,8 +149,8 @@ impl App {
 
     pub(crate) fn sa_clip_objects(&self) -> Vec<ClipObject> {
         if self.sa_clip_on {
-            // Clip along Y so the plane slices through all three columns equally,
-            // revealing the interior of every sphere.
+            // Clip along Y so the plane slices through all three rows equally,
+            // revealing the interior of every shape.
             vec![ClipObject::plane([0.0, 1.0, 0.0], 0.0)]
         } else {
             vec![]

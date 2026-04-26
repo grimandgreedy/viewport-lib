@@ -79,7 +79,27 @@ fn extract_contour_segments(
         }
     }
 
+    // Deduplicate segments: when vertices lie on the clip plane, multiple
+    // triangles sharing those vertices produce identical segments.
+    dedup_segments(&mut segments);
+
     segments
+}
+
+/// Remove duplicate segments using quantized endpoint pairs.
+/// Two segments match if their quantized endpoints are identical in either order.
+fn dedup_segments(segments: &mut Vec<[glam::Vec3; 2]>) {
+    use std::collections::HashSet;
+    type Key = ((i32, i32, i32), (i32, i32, i32));
+
+    let mut seen = HashSet::new();
+    segments.retain(|seg| {
+        let a = quantize(seg[0]);
+        let b = quantize(seg[1]);
+        // Canonical order so (A,B) and (B,A) are the same key.
+        let key: Key = if a <= b { (a, b) } else { (b, a) };
+        seen.insert(key)
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -494,6 +514,55 @@ mod tests {
         assert!(!cap.positions.is_empty());
         assert!(!cap.indices.is_empty());
         // Should produce a square cap
+        assert!(cap.indices.len() >= 3);
+    }
+
+    /// UV sphere sliced through its center: the clip plane passes through
+    /// on-plane vertices, which previously produced duplicate segments that
+    /// broke loop assembly.
+    #[test]
+    fn test_generate_cap_mesh_uv_sphere() {
+        // Build a small UV sphere (same structure as the showcase).
+        let lon_segs = 48usize;
+        let lat_segs = 24usize;
+        let mut positions = Vec::new();
+        let mut indices = Vec::new();
+        for lat in 0..=lat_segs {
+            let theta = std::f32::consts::PI * lat as f32 / lat_segs as f32;
+            let (sin_t, cos_t) = theta.sin_cos();
+            for lon in 0..=lon_segs {
+                let phi = 2.0 * std::f32::consts::PI * lon as f32 / lon_segs as f32;
+                let (sin_p, cos_p) = phi.sin_cos();
+                positions.push([sin_t * cos_p, cos_t, sin_t * sin_p]);
+            }
+        }
+        let stride = lon_segs + 1;
+        for lat in 0..lat_segs {
+            for lon in 0..lon_segs {
+                let a = (lat * stride + lon) as u32;
+                let b = ((lat + 1) * stride + lon) as u32;
+                let c = ((lat + 1) * stride + lon + 1) as u32;
+                let d = (lat * stride + lon + 1) as u32;
+                if lat > 0 {
+                    indices.extend_from_slice(&[a, d, b]);
+                }
+                if lat < lat_segs - 1 {
+                    indices.extend_from_slice(&[b, d, c]);
+                }
+            }
+        }
+
+        // Clip at X=0 through the center (same as showcase_07).
+        let model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.0));
+        let cap = generate_cap_mesh(
+            &positions,
+            &indices,
+            &model,
+            glam::Vec3::X,
+            0.0,
+        );
+        assert!(cap.is_some(), "sphere cap mesh must be generated");
+        let cap = cap.unwrap();
         assert!(cap.indices.len() >= 3);
     }
 }

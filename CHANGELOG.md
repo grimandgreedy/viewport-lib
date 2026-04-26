@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.8.3]
+- Major fix to for cap filling. Added loop calculation so that necessary cap filling is identified when the clip plane passes through verticies -- e.g., for a sphere, torus, cone, etc.
+
 ## [0.8.2]
 
 - Replaced stencil-based selection outline with screen-space edge detection for smooth, anti-aliased outlines
