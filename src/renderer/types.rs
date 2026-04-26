@@ -1232,6 +1232,26 @@ impl SceneFrame {
     pub fn from_surface_items(items: Vec<SceneRenderItem>) -> Self {
         Self::new(SurfaceSubmission::Flat(items))
     }
+
+    /// Build a scene frame by collecting render items from a [`Scene`](crate::scene::scene::Scene).
+    ///
+    /// Calls [`Scene::collect_render_items`](crate::scene::scene::Scene::collect_render_items)
+    /// and stamps `generation` with the current scene version so the renderer can
+    /// skip batch rebuilds on unchanged frames.
+    ///
+    /// This is the preferred constructor for the common single-viewport path.
+    /// Use [`SceneFrame::from_surface_items`] when you need to assemble render items manually.
+    pub fn from_scene(
+        scene: &mut crate::scene::scene::Scene,
+        selection: &crate::interaction::selection::Selection,
+    ) -> Self {
+        let items = scene.collect_render_items(selection);
+        Self {
+            generation: scene.version(),
+            surfaces: SurfaceSubmission::Flat(items),
+            ..Self::default()
+        }
+    }
 }
 
 /// Viewport presentation settings for one frame.
@@ -1318,6 +1338,20 @@ impl Default for InteractionFrame {
             outline_width_px: 2.0,
             xray_selected: false,
             xray_color: [0.3, 0.7, 1.0, 0.25],
+        }
+    }
+}
+
+impl InteractionFrame {
+    /// Build an interaction frame stamped with the current selection version.
+    ///
+    /// Sets `selection_generation` from [`Selection::version`](crate::interaction::selection::Selection::version)
+    /// so the renderer can skip overlay rebuilds on unchanged frames.
+    /// All other fields remain at their defaults.
+    pub fn from_selection(selection: &crate::interaction::selection::Selection) -> Self {
+        Self {
+            selection_generation: selection.version(),
+            ..Self::default()
         }
     }
 }
@@ -1538,6 +1572,60 @@ impl FrameData {
             scene,
             ..Self::default()
         }
+    }
+
+    /// Build frame data from a camera, scene, and selection in one call.
+    ///
+    /// This is the preferred constructor for the common single-viewport path.
+    /// It collects render items, stamps the scene and selection generation counters,
+    /// and leaves viewport chrome and effects at their defaults.
+    ///
+    /// Override individual settings with the builder methods:
+    ///
+    /// ```rust,ignore
+    /// let frame = FrameData::from_scene(
+    ///     CameraFrame::from_camera(&camera, [w, h]),
+    ///     &mut scene,
+    ///     &selection,
+    /// )
+    /// .with_background([0.1, 0.1, 0.12, 1.0])
+    /// .with_lighting(lighting);
+    /// ```
+    pub fn from_scene(
+        camera: CameraFrame,
+        scene: &mut crate::scene::scene::Scene,
+        selection: &crate::interaction::selection::Selection,
+    ) -> Self {
+        Self {
+            camera,
+            scene: SceneFrame::from_scene(scene, selection),
+            interaction: InteractionFrame::from_selection(selection),
+            ..Self::default()
+        }
+    }
+
+    /// Set the viewport background clear color.
+    pub fn with_background(mut self, color: [f32; 4]) -> Self {
+        self.viewport.background_color = Some(color);
+        self
+    }
+
+    /// Override the per-frame lighting configuration.
+    pub fn with_lighting(mut self, lighting: LightingSettings) -> Self {
+        self.effects.lighting = lighting;
+        self
+    }
+
+    /// Override the post-processing settings.
+    pub fn with_post_process(mut self, post: PostProcessSettings) -> Self {
+        self.effects.post_process = post;
+        self
+    }
+
+    /// Override the ground plane configuration.
+    pub fn with_ground_plane(mut self, ground: GroundPlane) -> Self {
+        self.effects.ground_plane = ground;
+        self
     }
 }
 

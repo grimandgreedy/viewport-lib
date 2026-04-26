@@ -9,9 +9,9 @@ mod viewport_callback;
 
 use eframe::egui;
 use viewport_lib::{
-    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, ManipResult,
-    ManipulationContext, ManipulationController, Material, OrbitCameraController, SceneFrame,
-    SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
+    ButtonState, Camera, CameraFrame, FrameData, ManipResult, ManipulationContext,
+    ManipulationController, Material, OrbitCameraController, SceneFrame, SceneRenderItem,
+    ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
 };
 
 fn main() -> eframe::Result {
@@ -69,7 +69,7 @@ struct App {
 
 impl App {
     fn new(m_sphere: usize, m_cube: usize, m_torus: usize) -> Self {
-        let mut make = |mesh_index, [x, y, z]: [f32; 3], color: [f32; 3]| {
+        let make = |mesh_index, [x, y, z]: [f32; 3], color: [f32; 3]| {
             let mut item = SceneRenderItem::default();
             item.mesh_index = mesh_index;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
@@ -249,11 +249,10 @@ impl eframe::App for App {
                 }
             }
 
-            let mut frame_data = FrameData::new(
+            let frame_data = FrameData::new(
                 CameraFrame::from_camera(&self.camera, [w, h]),
                 SceneFrame::from_surface_items(self.scene_items.clone()),
             );
-            frame_data.effects.lighting = LightingSettings::default();
 
             ui.painter()
                 .add(eframe::egui_wgpu::Callback::new_paint_callback(
