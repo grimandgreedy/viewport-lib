@@ -9,9 +9,9 @@ mod viewport_callback;
 
 use eframe::egui;
 use viewport_lib::{
-    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, Material, MeshId,
-    OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent,
-    ViewportRenderer, primitives,
+    ButtonState, Camera, CameraFrame, FrameData, LightKind, LightSource, LightingSettings,
+    Material, MeshId, OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits,
+    ViewportContext, ViewportEvent, ViewportRenderer, primitives,
 };
 
 fn main() -> eframe::Result {
@@ -61,10 +61,10 @@ fn main() -> eframe::Result {
             let m_plane = mesh!(primitives::plane(1.8, 1.8));
             let m_grid_plane = mesh!(primitives::grid_plane(1.8, 1.8, 8, 8));
             let m_frustum = mesh!(primitives::frustum(
-                std::f32::consts::FRAC_PI_3,
-                16.0 / 9.0,
-                0.3,
-                2.5
+                std::f32::consts::FRAC_PI_4, // 45° fov — tighter than 60°
+                4.0 / 3.0,
+                0.12,
+                1.1
             ));
             let m_arrow = mesh!(primitives::arrow(0.07, 0.18, 0.28, 24));
 
@@ -102,7 +102,14 @@ fn main() -> eframe::Result {
                 item(m_ring, cx[3], rz[2], [0.55, 0.90, 0.30]),
                 item(m_plane, cx[0], rz[3], [0.60, 0.55, 0.75]),
                 item(m_grid_plane, cx[1], rz[3], [0.80, 0.50, 0.25]),
-                item(m_frustum, cx[2], rz[3], [0.30, 0.65, 0.90]),
+                {
+                    // Rotate 180° around X so the frustum opens upward (+Z) in the z-up scene.
+                    let mut s = item(m_frustum, cx[2], rz[3], [0.30, 0.65, 0.90]);
+                    s.model = (glam::Mat4::from_translation(glam::Vec3::new(cx[2], 0.0, rz[3]))
+                        * glam::Mat4::from_rotation_x(std::f32::consts::PI))
+                        .to_cols_array_2d();
+                    s
+                },
                 item(m_arrow, cx[3], rz[3], [0.90, 0.25, 0.30]),
                 item(m_spring_a, cx[0], rz[4], [0.85, 0.30, 0.75]),
                 item(m_spring_b, cx[1], rz[4], [0.55, 0.35, 0.90]),
@@ -125,7 +132,10 @@ impl App {
             camera: Camera {
                 center: glam::Vec3::ZERO,
                 distance: 28.0,
-                orientation: glam::Quat::from_rotation_x(-0.55),
+                // Z-up: compose a 30° azimuth around Z with a ~57° tilt from vertical.
+                // orientation * Y ≈ world Z (screen up), orientation * Z points from center to eye.
+                orientation: glam::Quat::from_rotation_z(0.5)
+                    * glam::Quat::from_rotation_x(1.0),
                 ..Camera::default()
             },
             controller: OrbitCameraController::viewport_primitives(),
@@ -202,8 +212,31 @@ impl eframe::App for App {
                 CameraFrame::from_camera(&self.camera, [w, h]),
                 SceneFrame::from_surface_items(self.scene_items.clone()),
             );
-            frame_data.effects.lighting = LightingSettings::default();
-            frame_data.viewport.show_grid = true;
+            frame_data.effects.lighting = LightingSettings {
+                lights: vec![
+                    // Key light: warm, from upper front-right.
+                    LightSource {
+                        kind: LightKind::Directional {
+                            direction: [0.4, -0.5, 1.2],
+                        },
+                        color: [1.0, 0.97, 0.92],
+                        intensity: 1.0,
+                    },
+                    // Cool fill from the opposite side.
+                    LightSource {
+                        kind: LightKind::Directional {
+                            direction: [-0.8, 0.6, 0.3],
+                        },
+                        color: [0.70, 0.82, 1.0],
+                        intensity: 0.35,
+                    },
+                ],
+                hemisphere_intensity: 0.35,
+                sky_color: [0.80, 0.90, 1.0],
+                ground_color: [0.35, 0.28, 0.22],
+                ..LightingSettings::default()
+            };
+            frame_data.viewport.show_grid = false;
             frame_data.viewport.show_axes_indicator = true;
 
             ui.painter()
