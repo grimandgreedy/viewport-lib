@@ -389,7 +389,7 @@ impl ViewportRenderer {
         let has_scalar_items = scene_items.iter().any(|i| i.active_attribute.is_some());
         let has_two_sided_items = scene_items
             .iter()
-            .any(|i| i.two_sided || i.material.is_two_sided());
+            .any(|i| i.material.is_two_sided());
         let has_matcap_items = scene_items.iter().any(|i| i.material.matcap_id.is_some());
         let has_param_vis_items = scene_items.iter().any(|i| i.material.param_vis.is_some());
         if !self.use_instancing
@@ -461,11 +461,19 @@ impl ViewportRenderer {
                         crate::scene::material::BackfacePolicy::Identical => 1,
                         crate::scene::material::BackfacePolicy::DifferentColor(_) => 2,
                         crate::scene::material::BackfacePolicy::Tint(_) => 3,
-                        crate::scene::material::BackfacePolicy::Pattern { .. } => 4,
+                        crate::scene::material::BackfacePolicy::Pattern { pattern, .. } => {
+                            4 + pattern as u32
+                        }
                     },
                     backface_color: match m.backface_policy {
                         crate::scene::material::BackfacePolicy::DifferentColor(c) => {
                             [c[0], c[1], c[2], 1.0]
+                        }
+                        crate::scene::material::BackfacePolicy::Tint(factor) => {
+                            [factor, 0.0, 0.0, 1.0]
+                        }
+                        crate::scene::material::BackfacePolicy::Pattern { color, .. } => {
+                            [color[0], color[1], color[2], 1.0]
                         }
                         _ => [0.0; 4],
                     },
@@ -552,7 +560,6 @@ impl ViewportRenderer {
                     .filter(|item| {
                         item.visible
                             && item.active_attribute.is_none()
-                            && !item.two_sided
                             && !item.material.is_two_sided()
                             && item.material.matcap_id.is_none()
                             && item.material.param_vis.is_none()
@@ -1329,7 +1336,7 @@ impl ViewportRenderer {
                 });
                 outline_object_buffers.push(OutlineObjectBuffers {
                     mesh_id: item.mesh_id,
-                    two_sided: item.two_sided || item.material.is_two_sided(),
+                    two_sided: item.material.is_two_sided(),
                     _mask_uniform_buf: buf,
                     mask_bind_group: bg,
                 });

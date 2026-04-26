@@ -29,7 +29,7 @@ fn item(mesh_id: MeshId, x: f32, y: f32, z: f32, color: [f32; 3]) -> SceneRender
     s.mesh_id = mesh_id;
     s.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
     s.material = Material::from_color(color);
-    s.two_sided = true;
+    s.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
     s
 }
 

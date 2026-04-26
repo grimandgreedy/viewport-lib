@@ -83,7 +83,7 @@ fn main() -> eframe::Result {
                 s.model =
                     glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, z)).to_cols_array_2d();
                 s.material = Material::from_color(color);
-                s.two_sided = true;
+                s.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
                 s
             };
 

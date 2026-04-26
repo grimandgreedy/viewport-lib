@@ -683,7 +683,6 @@ impl Scene {
                 scalar_range: None,
                 colormap_id: None,
                 nan_color: None,
-                two_sided: node.material.is_two_sided(),
                 pick_id: PickId(node.id),
             });
         }
@@ -751,7 +750,6 @@ impl Scene {
                 scalar_range: None,
                 colormap_id: None,
                 nan_color: None,
-                two_sided: node.material.is_two_sided(),
                 pick_id: PickId(node.id),
             });
         }

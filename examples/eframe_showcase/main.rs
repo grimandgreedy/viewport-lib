@@ -83,7 +83,8 @@ use std::collections::HashMap;
 
 use eframe::egui;
 use viewport_lib::{
-    Action, AnnotationLabel, AttributeKind, AttributeRef, BuiltinColormap, ButtonState, Camera,
+    Action, AnnotationLabel, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap,
+    ButtonState, Camera,
     CameraAnimator, CameraFrame, ClipAxis, ClipObject, ColormapId, Easing, FrameData, FrameStats,
     Gizmo, GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace, GlyphType, GroundPlane, GroundPlaneMode,
     KeyCode, LightKind, LightSource, LightingSettings, ManipResult, ManipulationContext,
@@ -1452,6 +1453,9 @@ impl eframe::App for App {
             // ----- Annotation labels drawn on top of the 3-D viewport -----
             if self.mode == ShowcaseMode::Annotation {
                 self.draw_annotation_labels(ui, rect);
+            }
+            if self.mode == ShowcaseMode::SurfaceAppearance {
+                self.draw_sa_labels(ui, rect);
             }
 
             // ----- Scalar bar overlay (Showcase 12) -----
@@ -2972,11 +2976,11 @@ impl App {
                             kind: AttributeKind::Vertex,
                         });
                         item.colormap_id = Some(ColormapId(BuiltinColormap::Coolwarm as usize));
-                        item.two_sided = true;
+                        item.material.backface_policy = BackfacePolicy::Identical;
                     }
                 } else {
                     for item in items.iter_mut() {
-                        item.two_sided = true;
+                        item.material.backface_policy = BackfacePolicy::Identical;
                     }
                 }
                 let sg = self.iso_scene.version();
@@ -3022,10 +3026,10 @@ impl App {
 
             ShowcaseMode::ClipVolumes => {
                 let mut items = self.clipvol_scene.collect_render_items(&Selection::new());
-                // Two-sided on all sub-modes: makes the sphere and ground plane visible
-                // from the inside when clipped, showing the cut cross-section surface.
+                // Identical backface policy on all sub-modes: makes the sphere and ground
+                // plane visible from the inside when clipped, showing the cut cross-section.
                 for item in items.iter_mut() {
-                    item.two_sided = true;
+                    item.material.backface_policy = BackfacePolicy::Identical;
                 }
                 let sg = self.clipvol_scene.version();
                 let lighting = LightingSettings {
@@ -3070,7 +3074,7 @@ impl App {
                     };
                 }
                 if let Some(item) = items.iter_mut().find(|item| item.pick_id == PickId(wave_node_id)) {
-                    item.two_sided = true;
+                    item.material.backface_policy = BackfacePolicy::Identical;
                 }
                 let sg = self.scalar_scene.version();
                 let lighting = LightingSettings {
@@ -3106,7 +3110,7 @@ impl App {
                 let mut items = self.texture_scene.collect_render_items(&Selection::new());
                 let plane_node = self.texture_plane_node;
                 if let Some(item) = items.iter_mut().find(|i| i.pick_id == PickId(plane_node)) {
-                    item.two_sided = true;
+                    item.material.backface_policy = BackfacePolicy::Identical;
                 }
                 let sg = self.texture_scene.version();
                 let lighting = LightingSettings {

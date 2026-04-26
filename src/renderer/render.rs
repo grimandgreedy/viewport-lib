@@ -456,7 +456,6 @@ impl ViewportRenderer {
                         .filter(|item| {
                             item.visible
                                 && (item.active_attribute.is_some()
-                                    || item.two_sided
                                     || item.material.is_two_sided()
                                     || item.material.matcap_id.is_some())
                                 && resources
@@ -553,7 +552,7 @@ impl ViewportRenderer {
                             else {
                                 continue;
                             };
-                            let pipeline = if item.two_sided || item.material.is_two_sided() {
+                            let pipeline = if item.material.is_two_sided() {
                                 hdr_solid_two_sided
                             } else {
                                 hdr_solid
@@ -678,7 +677,7 @@ impl ViewportRenderer {
                         &resources.hdr_wireframe_pipeline,
                     ) {
                         for item in &opaque {
-                            let solid_pl = if item.two_sided || item.material.is_two_sided() {
+                            let solid_pl = if item.material.is_two_sided() {
                                 hdr_solid_two_sided
                             } else {
                                 hdr_solid

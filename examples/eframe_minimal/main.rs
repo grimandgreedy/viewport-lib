@@ -74,7 +74,7 @@ impl App {
             item.mesh_id = mesh_id;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
             item.material = Material::from_color(color);
-            item.two_sided = true;
+            item.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
             item
         };
 

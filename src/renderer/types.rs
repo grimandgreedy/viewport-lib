@@ -405,12 +405,6 @@ pub struct SceneRenderItem {
     pub colormap_id: Option<crate::resources::ColormapId>,
     /// RGBA color for NaN scalar values. `None` = discard (fully transparent).
     pub nan_color: Option<[f32; 4]>,
-    /// Render this mesh with no back-face culling (visible from both sides).
-    ///
-    /// Set this for analytical surfaces (plots, CFD isosurfaces) that the camera
-    /// can orbit under. Opaque geometry with this flag uses the
-    /// `solid_two_sided_pipeline` instead of `solid_pipeline`.
-    pub two_sided: bool,
     /// GPU pick identifier for this surface. [`PickId::NONE`] = not pickable.
     ///
     /// The renderer only includes surfaces with a nonzero pick ID in the GPU
@@ -433,7 +427,6 @@ impl Default for SceneRenderItem {
             scalar_range: None,
             colormap_id: None,
             nan_color: None,
-            two_sided: false,
             pick_id: PickId::NONE,
         }
     }
@@ -1707,7 +1700,6 @@ macro_rules! emit_draw_calls {
                         .filter(|item| {
                             item.visible
                                 && (item.active_attribute.is_some()
-                                    || item.two_sided
                                     || item.material.is_two_sided()
                                     || item.material.param_vis.is_some())
                                 && resources
@@ -1801,7 +1793,7 @@ macro_rules! emit_draw_calls {
                             };
                             let pipeline = if item.material.opacity < 1.0 {
                                 &resources.transparent_pipeline
-                            } else if item.two_sided || item.material.is_two_sided() {
+                            } else if item.material.is_two_sided() {
                                 &resources.solid_two_sided_pipeline
                             } else {
                                 &resources.solid_pipeline
@@ -1910,7 +1902,7 @@ macro_rules! emit_draw_calls {
                 }
 
                 for item in &opaque {
-                    let pl = if item.two_sided || item.material.is_two_sided() {
+                    let pl = if item.material.is_two_sided() {
                         &resources.solid_two_sided_pipeline
                     } else {
                         &resources.solid_pipeline

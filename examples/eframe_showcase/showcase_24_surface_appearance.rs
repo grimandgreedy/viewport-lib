@@ -21,7 +21,7 @@ use eframe::egui;
 use glam::Mat4;
 use viewport_lib::{
     BackfacePattern, BackfacePolicy, ClipObject, LightSource, LightingSettings, Material,
-    SceneRenderItem, ViewportRenderer, scene::Scene,
+    SceneRenderItem, ViewportRenderer, scene::Scene, world_to_screen,
 };
 
 /// All backface policies demonstrated, one per column.
@@ -178,6 +178,41 @@ impl App {
             vec![ClipObject::plane([0.0, 1.0, 0.0], 0.0)]
         } else {
             vec![]
+        }
+    }
+
+    /// Draw column labels above each BackfacePolicy column using world-space projection.
+    pub(crate) fn draw_sa_labels(&self, ui: &egui::Ui, rect: egui::Rect) {
+        let policies = policies();
+        let col_count = policies.len();
+        let col_x: Vec<f32> = (0..col_count)
+            .map(|i| (i as f32 - (col_count - 1) as f32 / 2.0) * 3.0)
+            .collect();
+
+        let painter = ui.painter_at(rect);
+        let view = self.camera.view_matrix();
+        let proj = self.camera.proj_matrix();
+        let vp_size = [rect.width(), rect.height()];
+
+        // Project a point just above the top row (z = 4.5 + 1.8 clearance).
+        for (i, (_, label)) in policies.iter().enumerate() {
+            let world_pos = glam::Vec3::new(col_x[i], 0.0, 6.3);
+            let Some(screen) = world_to_screen(world_pos, &view, &proj, vp_size) else {
+                continue;
+            };
+            let pos = egui::pos2(rect.left() + screen.x, rect.top() + screen.y);
+            let galley = painter.layout_no_wrap(
+                label.to_string(),
+                egui::FontId::proportional(13.0),
+                egui::Color32::from_rgba_unmultiplied(220, 220, 220, 220),
+            );
+            let text_pos = pos - egui::vec2(galley.size().x / 2.0, galley.size().y);
+            let bg_rect = egui::Rect::from_min_size(
+                text_pos - egui::vec2(3.0, 2.0),
+                galley.size() + egui::vec2(6.0, 4.0),
+            );
+            painter.rect_filled(bg_rect, 3.0, egui::Color32::from_black_alpha(120));
+            painter.galley(text_pos, galley, egui::Color32::WHITE);
         }
     }
 
