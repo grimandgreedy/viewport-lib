@@ -23,7 +23,7 @@ impl App {
                 glam::Quat::IDENTITY,
                 glam::Vec3::new(0.0, 0.0, -0.575),
             ),
-            Material::pbr([0.6, 0.6, 0.6], 0.0, 0.9),
+            Material::pbr([1.0, 1.0, 1.0], 0.0, 0.9),
         );
 
         let m = self.upload_box(renderer);

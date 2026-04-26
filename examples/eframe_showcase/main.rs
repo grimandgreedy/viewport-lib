@@ -188,6 +188,7 @@ fn main() -> eframe::Result {
                 },
                 controller: OrbitCameraController::viewport_primitives(),
                 mode: ShowcaseMode::Basic,
+                show_keybinds: false,
                 mesh_indices,
                 use_point_light: false,
                 scene: Scene::new(),
@@ -234,7 +235,7 @@ fn main() -> eframe::Result {
                 pp_built: false,
                 pp_shadow_pcss: true,
                 pp_point_light_on: true,
-                pp_dir_intensity: 2.0,
+                pp_dir_intensity: 4.0,
                 nm_scene: Scene::new(),
                 nm_built: false,
                 nm_tex_ids: [0; 3],
@@ -454,6 +455,8 @@ fn main() -> eframe::Result {
                 sv_built: false,
                 sv_mode: showcase_25_surface_vectors::SvMode::VertexIntrinsic,
                 sv_scale: 0.15,
+                sv_density: 1.0,
+                sv_glyph_density: -1.0,
                 sv_mesh_index: [0; 3],
                 sv_positions: [Vec::new(), Vec::new(), Vec::new()],
                 sv_normals: [Vec::new(), Vec::new(), Vec::new()],
@@ -568,6 +571,7 @@ pub(crate) struct App {
     camera: Camera,
     controller: OrbitCameraController,
     mode: ShowcaseMode,
+    show_keybinds: bool,
 
     // --- Showcase 1 ---
     mesh_indices: Vec<usize>,
@@ -840,6 +844,8 @@ pub(crate) struct App {
     pub(crate) sv_built: bool,
     sv_mode: showcase_25_surface_vectors::SvMode,
     sv_scale: f32,
+    sv_density: f32,
+    sv_glyph_density: f32,
     /// Mesh upload indices: [sphere, torus, plane].
     pub(crate) sv_mesh_index: [usize; 3],
     /// CPU-side positions for each mesh.
@@ -895,34 +901,69 @@ pub(crate) struct App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let mut cycle_dir = 0_i32;
+        let mut toggle_keybinds = false;
         ctx.input(|i| {
-            let use_cycle_shortcut = (i.modifiers.ctrl || i.modifiers.command) && !i.modifiers.alt;
-            if !use_cycle_shortcut {
-                return;
-            }
             for event in &i.events {
-                let egui::Event::Key {
-                    key,
-                    pressed,
-                    repeat,
-                    ..
-                } = event
-                else {
-                    continue;
-                };
-                if !pressed || *repeat {
-                    continue;
-                }
-                match key {
-                    egui::Key::OpenBracket => cycle_dir = -1,
-                    egui::Key::CloseBracket => cycle_dir = 1,
+                match event {
+                    egui::Event::Key {
+                        key,
+                        pressed,
+                        repeat,
+                        modifiers,
+                        ..
+                    } if *pressed && !*repeat => {
+                        let use_cycle =
+                            (modifiers.ctrl || modifiers.command) && !modifiers.alt;
+                        match key {
+                            egui::Key::OpenBracket if use_cycle => cycle_dir = -1,
+                            egui::Key::CloseBracket if use_cycle => cycle_dir = 1,
+                            _ => {}
+                        }
+                    }
+                    egui::Event::Text(t) if t == "?" => {
+                        toggle_keybinds = true;
+                    }
                     _ => {}
                 }
             }
         });
+        if toggle_keybinds {
+            self.show_keybinds = !self.show_keybinds;
+        }
         if cycle_dir != 0 {
             self.cycle_showcase(cycle_dir);
         }
+
+        // ---- Keybinds window ----
+        egui::Window::new("Keybinds")
+            .open(&mut self.show_keybinds)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                egui::Grid::new("keybinds_grid")
+                    .num_columns(2)
+                    .spacing([20.0, 4.0])
+                    .show(ui, |ui| {
+                        let binds: &[(&str, &str)] = &[
+                            ("Left drag", "Orbit"),
+                            ("Middle drag", "Orbit"),
+                            ("Right drag", "Pan"),
+                            ("Middle + Shift drag", "Pan"),
+                            ("Scroll", "Zoom"),
+                            ("Ctrl + Scroll", "Orbit (two-axis)"),
+                            ("Shift + Scroll", "Pan (two-axis)"),
+                            ("Click", "Select object"),
+                            ("Ctrl + [ / ]", "Cycle showcase"),
+                            ("?", "Toggle this window"),
+                        ];
+                        for (key, action) in binds {
+                            ui.strong(*key);
+                            ui.label(*action);
+                            ui.end_row();
+                        }
+                    });
+            });
 
         // Lazy scene builds for the active mode.
         self.ensure_scene_built(frame);
@@ -1642,7 +1683,12 @@ impl App {
 
 impl App {
     fn show_controls(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
-        ui.heading(self.mode.label());
+        ui.horizontal(|ui| {
+            ui.heading(self.mode.label());
+            if ui.small_button("(?)").on_hover_text("Keybinds").clicked() {
+                self.show_keybinds = !self.show_keybinds;
+            }
+        });
         ui.separator();
 
         match self.mode {
@@ -2694,7 +2740,6 @@ impl App {
                     } else {
                         ShadowFilter::Pcf
                     },
-                    shadow_extent_override: Some(14.0),
                     hemisphere_intensity: 0.5,
                     sky_color: [1.0, 1.0, 1.0],
                     ground_color: [1.0, 1.0, 1.0],
@@ -3249,7 +3294,13 @@ impl App {
         // surface access. In the eframe callback model we use prepare()+paint(),
         // so the post-process pass is not applied. Settings are stored for reference.
         match self.mode {
-            ShowcaseMode::PostProcess => {} // No post-process settings; HDR path unavailable via callback.
+            ShowcaseMode::PostProcess => {
+                // Clamp far plane for better cascade distribution.
+                let mut rc = RenderCamera::from_camera(&self.camera);
+                rc.far = self.camera.zfar.min(60.0);
+                rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
+                fd.camera.render_camera = rc;
+            }
             ShowcaseMode::Shadows => {
                 fd.effects.post_process = PostProcessSettings {
                     enabled: false,
