@@ -397,7 +397,8 @@ fn make_torus_face_vectors(torus: &MeshData, major_r: f32) -> Vec<[f32; 2]> {
 fn make_plane_with_source_one_form(n: usize) -> (MeshData, Vec<f32>) {
     use glam::Vec3;
 
-    let half = n as f32 * 0.5;
+    // Fixed world-space extent: plane always spans [-10, 10] on each axis.
+    let extent = 10.0_f32;
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
@@ -405,8 +406,8 @@ fn make_plane_with_source_one_form(n: usize) -> (MeshData, Vec<f32>) {
     // Grid of (n+1)×(n+1) vertices in the XY plane.
     for row in 0..=(n as i32) {
         for col in 0..=(n as i32) {
-            let x = (col as f32 - half as f32) / half as f32 * half;
-            let y = (row as f32 - half as f32) / half as f32 * half;
+            let x = (col as f32 / n as f32 - 0.5) * 2.0 * extent;
+            let y = (row as f32 / n as f32 - 0.5) * 2.0 * extent;
             positions.push([x, y, 0.0_f32]);
             normals.push([0.0_f32, 0.0, 1.0]);
         }

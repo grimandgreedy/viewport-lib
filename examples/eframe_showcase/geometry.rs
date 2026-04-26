@@ -141,8 +141,8 @@ pub fn make_brick_normal_map(w: u32, h: u32) -> Vec<u8> {
             } else {
                 let cx = (bx - 0.5) * 2.0;
                 let cy = (by - 0.5) * 2.0;
-                let tx = -cx * 0.3;
-                let ty = -cy * 0.3;
+                let tx = -cx * 0.6;
+                let ty = -cy * 0.6;
                 let len = (tx * tx + ty * ty + 1.0f32).sqrt();
                 (tx / len, ty / len, 1.0 / len)
             };
