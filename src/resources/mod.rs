@@ -16,6 +16,8 @@ mod scivis;
 mod textures;
 mod types;
 mod volumes;
+/// Unstructured volume mesh topology processing (tet / hex boundary extraction).
+pub mod volume_mesh;
 
 pub use self::extra_impls::{ComputeFilterResult, lerp_attributes};
 use self::extra_impls::{
@@ -28,6 +30,7 @@ pub use self::types::{
     MeshData, OverlayVertex, PointCloudGpuData, PolylineGpuData, ScreenImageGpuData,
     SingleLightUniform, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
 };
+pub use self::volume_mesh::{TET_SENTINEL, VolumeMeshData};
 pub(crate) use self::types::{
     BloomUniform, ClipPlanesUniform, ContactShadowUniform, GlyphBaseMesh, GlyphGpuData,
     GridUniform, GroundPlaneUniform, InstanceData, ObjectUniform, OutlineObjectBuffers, OutlineUniform, OverlayUniform,

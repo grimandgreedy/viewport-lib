@@ -243,6 +243,25 @@ impl ViewportGpuResources {
             .remove(crate::resources::mesh_store::MeshId(index))
     }
 
+    /// Upload an unstructured volume mesh by extracting its boundary surface and uploading
+    /// the result via [`upload_mesh_data`](Self::upload_mesh_data).
+    ///
+    /// Interior faces (shared by two cells) are discarded; only boundary faces (belonging
+    /// to exactly one cell) are kept. Per-cell scalar and color attributes are remapped to
+    /// per-face attributes so the Phase 2 face-coloring path handles them automatically.
+    ///
+    /// Returns the mesh index, identical to what [`upload_mesh_data`](Self::upload_mesh_data)
+    /// would return. Reference cell attributes via
+    /// [`AttributeRef { kind: AttributeKind::Face, .. }`](crate::resources::AttributeRef).
+    pub fn upload_volume_mesh_data(
+        &mut self,
+        device: &wgpu::Device,
+        data: &crate::resources::volume_mesh::VolumeMeshData,
+    ) -> crate::error::ViewportResult<usize> {
+        let mesh_data = crate::resources::volume_mesh::extract_boundary_faces(data);
+        self.upload_mesh_data(device, &mesh_data)
+    }
+
     /// Upload per-vertex, per-cell, per-face scalar, and per-face color attributes to GPU buffers.
     ///
     /// Returns `(attribute_buffers, attribute_ranges, face_vertex_buffer, face_attribute_buffers,

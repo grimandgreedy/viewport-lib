@@ -1141,7 +1141,15 @@ impl ViewportGpuResources {
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::LessEqual,
                 stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
+                bias: wgpu::DepthBiasState {
+                    // Push grid depth slightly behind coplanar geometry to prevent
+                    // z-fighting when object faces coincide with the grid plane.
+                    // 4 × the minimum representable Depth24 unit ≈ 2.4e-7 — invisible
+                    // at any distance but reliably loses the depth test to geometry.
+                    constant: 4,
+                    slope_scale: 0.0,
+                    clamp: 0.0,
+                },
             }),
             multisample: wgpu::MultisampleState {
                 count: sample_count,

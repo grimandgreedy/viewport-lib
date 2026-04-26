@@ -187,3 +187,4 @@ pub use resources::{
     ClipVolumeUniform, ColormapId, ComputeFilterResult, LightUniform, LightsUniform, MatcapId,
     MeshData, SingleLightUniform, ViewportGpuResources, VolumeId, lerp_attributes,
 };
+pub use resources::volume_mesh::{TET_SENTINEL, VolumeMeshData};

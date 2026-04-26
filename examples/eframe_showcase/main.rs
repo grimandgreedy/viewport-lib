@@ -121,6 +121,7 @@ mod showcase_23_ground_plane;
 mod hdr_viewport_callback;
 mod showcase_24_surface_appearance;
 mod showcase_25_surface_vectors;
+mod showcase_26_volume_mesh;
 mod showcase_27_auxiliary;
 mod viewport_callback;
 
@@ -459,6 +460,13 @@ fn main() -> eframe::Result {
                 sv_face_vecs: Vec::new(),
                 sv_edge_vals: Vec::new(),
 
+                vm_built: false,
+                vm_mode: showcase_26_volume_mesh::VmMode::Hex,
+                vm_tet_index: 0,
+                vm_hex_index: 0,
+                vm_colormap: BuiltinColormap::Viridis,
+                vm_field: showcase_26_volume_mesh::VmField::Latitude,
+
                 aux_built: false,
                 aux_frustums: Vec::new(),
                 aux_img_alpha: 1.0,
@@ -506,6 +514,7 @@ enum ShowcaseMode {
     GroundPlane,
     SurfaceAppearance,
     SurfaceVectors,
+    VolumeMesh,
     Auxiliary,
 }
 
@@ -537,6 +546,7 @@ impl ShowcaseMode {
             Self::GroundPlane => "23: Ground Plane",
             Self::SurfaceAppearance => "24: Surface Appearance",
             Self::SurfaceVectors => "25: Surface Vectors",
+            Self::VolumeMesh => "26: Volume Meshes",
             Self::Auxiliary => "27: Auxiliary Structures",
         }
     }
@@ -844,6 +854,14 @@ pub(crate) struct App {
     /// Per-directed-edge one-form values (plane / edge mode).
     pub(crate) sv_edge_vals: Vec<f32>,
 
+    // --- Showcase 26 ---
+    pub(crate) vm_built: bool,
+    vm_mode: showcase_26_volume_mesh::VmMode,
+    vm_tet_index: usize,
+    vm_hex_index: usize,
+    vm_colormap: BuiltinColormap,
+    vm_field: showcase_26_volume_mesh::VmField,
+
     // --- Showcase 27 ---
     pub(crate) aux_built: bool,
     pub(crate) aux_frustums: Vec<viewport_lib::CameraFrustumItem>,
@@ -936,6 +954,7 @@ impl eframe::App for App {
                     ShowcaseMode::GroundPlane,
                     ShowcaseMode::SurfaceAppearance,
                     ShowcaseMode::SurfaceVectors,
+                    ShowcaseMode::VolumeMesh,
                     ShowcaseMode::Auxiliary,
                 ] {
                     if ui
@@ -1278,7 +1297,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 26] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 27] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::Performance,
@@ -1304,6 +1323,7 @@ impl App {
             ShowcaseMode::GroundPlane,
             ShowcaseMode::SurfaceAppearance,
             ShowcaseMode::SurfaceVectors,
+            ShowcaseMode::VolumeMesh,
             ShowcaseMode::Auxiliary,
         ];
 
@@ -1350,6 +1370,7 @@ impl App {
             ShowcaseMode::GroundPlane => !self.gp_built,
             ShowcaseMode::SurfaceAppearance => !self.sa_built,
             ShowcaseMode::SurfaceVectors => !self.sv_built,
+            ShowcaseMode::VolumeMesh => !self.vm_built,
             ShowcaseMode::Auxiliary => !self.aux_built,
             _ => false,
         };
@@ -1580,6 +1601,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::VolumeMesh => {
+                self.build_vm_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 9.0,
+                    orientation: glam::Quat::from_rotation_z(0.5)
+                        * glam::Quat::from_rotation_x(1.0),
+                    ..Camera::default()
+                };
+            }
             ShowcaseMode::Auxiliary => {
                 self.build_aux_scene();
                 self.camera = Camera {
@@ -1630,6 +1661,7 @@ impl App {
             ShowcaseMode::GroundPlane => self.controls_ground_plane(ui),
             ShowcaseMode::SurfaceAppearance => self.controls_surface_appearance(ui),
             ShowcaseMode::SurfaceVectors => self.controls_surface_vectors(ui),
+            ShowcaseMode::VolumeMesh => self.controls_volume_mesh(ui),
             ShowcaseMode::Auxiliary => self.controls_aux(ui),
         }
     }
@@ -3013,6 +3045,11 @@ impl App {
                     vec![]
                 };
                 (surface_item, Some(BG_COLOR), App::sv_lighting(), 0, 0)
+            }
+
+            ShowcaseMode::VolumeMesh => {
+                let items = self.vm_scene_items();
+                (items, Some(BG_COLOR), App::vm_lighting(), 0, 0)
             }
 
             ShowcaseMode::Auxiliary => {
