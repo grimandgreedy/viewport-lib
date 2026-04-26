@@ -11,6 +11,10 @@
     <td><img src="assets/demo3.png" alt="demo 3" /></td>
     <td><img src="assets/demo10.png" alt="demo 4" /></td>
   </tr>
+  <tr>
+    <td><img src="assets/demo2.png" alt="demo 5" /></td>
+    <td><img src="assets/demo8.png" alt="demo 6" /></td>
+  </tr>
 </table>
 
 Whichever gui library you choose to use (`winit`, `eframe`, `Iced`, `Slint`, etc.), the integration model stays the same in each case:
@@ -37,9 +41,10 @@ The `examples/` directory contains working integrations for several GUI framewor
 - **eframe-showcase**: run this first: demonstrates many of the viewport's built-in capabilities across multiple showcases (not exhaustive).
 - **eframe-minimal**: the simplest integration: start here if you want to understand the minimal setup.
 - **eframe-primitives**: demonstrates the built-in geometry primitives.
-- **winit-viewport**: raw `winit` + `wgpu` with no GUI framework, for when you want full control.
+- **eframe-viewport**: a mid-complexity example with scene graph, picking, and gizmos.
+- **eframe-input-controllers**: shows custom input bindings and controller configuration.
 
-Other examples: `eframe-viewport`, `eframe-input-controllers`, `winit-showcase`, `winit-primitives`, `winit-multi-viewport`, `iced-viewport`, `slint-viewport`, `gtk4-viewport`
+Other examples: `winit-viewport`, `winit-showcase`, `winit-primitives`, `winit-multi-viewport`, `iced-viewport`, `slint-viewport`, `gtk4-viewport`
 
 Run examples with:
 ```
