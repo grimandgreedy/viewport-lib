@@ -94,7 +94,7 @@ struct Object {
     use_face_color: u32,     // offset 176
     uv_vis_mode: u32,           // offset 180 : 0=off 1=checker 2=grid 3=localcheck 4=localrad
     uv_vis_scale: f32,          // offset 184 : tile frequency multiplier
-    backface_policy: u32,       // offset 188 : 0=Cull 1=Identical 2=DifferentColor
+    backface_policy: u32,       // offset 188 : 0=Cull 1=Identical 2=DiffColor 3=Tint 4..7=Pattern
     backface_color: vec4<f32>,  // offset 192
 };
 
@@ -509,10 +509,32 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
         N = normalize(in.world_normal);
     }
 
-    // BackfacePolicy::DifferentColor: flip normal and override base_color for back faces.
-    if object.backface_policy == 2u && !is_front {
+    // Back-face policy handling: flip normal and optionally override color for back faces.
+    // 0=Cull, 1=Identical, 2=DifferentColor, 3=Tint, 4=Checker, 5=Hatching, 6=Crosshatch, 7=Stripes.
+    if !is_front && object.backface_policy >= 2u {
         N = -N;
-        base_color = object.backface_color.rgb;
+        if object.backface_policy == 2u {
+            base_color = object.backface_color.rgb;
+        } else if object.backface_policy == 3u {
+            base_color = base_color * (1.0 - object.backface_color.r);
+        } else {
+            let pattern_color = object.backface_color.rgb;
+            let pattern_type = object.backface_policy - 4u;
+            let scale = 8.0;
+            let wp = in.world_pos * scale;
+            var use_pattern = false;
+            if pattern_type == 0u {
+                let p = (i32(floor(wp.x)) + i32(floor(wp.z))) & 1;
+                use_pattern = p != 0;
+            } else if pattern_type == 1u {
+                use_pattern = fract((wp.x + wp.z) * 0.5) < 0.4;
+            } else if pattern_type == 2u {
+                use_pattern = fract((wp.x + wp.z) * 0.5) < 0.3 || fract((wp.x - wp.z) * 0.5) < 0.3;
+            } else {
+                use_pattern = fract(wp.z * 0.5) < 0.4;
+            }
+            base_color = select(base_color, pattern_color, use_pattern);
+        }
     }
 
     var ao_factor = 1.0;

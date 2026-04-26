@@ -460,10 +460,20 @@ impl ViewportRenderer {
                         crate::scene::material::BackfacePolicy::Cull => 0,
                         crate::scene::material::BackfacePolicy::Identical => 1,
                         crate::scene::material::BackfacePolicy::DifferentColor(_) => 2,
+                        crate::scene::material::BackfacePolicy::Tint(_) => 3,
+                        crate::scene::material::BackfacePolicy::Pattern { pattern, .. } => {
+                            4 + pattern as u32
+                        }
                     },
                     backface_color: match m.backface_policy {
                         crate::scene::material::BackfacePolicy::DifferentColor(c) => {
                             [c[0], c[1], c[2], 1.0]
+                        }
+                        crate::scene::material::BackfacePolicy::Tint(factor) => {
+                            [factor, 0.0, 0.0, 1.0]
+                        }
+                        crate::scene::material::BackfacePolicy::Pattern { color, .. } => {
+                            [color[0], color[1], color[2], 1.0]
                         }
                         _ => [0.0; 4],
                     },

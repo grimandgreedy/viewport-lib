@@ -38,6 +38,22 @@ impl Default for ParamVis {
     }
 }
 
+/// Procedural pattern for back-face rendering.
+///
+/// Used with [`BackfacePolicy::Pattern`] to render a procedural pattern on back faces.
+/// The pattern is evaluated in world space so it remains stable as the camera moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackfacePattern {
+    /// Alternating squares in world XY.
+    Checker = 0,
+    /// Diagonal lines (45 degrees).
+    Hatching = 1,
+    /// Two sets of diagonal lines (45 and 135 degrees).
+    Crosshatch = 2,
+    /// Horizontal stripes.
+    Stripes = 3,
+}
+
 /// Controls how back faces of a mesh are rendered.
 ///
 /// Use [`BackfacePolicy::Cull`] (the default) to hide back faces, [`BackfacePolicy::Identical`]
@@ -56,6 +72,21 @@ pub enum BackfacePolicy {
     /// with the supplied color and the same ambient/diffuse/specular coefficients.
     /// The normal is flipped so lighting is computed from the back-face perspective.
     DifferentColor([f32; 3]),
+    /// Back faces are visible and tinted darker by the given factor (0.0..1.0).
+    ///
+    /// The base color is multiplied by `(1.0 - factor)`, so `Tint(0.3)` means
+    /// back faces are 30% darker. The normal is flipped for correct lighting.
+    Tint(f32),
+    /// Back faces are visible and rendered with a procedural pattern in the given RGB color.
+    ///
+    /// The pattern alternates between the specified color and the object's base color.
+    /// The normal is flipped for correct lighting.
+    Pattern {
+        /// Which procedural pattern to use.
+        pattern: BackfacePattern,
+        /// RGB color for the pattern foreground (linear 0..1).
+        color: [f32; 3],
+    },
 }
 
 impl Default for BackfacePolicy {
@@ -151,12 +182,9 @@ impl Default for Material {
 }
 
 impl Material {
-    /// Returns `true` if the backface policy makes back faces visible (`Identical` or `DifferentColor`).
+    /// Returns `true` if the backface policy makes back faces visible.
     pub fn is_two_sided(&self) -> bool {
-        matches!(
-            self.backface_policy,
-            BackfacePolicy::Identical | BackfacePolicy::DifferentColor(_)
-        )
+        !matches!(self.backface_policy, BackfacePolicy::Cull)
     }
 
     /// Construct from a plain color, all other parameters at their defaults.

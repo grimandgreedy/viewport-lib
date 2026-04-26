@@ -112,7 +112,7 @@ pub use camera::frustum::{CullStats, Frustum};
 pub use camera::view_preset::ViewPreset;
 
 pub use scene::aabb::Aabb;
-pub use scene::material::{BackfacePolicy, Material, ParamVis, ParamVisMode};
+pub use scene::material::{BackfacePattern, BackfacePolicy, Material, ParamVis, ParamVisMode};
 pub use scene::scene::{Group, GroupId, Layer, LayerId, Scene, SceneNode};
 pub use scene::traits::{RenderMode, ViewportObject};
 

@@ -1,33 +1,66 @@
 //! Showcase 24: Surface Appearance : BackfacePolicy.
 //!
-//! Three rows of shapes each use a different [`BackfacePolicy`] per column:
-//! - **Top row : Toruses** clipped through the ring.
-//! - **Middle row : Spheres** clipped through the center.
-//! - **Bottom row : Cones** clipped through the middle.
-//! - **Bottom-most row : Springs** clipped through the coils.
+//! Four rows of shapes demonstrate every [`BackfacePolicy`] variant:
+//! - **Row 1 : Toruses** clipped through the ring.
+//! - **Row 2 : Spheres** clipped through the center.
+//! - **Row 3 : Cones** clipped through the middle.
+//! - **Row 4 : Springs** clipped through the coils.
 //!
-//! Columns:
-//! - **Left : Cull** (default): back faces are invisible. The clipped interior is hollow.
-//! - **Centre : Identical**: back faces are shaded the same as front faces.
-//! - **Right : DifferentColor**: back faces are shaded red, front faces gray.
+//! Columns (left to right):
+//! - **Cull** (default): back faces invisible, interior hollow.
+//! - **Identical**: back faces shaded the same as front faces.
+//! - **DifferentColor**: back faces shaded red.
+//! - **Tint**: back faces darkened by 40%.
+//! - **Checker**: checker pattern on back faces.
+//! - **Hatching**: diagonal hatching on back faces.
+//! - **Crosshatch**: crosshatch pattern on back faces.
+//! - **Stripes**: horizontal stripes on back faces.
 
 use crate::App;
 use eframe::egui;
 use glam::Mat4;
 use viewport_lib::{
-    BackfacePolicy, ClipObject, LightSource, LightingSettings, Material, MeshId,
+    BackfacePattern, BackfacePolicy, ClipObject, LightSource, LightingSettings, Material, MeshId,
     SceneRenderItem, ViewportRenderer, scene::Scene,
 };
 
-/// The three backface policies demonstrated in each column.
-const POLICIES: [(BackfacePolicy, &str); 3] = [
-    (BackfacePolicy::Cull, "Cull"),
-    (BackfacePolicy::Identical, "Identical"),
-    (BackfacePolicy::DifferentColor([1.0, 0.1, 0.1]), "DifferentColor"),
-];
-
-/// X positions for the three columns.
-const COL_X: [f32; 3] = [-3.0, 0.0, 3.0];
+/// All backface policies demonstrated, one per column.
+fn policies() -> Vec<(BackfacePolicy, &'static str)> {
+    vec![
+        (BackfacePolicy::Cull, "Cull"),
+        (BackfacePolicy::Identical, "Identical"),
+        (BackfacePolicy::DifferentColor([1.0, 0.1, 0.1]), "DifferentColor"),
+        (BackfacePolicy::Tint(0.4), "Tint"),
+        (
+            BackfacePolicy::Pattern {
+                pattern: BackfacePattern::Checker,
+                color: [0.9, 0.2, 0.1],
+            },
+            "Checker",
+        ),
+        (
+            BackfacePolicy::Pattern {
+                pattern: BackfacePattern::Hatching,
+                color: [0.1, 0.5, 0.9],
+            },
+            "Hatching",
+        ),
+        (
+            BackfacePolicy::Pattern {
+                pattern: BackfacePattern::Crosshatch,
+                color: [0.1, 0.7, 0.2],
+            },
+            "Crosshatch",
+        ),
+        (
+            BackfacePolicy::Pattern {
+                pattern: BackfacePattern::Stripes,
+                color: [0.8, 0.6, 0.1],
+            },
+            "Stripes",
+        ),
+    ]
+}
 
 fn make_material(policy: BackfacePolicy) -> Material {
     let mut mat = Material::from_color([0.7, 0.7, 0.7]);
@@ -44,11 +77,15 @@ impl App {
         use viewport_lib::geometry::primitives;
 
         self.sa_scene = Scene::new();
+        let policies = policies();
+        let col_count = policies.len();
+        let col_x: Vec<f32> = (0..col_count)
+            .map(|i| (i as f32 - (col_count - 1) as f32 / 2.0) * 3.0)
+            .collect();
 
-        // --- Top row : Toruses (z = +3) ---
-        let torus_z = 3.0;
+        // --- Row 1 : Toruses (z = +4.5) ---
         let torus_mesh = primitives::torus(0.8, 0.35, 32, 16);
-        for (i, &(policy, label)) in POLICIES.iter().enumerate() {
+        for (i, (policy, label)) in policies.iter().enumerate() {
             let mesh_id = MeshId::from_index(
                 renderer
                     .resources_mut()
@@ -58,14 +95,14 @@ impl App {
             self.sa_scene.add_named(
                 &format!("Torus {label}"),
                 Some(mesh_id),
-                Mat4::from_translation(glam::Vec3::new(COL_X[i], 0.0, torus_z)),
-                make_material(policy),
+                Mat4::from_translation(glam::Vec3::new(col_x[i], 0.0, 4.5)),
+                make_material(*policy),
             );
         }
 
-        // --- Middle row : Spheres (z = 0) ---
+        // --- Row 2 : Spheres (z = +1.5) ---
         let sphere_mesh = primitives::sphere(1.2, 32, 16);
-        for (i, &(policy, label)) in POLICIES.iter().enumerate() {
+        for (i, (policy, label)) in policies.iter().enumerate() {
             let mesh_id = MeshId::from_index(
                 renderer
                     .resources_mut()
@@ -75,15 +112,14 @@ impl App {
             self.sa_scene.add_named(
                 &format!("Sphere {label}"),
                 Some(mesh_id),
-                Mat4::from_translation(glam::Vec3::new(COL_X[i], 0.0, 0.0)),
-                make_material(policy),
+                Mat4::from_translation(glam::Vec3::new(col_x[i], 0.0, 1.5)),
+                make_material(*policy),
             );
         }
 
-        // --- Bottom row : Cones (z = -3) ---
-        let cone_z = -3.0;
+        // --- Row 3 : Cones (z = -1.5) ---
         let cone_mesh = primitives::cone(0.9, 2.0, 32);
-        for (i, &(policy, label)) in POLICIES.iter().enumerate() {
+        for (i, (policy, label)) in policies.iter().enumerate() {
             let mesh_id = MeshId::from_index(
                 renderer
                     .resources_mut()
@@ -93,15 +129,14 @@ impl App {
             self.sa_scene.add_named(
                 &format!("Cone {label}"),
                 Some(mesh_id),
-                Mat4::from_translation(glam::Vec3::new(COL_X[i], 0.0, cone_z)),
-                make_material(policy),
+                Mat4::from_translation(glam::Vec3::new(col_x[i], 0.0, -1.5)),
+                make_material(*policy),
             );
         }
 
-        // --- Bottom-most row : Springs (z = -6) ---
-        let spring_z = -6.0;
+        // --- Row 4 : Springs (z = -4.5) ---
         let spring_mesh = primitives::spring(0.6, 0.2, 3.0, 16);
-        for (i, &(policy, label)) in POLICIES.iter().enumerate() {
+        for (i, (policy, label)) in policies.iter().enumerate() {
             let mesh_id = MeshId::from_index(
                 renderer
                     .resources_mut()
@@ -111,8 +146,8 @@ impl App {
             self.sa_scene.add_named(
                 &format!("Spring {label}"),
                 Some(mesh_id),
-                Mat4::from_translation(glam::Vec3::new(COL_X[i], 0.0, spring_z)),
-                make_material(policy),
+                Mat4::from_translation(glam::Vec3::new(col_x[i], 0.0, -4.5)),
+                make_material(*policy),
             );
         }
 
@@ -126,9 +161,8 @@ impl App {
     pub(crate) fn controls_surface_appearance(&mut self, ui: &mut egui::Ui) {
         ui.label("BackfacePolicy (clip plane reveals inside):");
         ui.indent("bp_desc", |ui| {
-            ui.label("Left:   Cull (interior hollow)");
-            ui.label("Centre: Identical (lit normally)");
-            ui.label("Right:  DifferentColor (red/orange)");
+            ui.label("Cull | Identical | DifferentColor | Tint");
+            ui.label("Checker | Hatching | Crosshatch | Stripes");
         });
         ui.separator();
         ui.label("Toruses | Spheres | Cones | Springs (top to bottom)");
@@ -149,8 +183,6 @@ impl App {
 
     pub(crate) fn sa_clip_objects(&self) -> Vec<ClipObject> {
         if self.sa_clip_on {
-            // Clip along Y so the plane slices through all three rows equally,
-            // revealing the interior of every shape.
             vec![ClipObject::plane([0.0, 1.0, 0.0], 0.0)]
         } else {
             vec![]

@@ -372,8 +372,8 @@ pub type LightUniform = LightsUniform;
 /// - use_face_color:    u32      =  4 bytes  offset 176
 /// - uv_vis_mode:       u32      =  4 bytes  offset 180  (0=off 1=checker 2=grid 3=localcheck 4=localrad)
 /// - uv_vis_scale:      f32      =  4 bytes  offset 184
-/// - backface_policy:   u32      =  4 bytes  offset 188  (0=Cull 1=Identical 2=DifferentColor)
-/// - backface_color:   [f32;4]   = 16 bytes  offset 192
+/// - backface_policy:   u32      =  4 bytes  offset 188  (0=Cull 1=Identical 2=DifferentColor 3=Tint 4=Checker 5=Hatching 6=Crosshatch 7=Stripes)
+/// - backface_color:   [f32;4]   = 16 bytes  offset 192  (DifferentColor/Pattern: RGB color; Tint: factor in [0])
 /// Total: 208 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -404,7 +404,7 @@ pub(crate) struct ObjectUniform {
     pub(crate) use_face_color: u32,      //   4 bytes, offset 176
     pub(crate) uv_vis_mode: u32,         //   4 bytes, offset 180
     pub(crate) uv_vis_scale: f32,        //   4 bytes, offset 184
-    pub(crate) backface_policy: u32, //   4 bytes, offset 188  (0=Cull 1=Identical 2=DifferentColor)
+    pub(crate) backface_policy: u32, //   4 bytes, offset 188  (0=Cull 1=Identical 2=DiffColor 3=Tint 4..7=Pattern)
     pub(crate) backface_color: [f32; 4], //  16 bytes, offset 192
 }
 
