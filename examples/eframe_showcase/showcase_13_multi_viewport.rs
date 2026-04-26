@@ -21,10 +21,10 @@ use crate::App;
 use crate::multi_viewport_callback::MultiViewportCallback;
 use eframe::egui;
 use viewport_lib::{
-    ButtonState, CameraFrame, FrameData, GizmoAxis, GizmoMode, GizmoSpace, LightingSettings,
-    Material, Modifiers, MouseButton, SceneFrame, ScrollUnits, Selection, SnapConfig,
-    ViewportContext, ViewportEvent, ViewportRenderer,
-    gizmo::{self, compute_gizmo_scale, gizmo_center_from_selection},
+    Action, ButtonState, CameraFrame, FrameData, GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace,
+    LightingSettings, ManipResult, ManipulationContext, Material, Modifiers, MouseButton,
+    SceneFrame, ScrollUnits, Selection, ViewportContext, ViewportEvent, ViewportRenderer,
+    gizmo::{compute_gizmo_scale, gizmo_center_from_selection},
     picking::pick_scene_nodes,
     picking::screen_to_ray,
 };
@@ -133,7 +133,7 @@ impl App {
             let qr = quad_rects[i];
             self.mv_controllers[i].begin_frame(ViewportContext {
                 hovered: i == hq && response.hovered(),
-                focused: i == hq && response.has_focus(),
+                focused: i == hq && response.hovered(),
                 viewport_size: [qr.width(), qr.height()],
             });
         }
@@ -143,7 +143,7 @@ impl App {
             self.mv_controllers[prev_hq].push_event(ViewportEvent::PointerLeft);
         }
 
-        let was_gizmo_active = self.mv_gizmo_drag_active;
+        let manip_active_for_text = self.mv_manip.is_active();
 
         // Push this frame's input events to the hovered controller.
         ui.input(|i| {
@@ -159,6 +159,31 @@ impl App {
 
             for event in &i.events {
                 match event {
+                    egui::Event::Key {
+                        key,
+                        pressed,
+                        repeat,
+                        ..
+                    } => {
+                        if let Some(kc) = crate::egui_key_to_keycode(*key) {
+                            self.mv_controllers[hq].push_event(ViewportEvent::Key {
+                                key: kc,
+                                state: if *pressed {
+                                    ButtonState::Pressed
+                                } else {
+                                    ButtonState::Released
+                                },
+                                repeat: *repeat,
+                            });
+                        }
+                    }
+
+                    egui::Event::Text(text) if manip_active_for_text => {
+                        for c in text.chars() {
+                            self.mv_controllers[hq].push_event(ViewportEvent::Character(c));
+                        }
+                    }
+
                     egui::Event::PointerButton {
                         button,
                         pressed,
@@ -177,48 +202,9 @@ impl App {
                             continue;
                         }
 
-                        // Gizmo hit-test on left press.
-                        if *button == egui::PointerButton::Primary && *pressed {
-                            if let Some(center) = self.mv_gizmo_center {
-                                let qr = quad_rects[hq];
-                                let local = glam::Vec2::new(pos.x - qr.left(), pos.y - qr.top());
-                                let cam = &self.mv_cameras[hq];
-                                let vp_inv = cam.view_proj_matrix().inverse();
-                                let (ray_origin, ray_dir) = screen_to_ray(
-                                    local,
-                                    glam::Vec2::new(qr.width(), qr.height()),
-                                    vp_inv,
-                                );
-                                let orient = mv_gizmo_orientation(
-                                    self.mv_gizmo.space,
-                                    &self.mv_selection,
-                                    &self.mv_scene,
-                                );
-                                let hit = self.mv_gizmo.hit_test_oriented(
-                                    ray_origin,
-                                    ray_dir,
-                                    center,
-                                    self.mv_gizmo_scales[hq],
-                                    orient,
-                                );
-                                if hit != GizmoAxis::None {
-                                    self.mv_gizmo.active_axis = hit;
-                                    self.mv_gizmo_drag_active = true;
-                                    self.mv_drag_accum_translation = glam::Vec3::ZERO;
-                                    self.mv_drag_accum_rotation = 0.0;
-                                    self.mv_drag_last_snapped_translation = glam::Vec3::ZERO;
-                                    self.mv_drag_last_snapped_rotation = 0.0;
-                                }
-                            }
-                        }
-
-                        // End gizmo drag on left release.
-                        if *button == egui::PointerButton::Primary
-                            && !pressed
-                            && self.mv_gizmo_drag_active
-                        {
-                            self.mv_gizmo_drag_active = false;
-                            self.mv_gizmo.active_axis = GizmoAxis::None;
+                        // Track raw left-button held state for ManipulationContext.
+                        if *button == egui::PointerButton::Primary {
+                            self.mv_left_held = *pressed;
                         }
 
                         let state = if *pressed {
@@ -247,22 +233,113 @@ impl App {
             }
         });
 
-        // Apply gizmo drag transform.
-        if self.mv_gizmo_drag_active && response.dragged() {
-            let dd = response.drag_delta();
+        // ----- ManipulationController update (G/R/S) -----
+        {
             let qr = quad_rects[hq];
-            self.apply_mv_gizmo_drag(dd.x, dd.y, hq, qr.width(), qr.height());
-        }
+            let w = qr.width();
+            let h = qr.height();
+            let viewport_size = glam::Vec2::new(w, h);
 
-        // Apply controllers to cameras; suppress orbit while dragging a gizmo.
-        for i in 0..4 {
-            if self.mv_gizmo_drag_active && i == hq {
-                self.mv_controllers[i].resolve();
-            } else {
-                self.mv_controllers[i].apply_to_camera(&mut self.mv_cameras[i]);
+            // Per-frame gizmo hover when no session is active.
+            if !self.mv_manip.is_active() {
+                if let Some(center) = self.mv_gizmo_center {
+                    let cam = &self.mv_cameras[hq];
+                    let ray_origin = cam.eye_position();
+                    let view_proj = cam.proj_matrix() * cam.view_matrix();
+                    let cursor = self.mv_cursor_local;
+                    let ndc_x = (cursor.x / w.max(1.0)) * 2.0 - 1.0;
+                    let ndc_y = 1.0 - (cursor.y / h.max(1.0)) * 2.0;
+                    let inv_vp = view_proj.inverse();
+                    let far = inv_vp.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
+                    let ray_dir = (far - ray_origin).normalize_or_zero();
+                    let orient = mv_gizmo_orientation(
+                        self.mv_gizmo.space,
+                        &self.mv_selection,
+                        &self.mv_scene,
+                    );
+                    self.mv_gizmo.hovered_axis = self.mv_gizmo.hit_test_oriented(
+                        ray_origin,
+                        ray_dir,
+                        center,
+                        self.mv_gizmo_scales[hq],
+                        orient,
+                    );
+                } else {
+                    self.mv_gizmo.hovered_axis = GizmoAxis::None;
+                }
             }
-            let qr = quad_rects[i];
-            self.mv_cameras[i].set_aspect_ratio(qr.width(), qr.height());
+
+            // Build GizmoInfo.
+            let orient =
+                mv_gizmo_orientation(self.mv_gizmo.space, &self.mv_selection, &self.mv_scene);
+            let gizmo_info = self.mv_gizmo_center.map(|center| GizmoInfo {
+                center,
+                scale: self.mv_gizmo_scales[hq],
+                orientation: orient,
+                mode: self.mv_gizmo.mode,
+            });
+
+            // Build ManipulationContext.
+            let pointer_delta =
+                ui.input(|i| glam::Vec2::new(i.pointer.delta().x, i.pointer.delta().y));
+            let manip_ctx = ManipulationContext {
+                camera: self.mv_cameras[hq].clone(),
+                viewport_size,
+                cursor_viewport: Some(self.mv_cursor_local),
+                pointer_delta,
+                selection_center: self.mv_gizmo_center,
+                gizmo: gizmo_info,
+                drag_started: response.drag_started(),
+                dragging: self.mv_left_held,
+                clicked: response.clicked(),
+            };
+
+            // Orbit: resolve hq controller while manipulation is active.
+            let action_frame = if self.mv_manip.is_active() {
+                self.mv_controllers[hq].resolve()
+            } else {
+                self.mv_controllers[hq].apply_to_camera(&mut self.mv_cameras[hq])
+            };
+
+            // Tab cycles gizmo mode when no session is active.
+            if !self.mv_manip.is_active() && action_frame.is_active(Action::CycleGizmoMode) {
+                self.mv_gizmo.mode = match self.mv_gizmo.mode {
+                    GizmoMode::Translate => GizmoMode::Rotate,
+                    GizmoMode::Rotate => GizmoMode::Scale,
+                    GizmoMode::Scale => GizmoMode::Translate,
+                    _ => GizmoMode::Translate,
+                };
+            }
+
+            match self.mv_manip.update(&action_frame, manip_ctx) {
+                ManipResult::Update(delta) => {
+                    self.apply_mv_delta(delta, hq);
+                }
+                ManipResult::Cancel | ManipResult::ConstraintChanged => {
+                    self.restore_mv_snapshots();
+                }
+                ManipResult::Commit => {
+                    self.save_mv_snapshots();
+                }
+                ManipResult::None => {
+                    if !self.mv_manip.is_active() {
+                        self.save_mv_snapshots();
+                    }
+                }
+            }
+
+            // Apply remaining controllers (non-hq); hq already applied/resolved above.
+            for i in 0..4 {
+                if i != hq {
+                    self.mv_controllers[i].apply_to_camera(&mut self.mv_cameras[i]);
+                }
+                self.mv_cameras[i].set_aspect_ratio(quad_rects[i].width(), quad_rects[i].height());
+            }
+
+            // Click-to-select only when no session is active.
+            if response.clicked() && !self.mv_manip.is_active() {
+                self.handle_mv_click(hq, w, h);
+            }
         }
 
         // Update shared gizmo center and per-quad screen-space scales.
@@ -284,13 +361,6 @@ impl App {
             }
         }
 
-        // Click-to-select in the hovered quad.
-        let gizmo_just_ended = was_gizmo_active && !self.mv_gizmo_drag_active;
-        if response.clicked() && !gizmo_just_ended {
-            let qr = quad_rects[hq];
-            self.handle_mv_click(hq, qr.width(), qr.height());
-        }
-
         // --- Build FrameData ---
         // Collect render items once; clone into each frame.
         let scene_items = self.mv_scene.collect_render_items(&self.mv_selection);
@@ -306,8 +376,11 @@ impl App {
         let gizmo_center = self.mv_gizmo_center;
         let gizmo_scales = self.mv_gizmo_scales;
         let gizmo_mode = self.mv_gizmo.mode;
-        let gizmo_active_axis = self.mv_gizmo.active_axis;
-        let gizmo_hovered_axis = self.mv_gizmo.hovered_axis;
+        let gizmo_hovered_axis = if let Some(state) = self.mv_manip.state() {
+            state.axis.unwrap_or(GizmoAxis::None)
+        } else {
+            self.mv_gizmo.hovered_axis
+        };
         let gizmo_orient =
             mv_gizmo_orientation(self.mv_gizmo.space, &self.mv_selection, &self.mv_scene);
 
@@ -342,11 +415,7 @@ impl App {
                 ));
                 fd.interaction.gizmo_mode = gizmo_mode;
                 fd.interaction.gizmo_space_orientation = gizmo_orient;
-                fd.interaction.gizmo_hovered = if gizmo_active_axis != GizmoAxis::None {
-                    gizmo_active_axis
-                } else {
-                    gizmo_hovered_axis
-                };
+                fd.interaction.gizmo_hovered = gizmo_hovered_axis;
             }
 
             fd
@@ -455,39 +524,21 @@ impl App {
         });
 
         ui.separator();
-        ui.label("Snap:");
-        ui.horizontal(|ui| {
-            let off = self.mv_snap.translation.is_none() && self.mv_snap.rotation.is_none();
-            if ui.radio(off, "Off").clicked() {
-                self.mv_snap = SnapConfig::default();
-            }
-            if ui
-                .radio(self.mv_snap.translation.is_some(), "0.5 u")
-                .clicked()
-            {
-                self.mv_snap = SnapConfig {
-                    translation: Some(0.5),
-                    ..SnapConfig::default()
-                };
-            }
-            if ui.radio(self.mv_snap.rotation.is_some(), "15°").clicked() {
-                self.mv_snap = SnapConfig {
-                    rotation: Some(std::f32::consts::PI / 12.0),
-                    ..SnapConfig::default()
-                };
-            }
-        });
-
-        ui.separator();
         if ui.button("Clear Selection").clicked() {
             self.mv_selection.clear();
         }
 
         ui.separator();
         ui.weak("Camera controls");
-        ui.label("Left/Middle drag: Orbit");
+        ui.label("Middle/Left drag: Orbit");
         ui.label("Right/Shift+drag: Pan");
         ui.label("Scroll: Zoom");
+        ui.separator();
+        ui.weak("Manipulation");
+        ui.label("G / R / S: Move / Rotate / Scale");
+        ui.label("X / Y / Z: Constrain axis");
+        ui.label("Enter: Confirm   Esc: Cancel");
+        ui.label("Tab: Cycle gizmo mode");
         ui.separator();
         ui.weak("Selection");
         ui.label("Click object: Select");
@@ -495,9 +546,9 @@ impl App {
         ui.separator();
         ui.weak("Quad layout");
         ui.label("TL : Perspective (orbit)");
-        ui.label("TR : Top (ortho, −Z)");
-        ui.label("BL : Front (ortho, −Y)");
-        ui.label("BR : Right (ortho, −X)");
+        ui.label("TR : Top (ortho, -Z)");
+        ui.label("BL : Front (ortho, -Y)");
+        ui.label("BR : Right (ortho, -X)");
     }
 }
 
@@ -533,164 +584,6 @@ impl App {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Gizmo drag
-// ---------------------------------------------------------------------------
-
-impl App {
-    fn apply_mv_gizmo_drag(&mut self, dx: f32, dy: f32, quad: usize, w: f32, h: f32) {
-        let Some(center) = self.mv_gizmo_center else {
-            return;
-        };
-        let drag = glam::Vec2::new(dx, dy);
-        let vp_size = glam::Vec2::new(w, h);
-        let cam = &self.mv_cameras[quad];
-        let vp_mat = cam.view_proj_matrix();
-        let view_mat = cam.view_matrix();
-        let axis = self.mv_gizmo.active_axis;
-        let orient = mv_gizmo_orientation(self.mv_gizmo.space, &self.mv_selection, &self.mv_scene);
-
-        let world_axis = |a: GizmoAxis| -> glam::Vec3 {
-            orient
-                * match a {
-                    GizmoAxis::X => glam::Vec3::X,
-                    GizmoAxis::Y => glam::Vec3::Y,
-                    GizmoAxis::Z => glam::Vec3::Z,
-                    _ => glam::Vec3::X,
-                }
-        };
-
-        match self.mv_gizmo.mode {
-            GizmoMode::Translate => {
-                let delta = match axis {
-                    GizmoAxis::X | GizmoAxis::Y | GizmoAxis::Z => {
-                        let dir = world_axis(axis);
-                        dir * gizmo::project_drag_onto_axis(drag, dir, vp_mat, center, vp_size)
-                    }
-                    GizmoAxis::XY => gizmo::project_drag_onto_plane(
-                        drag,
-                        orient * glam::Vec3::X,
-                        orient * glam::Vec3::Y,
-                        vp_mat,
-                        center,
-                        vp_size,
-                    ),
-                    GizmoAxis::XZ => gizmo::project_drag_onto_plane(
-                        drag,
-                        orient * glam::Vec3::X,
-                        orient * glam::Vec3::Z,
-                        vp_mat,
-                        center,
-                        vp_size,
-                    ),
-                    GizmoAxis::YZ => gizmo::project_drag_onto_plane(
-                        drag,
-                        orient * glam::Vec3::Y,
-                        orient * glam::Vec3::Z,
-                        vp_mat,
-                        center,
-                        vp_size,
-                    ),
-                    GizmoAxis::Screen => gizmo::project_drag_onto_screen_plane(
-                        drag,
-                        cam.right(),
-                        cam.up(),
-                        vp_mat,
-                        center,
-                        vp_size,
-                    ),
-                    _ => glam::Vec3::ZERO,
-                };
-
-                let snap_delta = if let Some(inc) = self.mv_snap.translation {
-                    self.mv_drag_accum_translation += delta;
-                    let snapped =
-                        viewport_lib::snap::snap_vec3(self.mv_drag_accum_translation, inc);
-                    let step = snapped - self.mv_drag_last_snapped_translation;
-                    self.mv_drag_last_snapped_translation = snapped;
-                    step
-                } else {
-                    delta
-                };
-
-                for id in self.mv_selection.iter().copied().collect::<Vec<_>>() {
-                    if let Some(node) = self.mv_scene.node(id) {
-                        let cur = node.local_transform();
-                        self.mv_scene.set_local_transform(
-                            id,
-                            glam::Mat4::from_translation(snap_delta) * cur,
-                        );
-                    }
-                }
-                self.mv_scene.update_transforms();
-            }
-
-            GizmoMode::Rotate => {
-                let angle = match axis {
-                    GizmoAxis::X | GizmoAxis::Y | GizmoAxis::Z => {
-                        let dir = world_axis(axis);
-                        gizmo::project_drag_onto_rotation(drag, dir, view_mat)
-                    }
-                    _ => 0.0,
-                };
-
-                let snap_angle = if let Some(inc) = self.mv_snap.rotation {
-                    self.mv_drag_accum_rotation += angle;
-                    let snapped = viewport_lib::snap::snap_angle(self.mv_drag_accum_rotation, inc);
-                    let step = snapped - self.mv_drag_last_snapped_rotation;
-                    self.mv_drag_last_snapped_rotation = snapped;
-                    step
-                } else {
-                    angle
-                };
-
-                if snap_angle.abs() > 1e-6 {
-                    let rot_axis = world_axis(axis);
-                    let rot = glam::Quat::from_axis_angle(rot_axis, snap_angle);
-                    let to_origin = glam::Mat4::from_translation(-center);
-                    let from_origin = glam::Mat4::from_translation(center);
-                    let rot_mat = glam::Mat4::from_quat(rot);
-                    for id in self.mv_selection.iter().copied().collect::<Vec<_>>() {
-                        if let Some(node) = self.mv_scene.node(id) {
-                            let cur = node.local_transform();
-                            let new_t = from_origin * rot_mat * to_origin * cur;
-                            self.mv_scene.set_local_transform(id, new_t);
-                        }
-                    }
-                    self.mv_scene.update_transforms();
-                }
-            }
-
-            GizmoMode::Scale => {
-                let amount = match axis {
-                    GizmoAxis::X | GizmoAxis::Y | GizmoAxis::Z => {
-                        let dir = world_axis(axis);
-                        gizmo::project_drag_onto_axis(drag, dir, vp_mat, center, vp_size)
-                    }
-                    _ => 0.0,
-                };
-                if amount.abs() > 1e-6 {
-                    let scale_vec = match axis {
-                        GizmoAxis::X => glam::Vec3::new(1.0 + amount, 1.0, 1.0),
-                        GizmoAxis::Y => glam::Vec3::new(1.0, 1.0 + amount, 1.0),
-                        GizmoAxis::Z => glam::Vec3::new(1.0, 1.0, 1.0 + amount),
-                        _ => glam::Vec3::ONE,
-                    };
-                    for id in self.mv_selection.iter().copied().collect::<Vec<_>>() {
-                        if let Some(node) = self.mv_scene.node(id) {
-                            let cur = node.local_transform();
-                            self.mv_scene
-                                .set_local_transform(id, cur * glam::Mat4::from_scale(scale_vec));
-                        }
-                    }
-                    self.mv_scene.update_transforms();
-                }
-            }
-
-            _ => {}
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Helpers

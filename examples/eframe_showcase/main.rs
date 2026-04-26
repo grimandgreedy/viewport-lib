@@ -89,7 +89,7 @@ use viewport_lib::{
     KeyCode, LightKind, LightSource, LightingSettings, ManipResult, ManipulationContext,
     ManipulationController, MatcapId, Material, MeshData, MeshId, NodeId, OrbitCameraController,
     PickAccelerator, PostProcessSettings, Projection, RenderCamera, SceneFrame, SceneRenderItem,
-    ScrollUnits, Selection, ShadowFilter, SnapConfig, ViewPreset, ViewportContext, ViewportEvent,
+    ScrollUnits, Selection, ShadowFilter, ViewPreset, ViewportContext, ViewportEvent,
     ViewportRenderer, VolumeData, VolumeId,
     geometry::isoline::IsolineItem,
     gizmo::{self, compute_gizmo_scale},
@@ -313,24 +313,21 @@ fn main() -> eframe::Result {
                     },
                 ],
                 mv_controllers: [
-                    OrbitCameraController::viewport_primitives(),
-                    OrbitCameraController::viewport_primitives(),
-                    OrbitCameraController::viewport_primitives(),
-                    OrbitCameraController::viewport_primitives(),
+                    OrbitCameraController::viewport_all(),
+                    OrbitCameraController::viewport_all(),
+                    OrbitCameraController::viewport_all(),
+                    OrbitCameraController::viewport_all(),
                 ],
                 mv_viewports: None,
                 mv_built: false,
                 mv_gizmo: Gizmo::new(),
-                mv_gizmo_drag_active: false,
                 mv_hovered_quad: 0,
                 mv_cursor_local: glam::Vec2::ZERO,
                 mv_gizmo_center: None,
                 mv_gizmo_scales: [1.0; 4],
-                mv_snap: SnapConfig::default(),
-                mv_drag_accum_translation: glam::Vec3::ZERO,
-                mv_drag_accum_rotation: 0.0,
-                mv_drag_last_snapped_translation: glam::Vec3::ZERO,
-                mv_drag_last_snapped_rotation: 0.0,
+                mv_manip: ManipulationController::new(),
+                mv_transforms_snapshot: HashMap::new(),
+                mv_left_held: false,
                 iso_scene: Scene::new(),
                 iso_mesh_index: 0,
                 iso_positions: Vec::new(),
@@ -338,7 +335,7 @@ fn main() -> eframe::Result {
                 iso_scalars: Vec::new(),
                 iso_grid_resolution: 128,
                 iso_contour_count: 8,
-                iso_line_color: [1.0, 1.0, 0.2, 1.0],
+                iso_line_color: [0.0, 0.0, 0.0, 1.0],
                 iso_line_width: 1.5,
                 iso_show_surface_color: true,
                 iso_depth_bias: 0.005,
@@ -692,16 +689,13 @@ pub(crate) struct App {
     pub(crate) mv_viewports: Option<[viewport_lib::ViewportId; 4]>,
     pub(crate) mv_built: bool,
     mv_gizmo: Gizmo,
-    mv_gizmo_drag_active: bool,
     mv_hovered_quad: usize,
     mv_cursor_local: glam::Vec2,
     pub(crate) mv_gizmo_center: Option<glam::Vec3>,
     mv_gizmo_scales: [f32; 4],
-    mv_snap: SnapConfig,
-    mv_drag_accum_translation: glam::Vec3,
-    mv_drag_accum_rotation: f32,
-    mv_drag_last_snapped_translation: glam::Vec3,
-    mv_drag_last_snapped_rotation: f32,
+    mv_manip: ManipulationController,
+    mv_transforms_snapshot: HashMap<NodeId, glam::Mat4>,
+    mv_left_held: bool,
 
     // --- Showcase 14 ---
     pub(crate) iso_scene: Scene,
@@ -3696,6 +3690,85 @@ impl App {
             }
         }
         self.interact_scene.update_transforms();
+    }
+
+    // -----------------------------------------------------------------------
+    // Showcase 13 : Multi-Viewport manipulation helpers
+    // -----------------------------------------------------------------------
+
+    /// Apply a [`viewport_lib::TransformDelta`] to all selected mv scene nodes.
+    pub(crate) fn apply_mv_delta(
+        &mut self,
+        delta: viewport_lib::TransformDelta,
+        hq: usize,
+    ) {
+        let Some(center) = self.mv_gizmo_center else {
+            return;
+        };
+
+        let has_pos_override = delta.position_override.iter().any(|v| v.is_some());
+        let has_scale_override = delta.scale_override.iter().any(|v| v.is_some());
+
+        if has_pos_override || has_scale_override {
+            self.restore_mv_snapshots();
+        }
+
+        let translation = if has_pos_override {
+            glam::Vec3::new(
+                delta.position_override[0].unwrap_or(0.0),
+                delta.position_override[1].unwrap_or(0.0),
+                delta.position_override[2].unwrap_or(0.0),
+            )
+        } else {
+            delta.translation
+        };
+
+        let scale = if has_scale_override {
+            glam::Vec3::new(
+                delta.scale_override[0].unwrap_or(1.0),
+                delta.scale_override[1].unwrap_or(1.0),
+                delta.scale_override[2].unwrap_or(1.0),
+            )
+        } else {
+            delta.scale
+        };
+
+        let _ = hq; // scale pivot uses world gizmo center, not quad-specific
+        let rot_mat = glam::Mat4::from_quat(delta.rotation);
+        let scale_mat = glam::Mat4::from_scale(scale);
+        let translate_mat = glam::Mat4::from_translation(translation);
+        let to_pivot = glam::Mat4::from_translation(-center);
+        let from_pivot = glam::Mat4::from_translation(center);
+
+        for id in self.mv_selection.iter().copied().collect::<Vec<_>>() {
+            if let Some(node) = self.mv_scene.node(id) {
+                let cur = node.local_transform();
+                let new_t = translate_mat * from_pivot * rot_mat * scale_mat * to_pivot * cur;
+                self.mv_scene.set_local_transform(id, new_t);
+            }
+        }
+        self.mv_scene.update_transforms();
+    }
+
+    /// Snapshot the current local transforms of all selected mv nodes.
+    pub(crate) fn save_mv_snapshots(&mut self) {
+        self.mv_transforms_snapshot.clear();
+        for id in self.mv_selection.iter().copied().collect::<Vec<_>>() {
+            if let Some(node) = self.mv_scene.node(id) {
+                self.mv_transforms_snapshot.insert(id, node.local_transform());
+            }
+        }
+    }
+
+    /// Restore local transforms from the last mv snapshot.
+    pub(crate) fn restore_mv_snapshots(&mut self) {
+        let ids: Vec<_> = self.mv_transforms_snapshot.keys().copied().collect();
+        for id in ids {
+            if let Some(&t) = self.mv_transforms_snapshot.get(&id) {
+                self.mv_scene.set_local_transform(id, t);
+            }
+        }
+        self.mv_scene.update_transforms();
     }
 
     fn zoom_to_fit_interact(&mut self) {
