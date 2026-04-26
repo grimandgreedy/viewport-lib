@@ -922,11 +922,11 @@ impl eframe::App for App {
                 }
             }
         });
-        // Consume Tab so egui doesn't use it for widget focus cycling.
+        // Prevent Tab from cycling egui widget focus.
+        // begin_pass already set focus_direction=Next, but widgets haven't been
+        // laid out yet, so resetting the direction here stops focus from moving.
         if tab_pressed {
-            ctx.input_mut(|i| {
-                i.events.retain(|e| !matches!(e, egui::Event::Key { key: egui::Key::Tab, .. }));
-            });
+            ctx.memory_mut(|mem| mem.move_focus(egui::FocusDirection::None));
         }
         if toggle_keybinds {
             self.show_keybinds = !self.show_keybinds;

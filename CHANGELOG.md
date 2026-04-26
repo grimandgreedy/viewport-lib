@@ -4,6 +4,7 @@
 - Major fix to for cap filling. Added loop calculation so that necessary cap filling is identified when the clip plane passes through verticies -- e.g., for a sphere, torus, cone, etc.
 - Added `Tint(f32)` backface policy: darkens the object's base color by a factor without specifying an explicit color
 - Added `Pattern` backface policy with four procedural patterns: Checker, Hatching, Crosshatch, Stripes
+- Fix normal generation: added check back to the main render loop
 
 ## [0.8.2]
 
