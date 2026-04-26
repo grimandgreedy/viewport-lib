@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.8.1]
+## [0.8.2]
 
 - Replaced stencil-based selection outline with screen-space edge detection for smooth, anti-aliased outlines
 - Default outline colour changed to white
