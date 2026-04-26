@@ -18,7 +18,7 @@ impl App {
             "Ground",
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.1)),
-            Material::pbr([0.55, 0.52, 0.48], 0.0, 0.9),
+            Material::pbr([1.0, 1.0, 1.0], 0.0, 0.9),
         );
 
         let sphere_mesh = make_uv_sphere(24, 12, 0.5);
