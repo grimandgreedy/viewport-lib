@@ -238,13 +238,11 @@ fn main() -> eframe::Result {
                 pp_dir_intensity: 4.0,
                 nm_scene: Scene::new(),
                 nm_built: false,
-                nm_tex_ids: [0; 3],
-                nm_tile_tex_ids: [0; 2],
-                nm_node: None,
-                nm_cube_node: None,
+                nm_mapped_nodes: Vec::new(),
                 nm_normal_on: true,
                 nm_ao_on: true,
                 nm_clip_enabled: false,
+                nm_cap_fill: true,
                 shd_scene: Scene::new(),
                 shd_built: false,
                 shd_cascade_count: 4,
@@ -448,7 +446,6 @@ fn main() -> eframe::Result {
 
                 sa_built: false,
                 sa_scene: Scene::new(),
-                sa_ssaa_factor: 1,
                 sa_clip_on: true,
                 sa_node_ids: [0; 3],
 
@@ -636,13 +633,12 @@ pub(crate) struct App {
     // --- Showcase 7 ---
     pub(crate) nm_scene: Scene,
     pub(crate) nm_built: bool,
-    pub(crate) nm_tex_ids: [u64; 3],
-    pub(crate) nm_tile_tex_ids: [u64; 2],
-    pub(crate) nm_node: Option<NodeId>,
-    pub(crate) nm_cube_node: Option<NodeId>,
+    /// (node_id, normal_map_id, ao_map_id) for every mapped object.
+    pub(crate) nm_mapped_nodes: Vec<(NodeId, u64, u64)>,
     pub(crate) nm_normal_on: bool,
     pub(crate) nm_ao_on: bool,
     pub(crate) nm_clip_enabled: bool,
+    pub(crate) nm_cap_fill: bool,
 
     // --- Showcase 8 ---
     pub(crate) shd_scene: Scene,
@@ -836,7 +832,6 @@ pub(crate) struct App {
     // --- Showcase 24 ---
     pub(crate) sa_built: bool,
     pub(crate) sa_scene: Scene,
-    sa_ssaa_factor: u32,
     sa_clip_on: bool,
     pub(crate) sa_node_ids: [NodeId; 3],
 
@@ -902,6 +897,7 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let mut cycle_dir = 0_i32;
         let mut toggle_keybinds = false;
+        let mut tab_pressed = false;
         ctx.input(|i| {
             for event in &i.events {
                 match event {
@@ -917,6 +913,7 @@ impl eframe::App for App {
                         match key {
                             egui::Key::OpenBracket if use_cycle => cycle_dir = -1,
                             egui::Key::CloseBracket if use_cycle => cycle_dir = 1,
+                            egui::Key::Tab => tab_pressed = true,
                             _ => {}
                         }
                     }
@@ -927,11 +924,20 @@ impl eframe::App for App {
                 }
             }
         });
+        // Consume Tab so egui doesn't use it for widget focus cycling.
+        if tab_pressed {
+            ctx.input_mut(|i| {
+                i.events.retain(|e| !matches!(e, egui::Event::Key { key: egui::Key::Tab, .. }));
+            });
+        }
         if toggle_keybinds {
             self.show_keybinds = !self.show_keybinds;
         }
         if cycle_dir != 0 {
             self.cycle_showcase(cycle_dir);
+        }
+        if tab_pressed {
+            self.cycle_selection_tab();
         }
 
         // ---- Keybinds window ----
@@ -1019,11 +1025,16 @@ impl eframe::App for App {
             });
 
         // ---- Central panel: 3-D viewport ----
+        let panel_bg = if self.mode == ShowcaseMode::SceneGraph {
+            background_color(self.bg_cycle)
+        } else {
+            BG_COLOR
+        };
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(egui::Color32::from_rgba_unmultiplied(
-                (BG_COLOR[0] * 255.0) as u8,
-                (BG_COLOR[1] * 255.0) as u8,
-                (BG_COLOR[2] * 255.0) as u8,
+                (panel_bg[0] * 255.0) as u8,
+                (panel_bg[1] * 255.0) as u8,
+                (panel_bg[2] * 255.0) as u8,
                 255,
             )))
             .show(ctx, |ui| {
@@ -1386,6 +1397,26 @@ impl App {
         self.switch_mode(SHOWCASE_MODES[next]);
     }
 
+    fn cycle_selection_tab(&mut self) {
+        let (scene, selection) = match self.mode {
+            ShowcaseMode::SceneGraph => (&self.scene, &mut self.selection),
+            ShowcaseMode::Advanced => (&self.adv_scene, &mut self.adv_selection),
+            _ => return,
+        };
+        let walk = scene.walk_depth_first();
+        if !walk.is_empty() {
+            let current = selection.primary();
+            let next_idx = match current {
+                Some(id) => {
+                    let pos = walk.iter().position(|(nid, _)| *nid == id);
+                    pos.map(|i| (i + 1) % walk.len()).unwrap_or(0)
+                }
+                None => 0,
+            };
+            selection.select_one(walk[next_idx].0);
+        }
+    }
+
     fn switch_mode(&mut self, mode: ShowcaseMode) {
         if self.mode == mode {
             return;
@@ -1474,10 +1505,10 @@ impl App {
             ShowcaseMode::NormalMaps => {
                 self.build_nm_scene(renderer);
                 self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 6.0,
+                    center: glam::Vec3::new(0.0, 0.0, 0.8),
+                    distance: 10.0,
                     orientation: glam::Quat::from_rotation_z(0.5)
-                        * glam::Quat::from_rotation_x(1.1),
+                        * glam::Quat::from_rotation_x(1.0),
                     ..Camera::default()
                 };
             }
@@ -2059,53 +2090,34 @@ impl App {
 
     fn controls_normal_maps(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
         if ui.checkbox(&mut self.nm_normal_on, "Normal map").changed() {
-            let nm_id = self.nm_tex_ids[0];
-            let tile_nm_id = self.nm_tile_tex_ids[0];
-            let nm_on = self.nm_normal_on;
-            let nm_node = self.nm_node;
-            let nm_cube_node = self.nm_cube_node;
-            if let Some(id) = nm_node {
-                if let Some(node) = self.nm_scene.node(id) {
+            let on = self.nm_normal_on;
+            for &(node_id, nm_id, _) in &self.nm_mapped_nodes.clone() {
+                if let Some(node) = self.nm_scene.node(node_id) {
                     let mut mat = *node.material();
-                    mat.normal_map_id = if nm_on { Some(nm_id) } else { None };
-                    self.nm_scene.set_material(id, mat);
-                }
-            }
-            if let Some(id) = nm_cube_node {
-                if let Some(node) = self.nm_scene.node(id) {
-                    let mut mat = *node.material();
-                    mat.normal_map_id = if nm_on { Some(tile_nm_id) } else { None };
-                    self.nm_scene.set_material(id, mat);
+                    mat.normal_map_id = if on { Some(nm_id) } else { None };
+                    self.nm_scene.set_material(node_id, mat);
                 }
             }
         }
 
         if ui.checkbox(&mut self.nm_ao_on, "AO map").changed() {
-            let ao_id = self.nm_tex_ids[2];
-            let tile_ao_id = self.nm_tile_tex_ids[1];
-            let ao_on = self.nm_ao_on;
-            let nm_node = self.nm_node;
-            let nm_cube_node = self.nm_cube_node;
-            if let Some(id) = nm_node {
-                if let Some(node) = self.nm_scene.node(id) {
+            let on = self.nm_ao_on;
+            for &(node_id, _, ao_id) in &self.nm_mapped_nodes.clone() {
+                if let Some(node) = self.nm_scene.node(node_id) {
                     let mut mat = *node.material();
-                    mat.ao_map_id = if ao_on { Some(ao_id) } else { None };
-                    self.nm_scene.set_material(id, mat);
-                }
-            }
-            if let Some(id) = nm_cube_node {
-                if let Some(node) = self.nm_scene.node(id) {
-                    let mut mat = *node.material();
-                    mat.ao_map_id = if ao_on { Some(tile_ao_id) } else { None };
-                    self.nm_scene.set_material(id, mat);
+                    mat.ao_map_id = if on { Some(ao_id) } else { None };
+                    self.nm_scene.set_material(node_id, mat);
                 }
             }
         }
 
         ui.checkbox(&mut self.nm_clip_enabled, "Clip plane");
+        if self.nm_clip_enabled {
+            ui.checkbox(&mut self.nm_cap_fill, "Cap fill");
+        }
 
         ui.separator();
-        let _ = frame; // available for future dynamic uploads if needed
+        let _ = frame;
     }
 
     fn controls_shadows(&mut self, ui: &mut egui::Ui) {
@@ -2758,23 +2770,23 @@ impl App {
                     lights: vec![
                         LightSource {
                             kind: LightKind::Directional {
-                                direction: [0.4, 0.3, 1.5],
+                                direction: [0.5, 0.3, 1.0],
                             },
-                            intensity: 1.5,
+                            intensity: 2.5,
                             ..LightSource::default()
                         },
                         LightSource {
                             kind: LightKind::Point {
-                                position: [2.0, 2.0, 2.0],
-                                range: 10.0,
+                                position: [3.0, 3.0, 3.0],
+                                range: 15.0,
                             },
-                            color: [1.0, 0.95, 0.9],
+                            color: [1.0, 0.97, 0.93],
                             intensity: 2.0,
                             ..LightSource::default()
                         },
                     ],
-                    shadows_enabled: false,
-                    hemisphere_intensity: 0.5,
+                    shadows_enabled: true,
+                    hemisphere_intensity: 0.4,
                     sky_color: [1.0, 1.0, 1.0],
                     ground_color: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
@@ -3194,6 +3206,9 @@ impl App {
             adv_clip_objects.extend(self.sa_clip_objects());
         }
         fd.effects.clip_objects = adv_clip_objects;
+        if self.mode == ShowcaseMode::NormalMaps {
+            fd.effects.cap_fill_enabled = self.nm_cap_fill;
+        }
         fd.interaction.gizmo_model = gizmo_model;
         fd.interaction.gizmo_mode = gizmo_mode;
         fd.interaction.gizmo_hovered = gizmo_hovered;
@@ -3321,10 +3336,13 @@ impl App {
                     enabled: false,
                     ..PostProcessSettings::default()
                 };
+                // Clamp far plane for better cascade distribution.
+                let mut rc = RenderCamera::from_camera(&self.camera);
+                rc.far = self.camera.zfar.min(60.0);
+                rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
+                fd.camera.render_camera = rc;
             }
-            ShowcaseMode::SurfaceAppearance => {
-                fd.effects.post_process = self.sa_post_process();
-            }
+            ShowcaseMode::SurfaceAppearance => {}
             _ => {}
         }
 

@@ -57,72 +57,82 @@ impl App {
     // One-time build
     // -------------------------------------------------------------------------
 
-    /// Upload meshes and pre-compute per-mode quantity data.
+    /// Upload render meshes (once) and generate initial glyph data.
     pub(crate) fn build_sv_scene(&mut self, renderer: &mut viewport_lib::ViewportRenderer) {
         use viewport_lib::geometry::primitives;
 
-        // --- Sphere (vertex intrinsic mode) ----------------------------------
+        // Upload render meshes at a fixed resolution (independent of glyph density).
         let sphere = primitives::sphere(1.0, 48, 24);
         let sphere_idx = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere)
             .expect("sv sphere");
 
-        let sv_positions = [sphere.positions.clone(), Vec::new(), Vec::new()];
-        let sv_normals = [sphere.normals.clone(), Vec::new(), Vec::new()];
-        // Sphere tangents from primitives::sphere are not set; pass None so the
-        // API uses Gram-Schmidt frames, consistent with how vertex_vecs are built.
-        let sv_tangents: [Option<Vec<[f32; 4]>>; 3] = [None, None, None];
-        let sv_indices = [sphere.indices.clone(), Vec::new(), Vec::new()];
-
-        // Vortex tangent field: arrows circle the sphere around the Z axis.
-        // World-space vortex direction at each vertex: n × Z (azimuthal).
-        // We project this 3D vector into the Gram-Schmidt tangent frame that
-        // `vertex_intrinsic_to_glyphs` will use internally, so the API sees
-        // the correct (u, v) coefficients.
-        let vertex_vecs = make_sphere_vortex_intrinsic(&sphere.positions, &sphere.normals);
-
-        // --- Torus (face intrinsic mode) -------------------------------------
         let torus = make_torus(1.2, 0.4, 48, 24);
         let torus_idx = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &torus)
             .expect("sv torus");
 
-        // Flow field: for each face use the centroid's longitude angle to
-        // compute an intrinsic vector pointing in the poloidal direction.
-        let face_vecs = make_torus_face_vectors(&torus, 1.2);
-
-        // --- Plane (edge one-form mode) --------------------------------------
-        let (plane, edge_vals) = make_plane_with_source_one_form(20);
+        let (plane, _) = make_plane_with_source_one_form(20);
         let plane_idx = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &plane)
             .expect("sv plane");
 
-        // --- Store data -------------------------------------------------------
         self.sv_mesh_index = [sphere_idx, torus_idx, plane_idx];
+        self.sv_built = true;
+
+        // Generate glyph data at the current density.
+        self.rebuild_sv_glyph_data();
+    }
+
+    /// Regenerate glyph source data (positions, normals, indices, quantity
+    /// vectors) at the current `sv_density`. Called on first build and
+    /// whenever the density slider changes.
+    pub(crate) fn rebuild_sv_glyph_data(&mut self) {
+        use viewport_lib::geometry::primitives;
+
+        let d = self.sv_density;
+
+        // Scale segment counts by density.
+        let sphere_lon = (48.0 * d).round().max(6.0) as u32;
+        let sphere_lat = (24.0 * d).round().max(3.0) as u32;
+        let torus_major = (48.0 * d).round().max(6.0) as usize;
+        let torus_minor = (24.0 * d).round().max(3.0) as usize;
+        let plane_n = (20.0 * d).round().max(3.0) as usize;
+
+        // --- Sphere (vertex intrinsic) ---
+        let sphere = primitives::sphere(1.0, sphere_lon, sphere_lat);
+        let vertex_vecs = make_sphere_vortex_intrinsic(&sphere.positions, &sphere.normals);
+
+        // --- Torus (face intrinsic) ---
+        let torus = make_torus(1.2, 0.4, torus_major, torus_minor);
+        let face_vecs = make_torus_face_vectors(&torus, 1.2);
+
+        // --- Plane (edge one-form) ---
+        let (plane, edge_vals) = make_plane_with_source_one_form(plane_n);
+
         self.sv_positions = [
-            sv_positions[0].clone(),
+            sphere.positions.clone(),
             torus.positions.clone(),
             plane.positions.clone(),
         ];
         self.sv_normals = [
-            sv_normals[0].clone(),
+            sphere.normals.clone(),
             torus.normals.clone(),
             plane.normals.clone(),
         ];
-        self.sv_tangents = [sv_tangents[0].clone(), None, None];
+        self.sv_tangents = [None, None, None];
         self.sv_indices = [
-            sv_indices[0].clone(),
+            sphere.indices.clone(),
             torus.indices.clone(),
             plane.indices.clone(),
         ];
         self.sv_vertex_vecs = vertex_vecs;
         self.sv_face_vecs = face_vecs;
         self.sv_edge_vals = edge_vals;
-
-        self.sv_built = true;
+        self.sv_glyph_density = d;
     }
 
     // -------------------------------------------------------------------------
@@ -144,6 +154,19 @@ impl App {
         ui.separator();
         ui.label("Arrow scale:");
         ui.add(egui::Slider::new(&mut self.sv_scale, 0.01..=1.0).step_by(0.01));
+
+        let count = self.sv_vector_count();
+        ui.label("Density:");
+        let density_changed = ui
+            .add(
+                egui::Slider::new(&mut self.sv_density, 0.1..=2.0)
+                    .step_by(0.1)
+                    .suffix(format!(" ({count} vectors)")),
+            )
+            .changed();
+        if density_changed {
+            self.rebuild_sv_glyph_data();
+        }
 
         ui.separator();
         match self.sv_mode {
@@ -176,6 +199,21 @@ impl App {
         let mut item = SceneRenderItem::default();
         item.mesh_index = mesh_idx;
         item
+    }
+
+    /// Total number of vectors in the full glyph set for the active mode.
+    fn sv_total_count(&self) -> usize {
+        match self.sv_mode {
+            SvMode::VertexIntrinsic => self.sv_vertex_vecs.len(),
+            SvMode::FaceIntrinsic => self.sv_face_vecs.len(),
+            SvMode::EdgeOneForm => self.sv_indices[2].len() / 3,
+        }
+    }
+
+    /// Number of vectors that will be shown at the current density.
+    pub(crate) fn sv_vector_count(&self) -> usize {
+        let total = self.sv_total_count();
+        (total as f32 * self.sv_density).ceil().max(1.0) as usize
     }
 
     /// Build the [`GlyphItem`] for the active sub-mode.
