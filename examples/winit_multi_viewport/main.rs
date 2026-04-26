@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use viewport_lib::{ButtonState, Modifiers, MouseButton, ScrollUnits};
 use viewport_lib::{
-    Camera, CameraFrame, FrameData, LightingSettings, OrbitCameraController, Projection,
+    Camera, CameraFrame, FrameData, LightingSettings, MeshId, OrbitCameraController, Projection,
     SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent, ViewportId, ViewportRenderer,
     primitives,
 };
@@ -99,7 +99,7 @@ struct AppState {
     depth_view: wgpu::TextureView,
 
     renderer: ViewportRenderer,
-    mesh_index: usize,
+    mesh_id: MeshId,
 
     /// One camera + controller per quadrant.
     cameras: [Camera; 4],
@@ -145,7 +145,7 @@ impl AppState {
             .iter()
             .map(|&(pos, color)| {
                 let mut item = SceneRenderItem::default();
-                item.mesh_index = self.mesh_index;
+                item.mesh_id = self.mesh_id;
                 item.model = glam::Mat4::from_translation(glam::Vec3::from(pos)).to_cols_array_2d();
                 item.material.base_color = [color[0], color[1], color[2]];
                 item
@@ -229,7 +229,7 @@ impl ApplicationHandler for App {
         let depth_view = AppState::create_depth_view(&device, config.width, config.height);
 
         let mut renderer = ViewportRenderer::new(&device, format);
-        let mesh_index = renderer
+        let mesh_id = renderer
             .resources_mut()
             .upload_mesh_data(&device, &primitives::cube(1.0))
             .expect("cube mesh");
@@ -313,7 +313,7 @@ impl ApplicationHandler for App {
             surface_config: config,
             depth_view,
             renderer,
-            mesh_index,
+            mesh_id,
             cameras: [cam_persp, cam_top, cam_front, cam_right],
             controllers: [ctrl0, ctrl1, ctrl2, ctrl3],
             viewports: [vp0, vp1, vp2, vp3],

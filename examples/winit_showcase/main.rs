@@ -158,7 +158,7 @@ pub(crate) struct AppState {
     camera: Camera,
 
     // -- Showcase 1 state --
-    mesh_indices: Vec<usize>,
+    mesh_indices: Vec<MeshId>,
     use_point_light: bool,
 
     // -- Showcase 2 state --
@@ -315,12 +315,11 @@ impl AppState {
     /// Upload a fresh box mesh and return its MeshId.
     /// Each scene node needs its own GPU mesh slot (own uniform buffer).
     pub(crate) fn upload_box(&mut self) -> MeshId {
-        let idx = self
+        self
             .renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &self.box_mesh_data)
-            .expect("box mesh upload");
-        MeshId::from_index(idx)
+            .expect("box mesh upload")
     }
 
     fn update_title(&self) {
@@ -1998,11 +1997,11 @@ impl ApplicationHandler for App {
                             .mesh_indices
                             .iter()
                             .zip(&positions)
-                            .map(|(&mesh_index, pos)| {
+                            .map(|(&mesh_id, pos)| {
                                 let model = glam::Mat4::from_translation(glam::Vec3::from(*pos));
                                 {
                                     let mut item = SceneRenderItem::default();
-                                    item.mesh_index = mesh_index;
+                                    item.mesh_id = mesh_id;
                                     item.model = model.to_cols_array_2d();
                                     item
                                 }

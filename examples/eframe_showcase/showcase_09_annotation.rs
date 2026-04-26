@@ -6,7 +6,7 @@
 
 use crate::App;
 use crate::geometry::make_box_with_uvs;
-use viewport_lib::{AnnotationLabel, Camera, Material, MeshId, ViewportRenderer, world_to_screen};
+use viewport_lib::{AnnotationLabel, Camera, Material, ViewportRenderer, world_to_screen};
 
 impl App {
     /// Build the scene for Showcase 9 (Annotation Labels demo).
@@ -18,11 +18,10 @@ impl App {
         let mut place_marker =
             |renderer: &mut ViewportRenderer, pos: glam::Vec3, color: [f32; 3]| {
                 let mesh = make_box_with_uvs(0.3, 0.3, 0.3);
-                let idx = renderer
+                let id = renderer
                     .resources_mut()
                     .upload_mesh_data(&self.device, &mesh)
                     .expect("annotation marker upload");
-                let id = MeshId::from_index(idx);
                 self.ann_scene.add_named(
                     "Marker",
                     Some(id),

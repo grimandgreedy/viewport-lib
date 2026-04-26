@@ -7,7 +7,7 @@
 
 use crate::App;
 use viewport_lib::{
-    AttributeData, Material, MeshData, MeshId, ScalarBarAnchor, ScalarBarOrientation,
+    AttributeData, Material, MeshData, ScalarBarAnchor, ScalarBarOrientation,
     ViewportRenderer, scene::Scene,
 };
 
@@ -27,11 +27,10 @@ impl App {
             "height".to_string(),
             AttributeData::Vertex(height_scalars.clone()),
         );
-        let sphere_idx = renderer
+        let sphere_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere)
             .expect("scalar sphere mesh");
-        let sphere_id = MeshId::from_index(sphere_idx);
         let sphere_node = self.scalar_scene.add_named(
             "Sphere",
             Some(sphere_id),
@@ -49,11 +48,10 @@ impl App {
 
         // ---- Object 1: Wave grid with 2-D sine wave scalar ----
         let (wave_mesh, wave_scalars) = make_wave_grid(20, 20, 8.0);
-        let wave_idx = renderer
+        let wave_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &wave_mesh)
             .expect("scalar wave mesh");
-        let wave_id = MeshId::from_index(wave_idx);
         let wave_node =
             self.scalar_scene
                 .add_named("Wave Grid", Some(wave_id), glam::Mat4::IDENTITY, {
@@ -68,11 +66,10 @@ impl App {
 
         // ---- Object 2: Box with distance-from-center scalar (NaN below threshold) ----
         let (box_mesh, box_scalars) = make_box_with_distance_scalar();
-        let box_idx = renderer
+        let box_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &box_mesh)
             .expect("scalar box mesh");
-        let box_id = MeshId::from_index(box_idx);
         let box_node = self.scalar_scene.add_named(
             "Distance Box",
             Some(box_id),
@@ -89,7 +86,7 @@ impl App {
         self.scalar_values[2] = box_scalars;
 
         // Store mesh indices for scalar-range auto-computation.
-        self.scalar_mesh_indices = [sphere_idx, wave_idx, box_idx];
+        self.scalar_mesh_indices = [sphere_id, wave_id, box_id];
         self.set_scalar_active_object(self.scalar_active_object.min(2));
 
         self.scalar_built = true;

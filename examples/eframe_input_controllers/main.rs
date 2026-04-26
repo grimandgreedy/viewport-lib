@@ -17,8 +17,8 @@ use eframe::egui;
 use viewport_lib::{
     Action, ButtonState, Camera, CameraFrame, FrameData, Gizmo, GizmoInfo, InteractionFrame,
     KeyCode, LightingSettings, ManipResult, ManipulationContext, ManipulationController,
-    ManipulationKind, Material, OrbitCameraController, PivotMode, SceneFrame, SceneRenderItem,
-    ScrollUnits, Selection, ViewportContext, ViewportEvent, ViewportRenderer,
+    ManipulationKind, Material, MeshId, OrbitCameraController, PivotMode, SceneFrame,
+    SceneRenderItem, ScrollUnits, Selection, ViewportContext, ViewportEvent, ViewportRenderer,
     gizmo_center_for_pivot, primitives,
 };
 
@@ -73,12 +73,12 @@ enum Mode {
 struct Object {
     model: glam::Mat4,
     snapshot: glam::Mat4,
-    mesh: usize,
+    mesh: MeshId,
     color: [f32; 3],
 }
 
 impl Object {
-    fn new(pos: glam::Vec3, mesh: usize, color: [f32; 3]) -> Self {
+    fn new(pos: glam::Vec3, mesh: MeshId, color: [f32; 3]) -> Self {
         let model = glam::Mat4::from_translation(pos);
         Self {
             model,
@@ -488,7 +488,7 @@ impl eframe::App for App {
                         .iter()
                         .map(|obj| {
                             let mut item = SceneRenderItem::default();
-                            item.mesh_index = obj.mesh;
+                            item.mesh_id = obj.mesh;
                             item.model = obj.model.to_cols_array_2d();
                             item.material = Material::from_color(obj.color);
                             item
@@ -641,7 +641,7 @@ impl eframe::App for App {
                         .enumerate()
                         .map(|(i, obj)| {
                             let mut item = SceneRenderItem::default();
-                            item.mesh_index = obj.mesh;
+                            item.mesh_id = obj.mesh;
                             item.model = obj.model.to_cols_array_2d();
                             item.material = Material::from_color(obj.color);
                             item.selected = self.selection.contains(i as u64);

@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use viewport_lib::{
-    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, ManipResult,
+    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, ManipResult, MeshId,
     ManipulationContext, ManipulationController, Material, OrbitCameraController, SceneFrame,
     SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
 };
@@ -139,9 +139,9 @@ impl ApplicationHandler for App {
             .upload_mesh_data(&device, &primitives::torus(0.5, 0.18, 32, 16))
             .unwrap();
 
-        let mut make_item = |mesh_index, [x, y, z]: [f32; 3], color: [f32; 3]| {
+        let mut make_item = |mesh_id: MeshId, [x, y, z]: [f32; 3], color: [f32; 3]| {
             let mut item = SceneRenderItem::default();
-            item.mesh_index = mesh_index;
+            item.mesh_id = mesh_id;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
             item.material = Material::from_color(color);
             item.two_sided = true;

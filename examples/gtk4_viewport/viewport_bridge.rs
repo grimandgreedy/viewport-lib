@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 
 use viewport_lib::{
-    Camera, CameraFrame, FrameData, LightingSettings, OrbitCameraController, SceneFrame,
+    Camera, CameraFrame, FrameData, LightingSettings, MeshId, OrbitCameraController, SceneFrame,
     SceneRenderItem, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
 };
 use wgpu;
@@ -21,7 +21,7 @@ pub struct SceneRenderer {
     renderer: ViewportRenderer,
     camera: Camera,
     controller: OrbitCameraController,
-    uploaded: HashMap<u64, usize>,
+    uploaded: HashMap<u64, MeshId>,
     color_texture: Option<wgpu::Texture>,
     depth_view: Option<wgpu::TextureView>,
     staging_buffer: Option<wgpu::Buffer>,
@@ -154,10 +154,10 @@ impl SceneRenderer {
         let scene_items: Vec<SceneRenderItem> = objects
             .iter()
             .filter_map(|&(id, position)| {
-                let mesh_index = *self.uploaded.get(&id)?;
+                let mesh_id = *self.uploaded.get(&id)?;
                 let model = glam::Mat4::from_translation(glam::Vec3::from(position));
                 let mut item = SceneRenderItem::default();
-                item.mesh_index = mesh_index;
+                item.mesh_id = mesh_id;
                 item.model = model.to_cols_array_2d();
                 Some(item)
             })

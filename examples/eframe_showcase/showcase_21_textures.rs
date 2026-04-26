@@ -44,7 +44,7 @@ impl App {
 
         self.texture_plane_node = self.texture_scene.add_named(
             "Percy Plane",
-            Some(viewport_lib::MeshId::from_index(plane_id)),
+            Some(plane_id),
             glam::Mat4::from_translation(glam::Vec3::new(-3.0, 0.0, 3.0)),
             {
                 let mut m = Material::default();
@@ -69,7 +69,7 @@ impl App {
 
         self.texture_scene.add_named(
             "Checker Sphere",
-            Some(viewport_lib::MeshId::from_index(sphere_id)),
+            Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(3.0, 0.0, 3.0)),
             {
                 let mut m = Material::default();
@@ -95,7 +95,7 @@ impl App {
 
         self.texture_scene.add_named(
             "Gradient Cube",
-            Some(viewport_lib::MeshId::from_index(cube_id)),
+            Some(cube_id),
             glam::Mat4::from_translation(glam::Vec3::new(-3.0, 0.0, -3.0)),
             {
                 let mut m = Material::default();
@@ -119,7 +119,7 @@ impl App {
 
         self.texture_scene.add_named(
             "Stripe Torus",
-            Some(viewport_lib::MeshId::from_index(torus_id)),
+            Some(torus_id),
             glam::Mat4::from_translation(glam::Vec3::new(3.0, 0.0, -3.0)),
             {
                 let mut m = Material::default();

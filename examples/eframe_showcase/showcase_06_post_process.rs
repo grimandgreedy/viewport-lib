@@ -7,7 +7,7 @@
 
 use crate::App;
 use crate::geometry::make_uv_sphere;
-use viewport_lib::{Material, MeshId, ViewportRenderer};
+use viewport_lib::{Material, ViewportRenderer};
 
 impl App {
     /// Build the scene for Showcase 6 (post-processing / PBR scene).
@@ -59,11 +59,10 @@ impl App {
         );
 
         let sphere = make_uv_sphere(32, 16, 0.6);
-        let sphere_idx = renderer
+        let sphere_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere)
             .expect("pp sphere upload");
-        let sphere_id = MeshId::from_index(sphere_idx);
         self.pp_scene.add_named(
             "Sphere Test",
             Some(sphere_id),

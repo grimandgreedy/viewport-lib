@@ -72,7 +72,7 @@ pub(crate) struct ViewportSlot {
     /// Per-frame outline buffers for selected objects, rebuilt in prepare().
     pub outline_object_buffers: Vec<OutlineObjectBuffers>,
     /// Per-frame x-ray buffers for selected objects, rebuilt in prepare().
-    pub xray_object_buffers: Vec<(usize, wgpu::Buffer, wgpu::BindGroup)>,
+    pub xray_object_buffers: Vec<(crate::resources::mesh_store::MeshId, wgpu::Buffer, wgpu::BindGroup)>,
     /// Per-frame constraint guide line buffers, rebuilt in prepare().
     pub constraint_line_buffers: Vec<(
         wgpu::Buffer,

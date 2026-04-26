@@ -669,7 +669,7 @@ impl Scene {
             };
             let locked = layer_locked.get(&node.layer).copied().unwrap_or(false);
             items.push(SceneRenderItem {
-                mesh_index: mesh_id.index(),
+                mesh_id,
                 model: node.world_transform.to_cols_array_2d(),
                 selected: if locked {
                     false
@@ -737,7 +737,7 @@ impl Scene {
             let locked = layer_locked.get(&node.layer).copied().unwrap_or(false);
             stats.visible += 1;
             items.push(SceneRenderItem {
-                mesh_index: mesh_id.index(),
+                mesh_id,
                 model: node.world_transform.to_cols_array_2d(),
                 selected: if locked {
                     false
@@ -983,7 +983,7 @@ mod tests {
         assert_eq!(stats.culled, 1);
         assert_eq!(items.len(), 1);
         // The visible item should be the one at the origin (mesh_index 0).
-        assert_eq!(items[0].mesh_index, visible_id as usize - 1); // MeshId(0).index() == 0
+        assert_eq!(items[0].mesh_id.index(), visible_id as usize - 1); // MeshId(0).index() == 0
         let _ = visible_id; // suppress unused warning
     }
 

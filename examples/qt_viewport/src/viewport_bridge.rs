@@ -4,14 +4,14 @@
 
 use std::collections::HashMap;
 use viewport_lib::{
-    Camera, CameraFrame, FrameData, GizmoAxis, GizmoMode, LightingSettings, SceneFrame,
+    Camera, CameraFrame, FrameData, GizmoAxis, GizmoMode, LightingSettings, MeshId, SceneFrame,
     SceneRenderItem, ViewportRenderer, primitives,
 };
 
 pub struct SceneRenderer {
     renderer: ViewportRenderer,
     pub camera: Camera,
-    uploaded: HashMap<u64, usize>,
+    uploaded: HashMap<u64, MeshId>,
     color_texture: Option<wgpu::Texture>,
     depth_view: Option<wgpu::TextureView>,
     staging_buffer: Option<wgpu::Buffer>,
@@ -93,9 +93,9 @@ impl SceneRenderer {
         self.camera.set_aspect_ratio(w as f32, h as f32);
 
         let scene_items: Vec<SceneRenderItem> = objects.iter().filter_map(|&(id, pos)| {
-            let mesh_index = *self.uploaded.get(&id)?;
+            let mesh_id = *self.uploaded.get(&id)?;
             let mut item = SceneRenderItem::default();
-            item.mesh_index = mesh_index;
+            item.mesh_id = mesh_id;
             item.model = glam::Mat4::from_translation(glam::Vec3::from(pos)).to_cols_array_2d();
             Some(item)
         }).collect();

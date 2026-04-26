@@ -463,7 +463,7 @@ pub fn pick_rect(
         if !item.visible {
             continue;
         }
-        let Some((positions, indices)) = mesh_lookup.get(&item.mesh_index) else {
+        let Some((positions, indices)) = mesh_lookup.get(&item.mesh_id.index()) else {
             continue;
         };
 
@@ -503,7 +503,7 @@ pub fn pick_rect(
         }
 
         if !tri_hits.is_empty() {
-            result.hits.insert(item.mesh_index as u64, tri_hits);
+            result.hits.insert(item.mesh_id.index() as u64, tri_hits);
         }
     }
 
@@ -1000,7 +1000,7 @@ mod tests {
         mesh_lookup.insert(0, (positions, indices.clone()));
 
         let item = crate::renderer::SceneRenderItem {
-            mesh_index: 0,
+            mesh_id: crate::resources::mesh_store::MeshId(0),
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             visible: true,
             ..Default::default()
@@ -1033,7 +1033,7 @@ mod tests {
         mesh_lookup.insert(0, (positions, indices));
 
         let item = crate::renderer::SceneRenderItem {
-            mesh_index: 0,
+            mesh_id: crate::resources::mesh_store::MeshId(0),
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             visible: true,
             ..Default::default()
@@ -1102,7 +1102,7 @@ mod tests {
         mesh_lookup.insert(0, (positions, indices));
 
         let item = crate::renderer::SceneRenderItem {
-            mesh_index: 0,
+            mesh_id: crate::resources::mesh_store::MeshId(0),
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             visible: false, // hidden
             ..Default::default()

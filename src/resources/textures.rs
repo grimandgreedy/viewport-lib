@@ -278,7 +278,7 @@ impl ViewportGpuResources {
     pub(crate) fn update_mesh_texture_bind_group(
         &mut self,
         device: &wgpu::Device,
-        mesh_index: usize,
+        mesh_id: crate::resources::mesh_store::MeshId,
         albedo_id: Option<u64>,
         normal_map_id: Option<u64>,
         ao_map_id: Option<u64>,
@@ -307,7 +307,7 @@ impl ViewportGpuResources {
         {
             let Some(mesh) = self
                 .mesh_store
-                .get(crate::resources::mesh_store::MeshId(mesh_index))
+                .get(mesh_id)
             else {
                 return;
             };
@@ -335,7 +335,7 @@ impl ViewportGpuResources {
 
         let Some(mesh) = self
             .mesh_store
-            .get_mut(crate::resources::mesh_store::MeshId(mesh_index))
+            .get_mut(mesh_id)
         else {
             return;
         };

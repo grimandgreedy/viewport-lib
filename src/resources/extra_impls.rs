@@ -564,8 +564,8 @@ pub struct ComputeFilterResult {
     pub index_buffer: wgpu::Buffer,
     /// Number of valid indices in `index_buffer` (may be 0 if all filtered).
     pub index_count: u32,
-    /// Mesh index this result corresponds to.
-    pub mesh_index: usize,
+    /// `MeshId` this result corresponds to.
+    pub mesh_id: crate::resources::mesh_store::MeshId,
 }
 
 impl ViewportGpuResources {
@@ -1068,7 +1068,7 @@ impl ViewportGpuResources {
             // Resolve the mesh.
             let gpu_mesh = match self
                 .mesh_store
-                .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                .get(item.mesh_id)
             {
                 Some(m) => m,
                 None => continue,
@@ -1306,7 +1306,7 @@ impl ViewportGpuResources {
             results.push(ComputeFilterResult {
                 index_buffer: out_index_buf,
                 index_count,
-                mesh_index: item.mesh_index,
+                mesh_id: item.mesh_id,
             });
         }
 

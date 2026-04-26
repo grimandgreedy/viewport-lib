@@ -11,19 +11,17 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{Material, MeshId, ViewportRenderer, scene::Scene};
+use viewport_lib::{Material, ViewportRenderer, scene::Scene};
 
 impl App {
     pub(crate) fn build_ground_plane_scene(&mut self, renderer: &mut ViewportRenderer) {
         self.gp_scene = Scene::new();
 
         let sphere = viewport_lib::geometry::primitives::sphere(1.0, 32, 16);
-        let sphere_id = MeshId::from_index(
-            renderer
-                .resources_mut()
-                .upload_mesh_data(&self.device, &sphere)
-                .expect("gp sphere mesh upload"),
-        );
+        let sphere_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &sphere)
+            .expect("gp sphere mesh upload");
 
         // Three spheres in a row along X.
         let positions: [(f32, &str, [f32; 3]); 3] = [

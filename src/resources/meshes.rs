@@ -9,7 +9,7 @@ impl ViewportGpuResources {
         device: &wgpu::Device,
         vertices: &[Vertex],
         indices: &[u32],
-    ) -> usize {
+    ) -> crate::resources::mesh_store::MeshId {
         let mesh = Self::create_mesh(
             device,
             &self.object_bind_group_layout,
@@ -24,14 +24,14 @@ impl ViewportGpuResources {
             vertices,
             indices,
         );
-        self.mesh_store.insert(mesh).index()
+        self.mesh_store.insert(mesh)
     }
 
     /// Upload a `MeshData` (from the geometry primitives module) directly.
     ///
     /// Converts positions/normals/indices to the GPU `Vertex` layout (white color)
     /// and creates a normal visualization line buffer (light blue #a0c4ff, length 0.1).
-    /// Returns the mesh index.
+    /// Returns the `MeshId`.
     ///
     /// # Errors
     ///
@@ -42,7 +42,7 @@ impl ViewportGpuResources {
         &mut self,
         device: &wgpu::Device,
         data: &MeshData,
-    ) -> crate::error::ViewportResult<usize> {
+    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
         Self::validate_mesh_data(data)?;
 
         let computed_tangents: Option<Vec<[f32; 4]>> = if data.tangents.is_none() {
@@ -121,7 +121,7 @@ impl ViewportGpuResources {
             indices = data.indices.len(),
             "mesh uploaded"
         );
-        Ok(id.index())
+        Ok(id)
     }
 
     /// Replace the mesh at `mesh_index` with new geometry data.
@@ -135,13 +135,12 @@ impl ViewportGpuResources {
     pub fn replace_mesh_data(
         &mut self,
         device: &wgpu::Device,
-        mesh_index: usize,
+        mesh_id: crate::resources::mesh_store::MeshId,
         data: &MeshData,
     ) -> crate::error::ViewportResult<()> {
-        let mesh_id = crate::resources::mesh_store::MeshId(mesh_index);
         if !self.mesh_store.contains(mesh_id) {
             return Err(crate::error::ViewportError::MeshIndexOutOfBounds {
-                index: mesh_index,
+                index: mesh_id.index(),
                 count: self.mesh_store.len(),
             });
         }
@@ -216,7 +215,7 @@ impl ViewportGpuResources {
         new_mesh.face_color_buffers = face_color_bufs;
         let _ = self.mesh_store.replace(mesh_id, new_mesh);
         tracing::debug!(
-            mesh_index,
+            mesh_index = mesh_id.index(),
             vertices = data.positions.len(),
             indices = data.indices.len(),
             "mesh replaced"
@@ -225,9 +224,8 @@ impl ViewportGpuResources {
     }
 
     /// Get a reference to the mesh at the given index, or `None` if the slot is empty/invalid.
-    pub fn mesh(&self, index: usize) -> Option<&GpuMesh> {
-        self.mesh_store
-            .get(crate::resources::mesh_store::MeshId(index))
+    pub fn mesh(&self, id: crate::resources::mesh_store::MeshId) -> Option<&GpuMesh> {
+        self.mesh_store.get(id)
     }
 
     /// Total number of mesh slots (including empty/removed slots).
@@ -238,9 +236,8 @@ impl ViewportGpuResources {
     /// Remove a mesh, dropping its GPU buffers and freeing its slot for reuse.
     ///
     /// Returns `true` if a mesh was removed, `false` if the slot was already empty.
-    pub fn remove_mesh(&mut self, index: usize) -> bool {
-        self.mesh_store
-            .remove(crate::resources::mesh_store::MeshId(index))
+    pub fn remove_mesh(&mut self, id: crate::resources::mesh_store::MeshId) -> bool {
+        self.mesh_store.remove(id)
     }
 
     /// Upload an unstructured volume mesh by extracting its boundary surface and uploading
@@ -250,14 +247,14 @@ impl ViewportGpuResources {
     /// to exactly one cell) are kept. Per-cell scalar and color attributes are remapped to
     /// per-face attributes so the Phase 2 face-coloring path handles them automatically.
     ///
-    /// Returns the mesh index, identical to what [`upload_mesh_data`](Self::upload_mesh_data)
+    /// Returns the `MeshId`, identical to what [`upload_mesh_data`](Self::upload_mesh_data)
     /// would return. Reference cell attributes via
     /// [`AttributeRef { kind: AttributeKind::Face, .. }`](crate::resources::AttributeRef).
     pub fn upload_volume_mesh_data(
         &mut self,
         device: &wgpu::Device,
         data: &crate::resources::volume_mesh::VolumeMeshData,
-    ) -> crate::error::ViewportResult<usize> {
+    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
         let mesh_data = crate::resources::volume_mesh::extract_boundary_faces(data);
         self.upload_mesh_data(device, &mesh_data)
     }

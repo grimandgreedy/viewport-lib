@@ -461,7 +461,7 @@ impl ViewportRenderer {
                                     || item.material.matcap_id.is_some())
                                 && resources
                                     .mesh_store
-                                    .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                                    .get(item.mesh_id)
                                     .is_some()
                         })
                         .collect();
@@ -483,7 +483,7 @@ impl ViewportRenderer {
                             for batch in &opaque_batches {
                                 let Some(mesh) = resources
                                     .mesh_store
-                                    .get(crate::resources::mesh_store::MeshId(batch.mesh_index))
+                                    .get(batch.mesh_id)
                                 else {
                                     continue;
                                 };
@@ -526,7 +526,7 @@ impl ViewportRenderer {
                                 }
                                 let Some(mesh) = resources
                                     .mesh_store
-                                    .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                                    .get(item.mesh_id)
                                 else {
                                     continue;
                                 };
@@ -549,7 +549,7 @@ impl ViewportRenderer {
                         {
                             let Some(mesh) = resources
                                 .mesh_store
-                                .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                                .get(item.mesh_id)
                             else {
                                 continue;
                             };
@@ -583,7 +583,7 @@ impl ViewportRenderer {
                         if !item.visible
                             || resources
                                 .mesh_store
-                                .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                                .get(item.mesh_id)
                                 .is_none()
                         {
                             continue;
@@ -613,7 +613,7 @@ impl ViewportRenderer {
                          wf_pl: &wgpu::RenderPipeline| {
                             let mesh = resources
                                 .mesh_store
-                                .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                                .get(item.mesh_id)
                                 .unwrap();
                             // mesh.object_bind_group (group 1) already carries the object uniform
                             // and the correct texture views.
@@ -830,7 +830,7 @@ impl ViewportRenderer {
                             let Some(mesh) = self
                                 .resources
                                 .mesh_store
-                                .get(crate::resources::mesh_store::MeshId(batch.mesh_index))
+                                .get(batch.mesh_id)
                             else {
                                 continue;
                             };
@@ -866,7 +866,7 @@ impl ViewportRenderer {
                         let Some(mesh) = self
                             .resources
                             .mesh_store
-                            .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                            .get(item.mesh_id)
                         else {
                             continue;
                         };
@@ -1332,11 +1332,11 @@ impl ViewportRenderer {
                 if !slot.xray_object_buffers.is_empty() {
                     overlay_pass.set_pipeline(&self.resources.xray_pipeline);
                     overlay_pass.set_bind_group(0, camera_bg, &[]);
-                    for (mesh_idx, _buf, bg) in &slot.xray_object_buffers {
+                    for (mesh_id, _buf, bg) in &slot.xray_object_buffers {
                         let Some(mesh) = self
                             .resources
                             .mesh_store
-                            .get(crate::resources::mesh_store::MeshId(*mesh_idx))
+                            .get(*mesh_id)
                         else {
                             continue;
                         };

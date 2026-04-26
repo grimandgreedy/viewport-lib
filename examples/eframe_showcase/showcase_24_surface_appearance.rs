@@ -20,7 +20,7 @@ use crate::App;
 use eframe::egui;
 use glam::Mat4;
 use viewport_lib::{
-    BackfacePattern, BackfacePolicy, ClipObject, LightSource, LightingSettings, Material, MeshId,
+    BackfacePattern, BackfacePolicy, ClipObject, LightSource, LightingSettings, Material,
     SceneRenderItem, ViewportRenderer, scene::Scene,
 };
 
@@ -86,12 +86,10 @@ impl App {
         // --- Row 1 : Toruses (z = +4.5) ---
         let torus_mesh = primitives::torus(0.8, 0.35, 32, 16);
         for (i, (policy, label)) in policies.iter().enumerate() {
-            let mesh_id = MeshId::from_index(
-                renderer
-                    .resources_mut()
-                    .upload_mesh_data(&self.device, &torus_mesh)
-                    .expect("sa torus upload"),
-            );
+            let mesh_id = renderer
+                .resources_mut()
+                .upload_mesh_data(&self.device, &torus_mesh)
+                .expect("sa torus upload");
             self.sa_scene.add_named(
                 &format!("Torus {label}"),
                 Some(mesh_id),
@@ -103,12 +101,10 @@ impl App {
         // --- Row 2 : Spheres (z = +1.5) ---
         let sphere_mesh = primitives::sphere(1.2, 32, 16);
         for (i, (policy, label)) in policies.iter().enumerate() {
-            let mesh_id = MeshId::from_index(
-                renderer
-                    .resources_mut()
-                    .upload_mesh_data(&self.device, &sphere_mesh)
-                    .expect("sa sphere upload"),
-            );
+            let mesh_id = renderer
+                .resources_mut()
+                .upload_mesh_data(&self.device, &sphere_mesh)
+                .expect("sa sphere upload");
             self.sa_scene.add_named(
                 &format!("Sphere {label}"),
                 Some(mesh_id),
@@ -120,12 +116,10 @@ impl App {
         // --- Row 3 : Cones (z = -1.5) ---
         let cone_mesh = primitives::cone(0.9, 2.0, 32);
         for (i, (policy, label)) in policies.iter().enumerate() {
-            let mesh_id = MeshId::from_index(
-                renderer
-                    .resources_mut()
-                    .upload_mesh_data(&self.device, &cone_mesh)
-                    .expect("sa cone upload"),
-            );
+            let mesh_id = renderer
+                .resources_mut()
+                .upload_mesh_data(&self.device, &cone_mesh)
+                .expect("sa cone upload");
             self.sa_scene.add_named(
                 &format!("Cone {label}"),
                 Some(mesh_id),
@@ -137,12 +131,10 @@ impl App {
         // --- Row 4 : Springs (z = -4.5) ---
         let spring_mesh = primitives::spring(0.6, 0.2, 3.0, 16);
         for (i, (policy, label)) in policies.iter().enumerate() {
-            let mesh_id = MeshId::from_index(
-                renderer
-                    .resources_mut()
-                    .upload_mesh_data(&self.device, &spring_mesh)
-                    .expect("sa spring upload"),
-            );
+            let mesh_id = renderer
+                .resources_mut()
+                .upload_mesh_data(&self.device, &spring_mesh)
+                .expect("sa spring upload");
             self.sa_scene.add_named(
                 &format!("Spring {label}"),
                 Some(mesh_id),

@@ -7,7 +7,7 @@ mod viewport_callback;
 
 use eframe::egui;
 use viewport_lib::{
-    ButtonState, CameraFrame, FrameData, LightKind, LightSource, LightingSettings,
+    ButtonState, CameraFrame, FrameData, LightKind, LightSource, LightingSettings, MeshId,
     OrbitCameraController, SceneFrame, ScrollUnits, ViewportContext, ViewportEvent,
     ViewportRenderer, primitives,
 };
@@ -72,7 +72,7 @@ struct SceneObj {
     id: u64,
     name: String,
     position: [f32; 3],
-    mesh_index: usize,
+    mesh_id: MeshId,
 }
 
 impl Default for App {
@@ -105,12 +105,12 @@ impl eframe::App for App {
                     let x = (n % 4.0) * 2.0 - 3.0;
                     let z = (n / 4.0).floor() * 2.0 - 3.0;
                     // Each object uses mesh slot = its index (pre-uploaded at startup).
-                    let mesh_index = self.objects.len();
+                    let mesh_id = MeshId::from_index(self.objects.len());
                     self.objects.push(SceneObj {
                         id,
                         name: format!("Box {id}"),
                         position: [x, 0.0, z],
-                        mesh_index,
+                        mesh_id,
                     });
                 }
 
@@ -207,7 +207,7 @@ impl eframe::App for App {
                     let model = glam::Mat4::from_translation(glam::Vec3::from(obj.position));
                     {
                         let mut item = viewport_lib::SceneRenderItem::default();
-                        item.mesh_index = obj.mesh_index;
+                        item.mesh_id = obj.mesh_id;
                         item.model = model.to_cols_array_2d();
                         item
                     }

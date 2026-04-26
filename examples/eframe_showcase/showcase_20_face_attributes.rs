@@ -18,7 +18,7 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    AttributeData, BuiltinColormap, Material, MeshId, ViewportRenderer, scene::Scene,
+    AttributeData, BuiltinColormap, Material, ViewportRenderer, scene::Scene,
 };
 
 impl App {
@@ -100,7 +100,7 @@ impl App {
             .expect("face attr mesh 0");
         let node0 = self.face_scene.add_named(
             "Vertex (interpolated)",
-            Some(MeshId::from_index(idx0)),
+            Some(idx0),
             glam::Mat4::from_translation(glam::Vec3::new(-5.0, 0.0, 0.0)),
             grey_mat,
         );
@@ -116,7 +116,7 @@ impl App {
             .expect("face attr mesh 1");
         let node1 = self.face_scene.add_named(
             "Face (flat)",
-            Some(MeshId::from_index(idx1)),
+            Some(idx1),
             glam::Mat4::IDENTITY,
             grey_mat,
         );
@@ -132,7 +132,7 @@ impl App {
             .expect("face attr mesh 2");
         let node2 = self.face_scene.add_named(
             "FaceColor (direct RGBA)",
-            Some(MeshId::from_index(idx2)),
+            Some(idx2),
             glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)),
             {
                 let mut m = Material::from_color([1.0, 1.0, 1.0]);

@@ -242,7 +242,7 @@ impl ViewportRenderer {
                 let Some(mesh) = self
                     .resources
                     .mesh_store
-                    .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                    .get(item.mesh_id)
                 else {
                     continue;
                 };

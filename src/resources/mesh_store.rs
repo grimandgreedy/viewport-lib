@@ -11,7 +11,7 @@ use crate::resources::GpuMesh;
 pub struct MeshId(pub(crate) usize);
 
 impl MeshId {
-    /// Create a `MeshId` from a raw index (e.g. from `upload_mesh_data()` return value).
+    /// Create a `MeshId` from a raw index.
     pub fn from_index(index: usize) -> Self {
         Self(index)
     }

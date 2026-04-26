@@ -392,23 +392,21 @@ impl ViewportRenderer {
             .any(|i| i.two_sided || i.material.is_two_sided());
         let has_matcap_items = scene_items.iter().any(|i| i.material.matcap_id.is_some());
         let has_param_vis_items = scene_items.iter().any(|i| i.material.param_vis.is_some());
-        let has_normal_vis_items = scene_items.iter().any(|i| i.show_normals);
         if !self.use_instancing
             || frame.viewport.wireframe_mode
             || has_scalar_items
             || has_two_sided_items
             || has_matcap_items
             || has_param_vis_items
-            || has_normal_vis_items
         {
             for item in scene_items {
                 if resources
                     .mesh_store
-                    .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                    .get(item.mesh_id)
                     .is_none()
                 {
                     tracing::warn!(
-                        mesh_index = item.mesh_index,
+                        mesh_index = item.mesh_id.index(),
                         "scene item mesh_index invalid, skipping"
                     );
                     continue;
@@ -421,7 +419,7 @@ impl ViewportRenderer {
                         .or_else(|| {
                             resources
                                 .mesh_store
-                                .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                                .get(item.mesh_id)
                                 .and_then(|mesh| mesh.attribute_ranges.get(&attr_ref.name).copied())
                         })
                         .unwrap_or((0.0, 1.0));
@@ -463,19 +461,11 @@ impl ViewportRenderer {
                         crate::scene::material::BackfacePolicy::Identical => 1,
                         crate::scene::material::BackfacePolicy::DifferentColor(_) => 2,
                         crate::scene::material::BackfacePolicy::Tint(_) => 3,
-                        crate::scene::material::BackfacePolicy::Pattern { pattern, .. } => {
-                            4 + pattern as u32
-                        }
+                        crate::scene::material::BackfacePolicy::Pattern { .. } => 4,
                     },
                     backface_color: match m.backface_policy {
                         crate::scene::material::BackfacePolicy::DifferentColor(c) => {
                             [c[0], c[1], c[2], 1.0]
-                        }
-                        crate::scene::material::BackfacePolicy::Tint(factor) => {
-                            [factor, 0.0, 0.0, 1.0]
-                        }
-                        crate::scene::material::BackfacePolicy::Pattern { color, .. } => {
-                            [color[0], color[1], color[2], 1.0]
                         }
                         _ => [0.0; 4],
                     },
@@ -516,7 +506,7 @@ impl ViewportRenderer {
                 {
                     let mesh = resources
                         .mesh_store
-                        .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                        .get(item.mesh_id)
                         .unwrap();
                     queue.write_buffer(
                         &mesh.object_uniform_buf,
@@ -533,7 +523,7 @@ impl ViewportRenderer {
                 // Rebuild the object bind group if material/attribute/LUT/matcap changed.
                 resources.update_mesh_texture_bind_group(
                     device,
-                    item.mesh_index,
+                    item.mesh_id,
                     item.material.texture_id,
                     item.material.normal_map_id,
                     item.material.ao_map_id,
@@ -568,14 +558,14 @@ impl ViewportRenderer {
                             && item.material.param_vis.is_none()
                             && resources
                                 .mesh_store
-                                .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                                .get(item.mesh_id)
                                 .is_some()
                     })
                     .collect();
 
                 sorted_items.sort_unstable_by_key(|item| {
                     (
-                        item.mesh_index,
+                        item.mesh_id.index(),
                         item.material.texture_id,
                         item.material.normal_map_id,
                         item.material.ao_map_id,
@@ -592,7 +582,7 @@ impl ViewportRenderer {
                         let key_changed = !at_end && {
                             let a = sorted_items[batch_start];
                             let b = sorted_items[i];
-                            a.mesh_index != b.mesh_index
+                            a.mesh_id != b.mesh_id
                                 || a.material.texture_id != b.material.texture_id
                                 || a.material.normal_map_id != b.material.normal_map_id
                                 || a.material.ao_map_id != b.material.ao_map_id
@@ -630,7 +620,7 @@ impl ViewportRenderer {
                             }
 
                             instanced_batches.push(InstancedBatch {
-                                mesh_index: rep.mesh_index,
+                                mesh_id: rep.mesh_id,
                                 texture_id: rep.material.texture_id,
                                 normal_map_id: rep.material.normal_map_id,
                                 ao_map_id: rep.material.ao_map_id,
@@ -848,7 +838,7 @@ impl ViewportRenderer {
                 for batch in &self.instanced_batches {
                     if let Some(mesh) = resources
                         .mesh_store
-                        .get(crate::resources::mesh_store::MeshId(batch.mesh_index))
+                        .get(batch.mesh_id)
                     {
                         draw_calls += 1;
                         triangles += (mesh.index_count / 3) as u64 * batch.instance_count as u64;
@@ -861,7 +851,7 @@ impl ViewportRenderer {
                     }
                     if let Some(mesh) = resources
                         .mesh_store
-                        .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                        .get(item.mesh_id)
                     {
                         draw_calls += 1;
                         triangles += (mesh.index_count / 3) as u64;
@@ -959,7 +949,7 @@ impl ViewportRenderer {
                                 }
                                 let Some(mesh) = resources
                                     .mesh_store
-                                    .get(crate::resources::mesh_store::MeshId(batch.mesh_index))
+                                    .get(batch.mesh_id)
                                 else {
                                     continue;
                                 };
@@ -1017,7 +1007,7 @@ impl ViewportRenderer {
                             }
                             let Some(mesh) = resources
                                 .mesh_store
-                                .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                                .get(item.mesh_id)
                             else {
                                 continue;
                             };
@@ -1338,7 +1328,7 @@ impl ViewportRenderer {
                     }],
                 });
                 outline_object_buffers.push(OutlineObjectBuffers {
-                    mesh_index: item.mesh_index,
+                    mesh_id: item.mesh_id,
                     two_sided: item.two_sided || item.material.is_two_sided(),
                     _mask_uniform_buf: buf,
                     mask_bind_group: bg,
@@ -1347,7 +1337,7 @@ impl ViewportRenderer {
         }
 
         // X-ray buffers for selected objects.
-        let mut xray_object_buffers: Vec<(usize, wgpu::Buffer, wgpu::BindGroup)> = Vec::new();
+        let mut xray_object_buffers: Vec<(crate::resources::mesh_store::MeshId, wgpu::Buffer, wgpu::BindGroup)> = Vec::new();
         if frame.interaction.xray_selected {
             let resources = &self.resources;
             for item in scene_items {
@@ -1375,7 +1365,7 @@ impl ViewportRenderer {
                         resource: buf.as_entire_binding(),
                     }],
                 });
-                xray_object_buffers.push((item.mesh_index, buf, bg));
+                xray_object_buffers.push((item.mesh_id, buf, bg));
             }
         }
 
@@ -1502,7 +1492,7 @@ impl ViewportRenderer {
                         let Some(mesh) = self
                             .resources
                             .mesh_store
-                            .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                            .get(item.mesh_id)
                         else {
                             continue;
                         };
@@ -1715,7 +1705,7 @@ impl ViewportRenderer {
                     let Some(mesh) = self
                         .resources
                         .mesh_store
-                        .get(crate::resources::mesh_store::MeshId(outlined.mesh_index))
+                        .get(outlined.mesh_id)
                     else {
                         continue;
                     };

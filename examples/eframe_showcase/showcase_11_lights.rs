@@ -5,7 +5,7 @@
 
 use crate::App;
 use crate::geometry::make_box_with_uvs;
-use viewport_lib::{Material, MeshId, ViewportRenderer, scene::Scene};
+use viewport_lib::{Material, ViewportRenderer, scene::Scene};
 
 impl App {
     /// Build the scene for Showcase 11 (Lights demo).
@@ -14,11 +14,10 @@ impl App {
 
         // Ground plane : thin slab, Z-up.
         let ground_mesh = make_box_with_uvs(16.0, 16.0, 0.1);
-        let ground_idx = renderer
+        let ground_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &ground_mesh)
             .expect("lights ground mesh");
-        let ground_id = MeshId::from_index(ground_idx);
         self.lights_scene.add_named(
             "Ground",
             Some(ground_id),
@@ -32,11 +31,10 @@ impl App {
 
         // 3×3 grid of spheres.
         let sphere_mesh = viewport_lib::primitives::sphere(0.6, 32, 16);
-        let sphere_idx = renderer
+        let sphere_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere_mesh)
             .expect("lights sphere mesh");
-        let sphere_id = MeshId::from_index(sphere_idx);
 
         for row in 0..3i32 {
             for col in 0..3i32 {

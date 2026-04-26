@@ -9,9 +9,9 @@ mod viewport_callback;
 
 use eframe::egui;
 use viewport_lib::{
-    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, Material, OrbitCameraController,
-    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer,
-    primitives,
+    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, Material, MeshId,
+    OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent,
+    ViewportRenderer, primitives,
 };
 
 fn main() -> eframe::Result {
@@ -77,9 +77,9 @@ fn main() -> eframe::Result {
             let cx = [-5.25f32, -1.75, 1.75, 5.25];
             let rz = [-7.0f32, -3.5, 0.0, 3.5, 7.0];
 
-            let mut item = |mesh_index, x, z, color: [f32; 3]| {
+            let mut item = |mesh_id: MeshId, x, z, color: [f32; 3]| {
                 let mut s = SceneRenderItem::default();
-                s.mesh_index = mesh_index;
+                s.mesh_id = mesh_id;
                 s.model =
                     glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, z)).to_cols_array_2d();
                 s.material = Material::from_color(color);

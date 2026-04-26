@@ -270,7 +270,7 @@ fn main() -> eframe::Result {
                 scalar_bar_anchor: viewport_lib::ScalarBarAnchor::BottomRight,
                 scalar_bar_orientation: viewport_lib::ScalarBarOrientation::Vertical,
                 scalar_node_ids: [0; 3],
-                scalar_mesh_indices: [0; 3],
+                scalar_mesh_indices: [MeshId::from_index(0); 3],
                 scalar_pick_positions: [Vec::new(), Vec::new(), Vec::new()],
                 scalar_pick_indices: [Vec::new(), Vec::new(), Vec::new()],
                 scalar_values: [Vec::new(), Vec::new(), Vec::new()],
@@ -329,7 +329,7 @@ fn main() -> eframe::Result {
                 mv_transforms_snapshot: HashMap::new(),
                 mv_left_held: false,
                 iso_scene: Scene::new(),
-                iso_mesh_index: 0,
+                iso_mesh_index: MeshId::from_index(0),
                 iso_positions: Vec::new(),
                 iso_indices: Vec::new(),
                 iso_scalars: Vec::new(),
@@ -420,7 +420,7 @@ fn main() -> eframe::Result {
                 texture_scene: Scene::new(),
                 texture_built: false,
                 texture_plane_node: 0,
-                face_mesh_indices: [0; 3],
+                face_mesh_indices: [MeshId::from_index(0); 3],
                 face_node_ids: [0; 3],
                 face_colormap: BuiltinColormap::Viridis,
                 face_opacity: 1.0,
@@ -449,7 +449,7 @@ fn main() -> eframe::Result {
                 sv_scale: 0.15,
                 sv_density: 1.0,
                 sv_glyph_density: -1.0,
-                sv_mesh_index: [0; 3],
+                sv_mesh_index: [MeshId::from_index(0); 3],
                 sv_positions: [Vec::new(), Vec::new(), Vec::new()],
                 sv_normals: [Vec::new(), Vec::new(), Vec::new()],
                 sv_tangents: [None, None, None],
@@ -460,8 +460,8 @@ fn main() -> eframe::Result {
 
                 vm_built: false,
                 vm_mode: showcase_26_volume_mesh::VmMode::Hex,
-                vm_tet_index: 0,
-                vm_hex_index: 0,
+                vm_tet_index: MeshId::from_index(0),
+                vm_hex_index: MeshId::from_index(0),
                 vm_colormap: BuiltinColormap::Viridis,
                 vm_field: showcase_26_volume_mesh::VmField::Latitude,
 
@@ -566,7 +566,7 @@ pub(crate) struct App {
     show_keybinds: bool,
 
     // --- Showcase 1 ---
-    mesh_indices: Vec<usize>,
+    mesh_indices: Vec<MeshId>,
     use_point_light: bool,
 
     // --- Showcase 2 ---
@@ -672,7 +672,7 @@ pub(crate) struct App {
     /// Stable node IDs for the scalar-field objects (sphere, wave grid, box).
     pub(crate) scalar_node_ids: [NodeId; 3],
     /// Mesh indices for the three scalar-field objects (sphere, wave grid, box).
-    pub(crate) scalar_mesh_indices: [usize; 3],
+    pub(crate) scalar_mesh_indices: [MeshId; 3],
     /// CPU-side triangle positions for picking each scalar-field object.
     pub(crate) scalar_pick_positions: [Vec<[f32; 3]>; 3],
     /// CPU-side triangle indices for picking each scalar-field object.
@@ -699,7 +699,7 @@ pub(crate) struct App {
 
     // --- Showcase 14 ---
     pub(crate) iso_scene: Scene,
-    pub(crate) iso_mesh_index: usize,
+    pub(crate) iso_mesh_index: MeshId,
     /// CPU-side positions for IsolineItem re-submission.
     pub(crate) iso_positions: Vec<[f32; 3]>,
     /// CPU-side indices for IsolineItem re-submission.
@@ -752,7 +752,7 @@ pub(crate) struct App {
     // --- Showcase 17 ---
     pub(crate) vol_built: bool,
     pub(crate) vol_volume_id: Option<VolumeId>,
-    pub(crate) vol_iso_mesh_index: Option<usize>,
+    pub(crate) vol_iso_mesh_index: Option<MeshId>,
     /// CPU-side field kept for re-extraction on isovalue change.
     pub(crate) vol_field: VolumeData,
     vol_mode: showcase_17_volume::VolumeMode,
@@ -830,7 +830,7 @@ pub(crate) struct App {
     sv_density: f32,
     sv_glyph_density: f32,
     /// Mesh upload indices: [sphere, torus, plane].
-    pub(crate) sv_mesh_index: [usize; 3],
+    pub(crate) sv_mesh_index: [MeshId; 3],
     /// CPU-side positions for each mesh.
     pub(crate) sv_positions: [Vec<[f32; 3]>; 3],
     /// CPU-side normals for each mesh.
@@ -849,8 +849,8 @@ pub(crate) struct App {
     // --- Showcase 26 ---
     pub(crate) vm_built: bool,
     vm_mode: showcase_26_volume_mesh::VmMode,
-    vm_tet_index: usize,
-    vm_hex_index: usize,
+    vm_tet_index: MeshId,
+    vm_hex_index: MeshId,
     vm_colormap: BuiltinColormap,
     vm_field: showcase_26_volume_mesh::VmField,
 
@@ -861,7 +861,7 @@ pub(crate) struct App {
     aux_img_scale: f32,
 
     /// Mesh upload indices for the three face-attribute spheres.
-    pub(crate) face_mesh_indices: [usize; 3],
+    pub(crate) face_mesh_indices: [MeshId; 3],
     /// Node IDs for the three face-attribute spheres.
     pub(crate) face_node_ids: [NodeId; 3],
     face_colormap: BuiltinColormap,
@@ -2721,10 +2721,10 @@ impl App {
                     .mesh_indices
                     .iter()
                     .zip(&positions)
-                    .map(|(&mesh_index, pos)| {
+                    .map(|(&mesh_id, pos)| {
                         let model = glam::Mat4::from_translation(glam::Vec3::from(*pos));
                         let mut item = SceneRenderItem::default();
-                        item.mesh_index = mesh_index;
+                        item.mesh_id = mesh_id;
                         item.model = model.to_cols_array_2d();
                         item
                     })
@@ -3578,7 +3578,7 @@ impl App {
                 let mut mesh_lookup = std::collections::HashMap::new();
                 for i in 0..self.scalar_mesh_indices.len() {
                     mesh_lookup.insert(
-                        self.scalar_mesh_indices[i] as u64,
+                        self.scalar_mesh_indices[i].index() as u64,
                         (
                             self.scalar_pick_positions[i].clone(),
                             self.scalar_pick_indices[i].clone(),
@@ -4053,7 +4053,7 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &self.box_mesh_data)
             .expect("box mesh upload");
-        MeshId::from_index(idx)
+        idx
     }
 }
 

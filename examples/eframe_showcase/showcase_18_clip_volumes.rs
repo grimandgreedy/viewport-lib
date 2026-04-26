@@ -18,7 +18,7 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    ClipAxis, ClipObject, ClipShape, GizmoMode, Material, MeshId, ViewportRenderer,
+    ClipAxis, ClipObject, ClipShape, GizmoMode, Material, ViewportRenderer,
     plane_from_axis_preset, scene::Scene,
 };
 
@@ -46,11 +46,10 @@ impl App {
 
         // Dense sphere : many vertices make the clip cross-section visually rich.
         let sphere_mesh = viewport_lib::primitives::sphere(3.0, 48, 24);
-        let sphere_idx = renderer
+        let sphere_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere_mesh)
             .expect("clipvol sphere mesh");
-        let sphere_id = MeshId::from_index(sphere_idx);
         self.clipvol_scene.add_named(
             "Sphere",
             Some(sphere_id),
@@ -65,11 +64,10 @@ impl App {
 
         // Ground plane.
         let ground_mesh = viewport_lib::primitives::plane(14.0, 14.0);
-        let ground_idx = renderer
+        let ground_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &ground_mesh)
             .expect("clipvol ground mesh");
-        let ground_id = MeshId::from_index(ground_idx);
         self.clipvol_scene.add_named(
             "Ground",
             Some(ground_id),

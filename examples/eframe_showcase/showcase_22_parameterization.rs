@@ -57,12 +57,10 @@ impl App {
         let plane_data = viewport_lib::primitives::plane(2.8, 2.8);
 
         let upload_mesh = |renderer: &mut ViewportRenderer, data: &MeshData| -> MeshId {
-            MeshId::from_index(
-                renderer
-                    .resources_mut()
-                    .upload_mesh_data(&self.device, data)
-                    .expect("param-vis mesh upload"),
-            )
+            renderer
+                .resources_mut()
+                .upload_mesh_data(&self.device, data)
+                .expect("param-vis mesh upload")
         };
 
         let scale = self.param_vis_scale;

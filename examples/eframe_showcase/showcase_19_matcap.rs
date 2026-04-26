@@ -8,7 +8,7 @@
 use crate::App;
 use crate::geometry::make_uv_sphere;
 use eframe::egui;
-use viewport_lib::{BuiltinMatcap, Material, MeshId, ViewportRenderer, scene::Scene};
+use viewport_lib::{BuiltinMatcap, Material, ViewportRenderer, scene::Scene};
 
 /// All eight built-in presets with their display name and blendable flag.
 pub(crate) const BUILTIN_PRESETS: [(BuiltinMatcap, &str, bool); 8] = [
@@ -38,12 +38,10 @@ impl App {
         // Each sphere needs its own GpuMesh so it gets independent GPU state.
         let sphere = make_uv_sphere(48, 24, 1.0);
         let upload_sphere = |renderer: &mut ViewportRenderer, device: &eframe::wgpu::Device| {
-            MeshId::from_index(
-                renderer
-                    .resources_mut()
-                    .upload_mesh_data(device, &sphere)
-                    .expect("matcap sphere mesh upload"),
-            )
+            renderer
+                .resources_mut()
+                .upload_mesh_data(device, &sphere)
+                .expect("matcap sphere mesh upload")
         };
 
         // Initialise built-ins before calling builtin_matcap_id.

@@ -46,7 +46,7 @@ impl App {
 
         let resources = renderer.resources();
         self.pick_accelerator = Some(PickAccelerator::build_from_scene(&self.perf_scene, |mid| {
-            resources.mesh(mid.index()).map(|m| m.aabb)
+            resources.mesh(mid).map(|m| m.aabb)
         }));
 
         self.perf_built = true;

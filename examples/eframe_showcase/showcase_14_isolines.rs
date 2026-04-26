@@ -7,7 +7,7 @@
 //! frame with the current slider/color/width settings : no re-upload needed.
 
 use crate::App;
-use viewport_lib::{AttributeData, Material, MeshData, MeshId, scene::Scene};
+use viewport_lib::{AttributeData, Material, MeshData, scene::Scene};
 
 impl App {
     /// Build the scene for Showcase 14 (Isolines demo).
@@ -22,12 +22,11 @@ impl App {
         self.iso_indices = mesh.indices.clone();
         self.iso_scalars = scalars;
 
-        let mesh_idx = renderer
+        let mesh_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &mesh)
             .expect("iso wave mesh");
-        let mesh_id = MeshId::from_index(mesh_idx);
-        self.iso_mesh_index = mesh_idx;
+        self.iso_mesh_index = mesh_id;
 
         self.iso_scene
             .add_named("Wave Grid", Some(mesh_id), glam::Mat4::IDENTITY, {

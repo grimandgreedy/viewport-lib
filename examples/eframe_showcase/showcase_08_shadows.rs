@@ -2,18 +2,17 @@
 
 use crate::App;
 use crate::geometry::{make_box_with_uvs, make_uv_sphere};
-use viewport_lib::{Material, MeshId, ViewportRenderer};
+use viewport_lib::{Material, ViewportRenderer};
 
 impl App {
     pub(crate) fn build_shadow_scene(&mut self, renderer: &mut ViewportRenderer) {
         self.shd_scene = viewport_lib::scene::Scene::new();
 
         let ground_mesh = make_box_with_uvs(20.0, 20.0, 0.2);
-        let ground_idx = renderer
+        let ground_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &ground_mesh)
             .expect("ground mesh upload");
-        let ground_id = MeshId::from_index(ground_idx);
         self.shd_scene.add_named(
             "Ground",
             Some(ground_id),
@@ -22,25 +21,22 @@ impl App {
         );
 
         let sphere_mesh = make_uv_sphere(24, 12, 0.5);
-        let sphere_idx = renderer
+        let sphere_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere_mesh)
             .expect("sphere mesh upload");
-        let sphere_id = MeshId::from_index(sphere_idx);
 
         let sphere_dense_mesh = make_uv_sphere(64, 32, 0.5);
-        let sphere_dense_idx = renderer
+        let sphere_dense_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere_dense_mesh)
             .expect("dense sphere mesh upload");
-        let sphere_dense_id = MeshId::from_index(sphere_dense_idx);
 
         let box_mesh = make_box_with_uvs(1.0, 1.0, 1.0);
-        let box_idx = renderer
+        let box_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &box_mesh)
             .expect("box mesh upload");
-        let box_id = MeshId::from_index(box_idx);
 
         let object_data: &[(&str, glam::Vec3, [f32; 3])] = &[
             (
@@ -81,11 +77,10 @@ impl App {
         }
 
         let pillar_mesh = make_box_with_uvs(0.4, 0.4, 3.0);
-        let pillar_idx = renderer
+        let pillar_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &pillar_mesh)
             .expect("pillar mesh upload");
-        let pillar_id = MeshId::from_index(pillar_idx);
         self.shd_scene.add_named(
             "Tall Pillar",
             Some(pillar_id),

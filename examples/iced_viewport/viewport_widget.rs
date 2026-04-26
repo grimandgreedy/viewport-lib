@@ -9,7 +9,7 @@ use iced::event::Event;
 use iced::widget::shader;
 use iced::{Element, Fill, Rectangle, mouse};
 use viewport_lib::{
-    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, Modifiers, MouseButton,
+    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, MeshId, Modifiers, MouseButton,
     OrbitCameraController, RenderCamera, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext,
     ViewportEvent, ViewportRenderer, primitives,
 };
@@ -82,7 +82,7 @@ struct CameraSnapshot {
 pub struct ViewportPipeline {
     renderer: ViewportRenderer,
     /// Track which object ids have been uploaded -> mesh_index.
-    uploaded: HashMap<u64, usize>,
+    uploaded: HashMap<u64, MeshId>,
     /// Current depth texture + view (recreated on resize).
     depth_view: wgpu::TextureView,
     depth_w: u32,
@@ -176,10 +176,10 @@ impl shader::Primitive for ViewportPrimitive {
             .objects
             .iter()
             .filter_map(|obj| {
-                let mesh_index = *pipeline.uploaded.get(&obj.id)?;
+                let mesh_id = *pipeline.uploaded.get(&obj.id)?;
                 let model = glam::Mat4::from_translation(glam::Vec3::from(obj.position));
                 let mut item = SceneRenderItem::default();
-                item.mesh_index = mesh_index;
+                item.mesh_id = mesh_id;
                 item.model = model.to_cols_array_2d();
                 Some(item)
             })
@@ -211,10 +211,10 @@ impl shader::Primitive for ViewportPrimitive {
             .objects
             .iter()
             .filter_map(|obj| {
-                let mesh_index = *pipeline.uploaded.get(&obj.id)?;
+                let mesh_id = *pipeline.uploaded.get(&obj.id)?;
                 let model = glam::Mat4::from_translation(glam::Vec3::from(obj.position));
                 let mut item = SceneRenderItem::default();
-                item.mesh_index = mesh_index;
+                item.mesh_id = mesh_id;
                 item.model = model.to_cols_array_2d();
                 Some(item)
             })

@@ -319,7 +319,7 @@ impl App {
             return vec![];
         }
 
-        let mesh_index = match self.vm_mode {
+        let mesh_id = match self.vm_mode {
             VmMode::Hex => self.vm_hex_index,
             VmMode::Tet => self.vm_tet_index,
         };
@@ -356,7 +356,7 @@ impl App {
         };
 
         let mut item = SceneRenderItem::default();
-        item.mesh_index = mesh_index;
+        item.mesh_id = mesh_id;
         item.active_attribute = active_attribute;
         item.colormap_id = colormap_id;
         vec![item]

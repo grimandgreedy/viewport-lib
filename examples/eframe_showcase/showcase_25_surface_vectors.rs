@@ -191,13 +191,13 @@ impl App {
 
     /// Mesh surface render item for the active sub-mode.
     pub(crate) fn sv_surface_item(&self) -> SceneRenderItem {
-        let mesh_idx = match self.sv_mode {
+        let mesh_id = match self.sv_mode {
             SvMode::VertexIntrinsic => self.sv_mesh_index[0],
             SvMode::FaceIntrinsic => self.sv_mesh_index[1],
             SvMode::EdgeOneForm => self.sv_mesh_index[2],
         };
         let mut item = SceneRenderItem::default();
-        item.mesh_index = mesh_idx;
+        item.mesh_id = mesh_id;
         item
     }
 

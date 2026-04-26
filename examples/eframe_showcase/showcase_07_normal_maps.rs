@@ -10,7 +10,7 @@ use crate::geometry::{
     make_box_with_uvs, make_brick_ao_map, make_brick_normal_map, make_tile_ao_map,
     make_tile_normal_map, make_uv_sphere,
 };
-use viewport_lib::{BackfacePolicy, Material, MeshId, ViewportRenderer, scene::Scene};
+use viewport_lib::{BackfacePolicy, Material, ViewportRenderer, scene::Scene};
 
 impl App {
     /// Build Showcase 7: Normal Maps + AO Maps demo.
@@ -45,34 +45,30 @@ impl App {
 
         // --- Meshes ---
         let sphere = make_uv_sphere(48, 24, 1.0);
-        let sphere_idx = renderer
+        let sphere_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere)
             .expect("sphere mesh upload");
-        let sphere_id = MeshId::from_index(sphere_idx);
 
         let cube_mesh = make_box_with_uvs(1.6, 1.6, 1.6);
-        let cube_idx = renderer
+        let cube_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &cube_mesh)
             .expect("nm cube mesh upload");
-        let cube_id = MeshId::from_index(cube_idx);
 
         // Flat wall panel to show brick normal map on a flat surface.
         let wall_mesh = make_box_with_uvs(4.0, 0.3, 3.0);
-        let wall_idx = renderer
+        let wall_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &wall_mesh)
             .expect("wall mesh upload");
-        let wall_id = MeshId::from_index(wall_idx);
 
         // Ground plane with tile pattern.
         let ground_mesh = make_box_with_uvs(12.0, 12.0, 0.15);
-        let ground_idx = renderer
+        let ground_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &ground_mesh)
             .expect("ground mesh upload");
-        let ground_id = MeshId::from_index(ground_idx);
 
         // --- Scene objects ---
 
@@ -144,11 +140,10 @@ impl App {
         // uniform clobbering (two items sharing a mesh_index would overwrite
         // each other's model matrix and texture bindings in the uniform buffer).
         let plain_sphere = make_uv_sphere(48, 24, 1.0);
-        let plain_sphere_idx = renderer
+        let plain_sphere_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &plain_sphere)
             .expect("plain sphere mesh upload");
-        let plain_sphere_id = MeshId::from_index(plain_sphere_idx);
         self.nm_scene.add_named(
             "Sphere (No Maps)",
             Some(plain_sphere_id),

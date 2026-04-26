@@ -19,7 +19,7 @@ pub(super) const INSTANCING_THRESHOLD: usize = 1;
 /// A batch of instances sharing the same mesh and material textures, drawn in one call.
 #[derive(Debug, Clone)]
 pub(crate) struct InstancedBatch {
-    pub mesh_index: usize,
+    pub mesh_id: crate::resources::mesh_store::MeshId,
     pub texture_id: Option<u64>,
     pub normal_map_id: Option<u64>,
     pub ao_map_id: Option<u64>,
@@ -364,8 +364,8 @@ impl Default for LightingSettings {
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct SceneRenderItem {
-    /// Index into `ViewportGpuResources::meshes` for this object's GPU buffers.
-    pub mesh_index: usize,
+    /// `MeshId` of the uploaded GPU mesh for this object.
+    pub mesh_id: crate::resources::mesh_store::MeshId,
     /// World-space model matrix (Translation * Rotation * Scale).
     pub model: [[f32; 4]; 4],
     /// Whether this object is selected (drives orange tint in WGSL).
@@ -402,7 +402,7 @@ pub struct SceneRenderItem {
 impl Default for SceneRenderItem {
     fn default() -> Self {
         Self {
-            mesh_index: 0,
+            mesh_id: crate::resources::mesh_store::MeshId(0),
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             selected: false,
             visible: true,
@@ -997,8 +997,8 @@ pub enum ComputeFilterKind {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct ComputeFilterItem {
-    /// Index into `ViewportGpuResources` mesh store.
-    pub mesh_index: usize,
+    /// `MeshId` of the uploaded GPU mesh for this compute filter item.
+    pub mesh_id: crate::resources::mesh_store::MeshId,
     /// Which filter to apply.
     pub kind: ComputeFilterKind,
     /// Name of the scalar attribute buffer (for Threshold). Ignored for Clip.
@@ -1008,7 +1008,7 @@ pub struct ComputeFilterItem {
 impl Default for ComputeFilterItem {
     fn default() -> Self {
         Self {
-            mesh_index: 0,
+            mesh_id: crate::resources::mesh_store::MeshId(0),
             kind: ComputeFilterKind::Clip {
                 plane_normal: [0.0, 0.0, 1.0],
                 plane_dist: 0.0,
@@ -1691,7 +1691,7 @@ macro_rules! emit_draw_calls {
                                     || item.material.param_vis.is_some())
                                 && resources
                                     .mesh_store
-                                    .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                                    .get(item.mesh_id)
                                     .is_some()
                         })
                         .collect();
@@ -1713,7 +1713,7 @@ macro_rules! emit_draw_calls {
                         if let Some(ref pipeline) = resources.solid_instanced_pipeline {
                             render_pass.set_pipeline(pipeline);
                             for batch in &opaque_batches {
-                                let Some(mesh) = resources.mesh_store.get(crate::resources::mesh_store::MeshId(batch.mesh_index)) else { continue };
+                                let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
                                 let mat_key = (
                                     batch.texture_id.unwrap_or(u64::MAX),
                                     batch.normal_map_id.unwrap_or(u64::MAX),
@@ -1738,7 +1738,7 @@ macro_rules! emit_draw_calls {
                         if let Some(ref pipeline) = resources.transparent_instanced_pipeline {
                             render_pass.set_pipeline(pipeline);
                             for batch in &transparent_batches {
-                                let Some(mesh) = resources.mesh_store.get(crate::resources::mesh_store::MeshId(batch.mesh_index)) else { continue };
+                                let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
                                 let mat_key = (
                                     batch.texture_id.unwrap_or(u64::MAX),
                                     batch.normal_map_id.unwrap_or(u64::MAX),
@@ -1763,7 +1763,7 @@ macro_rules! emit_draw_calls {
                     if frame.viewport.wireframe_mode {
                         for item in scene_items {
                             if !item.visible { continue; }
-                            let Some(mesh) = resources.mesh_store.get(crate::resources::mesh_store::MeshId(item.mesh_index)) else { continue };
+                            let Some(mesh) = resources.mesh_store.get(item.mesh_id) else { continue };
                             render_pass.set_pipeline(&resources.wireframe_pipeline);
                             render_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
                             render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
@@ -1774,7 +1774,7 @@ macro_rules! emit_draw_calls {
                         for item in &excluded_items {
                             let Some(mesh) = resources
                                 .mesh_store
-                                .get(crate::resources::mesh_store::MeshId(item.mesh_index))
+                                .get(item.mesh_id)
                             else {
                                 continue;
                             };
@@ -1795,20 +1795,6 @@ macro_rules! emit_draw_calls {
                             render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                         }
                     }
-
-                    // Normal visualization lines for instanced items.
-                    for item in scene_items {
-                        if !item.visible || !item.show_normals { continue; }
-                        let Some(mesh) = resources.mesh_store.get(crate::resources::mesh_store::MeshId(item.mesh_index)) else { continue };
-                        if let Some(ref nl_buf) = mesh.normal_line_buffer {
-                            if mesh.normal_line_count > 0 {
-                                render_pass.set_pipeline(&resources.wireframe_pipeline);
-                                render_pass.set_bind_group(1, &mesh.normal_bind_group, &[]);
-                                render_pass.set_vertex_buffer(0, nl_buf.slice(..));
-                                render_pass.draw(0..mesh.normal_line_count, 0..1);
-                            }
-                        }
-                    }
             } else {
                 // --- Per-object draw path (original) ---
                 let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
@@ -1825,7 +1811,7 @@ macro_rules! emit_draw_calls {
                 let mut opaque: Vec<&SceneRenderItem> = Vec::new();
                 let mut transparent: Vec<&SceneRenderItem> = Vec::new();
                 for item in scene_items {
-                    if !item.visible || resources.mesh_store.get(crate::resources::mesh_store::MeshId(item.mesh_index)).is_none() {
+                    if !item.visible || resources.mesh_store.get(item.mesh_id).is_none() {
                         continue;
                     }
                     if item.material.opacity < 1.0 {
@@ -1840,7 +1826,7 @@ macro_rules! emit_draw_calls {
                 macro_rules! draw_item {
                     ($item:expr, $pipeline:expr) => {{
                         let item = $item;
-                        let mesh = resources.mesh_store.get(crate::resources::mesh_store::MeshId(item.mesh_index)).unwrap();
+                        let mesh = resources.mesh_store.get(item.mesh_id).unwrap();
                         render_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
 
                         // mesh.object_bind_group (group 1) already carries the object uniform
@@ -1872,7 +1858,7 @@ macro_rules! emit_draw_calls {
                             // Phase G: check for a compute-filtered index buffer override.
                             let filter_result = compute_filter_results
                                 .iter()
-                                .find(|r| r.mesh_index == item.mesh_index);
+                                .find(|r| r.mesh_id == item.mesh_id);
                             render_pass.set_pipeline($pipeline);
                             if let Some(fr) = filter_result {
                                 render_pass.set_index_buffer(
@@ -1992,8 +1978,8 @@ macro_rules! emit_draw_calls {
             if !slot.xray_object_buffers.is_empty() {
                 render_pass.set_pipeline(&resources.xray_pipeline);
                 render_pass.set_bind_group(0, camera_bg, &[]);
-                for (mesh_idx, _buf, bg) in &slot.xray_object_buffers {
-                    let Some(mesh) = resources.mesh_store.get(crate::resources::mesh_store::MeshId(*mesh_idx)) else { continue };
+                for (mesh_id, _buf, bg) in &slot.xray_object_buffers {
+                    let Some(mesh) = resources.mesh_store.get(*mesh_id) else { continue };
                     render_pass.set_bind_group(1, bg, &[]);
                     render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                     render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);

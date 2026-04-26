@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use viewport_lib::{ButtonState, ScrollUnits};
 use viewport_lib::{
-    Camera, CameraFrame, FrameData, LightingSettings, OrbitCameraController, SceneFrame,
+    Camera, CameraFrame, FrameData, LightingSettings, MeshId, OrbitCameraController, SceneFrame,
     SceneRenderItem, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
 };
 use winit::application::ApplicationHandler;
@@ -48,7 +48,7 @@ struct AppState {
 
     renderer: ViewportRenderer,
     camera: Camera,
-    mesh_index: usize,
+    mesh_id: MeshId,
     controller: OrbitCameraController,
 }
 
@@ -135,7 +135,7 @@ impl ApplicationHandler for App {
 
         let mut renderer = ViewportRenderer::new(&device, format);
 
-        let mesh_index = renderer
+        let mesh_id = renderer
             .resources_mut()
             .upload_mesh_data(&device, &primitives::cube(1.0))
             .expect("built-in mesh");
@@ -164,7 +164,7 @@ impl ApplicationHandler for App {
             depth_view,
             renderer,
             camera,
-            mesh_index,
+            mesh_id,
             controller,
         });
     }
@@ -305,7 +305,7 @@ impl ApplicationHandler for App {
                     .iter()
                     .map(|&pos| {
                         let mut item = SceneRenderItem::default();
-                        item.mesh_index = state.mesh_index;
+                        item.mesh_id = state.mesh_id;
                         item.model =
                             glam::Mat4::from_translation(glam::Vec3::from(pos)).to_cols_array_2d();
                         item

@@ -210,9 +210,9 @@ impl App {
 
     /// Build a `SceneRenderItem` for the isosurface mesh.
     pub(crate) fn make_iso_surface_item(&self) -> Option<viewport_lib::SceneRenderItem> {
-        let mesh_index = self.vol_iso_mesh_index?;
+        let mesh_id = self.vol_iso_mesh_index?;
         let mut item = viewport_lib::SceneRenderItem::default();
-        item.mesh_index = mesh_index;
+        item.mesh_id = mesh_id;
         item.material = self.vol_iso_material;
         // Slight transparency in Both mode so the volume is visible through the surface.
         if self.vol_mode == VolumeMode::Both {
