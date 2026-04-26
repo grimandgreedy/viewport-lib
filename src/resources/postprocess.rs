@@ -3448,7 +3448,23 @@ impl ViewportGpuResources {
         });
         let fxaa_view = fxaa_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Outline offscreen
+        // Outline offscreen : mask (R8), color (target_format), and depth.
+        let outline_mask_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("outline_mask_texture"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let outline_mask_view =
+            outline_mask_tex.create_view(&wgpu::TextureViewDescriptor::default());
         let outline_color_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("outline_color_texture"),
             size: wgpu::Extent3d {
@@ -3818,6 +3834,33 @@ impl ViewportGpuResources {
             ],
         });
 
+        // Edge-detection bind group : reads the R8 mask, writes outline ring.
+        let outline_edge_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("outline_edge_uniform_buf"),
+            size: std::mem::size_of::<OutlineEdgeUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let outline_edge_bgl = &self.outline_edge_bgl;
+        let outline_edge_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("outline_edge_bg"),
+            layout: outline_edge_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&outline_mask_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(outline_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: outline_edge_uniform_buf.as_entire_binding(),
+                },
+            ],
+        });
+
         // OIT composite bind group placeholder (created lazily via ensure_viewport_oit)
         // We create a dummy one using placeholders so the bind group is always valid.
         // It will be rebuilt on first ensure_viewport_oit call.
@@ -3964,10 +4007,14 @@ impl ViewportGpuResources {
             oit_reveal_view: None,
             oit_composite_bind_group: None,
             oit_size: [0, 0],
+            outline_mask_texture: outline_mask_tex,
+            outline_mask_view,
             outline_color_texture: outline_color_tex,
             outline_color_view,
             outline_depth_texture: outline_depth_tex,
             outline_depth_view,
+            outline_edge_bind_group,
+            outline_edge_uniform_buf,
             outline_composite_bind_group,
             tone_map_bind_group,
             bloom_threshold_bg,

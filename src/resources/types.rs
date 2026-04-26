@@ -580,10 +580,19 @@ pub(crate) struct OutlineUniform {
 pub(crate) struct OutlineObjectBuffers {
     pub mesh_index: usize,
     pub two_sided: bool,
-    pub _stencil_uniform_buf: wgpu::Buffer,
-    pub stencil_bind_group: wgpu::BindGroup,
-    pub _outline_uniform_buf: wgpu::Buffer,
-    pub outline_bind_group: wgpu::BindGroup,
+    pub _mask_uniform_buf: wgpu::Buffer,
+    pub mask_bind_group: wgpu::BindGroup,
+}
+
+/// Uniform for the fullscreen outline edge-detection pass (32 bytes).
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct OutlineEdgeUniform {
+    pub(crate) color: [f32; 4],      // 16 bytes
+    pub(crate) radius: f32,          //  4 bytes
+    pub(crate) viewport_w: f32,      //  4 bytes
+    pub(crate) viewport_h: f32,      //  4 bytes
+    pub(crate) _pad: f32,            //  4 bytes
 }
 
 /// Tone mapping uniform.
@@ -995,10 +1004,18 @@ pub(crate) struct ViewportHdrState {
     pub oit_size: [u32; 2],
 
     // --- Outline offscreen (used by the outline prepare pass) ---
+    /// R8Unorm mask: selected objects rendered as white on black.
+    pub outline_mask_texture: wgpu::Texture,
+    pub outline_mask_view: wgpu::TextureView,
+    /// RGBA output of the edge-detection pass (composited onto the main target).
     pub outline_color_texture: wgpu::Texture,
     pub outline_color_view: wgpu::TextureView,
     pub outline_depth_texture: wgpu::Texture,
     pub outline_depth_view: wgpu::TextureView,
+    /// Bind group for the edge-detection pass (reads mask, writes to color).
+    pub outline_edge_bind_group: wgpu::BindGroup,
+    /// Uniform buffer for the edge-detection pass parameters.
+    pub outline_edge_uniform_buf: wgpu::Buffer,
     pub outline_composite_bind_group: wgpu::BindGroup,
 
     // --- Bind groups (rebuilt when viewport dimensions change) ---
@@ -1188,14 +1205,16 @@ pub struct ViewportGpuResources {
     pub(crate) clip_volume_uniform_buf: wgpu::Buffer,
 
     // --- Outline & x-ray resources ---
-    /// Bind group layout for OutlineUniform (group 1 for outline/xray pipelines).
+    /// Bind group layout for OutlineUniform (group 1 for outline mask/xray pipelines).
     pub(crate) outline_bind_group_layout: wgpu::BindGroupLayout,
-    /// Stencil-write pipeline: draws selected objects writing stencil=1 (depth pass).
-    pub(crate) stencil_write_pipeline: wgpu::RenderPipeline,
-    /// Two-sided stencil-write pipeline for selected meshes rendered without face culling.
-    pub(crate) stencil_write_two_sided_pipeline: wgpu::RenderPipeline,
-    /// Outline pipeline: draws expanded silhouette where stencil != 1.
-    pub(crate) outline_pipeline: wgpu::RenderPipeline,
+    /// Mask-write pipeline: renders selected objects as r=1.0 to an R8 mask (backface culled).
+    pub(crate) outline_mask_pipeline: wgpu::RenderPipeline,
+    /// Two-sided mask-write pipeline for selected meshes rendered without face culling.
+    pub(crate) outline_mask_two_sided_pipeline: wgpu::RenderPipeline,
+    /// Fullscreen edge-detection pipeline: reads mask, outputs anti-aliased outline ring.
+    pub(crate) outline_edge_pipeline: wgpu::RenderPipeline,
+    /// Bind group layout for the edge-detection pass (mask texture + sampler + uniform).
+    pub(crate) outline_edge_bgl: wgpu::BindGroupLayout,
     /// X-ray pipeline: draws selected objects through occluders (depth_compare Always).
     pub(crate) xray_pipeline: wgpu::RenderPipeline,
     // --- Outline offscreen resources (lazily created) ---

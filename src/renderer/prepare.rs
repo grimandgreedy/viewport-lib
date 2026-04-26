@@ -1296,7 +1296,7 @@ impl ViewportRenderer {
 
         let vp_idx = frame.camera.viewport_index;
 
-        // Outline buffers for selected objects.
+        // Outline mask buffers for selected objects (one per selected object).
         let mut outline_object_buffers: Vec<OutlineObjectBuffers> = Vec::new();
         if frame.interaction.outline_selected {
             let resources = &self.resources;
@@ -1304,125 +1304,21 @@ impl ViewportRenderer {
                 if !item.visible || !item.selected {
                     continue;
                 }
-                let m = &item.material;
-                let stencil_uniform = ObjectUniform {
-                    model: item.model,
-                    color: [m.base_color[0], m.base_color[1], m.base_color[2], m.opacity],
-                    selected: 1,
-                    wireframe: 0,
-                    ambient: m.ambient,
-                    diffuse: m.diffuse,
-                    specular: m.specular,
-                    shininess: m.shininess,
-                    has_texture: if m.texture_id.is_some() { 1 } else { 0 },
-                    use_pbr: if m.use_pbr { 1 } else { 0 },
-                    metallic: m.metallic,
-                    roughness: m.roughness,
-                    has_normal_map: if m.normal_map_id.is_some() { 1 } else { 0 },
-                    has_ao_map: if m.ao_map_id.is_some() { 1 } else { 0 },
-                    has_attribute: 0,
-                    scalar_min: 0.0,
-                    scalar_max: 1.0,
-                    _pad_scalar: 0,
-                    nan_color: [0.0; 4],
-                    use_nan_color: 0,
-                    use_matcap: 0,
-                    matcap_blendable: 0,
-                    _pad2: 0,
-                    use_face_color: 0,
-                    uv_vis_mode: 0,
-                    uv_vis_scale: 8.0,
-                    backface_policy: 0,
-                    backface_color: [0.0; 4],
-                };
-                let stencil_buf = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("outline_stencil_object_uniform_buf"),
-                    size: std::mem::size_of::<ObjectUniform>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                queue.write_buffer(&stencil_buf, 0, bytemuck::cast_slice(&[stencil_uniform]));
-
-                let albedo_view = match m.texture_id {
-                    Some(id) if (id as usize) < resources.textures.len() => {
-                        &resources.textures[id as usize].view
-                    }
-                    _ => &resources.fallback_texture.view,
-                };
-                let normal_view = match m.normal_map_id {
-                    Some(id) if (id as usize) < resources.textures.len() => {
-                        &resources.textures[id as usize].view
-                    }
-                    _ => &resources.fallback_normal_map_view,
-                };
-                let ao_view = match m.ao_map_id {
-                    Some(id) if (id as usize) < resources.textures.len() => {
-                        &resources.textures[id as usize].view
-                    }
-                    _ => &resources.fallback_ao_map_view,
-                };
-                let stencil_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("outline_stencil_object_bg"),
-                    layout: &resources.object_bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: stencil_buf.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(albedo_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::Sampler(&resources.material_sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: wgpu::BindingResource::TextureView(normal_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 4,
-                            resource: wgpu::BindingResource::TextureView(ao_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 5,
-                            resource: wgpu::BindingResource::TextureView(
-                                &resources.fallback_lut_view,
-                            ),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 6,
-                            resource: resources.fallback_scalar_buf.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 7,
-                            resource: wgpu::BindingResource::TextureView(
-                                &resources.fallback_texture.view,
-                            ),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 8,
-                            resource: resources.fallback_face_color_buf.as_entire_binding(),
-                        },
-                    ],
-                });
-
                 let uniform = OutlineUniform {
                     model: item.model,
-                    color: frame.interaction.outline_color,
-                    pixel_offset: frame.interaction.outline_width_px,
+                    color: [0.0; 4], // unused by mask shader
+                    pixel_offset: 0.0,
                     _pad: [0.0; 3],
                 };
                 let buf = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("outline_uniform_buf"),
+                    label: Some("outline_mask_uniform_buf"),
                     size: std::mem::size_of::<OutlineUniform>() as u64,
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
                 queue.write_buffer(&buf, 0, bytemuck::cast_slice(&[uniform]));
                 let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("outline_object_bg"),
+                    label: Some("outline_mask_object_bg"),
                     layout: &resources.outline_bind_group_layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 0,
@@ -1432,10 +1328,8 @@ impl ViewportRenderer {
                 outline_object_buffers.push(OutlineObjectBuffers {
                     mesh_index: item.mesh_index,
                     two_sided: item.two_sided || item.material.is_two_sided(),
-                    _stencil_uniform_buf: stencil_buf,
-                    stencil_bind_group: stencil_bg,
-                    _outline_uniform_buf: buf,
-                    outline_bind_group: bg,
+                    _mask_uniform_buf: buf,
+                    mask_bind_group: bg,
                 });
             }
         }
@@ -1707,10 +1601,14 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // Outline offscreen pass : render stencil-based outline ring into a
-        // dedicated RGBA texture so the paint() path can composite it later.
+        // Outline offscreen pass : screen-space edge detection.
         //
-        // Uses the per-viewport camera bind group and per-viewport HDR views.
+        // 1. Render selected objects to an R8 mask texture (white on black).
+        // 2. Run a fullscreen edge-detection pass reading the mask and writing
+        //    an anti-aliased outline ring to the outline color texture.
+        //
+        // The outline color texture is later composited onto the main target
+        // by the composite pass in paint()/render().
         // ------------------------------------------------------------------
         if frame.interaction.outline_selected
             && !self.viewport_slots[vp_idx]
@@ -1720,7 +1618,7 @@ impl ViewportRenderer {
             let w = frame.camera.viewport_size[0] as u32;
             let h = frame.camera.viewport_size[1] as u32;
 
-            // Ensure per-viewport HDR state exists (provides outline color + depth views).
+            // Ensure per-viewport HDR state exists (provides outline textures).
             self.ensure_viewport_hdr(
                 device,
                 queue,
@@ -1730,34 +1628,57 @@ impl ViewportRenderer {
                 frame.effects.post_process.ssaa_factor.max(1),
             );
 
-            // Extract raw pointers for slot fields needed inside the render pass
-            // alongside &self.resources borrows (borrow-checker trick: slot and resources
-            // are independent fields of self).
+            // Write edge-detection uniform (color, radius, viewport size).
+            {
+                let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+                let edge_uniform = OutlineEdgeUniform {
+                    color: frame.interaction.outline_color,
+                    radius: frame.interaction.outline_width_px,
+                    viewport_w: w as f32,
+                    viewport_h: h as f32,
+                    _pad: 0.0,
+                };
+                queue.write_buffer(
+                    &slot_hdr.outline_edge_uniform_buf,
+                    0,
+                    bytemuck::cast_slice(&[edge_uniform]),
+                );
+            }
+
+            // Extract raw pointers for slot fields needed inside the render
+            // passes alongside &self.resources borrows.
             let slot_ref = &self.viewport_slots[vp_idx];
-            let outlines_ptr = &slot_ref.outline_object_buffers as *const Vec<OutlineObjectBuffers>;
+            let outlines_ptr =
+                &slot_ref.outline_object_buffers as *const Vec<OutlineObjectBuffers>;
             let camera_bg_ptr = &slot_ref.camera_bind_group as *const wgpu::BindGroup;
             let slot_hdr = slot_ref.hdr.as_ref().unwrap();
+            let mask_view_ptr = &slot_hdr.outline_mask_view as *const wgpu::TextureView;
             let color_view_ptr = &slot_hdr.outline_color_view as *const wgpu::TextureView;
             let depth_view_ptr = &slot_hdr.outline_depth_view as *const wgpu::TextureView;
+            let edge_bg_ptr = &slot_hdr.outline_edge_bind_group as *const wgpu::BindGroup;
             // SAFETY: slot fields remain valid for the duration of this function;
             // no other code modifies these fields here.
-            let (outlines, camera_bg, color_view, depth_view) = unsafe {
+            let (outlines, camera_bg, mask_view, color_view, depth_view, edge_bg) = unsafe {
                 (
                     &*outlines_ptr,
                     &*camera_bg_ptr,
+                    &*mask_view_ptr,
                     &*color_view_ptr,
                     &*depth_view_ptr,
+                    &*edge_bg_ptr,
                 )
             };
 
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("outline_offscreen_encoder"),
             });
+
+            // Pass 1: render selected objects to R8 mask texture.
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("outline_offscreen_pass"),
+                    label: Some("outline_mask_pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: color_view,
+                        view: mask_view,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -1771,17 +1692,12 @@ impl ViewportRenderer {
                             load: wgpu::LoadOp::Clear(1.0),
                             store: wgpu::StoreOp::Discard,
                         }),
-                        stencil_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(0),
-                            store: wgpu::StoreOp::Discard,
-                        }),
+                        stencil_ops: None,
                     }),
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
 
-                // Pass 1: write stencil=1 for selected objects.
-                pass.set_stencil_reference(1);
                 pass.set_bind_group(0, camera_bg, &[]);
                 for outlined in outlines {
                     let Some(mesh) = self
@@ -1792,34 +1708,40 @@ impl ViewportRenderer {
                         continue;
                     };
                     let pipeline = if outlined.two_sided {
-                        &self.resources.stencil_write_two_sided_pipeline
+                        &self.resources.outline_mask_two_sided_pipeline
                     } else {
-                        &self.resources.stencil_write_pipeline
+                        &self.resources.outline_mask_pipeline
                     };
                     pass.set_pipeline(pipeline);
-                    pass.set_bind_group(1, &outlined.stencil_bind_group, &[]);
-                    pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                }
-
-                // Pass 2: draw expanded outline ring where stencil != 1.
-                pass.set_pipeline(&self.resources.outline_pipeline);
-                pass.set_stencil_reference(1);
-                for outlined in outlines {
-                    let Some(mesh) = self
-                        .resources
-                        .mesh_store
-                        .get(crate::resources::mesh_store::MeshId(outlined.mesh_index))
-                    else {
-                        continue;
-                    };
-                    pass.set_bind_group(1, &outlined.outline_bind_group, &[]);
+                    pass.set_bind_group(1, &outlined.mask_bind_group, &[]);
                     pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                     pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                 }
             }
+
+            // Pass 2: fullscreen edge detection (reads mask, writes color).
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("outline_edge_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: color_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&self.resources.outline_edge_pipeline);
+                pass.set_bind_group(0, edge_bg, &[]);
+                pass.draw(0..3, 0..1);
+            }
+
             queue.submit(std::iter::once(encoder.finish()));
         }
     }

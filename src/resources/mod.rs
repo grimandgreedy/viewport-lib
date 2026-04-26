@@ -31,8 +31,8 @@ pub use self::types::{
 };
 pub(crate) use self::types::{
     BloomUniform, ClipPlanesUniform, ContactShadowUniform, GlyphBaseMesh, GlyphGpuData,
-    GridUniform, GroundPlaneUniform, InstanceData, ObjectUniform, OutlineObjectBuffers,
-    OutlineUniform, OverlayUniform, PickInstance, SHADOW_ATLAS_SIZE, ShadowAtlasUniform,
-    SsaoUniform, StreamtubeGpuData, ToneMapUniform, ViewportHdrState,
+    GridUniform, GroundPlaneUniform, InstanceData, ObjectUniform, OutlineEdgeUniform,
+    OutlineObjectBuffers, OutlineUniform, OverlayUniform, PickInstance, SHADOW_ATLAS_SIZE,
+    ShadowAtlasUniform, SsaoUniform, StreamtubeGpuData, ToneMapUniform, ViewportHdrState,
 };
 pub use self::volume_mesh::{TET_SENTINEL, VolumeMeshData};

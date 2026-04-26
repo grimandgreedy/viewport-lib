@@ -1584,32 +1584,31 @@ impl ViewportGpuResources {
                 push_constant_ranges: &[],
             });
 
-        // Pass 1: render selected objects writing stencil=1 (same mesh shader, same layout).
-        // StencilState: compare=Always, pass_op=Replace -> writes ref(=1) on depth pass.
-        let stencil_write_face = wgpu::StencilFaceState {
-            compare: wgpu::CompareFunction::Always,
-            fail_op: wgpu::StencilOperation::Keep,
-            depth_fail_op: wgpu::StencilOperation::Keep,
-            pass_op: wgpu::StencilOperation::Replace,
-        };
-        let stencil_write_pipeline =
+        // Mask-write pipeline: renders selected objects as r=1.0 to an R8 mask
+        // texture with depth testing, replacing the old stencil-based approach.
+        let outline_mask_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("outline_mask_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/outline_mask.wgsl").into(),
+            ),
+        });
+        let outline_mask_pipeline =
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("stencil_write_pipeline"),
-                layout: Some(&pipeline_layout),
+                label: Some("outline_mask_pipeline"),
+                layout: Some(&outline_pipeline_layout),
                 vertex: wgpu::VertexState {
-                    module: &shader,
+                    module: &outline_mask_shader,
                     entry_point: Some("vs_main"),
                     buffers: &[Vertex::buffer_layout()],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
-                    module: &shader,
+                    module: &outline_mask_shader,
                     entry_point: Some("fs_main"),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: target_format,
+                        format: wgpu::TextureFormat::R8Unorm,
                         blend: None,
-                        // Don't write color : stencil write pass is depth+stencil only.
-                        write_mask: wgpu::ColorWrites::empty(),
+                        write_mask: wgpu::ColorWrites::ALL,
                     })],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 }),
@@ -1622,15 +1621,9 @@ impl ViewportGpuResources {
                     format: wgpu::TextureFormat::Depth24PlusStencil8,
                     depth_write_enabled: true,
                     depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState {
-                        front: stencil_write_face,
-                        back: stencil_write_face,
-                        read_mask: 0xFF,
-                        write_mask: 0xFF,
-                    },
+                    stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
-                // Outline passes render into a dedicated single-sample target.
                 multisample: wgpu::MultisampleState {
                     count: 1,
                     mask: !0,
@@ -1640,23 +1633,23 @@ impl ViewportGpuResources {
                 cache: None,
             });
 
-        let stencil_write_two_sided_pipeline =
+        let outline_mask_two_sided_pipeline =
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("stencil_write_two_sided_pipeline"),
-                layout: Some(&pipeline_layout),
+                label: Some("outline_mask_two_sided_pipeline"),
+                layout: Some(&outline_pipeline_layout),
                 vertex: wgpu::VertexState {
-                    module: &shader,
+                    module: &outline_mask_shader,
                     entry_point: Some("vs_main"),
                     buffers: &[Vertex::buffer_layout()],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
-                    module: &shader,
+                    module: &outline_mask_shader,
                     entry_point: Some("fs_main"),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: target_format,
+                        format: wgpu::TextureFormat::R8Unorm,
                         blend: None,
-                        write_mask: wgpu::ColorWrites::empty(),
+                        write_mask: wgpu::ColorWrites::ALL,
                     })],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 }),
@@ -1669,12 +1662,7 @@ impl ViewportGpuResources {
                     format: wgpu::TextureFormat::Depth24PlusStencil8,
                     depth_write_enabled: true,
                     depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState {
-                        front: stencil_write_face,
-                        back: stencil_write_face,
-                        read_mask: 0xFF,
-                        write_mask: 0xFF,
-                    },
+                    stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
                 multisample: wgpu::MultisampleState {
@@ -1686,59 +1674,82 @@ impl ViewportGpuResources {
                 cache: None,
             });
 
-        // Pass 2: draw expanded silhouette ring where stencil != 1 (outline ring).
-        // depth_compare=Always so ring always appears on top of occluding geometry.
-        let outline_ring_face = wgpu::StencilFaceState {
-            compare: wgpu::CompareFunction::NotEqual,
-            fail_op: wgpu::StencilOperation::Keep,
-            depth_fail_op: wgpu::StencilOperation::Keep,
-            pass_op: wgpu::StencilOperation::Keep,
-        };
-        let outline_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("outline_pipeline"),
-            layout: Some(&outline_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &outline_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &outline_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None, // No culling: ring is drawn from both sides.
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Always,
-                stencil: wgpu::StencilState {
-                    front: outline_ring_face,
-                    back: outline_ring_face,
-                    read_mask: 0xFF,
-                    write_mask: 0x00, // Don't modify stencil in pass 2.
-                },
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            // Outline passes render into a dedicated single-sample target.
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: None,
+        // Edge-detection pipeline: fullscreen pass that reads the R8 mask and
+        // outputs an anti-aliased outline ring to the outline color texture.
+        let outline_edge_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("outline_edge_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/outline_edge.wgsl").into(),
+            ),
         });
+        let outline_edge_bgl =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("outline_edge_bgl"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let outline_edge_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("outline_edge_layout"),
+                bind_group_layouts: &[&outline_edge_bgl],
+                push_constant_ranges: &[],
+            });
+        let outline_edge_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("outline_edge_pipeline"),
+                layout: Some(&outline_edge_layout),
+                vertex: wgpu::VertexState {
+                    module: &outline_edge_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &outline_edge_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
 
         // X-ray pipeline: render selected objects through all geometry as a semi-transparent tint.
         let xray_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1903,9 +1914,10 @@ impl ViewportGpuResources {
             clip_planes_uniform_buf,
             clip_volume_uniform_buf,
             outline_bind_group_layout: outline_bgl,
-            stencil_write_pipeline,
-            stencil_write_two_sided_pipeline,
-            outline_pipeline,
+            outline_mask_pipeline,
+            outline_mask_two_sided_pipeline,
+            outline_edge_pipeline,
+            outline_edge_bgl,
             xray_pipeline,
             outline_color_texture: None,
             outline_color_view: None,

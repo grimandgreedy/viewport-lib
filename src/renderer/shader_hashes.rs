@@ -33,7 +33,7 @@ pub struct ShaderEntry {
     pub source: &'static str,
 }
 
-/// All 17 shaders embedded via `include_str!`.
+/// All 19 shaders embedded via `include_str!`.
 ///
 /// Order matches the filesystem order in `src/shaders/`.
 pub const SHADERS: &[ShaderEntry] = &[
@@ -80,6 +80,14 @@ pub const SHADERS: &[ShaderEntry] = &[
     ShaderEntry {
         name: "outline_composite.wgsl",
         source: include_str!("../shaders/outline_composite.wgsl"),
+    },
+    ShaderEntry {
+        name: "outline_mask.wgsl",
+        source: include_str!("../shaders/outline_mask.wgsl"),
+    },
+    ShaderEntry {
+        name: "outline_edge.wgsl",
+        source: include_str!("../shaders/outline_edge.wgsl"),
     },
     ShaderEntry {
         name: "overlay.wgsl",
@@ -194,8 +202,8 @@ mod tests {
         let hashes = current_shader_hashes();
         assert_eq!(
             hashes.len(),
-            17,
-            "expected 17 shaders, got {}",
+            19,
+            "expected 19 shaders, got {}",
             hashes.len()
         );
     }
@@ -215,7 +223,7 @@ mod tests {
         let hashes = current_shader_hashes();
         let expected: Vec<(&str, u64)> = hashes.iter().map(|(n, h)| (*n, *h)).collect();
         let result = validate_shader_hashes(&expected);
-        assert_eq!(result.valid, 17);
+        assert_eq!(result.valid, 19);
         assert!(result.mismatched.is_empty());
     }
 

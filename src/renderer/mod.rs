@@ -41,7 +41,8 @@ use self::shadows::{compute_cascade_matrix, compute_cascade_splits};
 use self::types::{INSTANCING_THRESHOLD, InstancedBatch};
 use crate::resources::{
     CameraUniform, ClipPlanesUniform, ClipVolumeUniform, GridUniform, InstanceData, LightsUniform,
-    ObjectUniform, OutlineObjectBuffers, OutlineUniform, PickInstance, ShadowAtlasUniform,
+    ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, PickInstance,
+    ShadowAtlasUniform,
     SingleLightUniform, ViewportGpuResources,
 };
 

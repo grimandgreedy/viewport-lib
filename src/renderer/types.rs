@@ -1294,7 +1294,7 @@ pub struct InteractionFrame {
     pub constraint_overlays: Vec<ConstraintOverlay>,
     /// Draw a stencil-outline ring around selected objects. Default: false.
     pub outline_selected: bool,
-    /// RGBA color of the selection outline ring. Default: orange [1.0, 0.5, 0.0, 1.0].
+    /// RGBA color of the selection outline ring. Default: white [1.0, 1.0, 1.0, 1.0].
     pub outline_color: [f32; 4],
     /// Width of the outline ring in pixels. Default: 2.0.
     pub outline_width_px: f32,
@@ -1314,8 +1314,8 @@ impl Default for InteractionFrame {
             gizmo_space_orientation: glam::Quat::IDENTITY,
             constraint_overlays: Vec::new(),
             outline_selected: false,
-            outline_color: [1.0, 0.5, 0.0, 1.0],
-            outline_width_px: 4.0,
+            outline_color: [1.0, 1.0, 1.0, 1.0],
+            outline_width_px: 2.0,
             xray_selected: false,
             xray_color: [0.3, 0.7, 1.0, 0.25],
         }
