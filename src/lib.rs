@@ -175,7 +175,9 @@ pub use renderer::{
 pub use renderer::{ScalarBar, ScalarBarAnchor, ScalarBarOrientation};
 
 pub use quantities::{
-    edge_one_form_to_glyphs, face_intrinsic_to_glyphs, vertex_intrinsic_to_glyphs,
+    edge_one_form_to_glyphs, face_intrinsic_to_glyphs,
+    polyline_edge_vectors_to_glyphs, polyline_node_vectors_to_glyphs,
+    vertex_intrinsic_to_glyphs,
 };
 
 pub use resources::colormap_data::{

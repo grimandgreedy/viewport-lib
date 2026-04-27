@@ -712,6 +712,24 @@ impl ViewportRenderer {
                 }
                 let gpu_data = resources.upload_polyline(device, queue, item, vp_size);
                 self.polyline_gpu_data.push(gpu_data);
+
+                // Phase 11: auto-generate GlyphItems for node/edge vector quantities.
+                if !item.node_vectors.is_empty() {
+                    resources.ensure_glyph_pipeline(device);
+                    let g = crate::quantities::polyline_node_vectors_to_glyphs(item);
+                    if !g.positions.is_empty() {
+                        let gd = resources.upload_glyph_set(device, queue, &g);
+                        self.glyph_gpu_data.push(gd);
+                    }
+                }
+                if !item.edge_vectors.is_empty() {
+                    resources.ensure_glyph_pipeline(device);
+                    let g = crate::quantities::polyline_edge_vectors_to_glyphs(item);
+                    if !g.positions.is_empty() {
+                        let gd = resources.upload_glyph_set(device, queue, &g);
+                        self.glyph_gpu_data.push(gd);
+                    }
+                }
             }
         }
 
@@ -737,6 +755,7 @@ impl ViewportRenderer {
                     default_color: item.color,
                     line_width: item.line_width,
                     id: 0,
+                    ..Default::default()
                 };
                 let gpu_data = resources.upload_polyline(device, queue, &polyline, vp_size);
                 self.polyline_gpu_data.push(gpu_data);

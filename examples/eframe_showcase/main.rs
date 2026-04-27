@@ -126,6 +126,7 @@ mod showcase_24_surface_appearance;
 mod showcase_25_surface_vectors;
 mod showcase_26_volume_mesh;
 mod showcase_27_auxiliary;
+mod showcase_28_curve_network_quantities;
 mod viewport_callback;
 
 const BG_COLOR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -466,10 +467,14 @@ fn main() -> eframe::Result {
                 vm_colormap: BuiltinColormap::Viridis,
                 vm_field: showcase_26_volume_mesh::VmField::Latitude,
 
+                cnq_mode: showcase_28_curve_network_quantities::CnqMode::EdgeScalar,
+                cnq_line_width: 4.0,
+
                 aux_built: false,
                 aux_frustums: Vec::new(),
                 aux_img_alpha: 1.0,
                 aux_img_scale: 1.0,
+                aux_active_frustum: None,
             }))
         }),
     )
@@ -515,6 +520,7 @@ enum ShowcaseMode {
     SurfaceVectors,
     VolumeMesh,
     Auxiliary,
+    CurveNetworkQuantities,
 }
 
 impl ShowcaseMode {
@@ -547,6 +553,7 @@ impl ShowcaseMode {
             Self::SurfaceVectors => "25: Surface Vectors",
             Self::VolumeMesh => "26: Volume Meshes",
             Self::Auxiliary => "27: Auxiliary Structures",
+            Self::CurveNetworkQuantities => "28: Curve Network Quantities",
         }
     }
 }
@@ -855,11 +862,16 @@ pub(crate) struct App {
     vm_colormap: BuiltinColormap,
     vm_field: showcase_26_volume_mesh::VmField,
 
+    // --- Showcase 28 ---
+    cnq_mode: showcase_28_curve_network_quantities::CnqMode,
+    cnq_line_width: f32,
+
     // --- Showcase 27 ---
     pub(crate) aux_built: bool,
     pub(crate) aux_frustums: Vec<viewport_lib::CameraFrustumItem>,
     aux_img_alpha: f32,
     aux_img_scale: f32,
+    pub(crate) aux_active_frustum: Option<usize>,
 
     /// Mesh upload indices for the three face-attribute spheres.
     pub(crate) face_mesh_indices: [MeshId; 3],
@@ -1007,6 +1019,7 @@ impl eframe::App for App {
                     ShowcaseMode::SurfaceVectors,
                     ShowcaseMode::VolumeMesh,
                     ShowcaseMode::Auxiliary,
+                    ShowcaseMode::CurveNetworkQuantities,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1489,7 +1502,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 27] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 28] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::Performance,
@@ -1517,6 +1530,7 @@ impl App {
             ShowcaseMode::SurfaceVectors,
             ShowcaseMode::VolumeMesh,
             ShowcaseMode::Auxiliary,
+            ShowcaseMode::CurveNetworkQuantities,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1880,6 +1894,7 @@ impl App {
             ShowcaseMode::SurfaceVectors => self.controls_surface_vectors(ui),
             ShowcaseMode::VolumeMesh => self.controls_volume_mesh(ui),
             ShowcaseMode::Auxiliary => self.controls_aux(ui),
+            ShowcaseMode::CurveNetworkQuantities => self.controls_cnq(ui),
         }
     }
 
@@ -3227,6 +3242,10 @@ impl App {
             }
 
             ShowcaseMode::Auxiliary => (vec![], Some(BG_COLOR), LightingSettings::default(), 0, 0),
+
+            ShowcaseMode::CurveNetworkQuantities => {
+                (vec![], Some(BG_COLOR), LightingSettings::default(), 0, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -3359,6 +3378,11 @@ impl App {
         // Surface vector glyphs (Showcase 25) : submitted every frame.
         if self.mode == ShowcaseMode::SurfaceVectors && self.sv_built {
             fd.scene.glyphs.push(self.sv_glyph_item());
+        }
+
+        // Curve network quantities (Showcase 28) : submitted every frame.
+        if self.mode == ShowcaseMode::CurveNetworkQuantities {
+            fd.scene.polylines.push(self.make_cnq_polyline_item());
         }
 
         // Auxiliary frustums and screen images (Showcase 27) : submitted every frame.

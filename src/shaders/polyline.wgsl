@@ -15,15 +15,20 @@
 //          + LUT texture (256×1 Rgba8Unorm)
 //          + LUT sampler.
 //
-// Instance input (per segment, VertexStepMode::Instance, 64 bytes):
-//   location 0 : pos_a    vec3   segment start (world space)
-//   location 1 : pos_b    vec3   segment end   (world space)
-//   location 2 : prev_pos vec3   point before A (== pos_a if strip start)
-//   location 3 : next_pos vec3   point after  B (== pos_b if strip end)
-//   location 4 : scalar_a f32    scalar at A
-//   location 5 : scalar_b f32    scalar at B
-//   location 6 : has_prev u32    1 = interior join at A, 0 = square cap
-//   location 7 : has_next u32    1 = interior join at B, 0 = square cap
+// Instance input (per segment, VertexStepMode::Instance, 112 bytes):
+//   location  0 : pos_a             vec3   segment start (world space)
+//   location  1 : pos_b             vec3   segment end   (world space)
+//   location  2 : prev_pos          vec3   point before A (== pos_a if strip start)
+//   location  3 : next_pos          vec3   point after  B (== pos_b if strip end)
+//   location  4 : scalar_a          f32    scalar at A
+//   location  5 : scalar_b          f32    scalar at B
+//   location  6 : has_prev          u32    1 = interior join at A, 0 = square cap
+//   location  7 : has_next          u32    1 = interior join at B, 0 = square cap
+//   location  8 : color_a           vec4   direct RGBA at A
+//   location  9 : color_b           vec4   direct RGBA at B
+//   location 10 : radius_a          f32    line width in px at A
+//   location 11 : radius_b          f32    line width in px at B
+//   location 12 : use_direct_color  u32    1 = use color_a/b, 0 = LUT / default
 
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -98,16 +103,21 @@ fn clip_volume_test(p: vec3<f32>) -> bool {
 @group(1) @binding(1) var          lut_texture: texture_2d<f32>;
 @group(1) @binding(2) var          lut_sampler: sampler;
 
-// Per-segment instance data (64 bytes).
+// Per-segment instance data (112 bytes).
 struct SegmentIn {
-    @location(0) pos_a:    vec3<f32>,
-    @location(1) pos_b:    vec3<f32>,
-    @location(2) prev_pos: vec3<f32>,
-    @location(3) next_pos: vec3<f32>,
-    @location(4) scalar_a: f32,
-    @location(5) scalar_b: f32,
-    @location(6) has_prev: u32,
-    @location(7) has_next: u32,
+    @location(0)  pos_a:            vec3<f32>,
+    @location(1)  pos_b:            vec3<f32>,
+    @location(2)  prev_pos:         vec3<f32>,
+    @location(3)  next_pos:         vec3<f32>,
+    @location(4)  scalar_a:         f32,
+    @location(5)  scalar_b:         f32,
+    @location(6)  has_prev:         u32,
+    @location(7)  has_next:         u32,
+    @location(8)  color_a:          vec4<f32>,
+    @location(9)  color_b:          vec4<f32>,
+    @location(10) radius_a:         f32,
+    @location(11) radius_b:         f32,
+    @location(12) use_direct_color: u32,
 };
 
 struct VertexOut {
@@ -200,9 +210,12 @@ fn vs_main(
     // Base clip-space position.
     var clip_pos = camera.view_proj * vec4<f32>(pos, 1.0f);
 
+    // Per-vertex radius: interpolate between endpoint radii (baked from node_radii or line_width).
+    let radius = select(seg.radius_a, seg.radius_b, use_b);
+
     // Apply half-width offset in screen space, converted to clip-space offset.
     // NDC offset = (pixels / viewport_px) * 2.  Clip offset = NDC offset * w.
-    let half_w = pl_uniform.line_width * 0.5f;
+    let half_w = radius * 0.5f;
     let ndc_offset = side * half_w * extrusion
         * vec2<f32>(2.0f / pl_uniform.viewport_width, 2.0f / pl_uniform.viewport_height);
     clip_pos.x += ndc_offset.x * clip_pos.w;
@@ -212,7 +225,10 @@ fn vs_main(
     out.clip_pos  = clip_pos;
     out.world_pos = pos;
 
-    if pl_uniform.has_scalar != 0u {
+    // Color priority: direct RGBA > scalar LUT > default_color.
+    if seg.use_direct_color != 0u {
+        out.color = select(seg.color_a, seg.color_b, use_b);
+    } else if pl_uniform.has_scalar != 0u {
         let range = pl_uniform.scalar_max - pl_uniform.scalar_min;
         let t = select(0.0f, (scalar - pl_uniform.scalar_min) / range, range > 0.0f);
         let u = clamp(t, 0.0f, 1.0f);

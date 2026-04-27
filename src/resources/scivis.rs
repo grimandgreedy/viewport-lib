@@ -331,17 +331,23 @@ impl ViewportGpuResources {
             push_constant_ranges: &[],
         });
 
-        // Instance buffer layout (64 bytes per segment):
-        //   offset  0: pos_a    vec3  : segment start (world space)
-        //   offset 12: pos_b    vec3  : segment end   (world space)
-        //   offset 24: prev_pos vec3  : point before pos_a (for miter at A); equals pos_a if strip start
-        //   offset 36: next_pos vec3  : point after  pos_b (for miter at B); equals pos_b if strip end
-        //   offset 48: scalar_a f32
-        //   offset 52: scalar_b f32
-        //   offset 56: has_prev u32   : 1 = prev_pos is valid (interior join at A), 0 = square cap
-        //   offset 60: has_next u32   : 1 = next_pos is valid (interior join at B), 0 = square cap
+        // Instance buffer layout (112 bytes per segment):
+        //   offset   0: pos_a             vec3  : segment start (world space)
+        //   offset  12: pos_b             vec3  : segment end   (world space)
+        //   offset  24: prev_pos          vec3  : point before pos_a (for miter at A); equals pos_a if strip start
+        //   offset  36: next_pos          vec3  : point after  pos_b (for miter at B); equals pos_b if strip end
+        //   offset  48: scalar_a          f32
+        //   offset  52: scalar_b          f32
+        //   offset  56: has_prev          u32   : 1 = prev_pos is valid (interior join at A), 0 = square cap
+        //   offset  60: has_next          u32   : 1 = next_pos is valid (interior join at B), 0 = square cap
+        //   offset  64: color_a           vec4  : direct RGBA at segment start
+        //   offset  80: color_b           vec4  : direct RGBA at segment end
+        //   offset  96: radius_a          f32   : line width in px at A (= line_width when node_radii is empty)
+        //   offset 100: radius_b          f32   : line width in px at B
+        //   offset 104: use_direct_color  u32   : 1 = use color_a/b, 0 = use scalar LUT / default
+        //   offset 108: _pad              u32
         let pl_instance_layout = wgpu::VertexBufferLayout {
-            array_stride: 64,
+            array_stride: 112,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &[
                 wgpu::VertexAttribute {
@@ -384,6 +390,31 @@ impl ViewportGpuResources {
                     shader_location: 7,
                     format: wgpu::VertexFormat::Uint32,
                 }, // has_next
+                wgpu::VertexAttribute {
+                    offset: 64,
+                    shader_location: 8,
+                    format: wgpu::VertexFormat::Float32x4,
+                }, // color_a
+                wgpu::VertexAttribute {
+                    offset: 80,
+                    shader_location: 9,
+                    format: wgpu::VertexFormat::Float32x4,
+                }, // color_b
+                wgpu::VertexAttribute {
+                    offset: 96,
+                    shader_location: 10,
+                    format: wgpu::VertexFormat::Float32,
+                }, // radius_a
+                wgpu::VertexAttribute {
+                    offset: 100,
+                    shader_location: 11,
+                    format: wgpu::VertexFormat::Float32,
+                }, // radius_b
+                wgpu::VertexAttribute {
+                    offset: 104,
+                    shader_location: 12,
+                    format: wgpu::VertexFormat::Uint32,
+                }, // use_direct_color
             ],
         };
 
@@ -434,13 +465,9 @@ impl ViewportGpuResources {
     /// Converts the strip-based point list into a flat segment-instance buffer
     /// suitable for the screen-space thick-line pipeline with miter joints.
     ///
-    /// Each consecutive pair of points in a strip becomes one 64-byte instance:
-    /// `[pos_a, pos_b, prev_pos, next_pos, scalar_a, scalar_b, has_prev, has_next]`
-    ///
-    /// `prev_pos`/`next_pos` are the adjacent points used to compute miter join
-    /// directions at each endpoint. At strip endpoints (no adjacent point), the
-    /// endpoint itself is repeated and `has_prev`/`has_next` = 0, which tells the
-    /// shader to use a square cap instead of a miter.
+    /// Each consecutive pair of points in a strip becomes one 112-byte instance
+    /// containing miter geometry, scalar coloring, direct RGBA colors, and per-vertex
+    /// radii. See the comment in `ensure_polyline_pipeline` for the full layout.
     ///
     /// `viewport_size` is `[width_px, height_px]` and is baked into the per-item
     /// uniform so the vertex shader can compute correct pixel offsets.
@@ -451,82 +478,119 @@ impl ViewportGpuResources {
         item: &crate::renderer::PolylineItem,
         viewport_size: [f32; 2],
     ) -> PolylineGpuData {
-        // Build the segment instance buffer (64 bytes per segment).
+        // Build the segment instance buffer (112 bytes per segment).
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct SegInstance {
-            pos_a: [f32; 3],
-            pos_b: [f32; 3],
-            prev_pos: [f32; 3],
-            next_pos: [f32; 3],
-            scalar_a: f32,
-            scalar_b: f32,
-            has_prev: u32,
-            has_next: u32,
+            pos_a: [f32; 3],         // offset   0
+            pos_b: [f32; 3],         // offset  12
+            prev_pos: [f32; 3],      // offset  24
+            next_pos: [f32; 3],      // offset  36
+            scalar_a: f32,           // offset  48
+            scalar_b: f32,           // offset  52
+            has_prev: u32,           // offset  56
+            has_next: u32,           // offset  60
+            color_a: [f32; 4],       // offset  64
+            color_b: [f32; 4],       // offset  80
+            radius_a: f32,           // offset  96
+            radius_b: f32,           // offset 100
+            use_direct_color: u32,   // offset 104
+            _pad: u32,               // offset 108
         }
 
-        let mut instances: Vec<SegInstance> = Vec::new();
+        // Determine which color/scalar/radius source to use per segment.
+        let use_direct = !item.node_colors.is_empty() || !item.edge_colors.is_empty();
+        let use_edge_scalars = item.scalars.is_empty() && !item.edge_scalars.is_empty();
+        let use_node_radii = !item.node_radii.is_empty();
 
-        let emit_strip = |instances: &mut Vec<SegInstance>,
-                          positions: &[[f32; 3]],
-                          scalars: &[f32],
-                          offset: usize,
-                          len: usize| {
-            let end = (offset + len).min(positions.len());
-            for i in offset..end.saturating_sub(1) {
+        let mut instances: Vec<SegInstance> = Vec::new();
+        let positions = &item.positions;
+        let npos = positions.len();
+
+        // Collect strip ranges: (start_idx, end_idx) into `positions`.
+        let strip_ranges: Vec<(usize, usize)> = if item.strip_lengths.is_empty() {
+            vec![(0, npos)]
+        } else {
+            let mut ranges = Vec::with_capacity(item.strip_lengths.len());
+            let mut off = 0usize;
+            for &l in &item.strip_lengths {
+                ranges.push((off, off + l as usize));
+                off += l as usize;
+            }
+            ranges
+        };
+
+        let mut seg_idx_global: usize = 0; // monotonic segment counter across all strips
+
+        for &(strip_start, strip_end) in &strip_ranges {
+            let end = strip_end.min(npos);
+            for i in strip_start..end.saturating_sub(1) {
                 let j = i + 1;
-                let has_prev = i > offset;
+                let has_prev = i > strip_start;
                 let has_next = j + 1 < end;
+
+                // Scalar: edge_scalars (flat per segment) > per-node scalars > 0
+                let (scalar_a, scalar_b) = if use_edge_scalars {
+                    let s = item.edge_scalars.get(seg_idx_global).copied().unwrap_or(0.0);
+                    (s, s)
+                } else {
+                    (
+                        item.scalars.get(i).copied().unwrap_or(0.0),
+                        item.scalars.get(j).copied().unwrap_or(0.0),
+                    )
+                };
+
+                // Direct color: node_colors (per-endpoint) > edge_colors (per-segment)
+                let (color_a, color_b) = if !item.node_colors.is_empty() {
+                    (
+                        item.node_colors.get(i).copied().unwrap_or([1.0; 4]),
+                        item.node_colors.get(j).copied().unwrap_or([1.0; 4]),
+                    )
+                } else if !item.edge_colors.is_empty() {
+                    let c = item.edge_colors.get(seg_idx_global).copied().unwrap_or([1.0; 4]);
+                    (c, c)
+                } else {
+                    ([1.0; 4], [1.0; 4])
+                };
+
+                // Radius: per-node > global line_width
+                let (radius_a, radius_b) = if use_node_radii {
+                    (
+                        item.node_radii.get(i).copied().unwrap_or(item.line_width),
+                        item.node_radii.get(j).copied().unwrap_or(item.line_width),
+                    )
+                } else {
+                    (item.line_width, item.line_width)
+                };
+
                 instances.push(SegInstance {
                     pos_a: positions[i],
                     pos_b: positions[j],
-                    prev_pos: if has_prev {
-                        positions[i - 1]
-                    } else {
-                        positions[i]
-                    },
-                    next_pos: if has_next {
-                        positions[j + 1]
-                    } else {
-                        positions[j]
-                    },
-                    scalar_a: scalars.get(i).copied().unwrap_or(0.0),
-                    scalar_b: scalars.get(j).copied().unwrap_or(0.0),
+                    prev_pos: if has_prev { positions[i - 1] } else { positions[i] },
+                    next_pos: if has_next { positions[j + 1] } else { positions[j] },
+                    scalar_a,
+                    scalar_b,
                     has_prev: has_prev as u32,
                     has_next: has_next as u32,
+                    color_a,
+                    color_b,
+                    radius_a,
+                    radius_b,
+                    use_direct_color: use_direct as u32,
+                    _pad: 0,
                 });
-            }
-        };
 
-        if item.strip_lengths.is_empty() {
-            emit_strip(
-                &mut instances,
-                &item.positions,
-                &item.scalars,
-                0,
-                item.positions.len(),
-            );
-        } else {
-            let mut offset = 0usize;
-            for &len in &item.strip_lengths {
-                emit_strip(
-                    &mut instances,
-                    &item.positions,
-                    &item.scalars,
-                    offset,
-                    len as usize,
-                );
-                offset += len as usize;
+                seg_idx_global += 1;
             }
         }
 
         let seg_count = instances.len() as u32;
 
-        // Allocate instance buffer (min 64 bytes so wgpu doesn't complain on empty).
+        // Allocate instance buffer (min 112 bytes so wgpu doesn't complain on empty).
         let seg_bytes: &[u8] = bytemuck::cast_slice(&instances);
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("polyline_vertex_buf"),
-            size: seg_bytes.len().max(64) as u64,
+            size: seg_bytes.len().max(112) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -534,14 +598,16 @@ impl ViewportGpuResources {
             queue.write_buffer(&vertex_buffer, 0, seg_bytes);
         }
 
-        let (has_scalar, scalar_min, scalar_max) = if !item.scalars.is_empty() {
+        // Determine scalar range for the LUT uniform (node or edge scalars).
+        let scalar_source: &[f32] = if !item.scalars.is_empty() {
+            &item.scalars
+        } else {
+            &item.edge_scalars
+        };
+        let (has_scalar, scalar_min, scalar_max) = if !scalar_source.is_empty() {
             let (min, max) = item.scalar_range.unwrap_or_else(|| {
-                let mn = item.scalars.iter().cloned().fold(f32::INFINITY, f32::min);
-                let mx = item
-                    .scalars
-                    .iter()
-                    .cloned()
-                    .fold(f32::NEG_INFINITY, f32::max);
+                let mn = scalar_source.iter().cloned().fold(f32::INFINITY, f32::min);
+                let mx = scalar_source.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
                 (mn, mx)
             });
             (1u32, min, max)

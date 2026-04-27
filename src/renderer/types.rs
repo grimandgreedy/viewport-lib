@@ -489,6 +489,7 @@ pub enum PointRenderMode {
 }
 
 /// A point cloud item to render in the viewport.
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct PointCloudItem {
     /// World-space positions (one vec3 per point).
@@ -650,24 +651,68 @@ impl Default for VolumeItem {
 ///
 /// All streamlines for one source are concatenated into a single vertex buffer.
 /// `strip_lengths` records how many vertices belong to each individual streamline.
+///
+/// # Curve network quantities
+///
+/// In addition to the existing per-node scalar path (`scalars`/`colormap_id`), this
+/// item supports several curve-network quantities:
+///
+/// - **Per-edge scalars** (`edge_scalars`): one value per segment; rendered as a flat
+///   constant color per edge (both endpoints share the same LUT value).
+/// - **Per-node colors** (`node_colors`): direct RGBA per node; takes priority over
+///   scalar-driven coloring.
+/// - **Per-edge colors** (`edge_colors`): direct RGBA per segment; takes priority over
+///   edge scalars.
+/// - **Per-node radius** (`node_radii`): per-node line width in pixels; overrides the
+///   global `line_width`.
+/// - **Node vectors** (`node_vectors`): world-space 3-D arrows at each node, rendered
+///   automatically as `GlyphItem` arrows.
+/// - **Edge vectors** (`edge_vectors`): world-space 3-D arrows at each segment midpoint,
+///   also rendered as `GlyphItem` arrows.
+///
+/// Color priority per segment: `node_colors`/`edge_colors` (direct) > `edge_scalars` >
+/// `scalars` (per-node) > `default_color`.
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct PolylineItem {
     /// World-space positions for all streamlines, concatenated.
     pub positions: Vec<[f32; 3]>,
-    /// Per-vertex scalar values (same length as `positions`). Empty = no scalar coloring.
+    /// Per-node scalar values (same length as `positions`). Empty = no scalar coloring.
     pub scalars: Vec<f32>,
     /// Number of vertices per individual streamline strip.
     pub strip_lengths: Vec<u32>,
-    /// Scalar range for LUT mapping. None = auto from min/max of `scalars`.
+    /// Scalar range for LUT mapping. None = auto from min/max of `scalars` or `edge_scalars`.
     pub scalar_range: Option<(f32, f32)>,
     /// Colormap for scalar coloring. None = viridis.
     pub colormap_id: Option<ColormapId>,
-    /// Fallback color when `scalars` is empty.
+    /// Fallback color when no scalar or direct-color data is provided.
     pub default_color: [f32; 4],
-    /// Hardware line width in pixels (may be clamped to 1 by some GPU drivers).
+    /// Global line width in pixels. Used when `node_radii` is empty.
     pub line_width: f32,
     /// Unique ID for identification. 0 = not pickable.
     pub id: u64,
+    /// Per-node direct RGBA colors. Length must match `positions`. Empty = not used.
+    /// Takes priority over scalar-driven coloring when non-empty.
+    pub node_colors: Vec<[f32; 4]>,
+    /// Per-edge scalar values. Length = total segment count across all strips (sum of
+    /// `strip_lengths[i] - 1`). Used when `scalars` is empty; both endpoints of each
+    /// segment share the same LUT value (flat constant color per edge).
+    pub edge_scalars: Vec<f32>,
+    /// Per-edge direct RGBA colors. Length = total segment count. Takes priority over
+    /// `edge_scalars` when non-empty.
+    pub edge_colors: Vec<[f32; 4]>,
+    /// Per-node line width in pixels. Length must match `positions`. When non-empty,
+    /// overrides the global `line_width`; adjacent endpoints are linearly interpolated
+    /// along each segment.
+    pub node_radii: Vec<f32>,
+    /// Per-node world-space vectors. Length must match `positions`. When non-empty the
+    /// renderer automatically generates a [`GlyphItem`] (arrows at node positions).
+    pub node_vectors: Vec<[f32; 3]>,
+    /// Per-edge world-space vectors. Length = total segment count. When non-empty the
+    /// renderer automatically generates a [`GlyphItem`] (arrows at segment midpoints).
+    pub edge_vectors: Vec<[f32; 3]>,
+    /// Scale applied to generated arrow glyphs from `node_vectors`/`edge_vectors`.
+    pub vector_scale: f32,
 }
 
 impl Default for PolylineItem {
@@ -681,6 +726,13 @@ impl Default for PolylineItem {
             default_color: [0.9, 0.92, 0.96, 1.0],
             line_width: 2.0,
             id: 0,
+            node_colors: Vec::new(),
+            edge_scalars: Vec::new(),
+            edge_colors: Vec::new(),
+            node_radii: Vec::new(),
+            node_vectors: Vec::new(),
+            edge_vectors: Vec::new(),
+            vector_scale: 1.0,
         }
     }
 }
@@ -888,6 +940,43 @@ impl CameraFrustumItem {
         let up = right.cross(forward).normalize();
         let rot = glam::Mat3::from_cols(right, up, -forward);
         let orientation = glam::Quat::from_mat3(&rot);
+
+        crate::camera::CameraTarget {
+            center,
+            distance,
+            orientation,
+        }
+    }
+
+    /// Compute a [`crate::camera::CameraTarget`] that adopts this frustum's own viewpoint.
+    ///
+    /// Unlike [`camera_target`](Self::camera_target), which frames the frustum from outside,
+    /// this places the orbit camera exactly at the frustum's eye position looking in the
+    /// frustum's forward direction. Use it for "look through this camera" functionality.
+    ///
+    /// ```rust,ignore
+    /// let t = frustum.camera_view_target();
+    /// animator.fly_to(&camera, t.center, t.distance, t.orientation, 1.0);
+    /// ```
+    pub fn camera_view_target(&self) -> crate::camera::CameraTarget {
+        let pose = glam::Mat4::from_cols_array_2d(&self.pose);
+
+        // Eye: world-space position of the frustum camera.
+        let eye = pose.transform_point3(glam::Vec3::ZERO);
+
+        // Orientation: rotation columns of pose (assumed rigid, no scale).
+        let rot = glam::Mat3::from_cols(
+            pose.x_axis.truncate(),
+            pose.y_axis.truncate(),
+            pose.z_axis.truncate(),
+        );
+        let orientation = glam::Quat::from_mat3(&rot).normalize();
+
+        // For the orbit camera: eye = center + orientation * Z * distance.
+        // Place the orbit center just inside the near plane so distance is non-zero.
+        // Camera -Z (forward) in world space = orientation * (-Z).
+        let distance = (self.near * 0.5_f32).max(0.01);
+        let center = eye + orientation * (-glam::Vec3::Z) * distance;
 
         crate::camera::CameraTarget {
             center,
