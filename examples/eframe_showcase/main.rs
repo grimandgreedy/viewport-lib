@@ -122,10 +122,10 @@ mod showcase_20_face_attributes;
 mod showcase_21_textures;
 mod showcase_22_parameterization;
 mod showcase_23_ground_plane;
-mod showcase_24_surface_appearance;
+mod showcase_24_backface_policy;
 mod showcase_25_surface_vectors;
 mod showcase_26_volume_mesh;
-mod showcase_27_auxiliary;
+mod showcase_27_camera_framing;
 mod showcase_28_curve_network_quantities;
 mod viewport_callback;
 
@@ -471,6 +471,7 @@ fn main() -> eframe::Result {
                 cnq_line_width: 4.0,
 
                 aux_built: false,
+                aux_scene: Scene::new(),
                 aux_frustums: Vec::new(),
                 aux_img_alpha: 1.0,
                 aux_img_scale: 1.0,
@@ -516,7 +517,7 @@ enum ShowcaseMode {
     Textures,
     ParamVis,
     GroundPlane,
-    SurfaceAppearance,
+    BackfacePolicy,
     SurfaceVectors,
     VolumeMesh,
     Auxiliary,
@@ -549,10 +550,10 @@ impl ShowcaseMode {
             Self::Textures => "21: Textures",
             Self::ParamVis => "22: UV Parameterization",
             Self::GroundPlane => "23: Ground Plane",
-            Self::SurfaceAppearance => "24: Surface Appearance",
+            Self::BackfacePolicy => "24: Backface Policy",
             Self::SurfaceVectors => "25: Surface Vectors",
             Self::VolumeMesh => "26: Volume Meshes",
-            Self::Auxiliary => "27: Auxiliary Structures",
+            Self::Auxiliary => "27: Camera Framing & HUD",
             Self::CurveNetworkQuantities => "28: Curve Network Quantities",
         }
     }
@@ -868,6 +869,7 @@ pub(crate) struct App {
 
     // --- Showcase 27 ---
     pub(crate) aux_built: bool,
+    pub(crate) aux_scene: viewport_lib::scene::Scene,
     pub(crate) aux_frustums: Vec<viewport_lib::CameraFrustumItem>,
     aux_img_alpha: f32,
     aux_img_scale: f32,
@@ -899,6 +901,7 @@ impl eframe::App for App {
         let mut cycle_dir = 0_i32;
         let mut toggle_keybinds = false;
         let mut tab_pressed = false;
+        let mut escape_pressed = false;
         ctx.input(|i| {
             for event in &i.events {
                 match event {
@@ -915,6 +918,7 @@ impl eframe::App for App {
                             egui::Key::OpenBracket if use_cycle => cycle_dir = -1,
                             egui::Key::CloseBracket if use_cycle => cycle_dir = 1,
                             egui::Key::Tab => tab_pressed = true,
+                            egui::Key::Escape => escape_pressed = true,
                             _ => {}
                         }
                     }
@@ -939,6 +943,9 @@ impl eframe::App for App {
         }
         if tab_pressed {
             self.cycle_selection_tab();
+        }
+        if escape_pressed && self.mode == ShowcaseMode::Auxiliary {
+            self.aux_active_frustum = None;
         }
 
         // ---- Keybinds window ----
@@ -1015,7 +1022,7 @@ impl eframe::App for App {
                     ShowcaseMode::Textures,
                     ShowcaseMode::ParamVis,
                     ShowcaseMode::GroundPlane,
-                    ShowcaseMode::SurfaceAppearance,
+                    ShowcaseMode::BackfacePolicy,
                     ShowcaseMode::SurfaceVectors,
                     ShowcaseMode::VolumeMesh,
                     ShowcaseMode::Auxiliary,
@@ -1403,7 +1410,7 @@ impl eframe::App for App {
 
             // ----- Schedule paint callback -----
             // Showcase 24 uses the HDR path so SSAA and post-processing work.
-            if self.mode == ShowcaseMode::SurfaceAppearance {
+            if self.mode == ShowcaseMode::BackfacePolicy {
                 ui.painter()
                     .add(eframe::egui_wgpu::Callback::new_paint_callback(
                         rect,
@@ -1467,7 +1474,7 @@ impl eframe::App for App {
             if self.mode == ShowcaseMode::Annotation {
                 self.draw_annotation_labels(ui, rect);
             }
-            if self.mode == ShowcaseMode::SurfaceAppearance {
+            if self.mode == ShowcaseMode::BackfacePolicy {
                 self.draw_sa_labels(ui, rect);
             }
 
@@ -1526,7 +1533,7 @@ impl App {
             ShowcaseMode::Textures,
             ShowcaseMode::ParamVis,
             ShowcaseMode::GroundPlane,
-            ShowcaseMode::SurfaceAppearance,
+            ShowcaseMode::BackfacePolicy,
             ShowcaseMode::SurfaceVectors,
             ShowcaseMode::VolumeMesh,
             ShowcaseMode::Auxiliary,
@@ -1542,6 +1549,31 @@ impl App {
     }
 
     fn cycle_selection_tab(&mut self) {
+        if self.mode == ShowcaseMode::Auxiliary {
+            // Cycle: overview -> A -> B -> C -> overview -> ...
+            let next = match self.aux_active_frustum {
+                None => Some(0),
+                Some(i) if i + 1 < self.aux_frustums.len() => Some(i + 1),
+                _ => None,
+            };
+            match next {
+                Some(i) => {
+                    let t = self.aux_frustums[i].camera_view_target();
+                    self.cam_animator.fly_to(&self.camera, t.center, t.distance, t.orientation, 0.8);
+                    self.aux_active_frustum = Some(i);
+                }
+                None => {
+                    self.cam_animator.fly_to(
+                        &self.camera,
+                        glam::Vec3::new(0.0, 0.0, 0.5), 30.0,
+                        glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
+                        0.8,
+                    );
+                    self.aux_active_frustum = None;
+                }
+            }
+            return;
+        }
         let (scene, selection) = match self.mode {
             ShowcaseMode::SceneGraph => (&self.scene, &mut self.selection),
             ShowcaseMode::Advanced => (&self.adv_scene, &mut self.adv_selection),
@@ -1594,7 +1626,7 @@ impl App {
             ShowcaseMode::Textures => !self.texture_built,
             ShowcaseMode::ParamVis => !self.param_vis_built,
             ShowcaseMode::GroundPlane => !self.gp_built,
-            ShowcaseMode::SurfaceAppearance => !self.sa_built,
+            ShowcaseMode::BackfacePolicy => !self.sa_built,
             ShowcaseMode::SurfaceVectors => !self.sv_built,
             ShowcaseMode::VolumeMesh => !self.vm_built,
             ShowcaseMode::Auxiliary => !self.aux_built,
@@ -1805,7 +1837,7 @@ impl App {
                     ..Camera::default()
                 };
             }
-            ShowcaseMode::SurfaceAppearance => {
+            ShowcaseMode::BackfacePolicy => {
                 self.build_sa_scene(renderer);
                 self.camera = Camera {
                     // Pull back so both the front spheres and the background
@@ -1838,11 +1870,11 @@ impl App {
                 };
             }
             ShowcaseMode::Auxiliary => {
-                self.build_aux_scene();
+                self.build_aux_scene(renderer);
                 self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 12.0,
-                    orientation: glam::Quat::from_rotation_z(0.3)
+                    center: glam::Vec3::new(0.0, 0.0, 0.5),
+                    distance: 30.0,
+                    orientation: glam::Quat::from_rotation_z(0.4)
                         * glam::Quat::from_rotation_x(1.0),
                     ..Camera::default()
                 };
@@ -1890,7 +1922,7 @@ impl App {
             ShowcaseMode::Textures => self.controls_textures(ui),
             ShowcaseMode::ParamVis => self.controls_param_vis(ui),
             ShowcaseMode::GroundPlane => self.controls_ground_plane(ui),
-            ShowcaseMode::SurfaceAppearance => self.controls_surface_appearance(ui),
+            ShowcaseMode::BackfacePolicy => self.controls_surface_appearance(ui),
             ShowcaseMode::SurfaceVectors => self.controls_surface_vectors(ui),
             ShowcaseMode::VolumeMesh => self.controls_volume_mesh(ui),
             ShowcaseMode::Auxiliary => self.controls_aux(ui),
@@ -3221,7 +3253,7 @@ impl App {
                 (items, Some(BG_COLOR), lighting, sg, 0)
             }
 
-            ShowcaseMode::SurfaceAppearance => {
+            ShowcaseMode::BackfacePolicy => {
                 let items = self.sa_scene_items();
                 let sg = self.sa_scene.version();
                 (items, Some(BG_COLOR), App::sa_lighting(), sg, 0)
@@ -3241,7 +3273,10 @@ impl App {
                 (items, Some(BG_COLOR), App::vm_lighting(), 0, 0)
             }
 
-            ShowcaseMode::Auxiliary => (vec![], Some(BG_COLOR), LightingSettings::default(), 0, 0),
+            ShowcaseMode::Auxiliary => {
+                let items = self.aux_scene.collect_render_items(&Selection::new());
+                (items, Some(BG_COLOR), App::aux_lighting(), 0, 0)
+            }
 
             ShowcaseMode::CurveNetworkQuantities => {
                 (vec![], Some(BG_COLOR), LightingSettings::default(), 0, 0)
@@ -3322,7 +3357,7 @@ impl App {
             };
         }
         // Clip objects for Showcase 24 (Surface Appearance).
-        if self.mode == ShowcaseMode::SurfaceAppearance {
+        if self.mode == ShowcaseMode::BackfacePolicy {
             adv_clip_objects.extend(self.sa_clip_objects());
         }
         fd.effects.clip_objects = adv_clip_objects;
@@ -3330,7 +3365,7 @@ impl App {
             fd.effects.cap_fill_enabled = self.nm_cap_fill;
         }
         // Showcase 24 exists to show back face policies : cap fill would hide them.
-        if self.mode == ShowcaseMode::SurfaceAppearance {
+        if self.mode == ShowcaseMode::BackfacePolicy {
             fd.effects.cap_fill_enabled = false;
         }
         fd.interaction.gizmo_model = gizmo_model;
@@ -3471,7 +3506,14 @@ impl App {
                 rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
                 fd.camera.render_camera = rc;
             }
-            ShowcaseMode::SurfaceAppearance => {}
+            ShowcaseMode::Auxiliary => {
+                // Clamp far plane for better cascade distribution.
+                let mut rc = RenderCamera::from_camera(&self.camera);
+                rc.far = self.camera.zfar.min(60.0);
+                rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
+                fd.camera.render_camera = rc;
+            }
+            ShowcaseMode::BackfacePolicy => {}
             _ => {}
         }
 
