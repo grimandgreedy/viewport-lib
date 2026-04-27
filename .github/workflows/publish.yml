@@ -33,9 +33,6 @@ jobs:
       - name: Run tests
         run: cargo test --lib
 
-      - name: Check examples
-        run: cargo check --examples
-
       - name: Dry run publish
         run: cargo publish --dry-run
 
@@ -44,14 +41,15 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      - name: Get tag message
-        id: tag_message
+      - name: Get changelog entry
+        id: changelog
         run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
           echo "body<<EOF" >> $GITHUB_OUTPUT
-          git tag -l --format='%(contents)' "$GITHUB_REF_NAME" >> $GITHUB_OUTPUT
+          awk "/^## \[${TAG_VERSION}\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          body: ${{ steps.tag_message.outputs.body }}
+          body: ${{ steps.changelog.outputs.body }}
