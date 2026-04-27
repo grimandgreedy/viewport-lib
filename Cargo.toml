@@ -1,6 +1,6 @@
 [package]
 name = "viewport-lib"
-version = "0.8.4"
+version = "0.8.5"
 edition = "2024"
 description = "3D viewport rendering library"
 readme = "README.md"
@@ -26,7 +26,7 @@ serde = { version = "1.0", features = ["derive"], optional = true }
 # Pin to =0.33.3 to stay aligned with eframe 0.33.3 used in the examples.
 egui = { version = "=0.33.3", optional = true }
 # gtk4 is optional because it requires system libraries (libgtk-4-dev / brew install gtk4).
-# Build the gtk4 example with: cargo run -p viewport-lib --example gtk4-viewport --features gtk4-example
+# Build the gtk4 example with: cargo run --release --example gtk4-viewport --features gtk4-example
 gtk4 = { version = "0.9", optional = true }
 
 [features]

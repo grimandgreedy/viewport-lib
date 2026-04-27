@@ -1009,10 +1009,22 @@ pub enum ImageAnchor {
 
 /// A floating screen-space RGBA image rendered as a viewport overlay.
 ///
-/// The image is drawn after all 3D geometry (no depth test) and anchored to
-/// one of the viewport corners or the center.
+/// The image is drawn after all 3D geometry and anchored to one of the viewport
+/// corners or the center.
 ///
-/// `depth_composite: true` is reserved for a future phase; set it to `false`.
+/// ## Depth compositing (Phase 12)
+///
+/// When `depth` is `Some`, the image composites against 3D scene geometry:
+/// pixels whose depth value exceeds the scene depth at that screen position are
+/// discarded, so near geometry occludes the image correctly.
+///
+/// `depth` must contain exactly `width * height` `f32` values in row-major,
+/// top-to-bottom order. Each value is an NDC depth in `[0.0, 1.0]` where
+/// `0.0` = near plane and `1.0` = far plane, matching wgpu's depth convention.
+///
+/// Depth compositing is only active in the full `render()` path. When using
+/// `paint()` / `paint_to()` (external render passes), the image is drawn
+/// without a depth test regardless of this field.
 #[non_exhaustive]
 #[derive(Clone)]
 pub struct ScreenImageItem {
@@ -1028,8 +1040,10 @@ pub struct ScreenImageItem {
     pub scale: f32,
     /// Overall opacity multiplier applied on top of per-pixel alpha. Default: `1.0`.
     pub alpha: f32,
-    /// Reserved : must be `false` in Phase 10.
-    pub depth_composite: bool,
+    /// Per-pixel NDC depth values `[0.0, 1.0]` for depth compositing against scene
+    /// geometry. Must contain exactly `width * height` values if `Some`.
+    /// `None` (default) renders the image on top of all geometry (no depth test).
+    pub depth: Option<Vec<f32>>,
 }
 
 impl Default for ScreenImageItem {
@@ -1041,7 +1055,7 @@ impl Default for ScreenImageItem {
             anchor: ImageAnchor::TopLeft,
             scale: 1.0,
             alpha: 1.0,
-            depth_composite: false,
+            depth: None,
         }
     }
 }

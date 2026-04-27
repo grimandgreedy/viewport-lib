@@ -782,6 +782,10 @@ impl ViewportRenderer {
         self.screen_image_gpu_data.clear();
         if !frame.scene.screen_images.is_empty() {
             resources.ensure_screen_image_pipeline(device);
+            // Phase 12: ensure dc pipeline if any item carries depth data.
+            if frame.scene.screen_images.iter().any(|i| i.depth.is_some()) {
+                resources.ensure_screen_image_dc_pipeline(device);
+            }
             let vp_w = vp_size[0];
             let vp_h = vp_size[1];
             for item in &frame.scene.screen_images {

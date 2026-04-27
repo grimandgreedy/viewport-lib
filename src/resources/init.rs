@@ -2060,6 +2060,8 @@ impl ViewportGpuResources {
             pick_camera_bgl: None,
             screen_image_pipeline: None,
             screen_image_bgl: None,
+            screen_image_dc_pipeline: None,
+            screen_image_dc_bgl: None,
         }
     }
 }

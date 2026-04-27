@@ -224,12 +224,23 @@ impl ViewportRenderer {
                     &self.streamtube_gpu_data,
                     camera_bg
                 );
-                // Phase 10B : screen-space image overlays (always on top).
+                // Phase 10B / Phase 12 : screen-space image overlays.
+                // Regular items drawn with depth_compare: Always (always on top).
+                // Depth-composite items drawn with depth_compare: LessEqual (occluded by
+                // scene geometry whose depth was already written to the depth attachment).
                 if !self.screen_image_gpu_data.is_empty() {
-                    if let Some(pipeline) = &self.resources.screen_image_pipeline {
-                        render_pass.set_pipeline(pipeline);
+                    if let Some(overlay_pipeline) = &self.resources.screen_image_pipeline {
+                        let dc_pipeline = self.resources.screen_image_dc_pipeline.as_ref();
                         for gpu in &self.screen_image_gpu_data {
-                            render_pass.set_bind_group(0, &gpu.bind_group, &[]);
+                            if let (Some(dc_bg), Some(dc_pipe)) =
+                                (&gpu.depth_bind_group, dc_pipeline)
+                            {
+                                render_pass.set_pipeline(dc_pipe);
+                                render_pass.set_bind_group(0, dc_bg, &[]);
+                            } else {
+                                render_pass.set_pipeline(overlay_pipeline);
+                                render_pass.set_bind_group(0, &gpu.bind_group, &[]);
+                            }
                             render_pass.draw(0..6, 0..1);
                         }
                     }
@@ -1385,11 +1396,13 @@ impl ViewportRenderer {
             }
         }
 
-        // Phase 10B : screen-space image overlay pass (HDR path).
+        // Phase 10B / Phase 12 : screen-space image overlay pass (HDR path).
         // Drawn after axes so overlays are always on top of everything.
+        // Regular items use depth_compare: Always; depth-composite items use LessEqual.
         if !self.screen_image_gpu_data.is_empty() {
-            if let Some(pipeline) = &self.resources.screen_image_pipeline {
+            if let Some(overlay_pipeline) = &self.resources.screen_image_pipeline {
                 let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+                let dc_pipeline = self.resources.screen_image_dc_pipeline.as_ref();
                 let mut img_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("screen_image_pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1412,9 +1425,14 @@ impl ViewportRenderer {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
-                img_pass.set_pipeline(pipeline);
                 for gpu in &self.screen_image_gpu_data {
-                    img_pass.set_bind_group(0, &gpu.bind_group, &[]);
+                    if let (Some(dc_bg), Some(dc_pipe)) = (&gpu.depth_bind_group, dc_pipeline) {
+                        img_pass.set_pipeline(dc_pipe);
+                        img_pass.set_bind_group(0, dc_bg, &[]);
+                    } else {
+                        img_pass.set_pipeline(overlay_pipeline);
+                        img_pass.set_bind_group(0, &gpu.bind_group, &[]);
+                    }
                     img_pass.draw(0..6, 0..1);
                 }
             }

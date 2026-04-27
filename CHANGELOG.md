@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.5]
+
+- `ScreenImageItem::depth`: optional per-pixel NDC depth array for depth-compositing CPU-rendered images against 3D scene geometry
+- Depth-composite overlay pipeline (`depth_compare: LessEqual`, `frag_depth` output) renders image pixels only where the image depth passes the hardware depth test against the scene depth buffer
+- Showcase 29: heatmap overlay demonstrating near/mid/far sphere occlusion with the depth composite path
+
 ## [0.8.4]
 
 - Curve network quantity system: `PolylineItem` now supports per-edge scalars, per-node/edge direct RGBA colors, per-node radius variation, and node/edge vector arrows

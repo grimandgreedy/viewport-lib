@@ -1442,6 +1442,120 @@ impl ViewportGpuResources {
         self.screen_image_pipeline = Some(pipeline);
     }
 
+    /// Lazily create the depth-composite screen-image render pipeline (Phase 12).
+    ///
+    /// No-op if already created. Called from `prepare()` when any submitted
+    /// `ScreenImageItem` carries per-pixel depth data.
+    pub(crate) fn ensure_screen_image_dc_pipeline(&mut self, device: &wgpu::Device) {
+        if self.screen_image_dc_pipeline.is_some() {
+            return;
+        }
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("screen_image_dc_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/screen_image_dc.wgsl").into(),
+            ),
+        });
+
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("screen_image_dc_bgl"),
+            entries: &[
+                // binding 0: ScreenImageUniform
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // binding 1: colour texture_2d<f32>
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                // binding 2: sampler (filtering, for colour texture)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // binding 3: R32Float depth texture (non-filterable, read via textureLoad)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("screen_image_dc_layout"),
+            bind_group_layouts: &[&bgl],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("screen_image_dc_pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: self.target_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            // Depth test: discard fragments whose image depth exceeds scene depth.
+            // depth_write_enabled: false so the scene depth buffer is not modified.
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        self.screen_image_dc_bgl = Some(bgl);
+        self.screen_image_dc_pipeline = Some(pipeline);
+    }
+
     /// Upload one [`ScreenImageItem`] to the GPU and return its per-frame GPU data.
     ///
     /// Creates a new RGBA8Unorm texture each call : intended for per-frame data.
@@ -1571,10 +1685,98 @@ impl ViewportGpuResources {
             ],
         });
 
+        // Phase 12: if the item carries per-pixel depth data, upload a R32Float depth texture
+        // and create a second bind group for the depth-composite pipeline.
+        let (depth_texture_opt, depth_bind_group_opt) = if let Some(depth_values) = &item.depth {
+            let dc_bgl = self
+                .screen_image_dc_bgl
+                .as_ref()
+                .expect("ensure_screen_image_dc_pipeline not called before upload_screen_image");
+
+            let dtex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("screen_image_depth_tex"),
+                size: wgpu::Extent3d {
+                    width: item.width.max(1),
+                    height: item.height.max(1),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R32Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+
+            // Upload depth values as raw bytes (each f32 = 4 bytes).
+            let pixel_count = (item.width * item.height) as usize;
+            let safe_depth: Vec<f32> = if depth_values.len() >= pixel_count {
+                depth_values[..pixel_count].to_vec()
+            } else {
+                // Pad with far-plane depth (1.0) if caller supplied too few values.
+                let mut v = depth_values.clone();
+                v.resize(pixel_count, 1.0);
+                v
+            };
+
+            if item.width > 0 && item.height > 0 {
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &dtex,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    bytemuck::cast_slice(&safe_depth),
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(item.width * 4),
+                        rows_per_image: Some(item.height),
+                    },
+                    wgpu::Extent3d {
+                        width: item.width,
+                        height: item.height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
+
+            let dview = dtex.create_view(&wgpu::TextureViewDescriptor::default());
+
+            let dc_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("screen_image_dc_bg"),
+                layout: dc_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(&dview),
+                    },
+                ],
+            });
+
+            (Some(dtex), Some(dc_bg))
+        } else {
+            (None, None)
+        };
+
         ScreenImageGpuData {
             uniform_buf,
             _texture: texture,
             bind_group,
+            _depth_texture: depth_texture_opt,
+            depth_bind_group: depth_bind_group_opt,
         }
     }
 }

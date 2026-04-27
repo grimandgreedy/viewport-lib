@@ -874,14 +874,20 @@ pub struct PolylineGpuData {
     pub(crate) _uniform_buf: wgpu::Buffer,
 }
 
-/// Per-frame GPU data for one screen-space image overlay, created in `prepare()` (Phase 10B).
+/// Per-frame GPU data for one screen-space image overlay, created in `prepare()` (Phase 10B/12).
 pub struct ScreenImageGpuData {
     /// Uniform buffer: `ScreenImageUniform` (32 bytes) with NDC extents and alpha.
     pub(crate) uniform_buf: wgpu::Buffer,
     /// Uploaded RGBA8 texture for this image (recreated each frame).
     pub(crate) _texture: wgpu::Texture,
-    /// Bind group (group 0): uniform + texture + sampler.
+    /// Bind group (group 0): uniform + colour texture + sampler.
+    /// Used by the regular pipeline (no depth test).
     pub(crate) bind_group: wgpu::BindGroup,
+    /// Uploaded R32Float depth texture. `None` when the item has no depth data.
+    pub(crate) _depth_texture: Option<wgpu::Texture>,
+    /// Bind group for the depth-composite pipeline (group 0: uniform + colour + sampler + depth).
+    /// `Some` only when the item carries per-pixel depth data (Phase 12).
+    pub(crate) depth_bind_group: Option<wgpu::BindGroup>,
 }
 
 /// Per-frame GPU data for one glyph item, created in `prepare()`.
@@ -1507,11 +1513,16 @@ pub struct ViewportGpuResources {
     /// Bind group for the ground plane pass (rebuilt when shadow atlas changes).
     pub(crate) ground_plane_bind_group: wgpu::BindGroup,
 
-    // --- Phase 10B: Screen-space image overlays (lazily created) ---
+    // --- Phase 10B / Phase 12: Screen-space image overlays (lazily created) ---
     /// Render pipeline for screen-space image quads. None until first screen image is submitted.
     pub(crate) screen_image_pipeline: Option<wgpu::RenderPipeline>,
     /// Bind group layout for the screen image pipeline (group 0: uniform + texture + sampler).
     pub(crate) screen_image_bgl: Option<wgpu::BindGroupLayout>,
+    /// Depth-composite pipeline (Phase 12). Uses depth_compare: LessEqual and outputs
+    /// frag_depth from a per-pixel image depth texture. None until first dc image is submitted.
+    pub(crate) screen_image_dc_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for the dc pipeline (group 0: uniform + colour tex + sampler + depth tex).
+    pub(crate) screen_image_dc_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- Phase K: GPU object-ID picking (lazily created) ---
     /// Render pipeline that outputs flat u32 object IDs to R32Uint + R32Float targets.
