@@ -1,10 +1,22 @@
 # Changelog
 
+## [0.8.4]
+
+- Curve network quantity system: `PolylineItem` now supports per-edge scalars, per-node/edge direct RGBA colors, per-node radius variation, and node/edge vector arrows
+- Vector arrows for polylines are auto-generated as `GlyphItem` instances in the render loop -- no manual setup required
+- New public helpers `polyline_node_vectors_to_glyphs` and `polyline_edge_vectors_to_glyphs` in the `quantities` module
+- `PointCloudItem` and `PolylineItem` now derive `Clone`
+
 ## [0.8.3]
+
 - Major fix to for cap filling. Added loop calculation so that necessary cap filling is identified when the clip plane passes through verticies -- e.g., for a sphere, torus, cone, etc.
 - Added `Tint(f32)` backface policy: darkens the object's base color by a factor without specifying an explicit color
 - Added `Pattern` backface policy with four procedural patterns: Checker, Hatching, Crosshatch, Stripes
 - Fix normal generation: added check back to the main render loop
+- Added scene building helpers (`SceneNode` construction utilities)
+- Replaced raw `usize` mesh indices with typed `MeshId` across the public API
+- Added typed `PickId` wrapper: `SceneRenderItem.pick_id` and GPU pick results now use `PickId` instead of `u64`
+- Removed `two_sided` boolean from `SceneRenderItem`; use `Material::backface_policy` instead (`BackfacePolicy::Identical` replaces `two_sided = true`)
 
 ## [0.8.2]
 
