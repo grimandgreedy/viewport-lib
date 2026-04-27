@@ -117,6 +117,7 @@ pub use scene::scene::{Group, GroupId, Layer, LayerId, Scene, SceneNode};
 pub use scene::traits::{RenderMode, ViewportObject};
 
 pub use geometry::bvh::PickAccelerator;
+pub use geometry::implicit::{ImplicitRenderOptions, march_implicit_surface, march_implicit_surface_color};
 pub use geometry::isoline::{IsolineItem, extract_isolines};
 pub use geometry::marching_cubes::{VolumeData, extract_isosurface};
 

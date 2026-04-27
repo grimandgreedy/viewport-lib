@@ -128,6 +128,7 @@ mod showcase_26_volume_mesh;
 mod showcase_27_camera_framing;
 mod showcase_28_curve_network_quantities;
 mod showcase_29_depth_composite_images;
+mod showcase_30_implicit_surface;
 mod viewport_callback;
 
 const BG_COLOR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -477,6 +478,13 @@ fn main() -> eframe::Result {
                 dc_pixels: Vec::new(),
                 dc_depths: Vec::new(),
 
+                is_built: false,
+                is_mesh_id: MeshId::from_index(0),
+                is_mc_mesh_id: None,
+                is_depth_composite: true,
+                is_resolution_div: 2,
+                is_sdf_variant: showcase_30_implicit_surface::IsSdfVariant::Blobs,
+
                 aux_built: false,
                 aux_scene: Scene::new(),
                 aux_frustums: Vec::new(),
@@ -530,6 +538,7 @@ enum ShowcaseMode {
     Auxiliary,
     CurveNetworkQuantities,
     DepthCompositeImages,
+    ImplicitSurface,
 }
 
 impl ShowcaseMode {
@@ -564,6 +573,7 @@ impl ShowcaseMode {
             Self::Auxiliary => "27: Camera Framing & HUD",
             Self::CurveNetworkQuantities => "28: Curve Network Quantities",
             Self::DepthCompositeImages => "29: Depth-Composited Images",
+            Self::ImplicitSurface => "30: Implicit Surfaces",
         }
     }
 }
@@ -883,6 +893,14 @@ pub(crate) struct App {
     dc_pixels: Vec<[u8; 4]>,
     dc_depths: Vec<f32>,
 
+    // --- Showcase 30 ---
+    is_built: bool,
+    is_mesh_id: MeshId,
+    is_mc_mesh_id: Option<MeshId>,
+    is_depth_composite: bool,
+    is_resolution_div: u32,
+    is_sdf_variant: showcase_30_implicit_surface::IsSdfVariant,
+
     // --- Showcase 27 ---
     pub(crate) aux_built: bool,
     pub(crate) aux_scene: viewport_lib::scene::Scene,
@@ -1044,6 +1062,7 @@ impl eframe::App for App {
                     ShowcaseMode::Auxiliary,
                     ShowcaseMode::CurveNetworkQuantities,
                     ShowcaseMode::DepthCompositeImages,
+                    ShowcaseMode::ImplicitSurface,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1431,6 +1450,7 @@ impl eframe::App for App {
             // buffer (eframe's plain paint pass has no depth attachment).
             if self.mode == ShowcaseMode::BackfacePolicy
                 || self.mode == ShowcaseMode::DepthCompositeImages
+                || self.mode == ShowcaseMode::ImplicitSurface
             {
                 ui.painter()
                     .add(eframe::egui_wgpu::Callback::new_paint_callback(
@@ -1530,7 +1550,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 29] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 30] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::Performance,
@@ -1560,6 +1580,7 @@ impl App {
             ShowcaseMode::Auxiliary,
             ShowcaseMode::CurveNetworkQuantities,
             ShowcaseMode::DepthCompositeImages,
+            ShowcaseMode::ImplicitSurface,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1653,6 +1674,7 @@ impl App {
             ShowcaseMode::VolumeMesh => !self.vm_built,
             ShowcaseMode::Auxiliary => !self.aux_built,
             ShowcaseMode::DepthCompositeImages => !self.dc_built,
+            ShowcaseMode::ImplicitSurface => !self.is_built,
             _ => false,
         };
         if !needs {
@@ -1905,6 +1927,9 @@ impl App {
             ShowcaseMode::DepthCompositeImages => {
                 self.build_dc_scene(renderer);
             }
+            ShowcaseMode::ImplicitSurface => {
+                self.build_implicit_scene(renderer);
+            }
             _ => {}
         }
     }
@@ -1954,6 +1979,7 @@ impl App {
             ShowcaseMode::Auxiliary => self.controls_aux(ui),
             ShowcaseMode::CurveNetworkQuantities => self.controls_cnq(ui),
             ShowcaseMode::DepthCompositeImages => self.controls_dc(ui),
+            ShowcaseMode::ImplicitSurface => self.controls_implicit(ui),
         }
     }
 
@@ -3312,6 +3338,10 @@ impl App {
             ShowcaseMode::DepthCompositeImages => {
                 (self.dc_scene_items(), Some(BG_COLOR), App::dc_lighting(), 0, 0)
             }
+
+            ShowcaseMode::ImplicitSurface => {
+                (self.implicit_scene_items(), Some(BG_COLOR), App::implicit_lighting(), 0, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -3454,6 +3484,11 @@ impl App {
         // Depth-composite screen image (Showcase 29) : submitted every frame.
         if self.mode == ShowcaseMode::DepthCompositeImages {
             self.dc_push_screen_image(&mut fd);
+        }
+
+        // Implicit surface sphere-march (Showcase 30) : re-marched every frame.
+        if self.mode == ShowcaseMode::ImplicitSurface {
+            self.push_implicit_screen_image(&mut fd, w as u32, h as u32);
         }
 
         // Auxiliary frustums and screen images (Showcase 27) : submitted every frame.
