@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.6]
+
+- Fix marching cubes winding order: all triangles were wound CW from outside, causing back-face culling to hide the mesh entirely
+- Fix duplicate test function names which caused errors in `sparse_volume` tests
+
 ## [0.8.5]
 
 - `ScreenImageItem::depth`: optional per-pixel NDC depth array for depth-compositing CPU-rendered images against 3D scene geometry

@@ -219,10 +219,10 @@ pub fn extract_isosurface(volume: &VolumeData, isovalue: f32) -> MeshData {
                             idx
                         });
                     }
-                    // Emit triangle.
+                    // Emit triangle (swap v1/v2 to match renderer's CCW front-face convention).
                     indices.push(tri_verts[0]);
-                    indices.push(tri_verts[1]);
                     indices.push(tri_verts[2]);
+                    indices.push(tri_verts[1]);
                     i += 3;
                 }
             }
@@ -616,6 +616,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_tri_table_edge_consistency() {
+        // Every edge index referenced in TRI_TABLE[i] must appear in EDGE_TABLE[i].
+        let mut failures = Vec::new();
+        for cube_index in 0u16..256 {
+            let edge_bits = EDGE_TABLE[cube_index as usize];
+            let tri_row = &TRI_TABLE[cube_index as usize];
+            let mut j = 0;
+            while j < 16 && tri_row[j] >= 0 {
+                let edge_id = tri_row[j] as u8;
+                if edge_bits & (1 << edge_id) == 0 {
+                    failures.push(format!(
+                        "TRI_TABLE[{}]: edge {} not in EDGE_TABLE ({:#014b})",
+                        cube_index, edge_id, edge_bits
+                    ));
+                    break; // one failure per cube_index is enough
+                }
+                j += 1;
+            }
+        }
+        if !failures.is_empty() {
+            panic!(
+                "{} TRI_TABLE entries inconsistent with EDGE_TABLE:\n{}",
+                failures.len(),
+                failures.join("\n")
+            );
+        }
+    }
+
+    #[test]
     fn test_sphere_isosurface() {
         let n = 32u32;
         let mut data = vec![0.0f32; (n * n * n) as usize];
@@ -681,6 +710,67 @@ mod tests {
 
         // positions and normals must be same length.
         assert_eq!(mesh.positions.len(), mesh.normals.len());
+    }
+
+    #[test]
+    fn test_sphere_winding_order() {
+        // Extract a sphere isosurface and verify geometric normals (cross product)
+        // align with the gradient-based vertex normals (which point outward for SDF).
+        // A winding mismatch means some fraction of triangles would be back-face culled.
+        let n = 32u32;
+        let center = n as f32 / 2.0;
+        let mut data = vec![0.0f32; (n * n * n) as usize];
+        for iz in 0..n {
+            for iy in 0..n {
+                for ix in 0..n {
+                    let dx = ix as f32 - center;
+                    let dy = iy as f32 - center;
+                    let dz = iz as f32 - center;
+                    data[(ix + iy * n + iz * n * n) as usize] =
+                        (dx * dx + dy * dy + dz * dz).sqrt();
+                }
+            }
+        }
+        let volume = VolumeData {
+            data,
+            dims: [n, n, n],
+            origin: [0.0, 0.0, 0.0],
+            spacing: [1.0, 1.0, 1.0],
+        };
+        let mesh = extract_isosurface(&volume, 8.0);
+        assert!(!mesh.positions.is_empty(), "expected vertices");
+
+        let mut correct = 0usize;
+        let mut flipped = 0usize;
+        let tri_count = mesh.indices.len() / 3;
+        for t in 0..tri_count {
+            let i0 = mesh.indices[t * 3] as usize;
+            let i1 = mesh.indices[t * 3 + 1] as usize;
+            let i2 = mesh.indices[t * 3 + 2] as usize;
+            let p0 = mesh.positions[i0];
+            let p1 = mesh.positions[i1];
+            let p2 = mesh.positions[i2];
+            // Geometric normal via cross product.
+            let e1 = [p1[0]-p0[0], p1[1]-p0[1], p1[2]-p0[2]];
+            let e2 = [p2[0]-p0[0], p2[1]-p0[1], p2[2]-p0[2]];
+            let gn = [
+                e1[1]*e2[2] - e1[2]*e2[1],
+                e1[2]*e2[0] - e1[0]*e2[2],
+                e1[0]*e2[1] - e1[1]*e2[0],
+            ];
+            // Vertex normal (gradient-based, points outward for this SDF).
+            let vn = mesh.normals[i0];
+            let dot = gn[0]*vn[0] + gn[1]*vn[1] + gn[2]*vn[2];
+            if dot >= 0.0 { correct += 1; } else { flipped += 1; }
+        }
+
+        let total = correct + flipped;
+        let flipped_pct = flipped as f32 / total as f32 * 100.0;
+        assert!(
+            flipped_pct < 5.0,
+            "{}/{} triangles ({:.1}%) have geometric normal opposing the gradient — winding is wrong",
+            flipped, total, flipped_pct
+        );
     }
 
     #[test]

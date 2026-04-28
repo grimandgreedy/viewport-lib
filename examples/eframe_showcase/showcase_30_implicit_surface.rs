@@ -62,9 +62,12 @@ fn blob_color(p: Vec3) -> [u8; 4] {
     const C1: [f32; 3] = [0.25, 0.55, 1.00]; // blue
     const C2: [f32; 3] = [0.25, 0.85, 0.45]; // green
 
-    let w0 = (-d0).max(0.0);
-    let w1 = (-d1).max(0.0);
-    let w2 = (-d2).max(0.0);
+    // Bias by the smin blend radius so weights are non-zero on the isosurface
+    // (at d_i = 0, weight = 0.9 rather than 0, which would produce black).
+    let blend = 0.9_f32;
+    let w0 = (-d0 + blend).max(0.0);
+    let w1 = (-d1 + blend).max(0.0);
+    let w2 = (-d2 + blend).max(0.0);
     let total = (w0 + w1 + w2).max(1e-5);
 
     [
@@ -292,16 +295,28 @@ impl App {
     /// Lighting for Showcase 30.
     pub(crate) fn implicit_lighting() -> LightingSettings {
         LightingSettings {
-            lights: vec![LightSource {
-                kind: LightKind::Directional {
-                    direction: [-0.4, -0.7, -1.0],
+            lights: vec![
+                LightSource {
+                    kind: LightKind::Directional {
+                        direction: [0.4, 0.7, 0.9],
+                    },
+                    color: [1.0, 0.97, 0.93],
+                    intensity: 1.4,
                 },
-                color: [1.0, 0.97, 0.93],
-                intensity: 2.2,
-            }],
+                LightSource {
+                    kind: LightKind::Directional {
+                        direction: [-0.3, 0.2, -0.5],
+                    },
+                    color: [0.5, 0.6, 0.9],
+                    intensity: 0.3,
+                },
+            ],
             hemisphere_intensity: 0.45,
-            sky_color: [0.10, 0.12, 0.20],
-            ground_color: [0.15, 0.15, 0.20],
+            sky_color: [0.50, 0.60, 0.80],
+            ground_color: [0.25, 0.25, 0.35],
+            // Higher bias for the marching-cubes variant: smooth vertex normals on
+            // faceted geometry cause shadow-terminator artifacts at the default 0.0001.
+            shadow_bias: 0.003,
             ..LightingSettings::default()
         }
     }
