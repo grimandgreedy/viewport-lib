@@ -3,11 +3,11 @@
 //! Demonstrates Phase 13 (CPU sphere-marching) alongside marching cubes, using
 //! the same three-sphere SDF scene rendered three ways:
 //!
-//! - **Merged blobs** — sphere-marching with smooth-min (smin), producing a
+//! - **Merged blobs** : sphere-marching with smooth-min (smin), producing a
 //!   single organic fused shape. Color is blended between the three spheres.
-//! - **Separate spheres** — sphere-marching with plain min(), so the three
+//! - **Separate spheres** : sphere-marching with plain min(), so the three
 //!   spheres stay distinct with sharp junctions.
-//! - **Marching cubes** — the same smin SDF sampled onto a 64³ grid and
+//! - **Marching cubes** : the same smin SDF sampled onto a 64³ grid and
 //!   triangulated. Renders as a normal mesh; shows the tessellation faceting
 //!   that sphere-marching avoids.
 //!
@@ -19,7 +19,8 @@ use crate::App;
 use eframe::egui;
 use glam::Vec3;
 use viewport_lib::{
-    Camera, LightKind, LightSource, LightingSettings, Material, SceneRenderItem,
+    Camera, GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
+    LightKind, LightSource, LightingSettings, Material, SceneRenderItem,
     VolumeData, extract_isosurface,
     geometry::implicit::{ImplicitRenderOptions, march_implicit_surface_color},
     primitives,
@@ -38,6 +39,8 @@ pub enum IsSdfVariant {
     SeparateSpheres,
     /// Marching cubes triangulation of the same smin SDF field.
     MarchingCubes,
+    /// GPU implicit surface: same three-blob SDF via descriptor-driven ray-march.
+    GpuImplicit,
 }
 
 // ---------------------------------------------------------------------------
@@ -139,22 +142,28 @@ impl App {
         ui.label("Rendering approach:");
         ui.radio_value(
             &mut self.is_sdf_variant,
+            IsSdfVariant::GpuImplicit,
+            "GPU implicit : descriptor-driven, full resolution",
+        );
+        ui.radio_value(
+            &mut self.is_sdf_variant,
             IsSdfVariant::Blobs,
-            "Sphere-march — smin (merged blobs)",
+            "CPU sphere-march : smin (merged blobs)",
         );
         ui.radio_value(
             &mut self.is_sdf_variant,
             IsSdfVariant::SeparateSpheres,
-            "Sphere-march — min (separate spheres)",
+            "CPU sphere-march : min (separate spheres)",
         );
         ui.radio_value(
             &mut self.is_sdf_variant,
             IsSdfVariant::MarchingCubes,
-            "Marching cubes — same smin field",
+            "Marching cubes : same smin field",
         );
         ui.separator();
 
-        let is_march = self.is_sdf_variant != IsSdfVariant::MarchingCubes;
+        let is_march = self.is_sdf_variant != IsSdfVariant::MarchingCubes
+            && self.is_sdf_variant != IsSdfVariant::GpuImplicit;
         ui.add_enabled_ui(is_march, |ui| {
             ui.label("Depth compositing (sphere-march only):");
             ui.checkbox(&mut self.is_depth_composite, "Depth-composite against scene");
@@ -171,7 +180,7 @@ impl App {
         ui.label("Orange sphere: behind the surface.");
         if self.is_sdf_variant == IsSdfVariant::MarchingCubes {
             ui.separator();
-            ui.label("Marching cubes produces a real mesh — orbit and pick it like any other object. Notice the faceting versus the smooth sphere-march result.");
+            ui.label("Marching cubes produces a real mesh : orbit and pick it like any other object. Notice the faceting versus the smooth sphere-march result.");
         }
     }
 
@@ -214,7 +223,7 @@ impl App {
             items.push(item);
         }
 
-        // Marching cubes mesh (variant C only).
+        // Marching cubes mesh (MarchingCubes variant only).
         if self.is_sdf_variant == IsSdfVariant::MarchingCubes {
             if let Some(mc_id) = self.is_mc_mesh_id {
                 let mut item = SceneRenderItem::default();
@@ -234,7 +243,7 @@ impl App {
 
     /// Sphere-march the current SDF variant and push the result into `fd`.
     ///
-    /// No-ops when `MarchingCubes` is active (the mesh is already in the scene).
+    /// No-ops when `MarchingCubes` or `GpuImplicit` is active.
     /// Called every frame so the image tracks camera movement.
     pub(crate) fn push_implicit_screen_image(
         &self,
@@ -242,7 +251,10 @@ impl App {
         viewport_w: u32,
         viewport_h: u32,
     ) {
-        if !self.is_built || self.is_sdf_variant == IsSdfVariant::MarchingCubes {
+        if !self.is_built
+            || self.is_sdf_variant == IsSdfVariant::MarchingCubes
+            || self.is_sdf_variant == IsSdfVariant::GpuImplicit
+        {
             return;
         }
 
@@ -280,7 +292,7 @@ impl App {
                 };
                 (d, color)
             }),
-            IsSdfVariant::MarchingCubes => unreachable!(),
+            IsSdfVariant::MarchingCubes | IsSdfVariant::GpuImplicit => unreachable!(),
         };
 
         img.scale = div as f32;
@@ -290,6 +302,50 @@ impl App {
         }
 
         fd.scene.screen_images.push(img);
+    }
+
+    /// Submit a GPU implicit surface item for the three-blob scene (Phase 16).
+    ///
+    /// Only active when `is_sdf_variant == GpuImplicit`. The three sphere
+    /// primitives match the CPU-path blob SDF so the two paths are visually
+    /// identical (modulo shading differences).
+    pub(crate) fn push_gpu_implicit(&self, fd: &mut viewport_lib::FrameData) {
+        if !self.is_built || self.is_sdf_variant != IsSdfVariant::GpuImplicit {
+            return;
+        }
+
+        // Centers and radius matching blob_sdf / blob_color.
+        const CENTERS: [[f32; 3]; 3] = [[-1.8, 0.0, 0.0], [1.8, 0.0, 0.0], [0.0, 1.8, 0.0]];
+        const COLORS: [[f32; 4]; 3] = [
+            [0.90, 0.35, 0.25, 1.0], // red-orange
+            [0.25, 0.55, 1.00, 1.0], // blue
+            [0.25, 0.85, 0.45, 1.0], // green
+        ];
+
+        let mut primitives = Vec::with_capacity(3);
+        for i in 0..3 {
+            let mut prim = ImplicitPrimitive::zeroed();
+            prim.kind = 1; // sphere
+            prim.blend = 0.9;
+            // params[0..4] = (cx, cy, cz, radius)
+            prim.params[0] = CENTERS[i][0];
+            prim.params[1] = CENTERS[i][1];
+            prim.params[2] = CENTERS[i][2];
+            prim.params[3] = 1.3;
+            prim.color = COLORS[i];
+            primitives.push(prim);
+        }
+
+        fd.scene.gpu_implicit.push(GpuImplicitItem {
+            primitives,
+            blend_mode: ImplicitBlendMode::SmoothUnion,
+            march_options: GpuImplicitOptions {
+                max_steps: 128,
+                step_scale: 0.85,
+                hit_threshold: 5e-4,
+                max_distance: self.camera.zfar,
+            },
+        });
     }
 
     /// Lighting for Showcase 30.

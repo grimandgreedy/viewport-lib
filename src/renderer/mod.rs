@@ -153,6 +153,8 @@ pub struct ViewportRenderer {
     volume_gpu_data: Vec<crate::resources::VolumeGpuData>,
     /// Per-frame streamtube GPU data, rebuilt in prepare(), consumed in paint().
     streamtube_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
+    /// Per-frame GPU implicit surface data, rebuilt in prepare(), consumed in paint() (Phase 16).
+    implicit_gpu_data: Vec<crate::resources::implicit::ImplicitGpuItem>,
     /// Per-frame screen-image GPU data, rebuilt in prepare(), consumed in paint() (Phase 10B).
     screen_image_gpu_data: Vec<crate::resources::ScreenImageGpuData>,
     /// Per-viewport GPU state slots.
@@ -205,6 +207,7 @@ impl ViewportRenderer {
             polyline_gpu_data: Vec::new(),
             volume_gpu_data: Vec::new(),
             streamtube_gpu_data: Vec::new(),
+            implicit_gpu_data: Vec::new(),
             screen_image_gpu_data: Vec::new(),
             viewport_slots: Vec::new(),
             compute_filter_results: Vec::new(),

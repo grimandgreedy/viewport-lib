@@ -63,7 +63,7 @@ impl App {
             .upload_mesh_data(&self.device, &make_box_with_uvs(1.2, 1.2, 1.2))
             .expect("aux box");
 
-        // South side (Y < 0) — warm colours.
+        // South side (Y < 0) : warm colours.
         self.aux_scene.add_named("South Sphere", Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(-2.5, -3.0, 0.6)),
             { let mut m = Material::from_color([0.85, 0.22, 0.18]); m.roughness = 0.3; m });
@@ -71,7 +71,7 @@ impl App {
             glam::Mat4::from_translation(glam::Vec3::new(2.5, -2.5, 0.6)),
             { let mut m = Material::from_color([0.95, 0.55, 0.10]); m.roughness = 0.5; m });
 
-        // North side (Y > 0) — cool colours.
+        // North side (Y > 0) : cool colours.
         self.aux_scene.add_named("North Sphere", Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(2.5, 3.0, 0.6)),
             { let mut m = Material::from_color([0.15, 0.65, 0.80]); m.roughness = 0.3; m });
@@ -125,7 +125,7 @@ impl App {
         ui.label(egui::RichText::new("Camera Framing").strong());
         ui.label(
             "A walled platform with warm objects (south) and cool objects (north). \
-             Each camera can only see one side — except Camera C which looks along the wall.",
+             Each camera can only see one side : except Camera C which looks along the wall.",
         );
 
         #[derive(Clone, Copy)]
@@ -172,7 +172,7 @@ impl App {
         );
         ui.add_space(2.0);
         match self.aux_active_frustum {
-            None => { ui.label("(overview — click 'Look through' to activate a camera)"); }
+            None => { ui.label("(overview : click 'Look through' to activate a camera)"); }
             Some(i) => {
                 ui.label(format!("Active: {}", ["A - blue", "B - orange", "C - green"][i]));
             }

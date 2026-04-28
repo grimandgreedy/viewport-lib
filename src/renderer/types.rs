@@ -1323,6 +1323,8 @@ pub struct SceneFrame {
     pub camera_frustums: Vec<CameraFrustumItem>,
     /// Screen-space image overlay items to render this frame (Phase 10).
     pub screen_images: Vec<ScreenImageItem>,
+    /// GPU implicit surface items to render this frame (Phase 16).
+    pub gpu_implicit: Vec<crate::resources::GpuImplicitItem>,
 }
 
 impl Default for SceneFrame {
@@ -1338,6 +1340,7 @@ impl Default for SceneFrame {
             streamtube_items: Vec::new(),
             camera_frustums: Vec::new(),
             screen_images: Vec::new(),
+            gpu_implicit: Vec::new(),
         }
     }
 }

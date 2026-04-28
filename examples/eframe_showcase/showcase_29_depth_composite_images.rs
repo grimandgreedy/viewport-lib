@@ -5,9 +5,9 @@
 //!
 //! The scene has three spheres at clearly different distances from the camera:
 //!
-//! - **Green (left, near)**: closer than the overlay — pokes through in DC mode.
+//! - **Green (left, near)**: closer than the overlay : pokes through in DC mode.
 //! - **Blue (center, mid)**: sits at exactly the overlay depth.
-//! - **Orange (right, far)**: farther than the overlay — hidden behind it in DC mode.
+//! - **Orange (right, far)**: farther than the overlay : hidden behind it in DC mode.
 //!
 //! The overlay is a semi-transparent heatmap gradient (blue -> red) computed at
 //! the world-space depth of the center sphere.  Toggle modes to see how the
@@ -29,9 +29,9 @@ const SPHERE_RADIUS: f32 = 1.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DcMode {
-    /// Regular overlay — drawn on top of all 3D content (no depth test).
+    /// Regular overlay : drawn on top of all 3D content (no depth test).
     Plain,
-    /// Depth-composite — depth-tested against scene geometry.
+    /// Depth-composite : depth-tested against scene geometry.
     DepthComposite,
 }
 
@@ -101,9 +101,9 @@ impl App {
         ui.separator();
         ui.label("The heatmap sits at the depth of the blue center sphere.");
         ui.separator();
-        ui.label("Green (left)  : closer than overlay — visible through it in DC mode.");
+        ui.label("Green (left)  : closer than overlay : visible through it in DC mode.");
         ui.label("Blue (center) : at the overlay depth.");
-        ui.label("Orange (right): farther than overlay — hidden behind it in DC mode.");
+        ui.label("Orange (right): farther than overlay : hidden behind it in DC mode.");
     }
 
     pub(crate) fn dc_scene_items(&self) -> Vec<SceneRenderItem> {

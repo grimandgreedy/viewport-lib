@@ -777,6 +777,21 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
+        // Phase 16 : GPU implicit surface items.
+        // ------------------------------------------------------------------
+        self.implicit_gpu_data.clear();
+        if !frame.scene.gpu_implicit.is_empty() {
+            resources.ensure_implicit_pipeline(device);
+            for item in &frame.scene.gpu_implicit {
+                if item.primitives.is_empty() {
+                    continue;
+                }
+                let gpu = resources.upload_implicit_item(device, item);
+                self.implicit_gpu_data.push(gpu);
+            }
+        }
+
+        // ------------------------------------------------------------------
         // Phase 10B : screen-space image overlays.
         // ------------------------------------------------------------------
         self.screen_image_gpu_data.clear();

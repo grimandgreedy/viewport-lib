@@ -4,6 +4,12 @@
 
 ### Features
 - Add colourmaps: magma, inferno, turbo, jet, rdbu
+- GPU implicit surface rendering
+  - `GpuImplicitItem`, `ImplicitPrimitive`, `ImplicitBlendMode`, `GpuImplicitOptions`
+  - Primitive types: sphere, box, plane, capsule; up to 16 per draw call
+  - Blend modes: `Union`, `SmoothUnion` (per-primitive smooth-min radius), `Intersection`
+  - Submit via `SceneFrame::gpu_implicit`
+  - Showcase 30 extended with a GPU implicit variant as the new default
 
 ## [0.8.7]
 

@@ -2058,6 +2058,8 @@ impl ViewportGpuResources {
             pick_pipeline: None,
             pick_bind_group_layout_1: None,
             pick_camera_bgl: None,
+            implicit_pipeline: None,
+            implicit_bgl: None,
             screen_image_pipeline: None,
             screen_image_bgl: None,
             screen_image_dc_pipeline: None,

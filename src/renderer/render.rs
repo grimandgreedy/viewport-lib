@@ -32,6 +32,17 @@ impl ViewportRenderer {
             &self.streamtube_gpu_data,
             camera_bg
         );
+        // Phase 16 : GPU implicit surface (depth-writes enabled, LessEqual compare).
+        if !self.implicit_gpu_data.is_empty() {
+            if let Some(pipeline) = &self.resources.implicit_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for gpu in &self.implicit_gpu_data {
+                    render_pass.set_bind_group(1, &gpu.bind_group, &[]);
+                    render_pass.draw(0..6, 0..1);
+                }
+            }
+        }
         // Phase 10B : screen-space image overlays (always on top, no depth test).
         if !self.screen_image_gpu_data.is_empty() {
             if let Some(pipeline) = &self.resources.screen_image_pipeline {
@@ -75,6 +86,17 @@ impl ViewportRenderer {
             &self.streamtube_gpu_data,
             camera_bg
         );
+        // Phase 16 : GPU implicit surface (depth-writes enabled, LessEqual compare).
+        if !self.implicit_gpu_data.is_empty() {
+            if let Some(pipeline) = &self.resources.implicit_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for gpu in &self.implicit_gpu_data {
+                    render_pass.set_bind_group(1, &gpu.bind_group, &[]);
+                    render_pass.draw(0..6, 0..1);
+                }
+            }
+        }
         // Phase 10B : screen-space image overlays (always on top, no depth test).
         if !self.screen_image_gpu_data.is_empty() {
             if let Some(pipeline) = &self.resources.screen_image_pipeline {
@@ -224,6 +246,17 @@ impl ViewportRenderer {
                     &self.streamtube_gpu_data,
                     camera_bg
                 );
+                // Phase 16 : GPU implicit surface.
+                if !self.implicit_gpu_data.is_empty() {
+                    if let Some(pipeline) = &self.resources.implicit_pipeline {
+                        render_pass.set_pipeline(pipeline);
+                        render_pass.set_bind_group(0, camera_bg, &[]);
+                        for gpu in &self.implicit_gpu_data {
+                            render_pass.set_bind_group(1, &gpu.bind_group, &[]);
+                            render_pass.draw(0..6, 0..1);
+                        }
+                    }
+                }
                 // Phase 10B / Phase 12 : screen-space image overlays.
                 // Regular items drawn with depth_compare: Always (always on top).
                 // Depth-composite items drawn with depth_compare: LessEqual (occluded by
@@ -726,6 +759,18 @@ impl ViewportRenderer {
                 &self.streamtube_gpu_data,
                 camera_bg
             );
+
+            // Phase 16 : GPU implicit surface (HDR path, before skybox).
+            if !self.implicit_gpu_data.is_empty() {
+                if let Some(pipeline) = &self.resources.implicit_pipeline {
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_bind_group(0, camera_bg, &[]);
+                    for gpu in &self.implicit_gpu_data {
+                        render_pass.set_bind_group(1, &gpu.bind_group, &[]);
+                        render_pass.draw(0..6, 0..1);
+                    }
+                }
+            }
 
             // Draw skybox last among opaques : only uncovered sky pixels pass depth == 1.0.
             if show_skybox {

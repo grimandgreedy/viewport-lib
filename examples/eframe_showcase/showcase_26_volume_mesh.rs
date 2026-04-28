@@ -83,7 +83,7 @@ fn vid(ix: usize, iy: usize, iz: usize) -> u32 {
 /// Generate vertex positions for a GRID_V³ lattice centred at the origin,
 /// then project each vertex onto the sphere of radius `SPHERE_R`.
 ///
-/// Vertices are placed at –1.5, –0.5, 0.5, 1.5 on each axis (half-step
+/// Vertices are placed at :1.5, :0.5, 0.5, 1.5 on each axis (half-step
 /// offset), so no vertex falls at the origin : safe for normalization.
 fn sphere_vertex_positions() -> Vec<[f32; 3]> {
     let mut pos = Vec::with_capacity(GRID_V * GRID_V * GRID_V);
@@ -176,7 +176,7 @@ fn build_hex_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
                 let s = SPHERE_R / raw_len;
                 let py = cy * s;
 
-                // Latitude: –1 (south pole) to +1 (north pole) -> 0..1
+                // Latitude: :1 (south pole) to +1 (north pole) -> 0..1
                 lat_scalars.push(py / SPHERE_R * 0.5 + 0.5);
 
                 // Longitude: azimuthal angle in [0, 2π] -> 0..1

@@ -1,5 +1,7 @@
 /// Built-in colormap LUT data.
 pub mod colormap_data;
+/// GPU implicit surface types and pipeline (Phase 16).
+pub mod implicit;
 /// IBL precomputation and environment map upload.
 pub mod environment;
 mod extra_impls;
@@ -36,6 +38,9 @@ pub(crate) use self::types::{
     GridUniform, GroundPlaneUniform, InstanceData, ObjectUniform, OutlineEdgeUniform,
     OutlineObjectBuffers, OutlineUniform, OverlayUniform, PickInstance, SHADOW_ATLAS_SIZE,
     ShadowAtlasUniform, SsaoUniform, StreamtubeGpuData, ToneMapUniform, ViewportHdrState,
+};
+pub use self::implicit::{
+    GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
 };
 pub use self::sparse_volume::SparseVolumeGridData;
 pub use self::volume_mesh::{TET_SENTINEL, VolumeMeshData};

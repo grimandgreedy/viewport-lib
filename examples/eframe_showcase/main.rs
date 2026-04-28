@@ -486,7 +486,7 @@ fn main() -> eframe::Result {
                 is_mc_mesh_id: None,
                 is_depth_composite: true,
                 is_resolution_div: 2,
-                is_sdf_variant: showcase_30_implicit_surface::IsSdfVariant::Blobs,
+                is_sdf_variant: showcase_30_implicit_surface::IsSdfVariant::GpuImplicit,
 
                 eq_built: false,
                 eq_sub_mode: showcase_32_extended_quantities::EqSubMode::EdgeCornerScalars,
@@ -3585,9 +3585,10 @@ impl App {
             self.dc_push_screen_image(&mut fd);
         }
 
-        // Implicit surface sphere-march (Showcase 30) : re-marched every frame.
+        // Implicit surface (Showcase 30) : CPU sphere-march or GPU implicit, re-submitted every frame.
         if self.mode == ShowcaseMode::ImplicitSurface {
             self.push_implicit_screen_image(&mut fd, w as u32, h as u32);
+            self.push_gpu_implicit(&mut fd);
         }
 
         // Auxiliary frustums and screen images (Showcase 27) : submitted every frame.

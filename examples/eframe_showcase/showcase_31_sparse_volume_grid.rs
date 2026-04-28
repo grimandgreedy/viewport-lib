@@ -8,13 +8,13 @@
 //! ## Shapes
 //!
 //! - **Solid sphere** (left) : all cells inside a sphere of radius 2.7 in a
-//!   5×5×5 grid (81 active cells).  Interior shared faces are discarded —
+//!   5×5×5 grid (81 active cells).  Interior shared faces are discarded :
 //!   only the outer surface is rendered.
 //!
 //! - **Hollow shell** (centre) : same 5×5×5 grid but only the cells between
 //!   inner radius 1.8 and outer radius 2.7 are active (54 active cells).
 //!   Because the interior is empty, `extract_sparse_boundary` produces
-//!   **two** surfaces — an outer boundary and an inner boundary — from a single
+//!   **two** surfaces : an outer boundary and an inner boundary : from a single
 //!   upload.
 //!
 //! - **Voxel terrain** (right) : an 8×5×8 column grid where each XZ column is
@@ -23,12 +23,12 @@
 //!
 //! ## Attribute modes (applied uniformly to all three shapes)
 //!
-//! - **Cell height**: `cell_scalars["height"]` — normalised Y elevation of
+//! - **Cell height**: `cell_scalars["height"]` : normalised Y elevation of
 //!   each cell centre.
-//! - **Node distance / elevation**: `node_scalars["distance"]` — distance from
+//! - **Node distance / elevation**: `node_scalars["distance"]` : distance from
 //!   the grid centre for the sphere/shell; normalised elevation for terrain.
 //!   Averaged over 4 quad corner nodes per face.
-//! - **Cell hue**: `cell_colors["hue"]` — direct RGBA from the azimuthal angle
+//! - **Cell hue**: `cell_colors["hue"]` : direct RGBA from the azimuthal angle
 //!   of each cell centre, no colormap.
 
 use crate::App;

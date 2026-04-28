@@ -2,14 +2,14 @@
 //!
 //! Three sub-modes demonstrating the Phase 15 additions:
 //!
-//! **A — Edge/Halfedge/Corner Scalars**: Three spheres coloured by the Z coordinate
+//! **A : Edge/Halfedge/Corner Scalars**: Three spheres coloured by the Z coordinate
 //! of each edge midpoint (Edge) or corner (Halfedge/Corner).  Edge is vertex-averaged
 //! (smooth gradient); Halfedge and Corner are flat per triangle corner.
 //!
-//! **B — Volume Mesh Vectors**: Hex-sphere boundary surface with radial arrows placed
+//! **B : Volume Mesh Vectors**: Hex-sphere boundary surface with radial arrows placed
 //! at every vertex (blue) and every cell centroid (orange).
 //!
-//! **C — Point Cloud Radius + Transparency**: Fibonacci sphere where per-point radius
+//! **C : Point Cloud Radius + Transparency**: Fibonacci sphere where per-point radius
 //! is large near the equator and per-point transparency follows a sinusoidal longitude
 //! pattern, producing transparent stripes.
 
@@ -65,7 +65,7 @@ fn corner_index_scalars(indices: &[u32]) -> Vec<f32> {
 }
 
 fn make_hex_sphere_volume_mesh() -> VolumeMeshData {
-    let n = 5usize; // 5x5x5 grid – 125 vertices, 64 cells
+    let n = 5usize; // 5x5x5 grid : 125 vertices, 64 cells
     let r = 2.0f32;
     let h = 1.0f32;
     let mut positions: Vec<[f32; 3]> = Vec::new();
@@ -204,8 +204,8 @@ impl App {
         ui.separator();
         match self.eq_sub_mode {
             EqSubMode::EdgeCornerScalars => {
-                ui.label("Left: Edge — smooth gradient (Z midpoints averaged to vertices)");
-                ui.label("Centre/Right: Halfedge & Corner — repeating 3-colour triangle pattern");
+                ui.label("Left: Edge : smooth gradient (Z midpoints averaged to vertices)");
+                ui.label("Centre/Right: Halfedge & Corner : repeating 3-colour triangle pattern");
                 ui.label("(corner 0=purple, 1=teal, 2=yellow; discontinuous across edges)");
                 ui.separator();
                 ui.label("Colormap:");
