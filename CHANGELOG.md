@@ -6,6 +6,7 @@
 - Add CPU boundary face extraction via HashSet neighbor lookup, deterministic axis-aligned winding, area-weighted normals, and attribute remapping to face/face-color data
 - Create showcase 31 for sparse volume grids
 - Fix `tests/clip_volume.rs` and `tests/headless.rs` to match current API (`ClipShape`/`ClipObject`, typed `MeshId`, renamed fields)
+- Fix Plasma colormap polynomial: previous coefficients produced purple/mauve throughout the range; replaced with correct degree-6 approximation (dark blue -> pink -> orange -> yellow)
 
 ## [0.8.6]
 

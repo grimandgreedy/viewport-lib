@@ -32,18 +32,18 @@ struct ClipPlanes {
     viewport_height: f32,
 };
 
-// Point cloud per-item uniform : 128 bytes.
+// Point cloud per-item uniform : 112 bytes.
 struct PointCloudUniform {
-    model:         mat4x4<f32>,   // 64 bytes
-    default_color: vec4<f32>,     // 16 bytes
-    point_size:    f32,           //  4 bytes
-    has_scalars:   u32,           //  4 bytes (1 = use scalar buffer + LUT)
-    scalar_min:    f32,           //  4 bytes
-    scalar_max:    f32,           //  4 bytes
-    has_colors:    u32,           //  4 bytes (1 = use color buffer)
-    _pad0:         u32,           //  4 bytes \
-    _pad1:         u32,           //  4 bytes  > explicit scalars: arrays<u32,N> banned in uniform
-    _pad2:         u32,           //  4 bytes /  : total 112 bytes
+    model:            mat4x4<f32>,   // 64 bytes
+    default_color:    vec4<f32>,     // 16 bytes
+    point_size:       f32,           //  4 bytes
+    has_scalars:      u32,           //  4 bytes (1 = use scalar buffer + LUT)
+    scalar_min:       f32,           //  4 bytes
+    scalar_max:       f32,           //  4 bytes
+    has_colors:       u32,           //  4 bytes (1 = use color buffer)
+    has_radius:       u32,           //  4 bytes (1 = per-point radius from radius_buffer)
+    has_transparency: u32,           //  4 bytes (1 = per-point alpha from transparency_buffer)
+    _pad:             u32,           //  4 bytes : total 112 bytes
 };
 
 struct ClipVolumeUB {
@@ -90,11 +90,13 @@ fn clip_volume_test(p: vec3<f32>) -> bool {
     return dot(ds, ds) <= clip_volume.sphere_radius * clip_volume.sphere_radius;
 }
 
-@group(1) @binding(0) var<uniform>            pc_uniform:    PointCloudUniform;
-@group(1) @binding(1) var                     lut_texture:   texture_2d<f32>;
-@group(1) @binding(2) var                     lut_sampler:   sampler;
-@group(1) @binding(3) var<storage, read>      scalar_buffer: array<f32>;
-@group(1) @binding(4) var<storage, read>      color_buffer:  array<vec4<f32>>;
+@group(1) @binding(0) var<uniform>            pc_uniform:           PointCloudUniform;
+@group(1) @binding(1) var                     lut_texture:          texture_2d<f32>;
+@group(1) @binding(2) var                     lut_sampler:          sampler;
+@group(1) @binding(3) var<storage, read>      scalar_buffer:        array<f32>;
+@group(1) @binding(4) var<storage, read>      color_buffer:         array<vec4<f32>>;
+@group(1) @binding(5) var<storage, read>      radius_buffer:        array<f32>;
+@group(1) @binding(6) var<storage, read>      transparency_buffer:  array<f32>;
 
 // Each point is rendered as an instanced billboard quad (6 vertices = 2 triangles).
 // The position attribute is per-instance (step_mode = Instance in Rust).
@@ -130,10 +132,14 @@ fn vs_main(in: VertexIn) -> VertexOut {
     let world_pos = (pc_uniform.model * vec4<f32>(in.position, 1.0)).xyz;
     let center    = camera.view_proj * vec4<f32>(world_pos, 1.0);
 
+    // Determine color : indexed by instance (= point index), not vertex.
+    let idx = in.instance_index;
+
     // Expand to a screen-space quad. corner is in [-1,1]^2, mapped to pixels via
     // half_size. The NDC offset is scaled by w so the division in the rasteriser
     // produces the correct pixel-space result.
-    let half_size   = pc_uniform.point_size * 0.5;
+    let point_size  = select(pc_uniform.point_size, radius_buffer[idx], pc_uniform.has_radius != 0u);
+    let half_size   = point_size * 0.5;
     let corner      = quad_corner(in.vertex_index);
     let ndc_offset  = corner * half_size
                       / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
@@ -145,9 +151,6 @@ fn vs_main(in: VertexIn) -> VertexOut {
     );
     out.world_pos = world_pos;
 
-    // Determine color : indexed by instance (= point index), not vertex.
-    let idx = in.instance_index;
-
     if pc_uniform.has_scalars != 0u {
         let raw   = scalar_buffer[idx];
         let range = pc_uniform.scalar_max - pc_uniform.scalar_min;
@@ -158,6 +161,11 @@ fn vs_main(in: VertexIn) -> VertexOut {
         out.color = color_buffer[idx];
     } else {
         out.color = pc_uniform.default_color;
+    }
+
+    // Apply per-point transparency (multiplies the alpha channel).
+    if pc_uniform.has_transparency != 0u {
+        out.color.a = out.color.a * clamp(transparency_buffer[idx], 0.0, 1.0);
     }
 
     return out;

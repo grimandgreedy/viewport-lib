@@ -86,10 +86,10 @@ use viewport_lib::{
     Action, AnnotationLabel, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap,
     ButtonState, Camera,
     CameraAnimator, CameraFrame, ClipAxis, ClipObject, ColormapId, Easing, FrameData, FrameStats,
-    Gizmo, GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace, GlyphType, GroundPlane, GroundPlaneMode,
+    Gizmo, GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode,
     KeyCode, LightKind, LightSource, LightingSettings, ManipResult, ManipulationContext,
     ManipulationController, MatcapId, Material, MeshData, MeshId, NodeId, OrbitCameraController,
-    PickAccelerator, PickId, PostProcessSettings, Projection, RenderCamera, SceneFrame,
+    PickAccelerator, PickId, PointCloudItem, PostProcessSettings, Projection, RenderCamera, SceneFrame,
     SceneRenderItem, ScrollUnits, Selection, ShadowFilter, ViewPreset, ViewportContext,
     ViewportEvent, ViewportRenderer, VolumeData, VolumeId,
     geometry::isoline::IsolineItem,
@@ -130,6 +130,7 @@ mod showcase_28_curve_network_quantities;
 mod showcase_29_depth_composite_images;
 mod showcase_30_implicit_surface;
 mod showcase_31_sparse_volume_grid;
+mod showcase_32_extended_quantities;
 mod viewport_callback;
 
 const BG_COLOR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -487,6 +488,18 @@ fn main() -> eframe::Result {
                 is_resolution_div: 2,
                 is_sdf_variant: showcase_30_implicit_surface::IsSdfVariant::Blobs,
 
+                eq_built: false,
+                eq_sub_mode: showcase_32_extended_quantities::EqSubMode::EdgeCornerScalars,
+                eq_edge_mesh_ids: [MeshId::from_index(0); 3],
+                eq_vm_mesh_id: MeshId::from_index(0),
+                eq_vm_data: viewport_lib::VolumeMeshData::default(),
+                eq_pc_positions: Vec::new(),
+                eq_pc_scalars: Vec::new(),
+                eq_pc_radii: Vec::new(),
+                eq_pc_transp: Vec::new(),
+                eq_pc_bg_mesh_id: MeshId::from_index(0),
+                eq_colormap: BuiltinColormap::Viridis,
+
                 svg_built: false,
                 svg_mesh_id: MeshId::from_index(0),
                 svg_shell_id: MeshId::from_index(0),
@@ -549,6 +562,7 @@ enum ShowcaseMode {
     DepthCompositeImages,
     ImplicitSurface,
     SparseVolumeGrid,
+    ExtendedQuantities,
 }
 
 impl ShowcaseMode {
@@ -585,6 +599,7 @@ impl ShowcaseMode {
             Self::DepthCompositeImages => "29: Depth-Composited Images",
             Self::ImplicitSurface => "30: Implicit Surfaces",
             Self::SparseVolumeGrid => "31: Sparse Volume Grid",
+            Self::ExtendedQuantities => "32: Extended Quantities",
         }
     }
 }
@@ -947,6 +962,19 @@ pub(crate) struct App {
     pub(crate) matcap_blendable_color: [f32; 3],
     /// Hue (0..360) for the custom matcap.
     pub(crate) matcap_custom_hue: f32,
+
+    // --- Showcase 32 ---
+    pub(crate) eq_built: bool,
+    pub(crate) eq_sub_mode: showcase_32_extended_quantities::EqSubMode,
+    pub(crate) eq_edge_mesh_ids: [MeshId; 3],
+    pub(crate) eq_vm_mesh_id: MeshId,
+    pub(crate) eq_vm_data: viewport_lib::VolumeMeshData,
+    pub(crate) eq_pc_positions: Vec<[f32; 3]>,
+    pub(crate) eq_pc_scalars: Vec<f32>,
+    pub(crate) eq_pc_radii: Vec<f32>,
+    pub(crate) eq_pc_transp: Vec<f32>,
+    pub(crate) eq_pc_bg_mesh_id: MeshId,
+    pub(crate) eq_colormap: BuiltinColormap,
 }
 
 // ---------------------------------------------------------------------------
@@ -1087,6 +1115,7 @@ impl eframe::App for App {
                     ShowcaseMode::DepthCompositeImages,
                     ShowcaseMode::ImplicitSurface,
                     ShowcaseMode::SparseVolumeGrid,
+                    ShowcaseMode::ExtendedQuantities,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1702,6 +1731,7 @@ impl App {
             ShowcaseMode::DepthCompositeImages => !self.dc_built,
             ShowcaseMode::ImplicitSurface => !self.is_built,
             ShowcaseMode::SparseVolumeGrid => !self.svg_built,
+            ShowcaseMode::ExtendedQuantities => !self.eq_built,
             _ => false,
         };
         if !needs {
@@ -1967,6 +1997,16 @@ impl App {
                     ..viewport_lib::Camera::default()
                 };
             }
+            ShowcaseMode::ExtendedQuantities => {
+                self.build_eq_scene(renderer);
+                self.camera = viewport_lib::Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 18.0,
+                    orientation: glam::Quat::from_rotation_z(0.4)
+                        * glam::Quat::from_rotation_x(0.8),
+                    ..viewport_lib::Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2018,6 +2058,7 @@ impl App {
             ShowcaseMode::DepthCompositeImages => self.controls_dc(ui),
             ShowcaseMode::ImplicitSurface => self.controls_implicit(ui),
             ShowcaseMode::SparseVolumeGrid => self.controls_sparse_volume_grid(ui),
+            ShowcaseMode::ExtendedQuantities => self.controls_eq(ui),
         }
     }
 
@@ -2851,6 +2892,9 @@ impl App {
         let mut scene_graph_outline = false;
         let mut scene_graph_outline_width = 4.0_f32;
 
+        let mut eq_glyphs: Vec<GlyphItem> = Vec::new();
+        let mut eq_pcs: Vec<PointCloudItem> = Vec::new();
+
         let (scene_items, bg_color, lighting, scene_gen, sel_gen) = match self.mode {
             ShowcaseMode::Basic => {
                 let positions = [
@@ -3384,6 +3428,13 @@ impl App {
             ShowcaseMode::SparseVolumeGrid => {
                 (self.svg_scene_items(), Some(BG_COLOR), App::svg_lighting(), self.mode_gen, 0)
             }
+
+            ShowcaseMode::ExtendedQuantities => {
+                let (items, glyphs, pcs) = self.eq_scene_items();
+                eq_glyphs = glyphs;
+                eq_pcs = pcs;
+                (items, Some(BG_COLOR), LightingSettings::default(), 0, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -3516,6 +3567,12 @@ impl App {
         // Surface vector glyphs (Showcase 25) : submitted every frame.
         if self.mode == ShowcaseMode::SurfaceVectors && self.sv_built {
             fd.scene.glyphs.push(self.sv_glyph_item());
+        }
+
+        // Extended quantity glyphs and point clouds (Showcase 32) : submitted every frame.
+        if self.mode == ShowcaseMode::ExtendedQuantities && self.eq_built {
+            fd.scene.glyphs.extend(eq_glyphs);
+            fd.scene.point_clouds.extend(eq_pcs);
         }
 
         // Curve network quantities (Showcase 28) : submitted every frame.

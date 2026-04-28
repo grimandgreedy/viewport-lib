@@ -384,6 +384,45 @@ impl ViewportGpuResources {
                     buf.unmap();
                     face_color_bufs.insert(name.clone(), buf);
                 }
+                AttributeData::Edge(e) => {
+                    // Average edge values to vertex values (each edge's scalar is
+                    // distributed to its two endpoint vertices).
+                    let scalars = Self::expand_edge_to_vertex(e, positions, indices);
+                    if scalars.is_empty() {
+                        continue;
+                    }
+                    let min = scalars.iter().cloned().fold(f32::INFINITY, f32::min);
+                    let max = scalars.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                    let buf = Self::create_storage_buffer_f32(
+                        device,
+                        &format!("attr_{name}"),
+                        &scalars,
+                    );
+                    bufs.insert(name.clone(), buf);
+                    ranges.insert(name.clone(), (min, max));
+                }
+                AttributeData::Halfedge(h) | AttributeData::Corner(h) => {
+                    // Per-corner scalars: already 3*n_tris values (one per corner),
+                    // matching the face vertex buffer layout. Store directly.
+                    if face_vbuf.is_none() {
+                        face_vbuf = Some(Self::build_face_vertex_buffer(
+                            device, positions, normals, indices, uvs, tangents,
+                        ));
+                    }
+                    if h.is_empty() {
+                        continue;
+                    }
+                    let expanded = h.as_slice();
+                    let min = expanded.iter().cloned().fold(f32::INFINITY, f32::min);
+                    let max = expanded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                    let buf = Self::create_storage_buffer_f32(
+                        device,
+                        &format!("face_attr_{name}"),
+                        &expanded,
+                    );
+                    face_attr_bufs.insert(name.clone(), buf);
+                    ranges.insert(name.clone(), (min, max));
+                }
             }
         }
         (bufs, ranges, face_vbuf, face_attr_bufs, face_color_bufs)
@@ -469,6 +508,46 @@ impl ViewportGpuResources {
             out.push(c);
         }
         out
+    }
+
+    /// Expand per-directed-edge scalars to per-vertex by averaging over incident edges.
+    ///
+    /// Edge ordering: `edge_values[3*t + k]` is the k-th edge of triangle `t`,
+    /// running from vertex `k` to vertex `(k+1)%3` of that triangle.
+    /// Each edge's value is added to both endpoint vertices; the final per-vertex
+    /// value is the average over all incident edge contributions.
+    fn expand_edge_to_vertex(
+        edge_values: &[f32],
+        positions: &[[f32; 3]],
+        indices: &[u32],
+    ) -> Vec<f32> {
+        let n = positions.len();
+        let mut sum = vec![0.0f32; n];
+        let mut count = vec![0u32; n];
+        for (tri_idx, chunk) in indices.chunks(3).enumerate() {
+            for k in 0..3 {
+                let v = edge_values.get(3 * tri_idx + k).copied().unwrap_or(0.0);
+                let vi0 = chunk[k] as usize;
+                let vi1 = chunk[(k + 1) % 3] as usize;
+                if vi0 < n {
+                    sum[vi0] += v;
+                    count[vi0] += 1;
+                }
+                if vi1 < n {
+                    sum[vi1] += v;
+                    count[vi1] += 1;
+                }
+            }
+        }
+        (0..n)
+            .map(|i| {
+                if count[i] > 0 {
+                    sum[i] / count[i] as f32
+                } else {
+                    0.0
+                }
+            })
+            .collect()
     }
 
     /// Expand per-cell (per-triangle) scalar values to per-vertex by averaging contributions.
