@@ -116,7 +116,6 @@ pub enum AttributeData {
 }
 
 /// Built-in colormap presets.
-#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinColormap {
     /// Viridis : perceptually uniform, colorblind-friendly (purple -> teal -> yellow).
