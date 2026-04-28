@@ -137,7 +137,7 @@ fn replace_mesh_data_bad_index() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
     let result = renderer
         .resources_mut()
-        .replace_mesh_data(&device, 999, &box_mesh());
+        .replace_mesh_data(&device, MeshId::from_index(999), &box_mesh());
     assert!(matches!(
         result.unwrap_err(),
         ViewportError::MeshIndexOutOfBounds { index: 999, .. }
@@ -225,7 +225,7 @@ fn test_scene_collect_render_items_roundtrip() {
 
     let mut scene = Scene::new();
     let node_id = scene.add(
-        Some(MeshId::from_index(mesh_idx)),
+        Some(mesh_idx),
         glam::Mat4::from_translation(glam::Vec3::new(1.0, 2.0, 3.0)),
         Material::default(),
     );
@@ -235,7 +235,7 @@ fn test_scene_collect_render_items_roundtrip() {
 
     let items = scene.collect_render_items(&sel);
     assert_eq!(items.len(), 1);
-    assert_eq!(items[0].mesh_index, mesh_idx);
+    assert_eq!(items[0].mesh_id, mesh_idx);
     assert!(items[0].selected);
     // Verify position is in the model matrix.
     let pos_x = items[0].model[3][0];
@@ -274,7 +274,7 @@ fn render_offscreen_produces_rgba_pixels() {
     frame.viewport.show_axes_indicator = false;
     // Add the box as a scene item.
     let mut item = SceneRenderItem::default();
-    item.mesh_index = mesh_idx;
+    item.mesh_id = mesh_idx;
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
     item.selected = false;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item]);

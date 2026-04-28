@@ -259,6 +259,24 @@ impl ViewportGpuResources {
         self.upload_mesh_data(device, &mesh_data)
     }
 
+    /// Upload a sparse voxel grid by extracting its boundary surface and uploading
+    /// the result via [`upload_mesh_data`](Self::upload_mesh_data).
+    ///
+    /// Only quad faces not shared between two active cells are kept.  Per-cell
+    /// scalars and colors are remapped to per-face attributes, and per-node
+    /// scalars are averaged over the 4 quad corners to produce per-face scalars.
+    ///
+    /// Returns the `MeshId`.  Reference cell and node attributes via
+    /// [`AttributeRef { kind: AttributeKind::Face, .. }`](crate::resources::AttributeRef).
+    pub fn upload_sparse_volume_grid_data(
+        &mut self,
+        device: &wgpu::Device,
+        data: &crate::resources::sparse_volume::SparseVolumeGridData,
+    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
+        let mesh_data = crate::resources::sparse_volume::extract_sparse_boundary(data);
+        self.upload_mesh_data(device, &mesh_data)
+    }
+
     /// Upload per-vertex, per-cell, per-face scalar, and per-face color attributes to GPU buffers.
     ///
     /// Returns `(attribute_buffers, attribute_ranges, face_vertex_buffer, face_attribute_buffers,

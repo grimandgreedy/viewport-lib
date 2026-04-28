@@ -15,6 +15,8 @@ mod postprocess;
 mod scivis;
 mod textures;
 mod types;
+/// Sparse voxel grid topology processing (boundary face extraction).
+pub mod sparse_volume;
 /// Unstructured volume mesh topology processing (tet / hex boundary extraction).
 pub mod volume_mesh;
 mod volumes;
@@ -35,4 +37,5 @@ pub(crate) use self::types::{
     OutlineObjectBuffers, OutlineUniform, OverlayUniform, PickInstance, SHADOW_ATLAS_SIZE,
     ShadowAtlasUniform, SsaoUniform, StreamtubeGpuData, ToneMapUniform, ViewportHdrState,
 };
+pub use self::sparse_volume::SparseVolumeGridData;
 pub use self::volume_mesh::{TET_SENTINEL, VolumeMeshData};

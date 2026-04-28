@@ -185,6 +185,7 @@ pub use resources::colormap_data::{
     export_paraview_xml_colormap, lerp_colormap_lut, parse_paraview_xml_colormap,
 };
 pub use resources::mesh_store::MeshId;
+pub use resources::sparse_volume::SparseVolumeGridData;
 pub use resources::volume_mesh::{TET_SENTINEL, VolumeMeshData};
 pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColormap, BuiltinMatcap, CameraUniform,

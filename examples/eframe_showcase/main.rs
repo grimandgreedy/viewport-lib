@@ -129,6 +129,7 @@ mod showcase_27_camera_framing;
 mod showcase_28_curve_network_quantities;
 mod showcase_29_depth_composite_images;
 mod showcase_30_implicit_surface;
+mod showcase_31_sparse_volume_grid;
 mod viewport_callback;
 
 const BG_COLOR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -195,6 +196,7 @@ fn main() -> eframe::Result {
                 },
                 controller: OrbitCameraController::viewport_all(),
                 mode: ShowcaseMode::Basic,
+                mode_gen: 0,
                 show_keybinds: false,
                 mesh_indices,
                 use_point_light: false,
@@ -474,7 +476,7 @@ fn main() -> eframe::Result {
 
                 dc_built: false,
                 dc_mesh_id: MeshId::from_index(0),
-                dc_mode: showcase_29_depth_composite_images::DcMode::Plain,
+                dc_mode: showcase_29_depth_composite_images::DcMode::DepthComposite,
                 dc_pixels: Vec::new(),
                 dc_depths: Vec::new(),
 
@@ -484,6 +486,13 @@ fn main() -> eframe::Result {
                 is_depth_composite: true,
                 is_resolution_div: 2,
                 is_sdf_variant: showcase_30_implicit_surface::IsSdfVariant::Blobs,
+
+                svg_built: false,
+                svg_mesh_id: MeshId::from_index(0),
+                svg_shell_id: MeshId::from_index(0),
+                svg_terrain_id: MeshId::from_index(0),
+                svg_colormap: BuiltinColormap::Viridis,
+                svg_field: showcase_31_sparse_volume_grid::SvgField::CellHeight,
 
                 aux_built: false,
                 aux_scene: Scene::new(),
@@ -539,6 +548,7 @@ enum ShowcaseMode {
     CurveNetworkQuantities,
     DepthCompositeImages,
     ImplicitSurface,
+    SparseVolumeGrid,
 }
 
 impl ShowcaseMode {
@@ -574,6 +584,7 @@ impl ShowcaseMode {
             Self::CurveNetworkQuantities => "28: Curve Network Quantities",
             Self::DepthCompositeImages => "29: Depth-Composited Images",
             Self::ImplicitSurface => "30: Implicit Surfaces",
+            Self::SparseVolumeGrid => "31: Sparse Volume Grid",
         }
     }
 }
@@ -591,6 +602,10 @@ pub(crate) struct App {
     camera: Camera,
     controller: OrbitCameraController,
     mode: ShowcaseMode,
+    /// Increments on every mode switch; used as scene generation for showcases
+    /// that build items manually (no Scene struct) so the renderer's instance
+    /// cache is always invalidated when changing showcases.
+    mode_gen: u64,
     show_keybinds: bool,
 
     // --- Showcase 1 ---
@@ -901,6 +916,14 @@ pub(crate) struct App {
     is_resolution_div: u32,
     is_sdf_variant: showcase_30_implicit_surface::IsSdfVariant,
 
+    // --- Showcase 31 ---
+    pub(crate) svg_built: bool,
+    pub(crate) svg_mesh_id: MeshId,
+    pub(crate) svg_shell_id: MeshId,
+    pub(crate) svg_terrain_id: MeshId,
+    pub(crate) svg_colormap: BuiltinColormap,
+    pub(crate) svg_field: showcase_31_sparse_volume_grid::SvgField,
+
     // --- Showcase 27 ---
     pub(crate) aux_built: bool,
     pub(crate) aux_scene: viewport_lib::scene::Scene,
@@ -1063,6 +1086,7 @@ impl eframe::App for App {
                     ShowcaseMode::CurveNetworkQuantities,
                     ShowcaseMode::DepthCompositeImages,
                     ShowcaseMode::ImplicitSurface,
+                    ShowcaseMode::SparseVolumeGrid,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1550,7 +1574,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 30] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 31] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::Performance,
@@ -1581,6 +1605,7 @@ impl App {
             ShowcaseMode::CurveNetworkQuantities,
             ShowcaseMode::DepthCompositeImages,
             ShowcaseMode::ImplicitSurface,
+            ShowcaseMode::SparseVolumeGrid,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1641,6 +1666,7 @@ impl App {
             return;
         }
         self.mode = mode;
+        self.mode_gen = self.mode_gen.wrapping_add(1);
         // Camera resets are applied on first build in ensure_scene_built.
         // Switching back to an already-built showcase doesn't reset.
     }
@@ -1675,6 +1701,7 @@ impl App {
             ShowcaseMode::Auxiliary => !self.aux_built,
             ShowcaseMode::DepthCompositeImages => !self.dc_built,
             ShowcaseMode::ImplicitSurface => !self.is_built,
+            ShowcaseMode::SparseVolumeGrid => !self.svg_built,
             _ => false,
         };
         if !needs {
@@ -1930,6 +1957,16 @@ impl App {
             ShowcaseMode::ImplicitSurface => {
                 self.build_implicit_scene(renderer);
             }
+            ShowcaseMode::SparseVolumeGrid => {
+                self.build_svg_scene(renderer);
+                self.camera = viewport_lib::Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 28.0,
+                    orientation: glam::Quat::from_rotation_z(0.4)
+                        * glam::Quat::from_rotation_x(0.8),
+                    ..viewport_lib::Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -1980,6 +2017,7 @@ impl App {
             ShowcaseMode::CurveNetworkQuantities => self.controls_cnq(ui),
             ShowcaseMode::DepthCompositeImages => self.controls_dc(ui),
             ShowcaseMode::ImplicitSurface => self.controls_implicit(ui),
+            ShowcaseMode::SparseVolumeGrid => self.controls_sparse_volume_grid(ui),
         }
     }
 
@@ -3340,7 +3378,11 @@ impl App {
             }
 
             ShowcaseMode::ImplicitSurface => {
-                (self.implicit_scene_items(), Some(BG_COLOR), App::implicit_lighting(), 0, 0)
+                (self.implicit_scene_items(), Some(BG_COLOR), App::implicit_lighting(), self.mode_gen, 0)
+            }
+
+            ShowcaseMode::SparseVolumeGrid => {
+                (self.svg_scene_items(), Some(BG_COLOR), App::svg_lighting(), self.mode_gen, 0)
             }
         };
 

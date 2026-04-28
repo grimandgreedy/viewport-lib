@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.7]
+
+- `SparseVolumeGridData`: sparse voxel grid type with per-cell and per-node scalar/color quantities
+- Add CPU boundary face extraction via HashSet neighbor lookup, deterministic axis-aligned winding, area-weighted normals, and attribute remapping to face/face-color data
+- Create showcase 31 for sparse volume grids
+- Fix `tests/clip_volume.rs` and `tests/headless.rs` to match current API (`ClipShape`/`ClipObject`, typed `MeshId`, renamed fields)
+
 ## [0.8.6]
 
 - Fix marching cubes winding order: all triangles were wound CW from outside, causing back-face culling to hide the mesh entirely
