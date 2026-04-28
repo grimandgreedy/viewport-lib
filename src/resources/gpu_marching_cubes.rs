@@ -413,24 +413,30 @@ impl ViewportGpuResources {
         vol: &VolumeData,
     ) -> crate::ViewportResult<VolumeGpuId> {
         let [nx, ny, nz] = vol.dims;
-        let max_buf  = device.limits().max_buffer_size;
+        // The vertex buffer is bound as both STORAGE (compute) and VERTEX (render).
+        // The binding limit for compute shaders is max_storage_buffer_binding_size, which
+        // is often half of max_buffer_size (e.g. 128 MiB vs 256 MiB). Use the smaller of
+        // the two so slab sizing respects both constraints.
+        let max_binding = device.limits().max_storage_buffer_binding_size as u64;
+        let max_buf     = device.limits().max_buffer_size;
+        let max_limit   = max_binding.min(max_buf);
 
         // Worst-case vertex buffer bytes per Z-cell-layer:
         // (nx-1)*(ny-1) cells × 5 triangles × 3 vertices × 24 bytes = cells_xy × 360.
-        // Compute how many Z-cell layers fit within max_buffer_size.
+        // Compute how many Z-cell layers fit within the effective limit.
         let cells_xy = (nx - 1) as u64 * (ny - 1) as u64;
-        let max_cells_per_slab = max_buf / (15 * 24);
+        let max_cells_per_slab = max_limit / (15 * 24);
         let z_cells_per_slab = if cells_xy > 0 {
             (max_cells_per_slab / cells_xy).min((nz - 1) as u64) as u32
         } else {
             nz - 1
         };
         if z_cells_per_slab == 0 {
-            // Even a single Z-layer of cells exceeds the device vertex buffer limit.
+            // Even a single Z-layer of cells exceeds the effective binding limit.
             return Err(crate::ViewportError::McBufferTooLarge {
                 buffer: "vertex_buf",
                 needed: cells_xy * 15 * 24,
-                limit:  max_buf,
+                limit:  max_limit,
             });
         }
 

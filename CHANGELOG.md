@@ -3,6 +3,8 @@
 ## [0.9.0]
 
 ### Features
+- `SceneRenderItem::render_as_wireframe`: per-item wireframe override independent of the global `wireframe_mode` setting
+- `PointCloudItem::gaussian`: Gaussian splat falloff (`exp(-3d²)`) per point cloud; replaces hard circular clip with a soft alpha fade
 - Add colourmaps: magma, inferno, turbo, jet, rdbu
 - GPU implicit surface rendering
   - `GpuImplicitItem`, `ImplicitPrimitive`, `ImplicitBlendMode`, `GpuImplicitOptions`
@@ -11,6 +13,8 @@
   - Submit via `SceneFrame::gpu_implicit`
   - Showcase 30 extended with a GPU implicit variant as the new default
 - GPU marching cubes compute pipeline
+  - Z-axis slab chunking: volumes of any size are split internally into slabs sized to fit `device.limits().max_buffer_size`; no public API change
+  - `upload_volume_for_mc` now returns `ViewportResult<VolumeGpuId>`; returns `Err(ViewportError::McBufferTooLarge)` when even a single Z-layer of cells exceeds the device limit, allowing callers to fall back to CPU extraction
 
 ## [0.8.7]
 
