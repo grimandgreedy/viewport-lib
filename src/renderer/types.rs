@@ -412,6 +412,9 @@ pub struct SceneRenderItem {
     /// click to select. Helper geometry and transient previews that should not
     /// participate in picking should leave this at the default [`PickId::NONE`].
     pub pick_id: PickId,
+    /// Render this item as a wireframe regardless of the global `wireframe_mode` setting.
+    /// Default: false.
+    pub render_as_wireframe: bool,
 }
 
 impl Default for SceneRenderItem {
@@ -428,6 +431,7 @@ impl Default for SceneRenderItem {
             colormap_id: None,
             nan_color: None,
             pick_id: PickId::NONE,
+            render_as_wireframe: false,
         }
     }
 }
@@ -516,6 +520,10 @@ pub struct PointCloudItem {
     pub radii: Vec<f32>,
     /// Optional per-point opacity values in `[0, 1]`. If non-empty, scales each point's alpha.
     pub transparencies: Vec<f32>,
+    /// When true, each point is rendered as a soft Gaussian splat instead of a flat circle.
+    /// The alpha falls off as `exp(-3 * d²)` where `d` is the normalised distance from the
+    /// point centre. Default: false.
+    pub gaussian: bool,
 }
 
 impl Default for PointCloudItem {
@@ -533,6 +541,7 @@ impl Default for PointCloudItem {
             id: 0,
             radii: Vec::new(),
             transparencies: Vec::new(),
+            gaussian: false,
         }
     }
 }

@@ -392,12 +392,14 @@ impl ViewportRenderer {
             .any(|i| i.material.is_two_sided());
         let has_matcap_items = scene_items.iter().any(|i| i.material.matcap_id.is_some());
         let has_param_vis_items = scene_items.iter().any(|i| i.material.param_vis.is_some());
+        let has_wireframe_items = scene_items.iter().any(|i| i.render_as_wireframe);
         if !self.use_instancing
             || frame.viewport.wireframe_mode
             || has_scalar_items
             || has_two_sided_items
             || has_matcap_items
             || has_param_vis_items
+            || has_wireframe_items
         {
             for item in scene_items {
                 if resources
@@ -431,7 +433,7 @@ impl ViewportRenderer {
                     model: item.model,
                     color: [m.base_color[0], m.base_color[1], m.base_color[2], m.opacity],
                     selected: if item.selected { 1 } else { 0 },
-                    wireframe: if frame.viewport.wireframe_mode { 1 } else { 0 },
+                    wireframe: if frame.viewport.wireframe_mode || item.render_as_wireframe { 1 } else { 0 },
                     ambient: m.ambient,
                     diffuse: m.diffuse,
                     specular: m.specular,

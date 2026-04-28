@@ -267,7 +267,7 @@ impl ViewportGpuResources {
             has_colors: u32,
             has_radius: u32,
             has_transparency: u32,
-            _pad: u32,
+            gaussian: u32,
         }
         let uniform_data = PointCloudUniform {
             model: item.model,
@@ -279,7 +279,7 @@ impl ViewportGpuResources {
             has_colors,
             has_radius,
             has_transparency,
-            _pad: 0,
+            gaussian: if item.gaussian { 1 } else { 0 },
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("pc_uniform_buf"),

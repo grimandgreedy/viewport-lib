@@ -43,7 +43,7 @@ struct PointCloudUniform {
     has_colors:       u32,           //  4 bytes (1 = use color buffer)
     has_radius:       u32,           //  4 bytes (1 = per-point radius from radius_buffer)
     has_transparency: u32,           //  4 bytes (1 = per-point alpha from transparency_buffer)
-    _pad:             u32,           //  4 bytes : total 112 bytes
+    gaussian:         u32,           //  4 bytes (1 = Gaussian splat falloff in fragment shader)
 };
 
 struct ClipVolumeUB {
@@ -111,6 +111,7 @@ struct VertexOut {
     @builtin(position) clip_pos:  vec4<f32>,
     @location(0)       color:     vec4<f32>,
     @location(1)       world_pos: vec3<f32>,
+    @location(2)       uv:        vec2<f32>,
 };
 
 // Unit quad corners for a billboard (two CCW triangles).
@@ -150,6 +151,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
         center.w,
     );
     out.world_pos = world_pos;
+    out.uv        = corner;
 
     if pc_uniform.has_scalars != 0u {
         let raw   = scalar_buffer[idx];
@@ -168,6 +170,13 @@ fn vs_main(in: VertexIn) -> VertexOut {
         out.color.a = out.color.a * clamp(transparency_buffer[idx], 0.0, 1.0);
     }
 
+    // Apply global opacity: default_color.a acts as a uniform opacity multiplier
+    // for all color modes (scalar LUT, per-point color, and solid color).
+    // For solid color mode it is already baked into default_color.a above.
+    if pc_uniform.has_scalars != 0u || pc_uniform.has_colors != 0u {
+        out.color.a = out.color.a * pc_uniform.default_color.a;
+    }
+
     return out;
 }
 
@@ -181,5 +190,11 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         }
     }
     if !clip_volume_test(in.world_pos) { discard; }
-    return in.color;
+    var color = in.color;
+    if pc_uniform.gaussian != 0u {
+        let d2 = dot(in.uv, in.uv); // d² in [0, 1] at quad edge
+        if d2 > 1.0 { discard; }
+        color.a = color.a * exp(-3.0 * d2);
+    }
+    return color;
 }
