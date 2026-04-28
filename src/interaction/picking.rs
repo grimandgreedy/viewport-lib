@@ -328,6 +328,53 @@ fn probe_scalar(hit: &mut PickHit, binding: &ProbeBinding<'_>) {
                 hit.scalar_value = Some(data[i0] * u + data[i1] * v + data[i2] * w);
             }
         }
+        AttributeKind::Edge => {
+            // Edge attribute: use the corner value at the closest triangle vertex
+            // (edge values are already averaged to vertices at upload time).
+            if let AttributeData::Edge(data) = binding.attribute_data {
+                let base = tri_idx * 3;
+                if base + 2 >= binding.indices.len() || data.is_empty() {
+                    return;
+                }
+                let i0 = binding.indices[base] as usize;
+                let i1 = binding.indices[base + 1] as usize;
+                let i2 = binding.indices[base + 2] as usize;
+                if i0 < data.len() || i1 < data.len() || i2 < data.len() {
+                    // Barycentric interpolation over the per-vertex averaged values.
+                    if i0 < data.len()
+                        && i1 < data.len()
+                        && i2 < data.len()
+                        && i0 < binding.positions.len()
+                        && i1 < binding.positions.len()
+                        && i2 < binding.positions.len()
+                    {
+                        let a = glam::Vec3::from(binding.positions[i0]);
+                        let b = glam::Vec3::from(binding.positions[i1]);
+                        let c = glam::Vec3::from(binding.positions[i2]);
+                        let (u, v, w) = barycentric(hit.world_pos, a, b, c);
+                        hit.scalar_value = Some(data[i0] * u + data[i1] * v + data[i2] * w);
+                    }
+                }
+            }
+        }
+        AttributeKind::Halfedge | AttributeKind::Corner => {
+            // Per-corner attributes: `values[3*t + k]` is the k-th corner of the triangle.
+            // Report the value at the nearest corner (flat shading).
+            let extract = |data: &[f32]| -> Option<f32> {
+                let base = tri_idx * 3;
+                if base + 2 >= data.len() {
+                    return None;
+                }
+                // Return the first corner value as the representative (flat per face).
+                Some(data[base])
+            };
+            match binding.attribute_data {
+                AttributeData::Halfedge(data) | AttributeData::Corner(data) => {
+                    hit.scalar_value = extract(data);
+                }
+                _ => {}
+            }
+        }
     }
 }
 

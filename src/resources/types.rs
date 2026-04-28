@@ -70,6 +70,18 @@ pub enum AttributeKind {
     /// One RGBA color per triangle. NOT averaged : rendered flat via vertex duplication.
     /// Bypasses the colormap; the per-face color is used directly.
     FaceColor,
+    /// One value per directed triangle edge. `values[3*t + k]` is the scalar on the
+    /// k-th edge of triangle `t` (edge from vertex `k` to vertex `(k+1)%3`).
+    /// Averaged to the two endpoint vertices for rendering.
+    Edge,
+    /// One value per directed triangle edge (halfedge). `values[3*t + k]` is the
+    /// scalar for the k-th halfedge of triangle `t`.
+    /// Rendered flat per triangle corner via vertex duplication (like `Face`).
+    Halfedge,
+    /// One value per triangle corner. `values[3*t + k]` is the scalar at the
+    /// k-th corner of triangle `t`.
+    /// Rendered flat per triangle corner via vertex duplication (like `Face`).
+    Corner,
 }
 
 /// Reference to a named scalar attribute on a mesh.
@@ -92,6 +104,15 @@ pub enum AttributeData {
     Face(Vec<f32>),
     /// One `[r, g, b, a]` per triangle. Not averaged; stored in a non-indexed expanded buffer.
     FaceColor(Vec<[f32; 4]>),
+    /// One `f32` per directed triangle edge. `values[3*t + k]` = k-th edge of triangle `t`.
+    /// Averaged to the two endpoint vertices for rendering.
+    Edge(Vec<f32>),
+    /// One `f32` per directed triangle edge (halfedge). `values[3*t + k]` = k-th halfedge of
+    /// triangle `t`. Rendered flat per corner via vertex duplication (like `Face`).
+    Halfedge(Vec<f32>),
+    /// One `f32` per triangle corner. `values[3*t + k]` = k-th corner of triangle `t`.
+    /// Rendered flat per corner via vertex duplication (like `Face`).
+    Corner(Vec<f32>),
 }
 
 /// Built-in colormap presets.
@@ -854,12 +875,14 @@ pub struct PointCloudGpuData {
     pub(crate) vertex_buffer: wgpu::Buffer,
     /// Number of points (= draw count).
     pub(crate) point_count: u32,
-    /// Bind group (group 1): uniform + LUT texture + sampler + scalar buf + color buf.
+    /// Bind group (group 1): uniform + LUT + sampler + scalar + color + radius + transparency.
     pub(crate) bind_group: wgpu::BindGroup,
     // Keep the buffers alive for the lifetime of this struct.
     pub(crate) _uniform_buf: wgpu::Buffer,
     pub(crate) _scalar_buf: wgpu::Buffer,
     pub(crate) _color_buf: wgpu::Buffer,
+    pub(crate) _radius_buf: wgpu::Buffer,
+    pub(crate) _transparency_buf: wgpu::Buffer,
 }
 
 /// Per-frame GPU data for one polyline item, created in `prepare()`.

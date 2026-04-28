@@ -633,6 +633,8 @@ impl ViewportRenderer {
                                     a.kind,
                                     crate::resources::AttributeKind::Face
                                         | crate::resources::AttributeKind::FaceColor
+                                        | crate::resources::AttributeKind::Halfedge
+                                        | crate::resources::AttributeKind::Corner
                                 )
                             });
                             if frame.viewport.wireframe_mode {

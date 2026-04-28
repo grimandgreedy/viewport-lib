@@ -58,6 +58,26 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -197,6 +217,44 @@ impl ViewportGpuResources {
             (buf, 0u32)
         };
 
+        let (radius_buf, has_radius) = if !item.radii.is_empty() {
+            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("pc_radius_buf"),
+                size: (std::mem::size_of::<f32>() * item.radii.len()).max(4) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&buf, 0, bytemuck::cast_slice(&item.radii));
+            (buf, 1u32)
+        } else {
+            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("pc_radius_buf_fallback"),
+                size: 4,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            (buf, 0u32)
+        };
+
+        let (transparency_buf, has_transparency) = if !item.transparencies.is_empty() {
+            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("pc_transparency_buf"),
+                size: (std::mem::size_of::<f32>() * item.transparencies.len()).max(4) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&buf, 0, bytemuck::cast_slice(&item.transparencies));
+            (buf, 1u32)
+        } else {
+            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("pc_transparency_buf_fallback"),
+                size: 4,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            (buf, 0u32)
+        };
+
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct PointCloudUniform {
@@ -207,7 +265,9 @@ impl ViewportGpuResources {
             scalar_min: f32,
             scalar_max: f32,
             has_colors: u32,
-            _pad: [u32; 3],
+            has_radius: u32,
+            has_transparency: u32,
+            _pad: u32,
         }
         let uniform_data = PointCloudUniform {
             model: item.model,
@@ -217,7 +277,9 @@ impl ViewportGpuResources {
             scalar_min,
             scalar_max,
             has_colors,
-            _pad: [0; 3],
+            has_radius,
+            has_transparency,
+            _pad: 0,
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("pc_uniform_buf"),
@@ -267,6 +329,14 @@ impl ViewportGpuResources {
                     binding: 4,
                     resource: color_buf.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: radius_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: transparency_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -277,6 +347,8 @@ impl ViewportGpuResources {
             _uniform_buf: uniform_buf,
             _scalar_buf: scalar_buf,
             _color_buf: color_buf,
+            _radius_buf: radius_buf,
+            _transparency_buf: transparency_buf,
         }
     }
 

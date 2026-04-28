@@ -3,10 +3,15 @@
 ## [0.8.7]
 
 - `SparseVolumeGridData`: sparse voxel grid type with per-cell and per-node scalar/color quantities
+- Add `Edge`, `Halfedge`, and `Corner` attribute kinds: per-edge scalars averaged to vertices for smooth rendering.
+- Add `PointCloudItem::radii` and `PointCloudItem::transparencies`: per-point size and opacity overrides
+- Add the ability to add glyphs at given vertexes.
+- Pick probing extended to `Edge`, `Halfedge`, and `Corner` attributes
+- Fix Plasma colormap polynomial
+- Fix `tests/clip_volume.rs` and `tests/headless.rs` which used the old `ClipPlane` and `ClipVolume`
 - Add CPU boundary face extraction via HashSet neighbor lookup, deterministic axis-aligned winding, area-weighted normals, and attribute remapping to face/face-color data
 - Create showcase 31 for sparse volume grids
-- Fix `tests/clip_volume.rs` and `tests/headless.rs` to match current API (`ClipShape`/`ClipObject`, typed `MeshId`, renamed fields)
-- Fix Plasma colormap polynomial: previous coefficients produced purple/mauve throughout the range; replaced with correct degree-6 approximation (dark blue -> pink -> orange -> yellow)
+- Create showcase 32: edge/halfedge/corner scalar colouring, volume mesh vector arrows, and point cloud radius + transparency
 
 ## [0.8.6]
 

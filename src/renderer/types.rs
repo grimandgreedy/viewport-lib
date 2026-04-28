@@ -512,6 +512,10 @@ pub struct PointCloudItem {
     pub render_mode: PointRenderMode,
     /// Unique ID for picking. 0 = not pickable.
     pub id: u64,
+    /// Optional per-point radii in pixels. If non-empty, overrides `point_size` for each point.
+    pub radii: Vec<f32>,
+    /// Optional per-point opacity values in `[0, 1]`. If non-empty, scales each point's alpha.
+    pub transparencies: Vec<f32>,
 }
 
 impl Default for PointCloudItem {
@@ -527,6 +531,8 @@ impl Default for PointCloudItem {
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             render_mode: PointRenderMode::ScreenSpaceCircle,
             id: 0,
+            radii: Vec::new(),
+            transparencies: Vec::new(),
         }
     }
 }
@@ -1952,6 +1958,8 @@ macro_rules! emit_draw_calls {
                                 a.kind,
                                 crate::resources::AttributeKind::Face
                                     | crate::resources::AttributeKind::FaceColor
+                                    | crate::resources::AttributeKind::Halfedge
+                                    | crate::resources::AttributeKind::Corner
                             )
                         });
 

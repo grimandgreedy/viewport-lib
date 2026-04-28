@@ -40,10 +40,14 @@ pub mod intrinsic_vectors;
 pub mod one_forms;
 pub mod polyline_vectors;
 pub mod tangent_frames;
+pub mod volume_mesh_vectors;
 
 pub use intrinsic_vectors::{face_intrinsic_to_glyphs, vertex_intrinsic_to_glyphs};
 pub use one_forms::edge_one_form_to_glyphs;
 pub use polyline_vectors::{polyline_edge_vectors_to_glyphs, polyline_node_vectors_to_glyphs};
 pub use tangent_frames::{
     compute_face_tangent_frames, compute_vertex_tangent_frames, tangents_from_explicit,
+};
+pub use volume_mesh_vectors::{
+    volume_mesh_cell_vectors_to_glyphs, volume_mesh_vertex_vectors_to_glyphs,
 };
