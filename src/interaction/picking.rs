@@ -116,7 +116,7 @@ pub fn screen_to_ray(
 /// * `ray_dir` : world-space ray direction (normalized)
 /// * `objects` : slice of trait objects implementing ViewportObject
 /// * `mesh_lookup` : lookup table: CPU-side positions and indices by mesh_id
-pub fn pick_scene(
+pub fn pick_scene_cpu(
     ray_origin: glam::Vec3,
     ray_dir: glam::Vec3,
     objects: &[&dyn ViewportObject],
@@ -205,16 +205,16 @@ pub fn pick_scene(
 
 /// Cast a ray against all visible scene nodes. Returns a [`PickHit`] for the nearest hit.
 ///
-/// Same ray-cast logic as `pick_scene` but reads from `Scene::nodes()` instead
+/// Same ray-cast logic as `pick_scene_cpu` but reads from `Scene::nodes()` instead
 /// of `&[&dyn ViewportObject]`.
-pub fn pick_scene_nodes(
+pub fn pick_scene_nodes_cpu(
     ray_origin: glam::Vec3,
     ray_dir: glam::Vec3,
     scene: &crate::scene::scene::Scene,
     mesh_lookup: &std::collections::HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
 ) -> Option<PickHit> {
     let nodes: Vec<&dyn ViewportObject> = scene.nodes().map(|n| n as &dyn ViewportObject).collect();
-    pick_scene(ray_origin, ray_dir, &nodes, mesh_lookup)
+    pick_scene_cpu(ray_origin, ray_dir, &nodes, mesh_lookup)
 }
 
 // ---------------------------------------------------------------------------
@@ -224,7 +224,7 @@ pub fn pick_scene_nodes(
 /// Per-object attribute binding for probe-aware picking.
 ///
 /// Maps an object ID to its active scalar attribute data so that
-/// `pick_scene_with_probe` can interpolate the scalar value at the hit point.
+/// `pick_scene_with_probe_cpu` can interpolate the scalar value at the hit point.
 pub struct ProbeBinding<'a> {
     /// Object/node ID this binding applies to.
     pub id: u64,
@@ -384,42 +384,42 @@ fn probe_scalar(hit: &mut PickHit, binding: &ProbeBinding<'_>) {
 ///
 /// `probe_bindings` maps object IDs to their active attribute data. If the hit
 /// object has no matching binding, `PickHit::scalar_value` remains `None`.
-pub fn pick_scene_with_probe(
+pub fn pick_scene_with_probe_cpu(
     ray_origin: glam::Vec3,
     ray_dir: glam::Vec3,
     objects: &[&dyn ViewportObject],
     mesh_lookup: &std::collections::HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
     probe_bindings: &[ProbeBinding<'_>],
 ) -> Option<PickHit> {
-    let mut hit = pick_scene(ray_origin, ray_dir, objects, mesh_lookup)?;
+    let mut hit = pick_scene_cpu(ray_origin, ray_dir, objects, mesh_lookup)?;
     if let Some(binding) = probe_bindings.iter().find(|b| b.id == hit.id) {
         probe_scalar(&mut hit, binding);
     }
     Some(hit)
 }
 
-/// Like [`pick_scene_nodes`] but also computes the scalar value at the hit point.
+/// Like [`pick_scene_nodes_cpu`] but also computes the scalar value at the hit point.
 ///
-/// See [`pick_scene_with_probe`] for details on probe bindings.
-pub fn pick_scene_nodes_with_probe(
+/// See [`pick_scene_with_probe_cpu`] for details on probe bindings.
+pub fn pick_scene_nodes_with_probe_cpu(
     ray_origin: glam::Vec3,
     ray_dir: glam::Vec3,
     scene: &crate::scene::scene::Scene,
     mesh_lookup: &std::collections::HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
     probe_bindings: &[ProbeBinding<'_>],
 ) -> Option<PickHit> {
-    let mut hit = pick_scene_nodes(ray_origin, ray_dir, scene, mesh_lookup)?;
+    let mut hit = pick_scene_nodes_cpu(ray_origin, ray_dir, scene, mesh_lookup)?;
     if let Some(binding) = probe_bindings.iter().find(|b| b.id == hit.id) {
         probe_scalar(&mut hit, binding);
     }
     Some(hit)
 }
 
-/// Like [`pick_scene_accelerated`](crate::geometry::bvh::pick_scene_accelerated) but also
+/// Like [`pick_scene_accelerated_cpu`](crate::geometry::bvh::pick_scene_accelerated_cpu) but also
 /// computes the scalar value at the hit point.
 ///
-/// See [`pick_scene_with_probe`] for details on probe bindings.
-pub fn pick_scene_accelerated_with_probe(
+/// See [`pick_scene_with_probe_cpu`] for details on probe bindings.
+pub fn pick_scene_accelerated_with_probe_cpu(
     ray_origin: glam::Vec3,
     ray_dir: glam::Vec3,
     accelerator: &mut crate::geometry::bvh::PickAccelerator,
@@ -720,7 +720,7 @@ mod tests {
         let objects: Vec<&dyn ViewportObject> = vec![&obj];
 
         // Ray from +Z toward origin should hit the cube.
-        let result = pick_scene(
+        let result = pick_scene_cpu(
             glam::Vec3::new(0.0, 0.0, 5.0),
             glam::Vec3::new(0.0, 0.0, -1.0),
             &objects,
@@ -754,7 +754,7 @@ mod tests {
         let objects: Vec<&dyn ViewportObject> = vec![&obj];
 
         // Ray far from geometry should miss.
-        let result = pick_scene(
+        let result = pick_scene_cpu(
             glam::Vec3::new(100.0, 100.0, 5.0),
             glam::Vec3::new(0.0, 0.0, -1.0),
             &objects,
@@ -785,7 +785,7 @@ mod tests {
         let objects: Vec<&dyn ViewportObject> = vec![&far_obj, &near_obj];
 
         // Ray from +Z toward -Z should hit the nearer object first.
-        let result = pick_scene(
+        let result = pick_scene_cpu(
             glam::Vec3::new(0.0, 0.0, 10.0),
             glam::Vec3::new(0.0, 0.0, -1.0),
             &objects,
@@ -869,7 +869,7 @@ mod tests {
         );
         scene.update_transforms();
 
-        let result = pick_scene_nodes(
+        let result = pick_scene_nodes_cpu(
             glam::Vec3::new(0.0, 0.0, 5.0),
             glam::Vec3::new(0.0, 0.0, -1.0),
             &scene,
@@ -892,7 +892,7 @@ mod tests {
         );
         scene.update_transforms();
 
-        let result = pick_scene_nodes(
+        let result = pick_scene_nodes_cpu(
             glam::Vec3::new(100.0, 100.0, 5.0),
             glam::Vec3::new(0.0, 0.0, -1.0),
             &scene,
@@ -931,7 +931,7 @@ mod tests {
             indices: &indices,
         }];
 
-        let result = pick_scene_with_probe(
+        let result = pick_scene_with_probe_cpu(
             glam::Vec3::new(0.0, 0.0, 5.0),
             glam::Vec3::new(0.0, 0.0, -1.0),
             &objects,
@@ -979,7 +979,7 @@ mod tests {
             indices: &indices,
         }];
 
-        let result = pick_scene_with_probe(
+        let result = pick_scene_with_probe_cpu(
             glam::Vec3::new(0.0, 0.0, 5.0),
             glam::Vec3::new(0.0, 0.0, -1.0),
             &objects,
@@ -1012,7 +1012,7 @@ mod tests {
         let objects: Vec<&dyn ViewportObject> = vec![&obj];
 
         // No probe bindings : scalar_value should remain None.
-        let result = pick_scene_with_probe(
+        let result = pick_scene_with_probe_cpu(
             glam::Vec3::new(0.0, 0.0, 5.0),
             glam::Vec3::new(0.0, 0.0, -1.0),
             &objects,

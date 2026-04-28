@@ -3729,7 +3729,7 @@ impl App {
                         });
                     }
                 }
-                let hit = viewport_lib::picking::pick_scene_nodes(
+                let hit = viewport_lib::picking::pick_scene_nodes_cpu(
                     ray_origin,
                     ray_dir,
                     &self.scene,
@@ -3754,7 +3754,7 @@ impl App {
                     );
                 }
                 let hit = if let Some(ref mut accel) = self.pick_accelerator {
-                    viewport_lib::bvh::pick_scene_accelerated(
+                    viewport_lib::bvh::pick_scene_accelerated_cpu(
                         ray_origin,
                         ray_dir,
                         accel,
@@ -3782,7 +3782,7 @@ impl App {
                         });
                     }
                 }
-                let hit = viewport_lib::picking::pick_scene_nodes(
+                let hit = viewport_lib::picking::pick_scene_nodes_cpu(
                     ray_origin,
                     ray_dir,
                     &self.interact_scene,
@@ -3807,7 +3807,7 @@ impl App {
                         });
                     }
                 }
-                let hit = viewport_lib::picking::pick_scene_nodes(
+                let hit = viewport_lib::picking::pick_scene_nodes_cpu(
                     ray_origin,
                     ray_dir,
                     &self.adv_scene,
@@ -3831,7 +3831,7 @@ impl App {
                         ),
                     );
                 }
-                let hit = viewport_lib::picking::pick_scene_nodes(
+                let hit = viewport_lib::picking::pick_scene_nodes_cpu(
                     ray_origin,
                     ray_dir,
                     &self.scalar_scene,

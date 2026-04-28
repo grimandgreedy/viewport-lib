@@ -11,7 +11,7 @@ impl ViewportRenderer {
     /// This is O(1) in mesh complexity : every object is rendered with a flat
     /// `u32` ID, and only one pixel is read back. For triangle-level queries
     /// (barycentric scalar probe, exact world position), use the CPU
-    /// [`crate::interaction::picking::pick_scene`] path instead.
+    /// [`crate::interaction::picking::pick_scene_cpu`] path instead.
     ///
     /// The pipeline is lazily initialized on first call : zero overhead when
     /// this method is never invoked.

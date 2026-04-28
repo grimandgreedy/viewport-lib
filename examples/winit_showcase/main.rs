@@ -1454,7 +1454,7 @@ impl ApplicationHandler for App {
                         }
                     }
 
-                    let hit = viewport_lib::picking::pick_scene_nodes(
+                    let hit = viewport_lib::picking::pick_scene_nodes_cpu(
                         ray_origin,
                         ray_dir,
                         &state.scene,
@@ -1553,7 +1553,7 @@ impl ApplicationHandler for App {
                                 }
                             }
 
-                            let hit = viewport_lib::picking::pick_scene_nodes(
+                            let hit = viewport_lib::picking::pick_scene_nodes_cpu(
                                 ray_origin,
                                 ray_dir,
                                 &state.interact_scene,
@@ -1602,7 +1602,7 @@ impl ApplicationHandler for App {
                     }
 
                     let hit = if let Some(ref mut accel) = state.pick_accelerator {
-                        viewport_lib::bvh::pick_scene_accelerated(
+                        viewport_lib::bvh::pick_scene_accelerated_cpu(
                             ray_origin,
                             ray_dir,
                             accel,
@@ -1651,7 +1651,7 @@ impl ApplicationHandler for App {
                         }
                     }
 
-                    let hit = viewport_lib::picking::pick_scene_nodes(
+                    let hit = viewport_lib::picking::pick_scene_nodes_cpu(
                         ray_origin,
                         ray_dir,
                         &state.adv_scene,

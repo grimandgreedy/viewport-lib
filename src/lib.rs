@@ -153,7 +153,7 @@ pub use interaction::clip_plane::{
 };
 pub use interaction::picking::{
     GpuPickHit, PickHit, ProbeBinding, RectPickResult, pick_rect,
-    pick_scene_accelerated_with_probe, pick_scene_nodes_with_probe, pick_scene_with_probe,
+    pick_scene_accelerated_with_probe_cpu, pick_scene_nodes_with_probe_cpu, pick_scene_with_probe_cpu,
 };
 pub use interaction::selection::{NodeId, Selection};
 pub use interaction::snap::{ConstraintOverlay, SnapConfig};

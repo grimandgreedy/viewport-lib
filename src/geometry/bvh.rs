@@ -378,7 +378,7 @@ fn ray_aabb_test(origin: glam::Vec3, dir: glam::Vec3, aabb: &Aabb) -> bool {
 /// Pick the nearest scene node using a BVH accelerator.
 ///
 /// Thin wrapper around `PickAccelerator::pick`.
-pub fn pick_scene_accelerated(
+pub fn pick_scene_accelerated_cpu(
     ray_origin: glam::Vec3,
     ray_dir: glam::Vec3,
     accelerator: &mut PickAccelerator,

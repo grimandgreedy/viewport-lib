@@ -25,7 +25,7 @@ use viewport_lib::{
     LightingSettings, ManipResult, ManipulationContext, Material, Modifiers, MouseButton,
     SceneFrame, ScrollUnits, Selection, ViewportContext, ViewportEvent, ViewportRenderer,
     gizmo::{compute_gizmo_scale, gizmo_center_from_selection},
-    picking::pick_scene_nodes,
+    picking::pick_scene_nodes_cpu,
     picking::screen_to_ray,
 };
 
@@ -575,7 +575,7 @@ impl App {
             }
         }
 
-        let hit = pick_scene_nodes(ray_origin, ray_dir, &self.mv_scene, &mesh_lookup);
+        let hit = pick_scene_nodes_cpu(ray_origin, ray_dir, &self.mv_scene, &mesh_lookup);
         if let Some(hit) = hit {
             self.mv_selection.select_one(hit.id);
         } else {
