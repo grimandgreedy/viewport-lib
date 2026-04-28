@@ -352,7 +352,7 @@ const EDGE_TABLE: [u16; 256] = [
 
 /// Triangle table: up to 5 triangles (15 edge indices) per configuration. -1 = sentinel.
 #[rustfmt::skip]
-const TRI_TABLE: [[i8; 16]; 256] = [
+pub(crate) const TRI_TABLE: [[i8; 16]; 256] = [
     [-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],
     [ 0, 8, 3,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],
     [ 0, 1, 9,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],

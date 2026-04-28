@@ -10,6 +10,7 @@
   - Blend modes: `Union`, `SmoothUnion` (per-primitive smooth-min radius), `Intersection`
   - Submit via `SceneFrame::gpu_implicit`
   - Showcase 30 extended with a GPU implicit variant as the new default
+- GPU marching cubes compute pipeline
 
 ## [0.8.7]
 

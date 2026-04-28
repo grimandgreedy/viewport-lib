@@ -43,6 +43,19 @@ impl ViewportRenderer {
                 }
             }
         }
+        // Phase 17 : GPU marching cubes indirect draw.
+        if !self.mc_gpu_data.is_empty() {
+            if let Some(pipeline) = &self.resources.mc_surface_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for mc in &self.mc_gpu_data {
+                    let vol = &self.resources.mc_volumes[mc.volume_idx];
+                    render_pass.set_bind_group(1, &mc.render_bg, &[]);
+                    render_pass.set_vertex_buffer(0, vol.vertex_buf.slice(..));
+                    render_pass.draw_indirect(&vol.indirect_buf, 0);
+                }
+            }
+        }
         // Phase 10B : screen-space image overlays (always on top, no depth test).
         if !self.screen_image_gpu_data.is_empty() {
             if let Some(pipeline) = &self.resources.screen_image_pipeline {
@@ -94,6 +107,19 @@ impl ViewportRenderer {
                 for gpu in &self.implicit_gpu_data {
                     render_pass.set_bind_group(1, &gpu.bind_group, &[]);
                     render_pass.draw(0..6, 0..1);
+                }
+            }
+        }
+        // Phase 17 : GPU marching cubes indirect draw.
+        if !self.mc_gpu_data.is_empty() {
+            if let Some(pipeline) = &self.resources.mc_surface_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for mc in &self.mc_gpu_data {
+                    let vol = &self.resources.mc_volumes[mc.volume_idx];
+                    render_pass.set_bind_group(1, &mc.render_bg, &[]);
+                    render_pass.set_vertex_buffer(0, vol.vertex_buf.slice(..));
+                    render_pass.draw_indirect(&vol.indirect_buf, 0);
                 }
             }
         }
@@ -254,6 +280,19 @@ impl ViewportRenderer {
                         for gpu in &self.implicit_gpu_data {
                             render_pass.set_bind_group(1, &gpu.bind_group, &[]);
                             render_pass.draw(0..6, 0..1);
+                        }
+                    }
+                }
+                // Phase 17 : GPU marching cubes indirect draw.
+                if !self.mc_gpu_data.is_empty() {
+                    if let Some(pipeline) = &self.resources.mc_surface_pipeline {
+                        render_pass.set_pipeline(pipeline);
+                        render_pass.set_bind_group(0, camera_bg, &[]);
+                        for mc in &self.mc_gpu_data {
+                            let vol = &self.resources.mc_volumes[mc.volume_idx];
+                            render_pass.set_bind_group(1, &mc.render_bg, &[]);
+                            render_pass.set_vertex_buffer(0, vol.vertex_buf.slice(..));
+                            render_pass.draw_indirect(&vol.indirect_buf, 0);
                         }
                     }
                 }
@@ -768,6 +807,19 @@ impl ViewportRenderer {
                     for gpu in &self.implicit_gpu_data {
                         render_pass.set_bind_group(1, &gpu.bind_group, &[]);
                         render_pass.draw(0..6, 0..1);
+                    }
+                }
+            }
+            // Phase 17 : GPU marching cubes indirect draw (HDR path).
+            if !self.mc_gpu_data.is_empty() {
+                if let Some(pipeline) = &self.resources.mc_surface_pipeline {
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_bind_group(0, camera_bg, &[]);
+                    for mc in &self.mc_gpu_data {
+                        let vol = &self.resources.mc_volumes[mc.volume_idx];
+                        render_pass.set_bind_group(1, &mc.render_bg, &[]);
+                        render_pass.set_vertex_buffer(0, vol.vertex_buf.slice(..));
+                        render_pass.draw_indirect(&vol.indirect_buf, 0);
                     }
                 }
             }

@@ -792,6 +792,16 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
+        // Phase 17 : GPU marching cubes compute dispatch.
+        // ------------------------------------------------------------------
+        self.mc_gpu_data.clear();
+        if !frame.scene.gpu_mc_jobs.is_empty() {
+            resources.ensure_mc_pipelines(device);
+            self.mc_gpu_data =
+                resources.run_mc_jobs(device, queue, &frame.scene.gpu_mc_jobs);
+        }
+
+        // ------------------------------------------------------------------
         // Phase 10B : screen-space image overlays.
         // ------------------------------------------------------------------
         self.screen_image_gpu_data.clear();

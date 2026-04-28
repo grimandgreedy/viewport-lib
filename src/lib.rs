@@ -191,6 +191,7 @@ pub use resources::volume_mesh::{TET_SENTINEL, VolumeMeshData};
 pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColormap, BuiltinMatcap, CameraUniform,
     ClipVolumeUniform, ColormapId, ComputeFilterResult, GpuImplicitItem, GpuImplicitOptions,
-    ImplicitBlendMode, ImplicitPrimitive, LightUniform, LightsUniform, MatcapId, MeshData,
-    SingleLightUniform, ViewportGpuResources, VolumeId, lerp_attributes,
+    GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive, LightUniform, LightsUniform,
+    MatcapId, MeshData, SingleLightUniform, ViewportGpuResources, VolumeGpuId, VolumeId,
+    lerp_attributes,
 };

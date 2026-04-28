@@ -1552,6 +1552,19 @@ pub struct ViewportGpuResources {
     /// Bind group layout for group 1 of the implicit pipeline (ImplicitUniformRaw).
     pub(crate) implicit_bgl: Option<wgpu::BindGroupLayout>,
 
+    // --- Phase 17: GPU marching cubes (lazily created) ---
+    pub(crate) mc_classify_pipeline:     Option<wgpu::ComputePipeline>,
+    pub(crate) mc_prefix_sum_pipeline:   Option<wgpu::ComputePipeline>,
+    pub(crate) mc_generate_pipeline:     Option<wgpu::ComputePipeline>,
+    pub(crate) mc_surface_pipeline:      Option<wgpu::RenderPipeline>,
+    pub(crate) mc_classify_bgl:          Option<wgpu::BindGroupLayout>,
+    pub(crate) mc_prefix_sum_bgl:        Option<wgpu::BindGroupLayout>,
+    pub(crate) mc_generate_bgl:          Option<wgpu::BindGroupLayout>,
+    pub(crate) mc_render_bgl:            Option<wgpu::BindGroupLayout>,
+    pub(crate) mc_case_count_buf:        Option<wgpu::Buffer>,
+    pub(crate) mc_case_table_buf:        Option<wgpu::Buffer>,
+    pub(crate) mc_volumes:               Vec<crate::resources::gpu_marching_cubes::McVolumeGpuData>,
+
     // --- Phase 10B / Phase 12: Screen-space image overlays (lazily created) ---
     /// Render pipeline for screen-space image quads. None until first screen image is submitted.
     pub(crate) screen_image_pipeline: Option<wgpu::RenderPipeline>,

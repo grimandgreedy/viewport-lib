@@ -2,6 +2,8 @@
 pub mod colormap_data;
 /// GPU implicit surface types and pipeline (Phase 16).
 pub mod implicit;
+/// GPU marching cubes compute pipeline (Phase 17).
+pub mod gpu_marching_cubes;
 /// IBL precomputation and environment map upload.
 pub mod environment;
 mod extra_impls;
@@ -42,5 +44,6 @@ pub(crate) use self::types::{
 pub use self::implicit::{
     GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
 };
+pub use self::gpu_marching_cubes::{GpuMarchingCubesJob, VolumeGpuId};
 pub use self::sparse_volume::SparseVolumeGridData;
 pub use self::volume_mesh::{TET_SENTINEL, VolumeMeshData};

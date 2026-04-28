@@ -1325,6 +1325,8 @@ pub struct SceneFrame {
     pub screen_images: Vec<ScreenImageItem>,
     /// GPU implicit surface items to render this frame (Phase 16).
     pub gpu_implicit: Vec<crate::resources::GpuImplicitItem>,
+    /// GPU marching cubes jobs to dispatch this frame (Phase 17).
+    pub gpu_mc_jobs: Vec<crate::resources::GpuMarchingCubesJob>,
 }
 
 impl Default for SceneFrame {
@@ -1341,6 +1343,7 @@ impl Default for SceneFrame {
             camera_frustums: Vec::new(),
             screen_images: Vec::new(),
             gpu_implicit: Vec::new(),
+            gpu_mc_jobs: Vec::new(),
         }
     }
 }

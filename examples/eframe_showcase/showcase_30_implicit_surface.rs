@@ -19,8 +19,8 @@ use crate::App;
 use eframe::egui;
 use glam::Vec3;
 use viewport_lib::{
-    Camera, GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
-    LightKind, LightSource, LightingSettings, Material, SceneRenderItem,
+    Camera, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode,
+    ImplicitPrimitive, LightKind, LightSource, LightingSettings, Material, SceneRenderItem,
     VolumeData, extract_isosurface,
     geometry::implicit::{ImplicitRenderOptions, march_implicit_surface_color},
     primitives,
@@ -41,6 +41,8 @@ pub enum IsSdfVariant {
     MarchingCubes,
     /// GPU implicit surface: same three-blob SDF via descriptor-driven ray-march.
     GpuImplicit,
+    /// GPU marching cubes: live isovalue scrubbing via compute shaders.
+    GpuMarchingCubes,
 }
 
 // ---------------------------------------------------------------------------
@@ -86,7 +88,7 @@ fn blob_color(p: Vec3) -> [u8; 4] {
 // ---------------------------------------------------------------------------
 
 impl App {
-    /// Build the showcase: upload reference spheres and the marching-cubes mesh.
+    /// Build the showcase: upload reference spheres, the CPU MC mesh, and the GPU MC volume.
     pub(crate) fn build_implicit_scene(&mut self, renderer: &mut viewport_lib::ViewportRenderer) {
         // Small sphere mesh used for the near/far depth-compositing reference objects.
         let sphere = primitives::sphere(0.8, 24, 12);
@@ -125,6 +127,31 @@ impl App {
             self.is_mc_mesh_id = Some(id);
         }
 
+        // GPU marching cubes: upload a 64³ gyroid scalar field for live isovalue scrubbing.
+        {
+            let n: u32 = 64;
+            let origin = [-4.0_f32; 3];
+            let step = 8.0 / (n - 1) as f32;
+            let spacing = [step; 3];
+            let mut data = Vec::with_capacity((n * n * n) as usize);
+            for iz in 0..n {
+                for iy in 0..n {
+                    for ix in 0..n {
+                        let x = origin[0] + ix as f32 * step;
+                        let y = origin[1] + iy as f32 * step;
+                        let z = origin[2] + iz as f32 * step;
+                        // Gyroid surface: sin(x)*cos(y) + sin(y)*cos(z) + sin(z)*cos(x).
+                        data.push(x.sin() * y.cos() + y.sin() * z.cos() + z.sin() * x.cos());
+                    }
+                }
+            }
+            let vol = VolumeData { data, dims: [n, n, n], origin, spacing };
+            let id = renderer
+                .resources_mut()
+                .upload_volume_for_mc(&self.device, &self.queue, &vol);
+            self.is_gmc_volume_id = Some(id);
+        }
+
         self.camera = Camera {
             center: glam::Vec3::new(0.0, 0.5, 0.0),
             distance: 9.0,
@@ -158,12 +185,24 @@ impl App {
         ui.radio_value(
             &mut self.is_sdf_variant,
             IsSdfVariant::MarchingCubes,
-            "Marching cubes : same smin field",
+            "Marching cubes : same smin field (CPU)",
+        );
+        ui.radio_value(
+            &mut self.is_sdf_variant,
+            IsSdfVariant::GpuMarchingCubes,
+            "GPU marching cubes : gyroid field, live isovalue",
         );
         ui.separator();
 
+        if self.is_sdf_variant == IsSdfVariant::GpuMarchingCubes {
+            ui.label("Isovalue (gyroid field):");
+            ui.add(egui::Slider::new(&mut self.is_gmc_isovalue, -1.5_f32..=1.5).text("isovalue"));
+            ui.separator();
+        }
+
         let is_march = self.is_sdf_variant != IsSdfVariant::MarchingCubes
-            && self.is_sdf_variant != IsSdfVariant::GpuImplicit;
+            && self.is_sdf_variant != IsSdfVariant::GpuImplicit
+            && self.is_sdf_variant != IsSdfVariant::GpuMarchingCubes;
         ui.add_enabled_ui(is_march, |ui| {
             ui.label("Depth compositing (sphere-march only):");
             ui.checkbox(&mut self.is_depth_composite, "Depth-composite against scene");
@@ -254,6 +293,7 @@ impl App {
         if !self.is_built
             || self.is_sdf_variant == IsSdfVariant::MarchingCubes
             || self.is_sdf_variant == IsSdfVariant::GpuImplicit
+            || self.is_sdf_variant == IsSdfVariant::GpuMarchingCubes
         {
             return;
         }
@@ -292,7 +332,9 @@ impl App {
                 };
                 (d, color)
             }),
-            IsSdfVariant::MarchingCubes | IsSdfVariant::GpuImplicit => unreachable!(),
+            IsSdfVariant::MarchingCubes
+            | IsSdfVariant::GpuImplicit
+            | IsSdfVariant::GpuMarchingCubes => unreachable!(),
         };
 
         img.scale = div as f32;
@@ -345,6 +387,25 @@ impl App {
                 hit_threshold: 5e-4,
                 max_distance: self.camera.zfar,
             },
+        });
+    }
+
+    /// Submit a GPU marching cubes job for the gyroid field (Phase 17).
+    ///
+    /// Only active when `is_sdf_variant == GpuMarchingCubes`.
+    pub(crate) fn push_gpu_mc_job(&self, fd: &mut viewport_lib::FrameData) {
+        if !self.is_built || self.is_sdf_variant != IsSdfVariant::GpuMarchingCubes {
+            return;
+        }
+        let Some(volume_id) = self.is_gmc_volume_id else { return };
+
+        let mut mat = Material::from_color([0.75, 0.80, 0.85]);
+        mat.roughness = 0.4;
+
+        fd.scene.gpu_mc_jobs.push(GpuMarchingCubesJob {
+            volume_id,
+            isovalue: self.is_gmc_isovalue,
+            material: mat,
         });
     }
 

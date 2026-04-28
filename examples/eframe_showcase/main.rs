@@ -487,6 +487,8 @@ fn main() -> eframe::Result {
                 is_depth_composite: true,
                 is_resolution_div: 2,
                 is_sdf_variant: showcase_30_implicit_surface::IsSdfVariant::GpuImplicit,
+                is_gmc_volume_id: None,
+                is_gmc_isovalue: 0.0,
 
                 eq_built: false,
                 eq_sub_mode: showcase_32_extended_quantities::EqSubMode::EdgeCornerScalars,
@@ -930,6 +932,8 @@ pub(crate) struct App {
     is_depth_composite: bool,
     is_resolution_div: u32,
     is_sdf_variant: showcase_30_implicit_surface::IsSdfVariant,
+    is_gmc_volume_id: Option<viewport_lib::VolumeGpuId>,
+    is_gmc_isovalue: f32,
 
     // --- Showcase 31 ---
     pub(crate) svg_built: bool,
@@ -3585,10 +3589,11 @@ impl App {
             self.dc_push_screen_image(&mut fd);
         }
 
-        // Implicit surface (Showcase 30) : CPU sphere-march or GPU implicit, re-submitted every frame.
+        // Implicit surface (Showcase 30) : CPU sphere-march, GPU implicit, or GPU MC — re-submitted every frame.
         if self.mode == ShowcaseMode::ImplicitSurface {
             self.push_implicit_screen_image(&mut fd, w as u32, h as u32);
             self.push_gpu_implicit(&mut fd);
+            self.push_gpu_mc_job(&mut fd);
         }
 
         // Auxiliary frustums and screen images (Showcase 27) : submitted every frame.
