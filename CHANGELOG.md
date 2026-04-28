@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.0]
+
+### Features
+- Add colourmaps: magma, inferno, turbo, jet, rdbu
+
 ## [0.8.7]
 
 ### Features

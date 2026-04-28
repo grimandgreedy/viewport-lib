@@ -139,9 +139,14 @@ impl App {
             for (preset, label) in [
                 (BuiltinColormap::Viridis, "Viridis"),
                 (BuiltinColormap::Plasma, "Plasma"),
-                (BuiltinColormap::Coolwarm, "Coolwarm"),
-                (BuiltinColormap::Rainbow, "Rainbow"),
+                (BuiltinColormap::Magma, "Magma"),
+                (BuiltinColormap::Inferno, "Inferno"),
+                (BuiltinColormap::Turbo, "Turbo"),
                 (BuiltinColormap::Greyscale, "Greyscale"),
+                (BuiltinColormap::Coolwarm, "Coolwarm"),
+                (BuiltinColormap::RdBu, "RdBu"),
+                (BuiltinColormap::Rainbow, "Rainbow"),
+                (BuiltinColormap::Jet, "Jet"),
             ] {
                 if ui.radio(self.vol_color_lut == preset, label).clicked() {
                     self.vol_color_lut = preset;

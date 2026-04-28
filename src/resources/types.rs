@@ -118,9 +118,9 @@ pub enum AttributeData {
 /// Built-in colormap presets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinColormap {
-    /// Viridis : perceptually uniform.
+    /// Viridis : perceptually uniform, colorblind-friendly (purple -> teal -> yellow).
     Viridis = 0,
-    /// Plasma : perceptually uniform, brighter.
+    /// Plasma : perceptually uniform, colorblind-friendly (blue -> pink -> yellow).
     Plasma = 1,
     /// Greyscale : linear black->white.
     Greyscale = 2,
@@ -128,6 +128,16 @@ pub enum BuiltinColormap {
     Coolwarm = 3,
     /// Rainbow : HSV hue sweep 240°->0°.
     Rainbow = 4,
+    /// Magma : perceptually uniform (black -> purple -> orange -> near-white).
+    Magma = 5,
+    /// Inferno : perceptually uniform (black -> deep-red -> orange -> light-yellow).
+    Inferno = 6,
+    /// Turbo : improved rainbow (Google 2019). Better perceptual uniformity than Jet.
+    Turbo = 7,
+    /// Jet : classic blue-cyan-green-yellow-red. Widely used in engineering.
+    Jet = 8,
+    /// RdBu : diverging blue->white->red (blue at t=0, red at t=1).
+    RdBu = 9,
 }
 
 /// Raw mesh data for upload to the GPU. Framework-agnostic representation.
@@ -1413,7 +1423,7 @@ pub struct ViewportGpuResources {
     pub(crate) fallback_face_color_buf: wgpu::Buffer,
     /// IDs of built-in preset colormaps, in BuiltinColormap discriminant order.
     /// `None` until `ensure_colormaps_initialized()` has been called.
-    pub(crate) builtin_colormap_ids: Option<[ColormapId; 5]>,
+    pub(crate) builtin_colormap_ids: Option<[ColormapId; 10]>,
     /// Whether built-in colormaps have been uploaded to the GPU.
     pub(crate) colormaps_initialized: bool,
 
@@ -1535,6 +1545,12 @@ pub struct ViewportGpuResources {
     pub(crate) ground_plane_uniform_buf: wgpu::Buffer,
     /// Bind group for the ground plane pass (rebuilt when shadow atlas changes).
     pub(crate) ground_plane_bind_group: wgpu::BindGroup,
+
+    // --- Phase 16: GPU implicit surface (lazily created) ---
+    /// Render pipeline for GPU-side implicit surface ray-marching. None until first item submitted.
+    pub(crate) implicit_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for group 1 of the implicit pipeline (ImplicitUniformRaw).
+    pub(crate) implicit_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- Phase 10B / Phase 12: Screen-space image overlays (lazily created) ---
     /// Render pipeline for screen-space image quads. None until first screen image is submitted.

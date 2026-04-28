@@ -513,7 +513,32 @@ impl ViewportGpuResources {
             queue,
             &crate::resources::colormap_data::rainbow_rgba(),
         );
-        self.builtin_colormap_ids = Some([viridis, plasma, greyscale, coolwarm, rainbow]);
+        let magma = self.upload_colormap(
+            device,
+            queue,
+            &crate::resources::colormap_data::magma_rgba(),
+        );
+        let inferno = self.upload_colormap(
+            device,
+            queue,
+            &crate::resources::colormap_data::inferno_rgba(),
+        );
+        let turbo = self.upload_colormap(
+            device,
+            queue,
+            &crate::resources::colormap_data::turbo_rgba(),
+        );
+        let jet = self.upload_colormap(
+            device,
+            queue,
+            &crate::resources::colormap_data::jet_rgba(),
+        );
+        let rdbu = self.upload_colormap(
+            device,
+            queue,
+            &crate::resources::colormap_data::rdbu_r_rgba(),
+        );
+        self.builtin_colormap_ids = Some([viridis, plasma, greyscale, coolwarm, rainbow, magma, inferno, turbo, jet, rdbu]);
         self.colormaps_initialized = true;
     }
 

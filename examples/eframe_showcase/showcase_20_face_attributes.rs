@@ -161,9 +161,14 @@ impl App {
                 for cm in [
                     BuiltinColormap::Viridis,
                     BuiltinColormap::Plasma,
-                    BuiltinColormap::Coolwarm,
+                    BuiltinColormap::Magma,
+                    BuiltinColormap::Inferno,
+                    BuiltinColormap::Turbo,
                     BuiltinColormap::Greyscale,
+                    BuiltinColormap::Coolwarm,
+                    BuiltinColormap::RdBu,
                     BuiltinColormap::Rainbow,
+                    BuiltinColormap::Jet,
                 ] {
                     ui.selectable_value(&mut self.face_colormap, cm, format!("{cm:?}"));
                 }

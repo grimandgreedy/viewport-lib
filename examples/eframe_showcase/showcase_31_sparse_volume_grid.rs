@@ -381,8 +381,13 @@ impl App {
                 for cm in [
                     BuiltinColormap::Viridis,
                     BuiltinColormap::Plasma,
+                    BuiltinColormap::Magma,
+                    BuiltinColormap::Inferno,
+                    BuiltinColormap::Turbo,
                     BuiltinColormap::Coolwarm,
+                    BuiltinColormap::RdBu,
                     BuiltinColormap::Rainbow,
+                    BuiltinColormap::Jet,
                 ] {
                     ui.radio_value(&mut self.svg_colormap, cm, format!("{cm:?}"));
                 }
