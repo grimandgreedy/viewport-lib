@@ -146,10 +146,13 @@ impl App {
                 }
             }
             let vol = VolumeData { data, dims: [n, n, n], origin, spacing };
-            let id = renderer
+            match renderer
                 .resources_mut()
-                .upload_volume_for_mc(&self.device, &self.queue, &vol);
-            self.is_gmc_volume_id = Some(id);
+                .upload_volume_for_mc(&self.device, &self.queue, &vol)
+            {
+                Ok(id) => { self.is_gmc_volume_id = Some(id); }
+                Err(e) => { eprintln!("GPU MC upload failed, falling back to CPU: {e}"); }
+            }
         }
 
         self.camera = Camera {

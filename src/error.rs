@@ -75,6 +75,18 @@ pub enum ViewportError {
         /// Actual number of f32 elements provided.
         got: usize,
     },
+
+    /// A buffer required for GPU marching cubes upload exceeds the device's
+    /// `max_buffer_size` limit. The caller should fall back to CPU marching cubes.
+    #[error("GPU MC buffer '{buffer}' needs {needed} bytes but device limit is {limit}")]
+    McBufferTooLarge {
+        /// Short name identifying which buffer exceeded the limit (e.g. `"vertex_buf"`).
+        buffer: &'static str,
+        /// Bytes required for the allocation.
+        needed: u64,
+        /// The device's `max_buffer_size` limit.
+        limit: u64,
+    },
 }
 
 /// Convenience alias for `Result<T, ViewportError>`.

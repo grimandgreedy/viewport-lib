@@ -51,8 +51,10 @@ impl ViewportRenderer {
                 for mc in &self.mc_gpu_data {
                     let vol = &self.resources.mc_volumes[mc.volume_idx];
                     render_pass.set_bind_group(1, &mc.render_bg, &[]);
-                    render_pass.set_vertex_buffer(0, vol.vertex_buf.slice(..));
-                    render_pass.draw_indirect(&vol.indirect_buf, 0);
+                    for slab in &vol.slabs {
+                        render_pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
+                        render_pass.draw_indirect(&slab.indirect_buf, 0);
+                    }
                 }
             }
         }
@@ -118,8 +120,10 @@ impl ViewportRenderer {
                 for mc in &self.mc_gpu_data {
                     let vol = &self.resources.mc_volumes[mc.volume_idx];
                     render_pass.set_bind_group(1, &mc.render_bg, &[]);
-                    render_pass.set_vertex_buffer(0, vol.vertex_buf.slice(..));
-                    render_pass.draw_indirect(&vol.indirect_buf, 0);
+                    for slab in &vol.slabs {
+                        render_pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
+                        render_pass.draw_indirect(&slab.indirect_buf, 0);
+                    }
                 }
             }
         }
@@ -291,8 +295,10 @@ impl ViewportRenderer {
                         for mc in &self.mc_gpu_data {
                             let vol = &self.resources.mc_volumes[mc.volume_idx];
                             render_pass.set_bind_group(1, &mc.render_bg, &[]);
-                            render_pass.set_vertex_buffer(0, vol.vertex_buf.slice(..));
-                            render_pass.draw_indirect(&vol.indirect_buf, 0);
+                            for slab in &vol.slabs {
+                                render_pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
+                                render_pass.draw_indirect(&slab.indirect_buf, 0);
+                            }
                         }
                     }
                 }
@@ -818,8 +824,10 @@ impl ViewportRenderer {
                     for mc in &self.mc_gpu_data {
                         let vol = &self.resources.mc_volumes[mc.volume_idx];
                         render_pass.set_bind_group(1, &mc.render_bg, &[]);
-                        render_pass.set_vertex_buffer(0, vol.vertex_buf.slice(..));
-                        render_pass.draw_indirect(&vol.indirect_buf, 0);
+                        for slab in &vol.slabs {
+                            render_pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
+                            render_pass.draw_indirect(&slab.indirect_buf, 0);
+                        }
                     }
                 }
             }

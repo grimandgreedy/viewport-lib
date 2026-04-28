@@ -45,23 +45,34 @@ pub struct GpuMarchingCubesJob {
 // GPU-internal types
 // ---------------------------------------------------------------------------
 
-/// Persistent GPU resources for one uploaded volume.
-pub(crate) struct McVolumeGpuData {
-    pub scalar_buf:     wgpu::Buffer,  // f32 per node; STORAGE | COPY_DST
-    pub counts_buf:     wgpu::Buffer,  // u32 per cell; STORAGE
-    pub case_idx_buf:   wgpu::Buffer,  // u32 per cell; STORAGE
-    pub offsets_buf:    wgpu::Buffer,  // u32 per cell; STORAGE
-    pub block_sums_buf: wgpu::Buffer,  // u32 per block; STORAGE
+/// GPU buffers for one Z-axis slab of an uploaded volume.
+///
+/// A slab covers `dims[2]` scalar Z-layers (`dims[2] - 1` cell layers).
+/// Adjacent slabs share exactly one scalar Z-layer at their boundary so MC
+/// edge interpolation produces no seams.
+pub(crate) struct McSlabGpuData {
+    pub scalar_buf:     wgpu::Buffer,  // f32 per slab node; STORAGE | COPY_DST
+    pub counts_buf:     wgpu::Buffer,  // u32 per slab cell; STORAGE
+    pub case_idx_buf:   wgpu::Buffer,  // u32 per slab cell; STORAGE
+    pub offsets_buf:    wgpu::Buffer,  // u32 per slab cell; STORAGE
+    pub block_sums_buf: wgpu::Buffer,  // u32 per slab block; STORAGE
     pub vertex_buf:     wgpu::Buffer,  // f32 * 6 per vertex; STORAGE | VERTEX
     pub indirect_buf:   wgpu::Buffer,  // 4 u32; STORAGE | INDIRECT
-    pub dims:           [u32; 3],
-    pub origin:         [f32; 3],
+    pub dims:           [u32; 3],      // [nx, ny, slab_nz] (scalar layers)
+    pub origin:         [f32; 3],      // world origin; z is offset per slab
     pub spacing:        [f32; 3],
     pub cell_count:     u32,
     pub block_count:    u32,
-    pub max_vertices:   u32,
+}
+
+/// Persistent GPU resources for one uploaded volume, split into Z-axis slabs.
+///
+/// Z-axis chunking keeps every allocation within `device.limits().max_buffer_size`
+/// regardless of volume size. The single-slab path is equivalent to the old layout.
+pub(crate) struct McVolumeGpuData {
+    pub slabs: Vec<McSlabGpuData>,
     /// False after `remove_mc_volume` is called; the slot is reused lazily.
-    pub alive:          bool,
+    pub alive: bool,
 }
 
 /// Per-frame data for one MC job, consumed by the render phase.
@@ -391,85 +402,129 @@ impl ViewportGpuResources {
     /// buffers for GPU marching cubes.
     ///
     /// The returned [`VolumeGpuId`] is stable until [`remove_mc_volume`] is called.
+    ///
+    /// Returns `Err(ViewportError::McBufferTooLarge)` if any required buffer exceeds
+    /// the device's `max_buffer_size`; the caller should fall back to CPU isosurface
+    /// extraction.
     pub fn upload_volume_for_mc(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         vol: &VolumeData,
-    ) -> VolumeGpuId {
+    ) -> crate::ViewportResult<VolumeGpuId> {
         let [nx, ny, nz] = vol.dims;
-        let cell_count = (nx - 1) * (ny - 1) * (nz - 1);
-        let block_count = cell_count.div_ceil(256);
-        let max_triangles = 5 * cell_count;
-        let max_vertices = 3 * max_triangles;
+        let max_buf  = device.limits().max_buffer_size;
 
-        let scalar_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mc_scalar_buf"),
-            contents: bytemuck::cast_slice(&vol.data),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        });
+        // Worst-case vertex buffer bytes per Z-cell-layer:
+        // (nx-1)*(ny-1) cells × 5 triangles × 3 vertices × 24 bytes = cells_xy × 360.
+        // Compute how many Z-cell layers fit within max_buffer_size.
+        let cells_xy = (nx - 1) as u64 * (ny - 1) as u64;
+        let max_cells_per_slab = max_buf / (15 * 24);
+        let z_cells_per_slab = if cells_xy > 0 {
+            (max_cells_per_slab / cells_xy).min((nz - 1) as u64) as u32
+        } else {
+            nz - 1
+        };
+        if z_cells_per_slab == 0 {
+            // Even a single Z-layer of cells exceeds the device vertex buffer limit.
+            return Err(crate::ViewportError::McBufferTooLarge {
+                buffer: "vertex_buf",
+                needed: cells_xy * 15 * 24,
+                limit:  max_buf,
+            });
+        }
 
-        let cell_bytes = (cell_count as u64) * 4;
-        let block_bytes = (block_count as u64) * 4;
-        let vertex_bytes = (max_vertices as u64) * 24;
+        let nz_cells_total = nz - 1;
+        let slab_count     = nz_cells_total.div_ceil(z_cells_per_slab);
+        let nodes_per_z    = (nx * ny) as usize;
 
-        let counts_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mc_counts_buf"),
-            size: cell_bytes,
-            usage: wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-        let case_idx_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mc_case_idx_buf"),
-            size: cell_bytes,
-            usage: wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-        let offsets_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mc_offsets_buf"),
-            size: cell_bytes,
-            usage: wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-        let block_sums_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mc_block_sums_buf"),
-            size: block_bytes,
-            usage: wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-        let vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mc_vertex_buf"),
-            size: vertex_bytes,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX,
-            mapped_at_creation: false,
-        });
-        let indirect_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mc_indirect_buf"),
-            // Initial: 0 vertices, 1 instance, 0 first_vertex, 0 first_instance.
-            contents: bytemuck::cast_slice(&[0u32, 1u32, 0u32, 0u32]),
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::INDIRECT
-                | wgpu::BufferUsages::COPY_DST,
-        });
+        let mut slabs = Vec::with_capacity(slab_count as usize);
+
+        for s in 0..slab_count {
+            let z_cell_start = s * z_cells_per_slab;
+            let z_cell_end   = (z_cell_start + z_cells_per_slab).min(nz_cells_total);
+            let slab_z_cells = z_cell_end - z_cell_start;  // cell layers in this slab
+            let slab_nz      = slab_z_cells + 1;           // scalar layers in this slab
+
+            // slab_cell_count is bounded by max_cells_per_slab, which fits in u32
+            // at any realistic max_buffer_size value.
+            let slab_cell_count  = (cells_xy * slab_z_cells as u64) as u32;
+            let slab_block_count = slab_cell_count.div_ceil(256);
+            let slab_cell_bytes  = (slab_cell_count as u64) * 4;
+            let slab_block_bytes = (slab_block_count as u64) * 4;
+            // At most 15 vertices per cell (5 triangles × 3 vertices) × 24 bytes each.
+            let slab_vertex_bytes = (slab_cell_count as u64) * 15 * 24;
+
+            // Scalar data is x-fastest: index = x + y*nx + z*nx*ny.
+            // A Z-slab covering scalar layers z_cell_start..z_cell_start+slab_nz is
+            // a contiguous slice — no copying required.
+            let scalar_start  = z_cell_start as usize * nodes_per_z;
+            let scalar_end    = (z_cell_start + slab_nz) as usize * nodes_per_z;
+            let slab_origin_z = vol.origin[2] + z_cell_start as f32 * vol.spacing[2];
+
+            let scalar_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("mc_scalar_buf"),
+                contents: bytemuck::cast_slice(&vol.data[scalar_start..scalar_end]),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            });
+            let counts_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("mc_counts_buf"),
+                size: slab_cell_bytes,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            });
+            let case_idx_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("mc_case_idx_buf"),
+                size: slab_cell_bytes,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            });
+            let offsets_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("mc_offsets_buf"),
+                size: slab_cell_bytes,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            });
+            let block_sums_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("mc_block_sums_buf"),
+                size: slab_block_bytes,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            });
+            let vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("mc_vertex_buf"),
+                size: slab_vertex_bytes,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX,
+                mapped_at_creation: false,
+            });
+            let indirect_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("mc_indirect_buf"),
+                // Initial: 0 vertices, 1 instance, 0 first_vertex, 0 first_instance.
+                contents: bytemuck::cast_slice(&[0u32, 1u32, 0u32, 0u32]),
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::INDIRECT
+                    | wgpu::BufferUsages::COPY_DST,
+            });
+
+            slabs.push(McSlabGpuData {
+                scalar_buf,
+                counts_buf,
+                case_idx_buf,
+                offsets_buf,
+                block_sums_buf,
+                vertex_buf,
+                indirect_buf,
+                dims:    [nx, ny, slab_nz],
+                origin:  [vol.origin[0], vol.origin[1], slab_origin_z],
+                spacing: vol.spacing,
+                cell_count:  slab_cell_count,
+                block_count: slab_block_count,
+            });
+        }
 
         let _ = queue; // retained for potential future use (e.g. scalar updates)
 
-        let gpu_data = McVolumeGpuData {
-            scalar_buf,
-            counts_buf,
-            case_idx_buf,
-            offsets_buf,
-            block_sums_buf,
-            vertex_buf,
-            indirect_buf,
-            dims: vol.dims,
-            origin: vol.origin,
-            spacing: vol.spacing,
-            cell_count,
-            block_count,
-            max_vertices,
-            alive: true,
-        };
+        let gpu_data = McVolumeGpuData { slabs, alive: true };
 
         // Find a free slot (from a previous remove_mc_volume call) or push a new one.
         let idx = if let Some(free_idx) = self.mc_volumes.iter().position(|v| !v.alive) {
@@ -480,7 +535,7 @@ impl ViewportGpuResources {
             self.mc_volumes.len() - 1
         };
 
-        VolumeGpuId(idx)
+        Ok(VolumeGpuId(idx))
     }
 
     /// Mark a MC volume slot as free. The GPU buffers are dropped immediately.
@@ -523,100 +578,9 @@ impl ViewportGpuResources {
             if !vol.alive {
                 continue;
             }
-            let cc = vol.cell_count;
-            let bc = vol.block_count;
 
             // ----------------------------------------------------------
-            // Per-job classify uniform.
-            // ----------------------------------------------------------
-            let classify_params = ClassifyParams {
-                nx: vol.dims[0],
-                ny: vol.dims[1],
-                nz: vol.dims[2],
-                isovalue: job.isovalue,
-            };
-            let classify_uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mc_classify_uniform"),
-                contents: bytemuck::bytes_of(&classify_params),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
-
-            let classify_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("mc_classify_bg"),
-                layout: classify_bgl,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: classify_uniform.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: vol.scalar_buf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: case_count_buf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: vol.counts_buf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 4, resource: vol.case_idx_buf.as_entire_binding() },
-                ],
-            });
-
-            // ----------------------------------------------------------
-            // Per-job prefix-sum uniforms (one per level).
-            // ----------------------------------------------------------
-            let ps_uniforms: [wgpu::Buffer; 3] = std::array::from_fn(|level| {
-                let params = PrefixSumParams { cell_count: cc, block_count: bc, level: level as u32, _pad: 0 };
-                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("mc_ps_uniform"),
-                    contents: bytemuck::bytes_of(&params),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                })
-            });
-
-            let ps_bgs: [wgpu::BindGroup; 3] = std::array::from_fn(|level| {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("mc_ps_bg"),
-                    layout: prefix_sum_bgl,
-                    entries: &[
-                        wgpu::BindGroupEntry { binding: 0, resource: ps_uniforms[level].as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 1, resource: vol.counts_buf.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 2, resource: vol.offsets_buf.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 3, resource: vol.block_sums_buf.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 4, resource: vol.indirect_buf.as_entire_binding() },
-                    ],
-                })
-            });
-
-            // ----------------------------------------------------------
-            // Per-job generate uniform.
-            // ----------------------------------------------------------
-            let generate_params = GenerateParams {
-                nx: vol.dims[0],
-                ny: vol.dims[1],
-                nz: vol.dims[2],
-                isovalue: job.isovalue,
-                origin_x: vol.origin[0],
-                origin_y: vol.origin[1],
-                origin_z: vol.origin[2],
-                _pad0: 0.0,
-                spacing_x: vol.spacing[0],
-                spacing_y: vol.spacing[1],
-                spacing_z: vol.spacing[2],
-                _pad1: 0.0,
-            };
-            let generate_uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mc_generate_uniform"),
-                contents: bytemuck::bytes_of(&generate_params),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
-
-            let generate_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("mc_generate_bg"),
-                layout: generate_bgl,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: generate_uniform.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: vol.scalar_buf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: case_table_buf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: vol.offsets_buf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 4, resource: vol.case_idx_buf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 5, resource: vol.vertex_buf.as_entire_binding() },
-                ],
-            });
-
-            // ----------------------------------------------------------
-            // Per-job surface material.
+            // Per-job surface material (one bind group shared by all slabs).
             // ----------------------------------------------------------
             let mat_raw = McSurfaceRaw {
                 base_color: job.material.base_color,
@@ -633,69 +597,164 @@ impl ViewportGpuResources {
                 entries: &[wgpu::BindGroupEntry { binding: 0, resource: mat_buf.as_entire_binding() }],
             });
 
-            // ----------------------------------------------------------
-            // Pass 1: classify.
-            // ----------------------------------------------------------
-            {
-                let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("mc_classify_pass"),
-                    timestamp_writes: None,
-                });
-                cp.set_pipeline(classify_pipeline);
-                cp.set_bind_group(0, &classify_bg, &[]);
-                cp.dispatch_workgroups(cc.div_ceil(256), 1, 1);
-            }
+            // Run all three compute passes for each slab independently.
+            for slab in &vol.slabs {
+                let cc = slab.cell_count;
+                let bc = slab.block_count;
 
-            // ----------------------------------------------------------
-            // Pass 2a: prefix sum level 0.
-            // ----------------------------------------------------------
-            {
-                let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("mc_ps_level0_pass"),
-                    timestamp_writes: None,
+                // ----------------------------------------------------------
+                // Per-slab classify uniform.
+                // ----------------------------------------------------------
+                let classify_params = ClassifyParams {
+                    nx: slab.dims[0],
+                    ny: slab.dims[1],
+                    nz: slab.dims[2],
+                    isovalue: job.isovalue,
+                };
+                let classify_uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("mc_classify_uniform"),
+                    contents: bytemuck::bytes_of(&classify_params),
+                    usage: wgpu::BufferUsages::UNIFORM,
                 });
-                cp.set_pipeline(prefix_sum_pipeline);
-                cp.set_bind_group(0, &ps_bgs[0], &[]);
-                cp.dispatch_workgroups(bc, 1, 1);
-            }
 
-            // ----------------------------------------------------------
-            // Pass 2b: prefix sum level 1 (single workgroup, sequential).
-            // ----------------------------------------------------------
-            {
-                let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("mc_ps_level1_pass"),
-                    timestamp_writes: None,
+                let classify_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("mc_classify_bg"),
+                    layout: classify_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: classify_uniform.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 1, resource: slab.scalar_buf.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 2, resource: case_count_buf.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 3, resource: slab.counts_buf.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 4, resource: slab.case_idx_buf.as_entire_binding() },
+                    ],
                 });
-                cp.set_pipeline(prefix_sum_pipeline);
-                cp.set_bind_group(0, &ps_bgs[1], &[]);
-                cp.dispatch_workgroups(1, 1, 1);
-            }
 
-            // ----------------------------------------------------------
-            // Pass 2c: prefix sum level 2 (propagate block offsets).
-            // ----------------------------------------------------------
-            {
-                let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("mc_ps_level2_pass"),
-                    timestamp_writes: None,
+                // ----------------------------------------------------------
+                // Per-slab prefix-sum uniforms (one per level).
+                // ----------------------------------------------------------
+                let ps_uniforms: [wgpu::Buffer; 3] = std::array::from_fn(|level| {
+                    let params = PrefixSumParams { cell_count: cc, block_count: bc, level: level as u32, _pad: 0 };
+                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("mc_ps_uniform"),
+                        contents: bytemuck::bytes_of(&params),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    })
                 });
-                cp.set_pipeline(prefix_sum_pipeline);
-                cp.set_bind_group(0, &ps_bgs[2], &[]);
-                cp.dispatch_workgroups(bc, 1, 1);
-            }
 
-            // ----------------------------------------------------------
-            // Pass 3: generate vertices.
-            // ----------------------------------------------------------
-            {
-                let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("mc_generate_pass"),
-                    timestamp_writes: None,
+                let ps_bgs: [wgpu::BindGroup; 3] = std::array::from_fn(|level| {
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("mc_ps_bg"),
+                        layout: prefix_sum_bgl,
+                        entries: &[
+                            wgpu::BindGroupEntry { binding: 0, resource: ps_uniforms[level].as_entire_binding() },
+                            wgpu::BindGroupEntry { binding: 1, resource: slab.counts_buf.as_entire_binding() },
+                            wgpu::BindGroupEntry { binding: 2, resource: slab.offsets_buf.as_entire_binding() },
+                            wgpu::BindGroupEntry { binding: 3, resource: slab.block_sums_buf.as_entire_binding() },
+                            wgpu::BindGroupEntry { binding: 4, resource: slab.indirect_buf.as_entire_binding() },
+                        ],
+                    })
                 });
-                cp.set_pipeline(generate_pipeline);
-                cp.set_bind_group(0, &generate_bg, &[]);
-                cp.dispatch_workgroups(cc.div_ceil(256), 1, 1);
+
+                // ----------------------------------------------------------
+                // Per-slab generate uniform (origin_z shifted by slab offset).
+                // ----------------------------------------------------------
+                let generate_params = GenerateParams {
+                    nx:        slab.dims[0],
+                    ny:        slab.dims[1],
+                    nz:        slab.dims[2],
+                    isovalue:  job.isovalue,
+                    origin_x:  slab.origin[0],
+                    origin_y:  slab.origin[1],
+                    origin_z:  slab.origin[2],
+                    _pad0:     0.0,
+                    spacing_x: slab.spacing[0],
+                    spacing_y: slab.spacing[1],
+                    spacing_z: slab.spacing[2],
+                    _pad1:     0.0,
+                };
+                let generate_uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("mc_generate_uniform"),
+                    contents: bytemuck::bytes_of(&generate_params),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+
+                let generate_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("mc_generate_bg"),
+                    layout: generate_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: generate_uniform.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 1, resource: slab.scalar_buf.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 2, resource: case_table_buf.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 3, resource: slab.offsets_buf.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 4, resource: slab.case_idx_buf.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 5, resource: slab.vertex_buf.as_entire_binding() },
+                    ],
+                });
+
+                // ----------------------------------------------------------
+                // Pass 1: classify.
+                // ----------------------------------------------------------
+                {
+                    let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("mc_classify_pass"),
+                        timestamp_writes: None,
+                    });
+                    cp.set_pipeline(classify_pipeline);
+                    cp.set_bind_group(0, &classify_bg, &[]);
+                    cp.dispatch_workgroups(cc.div_ceil(256), 1, 1);
+                }
+
+                // ----------------------------------------------------------
+                // Pass 2a: prefix sum level 0.
+                // ----------------------------------------------------------
+                {
+                    let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("mc_ps_level0_pass"),
+                        timestamp_writes: None,
+                    });
+                    cp.set_pipeline(prefix_sum_pipeline);
+                    cp.set_bind_group(0, &ps_bgs[0], &[]);
+                    cp.dispatch_workgroups(bc, 1, 1);
+                }
+
+                // ----------------------------------------------------------
+                // Pass 2b: prefix sum level 1 (single workgroup, sequential).
+                // ----------------------------------------------------------
+                {
+                    let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("mc_ps_level1_pass"),
+                        timestamp_writes: None,
+                    });
+                    cp.set_pipeline(prefix_sum_pipeline);
+                    cp.set_bind_group(0, &ps_bgs[1], &[]);
+                    cp.dispatch_workgroups(1, 1, 1);
+                }
+
+                // ----------------------------------------------------------
+                // Pass 2c: prefix sum level 2 (propagate block offsets).
+                // ----------------------------------------------------------
+                {
+                    let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("mc_ps_level2_pass"),
+                        timestamp_writes: None,
+                    });
+                    cp.set_pipeline(prefix_sum_pipeline);
+                    cp.set_bind_group(0, &ps_bgs[2], &[]);
+                    cp.dispatch_workgroups(bc, 1, 1);
+                }
+
+                // ----------------------------------------------------------
+                // Pass 3: generate vertices.
+                // ----------------------------------------------------------
+                {
+                    let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("mc_generate_pass"),
+                        timestamp_writes: None,
+                    });
+                    cp.set_pipeline(generate_pipeline);
+                    cp.set_bind_group(0, &generate_bg, &[]);
+                    cp.dispatch_workgroups(cc.div_ceil(256), 1, 1);
+                }
             }
 
             frame_data.push(McFrameData { volume_idx: job.volume_id.0, render_bg });
