@@ -1,6 +1,6 @@
 [package]
 name = "viewport-lib"
-version = "0.8.7"
+version = "0.9.0"
 edition = "2024"
 description = "3D viewport rendering library"
 readme = "README.md"
@@ -70,6 +70,10 @@ path = "examples/winit_showcase/main.rs"
 [[example]]
 name = "eframe-minimal"
 path = "examples/eframe_minimal/main.rs"
+
+[[example]]
+name = "eframe-testing"
+path = "examples/eframe_testing/main.rs"
 
 [[example]]
 name = "eframe-primitives"
