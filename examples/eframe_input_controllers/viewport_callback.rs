@@ -1,7 +1,12 @@
+use std::sync::{Arc, Mutex};
 use viewport_lib::{FrameData, ViewportRenderer};
 
 pub struct ViewportCallback {
     pub frame: FrameData,
+    /// Cursor position to GPU-pick at this frame, set on click.
+    pub pick_cursor: Option<glam::Vec2>,
+    /// Shared slot: prepare writes the raw pick_id (0 = miss) after GPU pick.
+    pub pick_result: Arc<Mutex<Option<u64>>>,
 }
 
 impl eframe::egui_wgpu::CallbackTrait for ViewportCallback {
@@ -15,6 +20,14 @@ impl eframe::egui_wgpu::CallbackTrait for ViewportCallback {
     ) -> Vec<eframe::wgpu::CommandBuffer> {
         if let Some(renderer) = callback_resources.get_mut::<ViewportRenderer>() {
             renderer.prepare(device, queue, &self.frame);
+
+            if let Some(cursor) = self.pick_cursor {
+                let hit = renderer.pick_scene_gpu(device, queue, cursor, &self.frame);
+                let id = hit.map(|h| h.object_id.0).unwrap_or(0);
+                if let Ok(mut slot) = self.pick_result.lock() {
+                    *slot = Some(id);
+                }
+            }
         }
         Vec::new()
     }
