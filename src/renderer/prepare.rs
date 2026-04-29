@@ -1803,6 +1803,43 @@ impl ViewportRenderer {
 
             queue.submit(std::iter::once(encoder.finish()));
         }
+
+        // ------------------------------------------------------------------
+        // Sub-object highlight prepare: build GPU geometry from sub-selection
+        // snapshot when the version has changed since the last frame.
+        // ------------------------------------------------------------------
+        {
+            let w = frame.camera.viewport_size[0];
+            let h = frame.camera.viewport_size[1];
+            if let Some(sel_ref) = &frame.interaction.sub_selection {
+                let needs_rebuild = {
+                    let slot = &self.viewport_slots[vp_idx];
+                    slot.sub_highlight_generation != sel_ref.version
+                        || slot.sub_highlight.is_none()
+                };
+                if needs_rebuild {
+                    self.resources.ensure_sub_highlight_pipelines(device);
+                    let data = self.resources.build_sub_highlight(
+                        device,
+                        queue,
+                        sel_ref,
+                        frame.interaction.sub_highlight_face_fill_color,
+                        frame.interaction.sub_highlight_edge_color,
+                        frame.interaction.sub_highlight_edge_width_px,
+                        frame.interaction.sub_highlight_vertex_size_px,
+                        w,
+                        h,
+                    );
+                    let slot = &mut self.viewport_slots[vp_idx];
+                    slot.sub_highlight = Some(data);
+                    slot.sub_highlight_generation = sel_ref.version;
+                }
+            } else {
+                let slot = &mut self.viewport_slots[vp_idx];
+                slot.sub_highlight = None;
+                slot.sub_highlight_generation = u64::MAX;
+            }
+        }
     }
 
     /// Upload per-frame data to GPU buffers and render the shadow pass.

@@ -267,6 +267,87 @@ impl SubSelection {
 }
 
 // ---------------------------------------------------------------------------
+// SubSelectionRef
+// ---------------------------------------------------------------------------
+
+/// A renderer-owned snapshot of a [`SubSelection`] taken at frame submission time.
+///
+/// Bundles the selection items with the CPU-side mesh and point cloud data the
+/// renderer needs to build highlight geometry. The renderer does not hold a
+/// reference to any app-owned data between frames.
+///
+/// # Usage
+///
+/// ```ignore
+/// fd.interaction.sub_selection = Some(SubSelectionRef::new(
+///     &self.sub_selection,
+///     mesh_lookup,
+///     model_matrices,
+///     point_positions,
+/// ));
+/// ```
+pub struct SubSelectionRef {
+    /// Snapshot of all selected (node_id, sub_object) pairs.
+    pub(crate) items: Vec<(NodeId, SubObjectRef)>,
+    /// CPU-side vertex positions and triangle indices keyed by node id.
+    ///
+    /// Same format as the `mesh_lookup` parameter to
+    /// [`pick_scene_cpu`](crate::interaction::picking::pick_scene_cpu):
+    /// the value is `(positions, indices)` where every three consecutive
+    /// indices form one triangle.
+    pub(crate) mesh_lookup:
+        std::collections::HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
+    /// World-space model matrix for each node, keyed by node id.
+    ///
+    /// Used to transform local-space mesh positions into world space when
+    /// building fill and edge geometry. Nodes absent from the map are treated
+    /// as having an identity transform.
+    pub(crate) model_matrices: std::collections::HashMap<u64, glam::Mat4>,
+    /// World-space point cloud positions keyed by node id.
+    ///
+    /// Required for [`SubObjectRef::Point`] highlights. The index carried by
+    /// `Point(i)` addresses `point_positions[node_id][i]`.
+    pub(crate) point_positions: std::collections::HashMap<u64, Vec<[f32; 3]>>,
+    /// Version counter copied from the source [`SubSelection::version()`].
+    ///
+    /// The renderer uses this to skip GPU buffer rebuilds when the selection
+    /// has not changed since the previous frame.
+    pub version: u64,
+}
+
+impl SubSelectionRef {
+    /// Create a snapshot from a live [`SubSelection`].
+    ///
+    /// - `mesh_lookup` : CPU positions + indices per node id (same type as the
+    ///   `mesh_lookup` argument to the CPU pick functions).
+    /// - `model_matrices` : world transform per node id.
+    /// - `point_positions` : point cloud positions per node id (for
+    ///   [`SubObjectRef::Point`] entries).
+    pub fn new(
+        sub_selection: &SubSelection,
+        mesh_lookup: std::collections::HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
+        model_matrices: std::collections::HashMap<u64, glam::Mat4>,
+        point_positions: std::collections::HashMap<u64, Vec<[f32; 3]>>,
+    ) -> Self {
+        Self {
+            items: sub_selection
+                .iter()
+                .map(|(n, s)| (*n, *s))
+                .collect(),
+            mesh_lookup,
+            model_matrices,
+            point_positions,
+            version: sub_selection.version(),
+        }
+    }
+
+    /// Returns `true` if the snapshot contains no selected sub-objects.
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

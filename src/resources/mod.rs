@@ -7,6 +7,7 @@ pub mod gpu_marching_cubes;
 /// IBL precomputation and environment map upload.
 pub mod environment;
 mod extra_impls;
+mod highlight;
 mod init;
 mod instancing;
 /// Built-in matcap texture data (procedurally generated).
@@ -39,7 +40,8 @@ pub(crate) use self::types::{
     BloomUniform, ClipPlanesUniform, ContactShadowUniform, GlyphBaseMesh, GlyphGpuData,
     GridUniform, GroundPlaneUniform, InstanceData, ObjectUniform, OutlineEdgeUniform,
     OutlineObjectBuffers, OutlineUniform, OverlayUniform, PickInstance, SHADOW_ATLAS_SIZE,
-    ShadowAtlasUniform, SsaoUniform, StreamtubeGpuData, ToneMapUniform, ViewportHdrState,
+    ShadowAtlasUniform, SsaoUniform, StreamtubeGpuData, SubHighlightGpuData,
+    ToneMapUniform, ViewportHdrState,
 };
 pub use self::implicit::{
     GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,

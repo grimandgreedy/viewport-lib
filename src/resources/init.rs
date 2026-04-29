@@ -2075,6 +2075,13 @@ impl ViewportGpuResources {
             screen_image_bgl: None,
             screen_image_dc_pipeline: None,
             screen_image_dc_bgl: None,
+            sub_highlight_fill_pipeline: None,
+            sub_highlight_edge_pipeline: None,
+            sub_highlight_sprite_pipeline: None,
+            sub_highlight_fill_ldr_pipeline: None,
+            sub_highlight_edge_ldr_pipeline: None,
+            sub_highlight_sprite_ldr_pipeline: None,
+            sub_highlight_bgl: None,
         }
     }
 }

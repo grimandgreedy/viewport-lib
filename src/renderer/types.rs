@@ -6,6 +6,7 @@
 
 use crate::interaction::gizmo::{GizmoAxis, GizmoMode};
 use crate::interaction::snap::ConstraintOverlay;
+use crate::interaction::sub_object::SubSelectionRef;
 use crate::resources::{CameraUniform, ColormapId};
 use crate::scene::material::Material;
 
@@ -1460,6 +1461,25 @@ pub struct InteractionFrame {
     pub xray_selected: bool,
     /// RGBA color of the x-ray tint (should have alpha < 1). Default: [0.3, 0.7, 1.0, 0.25].
     pub xray_color: [f32; 4],
+
+    // --- Sub-object highlight ---
+    /// Sub-object selection to highlight this frame.
+    ///
+    /// `None` = no sub-object highlights drawn. When `Some`, the renderer
+    /// builds face fill, edge outline, and vertex/point sprite geometry from
+    /// the snapshot and draws them after the opaque scene pass.
+    pub sub_selection: Option<SubSelectionRef>,
+    /// Fill color (RGBA) for selected faces. The alpha component controls
+    /// fill opacity. Default: translucent yellow `[1.0, 0.85, 0.0, 0.25]`.
+    pub sub_highlight_face_fill_color: [f32; 4],
+    /// Edge color (RGBA) for selected face outlines. Default: opaque yellow
+    /// `[1.0, 0.85, 0.0, 1.0]`.
+    pub sub_highlight_edge_color: [f32; 4],
+    /// Line width in pixels for face edge outlines. Default: `2.0`.
+    pub sub_highlight_edge_width_px: f32,
+    /// Point sprite size in pixels for selected vertices and point cloud
+    /// points. Default: `10.0`.
+    pub sub_highlight_vertex_size_px: f32,
 }
 
 impl Default for InteractionFrame {
@@ -1476,6 +1496,11 @@ impl Default for InteractionFrame {
             outline_width_px: 2.0,
             xray_selected: false,
             xray_color: [0.3, 0.7, 1.0, 0.25],
+            sub_selection: None,
+            sub_highlight_face_fill_color: [1.0, 0.85, 0.0, 0.25],
+            sub_highlight_edge_color: [1.0, 0.85, 0.0, 1.0],
+            sub_highlight_edge_width_px: 2.0,
+            sub_highlight_vertex_size_px: 10.0,
         }
     }
 }

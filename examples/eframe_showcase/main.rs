@@ -90,7 +90,7 @@ use viewport_lib::{
     KeyCode, LightKind, LightSource, LightingSettings, ManipResult, ManipulationContext,
     ManipulationController, MatcapId, Material, MeshData, MeshId, NodeId, OrbitCameraController,
     PickAccelerator, PickId, PointCloudItem, PostProcessSettings, Projection, RenderCamera, SceneFrame,
-    SceneRenderItem, ScrollUnits, Selection, ShadowFilter, ViewPreset, ViewportContext,
+    SceneRenderItem, ScrollUnits, Selection, ShadowFilter, SubSelectionRef, ViewPreset, ViewportContext,
     ViewportEvent, ViewportRenderer, VolumeData, VolumeId,
     geometry::isoline::IsolineItem,
     gizmo::{self, compute_gizmo_scale},
@@ -131,6 +131,7 @@ mod showcase_29_depth_composite_images;
 mod showcase_30_implicit_surface;
 mod showcase_31_sparse_volume_grid;
 mod showcase_32_extended_quantities;
+mod showcase_33_picking_levels;
 mod viewport_callback;
 
 const BG_COLOR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -515,6 +516,22 @@ fn main() -> eframe::Result {
                 aux_img_alpha: 1.0,
                 aux_img_scale: 1.0,
                 aux_active_frustum: None,
+
+                pl_scene: viewport_lib::scene::Scene::new(),
+                pl_selection: Selection::new(),
+                pl_sub_selection: viewport_lib::SubSelection::new(),
+                pl_built: false,
+                pl_level: showcase_33_picking_levels::PlPickLevel::default(),
+                pl_cube_mesh_id: MeshId::from_index(0),
+                pl_hemi_mesh_id: MeshId::from_index(0),
+                pl_mesh_lookup: std::collections::HashMap::new(),
+                pl_wireframe: true,
+                pl_shift_held: false,
+                pl_drag_start: None,
+                pl_node_names: Vec::new(),
+                pl_last_hit: None,
+                pl_hit_marker: None,
+                pl_pc_positions: Vec::new(),
             }))
         }),
     )
@@ -565,6 +582,7 @@ enum ShowcaseMode {
     ImplicitSurface,
     SparseVolumeGrid,
     ExtendedQuantities,
+    PickLevels,
 }
 
 impl ShowcaseMode {
@@ -602,6 +620,7 @@ impl ShowcaseMode {
             Self::ImplicitSurface => "30: Implicit Surfaces",
             Self::SparseVolumeGrid => "31: Sparse Volume Grid",
             Self::ExtendedQuantities => "32: Extended Quantities",
+            Self::PickLevels => "33: Picking Levels",
         }
     }
 }
@@ -979,6 +998,23 @@ pub(crate) struct App {
     pub(crate) eq_pc_transp: Vec<f32>,
     pub(crate) eq_pc_bg_mesh_id: MeshId,
     pub(crate) eq_colormap: BuiltinColormap,
+
+    // --- Showcase 33 ---
+    pub(crate) pl_scene: viewport_lib::scene::Scene,
+    pub(crate) pl_selection: Selection,
+    pub(crate) pl_sub_selection: viewport_lib::SubSelection,
+    pub(crate) pl_built: bool,
+    pub(crate) pl_level: showcase_33_picking_levels::PlPickLevel,
+    pub(crate) pl_cube_mesh_id: MeshId,
+    pub(crate) pl_hemi_mesh_id: MeshId,
+    pub(crate) pl_mesh_lookup: std::collections::HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
+    pub(crate) pl_wireframe: bool,
+    pub(crate) pl_shift_held: bool,
+    pub(crate) pl_drag_start: Option<glam::Vec2>,
+    pub(crate) pl_node_names: Vec<(NodeId, String)>,
+    pub(crate) pl_last_hit: Option<showcase_33_picking_levels::PlHitInfo>,
+    pub(crate) pl_hit_marker: Option<glam::Vec3>,
+    pub(crate) pl_pc_positions: Vec<[f32; 3]>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1120,6 +1156,7 @@ impl eframe::App for App {
                     ShowcaseMode::ImplicitSurface,
                     ShowcaseMode::SparseVolumeGrid,
                     ShowcaseMode::ExtendedQuantities,
+                    ShowcaseMode::PickLevels,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1283,6 +1320,18 @@ impl eframe::App for App {
                                 self.clipvol_gizmo.active_axis = GizmoAxis::None;
                             }
 
+                            // PickLevels: track drag start for rubber-band box select.
+                            if self.mode == ShowcaseMode::PickLevels
+                                && *button == egui::PointerButton::Primary
+                                && *pressed
+                            {
+                                let local = glam::Vec2::new(
+                                    pos.x - rect.left(),
+                                    pos.y - rect.top(),
+                                );
+                                self.pl_drag_start = Some(local);
+                            }
+
                             let state = if *pressed {
                                 ButtonState::Pressed
                             } else {
@@ -1312,6 +1361,28 @@ impl eframe::App for App {
                     }
                 }
             });
+
+            // ----- PickLevels: update shift state and fire box-select on drag end -----
+            if self.mode == ShowcaseMode::PickLevels {
+                self.pl_shift_held = ctx.input(|i| i.modifiers.shift);
+                if response.drag_stopped() {
+                    if let Some(drag_start) = self.pl_drag_start.take() {
+                        let drag_end = self.last_cursor_viewport;
+                        if (drag_end - drag_start).length() > 4.0 {
+                            let shift = self.pl_shift_held;
+                            self.handle_pl_box_select(
+                                drag_start, drag_end,
+                                rect.width(), rect.height(),
+                                shift,
+                            );
+                        }
+                    }
+                }
+                // Clear drag start if the button was released below egui's drag threshold.
+                if !ctx.input(|i| i.pointer.primary_down()) {
+                    self.pl_drag_start = None;
+                }
+            }
 
             // ----- Clip-vol gizmo drag (Showcase 18) -----
             if self.mode == ShowcaseMode::ClipVolumes
@@ -1452,7 +1523,8 @@ impl eframe::App for App {
             } else {
                 // ----- Apply / resolve orbit controller (non-Interaction modes) -----
                 let suppress_orbit =
-                    self.mode == ShowcaseMode::ClipVolumes && self.clipvol_gizmo_drag_active;
+                    (self.mode == ShowcaseMode::ClipVolumes && self.clipvol_gizmo_drag_active)
+                    || (self.mode == ShowcaseMode::PickLevels && self.pl_drag_start.is_some());
                 if suppress_orbit {
                     self.controller.resolve();
                 } else {
@@ -1523,6 +1595,28 @@ impl eframe::App for App {
                         rect,
                         viewport_callback::ViewportCallback { frame: frame_data },
                     ));
+            }
+
+            // ----- PickLevels: rubber-band drag rect overlay -----
+            if self.mode == ShowcaseMode::PickLevels {
+                if let Some(drag_start) = self.pl_drag_start {
+                    let drag_end = self.last_cursor_viewport;
+                    if response.dragged() && (drag_end - drag_start).length() > 4.0 {
+                        let a = egui::pos2(rect.left() + drag_start.x, rect.top() + drag_start.y);
+                        let b = egui::pos2(rect.left() + drag_end.x, rect.top() + drag_end.y);
+                        let sel_rect = egui::Rect::from_two_pos(a, b);
+                        ui.painter().rect(
+                            sel_rect,
+                            0.0,
+                            egui::Color32::from_rgba_unmultiplied(255, 200, 50, 20),
+                            egui::Stroke::new(
+                                1.5,
+                                egui::Color32::from_rgba_unmultiplied(255, 200, 50, 200),
+                            ),
+                            egui::StrokeKind::Outside,
+                        );
+                    }
+                }
             }
 
             // ----- Manipulation mode overlay (Showcase 4) -----
@@ -1607,7 +1701,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 31] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 32] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::Performance,
@@ -1639,6 +1733,7 @@ impl App {
             ShowcaseMode::DepthCompositeImages,
             ShowcaseMode::ImplicitSurface,
             ShowcaseMode::SparseVolumeGrid,
+            ShowcaseMode::PickLevels,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1736,6 +1831,7 @@ impl App {
             ShowcaseMode::ImplicitSurface => !self.is_built,
             ShowcaseMode::SparseVolumeGrid => !self.svg_built,
             ShowcaseMode::ExtendedQuantities => !self.eq_built,
+            ShowcaseMode::PickLevels => !self.pl_built,
             _ => false,
         };
         if !needs {
@@ -2011,6 +2107,16 @@ impl App {
                     ..viewport_lib::Camera::default()
                 };
             }
+            ShowcaseMode::PickLevels => {
+                self.build_pl_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 14.0,
+                    orientation: glam::Quat::from_rotation_z(0.6)
+                        * glam::Quat::from_rotation_x(1.1),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2063,6 +2169,7 @@ impl App {
             ShowcaseMode::ImplicitSurface => self.controls_implicit(ui),
             ShowcaseMode::SparseVolumeGrid => self.controls_sparse_volume_grid(ui),
             ShowcaseMode::ExtendedQuantities => self.controls_eq(ui),
+            ShowcaseMode::PickLevels => self.controls_pick_levels(ui),
         }
     }
 
@@ -3439,6 +3546,18 @@ impl App {
                 eq_pcs = pcs;
                 (items, Some(BG_COLOR), LightingSettings::default(), 0, 0)
             }
+
+            ShowcaseMode::PickLevels => {
+                let items = self.pl_scene.collect_render_items(&self.pl_selection);
+                let sg = self.pl_scene.version();
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.5,
+                    sky_color: [1.0, 1.0, 1.0],
+                    ground_color: [0.8, 0.8, 0.8],
+                    ..LightingSettings::default()
+                };
+                (items, Some(BG_COLOR), lighting, sg, self.pl_selection.version())
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -3493,6 +3612,9 @@ impl App {
             SceneFrame::from_surface_items(scene_items),
         );
         fd.effects.lighting = lighting;
+        if self.mode == ShowcaseMode::PickLevels {
+            fd.viewport.wireframe_mode = self.pl_wireframe;
+        }
         fd.viewport.show_grid = false;
         fd.viewport.show_axes_indicator = true;
         fd.viewport.background_color = bg_color;
@@ -3534,7 +3656,8 @@ impl App {
             || perf_outline
             || scene_graph_outline
             || interact_outline
-            || (self.mode == ShowcaseMode::ScalarFields && !self.scalar_selection.is_empty());
+            || (self.mode == ShowcaseMode::ScalarFields && !self.scalar_selection.is_empty())
+            || (self.mode == ShowcaseMode::PickLevels && !self.pl_selection.is_empty());
         if scene_graph_outline {
             fd.interaction.outline_width_px = scene_graph_outline_width;
         }
@@ -3577,6 +3700,56 @@ impl App {
         if self.mode == ShowcaseMode::ExtendedQuantities && self.eq_built {
             fd.scene.glyphs.extend(eq_glyphs);
             fd.scene.point_clouds.extend(eq_pcs);
+        }
+
+        // Picking Levels (Showcase 33) : point cloud, sub-selection highlights, and hit marker.
+        if self.mode == ShowcaseMode::PickLevels && self.pl_built {
+            // Background point cloud (blue, pickable via id=1).
+            if !self.pl_pc_positions.is_empty() {
+                let mut pc = PointCloudItem::default();
+                pc.positions = self.pl_pc_positions.clone();
+                pc.point_size = 6.0;
+                pc.default_color = [0.5, 0.8, 1.0, 1.0];
+                pc.id = 1;
+                fd.scene.point_clouds.push(pc);
+            }
+            // Sub-object highlight pass (face fill, edge outline, vertex/point sprites).
+            if !self.pl_sub_selection.is_empty() {
+                let mut mesh_lookup: HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)> = HashMap::new();
+                let mut model_matrices: HashMap<u64, glam::Mat4> = HashMap::new();
+                for node in self.pl_scene.nodes() {
+                    let node_id = viewport_lib::traits::ViewportObject::id(node);
+                    let model = viewport_lib::traits::ViewportObject::model_matrix(node);
+                    model_matrices.insert(node_id, model);
+                    if let Some(mesh_key) = viewport_lib::traits::ViewportObject::mesh_id(node) {
+                        if let Some(data) = self.pl_mesh_lookup.get(&mesh_key) {
+                            mesh_lookup.insert(node_id, data.clone());
+                        }
+                    }
+                }
+                let mut point_positions: HashMap<u64, Vec<[f32; 3]>> = HashMap::new();
+                point_positions.insert(1, self.pl_pc_positions.clone());
+                fd.interaction.sub_selection = Some(SubSelectionRef::new(
+                    &self.pl_sub_selection,
+                    mesh_lookup,
+                    model_matrices,
+                    point_positions,
+                ));
+                fd.interaction.sub_highlight_face_fill_color = [1.0, 0.85, 0.0, 0.25];
+                fd.interaction.sub_highlight_edge_color = [1.0, 0.85, 0.0, 1.0];
+                fd.interaction.sub_highlight_edge_width_px = 2.5;
+                fd.interaction.sub_highlight_vertex_size_px = 14.0;
+            }
+            // Orange crosshair marker: only in Object level (sub-levels use highlight dots).
+            if self.pl_level == showcase_33_picking_levels::PlPickLevel::Object {
+                if let Some(marker_pos) = self.pl_hit_marker {
+                    let mut marker = PointCloudItem::default();
+                    marker.positions = vec![marker_pos.to_array()];
+                    marker.point_size = 16.0;
+                    marker.default_color = [1.0, 0.35, 0.0, 1.0];
+                    fd.scene.point_clouds.push(marker);
+                }
+            }
         }
 
         // Curve network quantities (Showcase 28) : submitted every frame.
@@ -3850,6 +4023,11 @@ impl App {
                 } else {
                     self.scalar_selection.clear();
                 }
+            }
+
+            ShowcaseMode::PickLevels => {
+                let shift = self.pl_shift_held;
+                self.handle_pl_click(pos, w, h, shift);
             }
 
             _ => {}

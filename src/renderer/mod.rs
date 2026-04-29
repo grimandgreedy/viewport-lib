@@ -119,6 +119,14 @@ pub(crate) struct ViewportSlot {
     pub gizmo_index_buffer: wgpu::Buffer,
     /// Number of indices in the current gizmo mesh.
     pub gizmo_index_count: u32,
+
+    // --- Sub-object highlight (per-viewport, generation-cached) ---
+    /// Cached GPU data for sub-object highlight rendering.
+    /// `None` when no sub-object selection is active.
+    pub sub_highlight: Option<crate::resources::SubHighlightGpuData>,
+    /// Version of the last sub-selection snapshot that was uploaded.
+    /// `u64::MAX` forces a rebuild on the first frame.
+    pub sub_highlight_generation: u64,
 }
 
 /// High-level renderer wrapping all GPU resources and providing framework-agnostic
@@ -422,6 +430,8 @@ impl ViewportRenderer {
                 gizmo_vertex_buffer,
                 gizmo_index_buffer,
                 gizmo_index_count,
+                sub_highlight: None,
+                sub_highlight_generation: u64::MAX,
             });
         }
     }

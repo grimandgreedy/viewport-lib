@@ -158,7 +158,7 @@ pub use interaction::picking::{
 pub use interaction::selection::{NodeId, Selection};
 pub use interaction::snap::{ConstraintOverlay, SnapConfig};
 pub use interaction::sub_object;
-pub use interaction::sub_object::{SubObjectRef, SubSelection};
+pub use interaction::sub_object::{SubObjectRef, SubSelection, SubSelectionRef};
 
 pub use widgets::axes_indicator::AxisView;
 

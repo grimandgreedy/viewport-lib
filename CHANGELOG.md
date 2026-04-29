@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.10.0]
+
+### Features
+- Sub-object highlight rendering: the renderer now owns a dedicated highlight pass for face fills, edge outlines, and vertex/point sprites
+  - Set `InteractionFrame::sub_selection` to a `SubSelectionRef` snapshot each frame; no more manual `PolylineItem`/`PointCloudItem` highlight geometry
+  - `SubSelectionRef::new` bundles the selection with per-node CPU mesh data, model matrices, and point cloud positions
+  - Face fill: translucent triangle overlay with polygon-offset depth bias (no z-fighting)
+  - Edge outlines: billboard line segments with clip-space depth nudge
+  - Vertex/point sprites: billboard disc sprites
+  - Style parameters on `InteractionFrame`: `sub_highlight_face_fill_color`, `sub_highlight_edge_color`, `sub_highlight_edge_width_px`, `sub_highlight_vertex_size_px`
+  - Generation-counter dirty tracking: GPU buffers are only rebuilt when the selection version changes
+  - Works on both the HDR (`render`/`render_viewport`) and LDR (`prepare` + `paint`/`paint_to`) render paths
+
+### Fixes
+- `pick_rect`: hits are now keyed by `PickId` (scene node id) instead of `mesh_id.index()`, making `RectPickResult.hits` consistent with `PickHit.id` from ray picks and with `SubSelection` key conventions
+- Sub-object face highlights now correctly handle parry3d backface hits: face indices >= n_triangles are wrapped to the canonical triangle index, fixing highlights on meshes whose winding makes dome/outer faces appear as backfaces to the ray caster (e.g. the hemisphere geometry)
+
 ## [0.9.0]
 
 ### Features

@@ -51,6 +51,23 @@ pub struct PickHit {
     pub scalar_value: Option<f32>,
 }
 
+impl PickHit {
+    /// Construct a minimal `PickHit` for cases where no sub-object is identified
+    /// (e.g. volume AABB hits). `normal` is an approximate inward normal.
+    #[allow(deprecated)]
+    pub fn object_hit(id: u64, world_pos: glam::Vec3, normal: glam::Vec3) -> Self {
+        Self {
+            id,
+            sub_object: None,
+            world_pos,
+            normal,
+            triangle_index: u32::MAX,
+            point_index: None,
+            scalar_value: None,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // GpuPickHit : GPU object-ID pick result
 // ---------------------------------------------------------------------------
@@ -447,8 +464,8 @@ pub fn pick_scene_accelerated_with_probe_cpu(
 pub struct RectPickResult {
     /// Per-object typed sub-object references.
     ///
-    /// Key = object identifier (`mesh_index` cast to `u64` for scene items,
-    /// [`crate::renderer::PointCloudItem::id`] for point clouds).
+    /// Key = object identifier: [`crate::renderer::PickId`]`.0` (the scene node id)
+    /// for mesh scene items, [`crate::renderer::PointCloudItem::id`] for point clouds.
     /// Value = [`SubObjectRef`]s inside the rect : `Face` for mesh triangles,
     /// `Point` for point cloud points.
     pub hits: std::collections::HashMap<u64, Vec<SubObjectRef>>,
@@ -550,7 +567,7 @@ pub fn pick_rect(
         }
 
         if !tri_hits.is_empty() {
-            result.hits.insert(item.mesh_id.index() as u64, tri_hits);
+            result.hits.insert(item.pick_id.0, tri_hits);
         }
     }
 

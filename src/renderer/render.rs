@@ -58,6 +58,36 @@ impl ViewportRenderer {
                 }
             }
         }
+        // Sub-object highlight (LDR path) : face fill, edge lines, vertex/point sprites.
+        if let Some(sub_hl) = self.viewport_slots.get(vp_idx).and_then(|s| s.sub_highlight.as_ref()) {
+            if let (Some(fill_pl), Some(edge_pl), Some(sprite_pl)) = (
+                &self.resources.sub_highlight_fill_ldr_pipeline,
+                &self.resources.sub_highlight_edge_ldr_pipeline,
+                &self.resources.sub_highlight_sprite_ldr_pipeline,
+            ) {
+                if sub_hl.fill_vertex_count > 0 {
+                    render_pass.set_pipeline(fill_pl);
+                    render_pass.set_bind_group(0, camera_bg, &[]);
+                    render_pass.set_bind_group(1, &sub_hl.fill_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, sub_hl.fill_vertex_buf.slice(..));
+                    render_pass.draw(0..sub_hl.fill_vertex_count, 0..1);
+                }
+                if sub_hl.edge_segment_count > 0 {
+                    render_pass.set_pipeline(edge_pl);
+                    render_pass.set_bind_group(0, camera_bg, &[]);
+                    render_pass.set_bind_group(1, &sub_hl.edge_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, sub_hl.edge_vertex_buf.slice(..));
+                    render_pass.draw(0..6, 0..sub_hl.edge_segment_count);
+                }
+                if sub_hl.sprite_point_count > 0 {
+                    render_pass.set_pipeline(sprite_pl);
+                    render_pass.set_bind_group(0, camera_bg, &[]);
+                    render_pass.set_bind_group(1, &sub_hl.sprite_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, sub_hl.sprite_vertex_buf.slice(..));
+                    render_pass.draw(0..6, 0..sub_hl.sprite_point_count);
+                }
+            }
+        }
         // Phase 10B : screen-space image overlays (always on top, no depth test).
         if !self.screen_image_gpu_data.is_empty() {
             if let Some(pipeline) = &self.resources.screen_image_pipeline {
@@ -124,6 +154,36 @@ impl ViewportRenderer {
                         render_pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
                         render_pass.draw_indirect(&slab.indirect_buf, 0);
                     }
+                }
+            }
+        }
+        // Sub-object highlight (LDR path) : face fill, edge lines, vertex/point sprites.
+        if let Some(sub_hl) = self.viewport_slots.get(vp_idx).and_then(|s| s.sub_highlight.as_ref()) {
+            if let (Some(fill_pl), Some(edge_pl), Some(sprite_pl)) = (
+                &self.resources.sub_highlight_fill_ldr_pipeline,
+                &self.resources.sub_highlight_edge_ldr_pipeline,
+                &self.resources.sub_highlight_sprite_ldr_pipeline,
+            ) {
+                if sub_hl.fill_vertex_count > 0 {
+                    render_pass.set_pipeline(fill_pl);
+                    render_pass.set_bind_group(0, camera_bg, &[]);
+                    render_pass.set_bind_group(1, &sub_hl.fill_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, sub_hl.fill_vertex_buf.slice(..));
+                    render_pass.draw(0..sub_hl.fill_vertex_count, 0..1);
+                }
+                if sub_hl.edge_segment_count > 0 {
+                    render_pass.set_pipeline(edge_pl);
+                    render_pass.set_bind_group(0, camera_bg, &[]);
+                    render_pass.set_bind_group(1, &sub_hl.edge_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, sub_hl.edge_vertex_buf.slice(..));
+                    render_pass.draw(0..6, 0..sub_hl.edge_segment_count);
+                }
+                if sub_hl.sprite_point_count > 0 {
+                    render_pass.set_pipeline(sprite_pl);
+                    render_pass.set_bind_group(0, camera_bg, &[]);
+                    render_pass.set_bind_group(1, &sub_hl.sprite_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, sub_hl.sprite_vertex_buf.slice(..));
+                    render_pass.draw(0..6, 0..sub_hl.sprite_point_count);
                 }
             }
         }
@@ -868,6 +928,67 @@ impl ViewportRenderer {
                 resolve_pass.set_pipeline(pipeline);
                 resolve_pass.set_bind_group(0, bg, &[]);
                 resolve_pass.draw(0..3, 0..1);
+            }
+        }
+
+        // -----------------------------------------------------------------------
+        // Sub-object highlight pass: face fill, edge lines, vertex sprites.
+        // Runs after opaque geometry (depth buffer is ready) and before OIT so
+        // highlights are not occluded by opaque surfaces.
+        // -----------------------------------------------------------------------
+        if let Some(sub_hl) = self.viewport_slots[vp_idx].sub_highlight.as_ref() {
+            let resources = &self.resources;
+            if let (Some(fill_pl), Some(edge_pl), Some(sprite_pl)) = (
+                &resources.sub_highlight_fill_pipeline,
+                &resources.sub_highlight_edge_pipeline,
+                &resources.sub_highlight_sprite_pipeline,
+            ) {
+                let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+                let camera_bg = &self.viewport_slots[vp_idx].camera_bind_group;
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("sub_highlight_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &slot_hdr.hdr_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &slot_hdr.hdr_depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Discard,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+
+                if sub_hl.fill_vertex_count > 0 {
+                    pass.set_pipeline(fill_pl);
+                    pass.set_bind_group(0, camera_bg, &[]);
+                    pass.set_bind_group(1, &sub_hl.fill_bind_group, &[]);
+                    pass.set_vertex_buffer(0, sub_hl.fill_vertex_buf.slice(..));
+                    pass.draw(0..sub_hl.fill_vertex_count, 0..1);
+                }
+                if sub_hl.edge_segment_count > 0 {
+                    pass.set_pipeline(edge_pl);
+                    pass.set_bind_group(0, camera_bg, &[]);
+                    pass.set_bind_group(1, &sub_hl.edge_bind_group, &[]);
+                    pass.set_vertex_buffer(0, sub_hl.edge_vertex_buf.slice(..));
+                    pass.draw(0..6, 0..sub_hl.edge_segment_count);
+                }
+                if sub_hl.sprite_point_count > 0 {
+                    pass.set_pipeline(sprite_pl);
+                    pass.set_bind_group(0, camera_bg, &[]);
+                    pass.set_bind_group(1, &sub_hl.sprite_bind_group, &[]);
+                    pass.set_vertex_buffer(0, sub_hl.sprite_vertex_buf.slice(..));
+                    pass.draw(0..6, 0..sub_hl.sprite_point_count);
+                }
             }
         }
 

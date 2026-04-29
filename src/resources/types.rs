@@ -626,6 +626,44 @@ pub(crate) struct OutlineEdgeUniform {
     pub(crate) _pad: f32,            //  4 bytes
 }
 
+/// Per-frame uniform for the sub-object highlight pass (48 bytes).
+///
+/// Shared by the fill, edge, and sprite draw calls.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct SubHighlightUniform {
+    pub(crate) fill_color:      [f32; 4], // 16 bytes
+    pub(crate) edge_color:      [f32; 4], // 16 bytes
+    pub(crate) edge_width:      f32,      //  4 bytes (pixels)
+    pub(crate) vertex_size:     f32,      //  4 bytes (pixels)
+    pub(crate) viewport_width:  f32,      //  4 bytes
+    pub(crate) viewport_height: f32,      //  4 bytes
+    // total 48 bytes — no padding required
+}
+
+/// GPU buffers for one frame of sub-object highlight rendering.
+///
+/// Rebuilt whenever [`InteractionFrame::sub_selection`] version changes.
+/// All three passes (fill, edges, sprites) share a single
+/// [`SubHighlightUniform`] buffer bound at group 1.
+pub(crate) struct SubHighlightGpuData {
+    // Face fill : flat triangle vertex list (xyz f32, 12 bytes each, non-indexed).
+    pub(crate) fill_vertex_buf:   wgpu::Buffer,
+    pub(crate) fill_vertex_count: u32,
+    // Edge lines : segment instances (pos_a xyz + pos_b xyz, 24 bytes each).
+    pub(crate) edge_vertex_buf:    wgpu::Buffer,
+    pub(crate) edge_segment_count: u32,
+    // Vertex / point sprites : positions (xyz padded to 16 bytes).
+    pub(crate) sprite_vertex_buf:  wgpu::Buffer,
+    pub(crate) sprite_point_count: u32,
+    // Shared uniform buffer.
+    pub(crate) _uniform_buf:       wgpu::Buffer,
+    // Per-pass bind groups (group 1: SubHighlightUniform).
+    pub(crate) fill_bind_group:    wgpu::BindGroup,
+    pub(crate) edge_bind_group:    wgpu::BindGroup,
+    pub(crate) sprite_bind_group:  wgpu::BindGroup,
+}
+
 /// Tone mapping uniform.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -1584,4 +1622,22 @@ pub struct ViewportGpuResources {
     pub(crate) pick_bind_group_layout_1: Option<wgpu::BindGroupLayout>,
     /// Minimal camera-only bind group layout for the pick pipeline (group 0, one uniform binding).
     pub(crate) pick_camera_bgl: Option<wgpu::BindGroupLayout>,
+
+    // --- Sub-object highlight (lazily created) ---
+    /// Translucent face fill pipeline — HDR path (Rgba16Float color target).
+    /// `None` until the first frame that has `sub_selection.is_some()`.
+    pub(crate) sub_highlight_fill_pipeline: Option<wgpu::RenderPipeline>,
+    /// Depth-nudged billboard edge-line pipeline — HDR path (Rgba16Float color target).
+    /// `None` until the first frame that has `sub_selection.is_some()`.
+    pub(crate) sub_highlight_edge_pipeline: Option<wgpu::RenderPipeline>,
+    /// Billboard sprite pipeline for vertex/point highlights — HDR path (Rgba16Float).
+    pub(crate) sub_highlight_sprite_pipeline: Option<wgpu::RenderPipeline>,
+    /// Translucent face fill pipeline — LDR path (swapchain `target_format`).
+    pub(crate) sub_highlight_fill_ldr_pipeline: Option<wgpu::RenderPipeline>,
+    /// Depth-nudged billboard edge-line pipeline — LDR path (swapchain `target_format`).
+    pub(crate) sub_highlight_edge_ldr_pipeline: Option<wgpu::RenderPipeline>,
+    /// Billboard sprite pipeline for vertex/point highlights — LDR path (swapchain `target_format`).
+    pub(crate) sub_highlight_sprite_ldr_pipeline: Option<wgpu::RenderPipeline>,
+    /// Shared bind group layout for all highlight pipelines (group 1: SubHighlightUniform).
+    pub(crate) sub_highlight_bgl: Option<wgpu::BindGroupLayout>,
 }
