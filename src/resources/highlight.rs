@@ -264,6 +264,48 @@ impl ViewportGpuResources {
                         }
                     }
                 }
+                SubObjectRef::Voxel(flat) => {
+                    if let Some(info) = sel.voxel_lookup.get(node_id) {
+                        let [nx, ny, nz] = info.dims;
+                        if nx == 0 || ny == 0 || nz == 0 {
+                            continue;
+                        }
+                        let flat = *flat;
+                        let ix = flat % nx;
+                        let iy = (flat / nx) % ny;
+                        let iz = flat / (nx * ny);
+                        let bbox_min = glam::Vec3::from(info.bbox_min);
+                        let bbox_max = glam::Vec3::from(info.bbox_max);
+                        let cell = (bbox_max - bbox_min)
+                            / glam::Vec3::new(nx as f32, ny as f32, nz as f32);
+                        let lo = bbox_min + cell * glam::Vec3::new(ix as f32, iy as f32, iz as f32);
+                        let hi = lo + cell;
+                        let m = glam::Mat4::from_cols_array_2d(&info.model);
+                        let xv = |lp: glam::Vec3| -> [f32; 3] {
+                            m.transform_point3(lp).to_array()
+                        };
+                        // 8 corners of the voxel AABB.
+                        let c = [
+                            xv(glam::Vec3::new(lo.x, lo.y, lo.z)),
+                            xv(glam::Vec3::new(hi.x, lo.y, lo.z)),
+                            xv(glam::Vec3::new(hi.x, hi.y, lo.z)),
+                            xv(glam::Vec3::new(lo.x, hi.y, lo.z)),
+                            xv(glam::Vec3::new(lo.x, lo.y, hi.z)),
+                            xv(glam::Vec3::new(hi.x, lo.y, hi.z)),
+                            xv(glam::Vec3::new(hi.x, hi.y, hi.z)),
+                            xv(glam::Vec3::new(lo.x, hi.y, hi.z)),
+                        ];
+                        // 12 edges of the cube.
+                        for (a, b) in [
+                            (0, 1), (1, 2), (2, 3), (3, 0), // bottom face
+                            (4, 5), (5, 6), (6, 7), (7, 4), // top face
+                            (0, 4), (1, 5), (2, 6), (3, 7), // verticals
+                        ] {
+                            edge_data.extend_from_slice(&c[a]);
+                            edge_data.extend_from_slice(&c[b]);
+                        }
+                    }
+                }
                 _ => {}
             }
         }

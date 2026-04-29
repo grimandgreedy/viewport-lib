@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 
 use eframe::egui;
-use viewport_lib::{Material, MeshData, MeshId, NodeId, SubObjectRef, ViewportRenderer};
+use viewport_lib::{Material, MeshData, MeshId, NodeId, SubObjectRef, VolumeData, ViewportRenderer};
 
 use crate::App;
 
@@ -29,6 +29,7 @@ pub(crate) enum PlPickLevel {
     Face,
     Vertex,
     Point,
+    Voxel,
 }
 
 // ---------------------------------------------------------------------------
@@ -41,6 +42,7 @@ pub(crate) struct PlHitInfo {
     pub world_pos: glam::Vec3,
     pub normal: glam::Vec3,
     pub sub_object: Option<SubObjectRef>,
+    pub scalar_value: Option<f32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +220,37 @@ impl App {
         }
         self.pl_pc_positions = pc;
 
+        // --- Volume: 16x16x16 sphere-shaped scalar field ---
+        let dims: [u32; 3] = [16, 16, 16];
+        let n = (dims[0] * dims[1] * dims[2]) as usize;
+        let mut vol_data = vec![0.0_f32; n];
+        let cx = 7.5_f32;
+        let cy = 7.5_f32;
+        let cz = 7.5_f32;
+        let radius = 7.5_f32;
+        for iz in 0..dims[2] {
+            for iy in 0..dims[1] {
+                for ix in 0..dims[0] {
+                    let flat = (ix + iy * dims[0] + iz * dims[0] * dims[1]) as usize;
+                    let dx = ix as f32 + 0.5 - cx;
+                    let dy = iy as f32 + 0.5 - cy;
+                    let dz = iz as f32 + 0.5 - cz;
+                    let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+                    vol_data[flat] = (1.0 - dist / radius).max(0.0);
+                }
+            }
+        }
+        let vol_id = renderer
+            .resources_mut()
+            .upload_volume(&self.device, &self.queue, &vol_data, dims);
+        self.pl_volume_id = Some(vol_id);
+        self.pl_volume_data = Some(VolumeData {
+            data: vol_data,
+            dims,
+            origin: [0.0, 0.0, 0.0],
+            spacing: [0.25, 0.25, 0.25],
+        });
+
         self.pl_built = true;
     }
 }
@@ -256,6 +289,7 @@ impl App {
                         world_pos: hit.world_pos,
                         normal: hit.normal,
                         sub_object: None,
+                        scalar_value: None,
                     });
                     self.pl_hit_marker = Some(hit.world_pos);
                 } else if !shift {
@@ -284,6 +318,7 @@ impl App {
                         world_pos: hit.world_pos,
                         normal: hit.normal,
                         sub_object: hit.sub_object,
+                        scalar_value: None,
                     });
                     self.pl_hit_marker = Some(hit.world_pos);
                 } else if !shift {
@@ -316,8 +351,48 @@ impl App {
                         world_pos: marker,
                         normal: hit.normal,
                         sub_object: vertex_sub,
+                        scalar_value: None,
                     });
                     self.pl_hit_marker = Some(marker);
+                } else if !shift {
+                    self.pl_selection.clear();
+                    self.pl_sub_selection.clear();
+                    self.pl_last_hit = None;
+                    self.pl_hit_marker = None;
+                }
+            }
+
+            PlPickLevel::Voxel => {
+                // Build the VolumeItem matching what the renderer submits.
+                let hit = self.pl_volume_id.zip(self.pl_volume_data.as_ref()).and_then(|(vol_id, vol_data)| {
+                    let mut item = viewport_lib::VolumeItem::default();
+                    item.volume_id = vol_id;
+                    item.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0))
+                        .to_cols_array_2d();
+                    item.bbox_min = [0.0, 0.0, 0.0];
+                    item.bbox_max = [4.0, 4.0, 4.0];
+                    item.scalar_range = (0.0, 1.0);
+                    item.threshold_min = 0.15;
+                    item.threshold_max = 1.0;
+                    viewport_lib::pick_volume_cpu(ray_origin, ray_dir, 2, &item, vol_data)
+                });
+
+                if let Some(hit) = hit {
+                    let sub = hit.sub_object.unwrap();
+                    if shift {
+                        self.pl_sub_selection.toggle(2, sub);
+                    } else {
+                        self.pl_selection.clear();
+                        self.pl_sub_selection.select_one(2, sub);
+                    }
+                    self.pl_last_hit = Some(PlHitInfo {
+                        object_name: "Volume".to_string(),
+                        world_pos: hit.world_pos,
+                        normal: hit.normal,
+                        sub_object: hit.sub_object,
+                        scalar_value: hit.scalar_value,
+                    });
+                    self.pl_hit_marker = Some(hit.world_pos);
                 } else if !shift {
                     self.pl_selection.clear();
                     self.pl_sub_selection.clear();
@@ -374,6 +449,7 @@ impl App {
                         world_pos,
                         normal: glam::Vec3::Y,
                         sub_object: Some(sub),
+                        scalar_value: None,
                     });
                     self.pl_hit_marker = Some(world_pos);
                 } else if !shift {
@@ -481,6 +557,64 @@ impl App {
                         && screen.y >= r_min.y && screen.y <= r_max.y
                     {
                         self.pl_sub_selection.add(1, SubObjectRef::Point(i as u32));
+                    }
+                }
+            }
+
+            PlPickLevel::Voxel => {
+                // Project each above-threshold voxel center to screen space and
+                // collect those whose projection falls inside the selection rect.
+                if let (Some(vol_id), Some(vol_data)) =
+                    (self.pl_volume_id, self.pl_volume_data.as_ref())
+                {
+                    let _ = vol_id; // id carried by VolumeItem, not needed here
+                    let model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0));
+                    let bbox_min = glam::Vec3::ZERO;
+                    let bbox_max = glam::Vec3::splat(4.0);
+                    let [nx, ny, nz] = vol_data.dims;
+                    let cell = (bbox_max - bbox_min)
+                        / glam::Vec3::new(nx as f32, ny as f32, nz as f32);
+                    let threshold_min = 0.15_f32;
+                    let threshold_max = 1.0_f32;
+
+                    for iz in 0..nz {
+                        for iy in 0..ny {
+                            for ix in 0..nx {
+                                let flat = ix + iy * nx + iz * nx * ny;
+                                let scalar = vol_data.data[flat as usize];
+                                if scalar.is_nan()
+                                    || scalar < threshold_min
+                                    || scalar > threshold_max
+                                {
+                                    continue;
+                                }
+                                let local_center = bbox_min
+                                    + cell * glam::Vec3::new(
+                                        ix as f32 + 0.5,
+                                        iy as f32 + 0.5,
+                                        iz as f32 + 0.5,
+                                    );
+                                let world = model.transform_point3(local_center);
+                                let clip = view_proj * world.extend(1.0);
+                                if clip.w <= 0.0 {
+                                    continue;
+                                }
+                                let ndc = glam::Vec2::new(
+                                    clip.x / clip.w,
+                                    -clip.y / clip.w,
+                                );
+                                let screen =
+                                    (ndc * 0.5 + glam::Vec2::splat(0.5)) * vp_size;
+                                if screen.x >= r_min.x
+                                    && screen.x <= r_max.x
+                                    && screen.y >= r_min.y
+                                    && screen.y <= r_max.y
+                                {
+                                    self.pl_sub_selection
+                                        .add(2, SubObjectRef::Voxel(flat));
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -599,6 +733,7 @@ impl App {
             ui.radio_value(&mut self.pl_level, PlPickLevel::Face,   "Face");
             ui.radio_value(&mut self.pl_level, PlPickLevel::Vertex, "Vertex");
             ui.radio_value(&mut self.pl_level, PlPickLevel::Point,  "Point");
+            ui.radio_value(&mut self.pl_level, PlPickLevel::Voxel,  "Voxel");
         });
 
         ui.separator();
@@ -628,12 +763,16 @@ impl App {
                 Some(SubObjectRef::Vertex(i))=>{ ui.label(format!("Level: Vertex #{i}")); }
                 Some(SubObjectRef::Edge(i)) => { ui.label(format!("Level: Edge #{i}")); }
                 Some(SubObjectRef::Point(i))=> { ui.label(format!("Level: Point #{i}")); }
+                Some(SubObjectRef::Voxel(i))=> { ui.label(format!("Level: Voxel #{i}")); }
                 Some(_)                     => { ui.label("Level: (unknown)"); }
             }
             let p = hit.world_pos;
             ui.label(format!("Pos: ({:.2}, {:.2}, {:.2})", p.x, p.y, p.z));
             let n = hit.normal;
             ui.label(format!("Normal: ({:.2}, {:.2}, {:.2})", n.x, n.y, n.z));
+            if let Some(sv) = hit.scalar_value {
+                ui.label(format!("Scalar: {sv:.3}"));
+            }
         } else {
             let sel_count = self.pl_selection.len()
                 + self.pl_sub_selection.iter().count();

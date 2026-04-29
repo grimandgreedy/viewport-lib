@@ -3,6 +3,9 @@
 ## [0.10.0]
 
 ### Features
+- Voxel picking: clicking on a ray-marched volume now identifies the individual voxel that was hit, returning its position, the face normal the ray entered on, and the raw scalar value at that voxel. Only voxels within the visible threshold range are considered, matching what the renderer draws.
+- Voxel selection highlighting: selected voxels are outlined as wireframe cubes, consistent with how face, vertex, and point selections are highlighted.
+- Voxel region select: rubber-band box selection works on volumes, collecting all visible voxels whose centers project inside the selection rectangle.
 - Sub-object highlight rendering: the renderer now owns a dedicated highlight pass for face fills, edge outlines, and vertex/point sprites
   - Set `InteractionFrame::sub_selection` to a `SubSelectionRef` snapshot each frame; no more manual `PolylineItem`/`PointCloudItem` highlight geometry
   - `SubSelectionRef::new` bundles the selection with per-node CPU mesh data, model matrices, and point cloud positions

@@ -46,6 +46,12 @@ pub enum SubObjectRef {
     Edge(u32),
     /// A point within a point-cloud object, by its index in the positions slice.
     Point(u32),
+    /// A voxel within a ray-marched volume, by its flat grid index.
+    ///
+    /// The flat index encodes `(ix, iy, iz)` as `ix + iy * nx + iz * nx * ny`.
+    /// Recover the 3-D indices using the grid dimensions from
+    /// [`VolumeData`](crate::geometry::marching_cubes::VolumeData).
+    Voxel(u32),
 }
 
 impl SubObjectRef {
@@ -69,10 +75,15 @@ impl SubObjectRef {
         matches!(self, Self::Edge(_))
     }
 
+    /// Returns `true` if this is a [`Voxel`](SubObjectRef::Voxel).
+    pub fn is_voxel(&self) -> bool {
+        matches!(self, Self::Voxel(_))
+    }
+
     /// Returns the raw index regardless of variant.
     pub fn index(&self) -> u32 {
         match *self {
-            Self::Face(i) | Self::Vertex(i) | Self::Edge(i) | Self::Point(i) => i,
+            Self::Face(i) | Self::Vertex(i) | Self::Edge(i) | Self::Point(i) | Self::Voxel(i) => i,
         }
     }
 
@@ -264,11 +275,31 @@ impl SubSelection {
     pub fn vertex_count(&self) -> usize {
         self.selected.iter().filter(|(_, s)| s.is_vertex()).count()
     }
+
+    /// Count of selected voxels across all objects.
+    pub fn voxel_count(&self) -> usize {
+        self.selected.iter().filter(|(_, s)| s.is_voxel()).count()
+    }
 }
 
 // ---------------------------------------------------------------------------
 // SubSelectionRef
 // ---------------------------------------------------------------------------
+
+/// Geometry info needed to decode a [`SubObjectRef::Voxel`] flat index into
+/// world-space AABB corners for highlight rendering.
+///
+/// Pass one entry per volume object via [`SubSelectionRef::with_voxels`].
+pub struct VolumeSelectionInfo {
+    /// Grid dimensions `[nx, ny, nz]` — same as [`VolumeData::dims`].
+    pub dims: [u32; 3],
+    /// Local-space bounding-box minimum corner (matches [`VolumeItem::bbox_min`]).
+    pub bbox_min: [f32; 3],
+    /// Local-space bounding-box maximum corner (matches [`VolumeItem::bbox_max`]).
+    pub bbox_max: [f32; 3],
+    /// World-space transform (matches [`VolumeItem::model`]).
+    pub model: [[f32; 4]; 4],
+}
 
 /// A renderer-owned snapshot of a [`SubSelection`] taken at frame submission time.
 ///
@@ -308,6 +339,12 @@ pub struct SubSelectionRef {
     /// Required for [`SubObjectRef::Point`] highlights. The index carried by
     /// `Point(i)` addresses `point_positions[node_id][i]`.
     pub(crate) point_positions: std::collections::HashMap<u64, Vec<[f32; 3]>>,
+    /// Volume geometry info keyed by node id.
+    ///
+    /// Required for [`SubObjectRef::Voxel`] highlights. Each entry provides the
+    /// grid dimensions and bounding box so the renderer can decode flat voxel
+    /// indices into world-space AABB wireframes.
+    pub(crate) voxel_lookup: std::collections::HashMap<u64, VolumeSelectionInfo>,
     /// Version counter copied from the source [`SubSelection::version()`].
     ///
     /// The renderer uses this to skip GPU buffer rebuilds when the selection
@@ -337,8 +374,21 @@ impl SubSelectionRef {
             mesh_lookup,
             model_matrices,
             point_positions,
+            voxel_lookup: std::collections::HashMap::new(),
             version: sub_selection.version(),
         }
+    }
+
+    /// Attach volume geometry info for [`SubObjectRef::Voxel`] highlight rendering.
+    ///
+    /// `lookup` maps each volume's node id to its [`VolumeSelectionInfo`]. Without
+    /// this, selected voxels are silently skipped during highlight geometry build.
+    pub fn with_voxels(
+        mut self,
+        lookup: std::collections::HashMap<u64, VolumeSelectionInfo>,
+    ) -> Self {
+        self.voxel_lookup = lookup;
+        self
     }
 
     /// Returns `true` if the snapshot contains no selected sub-objects.

@@ -532,6 +532,8 @@ fn main() -> eframe::Result {
                 pl_last_hit: None,
                 pl_hit_marker: None,
                 pl_pc_positions: Vec::new(),
+                pl_volume_id: None,
+                pl_volume_data: None,
             }))
         }),
     )
@@ -1015,6 +1017,8 @@ pub(crate) struct App {
     pub(crate) pl_last_hit: Option<showcase_33_picking_levels::PlHitInfo>,
     pub(crate) pl_hit_marker: Option<glam::Vec3>,
     pub(crate) pl_pc_positions: Vec<[f32; 3]>,
+    pub(crate) pl_volume_id: Option<viewport_lib::VolumeId>,
+    pub(crate) pl_volume_data: Option<viewport_lib::VolumeData>,
 }
 
 // ---------------------------------------------------------------------------
@@ -3729,12 +3733,22 @@ impl App {
                 }
                 let mut point_positions: HashMap<u64, Vec<[f32; 3]>> = HashMap::new();
                 point_positions.insert(1, self.pl_pc_positions.clone());
+                let mut voxel_lookup: HashMap<u64, viewport_lib::VolumeSelectionInfo> = HashMap::new();
+                if self.pl_volume_id.is_some() {
+                    voxel_lookup.insert(2, viewport_lib::VolumeSelectionInfo {
+                        dims: [16, 16, 16],
+                        bbox_min: [0.0, 0.0, 0.0],
+                        bbox_max: [4.0, 4.0, 4.0],
+                        model: glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0))
+                            .to_cols_array_2d(),
+                    });
+                }
                 fd.interaction.sub_selection = Some(SubSelectionRef::new(
                     &self.pl_sub_selection,
                     mesh_lookup,
                     model_matrices,
                     point_positions,
-                ));
+                ).with_voxels(voxel_lookup));
                 fd.interaction.sub_highlight_face_fill_color = [1.0, 0.85, 0.0, 0.25];
                 fd.interaction.sub_highlight_edge_color = [1.0, 0.85, 0.0, 1.0];
                 fd.interaction.sub_highlight_edge_width_px = 2.5;
@@ -3749,6 +3763,21 @@ impl App {
                     marker.default_color = [1.0, 0.35, 0.0, 1.0];
                     fd.scene.point_clouds.push(marker);
                 }
+            }
+            // Volume render (always submitted when built).
+            if let Some(vol_id) = self.pl_volume_id {
+                let mut vol = viewport_lib::VolumeItem::default();
+                vol.volume_id = vol_id;
+                vol.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0))
+                    .to_cols_array_2d();
+                vol.bbox_min = [0.0, 0.0, 0.0];
+                vol.bbox_max = [4.0, 4.0, 4.0];
+                vol.scalar_range = (0.0, 1.0);
+                vol.threshold_min = 0.15;
+                vol.threshold_max = 1.0;
+                vol.opacity_scale = 0.6;
+                vol.enable_shading = true;
+                fd.scene.volumes.push(vol);
             }
         }
 

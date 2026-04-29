@@ -2,6 +2,7 @@
 ///
 /// Uses parry3d 0.26's glam-native API (no nalgebra required).
 /// All conversions are contained here at the picking boundary.
+use crate::geometry::marching_cubes::VolumeData;
 use crate::interaction::sub_object::SubObjectRef;
 use crate::resources::{AttributeData, AttributeKind, AttributeRef};
 use crate::scene::traits::ViewportObject;
@@ -647,6 +648,303 @@ pub fn box_select(
     hits
 }
 
+// ---------------------------------------------------------------------------
+// Volume ray-cast picking
+// ---------------------------------------------------------------------------
+
+/// Slab-method AABB intersection in an arbitrary coordinate space.
+///
+/// Returns `(t_entry, t_exit, entry_axis, entry_sign)` or `None` on miss.
+/// - `entry_axis` : 0/1/2 for x/y/z
+/// - `entry_sign` : ±1.0 — sign of the outward face normal on the entry face
+///   (points back toward the ray origin)
+fn ray_aabb_volume(
+    origin: glam::Vec3,
+    dir: glam::Vec3,
+    bbox_min: glam::Vec3,
+    bbox_max: glam::Vec3,
+) -> Option<(f32, f32, usize, f32)> {
+    let mut t_min = f32::NEG_INFINITY;
+    let mut t_max = f32::INFINITY;
+    let mut entry_axis = 0usize;
+    let mut entry_sign = -1.0f32;
+
+    let dirs = [dir.x, dir.y, dir.z];
+    let origins = [origin.x, origin.y, origin.z];
+    let mins = [bbox_min.x, bbox_min.y, bbox_min.z];
+    let maxs = [bbox_max.x, bbox_max.y, bbox_max.z];
+
+    for i in 0..3 {
+        let d = dirs[i];
+        let o = origins[i];
+        if d.abs() < 1e-12 {
+            // Ray parallel to slab: origin must be inside.
+            if o < mins[i] || o > maxs[i] {
+                return None;
+            }
+        } else {
+            let t1 = (mins[i] - o) / d;
+            let t2 = (maxs[i] - o) / d;
+            let (t_near, t_far) = if t1 <= t2 { (t1, t2) } else { (t2, t1) };
+            if t_near > t_min {
+                t_min = t_near;
+                entry_axis = i;
+                // d > 0 -> entered through min face -> outward normal = -e_i -> sign = -1.
+                // d < 0 -> entered through max face -> outward normal = +e_i -> sign = +1.
+                entry_sign = if d > 0.0 { -1.0 } else { 1.0 };
+            }
+            if t_far < t_max {
+                t_max = t_far;
+            }
+        }
+    }
+
+    if t_min > t_max || t_max < 0.0 {
+        return None;
+    }
+    Some((t_min, t_max, entry_axis, entry_sign))
+}
+
+/// Ray-cast a single volume using Amanatides-Woo DDA traversal.
+///
+/// Walks voxels in exact ray order — no steps are skipped — and returns a
+/// [`PickHit`] for the first voxel whose raw scalar value falls within
+/// `[item.threshold_min, item.threshold_max]`.
+///
+/// # Arguments
+/// * `ray_origin` : world-space ray origin
+/// * `ray_dir` : world-space ray direction (normalized)
+/// * `id` : caller-assigned object identifier, copied into [`PickHit::id`]
+/// * `item` : volume render parameters (bounding box, transform, thresholds)
+/// * `volume` : CPU-side scalar field — same data passed to
+///   [`upload_volume`](crate::resources::ViewportGpuResources::upload_volume)
+///
+/// # Returns
+/// `Some(PickHit)` on a hit:
+/// - `sub_object` : [`SubObjectRef::Voxel`] carrying the flat grid index
+///   `ix + iy*nx + iz*nx*ny`
+/// - `world_pos` : ray entry point into the hit voxel
+/// - `normal` : world-space outward face normal of the voxel face entered
+/// - `scalar_value` : raw scalar at the hit voxel
+///
+/// Returns `None` if the ray misses the bounding box or every voxel in
+/// the path is outside the threshold range (or NaN).
+pub fn pick_volume_cpu(
+    ray_origin: glam::Vec3,
+    ray_dir: glam::Vec3,
+    id: u64,
+    item: &crate::renderer::VolumeItem,
+    volume: &VolumeData,
+) -> Option<PickHit> {
+    let [nx, ny, nz] = volume.dims;
+    if nx == 0 || ny == 0 || nz == 0 || volume.data.is_empty() {
+        return None;
+    }
+
+    // Transform ray to model-local space (handles rotation, scale, translation).
+    let model = glam::Mat4::from_cols_array_2d(&item.model);
+    let inv_model = model.inverse();
+    let local_origin = inv_model.transform_point3(ray_origin);
+    let local_dir = inv_model.transform_vector3(ray_dir);
+
+    let bbox_min = glam::Vec3::from(item.bbox_min);
+    let bbox_max = glam::Vec3::from(item.bbox_max);
+
+    let (t_entry, t_exit, entry_axis, entry_sign) =
+        ray_aabb_volume(local_origin, local_dir, bbox_min, bbox_max)?;
+
+    // Advance to AABB surface if the ray starts outside.
+    let t_start = t_entry.max(0.0);
+    if t_start >= t_exit {
+        return None;
+    }
+
+    // Cell dimensions in local space.
+    let extent = bbox_max - bbox_min;
+    let cell = extent / glam::Vec3::new(nx as f32, ny as f32, nz as f32);
+
+    // Entry point in local space.
+    let p_entry = local_origin + t_start * local_dir;
+
+    // Starting grid cell. Nudge the fractional position slightly inside to
+    // avoid landing exactly on a boundary and mis-classifying the first cell.
+    let eps = 1e-4_f32;
+    let frac = ((p_entry - bbox_min) / extent).clamp(
+        glam::Vec3::splat(eps),
+        glam::Vec3::splat(1.0 - eps),
+    );
+    let mut ix = (frac.x * nx as f32).floor() as i32;
+    let mut iy = (frac.y * ny as f32).floor() as i32;
+    let mut iz = (frac.z * nz as f32).floor() as i32;
+    ix = ix.clamp(0, nx as i32 - 1);
+    iy = iy.clamp(0, ny as i32 - 1);
+    iz = iz.clamp(0, nz as i32 - 1);
+
+    // DDA step direction per axis (+1 or -1).
+    let step_x: i32 = if local_dir.x >= 0.0 { 1 } else { -1 };
+    let step_y: i32 = if local_dir.y >= 0.0 { 1 } else { -1 };
+    let step_z: i32 = if local_dir.z >= 0.0 { 1 } else { -1 };
+
+    // t increment to traverse one cell in each axis.
+    let td_x = if local_dir.x.abs() > 1e-12 { cell.x / local_dir.x.abs() } else { f32::INFINITY };
+    let td_y = if local_dir.y.abs() > 1e-12 { cell.y / local_dir.y.abs() } else { f32::INFINITY };
+    let td_z = if local_dir.z.abs() > 1e-12 { cell.z / local_dir.z.abs() } else { f32::INFINITY };
+
+    // t to the next axis-aligned boundary ahead of p_entry in each axis.
+    let next_bx = bbox_min.x + (if step_x > 0 { ix + 1 } else { ix }) as f32 * cell.x;
+    let next_by = bbox_min.y + (if step_y > 0 { iy + 1 } else { iy }) as f32 * cell.y;
+    let next_bz = bbox_min.z + (if step_z > 0 { iz + 1 } else { iz }) as f32 * cell.z;
+
+    let mut tmax_x = if local_dir.x.abs() > 1e-12 {
+        t_start + (next_bx - p_entry.x) / local_dir.x
+    } else {
+        f32::INFINITY
+    };
+    let mut tmax_y = if local_dir.y.abs() > 1e-12 {
+        t_start + (next_by - p_entry.y) / local_dir.y
+    } else {
+        f32::INFINITY
+    };
+    let mut tmax_z = if local_dir.z.abs() > 1e-12 {
+        t_start + (next_bz - p_entry.z) / local_dir.z
+    } else {
+        f32::INFINITY
+    };
+
+    // Outward face normal in local space for the face the ray is currently entering.
+    let mut entry_normal_local = glam::Vec3::ZERO;
+    match entry_axis {
+        0 => entry_normal_local.x = entry_sign,
+        1 => entry_normal_local.y = entry_sign,
+        _ => entry_normal_local.z = entry_sign,
+    }
+
+    // t at which we entered the current voxel (for computing world_pos on hit).
+    let mut t_voxel_entry = t_start;
+
+    loop {
+        // Safety bounds check: exit if DDA has walked outside the grid.
+        if ix < 0 || ix >= nx as i32 || iy < 0 || iy >= ny as i32 || iz < 0 || iz >= nz as i32 {
+            break;
+        }
+
+        let flat = ix as u32 + iy as u32 * nx + iz as u32 * nx * ny;
+        let scalar = volume.data[flat as usize];
+
+        // Skip NaN and out-of-threshold voxels (mirrors the shader behaviour).
+        if !scalar.is_nan() && scalar >= item.threshold_min && scalar <= item.threshold_max {
+            let local_hit = local_origin + t_voxel_entry * local_dir;
+            let world_pos = model.transform_point3(local_hit);
+            // Normals transform by the inverse-transpose to handle non-uniform scale.
+            let world_normal = inv_model
+                .transpose()
+                .transform_vector3(entry_normal_local)
+                .normalize();
+
+            #[allow(deprecated)]
+            return Some(PickHit {
+                id,
+                sub_object: Some(SubObjectRef::Voxel(flat)),
+                world_pos,
+                normal: world_normal,
+                triangle_index: u32::MAX,
+                point_index: None,
+                scalar_value: Some(scalar),
+            });
+        }
+
+        // Advance to the next voxel: step along the axis with the smallest tMax.
+        if tmax_x <= tmax_y && tmax_x <= tmax_z {
+            if tmax_x > t_exit {
+                break;
+            }
+            t_voxel_entry = tmax_x;
+            tmax_x += td_x;
+            ix += step_x;
+            entry_normal_local = glam::Vec3::new(-(step_x as f32), 0.0, 0.0);
+        } else if tmax_y <= tmax_z {
+            if tmax_y > t_exit {
+                break;
+            }
+            t_voxel_entry = tmax_y;
+            tmax_y += td_y;
+            iy += step_y;
+            entry_normal_local = glam::Vec3::new(0.0, -(step_y as f32), 0.0);
+        } else {
+            if tmax_z > t_exit {
+                break;
+            }
+            t_voxel_entry = tmax_z;
+            tmax_z += td_z;
+            iz += step_z;
+            entry_normal_local = glam::Vec3::new(0.0, 0.0, -(step_z as f32));
+        }
+    }
+
+    None
+}
+
+/// Compute the world-space axis-aligned bounding box of a single voxel.
+///
+/// Given the flat voxel index from [`SubObjectRef::Voxel`], returns
+/// `(world_min, world_max)` suitable for positioning a highlight wireframe
+/// around the selected voxel.
+///
+/// When `item.model` contains rotation or non-uniform scale the returned AABB
+/// is the world-space envelope of the (non-axis-aligned) voxel — computed by
+/// transforming all 8 corners.
+///
+/// # Panics
+///
+/// Panics if `flat_index` is out of bounds for `volume.dims`.
+pub fn voxel_world_aabb(
+    flat_index: u32,
+    volume: &VolumeData,
+    item: &crate::renderer::VolumeItem,
+) -> (glam::Vec3, glam::Vec3) {
+    let [nx, ny, nz] = volume.dims;
+    let ix = flat_index % nx;
+    let iy = (flat_index / nx) % ny;
+    let iz = flat_index / (nx * ny);
+    assert!(
+        ix < nx && iy < ny && iz < nz,
+        "flat_index {} out of bounds for dims {:?}",
+        flat_index,
+        volume.dims
+    );
+
+    let bbox_min = glam::Vec3::from(item.bbox_min);
+    let bbox_max = glam::Vec3::from(item.bbox_max);
+    let cell = (bbox_max - bbox_min) / glam::Vec3::new(nx as f32, ny as f32, nz as f32);
+
+    let local_lo = bbox_min
+        + glam::Vec3::new(ix as f32 * cell.x, iy as f32 * cell.y, iz as f32 * cell.z);
+    let local_hi = local_lo + cell;
+
+    let model = glam::Mat4::from_cols_array_2d(&item.model);
+    let corners = [
+        glam::Vec3::new(local_lo.x, local_lo.y, local_lo.z),
+        glam::Vec3::new(local_hi.x, local_lo.y, local_lo.z),
+        glam::Vec3::new(local_lo.x, local_hi.y, local_lo.z),
+        glam::Vec3::new(local_hi.x, local_hi.y, local_lo.z),
+        glam::Vec3::new(local_lo.x, local_lo.y, local_hi.z),
+        glam::Vec3::new(local_hi.x, local_lo.y, local_hi.z),
+        glam::Vec3::new(local_lo.x, local_hi.y, local_hi.z),
+        glam::Vec3::new(local_hi.x, local_hi.y, local_hi.z),
+    ];
+
+    let world_min = corners
+        .iter()
+        .map(|&c| model.transform_point3(c))
+        .fold(glam::Vec3::splat(f32::INFINITY), |acc, c| acc.min(c));
+    let world_max = corners
+        .iter()
+        .map(|&c| model.transform_point3(c))
+        .fold(glam::Vec3::splat(f32::NEG_INFINITY), |acc, c| acc.max(c));
+
+    (world_min, world_max)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1232,5 +1530,240 @@ mod tests {
         assert!((u - 1.0 / 3.0).abs() < 1e-4, "u={u}");
         assert!((v - 1.0 / 3.0).abs() < 1e-4, "v={v}");
         assert!((w - 1.0 / 3.0).abs() < 1e-4, "w={w}");
+    }
+
+    // ---------------------------------------------------------------------------
+    // pick_volume_cpu / voxel_world_aabb tests
+    // ---------------------------------------------------------------------------
+
+    fn make_volume_item(
+        bbox_min: [f32; 3],
+        bbox_max: [f32; 3],
+        threshold_min: f32,
+        threshold_max: f32,
+    ) -> crate::renderer::VolumeItem {
+        crate::renderer::VolumeItem {
+            bbox_min,
+            bbox_max,
+            threshold_min,
+            threshold_max,
+            ..crate::renderer::VolumeItem::default()
+        }
+    }
+
+    fn make_volume_data(
+        dims: [u32; 3],
+        fill: f32,
+    ) -> crate::geometry::marching_cubes::VolumeData {
+        let n = (dims[0] * dims[1] * dims[2]) as usize;
+        crate::geometry::marching_cubes::VolumeData {
+            data: vec![fill; n],
+            dims,
+            origin: [0.0; 3],
+            spacing: [1.0; 3],
+        }
+    }
+
+    #[test]
+    fn test_pick_volume_basic_hit() {
+        // 3x3x3 volume, bbox [0,0,0]->[3,3,3], all scalars 0.8.
+        // Ray from +y: hits the top-center voxel (ix=1, iy=2, iz=1).
+        let item = make_volume_item([0.0; 3], [3.0, 3.0, 3.0], 0.5, 1.0);
+        let volume = make_volume_data([3, 3, 3], 0.8);
+
+        let hit = super::pick_volume_cpu(
+            glam::Vec3::new(1.5, 10.0, 1.5),
+            glam::Vec3::new(0.0, -1.0, 0.0),
+            42,
+            &item,
+            &volume,
+        );
+        assert!(hit.is_some(), "expected a hit");
+        let hit = hit.unwrap();
+
+        assert_eq!(hit.id, 42);
+        assert_eq!(hit.scalar_value, Some(0.8));
+
+        // Decode the flat index.
+        let flat = hit.sub_object.unwrap().index();
+        let nx = 3u32;
+        let ny = 3u32;
+        let ix = flat % nx;
+        let iy = (flat / nx) % ny;
+        let iz = flat / (nx * ny);
+        assert_eq!((ix, iy, iz), (1, 2, 1), "expected top-centre voxel");
+
+        // Entry point should be on the top bbox face (y≈3).
+        assert!(hit.world_pos.y > 2.9, "world_pos.y={}", hit.world_pos.y);
+
+        // Normal should point upward (ray entered through the +y face).
+        assert!(hit.normal.y > 0.9, "normal={:?}", hit.normal);
+    }
+
+    #[test]
+    fn test_pick_volume_miss_aabb() {
+        let item = make_volume_item([0.0; 3], [1.0; 3], 0.0, 1.0);
+        let volume = make_volume_data([4, 4, 4], 0.5);
+
+        // Ray displaced 10 units in x: should miss the unit-cube bbox entirely.
+        let hit = super::pick_volume_cpu(
+            glam::Vec3::new(10.0, 5.0, 0.5),
+            glam::Vec3::new(0.0, -1.0, 0.0),
+            1,
+            &item,
+            &volume,
+        );
+        assert!(hit.is_none(), "expected miss");
+    }
+
+    #[test]
+    fn test_pick_volume_threshold_miss() {
+        // All scalars (0.3) below threshold_min (0.5) -> no hit.
+        let item = make_volume_item([0.0; 3], [1.0; 3], 0.5, 1.0);
+        let volume = make_volume_data([4, 4, 4], 0.3);
+
+        let hit = super::pick_volume_cpu(
+            glam::Vec3::new(0.5, 5.0, 0.5),
+            glam::Vec3::new(0.0, -1.0, 0.0),
+            1,
+            &item,
+            &volume,
+        );
+        assert!(hit.is_none(), "expected no hit when all scalars below threshold");
+    }
+
+    #[test]
+    fn test_pick_volume_threshold_skip() {
+        // 1x3x1 volume along y. Ray from +y enters iy=2 first.
+        // iy=2: scalar 0.3 (below threshold) -> skipped.
+        // iy=1: scalar 0.8 (within threshold) -> hit.
+        // iy=0: not reached.
+        let item = make_volume_item([0.0; 3], [1.0, 3.0, 1.0], 0.5, 1.0);
+        let mut volume = make_volume_data([1, 3, 1], 0.0);
+        // flat index = ix + iy*nx: nx=1, so flat = iy.
+        volume.data[2] = 0.3;
+        volume.data[1] = 0.8;
+        volume.data[0] = 0.8;
+
+        let hit = super::pick_volume_cpu(
+            glam::Vec3::new(0.5, 10.0, 0.5),
+            glam::Vec3::new(0.0, -1.0, 0.0),
+            1,
+            &item,
+            &volume,
+        );
+        assert!(hit.is_some(), "expected a hit");
+        let hit = hit.unwrap();
+        let flat = hit.sub_object.unwrap().index();
+        assert_eq!(flat, 1, "expected iy=1 (flat=1), got flat={flat}");
+        assert_eq!(hit.scalar_value, Some(0.8));
+    }
+
+    #[test]
+    fn test_pick_volume_nan_skip() {
+        // 1x2x1 volume. iy=1 (top) is NaN; iy=0 (bottom) is 0.5.
+        // Ray from +y skips NaN and hits the valid voxel.
+        let item = make_volume_item([0.0; 3], [1.0, 2.0, 1.0], 0.0, 1.0);
+        let mut volume = make_volume_data([1, 2, 1], 0.0);
+        volume.data[1] = f32::NAN;
+        volume.data[0] = 0.5;
+
+        let hit = super::pick_volume_cpu(
+            glam::Vec3::new(0.5, 10.0, 0.5),
+            glam::Vec3::new(0.0, -1.0, 0.0),
+            1,
+            &item,
+            &volume,
+        );
+        assert!(hit.is_some(), "expected hit after NaN skip");
+        let hit = hit.unwrap();
+        assert_eq!(hit.sub_object.unwrap().index(), 0, "expected iy=0 (flat=0)");
+        assert_eq!(hit.scalar_value, Some(0.5));
+    }
+
+    #[test]
+    fn test_pick_volume_dda_no_skip() {
+        // 10x1x1 volume along x. First 9 voxels are below threshold;
+        // voxel ix=9 is the only one in range. A ray with a tiny z-component
+        // (nearly axis-aligned to x) must still reach voxel 9 without skipping.
+        let item = make_volume_item([0.0; 3], [10.0, 1.0, 1.0], 0.5, 1.0);
+        let mut volume = make_volume_data([10, 1, 1], 0.0);
+        volume.data[9] = 0.8;
+
+        let dir = glam::Vec3::new(1.0, 0.0, 0.001).normalize();
+        let hit = super::pick_volume_cpu(
+            glam::Vec3::new(-1.0, 0.5, 0.5),
+            dir,
+            1,
+            &item,
+            &volume,
+        );
+        assert!(hit.is_some(), "DDA must reach the last voxel without skipping");
+        let flat = hit.unwrap().sub_object.unwrap().index();
+        assert_eq!(flat, 9, "expected ix=9 (flat=9), got flat={flat}");
+    }
+
+    #[test]
+    fn test_voxel_world_aabb_identity() {
+        // Identity model, 4x4x4 uniform bbox [0,0,0]->[4,4,4].
+        let item = make_volume_item([0.0; 3], [4.0, 4.0, 4.0], 0.0, 1.0);
+        let volume = make_volume_data([4, 4, 4], 0.0);
+
+        // Voxel (0,0,0) = flat 0: occupies [0,0,0]->[1,1,1].
+        let (lo, hi) = super::voxel_world_aabb(0, &volume, &item);
+        assert!((lo - glam::Vec3::ZERO).length() < 1e-5, "lo={lo:?}");
+        assert!((hi - glam::Vec3::ONE).length() < 1e-5, "hi={hi:?}");
+
+        // Voxel (1,0,0) = flat 1: occupies [1,0,0]->[2,1,1].
+        let (lo, hi) = super::voxel_world_aabb(1, &volume, &item);
+        assert!((lo.x - 1.0).abs() < 1e-5 && (hi.x - 2.0).abs() < 1e-5);
+
+        // Voxel (1,2,3) = flat 1 + 2*4 + 3*16 = 57: occupies [1,2,3]->[2,3,4].
+        let (lo, hi) = super::voxel_world_aabb(57, &volume, &item);
+        assert!((lo - glam::Vec3::new(1.0, 2.0, 3.0)).length() < 1e-5, "lo={lo:?}");
+        assert!((hi - glam::Vec3::new(2.0, 3.0, 4.0)).length() < 1e-5, "hi={hi:?}");
+    }
+
+    #[test]
+    fn test_voxel_world_aabb_round_trip() {
+        // Pick a voxel, then verify that world_pos from the hit lies inside
+        // the AABB returned by voxel_world_aabb.
+        let item = make_volume_item([0.0; 3], [3.0, 3.0, 3.0], 0.5, 1.0);
+        let volume = make_volume_data([3, 3, 3], 0.8);
+
+        let hit = super::pick_volume_cpu(
+            glam::Vec3::new(1.5, 10.0, 1.5),
+            glam::Vec3::new(0.0, -1.0, 0.0),
+            1,
+            &item,
+            &volume,
+        )
+        .expect("expected a hit for round-trip test");
+
+        let flat = hit.sub_object.unwrap().index();
+        let (lo, hi) = super::voxel_world_aabb(flat, &volume, &item);
+
+        let tol = 1e-3;
+        assert!(
+            hit.world_pos.x >= lo.x - tol && hit.world_pos.x <= hi.x + tol,
+            "world_pos.x={} outside [{}, {}]",
+            hit.world_pos.x,
+            lo.x,
+            hi.x
+        );
+        assert!(
+            hit.world_pos.y >= lo.y - tol && hit.world_pos.y <= hi.y + tol,
+            "world_pos.y={} outside [{}, {}]",
+            hit.world_pos.y,
+            lo.y,
+            hi.y
+        );
+        assert!(
+            hit.world_pos.z >= lo.z - tol && hit.world_pos.z <= hi.z + tol,
+            "world_pos.z={} outside [{}, {}]",
+            hit.world_pos.z,
+            lo.z,
+            hi.z
+        );
     }
 }
