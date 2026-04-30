@@ -255,8 +255,8 @@ pub(crate) struct AppState {
     ann_scene: Scene,
     /// Whether the annotation scene has been built.
     ann_built: bool,
-    /// Annotation labels - each holds a world_pos, text, optional leader, colour, font_size.
-    ann_labels: Vec<viewport_lib::AnnotationLabel>,
+    /// Annotation labels rendered natively via `OverlayFrame`.
+    ann_labels: Vec<viewport_lib::LabelItem>,
 
     // Mouse tracking.
     left_pressed: bool,
@@ -2153,7 +2153,7 @@ impl ApplicationHandler for App {
                     ShowcaseMode::Annotation => {
                         // Collect marker boxes from the annotation scene.
                         let items = state.ann_scene.collect_render_items(&Selection::new());
-                        // Labels are projected via world_to_screen in update_title each frame.
+                        // Labels are rendered natively via OverlayFrame.
                         (items, Some(BG_COLOR), LightingSettings::default())
                     }
                     ShowcaseMode::Interaction => {
@@ -2264,6 +2264,9 @@ impl ApplicationHandler for App {
                 frame_data.interaction.xray_selected = adv_xray;
                 frame_data.scene.generation = scene_gen;
                 frame_data.interaction.selection_generation = sel_gen;
+                if state.mode == ShowcaseMode::Annotation {
+                    frame_data.overlays.labels = state.ann_labels.clone();
+                }
 
                 if matches!(
                     state.mode,

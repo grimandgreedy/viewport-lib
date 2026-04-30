@@ -463,9 +463,11 @@ impl ViewportGpuResources {
         id
     }
 
-    /// Return the CPU-side colormap data for `id`, or `None` if the id is invalid.
+    /// Return the CPU-side colormap LUT for `id` as 256 RGBA8 entries, or `None` if the id is invalid.
     ///
-    /// Use this to draw an egui scalar bar gradient strip via `egui::Painter::image`.
+    /// Useful for any non-GPU colormap output: PDF export, table cell colouring, custom legend
+    /// widgets, or sampling a colour at a specific scalar value. The data is always in memory
+    /// (kept for GPU upload) so this accessor is free.
     pub fn get_colormap_rgba(&self, id: ColormapId) -> Option<&[[u8; 4]; 256]> {
         self.colormaps_cpu.get(id.0)
     }

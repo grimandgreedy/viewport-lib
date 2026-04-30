@@ -23,9 +23,6 @@ fontdue = "0.9"
 thiserror = "2.0"
 tracing = "0.1"
 serde = { version = "1.0", features = ["derive"], optional = true }
-# egui is optional - enables draw_annotation_labels helper.
-# Pin to =0.33.3 to stay aligned with eframe 0.33.3 used in the examples.
-egui = { version = "=0.33.3", optional = true }
 # gtk4 is optional because it requires system libraries (libgtk-4-dev / brew install gtk4).
 # Build the gtk4 example with: cargo run --release --example gtk4-viewport --features gtk4-example
 gtk4 = { version = "0.9", optional = true }
@@ -33,8 +30,6 @@ gtk4 = { version = "0.9", optional = true }
 [features]
 default = ["serde"]
 gtk4-example = ["gtk4"]
-# Enable egui integration helpers (draw_annotation_labels).
-egui = ["dep:egui"]
 
 [dev-dependencies]
 iced = { version = "0.14", features = ["wgpu"] }

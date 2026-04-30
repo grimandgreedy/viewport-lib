@@ -19,8 +19,8 @@ pub use self::types::{
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane,
     GroundPlaneMode, ImageAnchor, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
     LightingSettings, OverlayFrame, OverlayImageItem, PickId, PointCloudItem, PointRenderMode,
-    PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBar, ScalarBarAnchor,
-    ScalarBarItem, ScalarBarOrientation, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem,
+    PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBarItem, SceneEffects,
+    SceneFrame, SceneRenderItem, ScreenImageItem,
     ShadowFilter, StreamtubeItem, SurfaceSubmission, ToneMapping, ViewportEffects, ViewportFrame,
     VolumeItem,
 };

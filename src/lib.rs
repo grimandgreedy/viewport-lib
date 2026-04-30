@@ -68,7 +68,7 @@ pub mod error;
 pub mod camera;
 /// BVH picking, marching cubes, isolines, and cap geometry.
 pub mod geometry;
-/// Gizmo, snap, selection, annotation, picking, and input.
+/// Gizmo, snap, selection, picking, and input.
 pub mod interaction;
 /// On-surface vector quantities (intrinsic vectors, Whitney one-forms).
 pub mod quantities;
@@ -87,7 +87,6 @@ pub mod widgets;
 
 pub use geometry::bvh;
 pub use geometry::primitives;
-pub use interaction::annotation;
 pub use interaction::clip_plane;
 pub use interaction::gizmo;
 pub use interaction::input;
@@ -121,10 +120,6 @@ pub use geometry::implicit::{ImplicitRenderOptions, march_implicit_surface, marc
 pub use geometry::isoline::{IsolineItem, extract_isolines};
 pub use geometry::marching_cubes::{VolumeData, extract_isosurface};
 
-pub use interaction::annotation::AnnotationLabel;
-#[cfg(feature = "egui")]
-pub use interaction::annotation::draw_annotation_labels;
-pub use interaction::annotation::{world_to_screen, world_to_screen_from_frame};
 pub use interaction::gizmo::{
     Gizmo, GizmoAxis, GizmoMode, GizmoSpace, PivotMode, gizmo_center_for_pivot,
 };
@@ -170,8 +165,8 @@ pub use renderer::{
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane,
     GroundPlaneMode, ImageAnchor, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
     LightingSettings, OverlayFrame, OverlayImageItem, PickId, PointCloudItem, PointRenderMode,
-    PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBar, ScalarBarAnchor,
-    ScalarBarItem, ScalarBarOrientation, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem,
+    PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBarItem, SceneEffects,
+    SceneFrame, SceneRenderItem, ScreenImageItem,
     ShadowFilter, StreamtubeItem, SurfaceSubmission, ToneMapping, ViewportEffects, ViewportFrame,
     ViewportId, ViewportRenderer, VolumeItem,
 };

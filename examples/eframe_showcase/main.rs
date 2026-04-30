@@ -52,9 +52,9 @@
 //!   - Contact shadows toggle
 //!
 //! ## Showcase 9 : Annotation Labels
-//!   - `world_to_screen` projection with on-screen text via egui painter
-//!   - Leader lines, anchor dots, semi-transparent text backgrounds
-//!   - Behind-camera labels are automatically culled
+//!   - Native `LabelItem` rendering via `OverlayFrame`
+//!   - World-anchored labels with leader lines and background boxes
+//!   - Behind-camera labels are automatically culled by the renderer
 //!
 //! ## Showcase 10 : Camera Tools
 //!   - Seven `ViewPreset` named views (Front/Back/Left/Right/Top/Bottom/Isometric)
@@ -96,6 +96,13 @@ use viewport_lib::{
     gizmo::{self, compute_gizmo_scale},
     scene::{LayerId, Scene},
 };
+
+// Local scalar bar state types (library versions were removed with the paint-back API in Phase 4;
+// native ScalarBarItem rendering will be added in Phase 5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScalarBarAnchor { TopLeft, TopRight, BottomLeft, BottomRight }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScalarBarOrientation { Vertical, Horizontal }
 
 mod geometry;
 mod hdr_viewport_callback;
@@ -276,8 +283,8 @@ fn main() -> eframe::Result {
                 scalar_range_auto: true,
                 scalar_range: (0.0, 1.0),
                 scalar_nan_on: false,
-                scalar_bar_anchor: viewport_lib::ScalarBarAnchor::BottomRight,
-                scalar_bar_orientation: viewport_lib::ScalarBarOrientation::Vertical,
+                scalar_bar_anchor: ScalarBarAnchor::BottomRight,
+                scalar_bar_orientation: ScalarBarOrientation::Vertical,
                 scalar_node_ids: [0; 3],
                 scalar_mesh_indices: [MeshId::from_index(0); 3],
                 scalar_pick_positions: [Vec::new(), Vec::new(), Vec::new()],
@@ -757,8 +764,8 @@ pub(crate) struct App {
     scalar_range_auto: bool,
     scalar_range: (f32, f32),
     scalar_nan_on: bool,
-    scalar_bar_anchor: viewport_lib::ScalarBarAnchor,
-    scalar_bar_orientation: viewport_lib::ScalarBarOrientation,
+    scalar_bar_anchor: ScalarBarAnchor,
+    scalar_bar_orientation: ScalarBarOrientation,
     /// Stable node IDs for the scalar-field objects (sphere, wave grid, box).
     pub(crate) scalar_node_ids: [NodeId; 3],
     /// Mesh indices for the three scalar-field objects (sphere, wave grid, box).
@@ -2585,13 +2592,13 @@ impl App {
             let status = if let Some(wa) = label.world_anchor {
                 let view = self.camera.view_matrix();
                 let proj = self.camera.proj_matrix();
-                let screen = viewport_lib::world_to_screen(
-                    glam::Vec3::from(wa),
-                    &view,
-                    &proj,
-                    [800.0, 600.0],
-                );
-                if screen.is_some() { "visible" } else { "clipped" }
+                let pos = glam::Vec3::from(wa);
+                let clip = proj * view * pos.extend(1.0);
+                let visible = clip.w > 0.0 && {
+                    let ndc = glam::Vec3::new(clip.x, clip.y, clip.z) / clip.w;
+                    ndc.x.abs() <= 1.0 && ndc.y.abs() <= 1.0
+                };
+                if visible { "visible" } else { "clipped" }
             } else {
                 "screen-anchored"
             };
@@ -2936,10 +2943,10 @@ impl App {
         ui.separator();
         ui.label("Scalar Bar:");
         for (anchor, label) in [
-            (viewport_lib::ScalarBarAnchor::TopLeft, "Top-Left"),
-            (viewport_lib::ScalarBarAnchor::TopRight, "Top-Right"),
-            (viewport_lib::ScalarBarAnchor::BottomLeft, "Bottom-Left"),
-            (viewport_lib::ScalarBarAnchor::BottomRight, "Bottom-Right"),
+            (ScalarBarAnchor::TopLeft, "Top-Left"),
+            (ScalarBarAnchor::TopRight, "Top-Right"),
+            (ScalarBarAnchor::BottomLeft, "Bottom-Left"),
+            (ScalarBarAnchor::BottomRight, "Bottom-Right"),
         ] {
             if ui.radio(self.scalar_bar_anchor == anchor, label).clicked() {
                 self.scalar_bar_anchor = anchor;
@@ -2948,21 +2955,21 @@ impl App {
         ui.horizontal(|ui| {
             if ui
                 .radio(
-                    self.scalar_bar_orientation == viewport_lib::ScalarBarOrientation::Vertical,
+                    self.scalar_bar_orientation == ScalarBarOrientation::Vertical,
                     "Vertical",
                 )
                 .clicked()
             {
-                self.scalar_bar_orientation = viewport_lib::ScalarBarOrientation::Vertical;
+                self.scalar_bar_orientation = ScalarBarOrientation::Vertical;
             }
             if ui
                 .radio(
-                    self.scalar_bar_orientation == viewport_lib::ScalarBarOrientation::Horizontal,
+                    self.scalar_bar_orientation == ScalarBarOrientation::Horizontal,
                     "Horizontal",
                 )
                 .clicked()
             {
-                self.scalar_bar_orientation = viewport_lib::ScalarBarOrientation::Horizontal;
+                self.scalar_bar_orientation = ScalarBarOrientation::Horizontal;
             }
         });
     }

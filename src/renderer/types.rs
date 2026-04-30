@@ -437,48 +437,6 @@ impl Default for SceneRenderItem {
     }
 }
 
-/// Scalar bar (colour legend) overlay descriptor.
-///
-/// Not part of `FrameData` : the application draws scalar bars after `show_viewport()`
-/// returns, using `egui::Painter` and the colormap data from
-/// [`ViewportGpuResources::get_colormap_rgba`](crate::resources::ViewportGpuResources::get_colormap_rgba).
-#[derive(Debug, Clone)]
-pub struct ScalarBar {
-    /// Colormap to display.
-    pub colormap_id: crate::resources::ColormapId,
-    /// Scalar value at the low end of the gradient.
-    pub scalar_min: f32,
-    /// Scalar value at the high end of the gradient.
-    pub scalar_max: f32,
-    /// Title label shown above the bar.
-    pub title: String,
-    /// Corner of the viewport rect to anchor the bar to.
-    pub anchor: ScalarBarAnchor,
-    /// Whether to draw the bar vertically or horizontally.
-    pub orientation: ScalarBarOrientation,
-}
-
-/// Anchor corner for a [`ScalarBar`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScalarBarAnchor {
-    /// Top-left corner of the viewport.
-    TopLeft,
-    /// Top-right corner of the viewport.
-    TopRight,
-    /// Bottom-left corner of the viewport.
-    BottomLeft,
-    /// Bottom-right corner of the viewport.
-    BottomRight,
-}
-
-/// Orientation of a [`ScalarBar`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScalarBarOrientation {
-    /// Gradient runs from bottom (min) to top (max).
-    Vertical,
-    /// Gradient runs from left (min) to right (max).
-    Horizontal,
-}
 
 // ---------------------------------------------------------------------------
 // SciVis Phase B : point cloud and glyph renderers
