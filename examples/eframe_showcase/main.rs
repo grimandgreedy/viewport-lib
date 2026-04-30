@@ -135,6 +135,7 @@ mod showcase_31_sparse_volume_grid;
 mod showcase_32_extended_quantities;
 mod showcase_33_picking_levels;
 mod showcase_34_labels;
+mod showcase_35_overlay;
 mod viewport_callback;
 
 const BG_COLOR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -543,6 +544,18 @@ fn main() -> eframe::Result {
                 lbl_show_part_labels: true,
                 lbl_show_hud_labels: true,
                 lbl_show_feature_demos: true,
+
+                ovl_colormap: viewport_lib::BuiltinColormap::Viridis,
+                ovl_bar_orientation: ScalarBarOrientation::Vertical,
+                ovl_bar_anchor: ScalarBarAnchor::BottomRight,
+                ovl_tick_count: 5,
+                ovl_bar_size: 200.0,
+                ovl_bg_color: [0.0, 0.0, 0.0, 0.63],
+                ovl_show_ruler: true,
+                ovl_show_labels: true,
+                ovl_cloud_positions: Vec::new(),
+                ovl_cloud_scalars: Vec::new(),
+                ovl_cloud_built: false,
             }))
         }),
     )
@@ -595,6 +608,7 @@ enum ShowcaseMode {
     ExtendedQuantities,
     PickLevels,
     Labels,
+    Overlay,
 }
 
 impl ShowcaseMode {
@@ -634,6 +648,7 @@ impl ShowcaseMode {
             Self::ExtendedQuantities => "32: Extended Quantities",
             Self::PickLevels => "33: Picking Levels",
             Self::Labels => "34: Labels",
+            Self::Overlay => "35: Overlay Composition",
         }
     }
 }
@@ -1038,6 +1053,19 @@ pub(crate) struct App {
     pub(crate) lbl_show_part_labels: bool,
     pub(crate) lbl_show_hud_labels: bool,
     pub(crate) lbl_show_feature_demos: bool,
+
+    // --- Showcase 35 ---
+    pub(crate) ovl_colormap: viewport_lib::BuiltinColormap,
+    pub(crate) ovl_bar_orientation: viewport_lib::ScalarBarOrientation,
+    pub(crate) ovl_bar_anchor: viewport_lib::ScalarBarAnchor,
+    pub(crate) ovl_tick_count: u32,
+    pub(crate) ovl_bar_size: f32,
+    pub(crate) ovl_bg_color: [f32; 4],
+    pub(crate) ovl_show_ruler: bool,
+    pub(crate) ovl_show_labels: bool,
+    pub(crate) ovl_cloud_positions: Vec<[f32; 3]>,
+    pub(crate) ovl_cloud_scalars: Vec<f32>,
+    pub(crate) ovl_cloud_built: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -1181,6 +1209,7 @@ impl eframe::App for App {
                     ShowcaseMode::ExtendedQuantities,
                     ShowcaseMode::PickLevels,
                     ShowcaseMode::Labels,
+                    ShowcaseMode::Overlay,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1717,7 +1746,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 34] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 35] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::Performance,
@@ -1752,6 +1781,7 @@ impl App {
             ShowcaseMode::ExtendedQuantities,
             ShowcaseMode::PickLevels,
             ShowcaseMode::Labels,
+            ShowcaseMode::Overlay,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1851,6 +1881,7 @@ impl App {
             ShowcaseMode::ExtendedQuantities => !self.eq_built,
             ShowcaseMode::PickLevels => !self.pl_built,
             ShowcaseMode::Labels => !self.lbl_built,
+            ShowcaseMode::Overlay => !self.ovl_cloud_built,
             _ => false,
         };
         if !needs {
@@ -2146,6 +2177,19 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::Overlay => {
+                let (positions, scalars) = showcase_35_overlay::build_ovl_cloud();
+                self.ovl_cloud_positions = positions;
+                self.ovl_cloud_scalars = scalars;
+                self.ovl_cloud_built = true;
+                self.camera = Camera {
+                    center: glam::Vec3::new(0.0, 1.57, 0.0),
+                    distance: 9.0,
+                    orientation: glam::Quat::from_rotation_z(0.4)
+                        * glam::Quat::from_rotation_x(1.0),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2200,6 +2244,7 @@ impl App {
             ShowcaseMode::ExtendedQuantities => self.controls_eq(ui),
             ShowcaseMode::PickLevels => self.controls_pick_levels(ui),
             ShowcaseMode::Labels => self.controls_labels(ui),
+            ShowcaseMode::Overlay => showcase_35_overlay::controls_overlay(self, ui),
         }
     }
 
@@ -3600,6 +3645,10 @@ impl App {
                 };
                 (items, Some(BG_COLOR), lighting, sg, 0)
             }
+
+            ShowcaseMode::Overlay => {
+                (Vec::new(), Some(BG_COLOR), LightingSettings::default(), 0, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -3939,6 +3988,23 @@ impl App {
         }
         if self.mode == ShowcaseMode::ScalarFields && self.scalar_built {
             fd.overlays.scalar_bars = vec![self.scalar_bar_item()];
+        }
+        if self.mode == ShowcaseMode::Overlay {
+            let (labels, bar, ruler) = showcase_35_overlay::build_overlay_frame(self);
+            fd.overlays.labels = labels;
+            fd.overlays.scalar_bars = vec![bar];
+            if let Some(r) = ruler {
+                fd.overlays.rulers = vec![r];
+            }
+            if self.ovl_cloud_built {
+                let mut pc = PointCloudItem::default();
+                pc.positions = self.ovl_cloud_positions.clone();
+                pc.scalars = self.ovl_cloud_scalars.clone();
+                pc.scalar_range = Some((-1.5, 1.5));
+                pc.colormap_id = Some(ColormapId(self.ovl_colormap as usize));
+                pc.point_size = 4.0;
+                fd.scene.point_clouds.push(pc);
+            }
         }
         if self.mode == ShowcaseMode::Labels && self.lbl_built {
             // World-anchored part labels (built once, filtered by toggle).
