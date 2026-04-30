@@ -1,5 +1,6 @@
 use super::types::{ClipShape, SceneEffects, ViewportEffects};
 use super::*;
+use wgpu::util::DeviceExt;
 
 impl ViewportRenderer {
     /// Scene-global prepare stage: compute filters, lighting, shadow pass, batching, scivis.
@@ -1840,6 +1841,172 @@ impl ViewportRenderer {
                 slot.sub_highlight_generation = u64::MAX;
             }
         }
+
+        // ---------------------------------------------------------------
+        // Overlay labels
+        // ---------------------------------------------------------------
+        self.label_gpu_data = None;
+        if !frame.overlays.labels.is_empty() {
+            self.resources.ensure_overlay_text_pipeline(device);
+            let vp_w = frame.camera.viewport_size[0];
+            let vp_h = frame.camera.viewport_size[1];
+            if vp_w > 0.0 && vp_h > 0.0 {
+                let view = &frame.camera.render_camera.view;
+                let proj = &frame.camera.render_camera.projection;
+
+                // Sort by z_order for correct draw ordering.
+                let mut sorted_labels: Vec<&crate::renderer::types::LabelItem> =
+                    frame.overlays.labels.iter().collect();
+                sorted_labels.sort_by_key(|l| l.z_order);
+
+                let mut verts: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+
+                for label in &sorted_labels {
+                    if label.text.is_empty() || label.opacity <= 0.0 {
+                        continue;
+                    }
+
+                    // Resolve screen position from anchor.
+                    let screen_pos = if let Some(sa) = label.screen_anchor {
+                        Some(sa)
+                    } else if let Some(wa) = label.world_anchor {
+                        project_to_screen(wa, view, proj, vp_w, vp_h)
+                    } else {
+                        continue;
+                    };
+                    let Some(anchor_px) = screen_pos else {
+                        continue;
+                    };
+
+                    let opacity = label.opacity.clamp(0.0, 1.0);
+
+                    // Layout text (with optional word wrapping).
+                    let layout = if let Some(max_w) = label.max_width {
+                        self.resources.glyph_atlas.layout_text_wrapped(
+                            &label.text,
+                            label.font_size,
+                            label.font,
+                            max_w,
+                            device,
+                        )
+                    } else {
+                        self.resources.glyph_atlas.layout_text(
+                            &label.text,
+                            label.font_size,
+                            label.font,
+                            device,
+                        )
+                    };
+
+                    // Compute ascent so glyphs are positioned below the anchor.
+                    let font_index = label.font.map_or(0, |h| h.0);
+                    let ascent = self.resources.glyph_atlas.font_ascent(font_index, label.font_size);
+
+                    // Horizontal alignment.
+                    let align_offset = match label.anchor_align {
+                        crate::renderer::types::LabelAnchor::Leading => 6.0,
+                        crate::renderer::types::LabelAnchor::Center => -layout.total_width * 0.5,
+                        crate::renderer::types::LabelAnchor::Trailing => -layout.total_width - 6.0,
+                    };
+
+                    // Text origin with alignment + user offset.
+                    let text_x = anchor_px[0] + align_offset + label.offset[0];
+                    let text_y = anchor_px[1] - layout.height * 0.5 + label.offset[1];
+
+                    // Background box (drawn first, behind text).
+                    if label.background {
+                        let pad = label.padding;
+                        let bx0 = text_x - pad;
+                        let by0 = text_y - pad;
+                        let bx1 = text_x + layout.total_width + pad;
+                        let by1 = text_y + layout.height + pad;
+                        let bg_color = apply_opacity(label.background_color, opacity);
+                        if label.border_radius > 0.0 {
+                            emit_rounded_quad(
+                                &mut verts,
+                                bx0, by0, bx1, by1,
+                                label.border_radius,
+                                bg_color,
+                                vp_w, vp_h,
+                            );
+                        } else {
+                            emit_solid_quad(
+                                &mut verts,
+                                bx0, by0, bx1, by1,
+                                bg_color,
+                                vp_w, vp_h,
+                            );
+                        }
+                    }
+
+                    // Leader line.
+                    if label.leader_line {
+                        if let Some(wa) = label.world_anchor {
+                            let world_px = project_to_screen(wa, view, proj, vp_w, vp_h);
+                            if let Some(wp) = world_px {
+                                emit_line_quad(
+                                    &mut verts,
+                                    wp[0], wp[1],
+                                    text_x, text_y + layout.height * 0.5,
+                                    1.5,
+                                    apply_opacity(label.leader_color, opacity),
+                                    vp_w, vp_h,
+                                );
+                            }
+                        }
+                    }
+
+                    // Glyph quads.
+                    let text_color = apply_opacity(label.color, opacity);
+                    for gq in &layout.quads {
+                        let gx = text_x + gq.pos[0];
+                        let gy = text_y + ascent + gq.pos[1];
+                        emit_textured_quad(
+                            &mut verts,
+                            gx, gy,
+                            gx + gq.size[0], gy + gq.size[1],
+                            gq.uv_min, gq.uv_max,
+                            text_color,
+                            vp_w, vp_h,
+                        );
+                    }
+                }
+
+                // Upload atlas if new glyphs were rasterized.
+                self.resources.glyph_atlas.upload_if_dirty(queue);
+
+                if !verts.is_empty() {
+                    let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("overlay_label_vbuf"),
+                        contents: bytemuck::cast_slice(&verts),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+                    let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
+                    let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
+                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("overlay_label_bg"),
+                        layout: bgl,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(
+                                    &self.resources.glyph_atlas.view,
+                                ),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(sampler),
+                            },
+                        ],
+                    });
+                    self.label_gpu_data = Some(crate::resources::LabelGpuData {
+                        vertex_buf,
+                        vertex_count: verts.len() as u32,
+                        bind_group,
+                    });
+                }
+            }
+        }
     }
 
     /// Upload per-frame data to GPU buffers and render the shadow pass.
@@ -1936,4 +2103,180 @@ fn clip_sphere_outline(center: [f32; 3], radius: f32, color: [f32; 4]) -> Polyli
     item.default_color = color;
     item.line_width = 2.0;
     item
+}
+
+// ---------------------------------------------------------------------------
+// Overlay label helpers
+// ---------------------------------------------------------------------------
+
+/// Project a world-space position to screen pixels (top-left origin).
+/// Returns `None` if behind the camera or outside the frustum.
+fn project_to_screen(
+    pos: [f32; 3],
+    view: &glam::Mat4,
+    proj: &glam::Mat4,
+    vp_w: f32,
+    vp_h: f32,
+) -> Option<[f32; 2]> {
+    let p = glam::Vec3::from(pos);
+    let clip = *proj * *view * p.extend(1.0);
+    if clip.w <= 0.0 {
+        return None;
+    }
+    let ndc_x = clip.x / clip.w;
+    let ndc_y = clip.y / clip.w;
+    if ndc_x < -1.0 || ndc_x > 1.0 || ndc_y < -1.0 || ndc_y > 1.0 {
+        return None;
+    }
+    let x = (ndc_x * 0.5 + 0.5) * vp_w;
+    let y = (1.0 - (ndc_y * 0.5 + 0.5)) * vp_h;
+    Some([x, y])
+}
+
+/// Convert screen pixel coordinates to NDC.
+#[inline]
+fn px_to_ndc(px_x: f32, px_y: f32, vp_w: f32, vp_h: f32) -> [f32; 2] {
+    [
+        px_x / vp_w * 2.0 - 1.0,
+        1.0 - px_y / vp_h * 2.0,
+    ]
+}
+
+/// Emit a solid-colour quad (6 vertices) in screen pixel coordinates.
+fn emit_solid_quad(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    x0: f32, y0: f32,
+    x1: f32, y1: f32,
+    color: [f32; 4],
+    vp_w: f32, vp_h: f32,
+) {
+    let tl = px_to_ndc(x0, y0, vp_w, vp_h);
+    let tr = px_to_ndc(x1, y0, vp_w, vp_h);
+    let bl = px_to_ndc(x0, y1, vp_w, vp_h);
+    let br = px_to_ndc(x1, y1, vp_w, vp_h);
+    let uv = [0.0, 0.0];
+    let tex = 0.0;
+    let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
+        position: pos, uv, color, use_texture: tex, _pad: 0.0,
+    };
+    verts.extend_from_slice(&[v(tl), v(bl), v(tr), v(tr), v(bl), v(br)]);
+}
+
+/// Emit a textured quad (6 vertices) for a glyph in screen pixel coordinates.
+fn emit_textured_quad(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    x0: f32, y0: f32,
+    x1: f32, y1: f32,
+    uv_min: [f32; 2],
+    uv_max: [f32; 2],
+    color: [f32; 4],
+    vp_w: f32, vp_h: f32,
+) {
+    let tl = px_to_ndc(x0, y0, vp_w, vp_h);
+    let tr = px_to_ndc(x1, y0, vp_w, vp_h);
+    let bl = px_to_ndc(x0, y1, vp_w, vp_h);
+    let br = px_to_ndc(x1, y1, vp_w, vp_h);
+    let tex = 1.0;
+    let v = |pos: [f32; 2], uv: [f32; 2]| crate::resources::OverlayTextVertex {
+        position: pos, uv, color, use_texture: tex, _pad: 0.0,
+    };
+    // UV layout: top-left = uv_min, bottom-right = uv_max.
+    verts.extend_from_slice(&[
+        v(tl, uv_min),
+        v(bl, [uv_min[0], uv_max[1]]),
+        v(tr, [uv_max[0], uv_min[1]]),
+        v(tr, [uv_max[0], uv_min[1]]),
+        v(bl, [uv_min[0], uv_max[1]]),
+        v(br, uv_max),
+    ]);
+}
+
+/// Emit a thin screen-space line as a quad (6 vertices).
+fn emit_line_quad(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    x0: f32, y0: f32,
+    x1: f32, y1: f32,
+    thickness: f32,
+    color: [f32; 4],
+    vp_w: f32, vp_h: f32,
+) {
+    let dx = x1 - x0;
+    let dy = y1 - y0;
+    let len = (dx * dx + dy * dy).sqrt();
+    if len < 0.001 {
+        return;
+    }
+    let half = thickness * 0.5;
+    let nx = -dy / len * half;
+    let ny = dx / len * half;
+
+    let p0 = px_to_ndc(x0 + nx, y0 + ny, vp_w, vp_h);
+    let p1 = px_to_ndc(x0 - nx, y0 - ny, vp_w, vp_h);
+    let p2 = px_to_ndc(x1 + nx, y1 + ny, vp_w, vp_h);
+    let p3 = px_to_ndc(x1 - nx, y1 - ny, vp_w, vp_h);
+    let uv = [0.0, 0.0];
+    let tex = 0.0;
+    let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
+        position: pos, uv, color, use_texture: tex, _pad: 0.0,
+    };
+    verts.extend_from_slice(&[v(p0), v(p1), v(p2), v(p2), v(p1), v(p3)]);
+}
+
+/// Apply an opacity multiplier to a colour's alpha channel.
+#[inline]
+fn apply_opacity(color: [f32; 4], opacity: f32) -> [f32; 4] {
+    [color[0], color[1], color[2], color[3] * opacity]
+}
+
+/// Emit a rounded rectangle as solid quads: one center rect + four edge rects +
+/// four corner fans.  This is a CPU tessellation approach that avoids shader
+/// changes.
+fn emit_rounded_quad(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    x0: f32, y0: f32,
+    x1: f32, y1: f32,
+    radius: f32,
+    color: [f32; 4],
+    vp_w: f32, vp_h: f32,
+) {
+    let w = x1 - x0;
+    let h = y1 - y0;
+    let r = radius.min(w * 0.5).min(h * 0.5).max(0.0);
+
+    if r < 0.5 {
+        emit_solid_quad(verts, x0, y0, x1, y1, color, vp_w, vp_h);
+        return;
+    }
+
+    // Center cross (two rects that cover everything except the corners).
+    // Horizontal bar (full width, inset top/bottom by r).
+    emit_solid_quad(verts, x0, y0 + r, x1, y1 - r, color, vp_w, vp_h);
+    // Top bar (inset left/right by r, top edge).
+    emit_solid_quad(verts, x0 + r, y0, x1 - r, y0 + r, color, vp_w, vp_h);
+    // Bottom bar.
+    emit_solid_quad(verts, x0 + r, y1 - r, x1 - r, y1, color, vp_w, vp_h);
+
+    // Four corner fans.
+    let corners = [
+        (x0 + r, y0 + r, std::f32::consts::PI, std::f32::consts::FRAC_PI_2 * 3.0),       // top-left
+        (x1 - r, y0 + r, std::f32::consts::FRAC_PI_2 * 3.0, std::f32::consts::TAU),      // top-right
+        (x1 - r, y1 - r, 0.0, std::f32::consts::FRAC_PI_2),                               // bottom-right
+        (x0 + r, y1 - r, std::f32::consts::FRAC_PI_2, std::f32::consts::PI),              // bottom-left
+    ];
+    let segments = 6;
+    let uv = [0.0, 0.0];
+    let tex = 0.0;
+    let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
+        position: pos, uv, color, use_texture: tex, _pad: 0.0,
+    };
+    for (cx, cy, start, end) in corners {
+        let center = px_to_ndc(cx, cy, vp_w, vp_h);
+        for i in 0..segments {
+            let a0 = start + (end - start) * i as f32 / segments as f32;
+            let a1 = start + (end - start) * (i + 1) as f32 / segments as f32;
+            let p0 = px_to_ndc(cx + a0.cos() * r, cy + a0.sin() * r, vp_w, vp_h);
+            let p1 = px_to_ndc(cx + a1.cos() * r, cy + a1.sin() * r, vp_w, vp_h);
+            verts.extend_from_slice(&[v(center), v(p0), v(p1)]);
+        }
+    }
 }

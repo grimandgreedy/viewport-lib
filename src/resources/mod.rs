@@ -17,6 +17,7 @@ pub mod matcap_data;
 /// Slotted GPU mesh storage with free-list removal.
 pub mod mesh_store;
 mod meshes;
+mod overlay_text;
 mod overlays;
 mod postprocess;
 mod scivis;
@@ -41,9 +42,9 @@ pub use self::types::{
 };
 pub(crate) use self::types::{
     BloomUniform, ClipPlanesUniform, ContactShadowUniform, GlyphBaseMesh, GlyphGpuData,
-    GridUniform, GroundPlaneUniform, InstanceData, ObjectUniform, OutlineEdgeUniform,
-    OutlineObjectBuffers, OutlineUniform, OverlayUniform, PickInstance, SHADOW_ATLAS_SIZE,
-    ShadowAtlasUniform, SsaoUniform, StreamtubeGpuData, SubHighlightGpuData,
+    GridUniform, GroundPlaneUniform, InstanceData, LabelGpuData, ObjectUniform, OutlineEdgeUniform,
+    OutlineObjectBuffers, OutlineUniform, OverlayTextVertex, OverlayUniform, PickInstance,
+    SHADOW_ATLAS_SIZE, ShadowAtlasUniform, SsaoUniform, StreamtubeGpuData, SubHighlightGpuData,
     ToneMapUniform, ViewportHdrState,
 };
 pub use self::implicit::{

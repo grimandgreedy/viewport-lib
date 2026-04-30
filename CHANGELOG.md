@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.1]
+
+### Features
+- `OverlayFrame`: new frame section for renderer-native semantic overlays (labels, scalar bars, rulers, images)
+- Font atlas with bundled default font and `FontHandle` for user-supplied TTF fonts
+- `LabelItem`: native text labels anchored to world-space or screen-space positions. Supports setting position, connecting line, text and bg colour, padding and porder radius, offset, opacity, max width (px), z order and font (family and size).
+- Pick pipeline: removed back-face culling so two-sided meshes are pickable from both sides
+
+### Fixes
+- Scalar buffer attribute lookup: simplified vertex/face attribute resolution path
+
+### Examples
+- New showcase (34) for new internal labels.
+
 ## [0.10.0]
 
 ### Features

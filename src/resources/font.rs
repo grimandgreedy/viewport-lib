@@ -231,6 +231,127 @@ impl GlyphAtlas {
         }
     }
 
+    /// Lay out text with word wrapping at a maximum width.
+    ///
+    /// Words that exceed `max_width` on their own are not broken: they extend
+    /// past the boundary.  The returned `total_width` is the maximum line width
+    /// actually used.
+    pub fn layout_text_wrapped(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        font: Option<FontHandle>,
+        max_width: f32,
+        device: &wgpu::Device,
+    ) -> TextLayout {
+        let font_index = font.map_or(0, |h| h.0);
+        let px = font_size;
+
+        let metrics = self.fonts[font_index].horizontal_line_metrics(px);
+        let line_height = metrics
+            .map(|m| m.ascent - m.descent + m.line_gap)
+            .unwrap_or(px * 1.2);
+
+        // Split into words and lay out greedily.
+        let words: Vec<&str> = text.split_whitespace().collect();
+        if words.is_empty() {
+            return TextLayout {
+                quads: Vec::new(),
+                total_width: 0.0,
+                height: line_height,
+            };
+        }
+
+        let size_tenths = (px * 10.0).round() as u32;
+        let space_advance = {
+            let gi = self.fonts[font_index].lookup_glyph_index(' ');
+            self.fonts[font_index].metrics_indexed(gi, px).advance_width
+        };
+
+        let mut quads = Vec::new();
+        let mut line_x: f32 = 0.0;
+        let mut line_y: f32 = 0.0;
+        let mut max_line_width: f32 = 0.0;
+        let mut first_on_line = true;
+
+        for word in &words {
+            // Measure the word width.
+            let mut word_quads: Vec<GlyphQuad> = Vec::new();
+            let mut pen_x: f32 = 0.0;
+            let mut prev_glyph: Option<u16> = None;
+
+            for ch in word.chars() {
+                let glyph_index = self.fonts[font_index].lookup_glyph_index(ch);
+                if let Some(prev) = prev_glyph {
+                    if let Some(kern) = self.fonts[font_index]
+                        .horizontal_kern_indexed(prev, glyph_index, px)
+                    {
+                        pen_x += kern;
+                    }
+                }
+                prev_glyph = Some(glyph_index);
+                let m = self.fonts[font_index].metrics_indexed(glyph_index, px);
+                if m.width > 0 && m.height > 0 {
+                    let entry = self.ensure_glyph(device, font_index, glyph_index, size_tenths, px);
+                    let atlas_size = self.size as f32;
+                    word_quads.push(GlyphQuad {
+                        pos: [pen_x + entry.offset_x, entry.offset_y],
+                        size: [entry.width as f32, entry.height as f32],
+                        uv_min: [
+                            entry.x as f32 / atlas_size,
+                            entry.y as f32 / atlas_size,
+                        ],
+                        uv_max: [
+                            (entry.x + entry.width) as f32 / atlas_size,
+                            (entry.y + entry.height) as f32 / atlas_size,
+                        ],
+                    });
+                }
+                pen_x += m.advance_width;
+            }
+            let word_width = pen_x;
+
+            // Wrap if this word doesn't fit on the current line.
+            let test_x = if first_on_line { line_x } else { line_x + space_advance };
+            if !first_on_line && test_x + word_width > max_width {
+                max_line_width = max_line_width.max(line_x);
+                line_x = 0.0;
+                line_y += line_height;
+                first_on_line = true;
+            }
+
+            let start_x = if first_on_line { line_x } else { line_x + space_advance };
+            for mut gq in word_quads {
+                gq.pos[0] += start_x;
+                gq.pos[1] += line_y;
+                quads.push(gq);
+            }
+            line_x = start_x + word_width;
+            first_on_line = false;
+        }
+
+        max_line_width = max_line_width.max(line_x);
+        let total_height = line_y + line_height;
+
+        TextLayout {
+            quads,
+            total_width: max_line_width,
+            height: total_height,
+        }
+    }
+
+    /// Return the font ascent in pixels for the given font index and size.
+    ///
+    /// The ascent is the distance from the baseline to the top of the tallest
+    /// glyph.  Used to position glyph quads relative to a text origin at the
+    /// top-left corner of the bounding box.
+    pub fn font_ascent(&self, font_index: usize, font_size: f32) -> f32 {
+        self.fonts[font_index]
+            .horizontal_line_metrics(font_size)
+            .map(|m| m.ascent)
+            .unwrap_or(font_size * 0.8)
+    }
+
     /// Upload new glyph data to the GPU if any glyphs were rasterized since
     /// the last upload.
     pub fn upload_if_dirty(&mut self, queue: &wgpu::Queue) {
