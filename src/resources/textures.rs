@@ -341,11 +341,11 @@ impl ViewportGpuResources {
         };
 
         let scalar_buf: &wgpu::Buffer = match active_attr {
-            Some(name) => mesh
-                .attribute_buffers
-                .get(name)
-                .or_else(|| mesh.face_attribute_buffers.get(name))
-                .unwrap_or(&self.fallback_scalar_buf),
+            Some(name) => {
+                let found_vertex = mesh.attribute_buffers.get(name);
+                let found_face = mesh.face_attribute_buffers.get(name);
+                found_vertex.or(found_face).unwrap_or(&self.fallback_scalar_buf)
+            }
             None => &self.fallback_scalar_buf,
         };
 

@@ -1412,7 +1412,7 @@ impl ViewportGpuResources {
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
+                cull_mode: None, // No culling: 3D meshes are often rendered two-sided; pick both faces.
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
