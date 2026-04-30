@@ -1640,4 +1640,8 @@ pub struct ViewportGpuResources {
     pub(crate) sub_highlight_sprite_ldr_pipeline: Option<wgpu::RenderPipeline>,
     /// Shared bind group layout for all highlight pipelines (group 1: SubHighlightUniform).
     pub(crate) sub_highlight_bgl: Option<wgpu::BindGroupLayout>,
+
+    // --- Font atlas (overlay text rendering) ---
+    /// Glyph atlas for overlay text rendering (labels, scalar bars, rulers).
+    pub(crate) glyph_atlas: super::font::GlyphAtlas,
 }

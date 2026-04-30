@@ -2082,6 +2082,7 @@ impl ViewportGpuResources {
             sub_highlight_edge_ldr_pipeline: None,
             sub_highlight_sprite_ldr_pipeline: None,
             sub_highlight_bgl: None,
+            glyph_atlas: super::font::GlyphAtlas::new(device),
         }
     }
 }
