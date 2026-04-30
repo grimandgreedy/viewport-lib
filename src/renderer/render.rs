@@ -107,6 +107,15 @@ impl ViewportRenderer {
                 render_pass.draw(0..ld.vertex_count, 0..1);
             }
         }
+        // Scalar bars (drawn after labels).
+        if let Some(ref sb) = self.scalar_bar_gpu_data {
+            if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, &sb.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, sb.vertex_buf.slice(..));
+                render_pass.draw(0..sb.vertex_count, 0..1);
+            }
+        }
     }
 
     /// Issue draw calls into a render pass with any lifetime.
@@ -213,6 +222,15 @@ impl ViewportRenderer {
                 render_pass.set_bind_group(0, &ld.bind_group, &[]);
                 render_pass.set_vertex_buffer(0, ld.vertex_buf.slice(..));
                 render_pass.draw(0..ld.vertex_count, 0..1);
+            }
+        }
+        // Scalar bars (drawn after labels).
+        if let Some(ref sb) = self.scalar_bar_gpu_data {
+            if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, &sb.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, sb.vertex_buf.slice(..));
+                render_pass.draw(0..sb.vertex_count, 0..1);
             }
         }
     }
@@ -408,6 +426,15 @@ impl ViewportRenderer {
                         render_pass.set_bind_group(0, &ld.bind_group, &[]);
                         render_pass.set_vertex_buffer(0, ld.vertex_buf.slice(..));
                         render_pass.draw(0..ld.vertex_count, 0..1);
+                    }
+                }
+                // Scalar bars (LDR fallback).
+                if let Some(ref sb) = self.scalar_bar_gpu_data {
+                    if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                        render_pass.set_pipeline(pipeline);
+                        render_pass.set_bind_group(0, &sb.bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, sb.vertex_buf.slice(..));
+                        render_pass.draw(0..sb.vertex_count, 0..1);
                     }
                 }
             }
@@ -1693,11 +1720,12 @@ impl ViewportRenderer {
             }
         }
 
-        // Overlay labels (HDR path): drawn last, no depth test.
-        if let Some(ref ld) = self.label_gpu_data {
+        // Overlay labels and scalar bars (HDR path): drawn last, no depth test.
+        let has_overlay = self.label_gpu_data.is_some() || self.scalar_bar_gpu_data.is_some();
+        if has_overlay {
             if let Some(pipeline) = &self.resources.overlay_text_pipeline {
-                let mut label_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("overlay_label_pass"),
+                let mut overlay_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("overlay_pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: output_view,
                         resolve_target: None,
@@ -1718,10 +1746,17 @@ impl ViewportRenderer {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
-                label_pass.set_pipeline(pipeline);
-                label_pass.set_bind_group(0, &ld.bind_group, &[]);
-                label_pass.set_vertex_buffer(0, ld.vertex_buf.slice(..));
-                label_pass.draw(0..ld.vertex_count, 0..1);
+                overlay_pass.set_pipeline(pipeline);
+                if let Some(ref ld) = self.label_gpu_data {
+                    overlay_pass.set_bind_group(0, &ld.bind_group, &[]);
+                    overlay_pass.set_vertex_buffer(0, ld.vertex_buf.slice(..));
+                    overlay_pass.draw(0..ld.vertex_count, 0..1);
+                }
+                if let Some(ref sb) = self.scalar_bar_gpu_data {
+                    overlay_pass.set_bind_group(0, &sb.bind_group, &[]);
+                    overlay_pass.set_vertex_buffer(0, sb.vertex_buf.slice(..));
+                    overlay_pass.draw(0..sb.vertex_count, 0..1);
+                }
             }
         }
 

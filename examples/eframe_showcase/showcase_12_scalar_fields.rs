@@ -5,7 +5,8 @@
 //!   Object 1 : Wave Grid, attribute "wave"      (sine-derived 2-D wave, -1..1 range)
 //!   Object 2 : Box,       attribute "distance"  (distance from center, with NaN below 0.3)
 
-use crate::{App, ScalarBarAnchor, ScalarBarOrientation};
+use crate::App;
+use viewport_lib::ScalarBarItem;
 use viewport_lib::{AttributeData, Material, MeshData, ViewportRenderer, scene::Scene};
 
 impl App {
@@ -89,156 +90,35 @@ impl App {
         self.scalar_built = true;
     }
 
-    /// Draw the scalar bar overlay on top of the viewport.
+    /// Build a [`ScalarBarItem`] for the current scalar bar UI state.
     ///
-    /// Phase 5 TODO: delete this method and replace the call site in main.rs with a
-    /// `ScalarBarItem` in `OverlayFrame` once native gradient rendering is implemented.
-    pub(crate) fn draw_scalar_bar(
-        &self,
-        ui: &eframe::egui::Ui,
-        rect: eframe::egui::Rect,
-        frame: &eframe::Frame,
-    ) {
-        let rs = frame.wgpu_render_state().unwrap();
-        let guard = rs.renderer.read();
-        let Some(renderer) = guard
-            .callback_resources
-            .get::<viewport_lib::ViewportRenderer>()
-        else {
-            return;
-        };
-        let colormap_id = viewport_lib::ColormapId(self.scalar_colormap as usize);
-        let Some(lut) = renderer.resources().get_colormap_rgba(colormap_id) else {
-            return;
+    /// Called each frame when Showcase 12 is active; the returned item is
+    /// inserted into `OverlayFrame::scalar_bars` for native rendering.
+    pub(crate) fn scalar_bar_item(&self) -> ScalarBarItem {
+        let (scalar_min, scalar_max) = if self.scalar_range_auto {
+            let vals = &self.scalar_values[self.scalar_active_object];
+            if vals.is_empty() {
+                (0.0_f32, 1.0_f32)
+            } else {
+                let mn = vals.iter().cloned().fold(f32::INFINITY, f32::min);
+                let mx = vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                (mn, mx)
+            }
+        } else {
+            self.scalar_range
         };
 
-        let painter = ui.painter_at(rect);
-        let (bar_w, bar_h) = match self.scalar_bar_orientation {
-            ScalarBarOrientation::Vertical => (20.0_f32, 140.0_f32),
-            ScalarBarOrientation::Horizontal => (140.0_f32, 20.0_f32),
-        };
-        let margin = 12.0_f32;
-        let bar_pos = match self.scalar_bar_anchor {
-            ScalarBarAnchor::TopLeft => eframe::egui::pos2(
-                rect.left() + margin,
-                rect.top() + margin + 20.0, // offset for potential title
-            ),
-            ScalarBarAnchor::TopRight => {
-                eframe::egui::pos2(rect.right() - margin - bar_w, rect.top() + margin + 20.0)
-            }
-            ScalarBarAnchor::BottomLeft => {
-                eframe::egui::pos2(rect.left() + margin, rect.bottom() - margin - bar_h)
-            }
-            ScalarBarAnchor::BottomRight => eframe::egui::pos2(
-                rect.right() - margin - bar_w,
-                rect.bottom() - margin - bar_h,
-            ),
-        };
-
-        let bar_rect = eframe::egui::Rect::from_min_size(bar_pos, eframe::egui::vec2(bar_w, bar_h));
-
-        // Dark background.
-        painter.rect_filled(
-            bar_rect.expand(3.0),
-            3.0,
-            eframe::egui::Color32::from_black_alpha(160),
-        );
-
-        // Draw gradient strips.
-        let steps = 64_usize;
-        match self.scalar_bar_orientation {
-            ScalarBarOrientation::Vertical => {
-                let strip_h = bar_h / steps as f32;
-                for s in 0..steps {
-                    // Vertical: top = max, bottom = min.
-                    let t = 1.0 - (s as f32 / (steps - 1) as f32);
-                    let lut_idx = (t * 255.0) as usize;
-                    let [r, g, b, _] = lut[lut_idx];
-                    let color = eframe::egui::Color32::from_rgb(r, g, b);
-                    let y = bar_pos.y + s as f32 * strip_h;
-                    painter.rect_filled(
-                        eframe::egui::Rect::from_min_size(
-                            eframe::egui::pos2(bar_pos.x, y),
-                            eframe::egui::vec2(bar_w, strip_h + 0.5),
-                        ),
-                        0.0,
-                        color,
-                    );
-                }
-                // Min/max labels.
-                let (range_min, range_max) = if self.scalar_range_auto {
-                    let vals = &self.scalar_values[self.scalar_active_object];
-                    if vals.is_empty() {
-                        (0.0_f32, 1.0_f32)
-                    } else {
-                        let mn = vals.iter().cloned().fold(f32::INFINITY, f32::min);
-                        let mx = vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                        (mn, mx)
-                    }
-                } else {
-                    self.scalar_range
-                };
-                let text_color = eframe::egui::Color32::WHITE;
-                painter.text(
-                    eframe::egui::pos2(bar_pos.x + bar_w + 4.0, bar_pos.y),
-                    eframe::egui::Align2::LEFT_TOP,
-                    format!("{range_max:.2}"),
-                    eframe::egui::FontId::proportional(11.0),
-                    text_color,
-                );
-                painter.text(
-                    eframe::egui::pos2(bar_pos.x + bar_w + 4.0, bar_pos.y + bar_h),
-                    eframe::egui::Align2::LEFT_BOTTOM,
-                    format!("{range_min:.2}"),
-                    eframe::egui::FontId::proportional(11.0),
-                    text_color,
-                );
-            }
-            ScalarBarOrientation::Horizontal => {
-                let strip_w = bar_w / steps as f32;
-                for s in 0..steps {
-                    let t = s as f32 / (steps - 1) as f32;
-                    let lut_idx = (t * 255.0) as usize;
-                    let [r, g, b, _] = lut[lut_idx];
-                    let color = eframe::egui::Color32::from_rgb(r, g, b);
-                    let x = bar_pos.x + s as f32 * strip_w;
-                    painter.rect_filled(
-                        eframe::egui::Rect::from_min_size(
-                            eframe::egui::pos2(x, bar_pos.y),
-                            eframe::egui::vec2(strip_w + 0.5, bar_h),
-                        ),
-                        0.0,
-                        color,
-                    );
-                }
-                let (range_min, range_max) = if self.scalar_range_auto {
-                    let vals = &self.scalar_values[self.scalar_active_object];
-                    if vals.is_empty() {
-                        (0.0_f32, 1.0_f32)
-                    } else {
-                        let mn = vals.iter().cloned().fold(f32::INFINITY, f32::min);
-                        let mx = vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                        (mn, mx)
-                    }
-                } else {
-                    self.scalar_range
-                };
-                let text_color = eframe::egui::Color32::WHITE;
-                painter.text(
-                    eframe::egui::pos2(bar_pos.x, bar_pos.y + bar_h + 3.0),
-                    eframe::egui::Align2::LEFT_TOP,
-                    format!("{range_min:.2}"),
-                    eframe::egui::FontId::proportional(11.0),
-                    text_color,
-                );
-                painter.text(
-                    eframe::egui::pos2(bar_pos.x + bar_w, bar_pos.y + bar_h + 3.0),
-                    eframe::egui::Align2::RIGHT_TOP,
-                    format!("{range_max:.2}"),
-                    eframe::egui::FontId::proportional(11.0),
-                    text_color,
-                );
-            }
+        ScalarBarItem {
+            colormap_id: viewport_lib::ColormapId(self.scalar_colormap as usize),
+            scalar_min,
+            scalar_max,
+            anchor: self.scalar_bar_anchor,
+            orientation: self.scalar_bar_orientation,
+            bar_width_px: 20.0,
+            bar_length_px: 140.0,
+            margin_px: 12.0,
+            tick_count: 3,
+            ..Default::default()
         }
     }
 }

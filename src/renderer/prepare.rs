@@ -2007,6 +2007,206 @@ impl ViewportRenderer {
                 }
             }
         }
+
+        // ---------------------------------------------------------------
+        // Scalar bars
+        // ---------------------------------------------------------------
+        self.scalar_bar_gpu_data = None;
+        if !frame.overlays.scalar_bars.is_empty() {
+            self.resources.ensure_overlay_text_pipeline(device);
+            let vp_w = frame.camera.viewport_size[0];
+            let vp_h = frame.camera.viewport_size[1];
+            if vp_w > 0.0 && vp_h > 0.0 {
+                let mut verts: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+
+                for bar in &frame.overlays.scalar_bars {
+                    let Some(lut) = self.resources.get_colormap_rgba(bar.colormap_id) else {
+                        continue;
+                    };
+
+                    let is_vertical = matches!(
+                        bar.orientation,
+                        crate::renderer::types::ScalarBarOrientation::Vertical
+                    );
+
+                    // Actual pixel dimensions of the gradient strip.
+                    let (strip_w, strip_h) = if is_vertical {
+                        (bar.bar_width_px, bar.bar_length_px)
+                    } else {
+                        (bar.bar_length_px, bar.bar_width_px)
+                    };
+
+                    // Extra vertical space needed for an optional title.
+                    let title_h = if bar.title.is_some() {
+                        bar.font_size + 4.0
+                    } else {
+                        0.0
+                    };
+
+                    // Top-left of the gradient strip, accounting for title height on
+                    // top-anchored positions so the title is not clipped.
+                    let (bar_x, bar_y) = match bar.anchor {
+                        crate::renderer::types::ScalarBarAnchor::TopLeft => {
+                            (bar.margin_px, bar.margin_px + title_h)
+                        }
+                        crate::renderer::types::ScalarBarAnchor::TopRight => {
+                            (vp_w - bar.margin_px - strip_w, bar.margin_px + title_h)
+                        }
+                        crate::renderer::types::ScalarBarAnchor::BottomLeft => {
+                            (bar.margin_px, vp_h - bar.margin_px - strip_h)
+                        }
+                        crate::renderer::types::ScalarBarAnchor::BottomRight => {
+                            (vp_w - bar.margin_px - strip_w, vp_h - bar.margin_px - strip_h)
+                        }
+                    };
+
+                    // Background box behind the gradient strip (3 px padding, slightly
+                    // expanded upward when a title is present).
+                    let bg_pad = 3.0;
+                    let bg_title = if bar.title.is_some() { title_h } else { 0.0 };
+                    emit_rounded_quad(
+                        &mut verts,
+                        bar_x - bg_pad,
+                        bar_y - bg_title - bg_pad,
+                        bar_x + strip_w + bg_pad,
+                        bar_y + strip_h + bg_pad,
+                        3.0,
+                        [0.0, 0.0, 0.0, 0.63],
+                        vp_w, vp_h,
+                    );
+
+                    // Gradient strip: 64 solid quads sampled from the colormap LUT.
+                    let steps: usize = 64;
+                    for s in 0..steps {
+                        let (qx0, qy0, qx1, qy1, t) = if is_vertical {
+                            // Top = max, bottom = min.
+                            let t = 1.0 - s as f32 / (steps - 1) as f32;
+                            let step_h = strip_h / steps as f32;
+                            let sy = bar_y + s as f32 * step_h;
+                            (bar_x, sy, bar_x + strip_w, sy + step_h + 0.5, t)
+                        } else {
+                            // Left = min, right = max.
+                            let t = s as f32 / (steps - 1) as f32;
+                            let step_w = strip_w / steps as f32;
+                            let sx = bar_x + s as f32 * step_w;
+                            (sx, bar_y, sx + step_w + 0.5, bar_y + strip_h, t)
+                        };
+                        let lut_idx = (t * 255.0).clamp(0.0, 255.0) as usize;
+                        let [r, g, b, a] = lut[lut_idx];
+                        let color = [
+                            r as f32 / 255.0,
+                            g as f32 / 255.0,
+                            b as f32 / 255.0,
+                            a as f32 / 255.0,
+                        ];
+                        emit_solid_quad(&mut verts, qx0, qy0, qx1, qy1, color, vp_w, vp_h);
+                    }
+
+                    // Tick labels.
+                    let tick_count = bar.tick_count.max(2);
+                    let font_index = bar.font.map_or(0, |h| h.0);
+                    for i in 0..tick_count {
+                        let t = i as f32 / (tick_count - 1) as f32;
+                        let value = bar.scalar_min + t * (bar.scalar_max - bar.scalar_min);
+                        let text = format!("{value:.2}");
+                        let layout = self.resources.glyph_atlas.layout_text(
+                            &text,
+                            bar.font_size,
+                            bar.font,
+                            device,
+                        );
+                        let ascent = self.resources.glyph_atlas.font_ascent(font_index, bar.font_size);
+
+                        let (lx, ly) = if is_vertical {
+                            // Place text to the right of the strip, vertically centered
+                            // on its tick position. Vertical progress: top = max (t=1).
+                            let progress = 1.0 - t;
+                            let tick_y = bar_y + progress * strip_h;
+                            (bar_x + strip_w + 4.0, tick_y - layout.height * 0.5)
+                        } else {
+                            // Place text below the strip, horizontally centered on its
+                            // tick position.
+                            let tick_x = bar_x + t * strip_w;
+                            (tick_x - layout.total_width * 0.5, bar_y + strip_h + 3.0)
+                        };
+
+                        for gq in &layout.quads {
+                            let gx = lx + gq.pos[0];
+                            let gy = ly + ascent + gq.pos[1];
+                            emit_textured_quad(
+                                &mut verts,
+                                gx, gy,
+                                gx + gq.size[0], gy + gq.size[1],
+                                gq.uv_min, gq.uv_max,
+                                bar.label_color,
+                                vp_w, vp_h,
+                            );
+                        }
+                    }
+
+                    // Optional title above the gradient strip.
+                    if let Some(ref title_text) = bar.title {
+                        let layout = self.resources.glyph_atlas.layout_text(
+                            title_text,
+                            bar.font_size,
+                            bar.font,
+                            device,
+                        );
+                        let ascent = self.resources.glyph_atlas.font_ascent(font_index, bar.font_size);
+                        // Centre the title over the gradient strip.
+                        let tx = bar_x + (strip_w - layout.total_width) * 0.5;
+                        let ty = bar_y - title_h;
+                        for gq in &layout.quads {
+                            let gx = tx + gq.pos[0];
+                            let gy = ty + ascent + gq.pos[1];
+                            emit_textured_quad(
+                                &mut verts,
+                                gx, gy,
+                                gx + gq.size[0], gy + gq.size[1],
+                                gq.uv_min, gq.uv_max,
+                                bar.label_color,
+                                vp_w, vp_h,
+                            );
+                        }
+                    }
+                }
+
+                // Upload any newly rasterized glyphs (may overlap with label upload above).
+                self.resources.glyph_atlas.upload_if_dirty(queue);
+
+                if !verts.is_empty() {
+                    let vertex_buf =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("overlay_scalar_bar_vbuf"),
+                            contents: bytemuck::cast_slice(&verts),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        });
+                    let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
+                    let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
+                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("overlay_scalar_bar_bg"),
+                        layout: bgl,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(
+                                    &self.resources.glyph_atlas.view,
+                                ),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(sampler),
+                            },
+                        ],
+                    });
+                    self.scalar_bar_gpu_data = Some(crate::resources::LabelGpuData {
+                        vertex_buf,
+                        vertex_count: verts.len() as u32,
+                        bind_group,
+                    });
+                }
+            }
+        }
     }
 
     /// Upload per-frame data to GPU buffers and render the shadow pass.

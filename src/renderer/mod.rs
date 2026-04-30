@@ -19,7 +19,8 @@ pub use self::types::{
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane,
     GroundPlaneMode, ImageAnchor, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
     LightingSettings, OverlayFrame, OverlayImageItem, PickId, PointCloudItem, PointRenderMode,
-    PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBarItem, SceneEffects,
+    PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBarAnchor, ScalarBarItem,
+    ScalarBarOrientation, SceneEffects,
     SceneFrame, SceneRenderItem, ScreenImageItem,
     ShadowFilter, StreamtubeItem, SurfaceSubmission, ToneMapping, ViewportEffects, ViewportFrame,
     VolumeItem,
@@ -170,6 +171,8 @@ pub struct ViewportRenderer {
     screen_image_gpu_data: Vec<crate::resources::ScreenImageGpuData>,
     /// Per-frame overlay label GPU data, rebuilt in prepare(), consumed in paint().
     label_gpu_data: Option<crate::resources::LabelGpuData>,
+    /// Per-frame scalar bar GPU data, rebuilt in prepare(), consumed in paint().
+    scalar_bar_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-viewport GPU state slots.
     ///
     /// Indexed by `FrameData::camera.viewport_index`. Each slot owns independent
@@ -224,6 +227,7 @@ impl ViewportRenderer {
             mc_gpu_data: Vec::new(),
             screen_image_gpu_data: Vec::new(),
             label_gpu_data: None,
+            scalar_bar_gpu_data: None,
             viewport_slots: Vec::new(),
             compute_filter_results: Vec::new(),
             last_cascade0_shadow_mat: glam::Mat4::IDENTITY,
