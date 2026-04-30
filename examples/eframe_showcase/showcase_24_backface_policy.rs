@@ -21,7 +21,7 @@ use eframe::egui;
 use glam::Mat4;
 use viewport_lib::{
     BackfacePattern, BackfacePolicy, ClipObject, LightSource, LightingSettings, Material,
-    SceneRenderItem, ViewportRenderer, scene::Scene, world_to_screen,
+    SceneRenderItem, ViewportRenderer, scene::Scene,
 };
 
 /// All backface policies demonstrated, one per column.
@@ -197,9 +197,14 @@ impl App {
         // Project a point just above the top row (z = 4.5 + 1.8 clearance).
         for (i, (_, label)) in policies.iter().enumerate() {
             let world_pos = glam::Vec3::new(col_x[i], 0.0, 6.3);
-            let Some(screen) = world_to_screen(world_pos, &view, &proj, vp_size) else {
-                continue;
-            };
+            let clip = proj * view * world_pos.extend(1.0);
+            if clip.w <= 0.0 { continue; }
+            let ndc = glam::Vec3::new(clip.x, clip.y, clip.z) / clip.w;
+            if ndc.x.abs() > 1.0 || ndc.y.abs() > 1.0 { continue; }
+            let screen = glam::Vec2::new(
+                (ndc.x * 0.5 + 0.5) * vp_size[0],
+                (1.0 - (ndc.y * 0.5 + 0.5)) * vp_size[1],
+            );
             let pos = egui::pos2(rect.left() + screen.x, rect.top() + screen.y);
             let galley = painter.layout_no_wrap(
                 label.to_string(),

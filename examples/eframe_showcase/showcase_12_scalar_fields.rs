@@ -5,11 +5,8 @@
 //!   Object 1 : Wave Grid, attribute "wave"      (sine-derived 2-D wave, -1..1 range)
 //!   Object 2 : Box,       attribute "distance"  (distance from center, with NaN below 0.3)
 
-use crate::App;
-use viewport_lib::{
-    AttributeData, Material, MeshData, ScalarBarAnchor, ScalarBarOrientation,
-    ViewportRenderer, scene::Scene,
-};
+use crate::{App, ScalarBarAnchor, ScalarBarOrientation};
+use viewport_lib::{AttributeData, Material, MeshData, ViewportRenderer, scene::Scene};
 
 impl App {
     /// Build the scene for Showcase 12 (Scalar Fields demo).
@@ -93,6 +90,9 @@ impl App {
     }
 
     /// Draw the scalar bar overlay on top of the viewport.
+    ///
+    /// Phase 5 TODO: delete this method and replace the call site in main.rs with a
+    /// `ScalarBarItem` in `OverlayFrame` once native gradient rendering is implemented.
     pub(crate) fn draw_scalar_bar(
         &self,
         ui: &eframe::egui::Ui,
