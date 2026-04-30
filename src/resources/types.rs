@@ -768,6 +768,70 @@ pub(crate) struct OverlayUniform {
     pub(crate) color: [f32; 4], // RGBA with alpha for transparency
 }
 
+/// Per-vertex data for overlay text and solid screen-space quads (labels, backgrounds, leader lines).
+///
+/// All fields are packed into a single vertex to allow batching every overlay
+/// quad into one draw call per frame.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct OverlayTextVertex {
+    /// NDC position (xy, z=0 w=1 in shader).
+    pub position: [f32; 2],
+    /// Atlas UV coordinates.  Ignored when `use_texture` is 0.
+    pub uv: [f32; 2],
+    /// RGBA tint colour.
+    pub color: [f32; 4],
+    /// 1.0 = sample glyph atlas alpha, 0.0 = solid colour.
+    pub use_texture: f32,
+    pub _pad: f32,
+}
+
+impl OverlayTextVertex {
+    /// wgpu vertex buffer layout matching `overlay_text.wgsl`.
+    pub fn buffer_layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<OverlayTextVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                // location 0: position vec2f
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // location 1: uv vec2f
+                wgpu::VertexAttribute {
+                    offset: 8,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // location 2: color vec4f
+                wgpu::VertexAttribute {
+                    offset: 16,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 3: use_texture f32
+                wgpu::VertexAttribute {
+                    offset: 32,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32,
+                },
+            ],
+        }
+    }
+}
+
+/// Per-frame GPU data for batched overlay label rendering.
+pub(crate) struct LabelGpuData {
+    /// Vertex buffer containing all label geometry for this frame.
+    pub vertex_buf: wgpu::Buffer,
+    /// Number of vertices to draw.
+    pub vertex_count: u32,
+    /// Bind group referencing the glyph atlas texture and sampler.
+    pub bind_group: wgpu::BindGroup,
+}
+
 /// Uniform buffer layout for the full-screen ground plane shader.
 ///
 /// Matches `GroundPlaneUniform` in `ground_plane.wgsl` exactly (256 bytes, 16-byte aligned).
@@ -1644,4 +1708,13 @@ pub struct ViewportGpuResources {
     // --- Font atlas (overlay text rendering) ---
     /// Glyph atlas for overlay text rendering (labels, scalar bars, rulers).
     pub(crate) glyph_atlas: super::font::GlyphAtlas,
+
+    // --- Overlay text pipeline (lazily created) ---
+    /// Render pipeline for screen-space text and solid overlay quads.
+    /// `None` until the first frame with non-empty `OverlayFrame.labels`.
+    pub(crate) overlay_text_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for the overlay text pipeline (group 0: atlas texture + sampler).
+    pub(crate) overlay_text_bgl: Option<wgpu::BindGroupLayout>,
+    /// Linear sampler for the glyph atlas texture.
+    pub(crate) overlay_text_sampler: Option<wgpu::Sampler>,
 }

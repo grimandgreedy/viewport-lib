@@ -98,6 +98,15 @@ impl ViewportRenderer {
                 }
             }
         }
+        // Overlay labels (always on top, after screen images).
+        if let Some(ref ld) = self.label_gpu_data {
+            if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, &ld.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, ld.vertex_buf.slice(..));
+                render_pass.draw(0..ld.vertex_count, 0..1);
+            }
+        }
     }
 
     /// Issue draw calls into a render pass with any lifetime.
@@ -195,6 +204,15 @@ impl ViewportRenderer {
                     render_pass.set_bind_group(0, &gpu.bind_group, &[]);
                     render_pass.draw(0..6, 0..1);
                 }
+            }
+        }
+        // Overlay labels (always on top, after screen images).
+        if let Some(ref ld) = self.label_gpu_data {
+            if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, &ld.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, ld.vertex_buf.slice(..));
+                render_pass.draw(0..ld.vertex_count, 0..1);
             }
         }
     }
@@ -381,6 +399,15 @@ impl ViewportRenderer {
                             }
                             render_pass.draw(0..6, 0..1);
                         }
+                    }
+                }
+                // Overlay labels (LDR fallback: inside the same render pass).
+                if let Some(ref ld) = self.label_gpu_data {
+                    if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                        render_pass.set_pipeline(pipeline);
+                        render_pass.set_bind_group(0, &ld.bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, ld.vertex_buf.slice(..));
+                        render_pass.draw(0..ld.vertex_count, 0..1);
                     }
                 }
             }
@@ -1663,6 +1690,38 @@ impl ViewportRenderer {
                     }
                     img_pass.draw(0..6, 0..1);
                 }
+            }
+        }
+
+        // Overlay labels (HDR path): drawn last, no depth test.
+        if let Some(ref ld) = self.label_gpu_data {
+            if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                let mut label_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("overlay_label_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: output_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.viewport_slots[vp_idx].hdr.as_ref().unwrap().hdr_depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Discard,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                label_pass.set_pipeline(pipeline);
+                label_pass.set_bind_group(0, &ld.bind_group, &[]);
+                label_pass.set_vertex_buffer(0, ld.vertex_buf.slice(..));
+                label_pass.draw(0..ld.vertex_count, 0..1);
             }
         }
 

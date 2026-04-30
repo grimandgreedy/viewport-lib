@@ -168,7 +168,7 @@ pub use renderer::stats::FrameStats;
 pub use renderer::{
     CameraFrame, CameraFrustumItem, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane,
-    GroundPlaneMode, ImageAnchor, InteractionFrame, LabelItem, LightKind, LightSource,
+    GroundPlaneMode, ImageAnchor, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
     LightingSettings, OverlayFrame, OverlayImageItem, PickId, PointCloudItem, PointRenderMode,
     PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBar, ScalarBarAnchor,
     ScalarBarItem, ScalarBarOrientation, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem,

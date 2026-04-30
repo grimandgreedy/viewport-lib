@@ -83,7 +83,7 @@ use std::collections::HashMap;
 
 use eframe::egui;
 use viewport_lib::{
-    Action, AnnotationLabel, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap,
+    Action, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap,
     ButtonState, Camera,
     CameraAnimator, CameraFrame, ClipAxis, ClipObject, ColormapId, Easing, FrameData, FrameStats,
     Gizmo, GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode,
@@ -132,6 +132,7 @@ mod showcase_30_implicit_surface;
 mod showcase_31_sparse_volume_grid;
 mod showcase_32_extended_quantities;
 mod showcase_33_picking_levels;
+mod showcase_34_labels;
 mod viewport_callback;
 
 const BG_COLOR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -534,6 +535,12 @@ fn main() -> eframe::Result {
                 pl_pc_positions: Vec::new(),
                 pl_volume_id: None,
                 pl_volume_data: None,
+                lbl_scene: viewport_lib::scene::Scene::new(),
+                lbl_built: false,
+                lbl_labels: Vec::new(),
+                lbl_show_part_labels: true,
+                lbl_show_hud_labels: true,
+                lbl_show_feature_demos: true,
             }))
         }),
     )
@@ -585,6 +592,7 @@ enum ShowcaseMode {
     SparseVolumeGrid,
     ExtendedQuantities,
     PickLevels,
+    Labels,
 }
 
 impl ShowcaseMode {
@@ -623,6 +631,7 @@ impl ShowcaseMode {
             Self::SparseVolumeGrid => "31: Sparse Volume Grid",
             Self::ExtendedQuantities => "32: Extended Quantities",
             Self::PickLevels => "33: Picking Levels",
+            Self::Labels => "34: Labels",
         }
     }
 }
@@ -723,7 +732,7 @@ pub(crate) struct App {
     // --- Showcase 9 ---
     pub(crate) ann_scene: Scene,
     pub(crate) ann_built: bool,
-    pub(crate) ann_labels: Vec<AnnotationLabel>,
+    pub(crate) ann_labels: Vec<viewport_lib::LabelItem>,
 
     // --- Showcase 10 ---
     pub(crate) cam_tools_scene: Scene,
@@ -1019,6 +1028,14 @@ pub(crate) struct App {
     pub(crate) pl_pc_positions: Vec<[f32; 3]>,
     pub(crate) pl_volume_id: Option<viewport_lib::VolumeId>,
     pub(crate) pl_volume_data: Option<viewport_lib::VolumeData>,
+
+    // --- Showcase 34 ---
+    pub(crate) lbl_scene: viewport_lib::scene::Scene,
+    pub(crate) lbl_built: bool,
+    pub(crate) lbl_labels: Vec<viewport_lib::LabelItem>,
+    pub(crate) lbl_show_part_labels: bool,
+    pub(crate) lbl_show_hud_labels: bool,
+    pub(crate) lbl_show_feature_demos: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -1161,6 +1178,7 @@ impl eframe::App for App {
                     ShowcaseMode::SparseVolumeGrid,
                     ShowcaseMode::ExtendedQuantities,
                     ShowcaseMode::PickLevels,
+                    ShowcaseMode::Labels,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1666,10 +1684,7 @@ impl eframe::App for App {
                 }
             }
 
-            // ----- Annotation labels drawn on top of the 3-D viewport -----
-            if self.mode == ShowcaseMode::Annotation {
-                self.draw_annotation_labels(ui, rect);
-            }
+            // (Annotation labels now render natively via OverlayFrame.)
             if self.mode == ShowcaseMode::BackfacePolicy {
                 self.draw_sa_labels(ui, rect);
             }
@@ -1705,7 +1720,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 32] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 34] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::Performance,
@@ -1737,7 +1752,9 @@ impl App {
             ShowcaseMode::DepthCompositeImages,
             ShowcaseMode::ImplicitSurface,
             ShowcaseMode::SparseVolumeGrid,
+            ShowcaseMode::ExtendedQuantities,
             ShowcaseMode::PickLevels,
+            ShowcaseMode::Labels,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1836,6 +1853,7 @@ impl App {
             ShowcaseMode::SparseVolumeGrid => !self.svg_built,
             ShowcaseMode::ExtendedQuantities => !self.eq_built,
             ShowcaseMode::PickLevels => !self.pl_built,
+            ShowcaseMode::Labels => !self.lbl_built,
             _ => false,
         };
         if !needs {
@@ -2121,6 +2139,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::Labels => {
+                self.build_labels_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::new(0.0, 0.0, 0.0),
+                    distance: 20.0,
+                    orientation: glam::Quat::from_rotation_z(0.5)
+                        * glam::Quat::from_rotation_x(1.1),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2174,6 +2202,7 @@ impl App {
             ShowcaseMode::SparseVolumeGrid => self.controls_sparse_volume_grid(ui),
             ShowcaseMode::ExtendedQuantities => self.controls_eq(ui),
             ShowcaseMode::PickLevels => self.controls_pick_levels(ui),
+            ShowcaseMode::Labels => self.controls_labels(ui),
         }
     }
 
@@ -2550,21 +2579,21 @@ impl App {
     }
 
     fn controls_annotation(&mut self, ui: &mut egui::Ui) {
-        ui.label("Labels are drawn directly on the viewport.");
+        ui.label("Labels render natively via OverlayFrame.");
         ui.separator();
         for (i, label) in self.ann_labels.iter().enumerate() {
-            let view = self.camera.view_matrix();
-            let proj = self.camera.proj_matrix();
-            let screen = viewport_lib::world_to_screen(
-                label.world_pos,
-                &view,
-                &proj,
-                [800.0, 600.0], // approximate; just for display
-            );
-            let status = if screen.is_some() {
-                "visible"
+            let status = if let Some(wa) = label.world_anchor {
+                let view = self.camera.view_matrix();
+                let proj = self.camera.proj_matrix();
+                let screen = viewport_lib::world_to_screen(
+                    glam::Vec3::from(wa),
+                    &view,
+                    &proj,
+                    [800.0, 600.0],
+                );
+                if screen.is_some() { "visible" } else { "clipped" }
             } else {
-                "clipped"
+                "screen-anchored"
             };
             ui.label(format!("L{i}: \"{}\" : {status}", label.text));
         }
@@ -3562,6 +3591,18 @@ impl App {
                 };
                 (items, Some(BG_COLOR), lighting, sg, self.pl_selection.version())
             }
+
+            ShowcaseMode::Labels => {
+                let items = self.lbl_scene.collect_render_items(&Selection::new());
+                let sg = self.lbl_scene.version();
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.5,
+                    sky_color: [1.0, 1.0, 1.0],
+                    ground_color: [1.0, 1.0, 1.0],
+                    ..LightingSettings::default()
+                };
+                (items, Some(BG_COLOR), lighting, sg, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -3893,6 +3934,19 @@ impl App {
             }
             ShowcaseMode::BackfacePolicy => {}
             _ => {}
+        }
+
+        // Overlay labels (Showcase 9 and 34): populate OverlayFrame.
+        if self.mode == ShowcaseMode::Annotation && self.ann_built {
+            fd.overlays.labels = self.ann_labels.clone();
+        }
+        if self.mode == ShowcaseMode::Labels && self.lbl_built {
+            // World-anchored part labels (built once, filtered by toggle).
+            if self.lbl_show_part_labels {
+                fd.overlays.labels.extend(self.lbl_labels.iter().cloned());
+            }
+            // Screen-anchored labels (title, legend, feature demos) sized to viewport.
+            fd.overlays.labels.extend(self.build_label_screen_overlays(w, h));
         }
 
         // Update stats from the last rendered frame (Performance mode).
