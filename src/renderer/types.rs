@@ -1696,6 +1696,64 @@ impl EffectsFrame {
     }
 }
 
+// ---------------------------------------------------------------------------
+// OverlayFrame and overlay item stubs
+// ---------------------------------------------------------------------------
+
+/// A text label rendered as a screen-space overlay.
+///
+/// Anchored to a world-space or screen-space position. Rendering is implemented
+/// in a later phase; this type exists now so downstream code can be written
+/// against the final API shape.
+#[derive(Debug, Clone, Default)]
+pub struct LabelItem {}
+
+/// A colour-legend (scalar bar) rendered as a screen-space overlay.
+///
+/// References an already-uploaded [`crate::resources::ColormapId`]. Rendering
+/// is implemented in a later phase; this type exists now so downstream code
+/// can be written against the final API shape.
+#[derive(Debug, Clone, Default)]
+pub struct ScalarBarItem {}
+
+/// A two-point measurement overlay that displays the distance between two
+/// world-space positions.
+///
+/// Rendering is implemented in a later phase; this type exists now so
+/// downstream code can be written against the final API shape.
+#[derive(Debug, Clone, Default)]
+pub struct RulerItem {}
+
+/// A pixel image composited over the viewport in screen space.
+///
+/// Unlike [`ScreenImageItem`] (which lives in [`SceneFrame`] and supports
+/// depth compositing with world geometry), `OverlayImageItem` is a pure
+/// screen-space overlay with no depth field.
+///
+/// Rendering is implemented in a later phase; this type exists now so
+/// downstream code can be written against the final API shape.
+#[derive(Debug, Clone, Default)]
+pub struct OverlayImageItem {}
+
+/// Semantic overlays rendered after post-processing: labels, scalar bars,
+/// rulers, and screen-space images.
+///
+/// This frame section is the right place for any visual element that belongs
+/// in front of the 3D scene and must not be affected by tone-mapping or bloom.
+#[derive(Debug, Clone, Default)]
+pub struct OverlayFrame {
+    /// Text labels anchored to world-space or screen-space positions.
+    pub labels: Vec<LabelItem>,
+    /// Colour-legend (scalar bar) overlays.
+    pub scalar_bars: Vec<ScalarBarItem>,
+    /// Two-point distance measurement overlays.
+    pub rulers: Vec<RulerItem>,
+    /// Pixel images composited over the viewport in screen space.
+    pub images: Vec<OverlayImageItem>,
+}
+
+// ---------------------------------------------------------------------------
+
 /// All data needed to render one frame of the viewport.
 ///
 /// Fields are grouped by responsibility. Build the sub-objects you need,
@@ -1713,6 +1771,8 @@ pub struct FrameData {
     pub interaction: InteractionFrame,
     /// Global rendering effects (lighting, clipping, post-process).
     pub effects: EffectsFrame,
+    /// Semantic overlays rendered after post-processing (labels, scalar bars, rulers).
+    pub overlays: OverlayFrame,
 }
 
 impl Default for FrameData {
@@ -1723,6 +1783,7 @@ impl Default for FrameData {
             viewport: ViewportFrame::default(),
             interaction: InteractionFrame::default(),
             effects: EffectsFrame::default(),
+            overlays: OverlayFrame::default(),
         }
     }
 }
@@ -1949,12 +2010,29 @@ macro_rules! emit_draw_calls {
                             };
                             render_pass.set_pipeline(pipeline);
                             render_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
-                            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                            render_pass.set_index_buffer(
-                                mesh.index_buffer.slice(..),
-                                wgpu::IndexFormat::Uint32,
-                            );
-                            render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+
+                            let is_face_attr = item.active_attribute.as_ref().map_or(false, |a| {
+                                matches!(
+                                    a.kind,
+                                    crate::resources::AttributeKind::Face
+                                        | crate::resources::AttributeKind::FaceColor
+                                        | crate::resources::AttributeKind::Halfedge
+                                        | crate::resources::AttributeKind::Corner
+                                )
+                            });
+                            if is_face_attr {
+                                if let Some(ref fvb) = mesh.face_vertex_buffer {
+                                    render_pass.set_vertex_buffer(0, fvb.slice(..));
+                                    render_pass.draw(0..mesh.index_count, 0..1);
+                                }
+                            } else {
+                                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                render_pass.set_index_buffer(
+                                    mesh.index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
+                                render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                            }
                         }
                     }
             } else {

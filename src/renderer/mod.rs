@@ -17,11 +17,12 @@ pub(crate) use self::types::ClipPlane;
 pub use self::types::{
     CameraFrame, CameraFrustumItem, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane,
-    GroundPlaneMode, ImageAnchor, InteractionFrame, LightKind, LightSource, LightingSettings,
-    PickId, PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings, RenderCamera,
-    ScalarBar, ScalarBarAnchor, ScalarBarOrientation, SceneEffects, SceneFrame, SceneRenderItem,
-    ScreenImageItem, ShadowFilter, StreamtubeItem, SurfaceSubmission, ToneMapping, ViewportEffects,
-    ViewportFrame, VolumeItem,
+    GroundPlaneMode, ImageAnchor, InteractionFrame, LabelItem, LightKind, LightSource,
+    LightingSettings, OverlayFrame, OverlayImageItem, PickId, PointCloudItem, PointRenderMode,
+    PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBar, ScalarBarAnchor,
+    ScalarBarItem, ScalarBarOrientation, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem,
+    ShadowFilter, StreamtubeItem, SurfaceSubmission, ToneMapping, ViewportEffects, ViewportFrame,
+    VolumeItem,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.

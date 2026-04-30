@@ -168,13 +168,13 @@ pub use renderer::stats::FrameStats;
 pub use renderer::{
     CameraFrame, CameraFrustumItem, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane,
-    GroundPlaneMode, ImageAnchor, InteractionFrame, LightKind, LightSource, LightingSettings,
-    PickId, PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings, RenderCamera,
-    SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem, ShadowFilter, StreamtubeItem,
-    SurfaceSubmission, ToneMapping, ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer,
-    VolumeItem,
+    GroundPlaneMode, ImageAnchor, InteractionFrame, LabelItem, LightKind, LightSource,
+    LightingSettings, OverlayFrame, OverlayImageItem, PickId, PointCloudItem, PointRenderMode,
+    PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBar, ScalarBarAnchor,
+    ScalarBarItem, ScalarBarOrientation, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem,
+    ShadowFilter, StreamtubeItem, SurfaceSubmission, ToneMapping, ViewportEffects, ViewportFrame,
+    ViewportId, ViewportRenderer, VolumeItem,
 };
-pub use renderer::{ScalarBar, ScalarBarAnchor, ScalarBarOrientation};
 
 pub use quantities::{
     edge_one_form_to_glyphs, face_intrinsic_to_glyphs,
