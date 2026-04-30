@@ -6,11 +6,14 @@
 - `OverlayFrame`: new frame section for renderer-native semantic overlays (labels, scalar bars, rulers, images)
 - Font atlas with bundled default font and `FontHandle` for user-supplied TTF fonts
 - `LabelItem`: native text labels anchored to world-space or screen-space positions. Supports setting position, connecting line, text and bg colour, padding and border radius, offset, opacity, max width (px), z order and font (family and size).
+- `ScalarBarItem`: native colour-legend overlay. References an uploaded `ColormapId` and renders a gradient strip with evenly-spaced tick labels and an optional title directly in the overlay pass. Supports both vertical and horizontal orientations, all four viewport corner anchors, configurable dimensions, margin, tick count, font, and label colour.
+- `ScalarBarAnchor`: enum for the four viewport corner positions used by `ScalarBarItem`.
+- `ScalarBarOrientation`: enum for vertical (top = max) and horizontal (left = min) gradient directions.
 - Pick pipeline: removed back-face culling so two-sided meshes are pickable from both sides
 
 ### Breaking changes
 - `AnnotationLabel`, `draw_annotation_labels`, `world_to_screen`, and `world_to_screen_from_frame` are removed. Use `LabelItem` in `OverlayFrame` instead.
-- `ScalarBar`, `ScalarBarAnchor`, and `ScalarBarOrientation` are removed. Native `ScalarBarItem` rendering is coming in the next release; applications that need a scalar bar in the interim can use `ViewportGpuResources::get_colormap_rgba` to obtain LUT data and draw their own overlay.
+- The old paint-back `ScalarBar` type is removed. Use `ScalarBarItem` in `OverlayFrame` instead.
 - The `egui` feature flag is removed. Applications that previously declared `features = ["egui"]` in their `viewport-lib` dependency should remove that entry.
 
 ### Fixes
