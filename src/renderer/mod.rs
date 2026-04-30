@@ -173,6 +173,8 @@ pub struct ViewportRenderer {
     label_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-frame scalar bar GPU data, rebuilt in prepare(), consumed in paint().
     scalar_bar_gpu_data: Option<crate::resources::LabelGpuData>,
+    /// Per-frame ruler GPU data, rebuilt in prepare(), consumed in paint().
+    ruler_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-viewport GPU state slots.
     ///
     /// Indexed by `FrameData::camera.viewport_index`. Each slot owns independent
@@ -228,6 +230,7 @@ impl ViewportRenderer {
             screen_image_gpu_data: Vec::new(),
             label_gpu_data: None,
             scalar_bar_gpu_data: None,
+            ruler_gpu_data: None,
             viewport_slots: Vec::new(),
             compute_filter_results: Vec::new(),
             last_cascade0_shadow_mat: glam::Mat4::IDENTITY,

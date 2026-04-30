@@ -2020,7 +2020,9 @@ impl ViewportRenderer {
                 let mut verts: Vec<crate::resources::OverlayTextVertex> = Vec::new();
 
                 for bar in &frame.overlays.scalar_bars {
-                    let Some(lut) = self.resources.get_colormap_rgba(bar.colormap_id) else {
+                    // Clone the LUT immediately so the immutable borrow on self.resources
+                    // is released before the mutable glyph_atlas borrow below.
+                    let Some(lut) = self.resources.get_colormap_rgba(bar.colormap_id).map(|l| l.to_vec()) else {
                         continue;
                     };
 
@@ -2028,6 +2030,12 @@ impl ViewportRenderer {
                         bar.orientation,
                         crate::renderer::types::ScalarBarOrientation::Vertical
                     );
+                    let reversed = bar.ticks_reversed;
+
+                    // Effective font sizes.
+                    let tick_fs = bar.font_size;
+                    let title_fs = bar.title_font_size.unwrap_or(bar.font_size);
+                    let font_index = bar.font.map_or(0, |h| h.0);
 
                     // Actual pixel dimensions of the gradient strip.
                     let (strip_w, strip_h) = if is_vertical {
@@ -2036,42 +2044,119 @@ impl ViewportRenderer {
                         (bar.bar_length_px, bar.bar_width_px)
                     };
 
-                    // Extra vertical space needed for an optional title.
+                    // Pre-compute tick texts and their widths so the background box
+                    // can be sized to cover the tick labels.
+                    let tick_count = bar.tick_count.max(2);
+                    let mut tick_data: Vec<(String, f32, f32)> = Vec::new(); // (text, total_w, height)
+                    let mut max_tick_w = 0.0f32;
+                    let mut tick_h = 0.0f32;
+                    for i in 0..tick_count {
+                        let t = i as f32 / (tick_count - 1) as f32;
+                        let value = bar.scalar_min + t * (bar.scalar_max - bar.scalar_min);
+                        let text = format!("{value:.2}");
+                        let layout = self.resources.glyph_atlas.layout_text(
+                            &text, tick_fs, bar.font, device,
+                        );
+                        max_tick_w = max_tick_w.max(layout.total_width);
+                        tick_h = layout.height;
+                        tick_data.push((text, layout.total_width, layout.height));
+                    }
+
+                    // Vertical space reserved above the gradient strip.
+                    // In vertical mode the top/bottom tick labels are centred on the strip
+                    // endpoints, so they each overhang by tick_h/2. title_h must absorb the
+                    // top overhang AND leave a gap so the title text does not touch the tick.
+                    let half_tick = tick_h / 2.0;
                     let title_h = if bar.title.is_some() {
-                        bar.font_size + 4.0
+                        // title text height + small gap + top-tick overhang
+                        title_fs + 4.0 + half_tick
+                    } else {
+                        // no title, but still need room for the top-tick overhang
+                        half_tick
+                    };
+
+                    // Pre-compute title width before bar_x/bar_y so the overhang can
+                    // be used to push the strip inward and prevent clipping.
+                    let title_w = if let Some(ref t) = bar.title {
+                        self.resources.glyph_atlas.layout_text(t, title_fs, bar.font, device).total_width
                     } else {
                         0.0
                     };
 
-                    // Top-left of the gradient strip, accounting for title height on
-                    // top-anchored positions so the title is not clipped.
-                    let (bar_x, bar_y) = match bar.anchor {
-                        crate::renderer::types::ScalarBarAnchor::TopLeft => {
-                            (bar.margin_px, bar.margin_px + title_h)
-                        }
-                        crate::renderer::types::ScalarBarAnchor::TopRight => {
-                            (vp_w - bar.margin_px - strip_w, bar.margin_px + title_h)
-                        }
-                        crate::renderer::types::ScalarBarAnchor::BottomLeft => {
-                            (bar.margin_px, vp_h - bar.margin_px - strip_h)
-                        }
-                        crate::renderer::types::ScalarBarAnchor::BottomRight => {
-                            (vp_w - bar.margin_px - strip_w, vp_h - bar.margin_px - strip_h)
-                        }
+                    // How far title / tick labels spill beyond the strip on each side.
+                    // Vertical: title centred on the narrow strip, ticks to the right.
+                    //   left side: title overhang only.
+                    //   right side: ticks dominate (strip_w + 4 + max_tick_w).
+                    // Horizontal: both title and tick labels can overhang left/right equally.
+                    let bg_pad = 4.0;
+                    let (inset_left, inset_right) = if is_vertical {
+                        let title_oh = ((title_w - strip_w) / 2.0).max(0.0);
+                        let right_extent = 4.0 + max_tick_w + bg_pad; // relative to strip right edge
+                        (title_oh + bg_pad, right_extent)
+                    } else {
+                        let title_oh = ((title_w - strip_w) / 2.0).max(0.0);
+                        let tick_oh  = max_tick_w / 2.0;
+                        let side = title_oh.max(tick_oh) + bg_pad;
+                        (side, side)
                     };
 
-                    // Background box behind the gradient strip (3 px padding, slightly
-                    // expanded upward when a title is present).
-                    let bg_pad = 3.0;
-                    let bg_title = if bar.title.is_some() { title_h } else { 0.0 };
+                    // How far content hangs below the strip bottom (used to keep the
+                    // background box flush with margin_px on the bottom-anchored side).
+                    // Vertical: bottom tick label is centred on the strip endpoint -> half_tick.
+                    // Horizontal: tick labels sit fully below the strip -> 3 + tick_h.
+                    let bottom_overhang = if is_vertical { half_tick } else { 3.0 + tick_h };
+
+                    // Top-left of the gradient strip.
+                    // bg_pad is added/subtracted here so that the background box edge lands
+                    // exactly at margin_px from the viewport edge on the anchored side.
+                    //   Top anchor:    bg_y0 = bar_y - title_h - bg_pad  =>  set bar_y = margin_px + title_h + bg_pad
+                    //   Bottom anchor: bg_y1 = bar_y + strip_h + bottom_overhang + bg_pad  =>  bar_y = vp_h - margin_px - strip_h - bottom_overhang - bg_pad
+                    let (bar_x, bar_y) = match bar.anchor {
+                        crate::renderer::types::ScalarBarAnchor::TopLeft => (
+                            bar.margin_px + inset_left,
+                            bar.margin_px + title_h + bg_pad,
+                        ),
+                        crate::renderer::types::ScalarBarAnchor::TopRight => (
+                            vp_w - bar.margin_px - strip_w - inset_right,
+                            bar.margin_px + title_h + bg_pad,
+                        ),
+                        crate::renderer::types::ScalarBarAnchor::BottomLeft => (
+                            bar.margin_px + inset_left,
+                            vp_h - bar.margin_px - strip_h - bottom_overhang - bg_pad,
+                        ),
+                        crate::renderer::types::ScalarBarAnchor::BottomRight => (
+                            vp_w - bar.margin_px - strip_w - inset_right,
+                            vp_h - bar.margin_px - strip_h - bottom_overhang - bg_pad,
+                        ),
+                    };
+
+                    // Background box: now that bar_x/bar_y are inset, the box stays on screen.
+                    let (bg_x0, bg_y0, bg_x1, bg_y1) = if is_vertical {
+                        let title_right = bar_x + (strip_w + title_w) / 2.0;
+                        let ticks_right = bar_x + strip_w + 4.0 + max_tick_w;
+                        (
+                            bar_x - bg_pad - ((title_w - strip_w) / 2.0).max(0.0),
+                            bar_y - title_h - bg_pad,
+                            ticks_right.max(title_right) + bg_pad,
+                            bar_y + strip_h + half_tick + bg_pad,
+                        )
+                    } else {
+                        let title_overhang = ((title_w - strip_w) / 2.0).max(0.0);
+                        let tick_overhang  = max_tick_w / 2.0;
+                        let side_pad = title_overhang.max(tick_overhang);
+                        let bottom = bar_y + strip_h + 3.0 + tick_h + bg_pad;
+                        (
+                            bar_x - bg_pad - side_pad,
+                            bar_y - title_h - bg_pad,
+                            bar_x + strip_w + bg_pad + side_pad,
+                            bottom,
+                        )
+                    };
                     emit_rounded_quad(
                         &mut verts,
-                        bar_x - bg_pad,
-                        bar_y - bg_title - bg_pad,
-                        bar_x + strip_w + bg_pad,
-                        bar_y + strip_h + bg_pad,
+                        bg_x0, bg_y0, bg_x1, bg_y1,
                         3.0,
-                        [0.0, 0.0, 0.0, 0.63],
+                        bar.background_color,
                         vp_w, vp_h,
                     );
 
@@ -2079,14 +2164,22 @@ impl ViewportRenderer {
                     let steps: usize = 64;
                     for s in 0..steps {
                         let (qx0, qy0, qx1, qy1, t) = if is_vertical {
-                            // Top = max, bottom = min.
-                            let t = 1.0 - s as f32 / (steps - 1) as f32;
+                            // Default: top = max (t=1). Reversed: top = min (t=0).
+                            let t = if reversed {
+                                s as f32 / (steps - 1) as f32
+                            } else {
+                                1.0 - s as f32 / (steps - 1) as f32
+                            };
                             let step_h = strip_h / steps as f32;
                             let sy = bar_y + s as f32 * step_h;
                             (bar_x, sy, bar_x + strip_w, sy + step_h + 0.5, t)
                         } else {
-                            // Left = min, right = max.
-                            let t = s as f32 / (steps - 1) as f32;
+                            // Default: left = min (t=0). Reversed: left = max (t=1).
+                            let t = if reversed {
+                                1.0 - s as f32 / (steps - 1) as f32
+                            } else {
+                                s as f32 / (steps - 1) as f32
+                            };
                             let step_w = strip_w / steps as f32;
                             let sx = bar_x + s as f32 * step_w;
                             (sx, bar_y, sx + step_w + 0.5, bar_y + strip_h, t)
@@ -2103,32 +2196,30 @@ impl ViewportRenderer {
                     }
 
                     // Tick labels.
-                    let tick_count = bar.tick_count.max(2);
-                    let font_index = bar.font.map_or(0, |h| h.0);
-                    for i in 0..tick_count {
+                    let ascent = self.resources.glyph_atlas.font_ascent(font_index, tick_fs);
+                    for (i, (text, tw, th)) in tick_data.iter().enumerate() {
                         let t = i as f32 / (tick_count - 1) as f32;
-                        let value = bar.scalar_min + t * (bar.scalar_max - bar.scalar_min);
-                        let text = format!("{value:.2}");
                         let layout = self.resources.glyph_atlas.layout_text(
-                            &text,
-                            bar.font_size,
-                            bar.font,
-                            device,
+                            text, tick_fs, bar.font, device,
                         );
-                        let ascent = self.resources.glyph_atlas.font_ascent(font_index, bar.font_size);
 
                         let (lx, ly) = if is_vertical {
                             // Place text to the right of the strip, vertically centered
-                            // on its tick position. Vertical progress: top = max (t=1).
-                            let progress = 1.0 - t;
+                            // on its tick position.
+                            // Default: top=max -> progress = 1.0-t puts max at top.
+                            // Reversed: top=min -> progress = t puts min at top.
+                            let progress = if reversed { t } else { 1.0 - t };
                             let tick_y = bar_y + progress * strip_h;
-                            (bar_x + strip_w + 4.0, tick_y - layout.height * 0.5)
+                            (bar_x + strip_w + 4.0, tick_y - th * 0.5)
                         } else {
-                            // Place text below the strip, horizontally centered on its
-                            // tick position.
-                            let tick_x = bar_x + t * strip_w;
-                            (tick_x - layout.total_width * 0.5, bar_y + strip_h + 3.0)
+                            // Place text below the strip, horizontally centered on its tick.
+                            // Default: left=min -> tick at t*strip_w.
+                            // Reversed: left=max -> tick at (1-t)*strip_w.
+                            let frac = if reversed { 1.0 - t } else { t };
+                            let tick_x = bar_x + frac * strip_w;
+                            (tick_x - tw * 0.5, bar_y + strip_h + 3.0)
                         };
+                        let _ = (tw, th); // used above
 
                         for gq in &layout.quads {
                             let gx = lx + gq.pos[0];
@@ -2147,18 +2238,15 @@ impl ViewportRenderer {
                     // Optional title above the gradient strip.
                     if let Some(ref title_text) = bar.title {
                         let layout = self.resources.glyph_atlas.layout_text(
-                            title_text,
-                            bar.font_size,
-                            bar.font,
-                            device,
+                            title_text, title_fs, bar.font, device,
                         );
-                        let ascent = self.resources.glyph_atlas.font_ascent(font_index, bar.font_size);
+                        let title_ascent = self.resources.glyph_atlas.font_ascent(font_index, title_fs);
                         // Centre the title over the gradient strip.
                         let tx = bar_x + (strip_w - layout.total_width) * 0.5;
                         let ty = bar_y - title_h;
                         for gq in &layout.quads {
                             let gx = tx + gq.pos[0];
-                            let gy = ty + ascent + gq.pos[1];
+                            let gy = ty + title_ascent + gq.pos[1];
                             emit_textured_quad(
                                 &mut verts,
                                 gx, gy,
@@ -2200,6 +2288,164 @@ impl ViewportRenderer {
                         ],
                     });
                     self.scalar_bar_gpu_data = Some(crate::resources::LabelGpuData {
+                        vertex_buf,
+                        vertex_count: verts.len() as u32,
+                        bind_group,
+                    });
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Rulers
+        // ---------------------------------------------------------------
+        self.ruler_gpu_data = None;
+        if !frame.overlays.rulers.is_empty() {
+            self.resources.ensure_overlay_text_pipeline(device);
+            let vp_w = frame.camera.viewport_size[0];
+            let vp_h = frame.camera.viewport_size[1];
+            if vp_w > 0.0 && vp_h > 0.0 {
+                let view = &frame.camera.render_camera.view;
+                let proj = &frame.camera.render_camera.projection;
+
+                let mut verts: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+
+                for ruler in &frame.overlays.rulers {
+                    // Project both endpoints to NDC (returns None only if behind camera).
+                    let start_ndc = project_to_ndc(ruler.start, view, proj);
+                    let end_ndc   = project_to_ndc(ruler.end,   view, proj);
+
+                    // Cull entirely when either endpoint is behind the camera.
+                    let (Some(sndc), Some(endc)) = (start_ndc, end_ndc) else { continue };
+
+                    // Clip the segment to the viewport NDC box [-1,1]^2.
+                    // This keeps the line visible when only one end is off-screen sideways.
+                    let Some((csndc, cendc)) = clip_line_ndc(sndc, endc) else { continue };
+
+                    let [sx, sy] = ndc_to_screen_px(csndc, vp_w, vp_h);
+                    let [ex, ey] = ndc_to_screen_px(cendc, vp_w, vp_h);
+
+                    // Track which original endpoints are within the viewport (for end caps).
+                    let start_on_screen = ndc_in_viewport(sndc);
+                    let end_on_screen   = ndc_in_viewport(endc);
+
+                    // Main ruler line.
+                    emit_line_quad(
+                        &mut verts,
+                        sx, sy, ex, ey,
+                        ruler.line_width_px,
+                        ruler.color,
+                        vp_w, vp_h,
+                    );
+
+                    // End caps only at endpoints that are actually on screen.
+                    if ruler.end_caps {
+                        let dx = ex - sx;
+                        let dy = ey - sy;
+                        let len = (dx * dx + dy * dy).sqrt().max(0.001);
+                        let cap_half = 5.0;
+                        let px = -dy / len * cap_half;
+                        let py =  dx / len * cap_half;
+
+                        if start_on_screen {
+                            emit_line_quad(
+                                &mut verts,
+                                sx - px, sy - py,
+                                sx + px, sy + py,
+                                ruler.line_width_px,
+                                ruler.color,
+                                vp_w, vp_h,
+                            );
+                        }
+                        if end_on_screen {
+                            emit_line_quad(
+                                &mut verts,
+                                ex - px, ey - py,
+                                ex + px, ey + py,
+                                ruler.line_width_px,
+                                ruler.color,
+                                vp_w, vp_h,
+                            );
+                        }
+                    }
+
+                    // Distance label: always shows true 3D distance.
+                    // Place it at the midpoint of the visible (clipped) segment.
+                    let start_world = glam::Vec3::from(ruler.start);
+                    let end_world = glam::Vec3::from(ruler.end);
+                    let distance = (end_world - start_world).length();
+                    let text = format_ruler_distance(distance, ruler.label_format.as_deref());
+
+                    let mid_x = (sx + ex) * 0.5;
+                    let mid_y = (sy + ey) * 0.5;
+
+                    let layout = self.resources.glyph_atlas.layout_text(
+                        &text,
+                        ruler.font_size,
+                        ruler.font,
+                        device,
+                    );
+                    let font_index = ruler.font.map_or(0, |h| h.0);
+                    let ascent = self.resources.glyph_atlas.font_ascent(font_index, ruler.font_size);
+
+                    // Center the label above the midpoint with a small gap.
+                    let lx = mid_x - layout.total_width * 0.5;
+                    let ly = mid_y - layout.height - 6.0;
+
+                    // Semi-transparent background box.
+                    let pad = 3.0;
+                    emit_solid_quad(
+                        &mut verts,
+                        lx - pad, ly - pad,
+                        lx + layout.total_width + pad, ly + layout.height + pad,
+                        [0.0, 0.0, 0.0, 0.55],
+                        vp_w, vp_h,
+                    );
+
+                    // Glyph quads.
+                    for gq in &layout.quads {
+                        let gx = lx + gq.pos[0];
+                        let gy = ly + ascent + gq.pos[1];
+                        emit_textured_quad(
+                            &mut verts,
+                            gx, gy,
+                            gx + gq.size[0], gy + gq.size[1],
+                            gq.uv_min, gq.uv_max,
+                            ruler.label_color,
+                            vp_w, vp_h,
+                        );
+                    }
+                }
+
+                // Upload any newly rasterized glyphs.
+                self.resources.glyph_atlas.upload_if_dirty(queue);
+
+                if !verts.is_empty() {
+                    let vertex_buf =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("overlay_ruler_vbuf"),
+                            contents: bytemuck::cast_slice(&verts),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        });
+                    let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
+                    let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
+                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("overlay_ruler_bg"),
+                        layout: bgl,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(
+                                    &self.resources.glyph_atlas.view,
+                                ),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(sampler),
+                            },
+                        ],
+                    });
+                    self.ruler_gpu_data = Some(crate::resources::LabelGpuData {
                         vertex_buf,
                         vertex_count: verts.len() as u32,
                         bind_group,
@@ -2308,6 +2554,63 @@ fn clip_sphere_outline(center: [f32; 3], radius: f32, color: [f32; 4]) -> Polyli
 // ---------------------------------------------------------------------------
 // Overlay label helpers
 // ---------------------------------------------------------------------------
+
+/// Project a world-space position to NDC.
+/// Returns `None` only if the point is behind the camera (`clip.w <= 0`).
+/// Does NOT reject points outside the [-1,1] viewport box.
+fn project_to_ndc(
+    pos: [f32; 3],
+    view: &glam::Mat4,
+    proj: &glam::Mat4,
+) -> Option<[f32; 2]> {
+    let clip = *proj * *view * glam::Vec3::from(pos).extend(1.0);
+    if clip.w <= 0.0 { return None; }
+    Some([clip.x / clip.w, clip.y / clip.w])
+}
+
+/// Convert NDC coordinates to screen pixels (top-left origin).
+fn ndc_to_screen_px(ndc: [f32; 2], vp_w: f32, vp_h: f32) -> [f32; 2] {
+    [
+        (ndc[0] * 0.5 + 0.5) * vp_w,
+        (1.0 - (ndc[1] * 0.5 + 0.5)) * vp_h,
+    ]
+}
+
+/// Returns true when the NDC point lies within the viewport square.
+fn ndc_in_viewport(ndc: [f32; 2]) -> bool {
+    ndc[0] >= -1.0 && ndc[0] <= 1.0 && ndc[1] >= -1.0 && ndc[1] <= 1.0
+}
+
+/// Clip a line segment [a, b] in NDC to the [-1,1]^2 viewport box
+/// using the Liang-Barsky algorithm.
+/// Returns the clipped endpoints, or `None` if the segment is entirely outside.
+fn clip_line_ndc(a: [f32; 2], b: [f32; 2]) -> Option<([f32; 2], [f32; 2])> {
+    let dx = b[0] - a[0];
+    let dy = b[1] - a[1];
+    let mut t0 = 0.0f32;
+    let mut t1 = 1.0f32;
+
+    // (p, q) pairs for left, right, bottom, top boundaries.
+    for (p, q) in [
+        (-dx, a[0] + 1.0),
+        ( dx, 1.0 - a[0]),
+        (-dy, a[1] + 1.0),
+        ( dy, 1.0 - a[1]),
+    ] {
+        if p == 0.0 {
+            if q < 0.0 { return None; }
+        } else {
+            let r = q / p;
+            if p < 0.0 { t0 = t0.max(r); } else { t1 = t1.min(r); }
+        }
+    }
+
+    if t0 > t1 { return None; }
+    Some((
+        [a[0] + t0 * dx, a[1] + t0 * dy],
+        [a[0] + t1 * dx, a[1] + t1 * dy],
+    ))
+}
 
 /// Project a world-space position to screen pixels (top-left origin).
 /// Returns `None` if behind the camera or outside the frustum.
@@ -2479,4 +2782,42 @@ fn emit_rounded_quad(
             verts.extend_from_slice(&[v(center), v(p0), v(p1)]);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Ruler label formatting
+// ---------------------------------------------------------------------------
+
+/// Format a distance value using a caller-supplied format pattern.
+///
+/// The pattern may contain one `{...}` placeholder with an optional precision
+/// specifier, e.g. `"{:.3}"` or `"{:.2} m"`.  Anything outside the braces is
+/// treated as a literal prefix / suffix.  Unrecognised patterns fall back to
+/// three decimal places.
+fn format_ruler_distance(distance: f32, fmt: Option<&str>) -> String {
+    let pattern = fmt.unwrap_or("{:.3}");
+    // Find the first `{...}` block.
+    if let Some(open) = pattern.find('{') {
+        if let Some(close_rel) = pattern[open..].find('}') {
+            let close = open + close_rel;
+            let spec = &pattern[open + 1..close]; // e.g. ":.3" or ""
+            let prefix = &pattern[..open];
+            let suffix = &pattern[close + 1..];
+            let formatted = if let Some(prec_str) = spec.strip_prefix(":.") {
+                // Strip trailing 'f' for patterns like "{:.3f}".
+                let prec_str = prec_str.trim_end_matches('f');
+                if let Ok(prec) = prec_str.parse::<usize>() {
+                    format!("{distance:.prec$}")
+                } else {
+                    format!("{distance:.3}")
+                }
+            } else if spec.is_empty() || spec == ":" {
+                format!("{distance}")
+            } else {
+                format!("{distance:.3}")
+            };
+            return format!("{prefix}{formatted}{suffix}");
+        }
+    }
+    format!("{distance:.3}")
 }

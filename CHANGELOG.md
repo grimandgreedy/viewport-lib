@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+- `RulerItem`: two-point measurement overlay. Renders a line between two world-space endpoints with a distance label at the segment midpoint. The line is clipped to the viewport boundary when one endpoint pans off-screen sideways and is only culled when an endpoint goes behind the camera. End caps are only drawn at endpoints within the viewport. Supports configurable line width, end caps, label format string (e.g. `"{:.2} m"`), font, font size, line colour, and label colour.
+- `ScalarBarItem` new fields:
+  - `background_color: [f32; 4]`: RGBA colour of the background box including opacity.
+  - `ticks_reversed: bool`: flips the gradient direction for both vertical and horizontal orientations.
+  - `title_font_size: Option<f32>`: separate font size for the title text; falls back to `font_size` when `None`.
+- `ScalarBarItem` background box correctly covers tick labels in both orientations, accounts for a wide title overhanging the narrow strip in vertical mode, and is pushed inward from the viewport edge so the title never clips off-screen.
+- `ScalarBarItem` background box edge lands exactly at `margin_px` from the viewport edge on the anchored side for both top and bottom anchors.
+
+### Examples
+- Showcase 35 (Overlay Composition): added a 70×70 sinusoidal wave point cloud coloured by height via the same colormap and scalar range as the scalar bar, demonstrating the scalar bar as a real data legend.
+- Showcase 35 controls: colormap selector is now a dropdown listing all ten built-in colormaps; added bar size slider (80–400 px) and background colour/opacity controls.
+- Showcase 35 added to the cmd+`[` / cmd+`]` cycle list.
+
 ## [0.10.1]
 
 ### Features
