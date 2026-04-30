@@ -97,12 +97,7 @@ use viewport_lib::{
     scene::{LayerId, Scene},
 };
 
-// Local scalar bar state types (library versions were removed with the paint-back API in Phase 4;
-// native ScalarBarItem rendering will be added in Phase 5).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ScalarBarAnchor { TopLeft, TopRight, BottomLeft, BottomRight }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ScalarBarOrientation { Vertical, Horizontal }
+use viewport_lib::{ScalarBarAnchor, ScalarBarOrientation};
 
 mod geometry;
 mod hdr_viewport_callback;
@@ -1694,11 +1689,6 @@ impl eframe::App for App {
             // (Annotation labels now render natively via OverlayFrame.)
             if self.mode == ShowcaseMode::BackfacePolicy {
                 self.draw_sa_labels(ui, rect);
-            }
-
-            // ----- Scalar bar overlay (Showcase 12) -----
-            if self.mode == ShowcaseMode::ScalarFields {
-                self.draw_scalar_bar(ui, rect, frame);
             }
 
             // ----- Cursor feedback -----
@@ -3946,6 +3936,9 @@ impl App {
         // Overlay labels (Showcase 9 and 34): populate OverlayFrame.
         if self.mode == ShowcaseMode::Annotation && self.ann_built {
             fd.overlays.labels = self.ann_labels.clone();
+        }
+        if self.mode == ShowcaseMode::ScalarFields && self.scalar_built {
+            fd.overlays.scalar_bars = vec![self.scalar_bar_item()];
         }
         if self.mode == ShowcaseMode::Labels && self.lbl_built {
             // World-anchored part labels (built once, filtered by toggle).
