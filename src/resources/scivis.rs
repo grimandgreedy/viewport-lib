@@ -1851,4 +1851,141 @@ impl ViewportGpuResources {
             depth_bind_group: depth_bind_group_opt,
         }
     }
+
+    /// Upload one [`OverlayImageItem`] to the GPU and return its render data (Phase 7).
+    ///
+    /// Reuses the `screen_image_pipeline` and its bind group layout; the shaders and
+    /// uniform layout are identical. No depth path: `OverlayImageItem` has no depth field.
+    ///
+    /// Caller must have called [`ensure_screen_image_pipeline`] first.
+    pub(crate) fn upload_overlay_image(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: &crate::OverlayImageItem,
+        viewport_w: f32,
+        viewport_h: f32,
+    ) -> ScreenImageGpuData {
+        use crate::ImageAnchor;
+
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("overlay_image_tex"),
+            size: wgpu::Extent3d {
+                width: item.width.max(1),
+                height: item.height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        if !item.pixels.is_empty() && item.width > 0 && item.height > 0 {
+            let raw: Vec<u8> = item.pixels.iter().flat_map(|p| p.iter().copied()).collect();
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &raw,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(item.width * 4),
+                    rows_per_image: Some(item.height),
+                },
+                wgpu::Extent3d {
+                    width: item.width,
+                    height: item.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("overlay_image_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let img_w_ndc = 2.0 * item.width as f32 * item.scale / viewport_w.max(1.0);
+        let img_h_ndc = 2.0 * item.height as f32 * item.scale / viewport_h.max(1.0);
+
+        let (ndc_min_x, ndc_max_x, ndc_min_y, ndc_max_y) = match item.anchor {
+            ImageAnchor::TopLeft => (-1.0, -1.0 + img_w_ndc, 1.0 - img_h_ndc, 1.0),
+            ImageAnchor::TopRight => (1.0 - img_w_ndc, 1.0, 1.0 - img_h_ndc, 1.0),
+            ImageAnchor::BottomLeft => (-1.0, -1.0 + img_w_ndc, -1.0, -1.0 + img_h_ndc),
+            ImageAnchor::BottomRight => (1.0 - img_w_ndc, 1.0, -1.0, -1.0 + img_h_ndc),
+            _ => (
+                -img_w_ndc * 0.5,
+                img_w_ndc * 0.5,
+                -img_h_ndc * 0.5,
+                img_h_ndc * 0.5,
+            ),
+        };
+
+        #[repr(C)]
+        #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
+        struct ScreenImageUniform {
+            ndc_min: [f32; 2],
+            ndc_max: [f32; 2],
+            alpha: f32,
+            _pad: [f32; 3],
+        }
+
+        let uniform_data = ScreenImageUniform {
+            ndc_min: [ndc_min_x, ndc_min_y],
+            ndc_max: [ndc_max_x, ndc_max_y],
+            alpha: item.alpha,
+            _pad: [0.0; 3],
+        };
+
+        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("overlay_image_uniform"),
+            size: std::mem::size_of::<ScreenImageUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
+
+        let bgl = self
+            .screen_image_bgl
+            .as_ref()
+            .expect("ensure_screen_image_pipeline not called before upload_overlay_image");
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("overlay_image_bg"),
+            layout: bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+
+        ScreenImageGpuData {
+            uniform_buf,
+            _texture: texture,
+            bind_group,
+            _depth_texture: None,
+            depth_bind_group: None,
+        }
+    }
 }

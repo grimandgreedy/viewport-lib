@@ -169,6 +169,8 @@ pub struct ViewportRenderer {
     mc_gpu_data: Vec<crate::resources::gpu_marching_cubes::McFrameData>,
     /// Per-frame screen-image GPU data, rebuilt in prepare(), consumed in paint() (Phase 10B).
     screen_image_gpu_data: Vec<crate::resources::ScreenImageGpuData>,
+    /// Per-frame overlay image GPU data, rebuilt in prepare(), consumed in paint() (Phase 7).
+    overlay_image_gpu_data: Vec<crate::resources::ScreenImageGpuData>,
     /// Per-frame overlay label GPU data, rebuilt in prepare(), consumed in paint().
     label_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-frame scalar bar GPU data, rebuilt in prepare(), consumed in paint().
@@ -228,6 +230,7 @@ impl ViewportRenderer {
             implicit_gpu_data: Vec::new(),
             mc_gpu_data: Vec::new(),
             screen_image_gpu_data: Vec::new(),
+            overlay_image_gpu_data: Vec::new(),
             label_gpu_data: None,
             scalar_bar_gpu_data: None,
             ruler_gpu_data: None,
