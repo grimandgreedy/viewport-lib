@@ -1,21 +1,5 @@
 # Changelog
 
-## [Unreleased]
-
-### Features
-- `RulerItem`: two-point measurement overlay. Renders a line between two world-space endpoints with a distance label at the segment midpoint. The line is clipped to the viewport boundary when one endpoint pans off-screen sideways and is only culled when an endpoint goes behind the camera. End caps are only drawn at endpoints within the viewport. Supports configurable line width, end caps, label format string (e.g. `"{:.2} m"`), font, font size, line colour, and label colour.
-- `ScalarBarItem` new fields:
-  - `background_color: [f32; 4]`: RGBA colour of the background box including opacity.
-  - `ticks_reversed: bool`: flips the gradient direction for both vertical and horizontal orientations.
-  - `title_font_size: Option<f32>`: separate font size for the title text; falls back to `font_size` when `None`.
-- `ScalarBarItem` background box correctly covers tick labels in both orientations, accounts for a wide title overhanging the narrow strip in vertical mode, and is pushed inward from the viewport edge so the title never clips off-screen.
-- `ScalarBarItem` background box edge lands exactly at `margin_px` from the viewport edge on the anchored side for both top and bottom anchors.
-
-### Examples
-- Showcase 35 (Overlay Composition): added a 70×70 sinusoidal wave point cloud coloured by height via the same colormap and scalar range as the scalar bar, demonstrating the scalar bar as a real data legend.
-- Showcase 35 controls: colormap selector is now a dropdown listing all ten built-in colormaps; added bar size slider (80–400 px) and background colour/opacity controls.
-- Showcase 35 added to the cmd+`[` / cmd+`]` cycle list.
-
 ## [0.10.1]
 
 ### Features
@@ -23,8 +7,7 @@
 - Font atlas with bundled default font and `FontHandle` for user-supplied TTF fonts
 - `LabelItem`: native text labels anchored to world-space or screen-space positions. Supports setting position, connecting line, text and bg colour, padding and border radius, offset, opacity, max width (px), z order and font (family and size).
 - `ScalarBarItem`: native colour-legend overlay. References an uploaded `ColormapId` and renders a gradient strip with evenly-spaced tick labels and an optional title directly in the overlay pass. Supports both vertical and horizontal orientations, all four viewport corner anchors, configurable dimensions, margin, tick count, font, and label colour.
-- `ScalarBarAnchor`: enum for the four viewport corner positions used by `ScalarBarItem`.
-- `ScalarBarOrientation`: enum for vertical (top = max) and horizontal (left = min) gradient directions.
+- `RulerItem`: two-point measurement overlay. Renders a line between two world-space endpoints with a distance label at the segment midpoint. The line is clipped to the viewport boundary when one endpoint pans off-screen sideways and is only culled when an endpoint goes behind the camera. End caps are only drawn at endpoints within the viewport. Supports configurable line width, end caps, label format string (e.g. `"{:.2} m"`), font, font size, line colour, and label colour.
 - Pick pipeline: removed back-face culling so two-sided meshes are pickable from both sides
 
 ### Breaking changes
@@ -36,7 +19,8 @@
 - Scalar buffer attribute lookup: simplified vertex/face attribute resolution path
 
 ### Examples
-- New showcase (34) for new internal labels.
+- Showcase (34) for new internal labels.
+- Showcase (35) for overlays: scalarbar, rulers, items
 
 ## [0.10.0]
 
