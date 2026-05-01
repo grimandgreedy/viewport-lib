@@ -986,6 +986,13 @@ pub enum ImageAnchor {
 /// The image is drawn after all 3D geometry and anchored to one of the viewport
 /// corners or the center.
 ///
+/// ## Migration note
+///
+/// If you do not need depth compositing against scene geometry, prefer
+/// [`OverlayImageItem`] in [`OverlayFrame`] instead. `OverlayImageItem` has no
+/// `depth` field and renders after post-processing alongside other semantic
+/// overlays (labels, scalar bars, rulers).
+///
 /// ## Depth compositing (Phase 12)
 ///
 /// When `depth` is `Some`, the image composites against 3D scene geometry:
@@ -1978,12 +1985,40 @@ impl Default for RulerItem {
 ///
 /// Unlike [`ScreenImageItem`] (which lives in [`SceneFrame`] and supports
 /// depth compositing with world geometry), `OverlayImageItem` is a pure
-/// screen-space overlay with no depth field.
+/// screen-space overlay with no depth field. It renders after post-processing,
+/// on top of all scene content, labels, scalar bars, and rulers.
 ///
-/// Rendering is implemented in a later phase; this type exists now so
-/// downstream code can be written against the final API shape.
-#[derive(Debug, Clone, Default)]
-pub struct OverlayImageItem {}
+/// Consumers using [`ScreenImageItem`] without a `depth` buffer (corner logos,
+/// diagnostic HUDs, watermarks) should migrate to `OverlayImageItem`.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct OverlayImageItem {
+    /// RGBA8 pixel data, row-major, top-to-bottom.
+    pub pixels: Vec<[u8; 4]>,
+    /// Image width in pixels.
+    pub width: u32,
+    /// Image height in pixels.
+    pub height: u32,
+    /// Which corner (or center) of the viewport to anchor the image to.
+    pub anchor: ImageAnchor,
+    /// Scale factor relative to natural pixel size (`1.0` = one pixel per screen pixel).
+    pub scale: f32,
+    /// Overall opacity multiplier applied on top of per-pixel alpha. Default: `1.0`.
+    pub alpha: f32,
+}
+
+impl Default for OverlayImageItem {
+    fn default() -> Self {
+        Self {
+            pixels: Vec::new(),
+            width: 0,
+            height: 0,
+            anchor: ImageAnchor::TopLeft,
+            scale: 1.0,
+            alpha: 1.0,
+        }
+    }
+}
 
 /// Semantic overlays rendered after post-processing: labels, scalar bars,
 /// rulers, and screen-space images.

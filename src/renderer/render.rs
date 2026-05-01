@@ -125,6 +125,16 @@ impl ViewportRenderer {
                 render_pass.draw(0..rd.vertex_count, 0..1);
             }
         }
+        // Phase 7 : overlay images (OverlayFrame, drawn last, no depth test).
+        if !self.overlay_image_gpu_data.is_empty() {
+            if let Some(pipeline) = &self.resources.screen_image_pipeline {
+                render_pass.set_pipeline(pipeline);
+                for gpu in &self.overlay_image_gpu_data {
+                    render_pass.set_bind_group(0, &gpu.bind_group, &[]);
+                    render_pass.draw(0..6, 0..1);
+                }
+            }
+        }
     }
 
     /// Issue draw calls into a render pass with any lifetime.
@@ -249,6 +259,16 @@ impl ViewportRenderer {
                 render_pass.set_bind_group(0, &rd.bind_group, &[]);
                 render_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
                 render_pass.draw(0..rd.vertex_count, 0..1);
+            }
+        }
+        // Phase 7 : overlay images (OverlayFrame, drawn last, no depth test).
+        if !self.overlay_image_gpu_data.is_empty() {
+            if let Some(pipeline) = &self.resources.screen_image_pipeline {
+                render_pass.set_pipeline(pipeline);
+                for gpu in &self.overlay_image_gpu_data {
+                    render_pass.set_bind_group(0, &gpu.bind_group, &[]);
+                    render_pass.draw(0..6, 0..1);
+                }
             }
         }
     }
@@ -462,6 +482,16 @@ impl ViewportRenderer {
                         render_pass.set_bind_group(0, &rd.bind_group, &[]);
                         render_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
                         render_pass.draw(0..rd.vertex_count, 0..1);
+                    }
+                }
+                // Phase 7 : overlay images (OverlayFrame, LDR fallback, drawn last).
+                if !self.overlay_image_gpu_data.is_empty() {
+                    if let Some(pipeline) = &self.resources.screen_image_pipeline {
+                        render_pass.set_pipeline(pipeline);
+                        for gpu in &self.overlay_image_gpu_data {
+                            render_pass.set_bind_group(0, &gpu.bind_group, &[]);
+                            render_pass.draw(0..6, 0..1);
+                        }
                     }
                 }
             }
@@ -1747,34 +1777,37 @@ impl ViewportRenderer {
             }
         }
 
-        // Overlay labels, scalar bars, and rulers (HDR path): drawn last, no depth test.
+        // Overlay labels, scalar bars, rulers, and overlay images (HDR path): drawn last.
         let has_overlay = self.label_gpu_data.is_some()
             || self.scalar_bar_gpu_data.is_some()
-            || self.ruler_gpu_data.is_some();
+            || self.ruler_gpu_data.is_some()
+            || !self.overlay_image_gpu_data.is_empty();
         if has_overlay {
-            if let Some(pipeline) = &self.resources.overlay_text_pipeline {
-                let mut overlay_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("overlay_pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: output_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.viewport_slots[vp_idx].hdr.as_ref().unwrap().hdr_depth_view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Discard,
-                        }),
-                        stencil_ops: None,
+            let hdr_depth_view =
+                &self.viewport_slots[vp_idx].hdr.as_ref().unwrap().hdr_depth_view;
+            let mut overlay_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("overlay_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: output_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: hdr_depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Discard,
                     }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            if let Some(pipeline) = &self.resources.overlay_text_pipeline {
                 overlay_pass.set_pipeline(pipeline);
                 if let Some(ref ld) = self.label_gpu_data {
                     overlay_pass.set_bind_group(0, &ld.bind_group, &[]);
@@ -1790,6 +1823,16 @@ impl ViewportRenderer {
                     overlay_pass.set_bind_group(0, &rd.bind_group, &[]);
                     overlay_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
                     overlay_pass.draw(0..rd.vertex_count, 0..1);
+                }
+            }
+            // Phase 7 : overlay images drawn last inside the overlay pass.
+            if !self.overlay_image_gpu_data.is_empty() {
+                if let Some(pipeline) = &self.resources.screen_image_pipeline {
+                    overlay_pass.set_pipeline(pipeline);
+                    for gpu in &self.overlay_image_gpu_data {
+                        overlay_pass.set_bind_group(0, &gpu.bind_group, &[]);
+                        overlay_pass.draw(0..6, 0..1);
+                    }
                 }
             }
         }
