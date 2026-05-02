@@ -89,7 +89,8 @@ use viewport_lib::{
     Gizmo, GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode,
     KeyCode, LightKind, LightSource, LightingSettings, ManipResult, ManipulationContext,
     ManipulationController, MatcapId, Material, MeshData, MeshId, NodeId, OrbitCameraController,
-    PickAccelerator, PickId, PointCloudItem, PostProcessSettings, Projection, RenderCamera, SceneFrame,
+    PerformancePolicy, PickAccelerator, PickId, PointCloudItem, PostProcessSettings, Projection,
+    RenderCamera, RuntimeMode, SceneFrame,
     SceneRenderItem, ScrollUnits, Selection, ShadowFilter, SubSelectionRef, ViewPreset, ViewportContext,
     ViewportEvent, ViewportRenderer, VolumeData, VolumeId,
     geometry::isoline::IsolineItem,
@@ -136,6 +137,7 @@ mod showcase_32_extended_quantities;
 mod showcase_33_picking_levels;
 mod showcase_34_labels;
 mod showcase_35_overlay;
+mod showcase_36_playback_runtime;
 mod viewport_callback;
 
 const BG_COLOR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -556,6 +558,20 @@ fn main() -> eframe::Result {
                 ovl_cloud_positions: Vec::new(),
                 ovl_cloud_scalars: Vec::new(),
                 ovl_cloud_built: false,
+
+                pb_built: false,
+                pb_mode: RuntimeMode::Interactive,
+                pb_policy: PerformancePolicy::default(),
+                pb_manual_render_scale: 1.0,
+                pb_grid_resolution: 200,
+                pb_last_grid_resolution: 0,
+                pb_instance_count: 10000,
+                pb_time: 0.0,
+                pb_mesh_id: None,
+                pb_static_mesh_id: None,
+                pb_scene: Scene::new(),
+                pb_last_stats: FrameStats::default(),
+                pb_stats_history: std::collections::VecDeque::new(),
             }))
         }),
     )
@@ -609,6 +625,7 @@ enum ShowcaseMode {
     PickLevels,
     Labels,
     Overlay,
+    PlaybackRuntime,
 }
 
 impl ShowcaseMode {
@@ -649,6 +666,7 @@ impl ShowcaseMode {
             Self::PickLevels => "33: Picking Levels",
             Self::Labels => "34: Labels",
             Self::Overlay => "35: Overlay Composition",
+            Self::PlaybackRuntime => "36: Playback Runtime Control",
         }
     }
 }
@@ -1066,6 +1084,21 @@ pub(crate) struct App {
     pub(crate) ovl_cloud_positions: Vec<[f32; 3]>,
     pub(crate) ovl_cloud_scalars: Vec<f32>,
     pub(crate) ovl_cloud_built: bool,
+
+    // --- Showcase 36 ---
+    pub(crate) pb_built: bool,
+    pub(crate) pb_mode: RuntimeMode,
+    pub(crate) pb_policy: PerformancePolicy,
+    pub(crate) pb_manual_render_scale: f32,
+    pub(crate) pb_grid_resolution: usize,
+    pub(crate) pb_last_grid_resolution: usize,
+    pub(crate) pb_instance_count: usize,
+    pub(crate) pb_time: f32,
+    pub(crate) pb_mesh_id: Option<MeshId>,
+    pub(crate) pb_static_mesh_id: Option<MeshId>,
+    pub(crate) pb_scene: Scene,
+    pub(crate) pb_last_stats: FrameStats,
+    pub(crate) pb_stats_history: std::collections::VecDeque<f32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1210,6 +1243,7 @@ impl eframe::App for App {
                     ShowcaseMode::PickLevels,
                     ShowcaseMode::Labels,
                     ShowcaseMode::Overlay,
+                    ShowcaseMode::PlaybackRuntime,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1736,6 +1770,14 @@ impl eframe::App for App {
             {
                 ctx.request_repaint();
             }
+            // ----- Playback runtime: advance time and request repaint -----
+            if self.mode == ShowcaseMode::PlaybackRuntime
+                && self.pb_mode == RuntimeMode::Playback
+            {
+                let dt = ctx.input(|i| i.stable_dt.min(1.0 / 15.0));
+                self.pb_time += dt;
+                ctx.request_repaint();
+            }
         });
     }
 }
@@ -1746,7 +1788,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 35] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 36] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::Performance,
@@ -1782,6 +1824,7 @@ impl App {
             ShowcaseMode::PickLevels,
             ShowcaseMode::Labels,
             ShowcaseMode::Overlay,
+            ShowcaseMode::PlaybackRuntime,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1882,6 +1925,7 @@ impl App {
             ShowcaseMode::PickLevels => !self.pl_built,
             ShowcaseMode::Labels => !self.lbl_built,
             ShowcaseMode::Overlay => !self.ovl_cloud_built,
+            ShowcaseMode::PlaybackRuntime => !self.pb_built,
             _ => false,
         };
         if !needs {
@@ -2190,6 +2234,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::PlaybackRuntime => {
+                showcase_36_playback_runtime::build_pb_scene(self, renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::new(0.0, 0.0, 0.0),
+                    distance: 18.0,
+                    orientation: glam::Quat::from_rotation_z(0.5)
+                        * glam::Quat::from_rotation_x(1.1),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2245,6 +2299,9 @@ impl App {
             ShowcaseMode::PickLevels => self.controls_pick_levels(ui),
             ShowcaseMode::Labels => self.controls_labels(ui),
             ShowcaseMode::Overlay => showcase_35_overlay::controls_overlay(self, ui),
+            ShowcaseMode::PlaybackRuntime => {
+                showcase_36_playback_runtime::controls_pb(self, ui, frame)
+            }
         }
     }
 
@@ -3649,6 +3706,55 @@ impl App {
             ShowcaseMode::Overlay => {
                 (Vec::new(), Some(BG_COLOR), LightingSettings::default(), 0, 0)
             }
+
+            ShowcaseMode::PlaybackRuntime => {
+                // Apply renderer settings and update deforming mesh.
+                let need_mesh_update = self.pb_mode == RuntimeMode::Playback
+                    || self.pb_grid_resolution != self.pb_last_grid_resolution;
+                if let Some(rs) = frame.wgpu_render_state() {
+                    let mut guard = rs.renderer.write();
+                    if let Some(renderer) =
+                        guard.callback_resources.get_mut::<ViewportRenderer>()
+                    {
+                        if need_mesh_update {
+                            if let Some(mesh_id) = self.pb_mesh_id {
+                                let mesh = showcase_36_playback_runtime::build_sine_grid(
+                                    self.pb_grid_resolution,
+                                    self.pb_time,
+                                );
+                                let _ = renderer.resources_mut().replace_mesh_data(
+                                    &rs.device,
+                                    mesh_id,
+                                    &mesh,
+                                );
+                                self.pb_last_grid_resolution = self.pb_grid_resolution;
+                            }
+                        }
+                        renderer.set_runtime_mode(self.pb_mode);
+                        renderer.set_performance_policy(self.pb_policy);
+                        if !self.pb_policy.allow_dynamic_resolution {
+                            renderer.set_render_scale(self.pb_manual_render_scale);
+                        }
+                        self.pb_last_stats = renderer.last_frame_stats();
+                    }
+                }
+
+                // Update rolling stats history.
+                self.pb_stats_history.push_back(self.pb_last_stats.total_frame_ms);
+                if self.pb_stats_history.len() > 60 {
+                    self.pb_stats_history.pop_front();
+                }
+
+                let items = showcase_36_playback_runtime::pb_scene_items(self);
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.5,
+                    sky_color: [1.0, 1.0, 1.0],
+                    ground_color: [1.0, 1.0, 1.0],
+                    ..LightingSettings::default()
+                };
+                let sg = self.pb_scene.version();
+                (items, Some(BG_COLOR), lighting, sg, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -4023,6 +4129,7 @@ impl App {
                 self.last_stats = renderer.last_frame_stats();
             }
         }
+        // PlaybackRuntime stats are updated inside the build_frame_data PlaybackRuntime arm.
 
         fd
     }
