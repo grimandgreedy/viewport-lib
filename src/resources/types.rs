@@ -1718,6 +1718,14 @@ pub struct ViewportGpuResources {
     /// Linear sampler for the glyph atlas texture.
     pub(crate) overlay_text_sampler: Option<wgpu::Sampler>,
 
+    // --- Dynamic resolution render target (lazily created) ---
+    /// Upscale pipeline: renders the scaled intermediate color texture to the surface.
+    pub(crate) dyn_res_upscale_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for the upscale pass (texture + sampler).
+    pub(crate) dyn_res_upscale_bgl: Option<wgpu::BindGroupLayout>,
+    /// Linear-clamp sampler for the upscale blit.
+    pub(crate) dyn_res_linear_sampler: Option<wgpu::Sampler>,
+
     // --- Runtime performance tracking ---
     /// Cumulative bytes of geometry data uploaded since the last `prepare()` reset.
     ///

@@ -353,19 +353,39 @@ impl ViewportRenderer {
         self.ensure_viewport_hdr(device, queue, vp_idx, w.max(1), h.max(1), ssaa_factor);
 
         if !frame.effects.post_process.enabled {
-            // LDR fallback: render directly to output_view.
+            // LDR fallback. When dynamic resolution is active and render_scale < 1.0,
+            // draw into a scaled intermediate texture and upscale-blit to output_view.
+            // Otherwise render directly to output_view.
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("ldr_encoder"),
             });
+
+            let use_dyn_res = self.performance_policy.allow_dynamic_resolution
+                && self.current_render_scale < 1.0;
+
+            if use_dyn_res {
+                let sw = ((w as f32 * self.current_render_scale) as u32).max(1);
+                let sh = ((h as f32 * self.current_render_scale) as u32).max(1);
+                self.ensure_dyn_res_target(device, vp_idx, [sw, sh], [w.max(1), h.max(1)]);
+            }
+
             {
                 let slot = &self.viewport_slots[vp_idx];
                 let slot_hdr = slot.hdr.as_ref().unwrap();
                 let camera_bg = &slot.camera_bind_group;
                 let grid_bg = &slot.grid_bind_group;
+                // Choose render target: dyn_res intermediate or directly output_view.
+                let (scene_color_view, scene_depth_view): (&wgpu::TextureView, &wgpu::TextureView) =
+                    if use_dyn_res {
+                        let dr = slot.dyn_res.as_ref().unwrap();
+                        (&dr.color_view, &dr.depth_view)
+                    } else {
+                        (output_view, &slot_hdr.outline_depth_view)
+                    };
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("ldr_render_pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: output_view,
+                        view: scene_color_view,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -379,7 +399,7 @@ impl ViewportRenderer {
                         depth_slice: None,
                     })],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &slot_hdr.outline_depth_view,
+                        view: scene_depth_view,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Clear(1.0),
                             store: wgpu::StoreOp::Discard,
@@ -495,6 +515,34 @@ impl ViewportRenderer {
                     }
                 }
             }
+
+            // Phase 3 : upscale blit from dyn_res intermediate to output_view.
+            if use_dyn_res {
+                let upscale_bg =
+                    &self.viewport_slots[vp_idx].dyn_res.as_ref().unwrap().upscale_bind_group;
+                let mut upscale_pass =
+                    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("dyn_res_upscale_pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: output_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                store: wgpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                if let Some(pipeline) = &self.resources.dyn_res_upscale_pipeline {
+                    upscale_pass.set_pipeline(pipeline);
+                    upscale_pass.set_bind_group(0, upscale_bg, &[]);
+                    upscale_pass.draw(0..3, 0..1);
+                }
+            }
+
             return encoder.finish();
         }
 

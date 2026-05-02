@@ -33,7 +33,7 @@ pub struct ShaderEntry {
     pub source: &'static str,
 }
 
-/// All 19 shaders embedded via `include_str!`.
+/// All 20 shaders embedded via `include_str!`.
 ///
 /// Order matches the filesystem order in `src/shaders/`.
 pub const SHADERS: &[ShaderEntry] = &[
@@ -52,6 +52,10 @@ pub const SHADERS: &[ShaderEntry] = &[
     ShaderEntry {
         name: "contact_shadow.wgsl",
         source: include_str!("../shaders/contact_shadow.wgsl"),
+    },
+    ShaderEntry {
+        name: "dyn_res_upscale.wgsl",
+        source: include_str!("../shaders/dyn_res_upscale.wgsl"),
     },
     ShaderEntry {
         name: "fxaa.wgsl",

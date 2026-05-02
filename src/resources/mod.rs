@@ -8,6 +8,8 @@ pub mod implicit;
 pub mod gpu_marching_cubes;
 /// IBL precomputation and environment map upload.
 pub mod environment;
+/// Dynamic resolution intermediate render target.
+pub(crate) mod dyn_res;
 mod extra_impls;
 mod highlight;
 mod init;

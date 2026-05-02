@@ -123,6 +123,9 @@ pub(crate) struct ViewportSlot {
     pub gizmo_index_count: u32,
 
     // --- Sub-object highlight (per-viewport, generation-cached) ---
+    /// Per-viewport dynamic resolution intermediate render target.
+    /// `None` when render_scale == 1.0 or not yet initialised.
+    pub dyn_res: Option<crate::resources::dyn_res::DynResTarget>,
     /// Cached GPU data for sub-object highlight rendering.
     /// `None` when no sub-object selection is active.
     pub sub_highlight: Option<crate::resources::SubHighlightGpuData>,
@@ -525,6 +528,7 @@ impl ViewportRenderer {
                 gizmo_index_count,
                 sub_highlight: None,
                 sub_highlight_generation: u64::MAX,
+                dyn_res: None,
             });
         }
     }
@@ -712,6 +716,30 @@ impl ViewportRenderer {
             .get(viewport_index)
             .map(|slot| &slot.grid_bind_group)
             .unwrap_or(&self.resources.grid_bind_group)
+    }
+
+    /// Ensure the dyn-res intermediate render target exists for `vp_idx` at the
+    /// given `scaled_size`, creating or recreating it when size changes.
+    ///
+    /// `surface_size` is the native output dimensions (used to size the upscale
+    /// blit correctly). `ensure_dyn_res_pipeline` is called automatically.
+    pub(crate) fn ensure_dyn_res_target(
+        &mut self,
+        device: &wgpu::Device,
+        vp_idx: usize,
+        scaled_size: [u32; 2],
+        surface_size: [u32; 2],
+    ) {
+        self.resources.ensure_dyn_res_pipeline(device);
+        let needs_create = match &self.viewport_slots[vp_idx].dyn_res {
+            None => true,
+            Some(dr) => dr.scaled_size != scaled_size || dr.surface_size != surface_size,
+        };
+        if needs_create {
+            let target =
+                self.resources.create_dyn_res_target(device, scaled_size, surface_size);
+            self.viewport_slots[vp_idx].dyn_res = Some(target);
+        }
     }
 
     /// Ensure per-viewport HDR state exists for `viewport_index` at dimensions `w`×`h`.

@@ -1,0 +1,179 @@
+//! Dynamic resolution render target for the LDR render path.
+//!
+//! When `render_scale < 1.0`, the scene is rendered into a scaled intermediate
+//! texture and then upscaled to the surface via bilinear filtering.
+
+use super::ViewportGpuResources;
+
+/// Per-viewport intermediate render target for dynamic resolution rendering.
+///
+/// Owned by the viewport slot; created or recreated whenever the render scale
+/// or surface size changes.
+pub(crate) struct DynResTarget {
+    /// Scaled color texture (render_scale × surface_size).
+    pub color_texture: wgpu::Texture,
+    /// View of `color_texture`.
+    pub color_view: wgpu::TextureView,
+    /// Depth texture matching the scaled resolution.
+    pub depth_texture: wgpu::Texture,
+    /// View of `depth_texture`.
+    pub depth_view: wgpu::TextureView,
+    /// Bind group for the upscale pass: color_texture + linear sampler.
+    pub upscale_bind_group: wgpu::BindGroup,
+    /// Dimensions of the intermediate target `[w, h]`.
+    pub scaled_size: [u32; 2],
+    /// Native surface dimensions this target was created for `[w, h]`.
+    pub surface_size: [u32; 2],
+}
+
+impl ViewportGpuResources {
+    /// Ensure the shared upscale pipeline and sampler exist, creating them on
+    /// first call. Idempotent.
+    pub(crate) fn ensure_dyn_res_pipeline(&mut self, device: &wgpu::Device) {
+        if self.dyn_res_upscale_pipeline.is_some() {
+            return;
+        }
+
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("dyn_res_upscale_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("dyn_res_linear_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("dyn_res_upscale_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/dyn_res_upscale.wgsl").into(),
+            ),
+        });
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("dyn_res_upscale_layout"),
+            bind_group_layouts: &[&bgl],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("dyn_res_upscale_pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: self.target_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        self.dyn_res_upscale_bgl = Some(bgl);
+        self.dyn_res_upscale_pipeline = Some(pipeline);
+        self.dyn_res_linear_sampler = Some(sampler);
+    }
+
+    /// Create a [`DynResTarget`] at `scaled_size`, bound for upscaling to
+    /// `surface_size`. The shared pipeline must already exist (call
+    /// [`ensure_dyn_res_pipeline`](Self::ensure_dyn_res_pipeline) first).
+    pub(crate) fn create_dyn_res_target(
+        &self,
+        device: &wgpu::Device,
+        scaled_size: [u32; 2],
+        surface_size: [u32; 2],
+    ) -> DynResTarget {
+        let [sw, sh] = scaled_size;
+
+        let color_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("dyn_res_color"),
+            size: wgpu::Extent3d { width: sw, height: sh, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.target_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("dyn_res_depth"),
+            size: wgpu::Extent3d { width: sw, height: sh, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth24Plus,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let bgl = self.dyn_res_upscale_bgl.as_ref().unwrap();
+        let sampler = self.dyn_res_linear_sampler.as_ref().unwrap();
+        let upscale_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("dyn_res_upscale_bg"),
+            layout: bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+        });
+
+        DynResTarget {
+            color_texture,
+            color_view,
+            depth_texture,
+            depth_view,
+            upscale_bind_group,
+            scaled_size,
+            surface_size,
+        }
+    }
+}

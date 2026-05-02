@@ -2087,6 +2087,9 @@ impl ViewportGpuResources {
             overlay_text_bgl: None,
             overlay_text_sampler: None,
             frame_upload_bytes: 0,
+            dyn_res_upscale_pipeline: None,
+            dyn_res_upscale_bgl: None,
+            dyn_res_linear_sampler: None,
         }
     }
 }
