@@ -319,7 +319,7 @@ impl ViewportGpuResources {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         item: &crate::renderer::VolumeItem,
-        clip_planes: &[crate::renderer::ClipPlane],
+        clip_objects: &[crate::renderer::ClipObject],
         // Multiplier applied to the computed step size (1.0 = normal, >1.0 = coarser/faster).
         step_scale_multiplier: f32,
     ) -> VolumeGpuData {
@@ -353,10 +353,15 @@ impl ViewportGpuResources {
 
         let mut clip_plane_data = [[0.0f32; 4]; 6];
         let mut num_clip = 0u32;
-        for cp in clip_planes.iter().filter(|c| c.enabled).take(6) {
-            clip_plane_data[num_clip as usize] =
-                [cp.normal[0], cp.normal[1], cp.normal[2], cp.distance];
-            num_clip += 1;
+        for obj in clip_objects.iter().filter(|o| o.enabled) {
+            if num_clip >= 6 {
+                break;
+            }
+            if let crate::renderer::ClipShape::Plane { normal, distance, .. } = obj.shape {
+                clip_plane_data[num_clip as usize] =
+                    [normal[0], normal[1], normal[2], distance];
+                num_clip += 1;
+            }
         }
 
         let mut uniform_data = [0u8; 304];

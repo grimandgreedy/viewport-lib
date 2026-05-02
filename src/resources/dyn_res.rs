@@ -11,11 +11,11 @@ use super::ViewportGpuResources;
 /// or surface size changes.
 pub(crate) struct DynResTarget {
     /// Scaled color texture (render_scale × surface_size).
-    pub color_texture: wgpu::Texture,
+    pub _color_texture: wgpu::Texture,
     /// View of `color_texture`.
     pub color_view: wgpu::TextureView,
     /// Depth texture matching the scaled resolution.
-    pub depth_texture: wgpu::Texture,
+    pub _depth_texture: wgpu::Texture,
     /// View of `depth_texture`.
     pub depth_view: wgpu::TextureView,
     /// Bind group for the upscale pass: color_texture + linear sampler.
@@ -167,9 +167,9 @@ impl ViewportGpuResources {
         });
 
         DynResTarget {
-            color_texture,
+            _color_texture: color_texture,
             color_view,
-            depth_texture,
+            _depth_texture: depth_texture,
             depth_view,
             upscale_bind_group,
             scaled_size,

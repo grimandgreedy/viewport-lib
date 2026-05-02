@@ -136,7 +136,7 @@ pub(crate) struct ImplicitUniformRaw {
 
 /// Per-draw GPU data for one [`GpuImplicitItem`].
 pub(crate) struct ImplicitGpuItem {
-    pub uniform_buf: wgpu::Buffer,
+    pub _uniform_buf: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
 }
 
@@ -277,6 +277,6 @@ impl ViewportGpuResources {
             }],
         });
 
-        ImplicitGpuItem { uniform_buf, bind_group }
+        ImplicitGpuItem { _uniform_buf: uniform_buf, bind_group }
     }
 }

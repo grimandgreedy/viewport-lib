@@ -10,7 +10,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use eframe::egui;
-use viewport_lib::{Aabb, FrameStats, Material, MeshId, PickAccelerator, scene::Scene};
+use viewport_lib::{Aabb, Material, MeshId, PickAccelerator, scene::Scene};
 
 use crate::App;
 

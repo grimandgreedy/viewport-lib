@@ -1879,7 +1879,7 @@ impl ViewportGpuResources {
             grid_bind_group,
             grid_bind_group_layout: grid_bgl,
             ground_plane_pipeline,
-            ground_plane_bgl,
+            _ground_plane_bgl: ground_plane_bgl,
             ground_plane_uniform_buf,
             ground_plane_bind_group,
             overlay_bind_group_layout: overlay_bgl,

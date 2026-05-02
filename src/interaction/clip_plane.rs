@@ -127,7 +127,7 @@ pub fn plane_from_axis_preset(axis: ClipAxis, distance: f32) -> ClipObject {
 /// Compute the intersection point of a ray with a plane.
 ///
 /// The plane equation used throughout this module is `dot(p, normal) + distance = 0`,
-/// matching [`ClipPlane`].
+/// matching [`ClipShape::Plane`](crate::renderer::types::ClipShape::Plane).
 ///
 /// Returns `Some(point)` if the ray hits the plane in front of the origin,
 /// `None` if the ray is parallel to the plane or the intersection is behind it.
@@ -171,9 +171,9 @@ pub(crate) struct ClipPlaneOverlay {
     /// RGBA color for the border edges and normal indicator line.
     pub border_color: [f32; 4],
     /// Whether the plane handle is hovered.
-    pub hovered: bool,
+    pub _hovered: bool,
     /// Whether the plane is actively being dragged.
-    pub active: bool,
+    pub _active: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -308,7 +308,7 @@ pub enum ClipPlaneResult {
 /// Per-frame incremental change to apply to a clip plane.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClipPlaneDelta {
-    /// Change in signed distance along the normal. Add to `ClipPlane::distance`.
+    /// Change in signed distance along the normal. Add to the plane's `distance` field.
     pub distance_delta: f32,
     /// New normal orientation. Only set during Orient sessions; `None` during Distance.
     pub normal_override: Option<[f32; 3]>,
@@ -515,6 +515,7 @@ impl ClipPlaneController {
     ///
     /// Returns `None` if the plane is not enabled or the shape is not a Plane variant.
     /// Used internally by the renderer when the `ClipObject` has a color set.
+    #[allow(dead_code)]
     pub(crate) fn overlay(&self, ctx: &ClipPlaneContext) -> Option<ClipPlaneOverlay> {
         if !ctx.plane.enabled {
             return None;
@@ -553,8 +554,8 @@ impl ClipPlaneController {
             extent: ctx.plane_extent,
             fill_color,
             border_color,
-            hovered,
-            active,
+            _hovered: hovered,
+            _active: active,
         })
     }
 

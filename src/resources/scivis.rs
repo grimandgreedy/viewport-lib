@@ -1844,7 +1844,7 @@ impl ViewportGpuResources {
         };
 
         ScreenImageGpuData {
-            uniform_buf,
+            _uniform_buf: uniform_buf,
             _texture: texture,
             bind_group,
             _depth_texture: depth_texture_opt,
@@ -1981,7 +1981,7 @@ impl ViewportGpuResources {
         });
 
         ScreenImageGpuData {
-            uniform_buf,
+            _uniform_buf: uniform_buf,
             _texture: texture,
             bind_group,
             _depth_texture: None,

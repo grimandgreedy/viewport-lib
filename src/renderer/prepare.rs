@@ -1011,30 +1011,7 @@ impl ViewportRenderer {
         self.volume_gpu_data.clear();
         if !frame.scene.volumes.is_empty() {
             resources.ensure_volume_pipeline(device);
-            // Extract ClipPlane structs from clip_objects for volume cap fill support.
-            let clip_planes_for_vol: Vec<crate::renderer::types::ClipPlane> = frame
-                .effects
-                .clip_objects
-                .iter()
-                .filter(|o| o.enabled)
-                .filter_map(|o| {
-                    if let ClipShape::Plane {
-                        normal,
-                        distance,
-                        cap_color,
-                    } = o.shape
-                    {
-                        Some(crate::renderer::types::ClipPlane {
-                            normal,
-                            distance,
-                            enabled: true,
-                            cap_color,
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+            let clip_objects_for_vol = &frame.effects.clip_objects;
             // Phase 5: under budget pressure with allow_volume_quality_reduction, double the
             // step size (half the sample count) to reduce GPU raymarch cost.
             let vol_step_multiplier =
@@ -1050,7 +1027,7 @@ impl ViewportRenderer {
                     device,
                     queue,
                     item,
-                    &clip_planes_for_vol,
+                    clip_objects_for_vol,
                     vol_step_multiplier,
                 );
                 self.volume_gpu_data.push(gpu);
@@ -1833,8 +1810,8 @@ impl ViewportRenderer {
                     extent: obj.extent,
                     fill_color,
                     border_color,
-                    hovered,
-                    active,
+                    _hovered: hovered,
+                    _active: active,
                 };
                 clip_plane_fill_buffers.push(
                     self.resources

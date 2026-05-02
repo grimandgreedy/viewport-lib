@@ -65,7 +65,7 @@ impl App {
 
         let scale = self.param_vis_scale;
 
-        let mut add_row = |scene: &mut Scene,
+        let add_row = |scene: &mut Scene,
                            renderer: &mut ViewportRenderer,
                            mesh_data: &MeshData,
                            z: f32,

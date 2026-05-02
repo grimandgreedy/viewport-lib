@@ -1078,7 +1078,7 @@ pub struct PolylineGpuData {
 /// Per-frame GPU data for one screen-space image overlay, created in `prepare()` (Phase 10B/12).
 pub struct ScreenImageGpuData {
     /// Uniform buffer: `ScreenImageUniform` (32 bytes) with NDC extents and alpha.
-    pub(crate) uniform_buf: wgpu::Buffer,
+    pub(crate) _uniform_buf: wgpu::Buffer,
     /// Uploaded RGBA8 texture for this image (recreated each frame).
     pub(crate) _texture: wgpu::Texture,
     /// Bind group (group 0): uniform + colour texture + sampler.
@@ -1749,7 +1749,7 @@ pub struct ViewportGpuResources {
     /// Full-screen ground plane render pipeline (alpha blending, LessEqual depth).
     pub(crate) ground_plane_pipeline: wgpu::RenderPipeline,
     /// Bind group layout for the ground plane (binding 0: uniform, 1: shadow depth, 2: comparison sampler).
-    pub(crate) ground_plane_bgl: wgpu::BindGroupLayout,
+    pub(crate) _ground_plane_bgl: wgpu::BindGroupLayout,
     /// Uniform buffer for GroundPlaneUniform (256 bytes, written each frame in prepare()).
     pub(crate) ground_plane_uniform_buf: wgpu::Buffer,
     /// Bind group for the ground plane pass (rebuilt when shadow atlas changes).

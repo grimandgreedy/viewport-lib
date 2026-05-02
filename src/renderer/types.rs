@@ -35,22 +35,6 @@ pub(crate) struct InstancedBatch {
 
 /// A world-space half-space clipping plane for section views.
 ///
-/// A fragment at world position `p` is discarded if `dot(p, normal) + distance < 0`.
-///
-/// This type is kept `pub(crate)` for internal use by `ClipPlaneController` session
-/// storage and `volumes.rs` cap fill. Public API uses [`ClipObject`] instead.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct ClipPlane {
-    /// Unit normal of the clip plane (pointing into the preserved half-space).
-    pub normal: [f32; 3],
-    /// Signed distance from the origin along `normal`.
-    pub distance: f32,
-    /// Whether this plane is active. Inactive planes are ignored.
-    pub enabled: bool,
-    /// Cap fill color override. `None` = use the clipped object's material base_color.
-    pub cap_color: Option<[f32; 4]>,
-}
-
 /// The shape of a [`ClipObject`].
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -66,13 +50,20 @@ pub enum ClipShape {
     },
     /// Oriented box : fragments inside the box are kept.
     Box {
+        /// World-space center of the box.
         center: [f32; 3],
+        /// Half-extents along each local axis.
         half_extents: [f32; 3],
         /// 3×3 rotation matrix columns.
         orientation: [[f32; 3]; 3],
     },
     /// Sphere : fragments inside the sphere are kept.
-    Sphere { center: [f32; 3], radius: f32 },
+    Sphere {
+        /// World-space center of the sphere.
+        center: [f32; 3],
+        /// Radius of the sphere.
+        radius: f32,
+    },
 }
 
 /// A clip object : defines a clipping region and optional visual boundary rendering.
@@ -90,6 +81,7 @@ pub enum ClipShape {
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ClipObject {
+    /// The clipping shape (plane, box, or sphere).
     pub shape: ClipShape,
     /// RGBA boundary color. `None` = no visual drawn.
     pub color: Option<[f32; 4]>,
@@ -2054,8 +2046,11 @@ impl Default for OverlayImageItem {
 /// Anchor position for a [`LoadingBarItem`] overlay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LoadingBarAnchor {
+    /// Anchored at the top center of the viewport.
     TopCenter,
+    /// Anchored at the center of the viewport.
     Center,
+    /// Anchored at the bottom center of the viewport (default).
     #[default]
     BottomCenter,
 }

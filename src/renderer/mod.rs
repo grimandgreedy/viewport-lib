@@ -14,7 +14,6 @@ pub mod shader_hashes;
 mod shadows;
 pub mod stats;
 
-pub(crate) use self::types::ClipPlane;
 pub use self::types::{
     CameraFrame, CameraFrustumItem, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane,
