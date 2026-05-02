@@ -18,6 +18,8 @@ pub enum ScrollUnits {
     Lines,
     /// Delta in physical pixels.
     Pixels,
+    /// Delta in viewport pages.
+    Pages,
 }
 
 /// A framework-agnostic event delivered to the viewport input pipeline.
@@ -78,4 +80,23 @@ pub enum ViewportEvent {
     /// ## Platform-specific
     /// Only emitted on macOS (and iOS). Silently unused on Windows and Linux.
     TrackpadRotate(f32),
+}
+
+impl ViewportEvent {
+    /// Convert an egui mouse wheel event into a viewport wheel event.
+    ///
+    /// Preserves both scroll axes and maps egui's unit metadata onto
+    /// [`ScrollUnits`] so mouse wheels and trackpads keep their native scale.
+    #[cfg(feature = "egui")]
+    pub fn from_egui_mouse_wheel(unit: egui::MouseWheelUnit, delta: egui::Vec2) -> Self {
+        let units = match unit {
+            egui::MouseWheelUnit::Line => ScrollUnits::Lines,
+            egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
+            egui::MouseWheelUnit::Page => ScrollUnits::Pages,
+        };
+        Self::Wheel {
+            delta: glam::Vec2::new(delta.x, delta.y),
+            units,
+        }
+    }
 }

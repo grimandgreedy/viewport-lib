@@ -23,12 +23,14 @@ fontdue = "0.9"
 thiserror = "2.0"
 tracing = "0.1"
 serde = { version = "1.0", features = ["derive"], optional = true }
+egui = { version = "=0.33.3", optional = true }
 # gtk4 is optional because it requires system libraries (libgtk-4-dev / brew install gtk4).
 # Build the gtk4 example with: cargo run --release --example gtk4-viewport --features gtk4-example
 gtk4 = { version = "0.9", optional = true }
 
 [features]
 default = ["serde"]
+egui = ["dep:egui"]
 gtk4-example = ["gtk4"]
 
 [dev-dependencies]
@@ -66,6 +68,7 @@ path = "examples/winit_showcase/main.rs"
 [[example]]
 name = "eframe-minimal"
 path = "examples/eframe_minimal/main.rs"
+required-features = ["egui"]
 
 [[example]]
 name = "eframe-testing"

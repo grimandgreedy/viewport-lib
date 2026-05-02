@@ -10,7 +10,7 @@ use super::action_frame::{ActionFrame, NavigationActions, ResolvedActionState};
 use super::binding::{KeyCode, Modifiers, MouseButton};
 use super::context::ViewportContext;
 use super::event::{ButtonState, ScrollUnits, ViewportEvent};
-use super::preset::{BindingPreset, viewport_all_bindings, viewport_primitives_bindings};
+use super::preset::{viewport_all_bindings, viewport_primitives_bindings, BindingPreset};
 use super::viewport_binding::{ViewportBinding, ViewportGesture};
 
 /// Pixels-per-line conversion for scroll delta normalisation.
@@ -140,6 +140,7 @@ impl ViewportInput {
                 let scale = match units {
                     ScrollUnits::Lines => PIXELS_PER_LINE,
                     ScrollUnits::Pixels => 1.0,
+                    ScrollUnits::Pages => self.ctx.viewport_size[1].max(1.0),
                 };
                 // Only accumulate if viewport is hovered
                 if self.ctx.hovered {

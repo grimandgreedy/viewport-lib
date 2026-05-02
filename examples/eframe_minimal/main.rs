@@ -9,9 +9,9 @@ mod viewport_callback;
 
 use eframe::egui;
 use viewport_lib::{
-    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, ManipResult, MeshId,
-    ManipulationContext, ManipulationController, Material, OrbitCameraController, SceneFrame,
-    SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
+    primitives, ButtonState, Camera, CameraFrame, FrameData, LightingSettings, ManipResult,
+    ManipulationContext, ManipulationController, Material, MeshId, OrbitCameraController,
+    SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent, ViewportRenderer,
 };
 
 fn main() -> eframe::Result {
@@ -178,11 +178,9 @@ impl eframe::App for App {
                                 }
                             }
                         }
-                        egui::Event::MouseWheel { delta, .. } => {
-                            self.controller.push_event(ViewportEvent::Wheel {
-                                delta: glam::Vec2::new(delta.x, delta.y),
-                                units: ScrollUnits::Pixels,
-                            });
+                        egui::Event::MouseWheel { unit, delta, .. } => {
+                            self.controller
+                                .push_event(ViewportEvent::from_egui_mouse_wheel(*unit, *delta));
                         }
                         _ => {}
                     }
