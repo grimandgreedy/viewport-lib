@@ -18,6 +18,49 @@ pub enum RuntimeMode {
     Capture,
 }
 
+/// Controls what quality reductions the viewport is allowed to apply under load.
+///
+/// Set once via [`crate::ViewportRenderer::set_performance_policy`]. The internal
+/// adaptation controller reads `target_fps` and adjusts render scale within
+/// `[min_render_scale, max_render_scale]` when `allow_dynamic_resolution` is true.
+///
+/// Pass-specific flags (`allow_shadow_reduction`, etc.) are accepted but act as
+/// no-ops until the relevant passes support quality levels (Phase 5).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PerformancePolicy {
+    /// Target frames per second. `None` means uncapped; `missed_budget` is always `false`.
+    pub target_fps: Option<f32>,
+    /// Lower bound for dynamic render scale (e.g. 0.5 = half resolution).
+    pub min_render_scale: f32,
+    /// Upper bound for dynamic render scale (1.0 = native).
+    pub max_render_scale: f32,
+    /// Allow the viewport to adjust render scale automatically when budget is exceeded.
+    ///
+    /// When `false`, the internal controller is inactive and render scale can be
+    /// set manually via [`crate::ViewportRenderer::set_render_scale`].
+    pub allow_dynamic_resolution: bool,
+    /// Allow the viewport to reduce shadow quality under load. No-op until Phase 5.
+    pub allow_shadow_reduction: bool,
+    /// Allow the viewport to reduce volume raymarch quality under load. No-op until Phase 5.
+    pub allow_volume_quality_reduction: bool,
+    /// Allow the viewport to throttle non-essential effect passes under load. No-op until Phase 5.
+    pub allow_effect_throttling: bool,
+}
+
+impl Default for PerformancePolicy {
+    fn default() -> Self {
+        Self {
+            target_fps: None,
+            min_render_scale: 0.5,
+            max_render_scale: 1.0,
+            allow_dynamic_resolution: false,
+            allow_shadow_reduction: false,
+            allow_volume_quality_reduction: false,
+            allow_effect_throttling: false,
+        }
+    }
+}
+
 /// Per-frame rendering statistics returned by [`crate::ViewportRenderer::prepare`].
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FrameStats {
@@ -49,13 +92,14 @@ pub struct FrameStats {
     pub total_frame_ms: f32,
     /// Current internal render scale (1.0 = native resolution).
     ///
-    /// Always 1.0 until Phase 3 (dynamic resolution render target) is implemented.
+    /// Reflects the value tracked by the adaptation controller. Values below 1.0
+    /// do not reduce visual resolution until Phase 3 (dynamic resolution render
+    /// target) is implemented, but can be read to observe controller behaviour.
     pub render_scale: f32,
     /// True if the last frame exceeded the target frame budget.
     ///
-    /// Requires a target FPS to be set via
-    /// [`crate::ViewportRenderer::set_target_fps`]. Always `false` when no
-    /// target is configured.
+    /// Requires `target_fps` to be set in the [`PerformancePolicy`]. Always
+    /// `false` when no target is configured.
     pub missed_budget: bool,
     /// Bytes of geometry data uploaded to the GPU since the previous
     /// `prepare()` call.
@@ -92,5 +136,14 @@ mod tests {
     #[test]
     fn test_runtime_mode_default_is_interactive() {
         assert_eq!(RuntimeMode::default(), RuntimeMode::Interactive);
+    }
+
+    #[test]
+    fn test_performance_policy_default() {
+        let p = PerformancePolicy::default();
+        assert!(p.target_fps.is_none());
+        assert!(!p.allow_dynamic_resolution);
+        assert!(p.min_render_scale <= p.max_render_scale);
+        assert_eq!(p.max_render_scale, 1.0);
     }
 }

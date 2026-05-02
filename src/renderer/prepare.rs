@@ -2500,10 +2500,29 @@ impl ViewportRenderer {
         self.prepare_viewport_internal(device, queue, frame, &viewport_fx);
 
         let cpu_prepare_ms = prepare_start.elapsed().as_secs_f32() * 1000.0;
-        let missed_budget = self
-            .target_fps
-            .map(|fps| total_frame_ms > 1000.0 / fps)
+
+        let policy = self.performance_policy;
+        let budget_ms = policy.target_fps.map(|fps| 1000.0 / fps);
+        let missed_budget = budget_ms
+            .map(|b| total_frame_ms > b)
             .unwrap_or(false);
+
+        // Adaptation controller: adjust render scale within policy bounds when enabled.
+        // Uses total_frame_ms from the *previous* frame so the controller reacts one
+        // frame after the overrun, which is the earliest it can have the measurement.
+        if policy.allow_dynamic_resolution {
+            if let Some(budget) = budget_ms {
+                if total_frame_ms > budget {
+                    // Over budget: step down quickly.
+                    self.current_render_scale =
+                        (self.current_render_scale - 0.1).max(policy.min_render_scale);
+                } else if total_frame_ms < budget * 0.8 {
+                    // Comfortably under budget: recover slowly to avoid oscillation.
+                    self.current_render_scale =
+                        (self.current_render_scale + 0.05).min(policy.max_render_scale);
+                }
+            }
+        }
 
         self.last_prepare_instant = Some(prepare_start);
         self.frame_counter = self.frame_counter.wrapping_add(1);
@@ -2512,7 +2531,7 @@ impl ViewportRenderer {
             cpu_prepare_ms,
             gpu_frame_ms: None,
             total_frame_ms,
-            render_scale: 1.0,
+            render_scale: self.current_render_scale,
             missed_budget,
             upload_bytes,
             ..self.last_stats

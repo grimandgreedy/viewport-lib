@@ -195,8 +195,13 @@ pub struct ViewportRenderer {
     last_cascade0_shadow_mat: glam::Mat4,
     /// Current runtime mode controlling internal default behavior.
     runtime_mode: crate::renderer::stats::RuntimeMode,
-    /// Target FPS used to compute `FrameStats::missed_budget`. `None` disables budget tracking.
-    target_fps: Option<f32>,
+    /// Active performance policy: target FPS, render scale bounds, and permitted reductions.
+    performance_policy: crate::renderer::stats::PerformancePolicy,
+    /// Current render scale tracked by the adaptation controller (or set manually).
+    ///
+    /// Clamped to `[policy.min_render_scale, policy.max_render_scale]`.
+    /// Reported in `FrameStats::render_scale` each frame.
+    current_render_scale: f32,
     /// Instant recorded at the start of the most recent `prepare()` call.
     /// Used to compute `total_frame_ms` on the following frame.
     last_prepare_instant: Option<std::time::Instant>,
@@ -247,7 +252,8 @@ impl ViewportRenderer {
             compute_filter_results: Vec::new(),
             last_cascade0_shadow_mat: glam::Mat4::IDENTITY,
             runtime_mode: crate::renderer::stats::RuntimeMode::Interactive,
-            target_fps: None,
+            performance_policy: crate::renderer::stats::PerformancePolicy::default(),
+            current_render_scale: 1.0,
             last_prepare_instant: None,
             frame_counter: 0,
         }
@@ -278,12 +284,49 @@ impl ViewportRenderer {
         self.runtime_mode
     }
 
+    /// Set the performance policy controlling target FPS, render scale bounds,
+    /// and permitted quality reductions.
+    ///
+    /// The internal adaptation controller activates when
+    /// `policy.allow_dynamic_resolution` is `true` and `policy.target_fps` is
+    /// `Some`. It adjusts `render_scale` within `[min_render_scale,
+    /// max_render_scale]` each frame based on `total_frame_ms`.
+    pub fn set_performance_policy(
+        &mut self,
+        policy: crate::renderer::stats::PerformancePolicy,
+    ) {
+        self.performance_policy = policy;
+        // Clamp current scale into the new bounds immediately.
+        self.current_render_scale = self.current_render_scale.clamp(
+            policy.min_render_scale,
+            policy.max_render_scale,
+        );
+    }
+
+    /// Return the active performance policy.
+    pub fn performance_policy(&self) -> crate::renderer::stats::PerformancePolicy {
+        self.performance_policy
+    }
+
+    /// Manually set the render scale.
+    ///
+    /// Effective when `performance_policy.allow_dynamic_resolution` is `false`.
+    /// When dynamic resolution is enabled the adaptation controller overrides
+    /// this value each frame.
+    ///
+    /// The value is clamped to `[policy.min_render_scale, policy.max_render_scale]`.
+    pub fn set_render_scale(&mut self, scale: f32) {
+        self.current_render_scale = scale.clamp(
+            self.performance_policy.min_render_scale,
+            self.performance_policy.max_render_scale,
+        );
+    }
+
     /// Set the target frame rate used to compute [`FrameStats::missed_budget`].
     ///
-    /// When `Some(fps)`, `missed_budget` is set to `true` if the frame interval
-    /// exceeds `1000 / fps` milliseconds. `None` disables budget tracking.
+    /// Convenience wrapper that updates `performance_policy.target_fps`.
     pub fn set_target_fps(&mut self, fps: Option<f32>) {
-        self.target_fps = fps;
+        self.performance_policy.target_fps = fps;
     }
 
     /// Mutable access to the underlying GPU resources (e.g. for mesh uploads).
