@@ -123,6 +123,11 @@ pub struct FrameStats {
     /// via `upload_mesh_data` / `upload_mesh`. Uniform buffer writes are not
     /// counted.
     pub upload_bytes: u64,
+    /// True when GPU-driven culling is active this frame.
+    ///
+    /// False when the device does not support `INDIRECT_FIRST_INSTANCE` or
+    /// culling has been disabled via `disable_gpu_driven_culling()`.
+    pub gpu_culling_active: bool,
 }
 
 #[cfg(test)]
@@ -145,6 +150,7 @@ mod tests {
         assert_eq!(stats.render_scale, 0.0);
         assert!(!stats.missed_budget);
         assert_eq!(stats.upload_bytes, 0);
+        assert!(!stats.gpu_culling_active);
     }
 
     #[test]

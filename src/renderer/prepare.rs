@@ -1072,6 +1072,7 @@ impl ViewportRenderer {
                 instanced_batches: instanced_batch_count,
                 triangles_submitted: triangles,
                 shadow_draw_calls: 0, // Updated below in shadow pass.
+                gpu_culling_active: self.gpu_culling_enabled,
                 ..self.last_stats
             };
         }
