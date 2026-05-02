@@ -352,6 +352,30 @@ impl ViewportRenderer {
         let ssaa_factor = frame.effects.post_process.ssaa_factor.max(1);
         self.ensure_viewport_hdr(device, queue, vp_idx, w.max(1), h.max(1), ssaa_factor);
 
+        // Phase 4 : lazy-initialize GPU timestamp resources on first render call when supported.
+        if self.ts_query_set.is_none()
+            && device.features().contains(wgpu::Features::TIMESTAMP_QUERY)
+        {
+            self.ts_query_set = Some(device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("ts_query_set"),
+                ty: wgpu::QueryType::Timestamp,
+                count: 2,
+            }));
+            self.ts_resolve_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("ts_resolve_buf"),
+                size: 16,
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            }));
+            self.ts_staging_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("ts_staging_buf"),
+                size: 16,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            }));
+            self.ts_period = queue.get_timestamp_period();
+        }
+
         if !frame.effects.post_process.enabled {
             // LDR fallback. When dynamic resolution is active and render_scale < 1.0,
             // draw into a scaled intermediate texture and upscale-blit to output_view.
@@ -382,6 +406,13 @@ impl ViewportRenderer {
                     } else {
                         (output_view, &slot_hdr.outline_depth_view)
                     };
+                let ts_writes = self.ts_query_set.as_ref().map(|qs| {
+                    wgpu::RenderPassTimestampWrites {
+                        query_set: qs,
+                        beginning_of_pass_write_index: Some(0),
+                        end_of_pass_write_index: Some(1),
+                    }
+                });
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("ldr_render_pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -406,7 +437,7 @@ impl ViewportRenderer {
                         }),
                         stencil_ops: None,
                     }),
-                    timestamp_writes: None,
+                    timestamp_writes: ts_writes,
                     occlusion_query_set: None,
                 });
                 emit_draw_calls!(
@@ -514,6 +545,17 @@ impl ViewportRenderer {
                         }
                     }
                 }
+            }
+
+            // Phase 4 : resolve timestamp queries -> staging buffer.
+            if let (Some(qs), Some(res_buf), Some(stg_buf)) = (
+                self.ts_query_set.as_ref(),
+                self.ts_resolve_buf.as_ref(),
+                self.ts_staging_buf.as_ref(),
+            ) {
+                encoder.resolve_query_set(qs, 0..2, res_buf, 0);
+                encoder.copy_buffer_to_buffer(res_buf, 0, stg_buf, 0, 16);
+                self.ts_needs_readback = true;
             }
 
             // Phase 3 : upscale blit from dyn_res intermediate to output_view.
@@ -717,6 +759,13 @@ impl ViewportRenderer {
                 a: bg_color[3] as f64,
             };
 
+            let hdr_ts_writes = self.ts_query_set.as_ref().map(|qs| {
+                wgpu::RenderPassTimestampWrites {
+                    query_set: qs,
+                    beginning_of_pass_write_index: Some(0),
+                    end_of_pass_write_index: Some(1),
+                }
+            });
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("hdr_scene_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -739,7 +788,7 @@ impl ViewportRenderer {
                         store: wgpu::StoreOp::Store,
                     }),
                 }),
-                timestamp_writes: None,
+                timestamp_writes: hdr_ts_writes,
                 occlusion_query_set: None,
             });
 
@@ -1883,6 +1932,17 @@ impl ViewportRenderer {
                     }
                 }
             }
+        }
+
+        // Phase 4 : resolve timestamp queries -> staging buffer (HDR path).
+        if let (Some(qs), Some(res_buf), Some(stg_buf)) = (
+            self.ts_query_set.as_ref(),
+            self.ts_resolve_buf.as_ref(),
+            self.ts_staging_buf.as_ref(),
+        ) {
+            encoder.resolve_query_set(qs, 0..2, res_buf, 0);
+            encoder.copy_buffer_to_buffer(res_buf, 0, stg_buf, 0, 16);
+            self.ts_needs_readback = true;
         }
 
         encoder.finish()

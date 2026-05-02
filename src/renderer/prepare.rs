@@ -2485,6 +2485,37 @@ impl ViewportRenderer {
     ) -> crate::renderer::stats::FrameStats {
         let prepare_start = std::time::Instant::now();
 
+        // Phase 4 : read back GPU timestamps from the previous frame, if available.
+        // By the time prepare() is called, the previous frame's queue.submit() has
+        // already happened, so it is safe to initiate the map here.
+        if self.ts_needs_readback {
+            if let Some(ref stg_buf) = self.ts_staging_buf {
+                let (tx, rx) = std::sync::mpsc::channel::<Result<(), wgpu::BufferAsyncError>>();
+                stg_buf.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                    let _ = tx.send(r);
+                });
+                // Non-blocking poll: flush any completed callbacks. GPU work from the
+                // previous frame is almost certainly done by the time CPU reaches here.
+                device
+                    .poll(wgpu::PollType::Wait {
+                        submission_index: None,
+                        timeout: Some(std::time::Duration::from_millis(100)),
+                    })
+                    .ok();
+                if rx.try_recv().unwrap_or(Err(wgpu::BufferAsyncError)).is_ok() {
+                    let data = stg_buf.slice(..).get_mapped_range();
+                    let t0 = u64::from_le_bytes(data[0..8].try_into().unwrap());
+                    let t1 = u64::from_le_bytes(data[8..16].try_into().unwrap());
+                    drop(data);
+                    // ts_period is nanoseconds/tick; convert delta to milliseconds.
+                    let gpu_ms = t1.saturating_sub(t0) as f32 * self.ts_period / 1_000_000.0;
+                    self.last_stats.gpu_frame_ms = Some(gpu_ms);
+                }
+                stg_buf.unmap();
+            }
+            self.ts_needs_readback = false;
+        }
+
         // Wall-clock duration since the previous prepare() call approximates the frame interval.
         let total_frame_ms = self
             .last_prepare_instant
@@ -2529,7 +2560,9 @@ impl ViewportRenderer {
 
         let stats = crate::renderer::stats::FrameStats {
             cpu_prepare_ms,
-            gpu_frame_ms: None,
+            // gpu_frame_ms is updated by the timestamp readback above when available;
+            // propagate the most recent value from last_stats.
+            gpu_frame_ms: self.last_stats.gpu_frame_ms,
             total_frame_ms,
             render_scale: self.current_render_scale,
             missed_budget,

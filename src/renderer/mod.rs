@@ -210,6 +210,19 @@ pub struct ViewportRenderer {
     last_prepare_instant: Option<std::time::Instant>,
     /// Frame counter incremented each `prepare()` call. Used for picking throttle in Playback mode.
     frame_counter: u64,
+
+    // --- Phase 4 : GPU timestamp queries ---
+    /// Timestamp query set with 2 entries (scene-pass begin + end).
+    /// `None` when `TIMESTAMP_QUERY` is unavailable or not yet initialized.
+    ts_query_set: Option<wgpu::QuerySet>,
+    /// Resolve buffer: 2 × u64, GPU-only (`QUERY_RESOLVE | COPY_SRC`).
+    ts_resolve_buf: Option<wgpu::Buffer>,
+    /// Staging buffer: 2 × u64, CPU-readable (`COPY_DST | MAP_READ`).
+    ts_staging_buf: Option<wgpu::Buffer>,
+    /// Nanoseconds per GPU timestamp tick, from `queue.get_timestamp_period()`.
+    ts_period: f32,
+    /// Whether the staging buffer holds unread timestamp data from the previous frame.
+    ts_needs_readback: bool,
 }
 
 impl ViewportRenderer {
@@ -259,6 +272,11 @@ impl ViewportRenderer {
             current_render_scale: 1.0,
             last_prepare_instant: None,
             frame_counter: 0,
+            ts_query_set: None,
+            ts_resolve_buf: None,
+            ts_staging_buf: None,
+            ts_period: 1.0,
+            ts_needs_readback: false,
         }
     }
 

@@ -80,11 +80,14 @@ pub struct FrameStats {
     pub shadow_draw_calls: u32,
     /// CPU time spent in `prepare()`, in milliseconds.
     pub cpu_prepare_ms: f32,
-    /// GPU frame time in milliseconds, if timestamp queries are available.
+    /// GPU scene-pass time in milliseconds, if timestamp queries are available.
     ///
-    /// Note: this reflects the *previous* frame's GPU cost due to async
-    /// readback; the value lags by one frame. Always `None` until Phase 4
-    /// (GPU timestamp queries) is implemented.
+    /// Measured with `TIMESTAMP_QUERY` around the main scene render pass.
+    /// `None` on backends that do not support `TIMESTAMP_QUERY` (e.g. WebGL).
+    ///
+    /// Note: this value reflects the *previous* frame's GPU cost due to async
+    /// readback. The value lags by one frame and should not be used by the
+    /// adaptation controller across mode transitions.
     pub gpu_frame_ms: Option<f32>,
     /// Wall-clock duration since the previous `prepare()` call, in milliseconds.
     ///
@@ -93,8 +96,8 @@ pub struct FrameStats {
     /// Current internal render scale (1.0 = native resolution).
     ///
     /// Reflects the value tracked by the adaptation controller. Values below 1.0
-    /// do not reduce visual resolution until Phase 3 (dynamic resolution render
-    /// target) is implemented, but can be read to observe controller behaviour.
+    /// cause the scene to render into a scaled intermediate texture that is
+    /// bilinearly upscaled to the surface (requires `allow_dynamic_resolution`).
     pub render_scale: f32,
     /// True if the last frame exceeded the target frame budget.
     ///
