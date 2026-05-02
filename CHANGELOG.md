@@ -1,4 +1,32 @@
 # Changelog
+## [0.12.0]
+
+### Performance
+- Arc-backed surface submission: `SurfaceSubmission::Flat` now holds `Arc<[SceneRenderItem]>` instead of `Vec`; per-frame cost for a static scene drops from a full deep-copy (~150 MB/frame at 1M objects) to a single atomic refcount increment. New `SceneFrame::from_shared_items` constructs a frame directly from a caller-owned `Arc` with no allocation.
+- Async scene build: large scene construction runs on a background thread; the UI thread stays live during the build. Completion is delivered via `mpsc::channel::try_recv`. A `LoadingBarItem` overlay drives a live progress bar fed by an `Arc<AtomicU32>` counter incremented every 10 000 objects.
+- Parallel BVH construction: `build_bvh_node` uses `rayon::join` for subtrees above 1 024 entries, cutting build time ~8x on multi-core hardware (~3 s -> ~400 ms for 1M objects)
+
+### Features
+- GPU-driven culling: compute cull pass replaces the CPU BVH instanced culling path
+  - `cull_instances` compute shader tests per-instance world-space AABBs against the camera frustum; visible instances are compacted into a visibility index buffer via atomic slot claims
+  - `write_indirect_args` compute shader writes one `DrawIndexedIndirect` entry per batch and resets atomic counters for the next frame
+  - Main pass and OIT pass use `draw_indexed_indirect`; vertex shaders read through the visibility index buffer via a `vs_main_cull` entry point
+  - Shadow cascade extension: each cascade gets its own GPU cull dispatch (per-cascade frustum, per-cascade visibility buffer) and indirect draw; the CPU per-item frustum loop in the instanced shadow path is replaced
+  - Automatic activation: GPU culling is on by default when the device supports `INDIRECT_FIRST_INSTANCE`; silent fallback to direct draw on devices that do not
+  - `disable_gpu_driven_culling()` / `enable_gpu_driven_culling()` runtime toggle on `ViewportRenderer`
+  - `FrameStats::gpu_culling_active`: reports which draw path ran each frame
+- Showcase 3 (Performance at Scale): live GPU culling toggle, full `FrameStats` readout (CPU/GPU timings, culled count, draw path, render scale, upload bytes)
+
+## [0.11.0]
+
+### Features
+- `RuntimeMode` enum: switch between `Interactive`, `Playback`, `Paused`, and `Capture` modes via `set_runtime_mode()`. Picking is throttled to every 4th frame in `Playback` mode.
+- `PerformancePolicy`: configure target FPS, render scale bounds, and per-pass degradation flags via `set_performance_policy()`.
+- `FrameStats` extended: `cpu_prepare_ms`, `gpu_frame_ms`, `total_frame_ms`, `render_scale`, `missed_budget`, `upload_bytes` returned from `prepare()`.
+- Adaptation controller: automatically adjusts render scale within `[min_render_scale, max_render_scale]` when `allow_dynamic_resolution` is true and the frame misses the target budget.
+- Dynamic resolution: when `allow_dynamic_resolution` is true and `current_render_scale < 1.0`, the LDR render path draws into a scaled intermediate texture that is bilinearly upscaled to the surface. HDR path unaffected (it already has its own intermediate texture).
+- GPU timestamp queries: `gpu_frame_ms` is populated with the previous frame's scene-pass GPU time on backends that support `TIMESTAMP_QUERY`. Lags by one frame due to async readback.
+- Per-pass degradation knobs: `allow_shadow_reduction` skips the shadow pass, `allow_volume_quality_reduction` doubles the volume raymarch step size, and `allow_effect_throttling` skips SSAO, contact shadows, and bloom — each when the previous frame missed the target budget.
 
 ## [0.11.0]
 

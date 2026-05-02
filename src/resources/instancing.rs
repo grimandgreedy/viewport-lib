@@ -298,6 +298,530 @@ impl ViewportGpuResources {
         );
     }
 
+    /// Upload per-instance AABB data and per-batch metadata to GPU buffers.
+    ///
+    /// Allocates or grows buffers using the same 2x strategy as `upload_instance_data`.
+    /// Also allocates `visibility_index_buf`, `batch_counter_buf`, `indirect_args_buf`,
+    /// and `shadow_indirect_bufs` at the same time since they share the same capacity.
+    /// Call on every batch cache miss, immediately after `upload_instance_data`.
+    pub(crate) fn upload_aabb_and_batch_meta(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        aabbs: &[crate::resources::types::InstanceAabb],
+        metas: &[crate::resources::types::BatchMeta],
+    ) {
+        // --- AABB buffer (per-instance) ---
+        let max_instances = (device.limits().max_storage_buffer_binding_size as usize)
+            / std::mem::size_of::<crate::resources::types::InstanceAabb>();
+        let aabbs = &aabbs[..aabbs.len().min(max_instances)];
+
+        if aabbs.len() > self.instance_aabb_capacity {
+            let new_cap = (aabbs.len() * 2).max(64).min(max_instances);
+            self.instance_aabb_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("instance_aabb_buf"),
+                size: (new_cap * std::mem::size_of::<crate::resources::types::InstanceAabb>())
+                    as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            self.instance_aabb_capacity = new_cap;
+        }
+        if !aabbs.is_empty() {
+            queue.write_buffer(
+                self.instance_aabb_buf.as_ref().unwrap(),
+                0,
+                bytemuck::cast_slice(aabbs),
+            );
+        }
+
+        // --- visibility_index_buf + shadow_vis_bufs: same count as instances ---
+        if aabbs.len() > self.visibility_index_capacity {
+            let new_cap = (aabbs.len() * 2).max(64).min(max_instances);
+            let vis_size = (new_cap * std::mem::size_of::<u32>()) as u64;
+            self.visibility_index_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("visibility_index_buf"),
+                size: vis_size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            self.visibility_index_capacity = new_cap;
+            // Per-cascade shadow visibility buffers grow with the instance count.
+            for i in 0..4 {
+                self.shadow_vis_bufs[i] = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(&format!("shadow_vis_buf_{i}")),
+                    size: vis_size,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }));
+            }
+            // Invalidate bind groups that reference the old shadow vis buffers.
+            self.shadow_cull_instance_bgs = [None, None, None, None];
+        }
+
+        // --- Batch meta + counter + indirect args buffers (per-batch) ---
+        let max_batches = (device.limits().max_storage_buffer_binding_size as usize)
+            / std::mem::size_of::<crate::resources::types::BatchMeta>();
+        let metas = &metas[..metas.len().min(max_batches)];
+        let batch_count = metas.len();
+
+        if batch_count > self.batch_meta_capacity {
+            let new_cap = (batch_count * 2).max(16).min(max_batches);
+            let meta_size =
+                (new_cap * std::mem::size_of::<crate::resources::types::BatchMeta>()) as u64;
+            let counter_size = (new_cap * std::mem::size_of::<u32>()) as u64;
+            // wgpu::util::DrawIndexedIndirect is 5 × u32 = 20 bytes.
+            let indirect_size = (new_cap * 20) as u64;
+
+            self.batch_meta_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("batch_meta_buf"),
+                size: meta_size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            self.batch_counter_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("batch_counter_buf"),
+                size: counter_size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            self.indirect_args_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("indirect_args_buf"),
+                size: indirect_size,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::INDIRECT
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            }));
+            for i in 0..4 {
+                self.shadow_indirect_bufs[i] =
+                    Some(device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some(&format!("shadow_indirect_buf_{i}")),
+                        size: indirect_size,
+                        usage: wgpu::BufferUsages::STORAGE
+                            | wgpu::BufferUsages::INDIRECT
+                            | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    }));
+            }
+            self.batch_meta_capacity = new_cap;
+        }
+
+        if !metas.is_empty() {
+            queue.write_buffer(
+                self.batch_meta_buf.as_ref().unwrap(),
+                0,
+                bytemuck::cast_slice(metas),
+            );
+        }
+
+        // Invalidate cull bind groups when visibility_index_buf was just (re-)allocated.
+        // The new buffer is only detectable by comparing capacity before and after.
+        // Simplest approach: always invalidate on upload (cache miss already guards frequency).
+        self.instance_cull_bind_groups.clear();
+        self.shadow_cull_instance_bgs = [None, None, None, None];
+    }
+
+    /// Ensure the GPU-driven cull variant pipelines and BGL are created.
+    ///
+    /// Must be called after `ensure_instanced_pipelines`.  Idempotent.
+    pub(crate) fn ensure_cull_instance_pipelines(&mut self, device: &wgpu::Device) {
+        if self.instance_cull_bind_group_layout.is_some() {
+            return;
+        }
+
+        let Some(ref _instance_bgl) = self.instance_bind_group_layout else {
+            return; // ensure_instanced_pipelines must be called first.
+        };
+
+        // Cull BGL = instance_bgl bindings 0-4 + binding 5: visibility_indices (read, VERTEX).
+        let cull_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("instance_cull_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // binding 5: visibility_indices (written by compute cull pass, read in vertex shader)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        // HDR solid cull pipeline: Rgba16Float target, vs_main_cull, back-face cull.
+        let instanced_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("mesh_instanced_shader_cull"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/mesh_instanced.wgsl").into(),
+            ),
+        });
+        let inst_cull_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("hdr_instanced_cull_pipeline_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, &cull_bgl],
+            push_constant_ranges: &[],
+        });
+        let hdr_solid_cull = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("hdr_solid_instanced_cull_pipeline"),
+            layout: Some(&inst_cull_layout),
+            vertex: wgpu::VertexState {
+                module: &instanced_shader,
+                entry_point: Some("vs_main_cull"),
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &instanced_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        // OIT cull pipeline: Rgba16Float + R8Unorm targets, vs_main_cull, no depth write.
+        let oit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("mesh_instanced_oit_shader_cull"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/mesh_instanced_oit.wgsl").into(),
+            ),
+        });
+        let oit_cull_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("oit_instanced_cull_pipeline_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, &cull_bgl],
+            push_constant_ranges: &[],
+        });
+        let accum_blend = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        let reveal_blend = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::OneMinusSrc,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::OneMinusSrc,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        let oit_cull = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("oit_instanced_cull_pipeline"),
+            layout: Some(&oit_cull_layout),
+            vertex: wgpu::VertexState {
+                module: &oit_shader,
+                entry_point: Some("vs_main_cull"),
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &oit_shader,
+                entry_point: Some("fs_oit_main"),
+                targets: &[
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: Some(accum_blend),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R8Unorm,
+                        blend: Some(reveal_blend),
+                        write_mask: wgpu::ColorWrites::RED,
+                    }),
+                ],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        self.instance_cull_bind_group_layout = Some(cull_bgl);
+        self.hdr_solid_instanced_cull_pipeline = Some(hdr_solid_cull);
+        self.oit_instanced_cull_pipeline = Some(oit_cull);
+
+        // Shadow instanced cull pipeline (Phase 4).
+        // Uses a minimal BGL for group 1: binding 0 (instances) + binding 5 (visibility_indices).
+        // Group 0 reuses the existing shadow cascade BGL (single mat4x4 uniform).
+        let shadow_cull_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("shadow_cull_instance_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        // Recreate the shadow cascade BGL (same definition as in ensure_instanced_pipelines).
+        let shadow_bgl_for_cull = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("shadow_bgl_for_cull"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let shadow_cull_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("shadow_instanced_cull_pipeline_layout"),
+            bind_group_layouts: &[&shadow_bgl_for_cull, &shadow_cull_bgl],
+            push_constant_ranges: &[],
+        });
+        let shadow_cull_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("shadow_instanced_cull_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/shadow_instanced.wgsl").into(),
+            ),
+        });
+        let shadow_instanced_cull = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("shadow_instanced_cull_pipeline"),
+            layout: Some(&shadow_cull_layout),
+            vertex: wgpu::VertexState {
+                module: &shadow_cull_shader,
+                entry_point: Some("vs_shadow_cull"),
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: None,
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(wgpu::Face::Front),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+        self.shadow_instanced_cull_pipeline = Some(shadow_instanced_cull);
+        self.shadow_cull_instance_bgl = Some(shadow_cull_bgl);
+    }
+
+    /// Get or create the shadow cull instance bind group for a given cascade index.
+    ///
+    /// Binds `instance_storage_buf` (binding 0) and `shadow_vis_bufs[cascade_idx]` (binding 5).
+    /// Returns `None` if the required buffers or BGL are not yet allocated.
+    pub(crate) fn get_shadow_cull_instance_bind_group(
+        &mut self,
+        device: &wgpu::Device,
+        cascade_idx: usize,
+    ) -> Option<&wgpu::BindGroup> {
+        if self.shadow_cull_instance_bgs[cascade_idx].is_none() {
+            let bgl = self.shadow_cull_instance_bgl.as_ref()?;
+            let inst_buf = self.instance_storage_buf.as_ref()?;
+            let vis_buf = self.shadow_vis_bufs[cascade_idx].as_ref()?;
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("shadow_cull_instance_bg_{cascade_idx}")),
+                layout: bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: inst_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: vis_buf.as_entire_binding(),
+                    },
+                ],
+            });
+            self.shadow_cull_instance_bgs[cascade_idx] = Some(bg);
+        }
+        self.shadow_cull_instance_bgs[cascade_idx].as_ref()
+    }
+
+    /// Get or create a cull-path bind group for the instanced cull pipeline.
+    ///
+    /// Identical to `get_instance_bind_group` but uses `instance_cull_bind_group_layout`
+    /// and includes the `visibility_index_buf` at binding 5.
+    pub(crate) fn get_instance_cull_bind_group(
+        &mut self,
+        device: &wgpu::Device,
+        albedo_id: Option<u64>,
+        normal_map_id: Option<u64>,
+        ao_map_id: Option<u64>,
+    ) -> Option<&wgpu::BindGroup> {
+        let key = (
+            albedo_id.unwrap_or(u64::MAX),
+            normal_map_id.unwrap_or(u64::MAX),
+            ao_map_id.unwrap_or(u64::MAX),
+        );
+
+        if !self.instance_cull_bind_groups.contains_key(&key) {
+            let bgl = self.instance_cull_bind_group_layout.as_ref()?;
+            let inst_buf = self.instance_storage_buf.as_ref()?;
+            let vis_buf = self.visibility_index_buf.as_ref()?;
+
+            let albedo_view = match albedo_id {
+                Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+                _ => &self.fallback_texture.view,
+            };
+            let normal_view = match normal_map_id {
+                Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+                _ => &self.fallback_normal_map_view,
+            };
+            let ao_view = match ao_map_id {
+                Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+                _ => &self.fallback_ao_map_view,
+            };
+
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("instance_cull_tex_bg"),
+                layout: bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: inst_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(albedo_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(normal_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(ao_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: vis_buf.as_entire_binding(),
+                    },
+                ],
+            });
+            self.instance_cull_bind_groups.insert(key, bg);
+        }
+
+        self.instance_cull_bind_groups.get(&key)
+    }
+
     /// Get or create a combined instance+texture bind group for the instanced pipeline.
     ///
     /// The bind group combines the shared instance storage buffer (binding 0) with the

@@ -1939,6 +1939,26 @@ impl ViewportGpuResources {
             shadow_instanced_pipeline: None,
             shadow_instanced_cascade_bufs: [None, None, None, None],
             shadow_instanced_cascade_bgs: [None, None, None, None],
+            // GPU culling buffers (Phase 2; populated on first batch cache miss).
+            instance_aabb_buf: None,
+            instance_aabb_capacity: 0,
+            batch_meta_buf: None,
+            batch_counter_buf: None,
+            batch_meta_capacity: 0,
+            visibility_index_buf: None,
+            visibility_index_capacity: 0,
+            indirect_args_buf: None,
+            shadow_indirect_bufs: [None, None, None, None],
+            // GPU culling pipelines (Phase 3; created lazily by ensure_cull_instance_pipelines).
+            instance_cull_bind_group_layout: None,
+            instance_cull_bind_groups: std::collections::HashMap::new(),
+            hdr_solid_instanced_cull_pipeline: None,
+            oit_instanced_cull_pipeline: None,
+            // GPU culling shadow cascade extension (Phase 4).
+            shadow_instanced_cull_pipeline: None,
+            shadow_cull_instance_bgl: None,
+            shadow_vis_bufs: [None, None, None, None],
+            shadow_cull_instance_bgs: [None, None, None, None],
             // Post-processing shared infrastructure (None until ensure_hdr_shared is called).
             bloom_bgl: None,
             ssao_bgl: None,

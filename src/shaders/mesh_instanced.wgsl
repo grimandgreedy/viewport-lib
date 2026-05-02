@@ -132,11 +132,12 @@ fn clip_volume_test(p: vec3<f32>) -> bool {
     let ds = p - clip_volume.sphere_center;
     return dot(ds, ds) <= clip_volume.sphere_radius * clip_volume.sphere_radius;
 }
-@group(1) @binding(0) var<storage, read> instances: array<InstanceData>;
-@group(1) @binding(1) var obj_texture: texture_2d<f32>;
-@group(1) @binding(2) var obj_sampler: sampler;
-@group(1) @binding(3) var normal_map: texture_2d<f32>;
-@group(1) @binding(4) var ao_map: texture_2d<f32>;
+@group(1) @binding(0) var<storage, read> instances:          array<InstanceData>;
+@group(1) @binding(1) var                obj_texture:        texture_2d<f32>;
+@group(1) @binding(2) var                obj_sampler:        sampler;
+@group(1) @binding(3) var                normal_map:         texture_2d<f32>;
+@group(1) @binding(4) var                ao_map:             texture_2d<f32>;
+@group(1) @binding(5) var<storage, read> visibility_indices: array<u32>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -173,6 +174,30 @@ fn vs_main(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
     out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
     out.uv = in.uv;
     out.instance_idx = idx;
+    return out;
+}
+
+// GPU-driven cull variant: `idx` is the visible-slot index written by the
+// compute cull pass. Look up the actual instance index via visibility_indices,
+// then run the same transform as vs_main.
+@vertex
+fn vs_main_cull(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
+    let actual_idx = visibility_indices[idx];
+    let inst = instances[actual_idx];
+    var out: VertexOut;
+    let world_pos = inst.model * vec4<f32>(in.position, 1.0);
+    out.clip_pos = camera.view_proj * world_pos;
+    out.color = in.color;
+    out.world_pos = world_pos.xyz;
+    let model3 = mat3x3<f32>(
+        inst.model[0].xyz,
+        inst.model[1].xyz,
+        inst.model[2].xyz,
+    );
+    out.world_normal = normalize(model3 * in.normal);
+    out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
+    out.uv = in.uv;
+    out.instance_idx = actual_idx;
     return out;
 }
 

@@ -36,7 +36,7 @@ impl ViewportRenderer {
 
         // Resolve scene items from the SurfaceSubmission seam.
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
-            SurfaceSubmission::Flat(items) => items,
+            SurfaceSubmission::Flat(items) => items.as_ref(),
         };
 
         // Compute scene center / extent for shadow framing.
@@ -583,6 +583,8 @@ impl ViewportRenderer {
                 });
 
                 let mut all_instances: Vec<InstanceData> = Vec::with_capacity(sorted_items.len());
+                let mut all_aabbs: Vec<InstanceAabb> = Vec::with_capacity(sorted_items.len());
+                let mut batch_metas: Vec<BatchMeta> = Vec::new();
                 let mut instanced_batches: Vec<InstancedBatch> = Vec::new();
 
                 if !sorted_items.is_empty() {
@@ -629,6 +631,42 @@ impl ViewportRenderer {
                                 });
                             }
 
+                            // Build per-instance AABBs alongside instance data.
+                            // All items in a batch share the same mesh_id (batch key), so
+                            // mesh.index_count is the same for every item — look it up once.
+                            let batch_idx = instanced_batches.len() as u32;
+                            let mesh_index_count = resources
+                                .mesh_store
+                                .get(rep.mesh_id)
+                                .map(|m| m.index_count)
+                                .unwrap_or(0);
+                            for item in batch_items {
+                                if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
+                                    let model =
+                                        glam::Mat4::from_cols_array_2d(&item.model);
+                                    let world_aabb = mesh.aabb.transformed(&model);
+                                    all_aabbs.push(InstanceAabb {
+                                        min: world_aabb.min.into(),
+                                        batch_index: batch_idx,
+                                        max: world_aabb.max.into(),
+                                        _pad: 0,
+                                    });
+                                }
+                            }
+
+                            // vis_offset is the prefix sum of instance counts; since
+                            // instances are laid out contiguously per batch, it equals
+                            // instance_offset.
+                            batch_metas.push(BatchMeta {
+                                index_count: mesh_index_count,
+                                first_index: 0,
+                                instance_offset,
+                                instance_count: batch_items.len() as u32,
+                                vis_offset: instance_offset,
+                                is_transparent: if is_transparent { 1 } else { 0 },
+                                _pad: [0, 0],
+                            });
+
                             instanced_batches.push(InstancedBatch {
                                 mesh_id: rep.mesh_id,
                                 texture_id: rep.material.texture_id,
@@ -648,6 +686,7 @@ impl ViewportRenderer {
                 self.cached_instanced_batches = instanced_batches;
 
                 resources.upload_instance_data(device, queue, &self.cached_instance_data);
+                resources.upload_aabb_and_batch_meta(device, queue, &all_aabbs, &batch_metas);
 
                 self.instanced_batches = self.cached_instanced_batches.clone();
 
@@ -671,6 +710,111 @@ impl ViewportRenderer {
                         batch.normal_map_id,
                         batch.ao_map_id,
                     );
+                }
+            }
+
+            // ------------------------------------------------------------------
+            // GPU cull dispatch (Phase 3)
+            //
+            // Run `cull_instances` + `write_indirect_args` whenever GPU culling
+            // is active and all required buffers are allocated.
+            // ------------------------------------------------------------------
+            if self.gpu_culling_enabled
+                && !self.instanced_batches.is_empty()
+                && !self.cached_instance_data.is_empty()
+            {
+                let instance_count = self.cached_instance_data.len() as u32;
+                let batch_count = self.instanced_batches.len() as u32;
+
+                // Do all mutable borrows before taking immutable borrows from resources.
+                if self.cull_resources.is_none() {
+                    self.cull_resources =
+                        Some(crate::renderer::indirect::CullResources::new(device));
+                }
+                resources.ensure_cull_instance_pipelines(device);
+                for batch in &self.instanced_batches.clone() {
+                    resources.get_instance_cull_bind_group(
+                        device,
+                        batch.texture_id,
+                        batch.normal_map_id,
+                        batch.ao_map_id,
+                    );
+                }
+
+                // Now take immutable borrows to the GPU buffers for dispatch.
+                if let (
+                    Some(aabb_buf),
+                    Some(meta_buf),
+                    Some(counter_buf),
+                    Some(vis_buf),
+                    Some(indirect_buf),
+                ) = (
+                    resources.instance_aabb_buf.as_ref(),
+                    resources.batch_meta_buf.as_ref(),
+                    resources.batch_counter_buf.as_ref(),
+                    resources.visibility_index_buf.as_ref(),
+                    resources.indirect_args_buf.as_ref(),
+                ) {
+                    // Build the FrustumUniform from the current camera view-projection.
+                    let vp_mat = frame.camera.render_camera.view_proj();
+                    let cpu_frustum =
+                        crate::camera::frustum::Frustum::from_view_proj(&vp_mat);
+                    let frustum_uniform = crate::resources::FrustumUniform {
+                        planes: std::array::from_fn(|i| crate::resources::FrustumPlane {
+                            normal: cpu_frustum.planes[i].normal.into(),
+                            distance: cpu_frustum.planes[i].d,
+                        }),
+                    };
+
+                    let cull = self.cull_resources.as_ref().unwrap();
+                    let mut encoder =
+                        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("cull_encoder"),
+                        });
+                    cull.dispatch(
+                        &mut encoder,
+                        device,
+                        queue,
+                        &frustum_uniform,
+                        aabb_buf,
+                        meta_buf,
+                        counter_buf,
+                        vis_buf,
+                        indirect_buf,
+                        instance_count,
+                        batch_count,
+                    );
+
+                    // Copy indirect_args_buf to the CPU-readable staging buffer so the
+                    // visible instance count can be read back next frame (one-frame lag).
+                    let indirect_bytes = batch_count as u64 * 20;
+                    if self
+                        .indirect_readback_buf
+                        .as_ref()
+                        .map_or(0, |b| b.size())
+                        < indirect_bytes
+                    {
+                        self.indirect_readback_buf =
+                            Some(device.create_buffer(&wgpu::BufferDescriptor {
+                                label: Some("indirect_readback_buf"),
+                                size: indirect_bytes,
+                                usage: wgpu::BufferUsages::COPY_DST
+                                    | wgpu::BufferUsages::MAP_READ,
+                                mapped_at_creation: false,
+                            }));
+                    }
+                    if let Some(ref rb_buf) = self.indirect_readback_buf {
+                        encoder.copy_buffer_to_buffer(
+                            indirect_buf,
+                            0,
+                            rb_buf,
+                            0,
+                            indirect_bytes,
+                        );
+                    }
+                    queue.submit(std::iter::once(encoder.finish()));
+                    self.indirect_readback_batch_count = batch_count;
+                    self.indirect_readback_pending = true;
                 }
             }
         }
@@ -958,6 +1102,13 @@ impl ViewportRenderer {
                 instanced_batches: instanced_batch_count,
                 triangles_submitted: triangles,
                 shadow_draw_calls: 0, // Updated below in shadow pass.
+                gpu_culling_active: self.gpu_culling_enabled,
+                // Clear stale readback if GPU culling is off this frame.
+                gpu_visible_instances: if self.gpu_culling_enabled {
+                    self.last_stats.gpu_visible_instances
+                } else {
+                    None
+                },
                 ..self.last_stats
             };
         }
@@ -969,6 +1120,78 @@ impl ViewportRenderer {
         let skip_shadows = self.last_stats.missed_budget
             && self.performance_policy.allow_shadow_reduction;
         if lighting.shadows_enabled && !scene_items.is_empty() && !skip_shadows {
+            // ------------------------------------------------------------------
+            // Shadow GPU cull dispatch (Phase 4)
+            //
+            // For each active cascade, dispatch `cull_instances` + `write_indirect_args`
+            // with the cascade frustum. Results land in `shadow_vis_bufs[c]` and
+            // `shadow_indirect_bufs[c]`, consumed by the shadow render pass below.
+            // All cascade dispatches share the same `batch_counter_buf`; each
+            // `write_indirect_args` dispatch resets the counters for the next cascade.
+            // ------------------------------------------------------------------
+            if self.gpu_culling_enabled
+                && self.use_instancing
+                && !self.instanced_batches.is_empty()
+                && !self.cached_instance_data.is_empty()
+            {
+                // Mutable operations first.
+                if self.cull_resources.is_none() {
+                    self.cull_resources =
+                        Some(crate::renderer::indirect::CullResources::new(device));
+                }
+                resources.ensure_cull_instance_pipelines(device);
+                for c in 0..effective_cascade_count {
+                    resources.get_shadow_cull_instance_bind_group(device, c);
+                }
+
+                let instance_count = self.cached_instance_data.len() as u32;
+                let batch_count = self.instanced_batches.len() as u32;
+
+                if let (Some(aabb_buf), Some(meta_buf), Some(counter_buf)) = (
+                    resources.instance_aabb_buf.as_ref(),
+                    resources.batch_meta_buf.as_ref(),
+                    resources.batch_counter_buf.as_ref(),
+                ) {
+                    let cull = self.cull_resources.as_ref().unwrap();
+                    let mut shadow_cull_encoder =
+                        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("shadow_cull_encoder"),
+                        });
+                    for c in 0..effective_cascade_count {
+                        if let (Some(shadow_vis_buf), Some(shadow_indirect_buf)) = (
+                            resources.shadow_vis_bufs[c].as_ref(),
+                            resources.shadow_indirect_bufs[c].as_ref(),
+                        ) {
+                            let cpu_frustum =
+                                crate::camera::frustum::Frustum::from_view_proj(
+                                    &cascade_view_projs[c],
+                                );
+                            let frustum_uniform = crate::resources::FrustumUniform {
+                                planes: std::array::from_fn(|i| crate::resources::FrustumPlane {
+                                    normal: cpu_frustum.planes[i].normal.into(),
+                                    distance: cpu_frustum.planes[i].d,
+                                }),
+                            };
+                            cull.dispatch_shadow(
+                                &mut shadow_cull_encoder,
+                                device,
+                                queue,
+                                c,
+                                &frustum_uniform,
+                                aabb_buf,
+                                meta_buf,
+                                counter_buf,
+                                shadow_vis_buf,
+                                shadow_indirect_buf,
+                                instance_count,
+                                batch_count,
+                            );
+                        }
+                    }
+                    queue.submit(std::iter::once(shadow_cull_encoder.finish()));
+                }
+            }
+
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("shadow_pass_encoder"),
             });
@@ -992,7 +1215,87 @@ impl ViewportRenderer {
                 let tile_px = tile_size as f32;
 
                 if self.use_instancing {
-                    if let (Some(pipeline), Some(instance_bg)) = (
+                    let use_shadow_indirect = self.gpu_culling_enabled
+                        && resources.shadow_instanced_cull_pipeline.is_some()
+                        && resources.shadow_vis_bufs[0].is_some();
+
+                    if use_shadow_indirect {
+                        // GPU-culled indirect shadow path (Phase 4).
+                        for cascade in 0..effective_cascade_count {
+                            let tile_col = (cascade % 2) as f32;
+                            let tile_row = (cascade / 2) as f32;
+                            shadow_pass.set_viewport(
+                                tile_col * tile_px,
+                                tile_row * tile_px,
+                                tile_px,
+                                tile_px,
+                                0.0,
+                                1.0,
+                            );
+                            shadow_pass.set_scissor_rect(
+                                (tile_col * tile_px) as u32,
+                                (tile_row * tile_px) as u32,
+                                tile_size,
+                                tile_size,
+                            );
+
+                            // Write cascade view-projection matrix.
+                            queue.write_buffer(
+                                resources.shadow_instanced_cascade_bufs[cascade]
+                                    .as_ref()
+                                    .expect("shadow_instanced_cascade_bufs not allocated"),
+                                0,
+                                bytemuck::cast_slice(
+                                    &cascade_view_projs[cascade].to_cols_array_2d(),
+                                ),
+                            );
+
+                            let Some(pipeline) =
+                                resources.shadow_instanced_cull_pipeline.as_ref()
+                            else {
+                                continue;
+                            };
+                            let Some(cascade_bg) =
+                                resources.shadow_instanced_cascade_bgs[cascade].as_ref()
+                            else {
+                                continue;
+                            };
+                            let Some(inst_cull_bg) =
+                                resources.shadow_cull_instance_bgs[cascade].as_ref()
+                            else {
+                                continue;
+                            };
+                            let Some(shadow_indirect_buf) =
+                                resources.shadow_indirect_bufs[cascade].as_ref()
+                            else {
+                                continue;
+                            };
+
+                            shadow_pass.set_pipeline(pipeline);
+                            shadow_pass.set_bind_group(0, cascade_bg, &[]);
+                            shadow_pass.set_bind_group(1, inst_cull_bg, &[]);
+
+                            for (bi, batch) in self.instanced_batches.iter().enumerate() {
+                                if batch.is_transparent {
+                                    continue;
+                                }
+                                let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+                                    continue;
+                                };
+                                shadow_pass
+                                    .set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                shadow_pass.set_index_buffer(
+                                    mesh.index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
+                                shadow_pass.draw_indexed_indirect(
+                                    shadow_indirect_buf,
+                                    bi as u64 * 20,
+                                );
+                                shadow_draws += 1;
+                            }
+                        }
+                    } else if let (Some(pipeline), Some(instance_bg)) = (
                         &resources.shadow_instanced_pipeline,
                         self.instanced_batches.first().and_then(|b| {
                             resources.instance_bind_groups.get(&(
@@ -1002,6 +1305,7 @@ impl ViewportRenderer {
                             ))
                         }),
                     ) {
+                        // Direct draw shadow path (fallback when GPU culling is off).
                         for cascade in 0..effective_cascade_count {
                             let tile_col = (cascade % 2) as f32;
                             let tile_row = (cascade / 2) as f32;
@@ -1148,7 +1452,7 @@ impl ViewportRenderer {
         self.ensure_viewport_slot(device, frame.camera.viewport_index);
 
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
-            SurfaceSubmission::Flat(items) => items,
+            SurfaceSubmission::Flat(items) => items.as_ref(),
         };
 
         // Capture before the resources mutable borrow so it's accessible inside the block.
@@ -2490,6 +2794,122 @@ impl ViewportRenderer {
                 }
             }
         }
+
+        // ---------------------------------------------------------------
+        // Loading bars
+        // ---------------------------------------------------------------
+        self.loading_bar_gpu_data = None;
+        if !frame.overlays.loading_bars.is_empty() {
+            self.resources.ensure_overlay_text_pipeline(device);
+            let vp_w = frame.camera.viewport_size[0];
+            let vp_h = frame.camera.viewport_size[1];
+            if vp_w > 0.0 && vp_h > 0.0 {
+                let mut verts: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+
+                for bar in &frame.overlays.loading_bars {
+                    // Bar top-left corner based on anchor.
+                    let bar_x = vp_w * 0.5 - bar.width_px * 0.5;
+                    let bar_y = match bar.anchor {
+                        crate::renderer::types::LoadingBarAnchor::TopCenter => bar.margin_px,
+                        crate::renderer::types::LoadingBarAnchor::Center => {
+                            vp_h * 0.5 - bar.height_px * 0.5
+                        }
+                        crate::renderer::types::LoadingBarAnchor::BottomCenter => {
+                            vp_h - bar.margin_px - bar.height_px
+                        }
+                    };
+
+                    // Label above (TopCenter: below) the bar.
+                    if let Some(ref text) = bar.label {
+                        let layout = self.resources.glyph_atlas.layout_text(
+                            text,
+                            bar.font_size,
+                            None,
+                            device,
+                        );
+                        let ascent =
+                            self.resources.glyph_atlas.font_ascent(0, bar.font_size);
+                        let label_gap = 5.0;
+                        let lx = bar_x + bar.width_px * 0.5 - layout.total_width * 0.5;
+                        let ly = match bar.anchor {
+                            crate::renderer::types::LoadingBarAnchor::TopCenter => {
+                                bar_y + bar.height_px + label_gap
+                            }
+                            _ => bar_y - layout.height - label_gap,
+                        };
+                        for gq in &layout.quads {
+                            let gx = lx + gq.pos[0];
+                            let gy = ly + ascent + gq.pos[1];
+                            emit_textured_quad(
+                                &mut verts,
+                                gx, gy,
+                                gx + gq.size[0], gy + gq.size[1],
+                                gq.uv_min, gq.uv_max,
+                                bar.label_color,
+                                vp_w, vp_h,
+                            );
+                        }
+                    }
+
+                    // Background rectangle.
+                    emit_rounded_quad(
+                        &mut verts,
+                        bar_x, bar_y,
+                        bar_x + bar.width_px, bar_y + bar.height_px,
+                        bar.corner_radius,
+                        bar.background_color,
+                        vp_w, vp_h,
+                    );
+
+                    // Fill rectangle clipped to progress fraction.
+                    let fill_w = bar.width_px * bar.progress.clamp(0.0, 1.0);
+                    if fill_w > 0.5 {
+                        emit_rounded_quad(
+                            &mut verts,
+                            bar_x, bar_y,
+                            bar_x + fill_w, bar_y + bar.height_px,
+                            bar.corner_radius,
+                            bar.fill_color,
+                            vp_w, vp_h,
+                        );
+                    }
+                }
+
+                self.resources.glyph_atlas.upload_if_dirty(queue);
+
+                if !verts.is_empty() {
+                    let vertex_buf =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("loading_bar_vbuf"),
+                            contents: bytemuck::cast_slice(&verts),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        });
+                    let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
+                    let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
+                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("loading_bar_bg"),
+                        layout: bgl,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(
+                                    &self.resources.glyph_atlas.view,
+                                ),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(sampler),
+                            },
+                        ],
+                    });
+                    self.loading_bar_gpu_data = Some(crate::resources::LabelGpuData {
+                        vertex_buf,
+                        vertex_count: verts.len() as u32,
+                        bind_group,
+                    });
+                }
+            }
+        }
     }
 
     /// Upload per-frame data to GPU buffers and render the shadow pass.
@@ -2533,6 +2953,43 @@ impl ViewportRenderer {
                 stg_buf.unmap();
             }
             self.ts_needs_readback = false;
+        }
+
+        // Read back GPU-visible instance count from the previous frame's indirect args copy.
+        // The cull pass from the previous frame has already been submitted and is almost
+        // certainly done by the time prepare() is called; a short poll is enough.
+        if self.indirect_readback_pending {
+            if let Some(ref stg_buf) = self.indirect_readback_buf {
+                let bytes = self.indirect_readback_batch_count as u64 * 20;
+                if bytes > 0 {
+                    let (tx, rx) =
+                        std::sync::mpsc::channel::<Result<(), wgpu::BufferAsyncError>>();
+                    stg_buf.slice(..bytes).map_async(wgpu::MapMode::Read, move |r| {
+                        let _ = tx.send(r);
+                    });
+                    device
+                        .poll(wgpu::PollType::Wait {
+                            submission_index: None,
+                            timeout: Some(std::time::Duration::from_millis(100)),
+                        })
+                        .ok();
+                    if rx.try_recv().unwrap_or(Err(wgpu::BufferAsyncError)).is_ok() {
+                        let data = stg_buf.slice(..bytes).get_mapped_range();
+                        let mut visible: u32 = 0;
+                        for i in 0..self.indirect_readback_batch_count as usize {
+                            // DrawIndexedIndirect layout: [index_count, instance_count, first_index, base_vertex, first_instance]
+                            // instance_count is at byte offset 4 within each 20-byte entry.
+                            let off = i * 20 + 4;
+                            let n = u32::from_le_bytes(data[off..off + 4].try_into().unwrap());
+                            visible = visible.saturating_add(n);
+                        }
+                        drop(data);
+                        self.last_stats.gpu_visible_instances = Some(visible);
+                    }
+                    stg_buf.unmap();
+                }
+            }
+            self.indirect_readback_pending = false;
         }
 
         // Wall-clock duration since the previous prepare() call approximates the frame interval.

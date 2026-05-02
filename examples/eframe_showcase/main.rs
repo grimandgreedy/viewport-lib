@@ -98,7 +98,7 @@ use viewport_lib::{
     scene::{LayerId, Scene},
 };
 
-use viewport_lib::{ScalarBarAnchor, ScalarBarOrientation};
+use viewport_lib::{LoadingBarAnchor, LoadingBarItem, ScalarBarAnchor, ScalarBarOrientation};
 
 mod geometry;
 mod hdr_viewport_callback;
@@ -153,6 +153,35 @@ fn main() -> eframe::Result {
             viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 800.0]),
             depth_buffer: 24,
             stencil_buffer: 8,
+            wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+                wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(
+                    eframe::egui_wgpu::WgpuSetupCreateNew {
+                        // Request INDIRECT_FIRST_INSTANCE when the adapter supports it so
+                        // GPU-driven culling is available on Metal (Apple Silicon) and Vulkan.
+                        device_descriptor: std::sync::Arc::new(|adapter| {
+                            use eframe::wgpu;
+                            let base_limits =
+                                if adapter.get_info().backend == wgpu::Backend::Gl {
+                                    wgpu::Limits::downlevel_webgl2_defaults()
+                                } else {
+                                    wgpu::Limits::default()
+                                };
+                            wgpu::DeviceDescriptor {
+                                label: Some("viewport-lib showcase device"),
+                                required_features: adapter.features()
+                                    & wgpu::Features::INDIRECT_FIRST_INSTANCE,
+                                required_limits: wgpu::Limits {
+                                    max_texture_dimension_2d: 8192,
+                                    ..base_limits
+                                },
+                                ..Default::default()
+                            }
+                        }),
+                        ..Default::default()
+                    },
+                ),
+                ..Default::default()
+            },
             ..Default::default()
         },
         Box::new(|cc| {
@@ -224,9 +253,12 @@ fn main() -> eframe::Result {
                 perf_mesh: None,
                 last_stats: FrameStats::default(),
                 perf_total_objects: 0,
-                perf_scene_items_cache: Vec::new(),
+                perf_scene_items_cache: std::sync::Arc::from([]),
                 perf_scene_items_version: (u64::MAX, u64::MAX),
                 perf_built: false,
+                perf_gpu_culling: true,
+                perf_build_rx: None,
+                perf_build_progress: None,
                 interact_scene: Scene::new(),
                 interact_selection: Selection::new(),
                 interact_animator: CameraAnimator::with_default_damping(),
@@ -713,9 +745,14 @@ pub(crate) struct App {
     pub(crate) perf_mesh: Option<MeshId>,
     last_stats: FrameStats,
     pub(crate) perf_total_objects: u32,
-    pub(crate) perf_scene_items_cache: Vec<SceneRenderItem>,
+    pub(crate) perf_scene_items_cache: std::sync::Arc<[SceneRenderItem]>,
     pub(crate) perf_scene_items_version: (u64, u64),
     pub(crate) perf_built: bool,
+    pub(crate) perf_gpu_culling: bool,
+    /// Receives the completed (Scene, PickAccelerator) from the background build thread.
+    perf_build_rx: Option<std::sync::mpsc::Receiver<(Scene, viewport_lib::PickAccelerator)>>,
+    /// Shared progress counter written by the background build thread (objects placed so far).
+    perf_build_progress: Option<std::sync::Arc<std::sync::atomic::AtomicU32>>,
 
     // --- Showcase 4 ---
     pub(crate) interact_scene: Scene,
@@ -1199,6 +1236,26 @@ impl eframe::App for App {
                         }
                     });
             });
+
+        // Poll for a completed async perf scene build.
+        let completed = self
+            .perf_build_rx
+            .as_ref()
+            .and_then(|rx| rx.try_recv().ok());
+        if let Some((scene, pick_acc)) = completed {
+            self.perf_scene = scene;
+            self.pick_accelerator = Some(pick_acc);
+            // Pre-warm items cache so the first rendered frame has no stall.
+            self.perf_scene_items_cache = std::sync::Arc::from(
+                self.perf_scene.collect_render_items(&self.perf_selection),
+            );
+            self.perf_scene_items_version =
+                (self.perf_scene.version(), self.perf_selection.version());
+            self.perf_total_objects = 1_000_000;
+            self.perf_build_rx = None;
+            self.perf_build_progress = None;
+            self.perf_built = true;
+        }
 
         // Lazy scene builds for the active mode.
         self.ensure_scene_built(frame);
@@ -1761,6 +1818,11 @@ impl eframe::App for App {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
             }
 
+            // ----- Continuous repaint for background build progress -----
+            if self.perf_build_rx.is_some() {
+                ctx.request_repaint();
+            }
+
             // ----- Continuous repaint for animated camera -----
             if self.mode == ShowcaseMode::Interaction && self.interact_animator.is_animating() {
                 ctx.request_repaint();
@@ -1893,7 +1955,7 @@ impl App {
     fn ensure_scene_built(&mut self, frame: &eframe::Frame) {
         let needs = match self.mode {
             ShowcaseMode::SceneGraph => !self.scene_built,
-            ShowcaseMode::Performance => !self.perf_built,
+            ShowcaseMode::Performance => !self.perf_built && self.perf_build_rx.is_none(),
             ShowcaseMode::Interaction => !self.interact_built,
             ShowcaseMode::Advanced => !self.adv_built,
             ShowcaseMode::PostProcess => !self.pp_built,
@@ -1941,8 +2003,32 @@ impl App {
         match self.mode {
             ShowcaseMode::SceneGraph => self.build_scene_graph(renderer),
             ShowcaseMode::Performance => {
-                self.build_perf_scene(renderer);
+                // Upload the box mesh on the main thread (requires GPU access).
+                let mesh = self.upload_box(renderer);
+                self.perf_mesh = Some(mesh);
+                self.perf_scene = Scene::new();
+                self.perf_selection.clear();
                 self.camera.distance = 80.0;
+
+                // Capture the mesh AABB before releasing the renderer borrow.
+                let mesh_aabb = renderer.resources().mesh(mesh).map(|m| m.aabb);
+
+                let progress =
+                    std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+                let progress_clone = std::sync::Arc::clone(&progress);
+                let (tx, rx) = std::sync::mpsc::channel();
+
+                std::thread::spawn(move || {
+                    let result = showcase_03_performance::build_perf_scene_threaded(
+                        mesh,
+                        mesh_aabb,
+                        &progress_clone,
+                    );
+                    let _ = tx.send(result);
+                });
+
+                self.perf_build_progress = Some(progress);
+                self.perf_build_rx = Some(rx);
             }
             ShowcaseMode::Interaction => {
                 self.build_interact_scene(renderer);
@@ -2452,22 +2538,7 @@ impl App {
     }
 
     fn controls_performance(&mut self, ui: &mut egui::Ui) {
-        let s = &self.last_stats;
-        let total = self.perf_total_objects;
-        let visible = s.total_objects;
-        let culled = total.saturating_sub(visible);
-        ui.label(format!("Total objects: {total}"));
-        ui.label(format!("Visible: {visible}"));
-        ui.label(format!("Culled: {culled}"));
-        ui.label(format!("Draw calls: {}", s.draw_calls));
-        ui.label(format!("Batches: {}", s.instanced_batches));
-        ui.label(format!("Triangles: {}", s.triangles_submitted));
-        ui.label(format!("Shadow draws: {}", s.shadow_draw_calls));
-        ui.separator();
-        ui.label("Click objects to select them.");
-        if ui.button("Clear Selection").clicked() {
-            self.perf_selection.clear();
-        }
+        self.perf_controls(ui);
     }
 
     fn controls_interaction(&mut self, ui: &mut egui::Ui) {
@@ -3138,6 +3209,10 @@ impl App {
         let mut eq_glyphs: Vec<GlyphItem> = Vec::new();
         let mut eq_pcs: Vec<PointCloudItem> = Vec::new();
 
+        // Performance showcase uses a cached Arc<[SceneRenderItem]> to avoid a per-frame
+        // deep clone of the 1M-item Vec. Set by the Performance arm below; None for all others.
+        let mut perf_arc: Option<std::sync::Arc<[SceneRenderItem]>> = None;
+
         let (scene_items, bg_color, lighting, scene_gen, sel_gen) = match self.mode {
             ShowcaseMode::Basic => {
                 let positions = [
@@ -3199,11 +3274,13 @@ impl App {
             ShowcaseMode::Performance => {
                 let current_ver = (self.perf_scene.version(), self.perf_selection.version());
                 if current_ver != self.perf_scene_items_version {
-                    self.perf_scene_items_cache =
-                        self.perf_scene.collect_render_items(&self.perf_selection);
+                    self.perf_scene_items_cache = std::sync::Arc::from(
+                        self.perf_scene.collect_render_items(&self.perf_selection),
+                    );
                     self.perf_scene_items_version = current_ver;
                 }
-                let items = self.perf_scene_items_cache.clone();
+                // Arc::clone is a single atomic refcount increment — no data copy.
+                perf_arc = Some(std::sync::Arc::clone(&self.perf_scene_items_cache));
                 let sg = self.perf_scene.version();
                 let ss = self.perf_selection.version();
                 perf_outline = !self.perf_selection.is_empty();
@@ -3213,7 +3290,7 @@ impl App {
                     ground_color: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
-                (items, Some(BG_COLOR), lighting, sg, ss)
+                (vec![], Some(BG_COLOR), lighting, sg, ss)
             }
 
             ShowcaseMode::Interaction => {
@@ -3806,7 +3883,11 @@ impl App {
 
         let mut fd = FrameData::new(
             CameraFrame::from_camera(&self.camera, [w, h]),
-            SceneFrame::from_surface_items(scene_items),
+            if let Some(arc) = perf_arc {
+                SceneFrame::from_shared_items(arc, scene_gen)
+            } else {
+                SceneFrame::from_surface_items(scene_items)
+            },
         );
         fd.effects.lighting = lighting;
         if self.mode == ShowcaseMode::PickLevels {
@@ -4125,11 +4206,33 @@ impl App {
             fd.overlays.labels.extend(self.build_label_screen_overlays(w, h));
         }
 
-        // Update stats from the last rendered frame (Performance mode).
+        // Loading bar while the async perf scene build is in flight.
+        if self.mode == ShowcaseMode::Performance {
+            if let Some(ref progress) = self.perf_build_progress {
+                let n = progress.load(std::sync::atomic::Ordering::Relaxed);
+                let label = format!(
+                    "Building scene\u{2026} {} / 1 000 000",
+                    showcase_03_performance::format_count(n),
+                );
+                fd.overlays.loading_bars.push(LoadingBarItem {
+                    progress: n as f32 / 1_000_000.0,
+                    label: Some(label),
+                    anchor: LoadingBarAnchor::BottomCenter,
+                    ..LoadingBarItem::default()
+                });
+            }
+        }
+
+        // Update stats and apply GPU culling toggle (Performance mode).
         if self.mode == ShowcaseMode::Performance {
             let rs = frame.wgpu_render_state().unwrap();
-            let guard = rs.renderer.read();
-            if let Some(renderer) = guard.callback_resources.get::<ViewportRenderer>() {
+            let mut guard = rs.renderer.write();
+            if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
+                if self.perf_gpu_culling {
+                    renderer.enable_gpu_driven_culling();
+                } else {
+                    renderer.disable_gpu_driven_culling();
+                }
                 self.last_stats = renderer.last_frame_stats();
             }
         }

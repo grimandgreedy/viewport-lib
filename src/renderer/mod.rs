@@ -6,6 +6,7 @@
 
 #[macro_use]
 mod types;
+mod indirect;
 mod picking;
 mod prepare;
 mod render;
@@ -18,7 +19,8 @@ pub use self::types::{
     CameraFrame, CameraFrustumItem, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane,
     GroundPlaneMode, ImageAnchor, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
-    LightingSettings, OverlayFrame, OverlayImageItem, PickId, PointCloudItem, PointRenderMode,
+    LightingSettings, LoadingBarAnchor, LoadingBarItem, OverlayFrame, OverlayImageItem, PickId,
+    PointCloudItem, PointRenderMode,
     PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBarAnchor, ScalarBarItem,
     ScalarBarOrientation, SceneEffects,
     SceneFrame, SceneRenderItem, ScreenImageItem,
@@ -42,10 +44,9 @@ pub struct ViewportId(pub usize);
 use self::shadows::{compute_cascade_matrix, compute_cascade_splits};
 use self::types::{INSTANCING_THRESHOLD, InstancedBatch};
 use crate::resources::{
-    CameraUniform, ClipPlanesUniform, ClipVolumeUniform, GridUniform, InstanceData, LightsUniform,
-    ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, PickInstance,
-    ShadowAtlasUniform,
-    SingleLightUniform, ViewportGpuResources,
+    BatchMeta, CameraUniform, ClipPlanesUniform, ClipVolumeUniform, GridUniform, InstanceAabb,
+    InstanceData, LightsUniform, ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers,
+    OutlineUniform, PickInstance, ShadowAtlasUniform, SingleLightUniform, ViewportGpuResources,
 };
 
 /// Per-viewport GPU state: uniform buffers and bind groups that differ per viewport.
@@ -142,6 +143,13 @@ pub struct ViewportRenderer {
     instanced_batches: Vec<InstancedBatch>,
     /// Whether the current frame uses the instanced draw path.
     use_instancing: bool,
+    /// True when the device supports `INDIRECT_FIRST_INSTANCE`.
+    gpu_culling_supported: bool,
+    /// True when GPU-driven culling is active (supported and not disabled by the caller).
+    gpu_culling_enabled: bool,
+    /// GPU culling compute pipelines and frustum buffer. Created lazily on the first
+    /// frame where `gpu_culling_enabled` is true and instance buffers are present.
+    cull_resources: Option<indirect::CullResources>,
     /// Performance counters from the last frame.
     last_stats: crate::renderer::stats::FrameStats,
     /// Last scene generation seen during prepare(). u64::MAX forces rebuild on first frame.
@@ -180,6 +188,8 @@ pub struct ViewportRenderer {
     scalar_bar_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-frame ruler GPU data, rebuilt in prepare(), consumed in paint().
     ruler_gpu_data: Option<crate::resources::LabelGpuData>,
+    /// Per-frame loading bar GPU data, rebuilt in prepare(), consumed in paint().
+    loading_bar_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-viewport GPU state slots.
     ///
     /// Indexed by `FrameData::camera.viewport_index`. Each slot owns independent
@@ -223,6 +233,15 @@ pub struct ViewportRenderer {
     ts_period: f32,
     /// Whether the staging buffer holds unread timestamp data from the previous frame.
     ts_needs_readback: bool,
+
+    // --- Indirect-args readback (GPU-driven culling visible instance count) ---
+    /// CPU-readable staging buffer for `indirect_args_buf` (batch_count × 20 bytes).
+    /// Grown lazily; never shrunk.
+    indirect_readback_buf: Option<wgpu::Buffer>,
+    /// Number of batches whose data was copied into `indirect_readback_buf` last frame.
+    indirect_readback_batch_count: u32,
+    /// True when `indirect_readback_buf` holds unread data from the previous cull pass.
+    indirect_readback_pending: bool,
 }
 
 impl ViewportRenderer {
@@ -242,10 +261,16 @@ impl ViewportRenderer {
         target_format: wgpu::TextureFormat,
         sample_count: u32,
     ) -> Self {
+        let gpu_culling_supported = device
+            .features()
+            .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
         Self {
             resources: ViewportGpuResources::new(device, target_format, sample_count),
             instanced_batches: Vec::new(),
             use_instancing: false,
+            gpu_culling_supported,
+            gpu_culling_enabled: gpu_culling_supported,
+            cull_resources: None,
             last_stats: crate::renderer::stats::FrameStats::default(),
             last_scene_generation: u64::MAX,
             last_selection_generation: u64::MAX,
@@ -264,6 +289,7 @@ impl ViewportRenderer {
             label_gpu_data: None,
             scalar_bar_gpu_data: None,
             ruler_gpu_data: None,
+            loading_bar_gpu_data: None,
             viewport_slots: Vec::new(),
             compute_filter_results: Vec::new(),
             last_cascade0_shadow_mat: glam::Mat4::IDENTITY,
@@ -277,6 +303,9 @@ impl ViewportRenderer {
             ts_staging_buf: None,
             ts_period: 1.0,
             ts_needs_readback: false,
+            indirect_readback_buf: None,
+            indirect_readback_batch_count: 0,
+            indirect_readback_pending: false,
         }
     }
 
@@ -288,6 +317,23 @@ impl ViewportRenderer {
     /// Performance counters from the last completed frame.
     pub fn last_frame_stats(&self) -> crate::renderer::stats::FrameStats {
         self.last_stats
+    }
+
+    /// Disable GPU-driven culling, reverting to the direct draw path.
+    ///
+    /// Has no effect when the device does not support `INDIRECT_FIRST_INSTANCE`
+    /// (culling is already disabled on those devices).
+    pub fn disable_gpu_driven_culling(&mut self) {
+        self.gpu_culling_enabled = false;
+    }
+
+    /// Re-enable GPU-driven culling after a call to `disable_gpu_driven_culling`.
+    ///
+    /// Has no effect when the device does not support `INDIRECT_FIRST_INSTANCE`.
+    pub fn enable_gpu_driven_culling(&mut self) {
+        if self.gpu_culling_supported {
+            self.gpu_culling_enabled = true;
+        }
     }
 
     /// Set the runtime mode controlling internal default behavior.

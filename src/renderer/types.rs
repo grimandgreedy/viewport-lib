@@ -1258,13 +1258,18 @@ impl CameraFrame {
 /// without changing the `SceneFrame` public type.
 #[non_exhaustive]
 pub enum SurfaceSubmission {
-    /// A flat list of scene render items (current behavior).
-    Flat(Vec<SceneRenderItem>),
+    /// A flat, reference-counted list of scene render items.
+    ///
+    /// Holding an `Arc<[SceneRenderItem]>` instead of a `Vec` means the per-frame
+    /// submission cost is a single atomic refcount increment rather than a full deep
+    /// copy of all items. Use [`SceneFrame::from_surface_items`] or
+    /// [`SceneFrame::from_scene`] to construct this variant.
+    Flat(std::sync::Arc<[SceneRenderItem]>),
 }
 
 impl Default for SurfaceSubmission {
     fn default() -> Self {
-        SurfaceSubmission::Flat(Vec::new())
+        SurfaceSubmission::Flat(std::sync::Arc::from([]))
     }
 }
 
@@ -1333,8 +1338,34 @@ impl SceneFrame {
     }
 
     /// Build a scene frame from a flat list of surface render items.
+    ///
+    /// The `Vec` is converted to an `Arc<[SceneRenderItem]>` so callers that
+    /// submit the same list repeatedly can cheaply clone the `Arc` instead of
+    /// cloning the underlying data.
     pub fn from_surface_items(items: Vec<SceneRenderItem>) -> Self {
-        Self::new(SurfaceSubmission::Flat(items))
+        Self::new(SurfaceSubmission::Flat(items.into()))
+    }
+
+    /// Build a scene frame from an already-allocated shared slice.
+    ///
+    /// Use this variant when you cache render items across frames:
+    ///
+    /// ```rust,ignore
+    /// // First frame / on change: rebuild the Arc once.
+    /// self.items_arc = Arc::from(scene.collect_render_items(&sel));
+    ///
+    /// // Every frame: zero-cost clone.
+    /// SceneFrame::from_shared_items(Arc::clone(&self.items_arc), scene.version())
+    /// ```
+    pub fn from_shared_items(
+        items: std::sync::Arc<[SceneRenderItem]>,
+        generation: u64,
+    ) -> Self {
+        Self {
+            generation,
+            surfaces: SurfaceSubmission::Flat(items),
+            ..Self::default()
+        }
     }
 
     /// Build a scene frame by collecting render items from a [`Scene`](crate::scene::scene::Scene).
@@ -1352,7 +1383,7 @@ impl SceneFrame {
         let items = scene.collect_render_items(selection);
         Self {
             generation: scene.version(),
-            surfaces: SurfaceSubmission::Flat(items),
+            surfaces: SurfaceSubmission::Flat(items.into()),
             ..Self::default()
         }
     }
@@ -2020,8 +2051,74 @@ impl Default for OverlayImageItem {
     }
 }
 
+/// Anchor position for a [`LoadingBarItem`] overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LoadingBarAnchor {
+    TopCenter,
+    Center,
+    #[default]
+    BottomCenter,
+}
+
+/// A progress bar drawn over the viewport in screen space.
+///
+/// Render via [`OverlayFrame::loading_bars`].
+///
+/// ```no_run
+/// use viewport_lib::{LoadingBarItem, LoadingBarAnchor};
+/// let bar = LoadingBarItem {
+///     progress: 0.42,
+///     label: Some("Building scene… 420 000 / 1 000 000".into()),
+///     anchor: LoadingBarAnchor::BottomCenter,
+///     ..LoadingBarItem::default()
+/// };
+/// ```
+#[derive(Debug, Clone)]
+pub struct LoadingBarItem {
+    /// Progress fraction in [0.0, 1.0].
+    pub progress: f32,
+    /// Optional label displayed above (or below for `TopCenter`) the bar.
+    pub label: Option<String>,
+    /// Viewport anchor for the bar.
+    pub anchor: LoadingBarAnchor,
+    /// Bar width in logical pixels.
+    pub width_px: f32,
+    /// Bar height in logical pixels.
+    pub height_px: f32,
+    /// Distance from the anchored viewport edge in logical pixels.
+    pub margin_px: f32,
+    /// Background (unfilled) colour.
+    pub background_color: [f32; 4],
+    /// Fill (progress) colour.
+    pub fill_color: [f32; 4],
+    /// Label text colour.
+    pub label_color: [f32; 4],
+    /// Font size for the label in logical pixels.
+    pub font_size: f32,
+    /// Corner radius of the bar rectangles in logical pixels.
+    pub corner_radius: f32,
+}
+
+impl Default for LoadingBarItem {
+    fn default() -> Self {
+        Self {
+            progress: 0.0,
+            label: None,
+            anchor: LoadingBarAnchor::default(),
+            width_px: 300.0,
+            height_px: 16.0,
+            margin_px: 24.0,
+            background_color: [0.12, 0.12, 0.12, 0.88],
+            fill_color: [0.22, 0.60, 1.0, 1.0],
+            label_color: [1.0, 1.0, 1.0, 1.0],
+            font_size: 13.0,
+            corner_radius: 4.0,
+        }
+    }
+}
+
 /// Semantic overlays rendered after post-processing: labels, scalar bars,
-/// rulers, and screen-space images.
+/// rulers, screen-space images, and loading bars.
 ///
 /// This frame section is the right place for any visual element that belongs
 /// in front of the 3D scene and must not be affected by tone-mapping or bloom.
@@ -2035,6 +2132,8 @@ pub struct OverlayFrame {
     pub rulers: Vec<RulerItem>,
     /// Pixel images composited over the viewport in screen space.
     pub images: Vec<OverlayImageItem>,
+    /// Progress bar overlays (loading indicators, progress feedback).
+    pub loading_bars: Vec<LoadingBarItem>,
 }
 
 // ---------------------------------------------------------------------------
@@ -2161,7 +2260,7 @@ macro_rules! emit_draw_calls {
 
         // Resolve scene items from the SurfaceSubmission seam.
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
-            SurfaceSubmission::Flat(items) => items,
+            SurfaceSubmission::Flat(items) => items.as_ref(),
         };
 
         render_pass.set_bind_group(0, camera_bg, &[]);

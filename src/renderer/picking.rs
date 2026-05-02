@@ -41,7 +41,7 @@ impl ViewportRenderer {
 
         // Resolve scene items from the SurfaceSubmission seam.
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
-            SurfaceSubmission::Flat(items) => items,
+            SurfaceSubmission::Flat(items) => items.as_ref(),
         };
 
         let vp_w = frame.camera.viewport_size[0] as u32;

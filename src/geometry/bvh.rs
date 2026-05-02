@@ -7,6 +7,8 @@
 
 use std::collections::HashMap;
 
+use rayon;
+
 use crate::interaction::selection::NodeId;
 use crate::resources::mesh_store::MeshId;
 use crate::scene::aabb::Aabb;
@@ -257,8 +259,12 @@ impl PickAccelerator {
 }
 
 // ---------------------------------------------------------------------------
-// BVH construction (SAH-based binary split)
+// BVH construction (SAH-based binary split, parallel via rayon)
 // ---------------------------------------------------------------------------
+
+// Switch from parallel rayon::join to sequential recursion below this count.
+// At this granularity the task-spawn overhead outweighs the parallelism gain.
+const PARALLEL_THRESHOLD: usize = 1024;
 
 fn build_bvh_node(entries: &[BvhEntry], indices: Vec<usize>) -> BvhNode {
     // Compute combined AABB.
@@ -298,10 +304,24 @@ fn build_bvh_node(entries: &[BvhEntry], indices: Vec<usize>) -> BvhNode {
         right_indices = indices[mid..].to_vec();
     }
 
+    // Recurse in parallel for large subtrees; fall back to sequential for small ones
+    // so we don't pay rayon task-spawn overhead on leaf-adjacent nodes.
+    let (left_node, right_node) = if indices.len() > PARALLEL_THRESHOLD {
+        rayon::join(
+            || build_bvh_node(entries, left_indices),
+            || build_bvh_node(entries, right_indices),
+        )
+    } else {
+        (
+            build_bvh_node(entries, left_indices),
+            build_bvh_node(entries, right_indices),
+        )
+    };
+
     BvhNode::Interior {
         aabb: combined,
-        left: Box::new(build_bvh_node(entries, left_indices)),
-        right: Box::new(build_bvh_node(entries, right_indices)),
+        left: Box::new(left_node),
+        right: Box::new(right_node),
     }
 }
 
