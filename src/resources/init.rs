@@ -1939,6 +1939,16 @@ impl ViewportGpuResources {
             shadow_instanced_pipeline: None,
             shadow_instanced_cascade_bufs: [None, None, None, None],
             shadow_instanced_cascade_bgs: [None, None, None, None],
+            // GPU culling buffers (Phase 2; populated on first batch cache miss).
+            instance_aabb_buf: None,
+            instance_aabb_capacity: 0,
+            batch_meta_buf: None,
+            batch_counter_buf: None,
+            batch_meta_capacity: 0,
+            visibility_index_buf: None,
+            visibility_index_capacity: 0,
+            indirect_args_buf: None,
+            shadow_indirect_bufs: [None, None, None, None],
             // Post-processing shared infrastructure (None until ensure_hdr_shared is called).
             bloom_bgl: None,
             ssao_bgl: None,

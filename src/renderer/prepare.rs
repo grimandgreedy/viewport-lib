@@ -583,6 +583,8 @@ impl ViewportRenderer {
                 });
 
                 let mut all_instances: Vec<InstanceData> = Vec::with_capacity(sorted_items.len());
+                let mut all_aabbs: Vec<InstanceAabb> = Vec::with_capacity(sorted_items.len());
+                let mut batch_metas: Vec<BatchMeta> = Vec::new();
                 let mut instanced_batches: Vec<InstancedBatch> = Vec::new();
 
                 if !sorted_items.is_empty() {
@@ -629,6 +631,42 @@ impl ViewportRenderer {
                                 });
                             }
 
+                            // Build per-instance AABBs alongside instance data.
+                            // All items in a batch share the same mesh_id (batch key), so
+                            // mesh.index_count is the same for every item — look it up once.
+                            let batch_idx = instanced_batches.len() as u32;
+                            let mesh_index_count = resources
+                                .mesh_store
+                                .get(rep.mesh_id)
+                                .map(|m| m.index_count)
+                                .unwrap_or(0);
+                            for item in batch_items {
+                                if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
+                                    let model =
+                                        glam::Mat4::from_cols_array_2d(&item.model);
+                                    let world_aabb = mesh.aabb.transformed(&model);
+                                    all_aabbs.push(InstanceAabb {
+                                        min: world_aabb.min.into(),
+                                        batch_index: batch_idx,
+                                        max: world_aabb.max.into(),
+                                        _pad: 0,
+                                    });
+                                }
+                            }
+
+                            // vis_offset is the prefix sum of instance counts; since
+                            // instances are laid out contiguously per batch, it equals
+                            // instance_offset.
+                            batch_metas.push(BatchMeta {
+                                index_count: mesh_index_count,
+                                first_index: 0,
+                                instance_offset,
+                                instance_count: batch_items.len() as u32,
+                                vis_offset: instance_offset,
+                                is_transparent: if is_transparent { 1 } else { 0 },
+                                _pad: [0, 0],
+                            });
+
                             instanced_batches.push(InstancedBatch {
                                 mesh_id: rep.mesh_id,
                                 texture_id: rep.material.texture_id,
@@ -648,6 +686,7 @@ impl ViewportRenderer {
                 self.cached_instanced_batches = instanced_batches;
 
                 resources.upload_instance_data(device, queue, &self.cached_instance_data);
+                resources.upload_aabb_and_batch_meta(device, queue, &all_aabbs, &batch_metas);
 
                 self.instanced_batches = self.cached_instanced_batches.clone();
 

@@ -42,10 +42,9 @@ pub struct ViewportId(pub usize);
 use self::shadows::{compute_cascade_matrix, compute_cascade_splits};
 use self::types::{INSTANCING_THRESHOLD, InstancedBatch};
 use crate::resources::{
-    CameraUniform, ClipPlanesUniform, ClipVolumeUniform, GridUniform, InstanceData, LightsUniform,
-    ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, PickInstance,
-    ShadowAtlasUniform,
-    SingleLightUniform, ViewportGpuResources,
+    BatchMeta, CameraUniform, ClipPlanesUniform, ClipVolumeUniform, GridUniform, InstanceAabb,
+    InstanceData, LightsUniform, ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers,
+    OutlineUniform, PickInstance, ShadowAtlasUniform, SingleLightUniform, ViewportGpuResources,
 };
 
 /// Per-viewport GPU state: uniform buffers and bind groups that differ per viewport.
@@ -142,6 +141,10 @@ pub struct ViewportRenderer {
     instanced_batches: Vec<InstancedBatch>,
     /// Whether the current frame uses the instanced draw path.
     use_instancing: bool,
+    /// True when the device supports `INDIRECT_FIRST_INSTANCE`.
+    gpu_culling_supported: bool,
+    /// True when GPU-driven culling is active (supported and not disabled by the caller).
+    gpu_culling_enabled: bool,
     /// Performance counters from the last frame.
     last_stats: crate::renderer::stats::FrameStats,
     /// Last scene generation seen during prepare(). u64::MAX forces rebuild on first frame.
@@ -242,10 +245,15 @@ impl ViewportRenderer {
         target_format: wgpu::TextureFormat,
         sample_count: u32,
     ) -> Self {
+        let gpu_culling_supported = device
+            .features()
+            .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
         Self {
             resources: ViewportGpuResources::new(device, target_format, sample_count),
             instanced_batches: Vec::new(),
             use_instancing: false,
+            gpu_culling_supported,
+            gpu_culling_enabled: gpu_culling_supported,
             last_stats: crate::renderer::stats::FrameStats::default(),
             last_scene_generation: u64::MAX,
             last_selection_generation: u64::MAX,
@@ -288,6 +296,14 @@ impl ViewportRenderer {
     /// Performance counters from the last completed frame.
     pub fn last_frame_stats(&self) -> crate::renderer::stats::FrameStats {
         self.last_stats
+    }
+
+    /// Disable GPU-driven culling, reverting to the direct draw path.
+    ///
+    /// Has no effect when the device does not support `INDIRECT_FIRST_INSTANCE`
+    /// (culling is already disabled on those devices).
+    pub fn disable_gpu_driven_culling(&mut self) {
+        self.gpu_culling_enabled = false;
     }
 
     /// Set the runtime mode controlling internal default behavior.

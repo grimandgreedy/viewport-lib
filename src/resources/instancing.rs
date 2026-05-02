@@ -298,6 +298,112 @@ impl ViewportGpuResources {
         );
     }
 
+    /// Upload per-instance AABB data and per-batch metadata to GPU buffers.
+    ///
+    /// Allocates or grows buffers using the same 2x strategy as `upload_instance_data`.
+    /// Also allocates `visibility_index_buf`, `batch_counter_buf`, `indirect_args_buf`,
+    /// and `shadow_indirect_bufs` at the same time since they share the same capacity.
+    /// Call on every batch cache miss, immediately after `upload_instance_data`.
+    pub(crate) fn upload_aabb_and_batch_meta(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        aabbs: &[crate::resources::types::InstanceAabb],
+        metas: &[crate::resources::types::BatchMeta],
+    ) {
+        // --- AABB buffer (per-instance) ---
+        let max_instances = (device.limits().max_storage_buffer_binding_size as usize)
+            / std::mem::size_of::<crate::resources::types::InstanceAabb>();
+        let aabbs = &aabbs[..aabbs.len().min(max_instances)];
+
+        if aabbs.len() > self.instance_aabb_capacity {
+            let new_cap = (aabbs.len() * 2).max(64).min(max_instances);
+            self.instance_aabb_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("instance_aabb_buf"),
+                size: (new_cap * std::mem::size_of::<crate::resources::types::InstanceAabb>())
+                    as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            self.instance_aabb_capacity = new_cap;
+        }
+        if !aabbs.is_empty() {
+            queue.write_buffer(
+                self.instance_aabb_buf.as_ref().unwrap(),
+                0,
+                bytemuck::cast_slice(aabbs),
+            );
+        }
+
+        // --- visibility_index_buf: same count as instances ---
+        if aabbs.len() > self.visibility_index_capacity {
+            let new_cap = (aabbs.len() * 2).max(64).min(max_instances);
+            self.visibility_index_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("visibility_index_buf"),
+                size: (new_cap * std::mem::size_of::<u32>()) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            self.visibility_index_capacity = new_cap;
+        }
+
+        // --- Batch meta + counter + indirect args buffers (per-batch) ---
+        let max_batches = (device.limits().max_storage_buffer_binding_size as usize)
+            / std::mem::size_of::<crate::resources::types::BatchMeta>();
+        let metas = &metas[..metas.len().min(max_batches)];
+        let batch_count = metas.len();
+
+        if batch_count > self.batch_meta_capacity {
+            let new_cap = (batch_count * 2).max(16).min(max_batches);
+            let meta_size =
+                (new_cap * std::mem::size_of::<crate::resources::types::BatchMeta>()) as u64;
+            let counter_size = (new_cap * std::mem::size_of::<u32>()) as u64;
+            // wgpu::util::DrawIndexedIndirect is 5 × u32 = 20 bytes.
+            let indirect_size = (new_cap * 20) as u64;
+
+            self.batch_meta_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("batch_meta_buf"),
+                size: meta_size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            self.batch_counter_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("batch_counter_buf"),
+                size: counter_size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            self.indirect_args_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("indirect_args_buf"),
+                size: indirect_size,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::INDIRECT
+                    | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            for i in 0..4 {
+                self.shadow_indirect_bufs[i] =
+                    Some(device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some(&format!("shadow_indirect_buf_{i}")),
+                        size: indirect_size,
+                        usage: wgpu::BufferUsages::STORAGE
+                            | wgpu::BufferUsages::INDIRECT
+                            | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    }));
+            }
+            self.batch_meta_capacity = new_cap;
+        }
+
+        if !metas.is_empty() {
+            queue.write_buffer(
+                self.batch_meta_buf.as_ref().unwrap(),
+                0,
+                bytemuck::cast_slice(metas),
+            );
+        }
+    }
+
     /// Get or create a combined instance+texture bind group for the instanced pipeline.
     ///
     /// The bind group combines the shared instance storage buffer (binding 0) with the

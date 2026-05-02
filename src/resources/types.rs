@@ -486,6 +486,48 @@ pub(crate) struct PickInstance {
 
 const _: () = assert!(std::mem::size_of::<PickInstance>() == 80);
 
+/// Per-instance world-space AABB, uploaded to GPU for the compute cull pass.
+///
+/// Layout (32 bytes):
+/// - min:         [f32; 3] = 12 bytes, offset  0
+/// - batch_index: u32      =  4 bytes, offset 12 — index into batch_meta_buf
+/// - max:         [f32; 3] = 12 bytes, offset 16
+/// - _pad:        u32      =  4 bytes, offset 28
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct InstanceAabb {
+    pub(crate) min: [f32; 3],
+    pub(crate) batch_index: u32,
+    pub(crate) max: [f32; 3],
+    pub(crate) _pad: u32,
+}
+
+const _: () = assert!(std::mem::size_of::<InstanceAabb>() == 32);
+
+/// Per-batch metadata for the GPU compute cull pass.
+///
+/// Layout (32 bytes):
+/// - index_count:     u32 =  4 bytes — mesh.index_count
+/// - first_index:     u32 =  4 bytes — always 0
+/// - instance_offset: u32 =  4 bytes — offset into instance_storage_buf
+/// - instance_count:  u32 =  4 bytes — total instances in this batch
+/// - vis_offset:      u32 =  4 bytes — pre-computed prefix sum (equals instance_offset)
+/// - is_transparent:  u32 =  4 bytes — 1 = transparent batch
+/// - _pad:       [u32; 2] =  8 bytes
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct BatchMeta {
+    pub(crate) index_count: u32,
+    pub(crate) first_index: u32,
+    pub(crate) instance_offset: u32,
+    pub(crate) instance_count: u32,
+    pub(crate) vis_offset: u32,
+    pub(crate) is_transparent: u32,
+    pub(crate) _pad: [u32; 2],
+}
+
+const _: () = assert!(std::mem::size_of::<BatchMeta>() == 32);
+
 /// Clip planes uniform for section-view clipping (binding 4 of camera bind group).
 ///
 /// Layout (112 bytes):
@@ -1401,6 +1443,23 @@ pub struct ViewportGpuResources {
     pub(crate) shadow_instanced_cascade_bufs: [Option<wgpu::Buffer>; 4],
     /// Per-cascade bind groups for shadow_instanced_pipeline group 0.
     pub(crate) shadow_instanced_cascade_bgs: [Option<wgpu::BindGroup>; 4],
+
+    // --- GPU culling buffers (Phase 2) ---
+    /// Per-instance world-space AABB buffer. Rebuilt on batch cache miss.
+    pub(crate) instance_aabb_buf: Option<wgpu::Buffer>,
+    pub(crate) instance_aabb_capacity: usize,
+    /// Per-batch metadata buffer. Rebuilt on batch cache miss.
+    pub(crate) batch_meta_buf: Option<wgpu::Buffer>,
+    /// Per-batch atomic counter buffer. Zeroed at the start of each cull dispatch.
+    pub(crate) batch_counter_buf: Option<wgpu::Buffer>,
+    pub(crate) batch_meta_capacity: usize,
+    /// Compact list of visible instance indices. Written by the compute cull pass.
+    pub(crate) visibility_index_buf: Option<wgpu::Buffer>,
+    pub(crate) visibility_index_capacity: usize,
+    /// Indirect draw args buffer for the main pass (one DrawIndexedIndirect per batch).
+    pub(crate) indirect_args_buf: Option<wgpu::Buffer>,
+    /// Indirect draw args buffers for shadow cascades (one per cascade).
+    pub(crate) shadow_indirect_bufs: [Option<wgpu::Buffer>; 4],
 
     // --- Post-processing shared infrastructure (BGLs / pipelines / samplers / static textures) ---
     // Viewport-sized textures, bind groups, and uniform buffers are stored in
