@@ -227,6 +227,7 @@ fn main() -> eframe::Result {
                 perf_scene_items_cache: Vec::new(),
                 perf_scene_items_version: (u64::MAX, u64::MAX),
                 perf_built: false,
+                perf_gpu_culling: true,
                 interact_scene: Scene::new(),
                 interact_selection: Selection::new(),
                 interact_animator: CameraAnimator::with_default_damping(),
@@ -716,6 +717,7 @@ pub(crate) struct App {
     pub(crate) perf_scene_items_cache: Vec<SceneRenderItem>,
     pub(crate) perf_scene_items_version: (u64, u64),
     pub(crate) perf_built: bool,
+    pub(crate) perf_gpu_culling: bool,
 
     // --- Showcase 4 ---
     pub(crate) interact_scene: Scene,
@@ -2452,22 +2454,7 @@ impl App {
     }
 
     fn controls_performance(&mut self, ui: &mut egui::Ui) {
-        let s = &self.last_stats;
-        let total = self.perf_total_objects;
-        let visible = s.total_objects;
-        let culled = total.saturating_sub(visible);
-        ui.label(format!("Total objects: {total}"));
-        ui.label(format!("Visible: {visible}"));
-        ui.label(format!("Culled: {culled}"));
-        ui.label(format!("Draw calls: {}", s.draw_calls));
-        ui.label(format!("Batches: {}", s.instanced_batches));
-        ui.label(format!("Triangles: {}", s.triangles_submitted));
-        ui.label(format!("Shadow draws: {}", s.shadow_draw_calls));
-        ui.separator();
-        ui.label("Click objects to select them.");
-        if ui.button("Clear Selection").clicked() {
-            self.perf_selection.clear();
-        }
+        self.perf_controls(ui);
     }
 
     fn controls_interaction(&mut self, ui: &mut egui::Ui) {
@@ -4121,11 +4108,16 @@ impl App {
             fd.overlays.labels.extend(self.build_label_screen_overlays(w, h));
         }
 
-        // Update stats from the last rendered frame (Performance mode).
+        // Update stats and apply GPU culling toggle (Performance mode).
         if self.mode == ShowcaseMode::Performance {
             let rs = frame.wgpu_render_state().unwrap();
-            let guard = rs.renderer.read();
-            if let Some(renderer) = guard.callback_resources.get::<ViewportRenderer>() {
+            let mut guard = rs.renderer.write();
+            if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
+                if self.perf_gpu_culling {
+                    renderer.enable_gpu_driven_culling();
+                } else {
+                    renderer.disable_gpu_driven_culling();
+                }
                 self.last_stats = renderer.last_frame_stats();
             }
         }

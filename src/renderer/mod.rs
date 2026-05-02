@@ -311,6 +311,15 @@ impl ViewportRenderer {
         self.gpu_culling_enabled = false;
     }
 
+    /// Re-enable GPU-driven culling after a call to `disable_gpu_driven_culling`.
+    ///
+    /// Has no effect when the device does not support `INDIRECT_FIRST_INSTANCE`.
+    pub fn enable_gpu_driven_culling(&mut self) {
+        if self.gpu_culling_supported {
+            self.gpu_culling_enabled = true;
+        }
+    }
+
     /// Set the runtime mode controlling internal default behavior.
     ///
     /// - [`RuntimeMode::Interactive`]: full picking rate, full quality (default).
