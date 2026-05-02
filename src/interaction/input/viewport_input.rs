@@ -140,6 +140,7 @@ impl ViewportInput {
                 let scale = match units {
                     ScrollUnits::Lines => PIXELS_PER_LINE,
                     ScrollUnits::Pixels => 1.0,
+                    ScrollUnits::Pages => self.ctx.viewport_size[1].max(1.0),
                 };
                 // Only accumulate if viewport is hovered
                 if self.ctx.hovered {

@@ -218,12 +218,17 @@ impl App {
                         });
                     }
 
-                    egui::Event::MouseWheel { delta, .. } => {
+                    egui::Event::MouseWheel { unit, delta, .. } => {
                         let over_vp = hover_pos.map(|p| rect.contains(p)).unwrap_or(false);
                         if over_vp {
+                            let units = match unit {
+                                egui::MouseWheelUnit::Line => ScrollUnits::Lines,
+                                egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
+                                egui::MouseWheelUnit::Page => ScrollUnits::Pages,
+                            };
                             self.mv_controllers[hq].push_event(ViewportEvent::Wheel {
                                 delta: glam::Vec2::new(delta.x, delta.y),
-                                units: ScrollUnits::Pixels,
+                                units,
                             });
                         }
                     }

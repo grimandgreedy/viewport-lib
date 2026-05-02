@@ -370,14 +370,14 @@ impl shader::Program<Message> for SceneSnapshot {
 
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
                 let _ = cursor.position_in(bounds)?;
-                let scroll_y = match delta {
-                    mouse::ScrollDelta::Lines { y, .. } => *y * 28.0,
-                    mouse::ScrollDelta::Pixels { y, .. } => *y,
+                let (scroll_y, units) = match delta {
+                    mouse::ScrollDelta::Lines { y, .. } => (*y, ScrollUnits::Lines),
+                    mouse::ScrollDelta::Pixels { y, .. } => (*y, ScrollUnits::Pixels),
                 };
                 state.controller.begin_frame(vp_ctx);
                 state.controller.push_event(ViewportEvent::Wheel {
                     delta: glam::vec2(0.0, scroll_y),
-                    units: ScrollUnits::Pixels,
+                    units,
                 });
                 state.controller.apply_to_camera(&mut state.camera);
                 Some(iced::widget::shader::Action::request_redraw().and_capture())

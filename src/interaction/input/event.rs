@@ -18,6 +18,8 @@ pub enum ScrollUnits {
     Lines,
     /// Delta in physical pixels.
     Pixels,
+    /// Delta in viewport pages (one unit = viewport height).
+    Pages,
 }
 
 /// A framework-agnostic event delivered to the viewport input pipeline.

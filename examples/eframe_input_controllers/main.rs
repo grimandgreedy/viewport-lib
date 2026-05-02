@@ -512,10 +512,15 @@ impl eframe::App for App {
                                 }
                             }
                         }
-                        egui::Event::MouseWheel { delta, .. } => {
+                        egui::Event::MouseWheel { unit, delta, .. } => {
+                            let units = match unit {
+                                egui::MouseWheelUnit::Line => ScrollUnits::Lines,
+                                egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
+                                egui::MouseWheelUnit::Page => ScrollUnits::Pages,
+                            };
                             vp_events.push(ViewportEvent::Wheel {
                                 delta: glam::Vec2::new(delta.x, delta.y),
-                                units: ScrollUnits::Pixels,
+                                units,
                             });
                         }
                         egui::Event::Text(text) if manip_active => {
