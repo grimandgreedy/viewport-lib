@@ -320,6 +320,8 @@ impl ViewportGpuResources {
         queue: &wgpu::Queue,
         item: &crate::renderer::VolumeItem,
         clip_planes: &[crate::renderer::ClipPlane],
+        // Multiplier applied to the computed step size (1.0 = normal, >1.0 = coarser/faster).
+        step_scale_multiplier: f32,
     ) -> VolumeGpuData {
         self.ensure_volume_cube(device);
         self.ensure_default_opacity_lut(device, queue);
@@ -347,7 +349,7 @@ impl ViewportGpuResources {
         let inv_model = model.inverse();
 
         let max_dim = dims[0].max(dims[1]).max(dims[2]) as f32;
-        let step_size = item.step_scale / max_dim.max(1.0);
+        let step_size = (item.step_scale * step_scale_multiplier) / max_dim.max(1.0);
 
         let mut clip_plane_data = [[0.0f32; 4]; 6];
         let mut num_clip = 0u32;

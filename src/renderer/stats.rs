@@ -24,8 +24,9 @@ pub enum RuntimeMode {
 /// adaptation controller reads `target_fps` and adjusts render scale within
 /// `[min_render_scale, max_render_scale]` when `allow_dynamic_resolution` is true.
 ///
-/// Pass-specific flags (`allow_shadow_reduction`, etc.) are accepted but act as
-/// no-ops until the relevant passes support quality levels (Phase 5).
+/// Pass-specific flags (`allow_shadow_reduction`, `allow_volume_quality_reduction`,
+/// `allow_effect_throttling`) gate concrete quality reductions that kick in when
+/// the previous frame missed the target budget.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PerformancePolicy {
     /// Target frames per second. `None` means uncapped; `missed_budget` is always `false`.
@@ -39,11 +40,21 @@ pub struct PerformancePolicy {
     /// When `false`, the internal controller is inactive and render scale can be
     /// set manually via [`crate::ViewportRenderer::set_render_scale`].
     pub allow_dynamic_resolution: bool,
-    /// Allow the viewport to reduce shadow quality under load. No-op until Phase 5.
+    /// Allow the viewport to skip the shadow pass under load.
+    ///
+    /// When `true` and the previous frame exceeded the target budget, the shadow depth
+    /// pass is skipped entirely. Shadows reappear as soon as the frame is within budget.
     pub allow_shadow_reduction: bool,
-    /// Allow the viewport to reduce volume raymarch quality under load. No-op until Phase 5.
+    /// Allow the viewport to reduce volume raymarch quality under load.
+    ///
+    /// When `true` and the previous frame exceeded the target budget, the per-volume
+    /// step size is doubled (half the number of samples), reducing GPU cost at the
+    /// cost of coarser volume appearance.
     pub allow_volume_quality_reduction: bool,
-    /// Allow the viewport to throttle non-essential effect passes under load. No-op until Phase 5.
+    /// Allow the viewport to skip non-essential HDR effect passes under load.
+    ///
+    /// When `true` and the previous frame exceeded the target budget, the SSAO,
+    /// contact shadow, and bloom passes are skipped for that frame.
     pub allow_effect_throttling: bool,
 }
 

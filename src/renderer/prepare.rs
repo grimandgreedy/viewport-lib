@@ -891,8 +891,24 @@ impl ViewportRenderer {
                     }
                 })
                 .collect();
+            // Phase 5: under budget pressure with allow_volume_quality_reduction, double the
+            // step size (half the sample count) to reduce GPU raymarch cost.
+            let vol_step_multiplier =
+                if self.last_stats.missed_budget
+                    && self.performance_policy.allow_volume_quality_reduction
+                {
+                    2.0_f32
+                } else {
+                    1.0_f32
+                };
             for item in &frame.scene.volumes {
-                let gpu = resources.upload_volume_frame(device, queue, item, &clip_planes_for_vol);
+                let gpu = resources.upload_volume_frame(
+                    device,
+                    queue,
+                    item,
+                    &clip_planes_for_vol,
+                    vol_step_multiplier,
+                );
                 self.volume_gpu_data.push(gpu);
             }
         }
@@ -948,8 +964,11 @@ impl ViewportRenderer {
 
         // ------------------------------------------------------------------
         // Shadow depth pass : CSM: render each cascade into its atlas tile.
+        // Phase 5: skip the pass entirely when over budget and shadow reduction is allowed.
         // ------------------------------------------------------------------
-        if lighting.shadows_enabled && !scene_items.is_empty() {
+        let skip_shadows = self.last_stats.missed_budget
+            && self.performance_policy.allow_shadow_reduction;
+        if lighting.shadows_enabled && !scene_items.is_empty() && !skip_shadows {
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("shadow_pass_encoder"),
             });

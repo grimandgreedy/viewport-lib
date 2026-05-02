@@ -1403,10 +1403,15 @@ impl ViewportRenderer {
             }
         }
 
+        // Phase 5 : effect throttling. When over budget and the policy permits it,
+        // skip non-essential effect passes (SSAO, contact shadows, bloom).
+        let throttle_effects = self.last_stats.missed_budget
+            && self.performance_policy.allow_effect_throttling;
+
         // -----------------------------------------------------------------------
         // SSAO pass.
         // -----------------------------------------------------------------------
-        if pp.ssao {
+        if pp.ssao && !throttle_effects {
             if let Some(ssao_pipeline) = &self.resources.ssao_pipeline {
                 {
                     let mut ssao_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1457,7 +1462,7 @@ impl ViewportRenderer {
         // -----------------------------------------------------------------------
         // Contact shadow pass.
         // -----------------------------------------------------------------------
-        if pp.contact_shadows {
+        if pp.contact_shadows && !throttle_effects {
             if let Some(cs_pipeline) = &self.resources.contact_shadow_pipeline {
                 let mut cs_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("contact_shadow_pass"),
@@ -1483,7 +1488,7 @@ impl ViewportRenderer {
         // -----------------------------------------------------------------------
         // Bloom passes.
         // -----------------------------------------------------------------------
-        if pp.bloom {
+        if pp.bloom && !throttle_effects {
             // Threshold pass: extract bright pixels into bloom_threshold_texture.
             if let Some(bloom_threshold_pipeline) = &self.resources.bloom_threshold_pipeline {
                 {
