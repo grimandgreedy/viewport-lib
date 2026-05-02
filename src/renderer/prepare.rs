@@ -36,7 +36,7 @@ impl ViewportRenderer {
 
         // Resolve scene items from the SurfaceSubmission seam.
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
-            SurfaceSubmission::Flat(items) => items,
+            SurfaceSubmission::Flat(items) => items.as_ref(),
         };
 
         // Compute scene center / extent for shadow framing.
@@ -784,7 +784,37 @@ impl ViewportRenderer {
                         instance_count,
                         batch_count,
                     );
+
+                    // Copy indirect_args_buf to the CPU-readable staging buffer so the
+                    // visible instance count can be read back next frame (one-frame lag).
+                    let indirect_bytes = batch_count as u64 * 20;
+                    if self
+                        .indirect_readback_buf
+                        .as_ref()
+                        .map_or(0, |b| b.size())
+                        < indirect_bytes
+                    {
+                        self.indirect_readback_buf =
+                            Some(device.create_buffer(&wgpu::BufferDescriptor {
+                                label: Some("indirect_readback_buf"),
+                                size: indirect_bytes,
+                                usage: wgpu::BufferUsages::COPY_DST
+                                    | wgpu::BufferUsages::MAP_READ,
+                                mapped_at_creation: false,
+                            }));
+                    }
+                    if let Some(ref rb_buf) = self.indirect_readback_buf {
+                        encoder.copy_buffer_to_buffer(
+                            indirect_buf,
+                            0,
+                            rb_buf,
+                            0,
+                            indirect_bytes,
+                        );
+                    }
                     queue.submit(std::iter::once(encoder.finish()));
+                    self.indirect_readback_batch_count = batch_count;
+                    self.indirect_readback_pending = true;
                 }
             }
         }
@@ -1073,6 +1103,12 @@ impl ViewportRenderer {
                 triangles_submitted: triangles,
                 shadow_draw_calls: 0, // Updated below in shadow pass.
                 gpu_culling_active: self.gpu_culling_enabled,
+                // Clear stale readback if GPU culling is off this frame.
+                gpu_visible_instances: if self.gpu_culling_enabled {
+                    self.last_stats.gpu_visible_instances
+                } else {
+                    None
+                },
                 ..self.last_stats
             };
         }
@@ -1416,7 +1452,7 @@ impl ViewportRenderer {
         self.ensure_viewport_slot(device, frame.camera.viewport_index);
 
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
-            SurfaceSubmission::Flat(items) => items,
+            SurfaceSubmission::Flat(items) => items.as_ref(),
         };
 
         // Capture before the resources mutable borrow so it's accessible inside the block.
@@ -2801,6 +2837,43 @@ impl ViewportRenderer {
                 stg_buf.unmap();
             }
             self.ts_needs_readback = false;
+        }
+
+        // Read back GPU-visible instance count from the previous frame's indirect args copy.
+        // The cull pass from the previous frame has already been submitted and is almost
+        // certainly done by the time prepare() is called; a short poll is enough.
+        if self.indirect_readback_pending {
+            if let Some(ref stg_buf) = self.indirect_readback_buf {
+                let bytes = self.indirect_readback_batch_count as u64 * 20;
+                if bytes > 0 {
+                    let (tx, rx) =
+                        std::sync::mpsc::channel::<Result<(), wgpu::BufferAsyncError>>();
+                    stg_buf.slice(..bytes).map_async(wgpu::MapMode::Read, move |r| {
+                        let _ = tx.send(r);
+                    });
+                    device
+                        .poll(wgpu::PollType::Wait {
+                            submission_index: None,
+                            timeout: Some(std::time::Duration::from_millis(100)),
+                        })
+                        .ok();
+                    if rx.try_recv().unwrap_or(Err(wgpu::BufferAsyncError)).is_ok() {
+                        let data = stg_buf.slice(..bytes).get_mapped_range();
+                        let mut visible: u32 = 0;
+                        for i in 0..self.indirect_readback_batch_count as usize {
+                            // DrawIndexedIndirect layout: [index_count, instance_count, first_index, base_vertex, first_instance]
+                            // instance_count is at byte offset 4 within each 20-byte entry.
+                            let off = i * 20 + 4;
+                            let n = u32::from_le_bytes(data[off..off + 4].try_into().unwrap());
+                            visible = visible.saturating_add(n);
+                        }
+                        drop(data);
+                        self.last_stats.gpu_visible_instances = Some(visible);
+                    }
+                    stg_buf.unmap();
+                }
+            }
+            self.indirect_readback_pending = false;
         }
 
         // Wall-clock duration since the previous prepare() call approximates the frame interval.

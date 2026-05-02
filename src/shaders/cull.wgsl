@@ -90,10 +90,10 @@ fn cull_instances(@builtin(global_invocation_id) id: vec3<u32>) {
     // Visible: atomically claim a slot in the visibility buffer for this batch.
     let b    = aabb.batch_index;
     let slot = atomicAdd(&batch_counters[b], 1u);
-    let meta = batch_metas[b];
+    let bmeta = batch_metas[b];
     // Guard against counter overflow if instance_count drifts from buffer size.
-    if slot < meta.instance_count {
-        visibility_indices[meta.vis_offset + slot] = i;
+    if slot < bmeta.instance_count {
+        visibility_indices[bmeta.vis_offset + slot] = i;
     }
 }
 
@@ -104,7 +104,7 @@ fn write_indirect_args(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
-    let meta          = batch_metas[b];
+    let bmeta         = batch_metas[b];
     let visible_count = atomicLoad(&batch_counters[b]);
 
     // Write one DrawIndexedIndirect struct.
@@ -112,11 +112,11 @@ fn write_indirect_args(@builtin(global_invocation_id) id: vec3<u32>) {
     // visibility_indices starting at the right offset for this batch.
     // (Requires INDIRECT_FIRST_INSTANCE device feature.)
     indirect_args[b] = DrawIndirect(
-        meta.index_count,
+        bmeta.index_count,
         visible_count,
-        meta.first_index,
+        bmeta.first_index,
         0i,
-        meta.vis_offset,
+        bmeta.vis_offset,
     );
 
     // Zero the counter ready for the next frame's cull_instances dispatch.

@@ -153,6 +153,35 @@ fn main() -> eframe::Result {
             viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 800.0]),
             depth_buffer: 24,
             stencil_buffer: 8,
+            wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+                wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(
+                    eframe::egui_wgpu::WgpuSetupCreateNew {
+                        // Request INDIRECT_FIRST_INSTANCE when the adapter supports it so
+                        // GPU-driven culling is available on Metal (Apple Silicon) and Vulkan.
+                        device_descriptor: std::sync::Arc::new(|adapter| {
+                            use eframe::wgpu;
+                            let base_limits =
+                                if adapter.get_info().backend == wgpu::Backend::Gl {
+                                    wgpu::Limits::downlevel_webgl2_defaults()
+                                } else {
+                                    wgpu::Limits::default()
+                                };
+                            wgpu::DeviceDescriptor {
+                                label: Some("viewport-lib showcase device"),
+                                required_features: adapter.features()
+                                    & wgpu::Features::INDIRECT_FIRST_INSTANCE,
+                                required_limits: wgpu::Limits {
+                                    max_texture_dimension_2d: 8192,
+                                    ..base_limits
+                                },
+                                ..Default::default()
+                            }
+                        }),
+                        ..Default::default()
+                    },
+                ),
+                ..Default::default()
+            },
             ..Default::default()
         },
         Box::new(|cc| {
@@ -224,7 +253,7 @@ fn main() -> eframe::Result {
                 perf_mesh: None,
                 last_stats: FrameStats::default(),
                 perf_total_objects: 0,
-                perf_scene_items_cache: Vec::new(),
+                perf_scene_items_cache: std::sync::Arc::from([]),
                 perf_scene_items_version: (u64::MAX, u64::MAX),
                 perf_built: false,
                 perf_gpu_culling: true,
@@ -714,7 +743,7 @@ pub(crate) struct App {
     pub(crate) perf_mesh: Option<MeshId>,
     last_stats: FrameStats,
     pub(crate) perf_total_objects: u32,
-    pub(crate) perf_scene_items_cache: Vec<SceneRenderItem>,
+    pub(crate) perf_scene_items_cache: std::sync::Arc<[SceneRenderItem]>,
     pub(crate) perf_scene_items_version: (u64, u64),
     pub(crate) perf_built: bool,
     pub(crate) perf_gpu_culling: bool,
@@ -3125,6 +3154,10 @@ impl App {
         let mut eq_glyphs: Vec<GlyphItem> = Vec::new();
         let mut eq_pcs: Vec<PointCloudItem> = Vec::new();
 
+        // Performance showcase uses a cached Arc<[SceneRenderItem]> to avoid a per-frame
+        // deep clone of the 1M-item Vec. Set by the Performance arm below; None for all others.
+        let mut perf_arc: Option<std::sync::Arc<[SceneRenderItem]>> = None;
+
         let (scene_items, bg_color, lighting, scene_gen, sel_gen) = match self.mode {
             ShowcaseMode::Basic => {
                 let positions = [
@@ -3186,11 +3219,13 @@ impl App {
             ShowcaseMode::Performance => {
                 let current_ver = (self.perf_scene.version(), self.perf_selection.version());
                 if current_ver != self.perf_scene_items_version {
-                    self.perf_scene_items_cache =
-                        self.perf_scene.collect_render_items(&self.perf_selection);
+                    self.perf_scene_items_cache = std::sync::Arc::from(
+                        self.perf_scene.collect_render_items(&self.perf_selection),
+                    );
                     self.perf_scene_items_version = current_ver;
                 }
-                let items = self.perf_scene_items_cache.clone();
+                // Arc::clone is a single atomic refcount increment — no data copy.
+                perf_arc = Some(std::sync::Arc::clone(&self.perf_scene_items_cache));
                 let sg = self.perf_scene.version();
                 let ss = self.perf_selection.version();
                 perf_outline = !self.perf_selection.is_empty();
@@ -3200,7 +3235,7 @@ impl App {
                     ground_color: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
-                (items, Some(BG_COLOR), lighting, sg, ss)
+                (vec![], Some(BG_COLOR), lighting, sg, ss)
             }
 
             ShowcaseMode::Interaction => {
@@ -3793,7 +3828,11 @@ impl App {
 
         let mut fd = FrameData::new(
             CameraFrame::from_camera(&self.camera, [w, h]),
-            SceneFrame::from_surface_items(scene_items),
+            if let Some(arc) = perf_arc {
+                SceneFrame::from_shared_items(arc, scene_gen)
+            } else {
+                SceneFrame::from_surface_items(scene_items)
+            },
         );
         fd.effects.lighting = lighting;
         if self.mode == ShowcaseMode::PickLevels {

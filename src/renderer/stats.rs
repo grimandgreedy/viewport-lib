@@ -128,6 +128,11 @@ pub struct FrameStats {
     /// False when the device does not support `INDIRECT_FIRST_INSTANCE` or
     /// culling has been disabled via `disable_gpu_driven_culling()`.
     pub gpu_culling_active: bool,
+    /// Number of instances that passed GPU culling and were submitted for drawing.
+    ///
+    /// Populated only when `gpu_culling_active` is true. `None` on the first frame
+    /// or when GPU culling is off. Lags by one frame due to async readback.
+    pub gpu_visible_instances: Option<u32>,
 }
 
 #[cfg(test)]
@@ -151,6 +156,7 @@ mod tests {
         assert!(!stats.missed_budget);
         assert_eq!(stats.upload_bytes, 0);
         assert!(!stats.gpu_culling_active);
+        assert!(stats.gpu_visible_instances.is_none());
     }
 
     #[test]

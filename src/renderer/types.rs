@@ -1258,13 +1258,18 @@ impl CameraFrame {
 /// without changing the `SceneFrame` public type.
 #[non_exhaustive]
 pub enum SurfaceSubmission {
-    /// A flat list of scene render items (current behavior).
-    Flat(Vec<SceneRenderItem>),
+    /// A flat, reference-counted list of scene render items.
+    ///
+    /// Holding an `Arc<[SceneRenderItem]>` instead of a `Vec` means the per-frame
+    /// submission cost is a single atomic refcount increment rather than a full deep
+    /// copy of all items. Use [`SceneFrame::from_surface_items`] or
+    /// [`SceneFrame::from_scene`] to construct this variant.
+    Flat(std::sync::Arc<[SceneRenderItem]>),
 }
 
 impl Default for SurfaceSubmission {
     fn default() -> Self {
-        SurfaceSubmission::Flat(Vec::new())
+        SurfaceSubmission::Flat(std::sync::Arc::from([]))
     }
 }
 
@@ -1333,8 +1338,34 @@ impl SceneFrame {
     }
 
     /// Build a scene frame from a flat list of surface render items.
+    ///
+    /// The `Vec` is converted to an `Arc<[SceneRenderItem]>` so callers that
+    /// submit the same list repeatedly can cheaply clone the `Arc` instead of
+    /// cloning the underlying data.
     pub fn from_surface_items(items: Vec<SceneRenderItem>) -> Self {
-        Self::new(SurfaceSubmission::Flat(items))
+        Self::new(SurfaceSubmission::Flat(items.into()))
+    }
+
+    /// Build a scene frame from an already-allocated shared slice.
+    ///
+    /// Use this variant when you cache render items across frames:
+    ///
+    /// ```rust,ignore
+    /// // First frame / on change: rebuild the Arc once.
+    /// self.items_arc = Arc::from(scene.collect_render_items(&sel));
+    ///
+    /// // Every frame: zero-cost clone.
+    /// SceneFrame::from_shared_items(Arc::clone(&self.items_arc), scene.version())
+    /// ```
+    pub fn from_shared_items(
+        items: std::sync::Arc<[SceneRenderItem]>,
+        generation: u64,
+    ) -> Self {
+        Self {
+            generation,
+            surfaces: SurfaceSubmission::Flat(items),
+            ..Self::default()
+        }
     }
 
     /// Build a scene frame by collecting render items from a [`Scene`](crate::scene::scene::Scene).
@@ -1352,7 +1383,7 @@ impl SceneFrame {
         let items = scene.collect_render_items(selection);
         Self {
             generation: scene.version(),
-            surfaces: SurfaceSubmission::Flat(items),
+            surfaces: SurfaceSubmission::Flat(items.into()),
             ..Self::default()
         }
     }
@@ -2161,7 +2192,7 @@ macro_rules! emit_draw_calls {
 
         // Resolve scene items from the SurfaceSubmission seam.
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
-            SurfaceSubmission::Flat(items) => items,
+            SurfaceSubmission::Flat(items) => items.as_ref(),
         };
 
         render_pass.set_bind_group(0, camera_bg, &[]);

@@ -44,8 +44,7 @@ impl App {
                     let transform = glam::Mat4::from_translation(pos);
                     let color = colors[count as usize % colors.len()];
                     let mat = Material::from_color(color);
-                    let name = format!("Perf {count}");
-                    self.perf_scene.add_named(&name, Some(mesh), transform, mat);
+                    self.perf_scene.add(Some(mesh), transform, mat);
                     count += 1;
                 }
             }
@@ -83,12 +82,20 @@ impl App {
         ui.separator();
         ui.heading("Culling");
         perf_stat_row(ui, "Total instances", &format_count(self.perf_total_objects));
-        perf_stat_row(ui, "Visible", &format_count(s.visible_objects));
-        perf_stat_row(
-            ui,
-            "Culled",
-            &format_count(self.perf_total_objects.saturating_sub(s.visible_objects)),
-        );
+        if s.gpu_culling_active {
+            // GPU readback gives the exact post-cull count (one frame lag).
+            let gpu_vis = s.gpu_visible_instances.unwrap_or(s.visible_objects);
+            let gpu_culled = self.perf_total_objects.saturating_sub(gpu_vis);
+            perf_stat_row(ui, "Visible (GPU)", &format_count(gpu_vis));
+            perf_stat_row(ui, "Culled (GPU)", &format_count(gpu_culled));
+        } else {
+            perf_stat_row(ui, "Visible (CPU)", &format_count(s.visible_objects));
+            perf_stat_row(
+                ui,
+                "Culled (CPU)",
+                &format_count(self.perf_total_objects.saturating_sub(s.visible_objects)),
+            );
+        }
         ui.add_space(4.0);
 
         // --- Draw path ---

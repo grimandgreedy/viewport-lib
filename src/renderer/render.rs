@@ -336,7 +336,7 @@ impl ViewportRenderer {
     ) -> wgpu::CommandBuffer {
         // Resolve scene items from the SurfaceSubmission seam.
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
-            SurfaceSubmission::Flat(items) => items,
+            SurfaceSubmission::Flat(items) => items.as_ref(),
         };
 
         let bg_color = frame.viewport.background_color.unwrap_or([

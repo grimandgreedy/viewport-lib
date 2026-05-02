@@ -165,7 +165,7 @@ fn prepare_empty_scene_no_panic() {
         aspect: cam.aspect,
     };
     frame.camera.viewport_size = [0.0, 0.0];
-    frame.scene.surfaces = SurfaceSubmission::Flat(vec![]);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
     // Should not panic.
@@ -277,7 +277,7 @@ fn render_offscreen_produces_rgba_pixels() {
     item.mesh_id = mesh_idx;
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
     item.selected = false;
-    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item]);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
     let width = 64u32;
     let height = 64u32;

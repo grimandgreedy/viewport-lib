@@ -230,6 +230,15 @@ pub struct ViewportRenderer {
     ts_period: f32,
     /// Whether the staging buffer holds unread timestamp data from the previous frame.
     ts_needs_readback: bool,
+
+    // --- Indirect-args readback (GPU-driven culling visible instance count) ---
+    /// CPU-readable staging buffer for `indirect_args_buf` (batch_count × 20 bytes).
+    /// Grown lazily; never shrunk.
+    indirect_readback_buf: Option<wgpu::Buffer>,
+    /// Number of batches whose data was copied into `indirect_readback_buf` last frame.
+    indirect_readback_batch_count: u32,
+    /// True when `indirect_readback_buf` holds unread data from the previous cull pass.
+    indirect_readback_pending: bool,
 }
 
 impl ViewportRenderer {
@@ -290,6 +299,9 @@ impl ViewportRenderer {
             ts_staging_buf: None,
             ts_period: 1.0,
             ts_needs_readback: false,
+            indirect_readback_buf: None,
+            indirect_readback_batch_count: 0,
+            indirect_readback_pending: false,
         }
     }
 
