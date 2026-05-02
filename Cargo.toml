@@ -19,6 +19,7 @@ wgpu = { version = "27.0", features = ["metal", "vulkan"] }
 glam = { version = "=0.30.10", features = ["bytemuck"] }
 bytemuck = { version = "1.25", features = ["derive"] }
 parry3d = "0.26"
+rayon = "1"
 fontdue = "0.9"
 thiserror = "2.0"
 tracing = "0.1"
