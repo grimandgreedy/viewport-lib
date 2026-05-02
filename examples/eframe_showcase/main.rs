@@ -4045,9 +4045,10 @@ impl App {
         // so the post-process pass is not applied. Settings are stored for reference.
         match self.mode {
             ShowcaseMode::PostProcess => {
-                // Clamp far plane for better cascade distribution.
+                // Cap far plane for better cascade distribution, but track orbit
+                // distance so the scene doesn't disappear when zooming out.
                 let mut rc = RenderCamera::from_camera(&self.camera);
-                rc.far = self.camera.zfar.min(60.0);
+                rc.far = (self.camera.distance * 3.0).max(60.0);
                 rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
                 fd.camera.render_camera = rc;
             }
@@ -4060,9 +4061,10 @@ impl App {
                     contact_shadow_thickness: 0.04,
                     ..PostProcessSettings::default()
                 };
-                // Clamp far plane for better cascade distribution.
+                // Cap far plane for better cascade distribution, but track orbit
+                // distance so the scene doesn't disappear when zooming out.
                 let mut rc = RenderCamera::from_camera(&self.camera);
-                rc.far = self.camera.zfar.min(60.0);
+                rc.far = (self.camera.distance * 3.0).max(60.0);
                 rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
                 fd.camera.render_camera = rc;
             }
@@ -4071,16 +4073,18 @@ impl App {
                     enabled: false,
                     ..PostProcessSettings::default()
                 };
-                // Clamp far plane for better cascade distribution.
+                // Cap far plane for better cascade distribution, but track orbit
+                // distance so the scene doesn't disappear when zooming out.
                 let mut rc = RenderCamera::from_camera(&self.camera);
-                rc.far = self.camera.zfar.min(60.0);
+                rc.far = (self.camera.distance * 3.0).max(60.0);
                 rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
                 fd.camera.render_camera = rc;
             }
             ShowcaseMode::Auxiliary => {
-                // Clamp far plane for better cascade distribution.
+                // Cap far plane for better cascade distribution, but track orbit
+                // distance so the scene doesn't disappear when zooming out.
                 let mut rc = RenderCamera::from_camera(&self.camera);
-                rc.far = self.camera.zfar.min(60.0);
+                rc.far = (self.camera.distance * 3.0).max(60.0);
                 rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
                 fd.camera.render_camera = rc;
             }
