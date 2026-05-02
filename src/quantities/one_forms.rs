@@ -102,3 +102,87 @@ pub fn edge_one_form_to_glyphs(
     item.scale = scale;
     item
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Right triangle in XY plane: (0,0,0), (1,0,0), (0,1,0)
+    fn xy_triangle() -> (Vec<[f32; 3]>, Vec<u32>) {
+        (
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            vec![0, 1, 2],
+        )
+    }
+
+    #[test]
+    fn zero_edge_values_produce_zero_vector() {
+        let (pos, idx) = xy_triangle();
+        let edge_values = vec![0.0, 0.0, 0.0];
+        let item = edge_one_form_to_glyphs(&pos, &idx, &edge_values, 1.0);
+        assert_eq!(item.vectors.len(), 1);
+        for c in &item.vectors[0] {
+            assert!(c.abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn linearity_scaling_edge_values_scales_output() {
+        let (pos, idx) = xy_triangle();
+        let ev1 = vec![1.0, 0.5, -0.5];
+        let ev2: Vec<f32> = ev1.iter().map(|v| v * 3.0).collect();
+        let item1 = edge_one_form_to_glyphs(&pos, &idx, &ev1, 1.0);
+        let item2 = edge_one_form_to_glyphs(&pos, &idx, &ev2, 1.0);
+        for i in 0..3 {
+            assert!(
+                (item2.vectors[0][i] - item1.vectors[0][i] * 3.0).abs() < 1e-4,
+                "linearity failed on component {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn output_position_is_centroid() {
+        let (pos, idx) = xy_triangle();
+        let edge_values = vec![1.0, 0.0, 0.0];
+        let item = edge_one_form_to_glyphs(&pos, &idx, &edge_values, 1.0);
+        let c = item.positions[0];
+        let expected = [1.0 / 3.0, 1.0 / 3.0, 0.0];
+        for i in 0..3 {
+            assert!((c[i] - expected[i]).abs() < 1e-4);
+        }
+    }
+
+    #[test]
+    fn degenerate_triangle_skipped() {
+        let pos = vec![[0.0; 3]; 3];
+        let idx = vec![0u32, 1, 2];
+        let edge_values = vec![1.0, 1.0, 1.0];
+        let item = edge_one_form_to_glyphs(&pos, &idx, &edge_values, 1.0);
+        assert!(item.positions.is_empty());
+    }
+
+    #[test]
+    fn out_of_bounds_indices_skipped() {
+        let pos = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+        let idx = vec![0u32, 1, 99];
+        let edge_values = vec![1.0, 1.0, 1.0];
+        let item = edge_one_form_to_glyphs(&pos, &idx, &edge_values, 1.0);
+        assert!(item.positions.is_empty());
+    }
+
+    #[test]
+    fn scale_forwarded() {
+        let (pos, idx) = xy_triangle();
+        let item = edge_one_form_to_glyphs(&pos, &idx, &[1.0, 0.0, 0.0], 5.0);
+        assert!((item.scale - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn short_edge_values_truncates() {
+        let (pos, idx) = xy_triangle();
+        // Only 2 edge values instead of 3 : 0 complete triangles
+        let item = edge_one_form_to_glyphs(&pos, &idx, &[1.0, 0.0], 1.0);
+        assert!(item.positions.is_empty());
+    }
+}

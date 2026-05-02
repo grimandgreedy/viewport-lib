@@ -132,3 +132,57 @@ pub fn face_intrinsic_to_glyphs(
     item.scale = scale;
     item
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vertex_intrinsic_unit_u_along_tangent() {
+        // Normal = +Y, so tangent frame spans XZ plane
+        let positions = vec![[0.0, 0.0, 0.0]];
+        let normals = vec![[0.0, 1.0, 0.0]];
+        let vectors = vec![[1.0, 0.0]]; // pure u component
+        let item = vertex_intrinsic_to_glyphs(&positions, &normals, None, &vectors, 1.0);
+        assert_eq!(item.vectors.len(), 1);
+        let v = glam::Vec3::from(item.vectors[0]);
+        // Should be in the XZ plane (Y ~ 0) and unit length
+        assert!(v.y.abs() < 1e-4, "should be in tangent plane");
+        assert!((v.length() - 1.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn vertex_intrinsic_mismatched_lengths_truncates() {
+        let positions = vec![[0.0; 3]; 5];
+        let normals = vec![[0.0, 1.0, 0.0]; 3]; // shorter
+        let vectors = vec![[1.0, 0.0]; 5];
+        let item = vertex_intrinsic_to_glyphs(&positions, &normals, None, &vectors, 1.0);
+        assert_eq!(item.vectors.len(), 3);
+    }
+
+    #[test]
+    fn vertex_intrinsic_scale_forwarded() {
+        let positions = vec![[0.0; 3]];
+        let normals = vec![[0.0, 1.0, 0.0]];
+        let vectors = vec![[1.0, 0.0]];
+        let item = vertex_intrinsic_to_glyphs(&positions, &normals, None, &vectors, 7.5);
+        assert!((item.scale - 7.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn face_intrinsic_centroid_position() {
+        let positions = vec![
+            [0.0, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+            [0.0, 3.0, 0.0],
+        ];
+        let normals = vec![[0.0, 0.0, 1.0]; 3];
+        let indices = vec![0u32, 1, 2];
+        let vectors = vec![[1.0, 0.0]];
+        let item = face_intrinsic_to_glyphs(&positions, &normals, &indices, &vectors, 1.0);
+        assert_eq!(item.positions.len(), 1);
+        let c = item.positions[0];
+        assert!((c[0] - 1.0).abs() < 1e-4);
+        assert!((c[1] - 1.0).abs() < 1e-4);
+    }
+}

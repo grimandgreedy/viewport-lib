@@ -100,3 +100,90 @@ pub fn polyline_edge_vectors_to_glyphs(item: &PolylineItem) -> GlyphItem {
         ..Default::default()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_polyline(
+        positions: Vec<[f32; 3]>,
+        node_vectors: Vec<[f32; 3]>,
+        edge_vectors: Vec<[f32; 3]>,
+        strip_lengths: Vec<u32>,
+    ) -> PolylineItem {
+        PolylineItem {
+            positions,
+            node_vectors,
+            edge_vectors,
+            strip_lengths,
+            vector_scale: 2.0,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn node_vectors_positions_match_input() {
+        let pl = make_polyline(
+            vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+            vec![[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
+            vec![],
+            vec![],
+        );
+        let item = polyline_node_vectors_to_glyphs(&pl);
+        assert_eq!(item.positions, pl.positions);
+        assert_eq!(item.vectors, pl.node_vectors);
+        assert!((item.scale - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn node_vectors_empty_returns_empty() {
+        let pl = make_polyline(vec![[0.0; 3]; 3], vec![], vec![], vec![]);
+        let item = polyline_node_vectors_to_glyphs(&pl);
+        assert!(item.positions.is_empty());
+    }
+
+    #[test]
+    fn edge_vectors_midpoints_correct() {
+        let pl = make_polyline(
+            vec![[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 4.0, 0.0]],
+            vec![],
+            vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            vec![], // single strip (all positions)
+        );
+        let item = polyline_edge_vectors_to_glyphs(&pl);
+        assert_eq!(item.positions.len(), 2);
+        // Midpoint of seg 0: (0+2)/2 = 1
+        assert!((item.positions[0][0] - 1.0).abs() < 1e-5);
+        // Midpoint of seg 1: ((2+2)/2, (0+4)/2) = (2, 2)
+        assert!((item.positions[1][0] - 2.0).abs() < 1e-5);
+        assert!((item.positions[1][1] - 2.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn edge_vectors_with_strip_lengths() {
+        let pl = make_polyline(
+            vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [2.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+            ],
+            vec![],
+            vec![[1.0, 0.0, 0.0]; 2], // 2 edges : strip1 has 1 edge, strip2 has 1 edge
+            vec![2, 2],                // two strips of 2 nodes each
+        );
+        let item = polyline_edge_vectors_to_glyphs(&pl);
+        assert_eq!(item.positions.len(), 2);
+        // First strip midpoint: (0+1)/2 = 0.5
+        assert!((item.positions[0][0] - 0.5).abs() < 1e-5);
+        // Second strip midpoint: (2+3)/2 = 2.5
+        assert!((item.positions[1][0] - 2.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn edge_vectors_empty_returns_empty() {
+        let pl = make_polyline(vec![[0.0; 3]; 3], vec![], vec![], vec![]);
+        let item = polyline_edge_vectors_to_glyphs(&pl);
+        assert!(item.positions.is_empty());
+    }
+}

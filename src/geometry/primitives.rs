@@ -1098,6 +1098,67 @@ mod tests {
         }
     }
 
+    /// Validates structural invariants that every generated mesh must satisfy.
+    fn assert_mesh_invariants(name: &str, mesh: &MeshData) {
+        assert!(
+            !mesh.positions.is_empty(),
+            "{name}: positions must not be empty"
+        );
+        assert_eq!(
+            mesh.positions.len(),
+            mesh.normals.len(),
+            "{name}: positions and normals length mismatch"
+        );
+        assert_eq!(
+            mesh.indices.len() % 3,
+            0,
+            "{name}: index count must be a multiple of 3"
+        );
+        let n = mesh.positions.len() as u32;
+        for (i, &idx) in mesh.indices.iter().enumerate() {
+            assert!(idx < n, "{name}: index[{i}] = {idx} out of bounds (n={n})");
+        }
+        if let Some(ref uvs) = mesh.uvs {
+            assert_eq!(
+                uvs.len(),
+                mesh.positions.len(),
+                "{name}: uvs length mismatch"
+            );
+        }
+        if let Some(ref tangents) = mesh.tangents {
+            assert_eq!(
+                tangents.len(),
+                mesh.positions.len(),
+                "{name}: tangents length mismatch"
+            );
+        }
+    }
+
+    /// Checks that all normals are unit length (within tolerance).
+    fn assert_normals_unit_length(name: &str, mesh: &MeshData) {
+        for (i, n) in mesh.normals.iter().enumerate() {
+            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            assert!(
+                (len - 1.0).abs() < 1e-4,
+                "{name}: normal[{i}] has length {len}"
+            );
+        }
+    }
+
+    /// Checks that all positions are within the given axis-aligned bounds.
+    fn assert_positions_bounded(name: &str, mesh: &MeshData, half: [f32; 3]) {
+        for (i, p) in mesh.positions.iter().enumerate() {
+            for axis in 0..3 {
+                assert!(
+                    p[axis].abs() <= half[axis] + 1e-5,
+                    "{name}: position[{i}][{axis}] = {} exceeds bound {}",
+                    p[axis],
+                    half[axis]
+                );
+            }
+        }
+    }
+
     #[test]
     fn generated_primitives_have_consistent_outward_winding() {
         let meshes = [
@@ -1127,5 +1188,462 @@ mod tests {
             eprintln!("checking {name}");
             assert_triangle_winding_matches_normals(mesh);
         }
+    }
+
+    // ---- structural invariants for every primitive ----
+
+    #[test]
+    fn all_primitives_pass_mesh_invariants() {
+        let meshes: Vec<(&str, MeshData)> = vec![
+            ("cube", cube(1.0)),
+            ("sphere", sphere(1.0, 16, 8)),
+            ("plane", plane(2.0, 3.0)),
+            ("cylinder", cylinder(1.0, 2.0, 16)),
+            ("cuboid", cuboid(1.0, 2.0, 3.0)),
+            ("cone", cone(1.0, 2.0, 16)),
+            ("capsule", capsule(0.5, 2.0, 12, 6)),
+            ("torus", torus(2.0, 0.5, 12, 12)),
+            ("icosphere_0", icosphere(1.0, 0)),
+            ("icosphere_2", icosphere(1.0, 2)),
+            ("arrow", arrow(0.1, 0.3, 0.3, 12)),
+            ("disk", disk(1.0, 12)),
+            ("frustum", frustum(1.0, 1.5, 0.1, 10.0)),
+            ("hemisphere", hemisphere(1.0, 12, 6)),
+            ("ring", ring(0.5, 1.0, 12)),
+            ("ellipsoid", ellipsoid(1.0, 0.5, 1.5, 12, 6)),
+            ("spring", spring(1.0, 0.2, 2.0, 8)),
+            ("grid_plane", grid_plane(1.0, 1.0, 4, 4)),
+        ];
+        for (name, mesh) in &meshes {
+            assert_mesh_invariants(name, mesh);
+        }
+    }
+
+    // ---- cube ----
+
+    #[test]
+    fn cube_vertex_and_index_counts() {
+        let m = cube(1.0);
+        assert_eq!(m.positions.len(), 24); // 6 faces * 4 verts
+        assert_eq!(m.indices.len(), 36); // 6 faces * 2 tris * 3
+    }
+
+    #[test]
+    fn cube_positions_bounded_by_half_size() {
+        let size = 2.0;
+        let m = cube(size);
+        let h = size / 2.0;
+        assert_positions_bounded("cube", &m, [h, h, h]);
+    }
+
+    #[test]
+    fn cube_has_uvs() {
+        let m = cube(1.0);
+        assert!(m.uvs.is_some());
+    }
+
+    #[test]
+    fn cube_normals_unit_length() {
+        assert_normals_unit_length("cube", &cube(1.0));
+    }
+
+    // ---- sphere ----
+
+    #[test]
+    fn sphere_vertices_at_radius() {
+        let r = 2.5;
+        let m = sphere(r, 16, 8);
+        for (i, p) in m.positions.iter().enumerate() {
+            let dist = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
+            assert!(
+                (dist - r).abs() < 1e-4,
+                "sphere vertex[{i}] at distance {dist}, expected {r}"
+            );
+        }
+    }
+
+    #[test]
+    fn sphere_vertex_count() {
+        let s = 16u32;
+        let t = 8u32;
+        let m = sphere(1.0, s, t);
+        assert_eq!(m.positions.len(), ((t + 1) * (s + 1)) as usize);
+    }
+
+    #[test]
+    fn sphere_normals_unit_length() {
+        assert_normals_unit_length("sphere", &sphere(1.0, 16, 8));
+    }
+
+    #[test]
+    fn sphere_has_uvs() {
+        assert!(sphere(1.0, 16, 8).uvs.is_some());
+    }
+
+    #[test]
+    fn sphere_minimum_sectors_clamped() {
+        let m = sphere(1.0, 1, 1); // should clamp to 3 sectors, 2 stacks
+        assert_mesh_invariants("sphere_min", &m);
+        assert_eq!(m.positions.len(), ((2 + 1) * (3 + 1)) as usize);
+    }
+
+    // ---- plane ----
+
+    #[test]
+    fn plane_all_y_zero() {
+        let m = plane(5.0, 3.0);
+        for (i, p) in m.positions.iter().enumerate() {
+            assert!(
+                p[1].abs() < 1e-6,
+                "plane vertex[{i}] has Y = {}",
+                p[1]
+            );
+        }
+    }
+
+    #[test]
+    fn plane_extents_match() {
+        let w = 4.0;
+        let d = 6.0;
+        let m = plane(w, d);
+        assert_positions_bounded("plane", &m, [w / 2.0, 0.0, d / 2.0]);
+    }
+
+    #[test]
+    fn plane_vertex_count() {
+        assert_eq!(plane(1.0, 1.0).positions.len(), 4);
+        assert_eq!(plane(1.0, 1.0).indices.len(), 6);
+    }
+
+    // ---- cylinder ----
+
+    #[test]
+    fn cylinder_side_vertices_at_radius() {
+        let r = 1.5;
+        let m = cylinder(r, 3.0, 16);
+        // Side vertices are first 2*sectors entries
+        for (i, p) in m.positions.iter().take(32).enumerate() {
+            let radial = (p[0] * p[0] + p[2] * p[2]).sqrt();
+            assert!(
+                (radial - r).abs() < 1e-4,
+                "cylinder side vertex[{i}] at radial dist {radial}, expected {r}"
+            );
+        }
+    }
+
+    #[test]
+    fn cylinder_y_bounded() {
+        let h = 4.0;
+        let m = cylinder(1.0, h, 12);
+        for (i, p) in m.positions.iter().enumerate() {
+            assert!(
+                p[1].abs() <= h / 2.0 + 1e-5,
+                "cylinder vertex[{i}] Y = {} exceeds half height",
+                p[1]
+            );
+        }
+    }
+
+    // ---- cuboid ----
+
+    #[test]
+    fn cuboid_positions_bounded() {
+        let (w, h, d) = (2.0, 3.0, 4.0);
+        let m = cuboid(w, h, d);
+        assert_positions_bounded("cuboid", &m, [w / 2.0, h / 2.0, d / 2.0]);
+        assert_eq!(m.positions.len(), 24);
+        assert_eq!(m.indices.len(), 36);
+    }
+
+    // ---- cone ----
+
+    #[test]
+    fn cone_tip_at_positive_y() {
+        let h = 3.0;
+        let m = cone(1.0, h, 12);
+        let tip_y = h / 2.0;
+        let has_tip = m.positions.iter().any(|p| (p[1] - tip_y).abs() < 1e-5);
+        assert!(has_tip, "cone should have a tip vertex at Y = {tip_y}");
+    }
+
+    #[test]
+    fn cone_base_vertices_at_radius() {
+        let r = 2.0;
+        let h = 3.0;
+        let m = cone(r, h, 16);
+        let base_y = -h / 2.0;
+        for (i, p) in m.positions.iter().enumerate() {
+            if (p[1] - base_y).abs() < 1e-5 && p[0].abs() > 1e-5 {
+                let radial = (p[0] * p[0] + p[2] * p[2]).sqrt();
+                assert!(
+                    (radial - r).abs() < 1e-4,
+                    "cone base vertex[{i}] at radial {radial}, expected {r}"
+                );
+            }
+        }
+    }
+
+    // ---- capsule ----
+
+    #[test]
+    fn capsule_all_vertices_within_bounding_sphere() {
+        let r = 0.5;
+        let h = 3.0;
+        let m = capsule(r, h, 12, 6);
+        let half_body = (h - 2.0 * r).max(0.0) / 2.0;
+        for (i, p) in m.positions.iter().enumerate() {
+            // Each vertex should be within radius of the closest point on the capsule axis
+            let axis_y = p[1].clamp(-half_body, half_body);
+            let dy = p[1] - axis_y;
+            let dist = (p[0] * p[0] + dy * dy + p[2] * p[2]).sqrt();
+            assert!(
+                dist <= r + 1e-3,
+                "capsule vertex[{i}] at dist {dist} from axis, expected <= {r}"
+            );
+        }
+    }
+
+    #[test]
+    fn capsule_zero_body_height() {
+        // When height <= 2*radius, body height is 0 (pure sphere shape)
+        let r = 1.0;
+        let m = capsule(r, 2.0 * r, 12, 6);
+        assert_mesh_invariants("capsule_zero_body", &m);
+    }
+
+    // ---- torus ----
+
+    #[test]
+    fn torus_vertices_within_radial_bounds() {
+        let major = 3.0;
+        let minor = 0.5;
+        let m = torus(major, minor, 12, 12);
+        for (i, p) in m.positions.iter().enumerate() {
+            let radial_xz = (p[0] * p[0] + p[2] * p[2]).sqrt();
+            assert!(
+                radial_xz >= major - minor - 1e-3 && radial_xz <= major + minor + 1e-3,
+                "torus vertex[{i}] radial_xz = {radial_xz}, expected in [{}, {}]",
+                major - minor,
+                major + minor
+            );
+        }
+    }
+
+    #[test]
+    fn torus_has_uvs() {
+        assert!(torus(2.0, 0.5, 8, 8).uvs.is_some());
+    }
+
+    // ---- icosphere ----
+
+    #[test]
+    fn icosphere_subdivision_0_counts() {
+        let m = icosphere(1.0, 0);
+        assert_eq!(m.positions.len(), 12); // icosahedron
+        assert_eq!(m.indices.len(), 60); // 20 faces * 3
+    }
+
+    #[test]
+    fn icosphere_subdivision_1_counts() {
+        let m = icosphere(1.0, 1);
+        assert_eq!(m.positions.len(), 42); // 12 + 30 edge midpoints
+        assert_eq!(m.indices.len(), 240); // 80 faces * 3
+    }
+
+    #[test]
+    fn icosphere_vertices_at_radius() {
+        let r = 3.0;
+        let m = icosphere(r, 2);
+        for (i, p) in m.positions.iter().enumerate() {
+            let dist = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
+            assert!(
+                (dist - r).abs() < 1e-4,
+                "icosphere vertex[{i}] at distance {dist}, expected {r}"
+            );
+        }
+    }
+
+    #[test]
+    fn icosphere_normals_unit_length() {
+        assert_normals_unit_length("icosphere", &icosphere(1.0, 2));
+    }
+
+    // ---- arrow ----
+
+    #[test]
+    fn arrow_total_height_is_one() {
+        let m = arrow(0.1, 0.3, 0.3, 12);
+        let min_y = m.positions.iter().map(|p| p[1]).fold(f32::INFINITY, f32::min);
+        let max_y = m.positions.iter().map(|p| p[1]).fold(f32::NEG_INFINITY, f32::max);
+        assert!(
+            ((max_y - min_y) - 1.0).abs() < 1e-4,
+            "arrow total height = {}, expected 1.0",
+            max_y - min_y
+        );
+    }
+
+    #[test]
+    fn arrow_head_fraction_clamped() {
+        // head_fraction < 0.1 should clamp to 0.1
+        let m = arrow(0.1, 0.3, 0.0, 12);
+        assert_mesh_invariants("arrow_clamp_low", &m);
+        // head_fraction > 0.9 should clamp to 0.9
+        let m = arrow(0.1, 0.3, 1.0, 12);
+        assert_mesh_invariants("arrow_clamp_high", &m);
+    }
+
+    // ---- disk ----
+
+    #[test]
+    fn disk_center_at_origin() {
+        let m = disk(2.0, 12);
+        assert!((m.positions[0][0]).abs() < 1e-6);
+        assert!((m.positions[0][1]).abs() < 1e-6);
+        assert!((m.positions[0][2]).abs() < 1e-6);
+    }
+
+    #[test]
+    fn disk_rim_at_radius() {
+        let r = 2.0;
+        let m = disk(r, 16);
+        for (i, p) in m.positions.iter().skip(1).enumerate() {
+            let dist = (p[0] * p[0] + p[2] * p[2]).sqrt();
+            assert!(
+                (dist - r).abs() < 1e-4,
+                "disk rim vertex[{i}] at dist {dist}, expected {r}"
+            );
+            assert!(p[1].abs() < 1e-6, "disk vertex should be at Y=0");
+        }
+    }
+
+    #[test]
+    fn disk_vertex_count() {
+        let sectors = 12u32;
+        let m = disk(1.0, sectors);
+        assert_eq!(m.positions.len(), (sectors + 1) as usize); // center + rim
+    }
+
+    // ---- frustum ----
+
+    #[test]
+    fn frustum_has_24_vertices_and_36_indices() {
+        let m = frustum(1.0, 1.5, 0.1, 10.0);
+        assert_eq!(m.positions.len(), 24); // 6 faces * 4 verts
+        assert_eq!(m.indices.len(), 36);
+    }
+
+    #[test]
+    fn frustum_near_plane_smaller_than_far() {
+        let m = frustum(std::f32::consts::FRAC_PI_4, 1.5, 0.1, 10.0);
+        let near_z = -0.1f32;
+        let far_z = -10.0f32;
+        let near_verts: Vec<_> = m.positions.iter().filter(|p| (p[2] - near_z).abs() < 1e-3).collect();
+        let far_verts: Vec<_> = m.positions.iter().filter(|p| (p[2] - far_z).abs() < 1e-3).collect();
+        assert!(!near_verts.is_empty());
+        assert!(!far_verts.is_empty());
+        let near_w = near_verts.iter().map(|p| p[0].abs()).fold(0.0f32, f32::max);
+        let far_w = far_verts.iter().map(|p| p[0].abs()).fold(0.0f32, f32::max);
+        assert!(far_w > near_w, "far plane should be wider than near plane");
+    }
+
+    // ---- hemisphere ----
+
+    #[test]
+    fn hemisphere_all_dome_vertices_non_negative_y() {
+        let m = hemisphere(1.0, 12, 6);
+        // Dome vertices (before cap) should have Y >= 0
+        let dome_count = (6 + 1) * (12 + 1);
+        for (i, p) in m.positions.iter().take(dome_count as usize).enumerate() {
+            assert!(
+                p[1] >= -1e-5,
+                "hemisphere dome vertex[{i}] has Y = {}",
+                p[1]
+            );
+        }
+    }
+
+    // ---- ring ----
+
+    #[test]
+    fn ring_radial_bounds() {
+        let inner = 1.0;
+        let outer = 2.0;
+        let m = ring(inner, outer, 16);
+        for (i, p) in m.positions.iter().enumerate() {
+            let dist = (p[0] * p[0] + p[2] * p[2]).sqrt();
+            assert!(
+                dist >= inner - 1e-4 && dist <= outer + 1e-4,
+                "ring vertex[{i}] radial = {dist}, expected in [{inner}, {outer}]"
+            );
+            assert!(p[1].abs() < 1e-6, "ring vertex should be at Y=0");
+        }
+    }
+
+    // ---- ellipsoid ----
+
+    #[test]
+    fn ellipsoid_vertices_on_surface() {
+        let (rx, ry, rz) = (2.0, 1.0, 3.0);
+        let m = ellipsoid(rx, ry, rz, 16, 8);
+        for (i, p) in m.positions.iter().enumerate() {
+            let val = (p[0] / rx).powi(2) + (p[1] / ry).powi(2) + (p[2] / rz).powi(2);
+            assert!(
+                (val - 1.0).abs() < 1e-3,
+                "ellipsoid vertex[{i}] has implicit value {val}, expected ~1.0"
+            );
+        }
+    }
+
+    #[test]
+    fn ellipsoid_normals_unit_length() {
+        assert_normals_unit_length("ellipsoid", &ellipsoid(2.0, 1.0, 3.0, 16, 8));
+    }
+
+    // ---- spring ----
+
+    #[test]
+    fn spring_invariants() {
+        let m = spring(2.0, 0.25, 3.0, 8);
+        assert_mesh_invariants("spring", &m);
+        assert!(!m.positions.is_empty());
+    }
+
+    #[test]
+    fn spring_normals_unit_length() {
+        assert_normals_unit_length("spring", &spring(2.0, 0.25, 2.0, 8));
+    }
+
+    // ---- grid_plane ----
+
+    #[test]
+    fn grid_plane_vertex_count() {
+        let cols = 4u32;
+        let rows = 3u32;
+        let m = grid_plane(1.0, 1.0, cols, rows);
+        assert_eq!(m.positions.len(), ((cols + 1) * (rows + 1)) as usize);
+    }
+
+    #[test]
+    fn grid_plane_all_y_zero() {
+        let m = grid_plane(5.0, 3.0, 8, 6);
+        for (i, p) in m.positions.iter().enumerate() {
+            assert!(p[1].abs() < 1e-6, "grid_plane vertex[{i}] Y = {}", p[1]);
+        }
+    }
+
+    #[test]
+    fn grid_plane_extents() {
+        let (w, d) = (4.0, 6.0);
+        let m = grid_plane(w, d, 4, 4);
+        assert_positions_bounded("grid_plane", &m, [w / 2.0, 0.0, d / 2.0]);
+    }
+
+    #[test]
+    fn grid_plane_index_count() {
+        let cols = 4u32;
+        let rows = 3u32;
+        let m = grid_plane(1.0, 1.0, cols, rows);
+        // Each cell = 2 triangles * 3 indices
+        assert_eq!(m.indices.len(), (cols * rows * 6) as usize);
     }
 }

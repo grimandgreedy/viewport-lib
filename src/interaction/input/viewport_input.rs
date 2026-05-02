@@ -391,4 +391,268 @@ mod tests {
             "key should be ignored without focus"
         );
     }
+
+    #[test]
+    fn resolve_no_events_is_zero() {
+        let mut input = ViewportInput::new(viewport_all_bindings());
+        input.begin_frame(focused_ctx());
+        let frame = input.resolve();
+        assert_eq!(frame.navigation.orbit, glam::Vec2::ZERO);
+        assert_eq!(frame.navigation.pan, glam::Vec2::ZERO);
+        assert_eq!(frame.navigation.zoom, 0.0);
+        assert_eq!(frame.navigation.twist, 0.0);
+        assert!(frame.actions.is_empty());
+    }
+
+    #[test]
+    fn scroll_produces_zoom() {
+        let mut input = ViewportInput::new(viewport_all_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::Wheel {
+            delta: glam::Vec2::new(0.0, 3.0),
+            units: ScrollUnits::Lines,
+        });
+        let frame = input.resolve();
+        // Lines are scaled by PIXELS_PER_LINE (28.0), so zoom = 3 * 28 = 84
+        assert!((frame.navigation.zoom - 84.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn scroll_pixel_units_no_scaling() {
+        let mut input = ViewportInput::new(viewport_all_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::Wheel {
+            delta: glam::Vec2::new(0.0, 10.0),
+            units: ScrollUnits::Pixels,
+        });
+        let frame = input.resolve();
+        assert!((frame.navigation.zoom - 10.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn scroll_ignored_when_not_hovered() {
+        let mut input = ViewportInput::new(viewport_all_bindings());
+        input.begin_frame(ViewportContext {
+            hovered: false,
+            focused: true,
+            viewport_size: [800.0, 600.0],
+        });
+        input.push_event(ViewportEvent::Wheel {
+            delta: glam::Vec2::new(0.0, 5.0),
+            units: ScrollUnits::Lines,
+        });
+        let frame = input.resolve();
+        assert_eq!(frame.navigation.zoom, 0.0);
+    }
+
+    #[test]
+    fn right_drag_produces_pan() {
+        let mut input = ViewportInput::new(viewport_all_bindings());
+        input.begin_frame(focused_ctx());
+        // Move pointer to a position, press right button, then move
+        input.push_event(ViewportEvent::PointerMoved {
+            position: glam::Vec2::new(100.0, 100.0),
+        });
+        input.push_event(ViewportEvent::MouseButton {
+            button: MouseButton::Right,
+            state: ButtonState::Pressed,
+        });
+        input.push_event(ViewportEvent::PointerMoved {
+            position: glam::Vec2::new(110.0, 105.0),
+        });
+        let frame = input.resolve();
+        assert!((frame.navigation.pan.x - 10.0).abs() < 1e-3);
+        assert!((frame.navigation.pan.y - 5.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn pointer_move_without_button_no_drag() {
+        let mut input = ViewportInput::new(viewport_all_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::PointerMoved {
+            position: glam::Vec2::new(100.0, 100.0),
+        });
+        input.push_event(ViewportEvent::PointerMoved {
+            position: glam::Vec2::new(200.0, 200.0),
+        });
+        let frame = input.resolve();
+        assert_eq!(frame.navigation.orbit, glam::Vec2::ZERO);
+        assert_eq!(frame.navigation.pan, glam::Vec2::ZERO);
+    }
+
+    #[test]
+    fn begin_frame_resets_accumulators() {
+        let mut input = ViewportInput::new(viewport_all_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::Wheel {
+            delta: glam::Vec2::new(0.0, 5.0),
+            units: ScrollUnits::Pixels,
+        });
+        // First resolve should have zoom
+        let frame1 = input.resolve();
+        assert!(frame1.navigation.zoom != 0.0);
+        // begin_frame resets accumulators
+        input.begin_frame(focused_ctx());
+        let frame2 = input.resolve();
+        assert_eq!(frame2.navigation.zoom, 0.0);
+    }
+
+    #[test]
+    fn pointer_left_releases_buttons() {
+        let mut input = ViewportInput::new(viewport_all_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::PointerMoved {
+            position: glam::Vec2::new(100.0, 100.0),
+        });
+        input.push_event(ViewportEvent::MouseButton {
+            button: MouseButton::Right,
+            state: ButtonState::Pressed,
+        });
+        input.push_event(ViewportEvent::PointerLeft);
+        // Now move again and check no drag delta accumulates
+        input.push_event(ViewportEvent::PointerMoved {
+            position: glam::Vec2::new(200.0, 200.0),
+        });
+        let frame = input.resolve();
+        assert_eq!(frame.navigation.pan, glam::Vec2::ZERO);
+    }
+
+    #[test]
+    fn focus_lost_clears_keys() {
+        let mut input = ViewportInput::new(viewport_all_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::Key {
+            key: KeyCode::W,
+            state: ButtonState::Pressed,
+            repeat: false,
+        });
+        input.push_event(ViewportEvent::FocusLost);
+        let frame = input.resolve();
+        // FlyForward is bound to W hold; after FocusLost, keys_held is cleared
+        assert!(
+            !frame.is_active(Action::FlyForward),
+            "FlyForward should not be active after focus lost"
+        );
+    }
+
+    #[test]
+    fn character_event_populates_typed_chars() {
+        let mut input = ViewportInput::new(viewport_all_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::Character('3'));
+        input.push_event(ViewportEvent::Character('.'));
+        input.push_event(ViewportEvent::Character('5'));
+        input.push_event(ViewportEvent::Character('a')); // filtered out
+        let frame = input.resolve();
+        assert_eq!(frame.typed_chars, vec!['3', '.', '5']);
+    }
+
+    #[test]
+    fn trackpad_rotate_accumulates_twist() {
+        let mut input = ViewportInput::new(viewport_all_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::TrackpadRotate(0.1));
+        input.push_event(ViewportEvent::TrackpadRotate(0.2));
+        let frame = input.resolve();
+        assert!((frame.navigation.twist - 0.3).abs() < 1e-5);
+    }
+
+    #[test]
+    fn key_hold_active_every_frame() {
+        let mut input = ViewportInput::new(viewport_all_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::Key {
+            key: KeyCode::W,
+            state: ButtonState::Pressed,
+            repeat: false,
+        });
+        let frame1 = input.resolve();
+        assert!(frame1.is_active(Action::FlyForward));
+        // Next frame: key is still held (no release event), so KeyHold should still fire
+        input.begin_frame(focused_ctx());
+        let frame2 = input.resolve();
+        assert!(
+            frame2.is_active(Action::FlyForward),
+            "FlyForward should persist while key is held"
+        );
+    }
+
+    #[test]
+    fn key_release_stops_hold() {
+        let mut input = ViewportInput::new(viewport_all_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::Key {
+            key: KeyCode::W,
+            state: ButtonState::Pressed,
+            repeat: false,
+        });
+        let frame1 = input.resolve();
+        assert!(frame1.is_active(Action::FlyForward));
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::Key {
+            key: KeyCode::W,
+            state: ButtonState::Released,
+            repeat: false,
+        });
+        let frame2 = input.resolve();
+        assert!(
+            !frame2.is_active(Action::FlyForward),
+            "FlyForward should stop after key release"
+        );
+    }
+
+    #[test]
+    fn modifiers_changed_affects_bindings() {
+        let mut input = ViewportInput::new(viewport_all_bindings());
+        input.begin_frame(focused_ctx());
+        // Press Shift modifier, then press X -> should fire ExcludeX (Shift+X)
+        input.push_event(ViewportEvent::ModifiersChanged(Modifiers::SHIFT));
+        input.push_event(ViewportEvent::Key {
+            key: KeyCode::X,
+            state: ButtonState::Pressed,
+            repeat: false,
+        });
+        let frame = input.resolve();
+        assert!(
+            frame.is_active(Action::ExcludeX),
+            "Shift+X should fire ExcludeX"
+        );
+    }
+
+    #[test]
+    fn repeat_key_does_not_fire_press() {
+        let mut input = ViewportInput::new(viewport_all_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::Key {
+            key: KeyCode::G,
+            state: ButtonState::Pressed,
+            repeat: true,
+        });
+        let frame = input.resolve();
+        // BeginMove is a KeyPress binding; repeat should not trigger it
+        assert!(
+            !frame.is_active(Action::BeginMove),
+            "repeat should not fire KeyPress bindings"
+        );
+    }
+
+    #[test]
+    fn middle_drag_shift_produces_pan() {
+        let mut input = ViewportInput::new(viewport_all_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::PointerMoved {
+            position: glam::Vec2::new(50.0, 50.0),
+        });
+        input.push_event(ViewportEvent::ModifiersChanged(Modifiers::SHIFT));
+        input.push_event(ViewportEvent::MouseButton {
+            button: MouseButton::Middle,
+            state: ButtonState::Pressed,
+        });
+        input.push_event(ViewportEvent::PointerMoved {
+            position: glam::Vec2::new(60.0, 55.0),
+        });
+        let frame = input.resolve();
+        assert!((frame.navigation.pan.x - 10.0).abs() < 1e-3);
+        assert!((frame.navigation.pan.y - 5.0).abs() < 1e-3);
+    }
 }

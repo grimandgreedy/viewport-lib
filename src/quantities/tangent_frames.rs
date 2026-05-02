@@ -120,3 +120,140 @@ fn gram_schmidt_tangent_vec(n: glam::Vec3) -> (glam::Vec3, glam::Vec3) {
     let b = n.cross(t);
     (t, b)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_orthonormal(name: &str, normal: [f32; 3], tangent: [f32; 3], bitangent: [f32; 3]) {
+        let n = glam::Vec3::from(normal);
+        let t = glam::Vec3::from(tangent);
+        let b = glam::Vec3::from(bitangent);
+        assert!(
+            (t.length() - 1.0).abs() < 1e-4,
+            "{name}: tangent not unit length: {}",
+            t.length()
+        );
+        assert!(
+            (b.length() - 1.0).abs() < 1e-4,
+            "{name}: bitangent not unit length: {}",
+            b.length()
+        );
+        assert!(
+            n.dot(t).abs() < 1e-4,
+            "{name}: tangent not perpendicular to normal: {}",
+            n.dot(t)
+        );
+        assert!(
+            n.dot(b).abs() < 1e-4,
+            "{name}: bitangent not perpendicular to normal: {}",
+            n.dot(b)
+        );
+        assert!(
+            t.dot(b).abs() < 1e-4,
+            "{name}: tangent not perpendicular to bitangent: {}",
+            t.dot(b)
+        );
+    }
+
+    #[test]
+    fn gram_schmidt_axis_aligned_normals() {
+        let normals = [
+            ([1.0, 0.0, 0.0], "+X"),
+            ([-1.0, 0.0, 0.0], "-X"),
+            ([0.0, 1.0, 0.0], "+Y"),
+            ([0.0, -1.0, 0.0], "-Y"),
+            ([0.0, 0.0, 1.0], "+Z"),
+            ([0.0, 0.0, -1.0], "-Z"),
+        ];
+        for (n, name) in &normals {
+            let (t, b) = gram_schmidt_tangent(*n);
+            assert_orthonormal(name, *n, t, b);
+        }
+    }
+
+    #[test]
+    fn gram_schmidt_diagonal_normal() {
+        let s = 1.0 / 3.0f32.sqrt();
+        let n = [s, s, s];
+        let (t, b) = gram_schmidt_tangent(n);
+        assert_orthonormal("diagonal", n, t, b);
+    }
+
+    #[test]
+    fn compute_vertex_tangent_frames_length_matches() {
+        let normals = vec![[0.0, 1.0, 0.0]; 10];
+        let frames = compute_vertex_tangent_frames(&normals);
+        assert_eq!(frames.len(), normals.len());
+    }
+
+    #[test]
+    fn compute_vertex_tangent_frames_all_orthonormal() {
+        let normals = vec![
+            [0.0, 1.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ];
+        let frames = compute_vertex_tangent_frames(&normals);
+        for (i, (t, b)) in frames.iter().enumerate() {
+            assert_orthonormal(&format!("vtx_{i}"), normals[i], *t, *b);
+        }
+    }
+
+    #[test]
+    fn compute_face_tangent_frames_right_triangle() {
+        let positions = vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ];
+        let indices = vec![0u32, 1, 2];
+        let frames = compute_face_tangent_frames(&positions, &indices);
+        assert_eq!(frames.len(), 1);
+        let (t, b) = frames[0];
+        // Tangent should be aligned with edge v0->v1 = +X
+        assert!((t[0] - 1.0).abs() < 1e-4, "tangent X should be ~1.0");
+        assert!(t[1].abs() < 1e-4);
+        assert!(t[2].abs() < 1e-4);
+        // Bitangent should be +Y (cross of +Z normal and +X tangent)
+        assert!(b[0].abs() < 1e-4);
+        assert!((b[1] - 1.0).abs() < 1e-4, "bitangent Y should be ~1.0");
+    }
+
+    #[test]
+    fn compute_face_tangent_frames_degenerate_no_panic() {
+        let positions = vec![[0.0; 3]; 3]; // degenerate
+        let indices = vec![0u32, 1, 2];
+        let frames = compute_face_tangent_frames(&positions, &indices);
+        assert_eq!(frames.len(), 1); // produces some frame, does not panic
+    }
+
+    #[test]
+    fn tangents_from_explicit_positive_handedness() {
+        let normals = vec![[0.0, 0.0, 1.0]]; // +Z
+        let tangents = vec![[1.0, 0.0, 0.0, 1.0]]; // +X, w=+1
+        let frames = tangents_from_explicit(&normals, &tangents);
+        let (t, b) = frames[0];
+        assert!((t[0] - 1.0).abs() < 1e-5);
+        // bitangent = cross(+Z, +X) * 1 = +Y
+        assert!((b[1] - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn tangents_from_explicit_negative_handedness() {
+        let normals = vec![[0.0, 0.0, 1.0]]; // +Z
+        let tangents = vec![[1.0, 0.0, 0.0, -1.0]]; // +X, w=-1
+        let frames = tangents_from_explicit(&normals, &tangents);
+        let (_, b) = frames[0];
+        // bitangent = cross(+Z, +X) * -1 = -Y
+        assert!((b[1] - (-1.0)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn tangents_from_explicit_length_matches() {
+        let normals = vec![[0.0, 1.0, 0.0]; 5];
+        let tangents = vec![[1.0, 0.0, 0.0, 1.0]; 5];
+        let frames = tangents_from_explicit(&normals, &tangents);
+        assert_eq!(frames.len(), 5);
+    }
+}

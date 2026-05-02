@@ -296,3 +296,135 @@ fn apply_firstperson_look(camera: &mut Camera, yaw: f32, pitch: f32) {
     // Re-derive center so the eye does not shift.
     camera.center = eye - camera.orientation * (glam::Vec3::Z * camera.distance);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interaction::input::binding::KeyCode;
+    use crate::interaction::input::event::{ButtonState, ScrollUnits, ViewportEvent};
+
+    fn make_ctx() -> ViewportContext {
+        ViewportContext {
+            hovered: true,
+            focused: true,
+            viewport_size: [800.0, 600.0],
+        }
+    }
+
+    #[test]
+    fn new_defaults() {
+        let ctrl = OrbitCameraController::viewport_primitives();
+        assert_eq!(ctrl.navigation_mode, NavigationMode::Arcball);
+        assert!((ctrl.fly_speed - OrbitCameraController::DEFAULT_FLY_SPEED).abs() < 1e-6);
+        assert!(
+            (ctrl.orbit_sensitivity - OrbitCameraController::DEFAULT_ORBIT_SENSITIVITY).abs()
+                < 1e-6
+        );
+    }
+
+    #[test]
+    fn resolve_no_events_zero_nav() {
+        let mut ctrl = OrbitCameraController::viewport_all();
+        ctrl.begin_frame(make_ctx());
+        let frame = ctrl.resolve();
+        assert_eq!(frame.navigation.orbit, glam::Vec2::ZERO);
+        assert_eq!(frame.navigation.pan, glam::Vec2::ZERO);
+        assert_eq!(frame.navigation.zoom, 0.0);
+    }
+
+    #[test]
+    fn apply_zoom_changes_distance() {
+        let mut ctrl = OrbitCameraController::viewport_primitives();
+        ctrl.begin_frame(make_ctx());
+        let mut cam = Camera::default();
+        let d0 = cam.distance;
+        ctrl.push_event(ViewportEvent::Wheel {
+            delta: glam::Vec2::new(0.0, 100.0),
+            units: ScrollUnits::Pixels,
+        });
+        ctrl.apply_to_camera(&mut cam);
+        assert!(
+            (cam.distance - d0).abs() > 1e-4,
+            "zoom should change camera distance"
+        );
+    }
+
+    #[test]
+    fn planar_mode_ignores_orbit() {
+        let mut ctrl = OrbitCameraController::viewport_primitives();
+        ctrl.navigation_mode = NavigationMode::Planar;
+        ctrl.begin_frame(make_ctx());
+        let mut cam = Camera::default();
+        let orient_before = cam.orientation;
+        // Simulate a left-drag (orbit gesture in primitives preset)
+        ctrl.push_event(ViewportEvent::PointerMoved {
+            position: glam::Vec2::new(100.0, 100.0),
+        });
+        ctrl.push_event(ViewportEvent::MouseButton {
+            button: crate::interaction::input::binding::MouseButton::Left,
+            state: ButtonState::Pressed,
+        });
+        ctrl.push_event(ViewportEvent::PointerMoved {
+            position: glam::Vec2::new(200.0, 200.0),
+        });
+        ctrl.apply_to_camera(&mut cam);
+        assert!(
+            (cam.orientation.x - orient_before.x).abs() < 1e-6
+                && (cam.orientation.y - orient_before.y).abs() < 1e-6
+                && (cam.orientation.z - orient_before.z).abs() < 1e-6
+                && (cam.orientation.w - orient_before.w).abs() < 1e-6,
+            "planar mode should not change orientation"
+        );
+    }
+
+    #[test]
+    fn turntable_pitch_clamped() {
+        let mut cam = Camera::default();
+        // Try to apply extreme pitch
+        for _ in 0..1000 {
+            apply_turntable(&mut cam, 0.0, 0.1);
+        }
+        // Check eye direction Z component stays within sin(89°)
+        let eye_z = (cam.orientation * glam::Vec3::Z).z;
+        let max_sin = 89.0_f32.to_radians().sin();
+        assert!(
+            eye_z.abs() <= max_sin + 1e-4,
+            "turntable pitch should be clamped: eye_z={eye_z}"
+        );
+    }
+
+    #[test]
+    fn firstperson_look_preserves_eye() {
+        let mut cam = Camera::default();
+        let eye_before = cam.eye_position();
+        apply_firstperson_look(&mut cam, 0.3, 0.2);
+        let eye_after = cam.eye_position();
+        let diff = (eye_after - eye_before).length();
+        assert!(
+            diff < 1e-3,
+            "firstperson look should preserve eye position, diff={diff}"
+        );
+    }
+
+    #[test]
+    fn firstperson_fly_moves_camera() {
+        let mut ctrl = OrbitCameraController::viewport_all();
+        ctrl.navigation_mode = NavigationMode::FirstPerson;
+        ctrl.fly_speed = 1.0;
+        ctrl.begin_frame(make_ctx());
+        let mut cam = Camera::default();
+        cam.center = glam::Vec3::ZERO;
+        cam.orientation = glam::Quat::IDENTITY;
+        let center_before = cam.center;
+        ctrl.push_event(ViewportEvent::Key {
+            key: KeyCode::W,
+            state: ButtonState::Pressed,
+            repeat: false,
+        });
+        ctrl.apply_to_camera(&mut cam);
+        assert!(
+            (cam.center - center_before).length() > 0.5,
+            "FlyForward should move camera center"
+        );
+    }
+}

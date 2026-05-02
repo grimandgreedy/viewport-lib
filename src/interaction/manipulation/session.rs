@@ -221,3 +221,145 @@ pub(super) fn update_numeric_state(session: &mut ManipulationSession, frame: &Ac
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- NumericInputState ---
+
+    #[test]
+    fn numeric_input_no_constraint_all_axes() {
+        let s = NumericInputState::new(None, false);
+        assert_eq!(s.active_axes, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn numeric_input_constrain_x() {
+        let s = NumericInputState::new(Some(GizmoAxis::X), false);
+        assert_eq!(s.active_axes, vec![0]);
+    }
+
+    #[test]
+    fn numeric_input_exclude_x() {
+        let s = NumericInputState::new(Some(GizmoAxis::X), true);
+        assert_eq!(s.active_axes, vec![1, 2]);
+    }
+
+    #[test]
+    fn numeric_input_constrain_y() {
+        let s = NumericInputState::new(Some(GizmoAxis::Y), false);
+        assert_eq!(s.active_axes, vec![1]);
+    }
+
+    #[test]
+    fn numeric_input_exclude_y() {
+        let s = NumericInputState::new(Some(GizmoAxis::Y), true);
+        assert_eq!(s.active_axes, vec![0, 2]);
+    }
+
+    #[test]
+    fn numeric_input_constrain_z() {
+        let s = NumericInputState::new(Some(GizmoAxis::Z), false);
+        assert_eq!(s.active_axes, vec![2]);
+    }
+
+    #[test]
+    fn numeric_input_exclude_z() {
+        let s = NumericInputState::new(Some(GizmoAxis::Z), true);
+        assert_eq!(s.active_axes, vec![0, 1]);
+    }
+
+    #[test]
+    fn numeric_input_parsed_values_empty() {
+        let s = NumericInputState::new(None, false);
+        let vals = s.parsed_values();
+        assert!(vals[0].is_none());
+        assert!(vals[1].is_none());
+        assert!(vals[2].is_none());
+    }
+
+    #[test]
+    fn numeric_input_parsed_values_with_input() {
+        let mut s = NumericInputState::new(None, false);
+        s.axis_inputs[0] = "2.5".to_string();
+        s.axis_inputs[2] = "-1".to_string();
+        let vals = s.parsed_values();
+        assert!((vals[0].unwrap() - 2.5).abs() < 1e-6);
+        assert!(vals[1].is_none());
+        assert!((vals[2].unwrap() - (-1.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn numeric_input_display_string() {
+        let mut s = NumericInputState::new(Some(GizmoAxis::X), true);
+        // Active axes: [1, 2] (Y, Z)
+        s.axis_inputs[1] = "3.0".to_string();
+        let display = s.display_string();
+        assert!(display.contains("Y: 3.0"));
+        assert!(display.contains("Z: _"));
+        assert!(!display.contains("X:"));
+    }
+
+    #[test]
+    fn numeric_input_current_axis() {
+        let s = NumericInputState::new(Some(GizmoAxis::Y), true);
+        // active_axes = [0, 2], current_axis_idx = 0
+        assert_eq!(s.current_axis(), 0); // X
+    }
+
+    // --- update_constraint ---
+
+    #[test]
+    fn update_constraint_sets_axis() {
+        let mut session = ManipulationSession {
+            kind: ManipulationKind::Move,
+            axis: None,
+            exclude_axis: false,
+            numeric: None,
+            is_gizmo_drag: false,
+            gizmo_center: glam::Vec3::ZERO,
+            cursor_anchor: None,
+            cursor_last_total: glam::Vec2::ZERO,
+            last_scale_factor: 1.0,
+        };
+        update_constraint(&mut session, true, false, false, false, false, false);
+        assert_eq!(session.axis, Some(GizmoAxis::X));
+        assert!(!session.exclude_axis);
+    }
+
+    #[test]
+    fn update_constraint_exclude_mode() {
+        let mut session = ManipulationSession {
+            kind: ManipulationKind::Scale,
+            axis: None,
+            exclude_axis: false,
+            numeric: None,
+            is_gizmo_drag: false,
+            gizmo_center: glam::Vec3::ZERO,
+            cursor_anchor: None,
+            cursor_last_total: glam::Vec2::ZERO,
+            last_scale_factor: 1.0,
+        };
+        update_constraint(&mut session, false, false, false, false, true, false);
+        assert_eq!(session.axis, Some(GizmoAxis::Y));
+        assert!(session.exclude_axis);
+    }
+
+    #[test]
+    fn update_constraint_clears_numeric() {
+        let mut session = ManipulationSession {
+            kind: ManipulationKind::Move,
+            axis: Some(GizmoAxis::X),
+            exclude_axis: false,
+            numeric: Some(NumericInputState::new(Some(GizmoAxis::X), false)),
+            is_gizmo_drag: false,
+            gizmo_center: glam::Vec3::ZERO,
+            cursor_anchor: None,
+            cursor_last_total: glam::Vec2::ZERO,
+            last_scale_factor: 1.0,
+        };
+        update_constraint(&mut session, false, true, false, false, false, false);
+        assert!(session.numeric.is_none());
+    }
+}

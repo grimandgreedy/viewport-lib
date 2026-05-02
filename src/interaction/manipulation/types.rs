@@ -116,3 +116,49 @@ pub struct ManipulationContext {
     /// `true` on a primary click-without-drag.
     pub clicked: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transform_delta_default_is_identity() {
+        let d = TransformDelta::default();
+        assert_eq!(d.translation, glam::Vec3::ZERO);
+        assert!((d.rotation.x).abs() < 1e-6);
+        assert!((d.rotation.y).abs() < 1e-6);
+        assert!((d.rotation.z).abs() < 1e-6);
+        assert!((d.rotation.w - 1.0).abs() < 1e-6);
+        assert_eq!(d.scale, glam::Vec3::ONE);
+        assert!(d.position_override.iter().all(|o| o.is_none()));
+        assert!(d.scale_override.iter().all(|o| o.is_none()));
+    }
+
+    #[test]
+    fn manipulation_kind_variants() {
+        // Ensure all three variants are distinct
+        assert_ne!(ManipulationKind::Move, ManipulationKind::Rotate);
+        assert_ne!(ManipulationKind::Rotate, ManipulationKind::Scale);
+        assert_ne!(ManipulationKind::Move, ManipulationKind::Scale);
+    }
+
+    #[test]
+    fn manip_result_none_variant() {
+        let r = ManipResult::None;
+        assert!(matches!(r, ManipResult::None));
+    }
+
+    #[test]
+    fn manip_result_update_carries_delta() {
+        let delta = TransformDelta {
+            translation: glam::Vec3::new(1.0, 2.0, 3.0),
+            ..Default::default()
+        };
+        let r = ManipResult::Update(delta);
+        if let ManipResult::Update(d) = r {
+            assert!((d.translation.x - 1.0).abs() < 1e-6);
+        } else {
+            panic!("expected Update variant");
+        }
+    }
+}

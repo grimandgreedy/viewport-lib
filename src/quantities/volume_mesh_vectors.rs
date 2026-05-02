@@ -107,3 +107,70 @@ pub fn volume_mesh_cell_vectors_to_glyphs(
         ..Default::default()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn vertex_vectors_length_matches() {
+        let positions = vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        let vectors = vec![[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]];
+        let item = volume_mesh_vertex_vectors_to_glyphs(&positions, &vectors, 1.0);
+        assert_eq!(item.positions.len(), 2);
+        assert_eq!(item.vectors.len(), 2);
+    }
+
+    #[test]
+    fn vertex_vectors_mismatched_truncates() {
+        let positions = vec![[0.0; 3]; 5];
+        let vectors = vec![[1.0, 0.0, 0.0]; 3];
+        let item = volume_mesh_vertex_vectors_to_glyphs(&positions, &vectors, 1.0);
+        assert_eq!(item.positions.len(), 3);
+    }
+
+    #[test]
+    fn vertex_vectors_scale_forwarded() {
+        let item = volume_mesh_vertex_vectors_to_glyphs(
+            &[[0.0; 3]],
+            &[[1.0, 0.0, 0.0]],
+            3.5,
+        );
+        assert!((item.scale - 3.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cell_vectors_tet_centroid() {
+        let data = VolumeMeshData {
+            positions: vec![
+                [0.0, 0.0, 0.0],
+                [4.0, 0.0, 0.0],
+                [0.0, 4.0, 0.0],
+                [0.0, 0.0, 4.0],
+            ],
+            cells: vec![[0, 1, 2, 3, TET_SENTINEL, TET_SENTINEL, TET_SENTINEL, TET_SENTINEL]],
+            cell_scalars: HashMap::new(),
+            cell_colors: HashMap::new(),
+        };
+        let cell_vectors = vec![[1.0, 0.0, 0.0]];
+        let item = volume_mesh_cell_vectors_to_glyphs(&data, &cell_vectors, 1.0);
+        assert_eq!(item.positions.len(), 1);
+        let c = item.positions[0];
+        assert!((c[0] - 1.0).abs() < 1e-4);
+        assert!((c[1] - 1.0).abs() < 1e-4);
+        assert!((c[2] - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn cell_vectors_empty_data() {
+        let data = VolumeMeshData {
+            positions: vec![],
+            cells: vec![],
+            cell_scalars: HashMap::new(),
+            cell_colors: HashMap::new(),
+        };
+        let item = volume_mesh_cell_vectors_to_glyphs(&data, &[], 1.0);
+        assert!(item.positions.is_empty());
+    }
+}

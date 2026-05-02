@@ -236,3 +236,179 @@ fn edge_crossing(pa: glam::Vec3, pb: glam::Vec3, sa: f32, sb: f32, iso: f32) -> 
 fn transform_point(m: glam::Mat4, p: glam::Vec3) -> [f32; 3] {
     m.transform_point3(p).to_array()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn simple_triangle_item(scalars: Vec<f32>, isovalues: Vec<f32>) -> IsolineItem {
+        // Right triangle in XY plane: (0,0,0), (1,0,0), (0,1,0)
+        IsolineItem {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            indices: vec![0, 1, 2],
+            scalars,
+            isovalues,
+            depth_bias: 0.0,
+            ..IsolineItem::default()
+        }
+    }
+
+    // -- edge_crossing tests --
+
+    #[test]
+    fn edge_crossing_midpoint() {
+        let a = glam::Vec3::ZERO;
+        let b = glam::Vec3::X;
+        let p = edge_crossing(a, b, 0.0, 1.0, 0.5).unwrap();
+        assert!((p.x - 0.5).abs() < 1e-5);
+        assert!(p.y.abs() < 1e-5);
+    }
+
+    #[test]
+    fn edge_crossing_same_side_returns_none() {
+        let a = glam::Vec3::ZERO;
+        let b = glam::Vec3::X;
+        assert!(edge_crossing(a, b, 0.0, 0.5, 1.0).is_none());
+    }
+
+    #[test]
+    fn edge_crossing_equal_scalars_returns_none() {
+        let a = glam::Vec3::ZERO;
+        let b = glam::Vec3::X;
+        assert!(edge_crossing(a, b, 0.5, 0.5, 0.5).is_none());
+    }
+
+    #[test]
+    fn edge_crossing_at_endpoint() {
+        let a = glam::Vec3::ZERO;
+        let b = glam::Vec3::X;
+        // iso exactly at sb : sa < iso, sb >= iso -> should cross
+        let p = edge_crossing(a, b, 0.0, 1.0, 1.0).unwrap();
+        assert!((p.x - 1.0).abs() < 1e-5);
+    }
+
+    // -- extract_isolines tests --
+
+    #[test]
+    fn extract_empty_positions_returns_empty() {
+        let item = IsolineItem::default();
+        let (pos, strips) = extract_isolines(&item);
+        assert!(pos.is_empty());
+        assert!(strips.is_empty());
+    }
+
+    #[test]
+    fn extract_mismatched_scalars_returns_empty() {
+        let item = IsolineItem {
+            positions: vec![[0.0; 3]; 3],
+            indices: vec![0, 1, 2],
+            scalars: vec![0.0, 1.0], // wrong length
+            isovalues: vec![0.5],
+            ..IsolineItem::default()
+        };
+        let (pos, _) = extract_isolines(&item);
+        assert!(pos.is_empty());
+    }
+
+    #[test]
+    fn extract_single_triangle_linear_ramp() {
+        // Scalars: 0, 1, 0. Iso at 0.5 should cross edges 0-1 and 1-2.
+        let item = simple_triangle_item(vec![0.0, 1.0, 0.0], vec![0.5]);
+        let (pos, strips) = extract_isolines(&item);
+        assert_eq!(strips.len(), 1);
+        assert_eq!(strips[0], 2);
+        assert_eq!(pos.len(), 2);
+    }
+
+    #[test]
+    fn extract_isovalue_outside_range_no_segments() {
+        let item = simple_triangle_item(vec![0.0, 0.5, 0.25], vec![10.0]);
+        let (pos, strips) = extract_isolines(&item);
+        assert!(pos.is_empty());
+        assert!(strips.is_empty());
+    }
+
+    #[test]
+    fn extract_multiple_isovalues() {
+        // Scalars from 0 to 1 across vertices. Two isovalues should each produce segments.
+        let item = simple_triangle_item(vec![0.0, 1.0, 0.0], vec![0.25, 0.75]);
+        let (pos, strips) = extract_isolines(&item);
+        assert_eq!(strips.len(), 2);
+        assert_eq!(pos.len(), 4);
+    }
+
+    #[test]
+    fn extract_degenerate_triangle_skipped() {
+        // Three coincident points : zero-area triangle
+        let item = IsolineItem {
+            positions: vec![[0.0; 3]; 3],
+            indices: vec![0, 1, 2],
+            scalars: vec![0.0, 1.0, 0.0],
+            isovalues: vec![0.5],
+            depth_bias: 0.0,
+            ..IsolineItem::default()
+        };
+        let (pos, _) = extract_isolines(&item);
+        assert!(pos.is_empty());
+    }
+
+    #[test]
+    fn extract_out_of_bounds_indices_skipped() {
+        let item = IsolineItem {
+            positions: vec![[0.0; 3]; 3],
+            indices: vec![0, 1, 99], // 99 is out of bounds
+            scalars: vec![0.0, 1.0, 0.0],
+            isovalues: vec![0.5],
+            ..IsolineItem::default()
+        };
+        let (pos, _) = extract_isolines(&item);
+        assert!(pos.is_empty());
+    }
+
+    #[test]
+    fn extract_model_matrix_transforms_output() {
+        let item = IsolineItem {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            indices: vec![0, 1, 2],
+            scalars: vec![0.0, 1.0, 0.0],
+            isovalues: vec![0.5],
+            model_matrix: glam::Mat4::from_translation(glam::Vec3::new(10.0, 0.0, 0.0)),
+            depth_bias: 0.0,
+            ..IsolineItem::default()
+        };
+        let (pos, _) = extract_isolines(&item);
+        // All output positions should be translated by +10 on X
+        for p in &pos {
+            assert!(p[0] > 9.0, "expected translated X, got {}", p[0]);
+        }
+    }
+
+    #[test]
+    fn extract_two_triangles_sharing_edge() {
+        // Two triangles forming a quad, with a linear ramp across them
+        let item = IsolineItem {
+            positions: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            scalars: vec![0.0, 1.0, 1.0, 0.0],
+            isovalues: vec![0.5],
+            depth_bias: 0.0,
+            ..IsolineItem::default()
+        };
+        let (pos, strips) = extract_isolines(&item);
+        assert_eq!(strips.len(), 2); // one segment per triangle
+        assert_eq!(pos.len(), 4);
+    }
+
+    #[test]
+    fn extract_empty_isovalues_returns_empty() {
+        let item = simple_triangle_item(vec![0.0, 1.0, 0.0], vec![]);
+        let (pos, strips) = extract_isolines(&item);
+        assert!(pos.is_empty());
+        assert!(strips.is_empty());
+    }
+}

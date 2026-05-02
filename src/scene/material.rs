@@ -212,3 +212,94 @@ impl Material {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_values() {
+        let m = Material::default();
+        assert!((m.base_color[0] - 0.7).abs() < 1e-6);
+        assert!((m.ambient - 0.15).abs() < 1e-6);
+        assert!((m.diffuse - 0.75).abs() < 1e-6);
+        assert!((m.opacity - 1.0).abs() < 1e-6);
+        assert!(!m.use_pbr);
+        assert!(m.texture_id.is_none());
+        assert!(m.normal_map_id.is_none());
+        assert!(m.ao_map_id.is_none());
+        assert!(m.matcap_id.is_none());
+        assert!(m.param_vis.is_none());
+    }
+
+    #[test]
+    fn from_color_sets_base_color() {
+        let m = Material::from_color([1.0, 0.0, 0.5]);
+        assert!((m.base_color[0] - 1.0).abs() < 1e-6);
+        assert!((m.base_color[1]).abs() < 1e-6);
+        assert!((m.base_color[2] - 0.5).abs() < 1e-6);
+        // Other fields should be defaults
+        assert!((m.ambient - 0.15).abs() < 1e-6);
+    }
+
+    #[test]
+    fn pbr_constructor() {
+        let m = Material::pbr([0.8, 0.2, 0.1], 0.9, 0.3);
+        assert!(m.use_pbr);
+        assert!((m.metallic - 0.9).abs() < 1e-6);
+        assert!((m.roughness - 0.3).abs() < 1e-6);
+        assert!((m.base_color[0] - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn is_two_sided_cull() {
+        let m = Material::default();
+        assert!(!m.is_two_sided());
+    }
+
+    #[test]
+    fn is_two_sided_identical() {
+        let m = Material {
+            backface_policy: BackfacePolicy::Identical,
+            ..Default::default()
+        };
+        assert!(m.is_two_sided());
+    }
+
+    #[test]
+    fn is_two_sided_different_color() {
+        let m = Material {
+            backface_policy: BackfacePolicy::DifferentColor([1.0, 0.0, 0.0]),
+            ..Default::default()
+        };
+        assert!(m.is_two_sided());
+    }
+
+    #[test]
+    fn is_two_sided_tint() {
+        let m = Material {
+            backface_policy: BackfacePolicy::Tint(0.3),
+            ..Default::default()
+        };
+        assert!(m.is_two_sided());
+    }
+
+    #[test]
+    fn is_two_sided_pattern() {
+        let m = Material {
+            backface_policy: BackfacePolicy::Pattern {
+                pattern: BackfacePattern::Hatching,
+                color: [0.5, 0.5, 0.5],
+            },
+            ..Default::default()
+        };
+        assert!(m.is_two_sided());
+    }
+
+    #[test]
+    fn param_vis_default() {
+        let pv = ParamVis::default();
+        assert_eq!(pv.mode, ParamVisMode::Checker);
+        assert!((pv.scale - 8.0).abs() < 1e-6);
+    }
+}

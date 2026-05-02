@@ -85,3 +85,47 @@ impl ViewportBinding {
         Self { action, gesture }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_none_matches_no_modifiers() {
+        assert!(ModifiersMatch::Exact(Modifiers::NONE).matches(Modifiers::NONE));
+    }
+
+    #[test]
+    fn exact_none_rejects_alt() {
+        assert!(!ModifiersMatch::Exact(Modifiers::NONE).matches(Modifiers::ALT));
+    }
+
+    #[test]
+    fn exact_shift_matches_shift_only() {
+        assert!(ModifiersMatch::Exact(Modifiers::SHIFT).matches(Modifiers::SHIFT));
+        assert!(!ModifiersMatch::Exact(Modifiers::SHIFT).matches(Modifiers::NONE));
+        assert!(!ModifiersMatch::Exact(Modifiers::SHIFT).matches(Modifiers::CTRL_SHIFT));
+    }
+
+    #[test]
+    fn contains_shift_allows_extras() {
+        assert!(ModifiersMatch::Contains(Modifiers::SHIFT).matches(Modifiers::SHIFT));
+        assert!(ModifiersMatch::Contains(Modifiers::SHIFT).matches(Modifiers::CTRL_SHIFT));
+        assert!(!ModifiersMatch::Contains(Modifiers::SHIFT).matches(Modifiers::NONE));
+        assert!(!ModifiersMatch::Contains(Modifiers::SHIFT).matches(Modifiers::CTRL));
+    }
+
+    #[test]
+    fn contains_ctrl_shift_requires_both() {
+        assert!(ModifiersMatch::Contains(Modifiers::CTRL_SHIFT).matches(Modifiers::CTRL_SHIFT));
+        assert!(!ModifiersMatch::Contains(Modifiers::CTRL_SHIFT).matches(Modifiers::CTRL));
+        assert!(!ModifiersMatch::Contains(Modifiers::CTRL_SHIFT).matches(Modifiers::SHIFT));
+    }
+
+    #[test]
+    fn any_matches_everything() {
+        assert!(ModifiersMatch::Any.matches(Modifiers::NONE));
+        assert!(ModifiersMatch::Any.matches(Modifiers::ALT));
+        assert!(ModifiersMatch::Any.matches(Modifiers::CTRL_SHIFT));
+    }
+}
