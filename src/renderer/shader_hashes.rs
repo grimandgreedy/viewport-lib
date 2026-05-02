@@ -206,8 +206,8 @@ mod tests {
         let hashes = current_shader_hashes();
         assert_eq!(
             hashes.len(),
-            19,
-            "expected 19 shaders, got {}",
+            20,
+            "expected 20 shaders, got {}",
             hashes.len()
         );
     }
@@ -227,7 +227,7 @@ mod tests {
         let hashes = current_shader_hashes();
         let expected: Vec<(&str, u64)> = hashes.iter().map(|(n, h)| (*n, *h)).collect();
         let result = validate_shader_hashes(&expected);
-        assert_eq!(result.valid, 19);
+        assert_eq!(result.valid, 20);
         assert!(result.mismatched.is_empty());
     }
 
