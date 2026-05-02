@@ -10,6 +10,8 @@ impl ViewportGpuResources {
         vertices: &[Vertex],
         indices: &[u32],
     ) -> crate::resources::mesh_store::MeshId {
+        self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
+            + indices.len() * std::mem::size_of::<u32>()) as u64;
         let mesh = Self::create_mesh(
             device,
             &self.object_bind_group_layout,
@@ -114,6 +116,8 @@ impl ViewportGpuResources {
         mesh.face_vertex_buffer = face_vbuf;
         mesh.face_attribute_buffers = face_attr_bufs;
         mesh.face_color_buffers = face_color_bufs;
+        self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
+            + data.indices.len() * std::mem::size_of::<u32>()) as u64;
         let id = self.mesh_store.insert(mesh);
         tracing::debug!(
             mesh_index = id.index(),
@@ -213,6 +217,8 @@ impl ViewportGpuResources {
         new_mesh.face_vertex_buffer = face_vbuf;
         new_mesh.face_attribute_buffers = face_attr_bufs;
         new_mesh.face_color_buffers = face_color_bufs;
+        self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
+            + data.indices.len() * std::mem::size_of::<u32>()) as u64;
         let _ = self.mesh_store.replace(mesh_id, new_mesh);
         tracing::debug!(
             mesh_index = mesh_id.index(),

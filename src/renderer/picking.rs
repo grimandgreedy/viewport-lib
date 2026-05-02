@@ -31,6 +31,14 @@ impl ViewportRenderer {
         cursor: glam::Vec2,
         frame: &FrameData,
     ) -> Option<crate::interaction::picking::GpuPickHit> {
+        // In Playback mode, throttle picking to every 4th frame to reduce overhead
+        // during animation. Interactive, Paused, and Capture modes always pick.
+        if self.runtime_mode == crate::renderer::stats::RuntimeMode::Playback
+            && self.frame_counter % 4 != 0
+        {
+            return None;
+        }
+
         // Resolve scene items from the SurfaceSubmission seam.
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
             SurfaceSubmission::Flat(items) => items,

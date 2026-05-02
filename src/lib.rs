@@ -159,7 +159,7 @@ pub use interaction::sub_object::{SubObjectRef, SubSelection, SubSelectionRef, V
 pub use widgets::axes_indicator::AxisView;
 
 pub use renderer::shader_hashes::ShaderValidation;
-pub use renderer::stats::FrameStats;
+pub use renderer::stats::{FrameStats, RuntimeMode};
 pub use renderer::{
     CameraFrame, CameraFrustumItem, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane,

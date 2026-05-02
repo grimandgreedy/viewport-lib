@@ -193,6 +193,15 @@ pub struct ViewportRenderer {
     /// Cascade-0 light-space view-projection matrix from the last shadow prepare.
     /// Cached here so `prepare_viewport_internal` can copy it into the ground plane uniform.
     last_cascade0_shadow_mat: glam::Mat4,
+    /// Current runtime mode controlling internal default behavior.
+    runtime_mode: crate::renderer::stats::RuntimeMode,
+    /// Target FPS used to compute `FrameStats::missed_budget`. `None` disables budget tracking.
+    target_fps: Option<f32>,
+    /// Instant recorded at the start of the most recent `prepare()` call.
+    /// Used to compute `total_frame_ms` on the following frame.
+    last_prepare_instant: Option<std::time::Instant>,
+    /// Frame counter incremented each `prepare()` call. Used for picking throttle in Playback mode.
+    frame_counter: u64,
 }
 
 impl ViewportRenderer {
@@ -237,6 +246,10 @@ impl ViewportRenderer {
             viewport_slots: Vec::new(),
             compute_filter_results: Vec::new(),
             last_cascade0_shadow_mat: glam::Mat4::IDENTITY,
+            runtime_mode: crate::renderer::stats::RuntimeMode::Interactive,
+            target_fps: None,
+            last_prepare_instant: None,
+            frame_counter: 0,
         }
     }
 
@@ -248,6 +261,29 @@ impl ViewportRenderer {
     /// Performance counters from the last completed frame.
     pub fn last_frame_stats(&self) -> crate::renderer::stats::FrameStats {
         self.last_stats
+    }
+
+    /// Set the runtime mode controlling internal default behavior.
+    ///
+    /// - [`RuntimeMode::Interactive`]: full picking rate, full quality (default).
+    /// - [`RuntimeMode::Playback`]: picking throttled to reduce CPU overhead during animation.
+    /// - [`RuntimeMode::Paused`]: full picking rate, full quality.
+    /// - [`RuntimeMode::Capture`]: full quality, intended for screenshot/export workflows.
+    pub fn set_runtime_mode(&mut self, mode: crate::renderer::stats::RuntimeMode) {
+        self.runtime_mode = mode;
+    }
+
+    /// Return the current runtime mode.
+    pub fn runtime_mode(&self) -> crate::renderer::stats::RuntimeMode {
+        self.runtime_mode
+    }
+
+    /// Set the target frame rate used to compute [`FrameStats::missed_budget`].
+    ///
+    /// When `Some(fps)`, `missed_budget` is set to `true` if the frame interval
+    /// exceeds `1000 / fps` milliseconds. `None` disables budget tracking.
+    pub fn set_target_fps(&mut self, fps: Option<f32>) {
+        self.target_fps = fps;
     }
 
     /// Mutable access to the underlying GPU resources (e.g. for mesh uploads).

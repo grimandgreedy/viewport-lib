@@ -942,6 +942,7 @@ impl ViewportRenderer {
                 instanced_batches: instanced_batch_count,
                 triangles_submitted: triangles,
                 shadow_draw_calls: 0, // Updated below in shadow pass.
+                ..self.last_stats
             };
         }
 
@@ -2474,10 +2475,50 @@ impl ViewportRenderer {
 
     /// Upload per-frame data to GPU buffers and render the shadow pass.
     /// Call before `paint()`.
-    pub fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame: &FrameData) {
+    ///
+    /// Returns [`crate::FrameStats`] with per-frame timing and upload metrics.
+    pub fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &FrameData,
+    ) -> crate::renderer::stats::FrameStats {
+        let prepare_start = std::time::Instant::now();
+
+        // Wall-clock duration since the previous prepare() call approximates the frame interval.
+        let total_frame_ms = self
+            .last_prepare_instant
+            .map(|t| t.elapsed().as_secs_f32() * 1000.0)
+            .unwrap_or(0.0);
+
+        // Snapshot geometry upload bytes accumulated since the last frame, then reset.
+        let upload_bytes = self.resources.frame_upload_bytes;
+        self.resources.frame_upload_bytes = 0;
+
         let (scene_fx, viewport_fx) = frame.effects.split();
         self.prepare_scene_internal(device, queue, frame, &scene_fx);
         self.prepare_viewport_internal(device, queue, frame, &viewport_fx);
+
+        let cpu_prepare_ms = prepare_start.elapsed().as_secs_f32() * 1000.0;
+        let missed_budget = self
+            .target_fps
+            .map(|fps| total_frame_ms > 1000.0 / fps)
+            .unwrap_or(false);
+
+        self.last_prepare_instant = Some(prepare_start);
+        self.frame_counter = self.frame_counter.wrapping_add(1);
+
+        let stats = crate::renderer::stats::FrameStats {
+            cpu_prepare_ms,
+            gpu_frame_ms: None,
+            total_frame_ms,
+            render_scale: 1.0,
+            missed_budget,
+            upload_bytes,
+            ..self.last_stats
+        };
+        self.last_stats = stats;
+        stats
     }
 }
 

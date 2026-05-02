@@ -1717,4 +1717,12 @@ pub struct ViewportGpuResources {
     pub(crate) overlay_text_bgl: Option<wgpu::BindGroupLayout>,
     /// Linear sampler for the glyph atlas texture.
     pub(crate) overlay_text_sampler: Option<wgpu::Sampler>,
+
+    // --- Runtime performance tracking ---
+    /// Cumulative bytes of geometry data uploaded since the last `prepare()` reset.
+    ///
+    /// Incremented by `upload_mesh`, `upload_mesh_data`, and `replace_mesh_data`.
+    /// Read and reset at the start of each `prepare()` call to populate
+    /// `FrameStats::upload_bytes`.
+    pub frame_upload_bytes: u64,
 }
