@@ -402,6 +402,296 @@ impl ViewportGpuResources {
                 bytemuck::cast_slice(metas),
             );
         }
+
+        // Invalidate cull bind groups when visibility_index_buf was just (re-)allocated.
+        // The new buffer is only detectable by comparing capacity before and after.
+        // Simplest approach: always invalidate on upload (cache miss already guards frequency).
+        self.instance_cull_bind_groups.clear();
+    }
+
+    /// Ensure the GPU-driven cull variant pipelines and BGL are created.
+    ///
+    /// Must be called after `ensure_instanced_pipelines`.  Idempotent.
+    pub(crate) fn ensure_cull_instance_pipelines(&mut self, device: &wgpu::Device) {
+        if self.instance_cull_bind_group_layout.is_some() {
+            return;
+        }
+
+        let Some(ref _instance_bgl) = self.instance_bind_group_layout else {
+            return; // ensure_instanced_pipelines must be called first.
+        };
+
+        // Cull BGL = instance_bgl bindings 0-4 + binding 5: visibility_indices (read, VERTEX).
+        let cull_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("instance_cull_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // binding 5: visibility_indices (written by compute cull pass, read in vertex shader)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        // HDR solid cull pipeline: Rgba16Float target, vs_main_cull, back-face cull.
+        let instanced_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("mesh_instanced_shader_cull"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/mesh_instanced.wgsl").into(),
+            ),
+        });
+        let inst_cull_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("hdr_instanced_cull_pipeline_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, &cull_bgl],
+            push_constant_ranges: &[],
+        });
+        let hdr_solid_cull = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("hdr_solid_instanced_cull_pipeline"),
+            layout: Some(&inst_cull_layout),
+            vertex: wgpu::VertexState {
+                module: &instanced_shader,
+                entry_point: Some("vs_main_cull"),
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &instanced_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        // OIT cull pipeline: Rgba16Float + R8Unorm targets, vs_main_cull, no depth write.
+        let oit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("mesh_instanced_oit_shader_cull"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/mesh_instanced_oit.wgsl").into(),
+            ),
+        });
+        let oit_cull_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("oit_instanced_cull_pipeline_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, &cull_bgl],
+            push_constant_ranges: &[],
+        });
+        let accum_blend = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        let reveal_blend = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::OneMinusSrc,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::OneMinusSrc,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        let oit_cull = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("oit_instanced_cull_pipeline"),
+            layout: Some(&oit_cull_layout),
+            vertex: wgpu::VertexState {
+                module: &oit_shader,
+                entry_point: Some("vs_main_cull"),
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &oit_shader,
+                entry_point: Some("fs_oit_main"),
+                targets: &[
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: Some(accum_blend),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R8Unorm,
+                        blend: Some(reveal_blend),
+                        write_mask: wgpu::ColorWrites::RED,
+                    }),
+                ],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        self.instance_cull_bind_group_layout = Some(cull_bgl);
+        self.hdr_solid_instanced_cull_pipeline = Some(hdr_solid_cull);
+        self.oit_instanced_cull_pipeline = Some(oit_cull);
+    }
+
+    /// Get or create a cull-path bind group for the instanced cull pipeline.
+    ///
+    /// Identical to `get_instance_bind_group` but uses `instance_cull_bind_group_layout`
+    /// and includes the `visibility_index_buf` at binding 5.
+    pub(crate) fn get_instance_cull_bind_group(
+        &mut self,
+        device: &wgpu::Device,
+        albedo_id: Option<u64>,
+        normal_map_id: Option<u64>,
+        ao_map_id: Option<u64>,
+    ) -> Option<&wgpu::BindGroup> {
+        let key = (
+            albedo_id.unwrap_or(u64::MAX),
+            normal_map_id.unwrap_or(u64::MAX),
+            ao_map_id.unwrap_or(u64::MAX),
+        );
+
+        if !self.instance_cull_bind_groups.contains_key(&key) {
+            let bgl = self.instance_cull_bind_group_layout.as_ref()?;
+            let inst_buf = self.instance_storage_buf.as_ref()?;
+            let vis_buf = self.visibility_index_buf.as_ref()?;
+
+            let albedo_view = match albedo_id {
+                Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+                _ => &self.fallback_texture.view,
+            };
+            let normal_view = match normal_map_id {
+                Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+                _ => &self.fallback_normal_map_view,
+            };
+            let ao_view = match ao_map_id {
+                Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+                _ => &self.fallback_ao_map_view,
+            };
+
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("instance_cull_tex_bg"),
+                layout: bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: inst_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(albedo_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(normal_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(ao_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: vis_buf.as_entire_binding(),
+                    },
+                ],
+            });
+            self.instance_cull_bind_groups.insert(key, bg);
+        }
+
+        self.instance_cull_bind_groups.get(&key)
     }
 
     /// Get or create a combined instance+texture bind group for the instanced pipeline.

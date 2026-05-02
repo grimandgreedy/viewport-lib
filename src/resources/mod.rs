@@ -43,11 +43,11 @@ pub use self::types::{
     SingleLightUniform, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
 };
 pub(crate) use self::types::{
-    BatchMeta, BloomUniform, ClipPlanesUniform, ContactShadowUniform, GlyphBaseMesh, GlyphGpuData,
-    GridUniform, GroundPlaneUniform, InstanceAabb, InstanceData, LabelGpuData, ObjectUniform,
-    OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, OverlayTextVertex, OverlayUniform,
-    PickInstance, SHADOW_ATLAS_SIZE, ShadowAtlasUniform, SsaoUniform, StreamtubeGpuData,
-    SubHighlightGpuData, ToneMapUniform, ViewportHdrState,
+    BatchMeta, BloomUniform, ClipPlanesUniform, ContactShadowUniform, FrustumPlane, FrustumUniform,
+    GlyphBaseMesh, GlyphGpuData, GridUniform, GroundPlaneUniform, InstanceAabb, InstanceData,
+    LabelGpuData, ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform,
+    OverlayTextVertex, OverlayUniform, PickInstance, SHADOW_ATLAS_SIZE, ShadowAtlasUniform,
+    SsaoUniform, StreamtubeGpuData, SubHighlightGpuData, ToneMapUniform, ViewportHdrState,
 };
 pub use self::implicit::{
     GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,

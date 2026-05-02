@@ -823,20 +823,67 @@ impl ViewportRenderer {
                         .collect();
 
                     // Separate opaque and transparent batches.
-                    let mut opaque_batches: Vec<&InstancedBatch> = Vec::new();
-                    let mut transparent_batches: Vec<&InstancedBatch> = Vec::new();
-                    for batch in batches {
+                    // Carry the global batch index (position in `batches`) alongside each batch
+                    // so draw_indexed_indirect can compute the correct buffer offset.
+                    let mut opaque_batches: Vec<(usize, &InstancedBatch)> = Vec::new();
+                    let mut transparent_batches: Vec<(usize, &InstancedBatch)> = Vec::new();
+                    for (batch_global_idx, batch) in batches.iter().enumerate() {
                         if batch.is_transparent {
-                            transparent_batches.push(batch);
+                            transparent_batches.push((batch_global_idx, batch));
                         } else {
-                            opaque_batches.push(batch);
+                            opaque_batches.push((batch_global_idx, batch));
                         }
                     }
 
                     if !opaque_batches.is_empty() && !frame.viewport.wireframe_mode {
-                        if let Some(ref pipeline) = resources.hdr_solid_instanced_pipeline {
+                        let use_indirect = self.gpu_culling_enabled
+                            && resources.hdr_solid_instanced_cull_pipeline.is_some()
+                            && resources.indirect_args_buf.is_some();
+
+                        if use_indirect {
+                            if let (
+                                Some(pipeline),
+                                Some(indirect_buf),
+                            ) = (
+                                &resources.hdr_solid_instanced_cull_pipeline,
+                                &resources.indirect_args_buf,
+                            ) {
+                                render_pass.set_pipeline(pipeline);
+                                for (batch_global_idx, batch) in &opaque_batches {
+                                    let Some(mesh) = resources.mesh_store.get(batch.mesh_id)
+                                    else {
+                                        continue;
+                                    };
+                                    let mat_key = (
+                                        batch.texture_id.unwrap_or(u64::MAX),
+                                        batch.normal_map_id.unwrap_or(u64::MAX),
+                                        batch.ao_map_id.unwrap_or(u64::MAX),
+                                    );
+                                    let Some(inst_tex_bg) =
+                                        resources.instance_cull_bind_groups.get(&mat_key)
+                                    else {
+                                        continue;
+                                    };
+                                    render_pass.set_bind_group(1, inst_tex_bg, &[]);
+                                    render_pass.set_vertex_buffer(
+                                        0,
+                                        mesh.vertex_buffer.slice(..),
+                                    );
+                                    render_pass.set_index_buffer(
+                                        mesh.index_buffer.slice(..),
+                                        wgpu::IndexFormat::Uint32,
+                                    );
+                                    // Each DrawIndexedIndirect entry is 20 bytes; index by global
+                                    // batch position so the offset matches write_indirect_args output.
+                                    render_pass.draw_indexed_indirect(
+                                        indirect_buf,
+                                        *batch_global_idx as u64 * 20,
+                                    );
+                                }
+                            }
+                        } else if let Some(ref pipeline) = resources.hdr_solid_instanced_pipeline {
                             render_pass.set_pipeline(pipeline);
-                            for batch in &opaque_batches {
+                            for (_, batch) in &opaque_batches {
                                 let Some(mesh) = resources
                                     .mesh_store
                                     .get(batch.mesh_id)
@@ -1267,7 +1314,53 @@ impl ViewportRenderer {
                 oit_pass.set_bind_group(0, camera_bg, &[]);
 
                 if self.use_instancing && !self.instanced_batches.is_empty() {
-                    if let Some(ref pipeline) = self.resources.oit_instanced_pipeline {
+                    let use_indirect_oit = self.gpu_culling_enabled
+                        && self.resources.oit_instanced_cull_pipeline.is_some()
+                        && self.resources.indirect_args_buf.is_some();
+
+                    if use_indirect_oit {
+                        if let (
+                            Some(pipeline),
+                            Some(indirect_buf),
+                        ) = (
+                            &self.resources.oit_instanced_cull_pipeline,
+                            &self.resources.indirect_args_buf,
+                        ) {
+                            oit_pass.set_pipeline(pipeline);
+                            for (batch_global_idx, batch) in
+                                self.instanced_batches.iter().enumerate()
+                            {
+                                if !batch.is_transparent {
+                                    continue;
+                                }
+                                let Some(mesh) =
+                                    self.resources.mesh_store.get(batch.mesh_id)
+                                else {
+                                    continue;
+                                };
+                                let mat_key = (
+                                    batch.texture_id.unwrap_or(u64::MAX),
+                                    batch.normal_map_id.unwrap_or(u64::MAX),
+                                    batch.ao_map_id.unwrap_or(u64::MAX),
+                                );
+                                let Some(inst_tex_bg) =
+                                    self.resources.instance_cull_bind_groups.get(&mat_key)
+                                else {
+                                    continue;
+                                };
+                                oit_pass.set_bind_group(1, inst_tex_bg, &[]);
+                                oit_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                oit_pass.set_index_buffer(
+                                    mesh.index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
+                                oit_pass.draw_indexed_indirect(
+                                    indirect_buf,
+                                    batch_global_idx as u64 * 20,
+                                );
+                            }
+                        }
+                    } else if let Some(ref pipeline) = self.resources.oit_instanced_pipeline {
                         oit_pass.set_pipeline(pipeline);
                         for batch in &self.instanced_batches {
                             if !batch.is_transparent {

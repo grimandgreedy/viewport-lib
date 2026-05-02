@@ -33,13 +33,17 @@ pub struct ShaderEntry {
     pub source: &'static str,
 }
 
-/// All 20 shaders embedded via `include_str!`.
+/// All 22 shaders embedded via `include_str!`.
 ///
 /// Order matches the filesystem order in `src/shaders/`.
 pub const SHADERS: &[ShaderEntry] = &[
     ShaderEntry {
         name: "axes_overlay.wgsl",
         source: include_str!("../shaders/axes_overlay.wgsl"),
+    },
+    ShaderEntry {
+        name: "cull.wgsl",
+        source: include_str!("../shaders/cull.wgsl"),
     },
     ShaderEntry {
         name: "bloom_blur.wgsl",
@@ -76,6 +80,10 @@ pub const SHADERS: &[ShaderEntry] = &[
     ShaderEntry {
         name: "mesh_instanced.wgsl",
         source: include_str!("../shaders/mesh_instanced.wgsl"),
+    },
+    ShaderEntry {
+        name: "mesh_instanced_oit.wgsl",
+        source: include_str!("../shaders/mesh_instanced_oit.wgsl"),
     },
     ShaderEntry {
         name: "outline.wgsl",
@@ -206,8 +214,8 @@ mod tests {
         let hashes = current_shader_hashes();
         assert_eq!(
             hashes.len(),
-            19,
-            "expected 19 shaders, got {}",
+            22,
+            "expected 22 shaders, got {}",
             hashes.len()
         );
     }
@@ -227,7 +235,7 @@ mod tests {
         let hashes = current_shader_hashes();
         let expected: Vec<(&str, u64)> = hashes.iter().map(|(n, h)| (*n, *h)).collect();
         let result = validate_shader_hashes(&expected);
-        assert_eq!(result.valid, 19);
+        assert_eq!(result.valid, 22);
         assert!(result.mismatched.is_empty());
     }
 

@@ -712,6 +712,81 @@ impl ViewportRenderer {
                     );
                 }
             }
+
+            // ------------------------------------------------------------------
+            // GPU cull dispatch (Phase 3)
+            //
+            // Run `cull_instances` + `write_indirect_args` whenever GPU culling
+            // is active and all required buffers are allocated.
+            // ------------------------------------------------------------------
+            if self.gpu_culling_enabled
+                && !self.instanced_batches.is_empty()
+                && !self.cached_instance_data.is_empty()
+            {
+                let instance_count = self.cached_instance_data.len() as u32;
+                let batch_count = self.instanced_batches.len() as u32;
+
+                // Do all mutable borrows before taking immutable borrows from resources.
+                if self.cull_resources.is_none() {
+                    self.cull_resources =
+                        Some(crate::renderer::indirect::CullResources::new(device));
+                }
+                resources.ensure_cull_instance_pipelines(device);
+                for batch in &self.instanced_batches.clone() {
+                    resources.get_instance_cull_bind_group(
+                        device,
+                        batch.texture_id,
+                        batch.normal_map_id,
+                        batch.ao_map_id,
+                    );
+                }
+
+                // Now take immutable borrows to the GPU buffers for dispatch.
+                if let (
+                    Some(aabb_buf),
+                    Some(meta_buf),
+                    Some(counter_buf),
+                    Some(vis_buf),
+                    Some(indirect_buf),
+                ) = (
+                    resources.instance_aabb_buf.as_ref(),
+                    resources.batch_meta_buf.as_ref(),
+                    resources.batch_counter_buf.as_ref(),
+                    resources.visibility_index_buf.as_ref(),
+                    resources.indirect_args_buf.as_ref(),
+                ) {
+                    // Build the FrustumUniform from the current camera view-projection.
+                    let vp_mat = frame.camera.render_camera.view_proj();
+                    let cpu_frustum =
+                        crate::camera::frustum::Frustum::from_view_proj(&vp_mat);
+                    let frustum_uniform = crate::resources::FrustumUniform {
+                        planes: std::array::from_fn(|i| crate::resources::FrustumPlane {
+                            normal: cpu_frustum.planes[i].normal.into(),
+                            distance: cpu_frustum.planes[i].d,
+                        }),
+                    };
+
+                    let cull = self.cull_resources.as_ref().unwrap();
+                    let mut encoder =
+                        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("cull_encoder"),
+                        });
+                    cull.dispatch(
+                        &mut encoder,
+                        device,
+                        queue,
+                        &frustum_uniform,
+                        aabb_buf,
+                        meta_buf,
+                        counter_buf,
+                        vis_buf,
+                        indirect_buf,
+                        instance_count,
+                        batch_count,
+                    );
+                    queue.submit(std::iter::once(encoder.finish()));
+                }
+            }
         }
 
         // ------------------------------------------------------------------

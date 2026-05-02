@@ -1949,6 +1949,11 @@ impl ViewportGpuResources {
             visibility_index_capacity: 0,
             indirect_args_buf: None,
             shadow_indirect_bufs: [None, None, None, None],
+            // GPU culling pipelines (Phase 3; created lazily by ensure_cull_instance_pipelines).
+            instance_cull_bind_group_layout: None,
+            instance_cull_bind_groups: std::collections::HashMap::new(),
+            hdr_solid_instanced_cull_pipeline: None,
+            oit_instanced_cull_pipeline: None,
             // Post-processing shared infrastructure (None until ensure_hdr_shared is called).
             bloom_bgl: None,
             ssao_bgl: None,

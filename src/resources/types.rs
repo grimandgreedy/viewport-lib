@@ -528,6 +528,30 @@ pub(crate) struct BatchMeta {
 
 const _: () = assert!(std::mem::size_of::<BatchMeta>() == 32);
 
+/// One plane of the view frustum as uploaded to the GPU cull shader.
+///
+/// Matches `FrustumPlane` in `cull.wgsl` (16 bytes: vec3 + f32).
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct FrustumPlane {
+    pub(crate) normal: [f32; 3],
+    pub(crate) distance: f32,
+}
+
+/// Six-plane frustum uniform uploaded to the GPU cull pass.
+///
+/// Matches `FrustumUniform` in `cull.wgsl` (96 bytes = 6 × 16).
+/// Planes are in Gribb-Hartmann order: left, right, bottom, top, near, far.
+/// Each plane normal points inward; `distance` is the signed offset from origin
+/// along the normal (`d` in the CPU `Plane` struct).
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct FrustumUniform {
+    pub(crate) planes: [FrustumPlane; 6],
+}
+
+const _: () = assert!(std::mem::size_of::<FrustumUniform>() == 96);
+
 /// Clip planes uniform for section-view clipping (binding 4 of camera bind group).
 ///
 /// Layout (112 bytes):
@@ -1460,6 +1484,19 @@ pub struct ViewportGpuResources {
     pub(crate) indirect_args_buf: Option<wgpu::Buffer>,
     /// Indirect draw args buffers for shadow cascades (one per cascade).
     pub(crate) shadow_indirect_bufs: [Option<wgpu::Buffer>; 4],
+
+    // --- GPU culling pipelines (Phase 3) ---
+    /// Bind group layout for instanced cull pipelines (group 1).
+    /// Extends `instance_bgl` with binding 5: visibility_indices storage buffer.
+    pub(crate) instance_cull_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    /// Per-texture-key bind groups for the cull pipelines.
+    /// Keyed by (albedo_id, normal_map_id, ao_map_id); invalidated when
+    /// `visibility_index_buf` is resized.
+    pub(crate) instance_cull_bind_groups: std::collections::HashMap<(u64, u64, u64), wgpu::BindGroup>,
+    /// HDR-pass solid instanced pipeline using `vs_main_cull` (indirect draw path).
+    pub(crate) hdr_solid_instanced_cull_pipeline: Option<wgpu::RenderPipeline>,
+    /// OIT-pass transparent instanced pipeline using `vs_main_cull` (indirect draw path).
+    pub(crate) oit_instanced_cull_pipeline: Option<wgpu::RenderPipeline>,
 
     // --- Post-processing shared infrastructure (BGLs / pipelines / samplers / static textures) ---
     // Viewport-sized textures, bind groups, and uniform buffers are stored in

@@ -6,6 +6,7 @@
 
 #[macro_use]
 mod types;
+mod indirect;
 mod picking;
 mod prepare;
 mod render;
@@ -145,6 +146,9 @@ pub struct ViewportRenderer {
     gpu_culling_supported: bool,
     /// True when GPU-driven culling is active (supported and not disabled by the caller).
     gpu_culling_enabled: bool,
+    /// GPU culling compute pipelines and frustum buffer. Created lazily on the first
+    /// frame where `gpu_culling_enabled` is true and instance buffers are present.
+    cull_resources: Option<indirect::CullResources>,
     /// Performance counters from the last frame.
     last_stats: crate::renderer::stats::FrameStats,
     /// Last scene generation seen during prepare(). u64::MAX forces rebuild on first frame.
@@ -254,6 +258,7 @@ impl ViewportRenderer {
             use_instancing: false,
             gpu_culling_supported,
             gpu_culling_enabled: gpu_culling_supported,
+            cull_resources: None,
             last_stats: crate::renderer::stats::FrameStats::default(),
             last_scene_generation: u64::MAX,
             last_selection_generation: u64::MAX,
