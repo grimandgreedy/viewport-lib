@@ -2794,6 +2794,122 @@ impl ViewportRenderer {
                 }
             }
         }
+
+        // ---------------------------------------------------------------
+        // Loading bars
+        // ---------------------------------------------------------------
+        self.loading_bar_gpu_data = None;
+        if !frame.overlays.loading_bars.is_empty() {
+            self.resources.ensure_overlay_text_pipeline(device);
+            let vp_w = frame.camera.viewport_size[0];
+            let vp_h = frame.camera.viewport_size[1];
+            if vp_w > 0.0 && vp_h > 0.0 {
+                let mut verts: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+
+                for bar in &frame.overlays.loading_bars {
+                    // Bar top-left corner based on anchor.
+                    let bar_x = vp_w * 0.5 - bar.width_px * 0.5;
+                    let bar_y = match bar.anchor {
+                        crate::renderer::types::LoadingBarAnchor::TopCenter => bar.margin_px,
+                        crate::renderer::types::LoadingBarAnchor::Center => {
+                            vp_h * 0.5 - bar.height_px * 0.5
+                        }
+                        crate::renderer::types::LoadingBarAnchor::BottomCenter => {
+                            vp_h - bar.margin_px - bar.height_px
+                        }
+                    };
+
+                    // Label above (TopCenter: below) the bar.
+                    if let Some(ref text) = bar.label {
+                        let layout = self.resources.glyph_atlas.layout_text(
+                            text,
+                            bar.font_size,
+                            None,
+                            device,
+                        );
+                        let ascent =
+                            self.resources.glyph_atlas.font_ascent(0, bar.font_size);
+                        let label_gap = 5.0;
+                        let lx = bar_x + bar.width_px * 0.5 - layout.total_width * 0.5;
+                        let ly = match bar.anchor {
+                            crate::renderer::types::LoadingBarAnchor::TopCenter => {
+                                bar_y + bar.height_px + label_gap
+                            }
+                            _ => bar_y - layout.height - label_gap,
+                        };
+                        for gq in &layout.quads {
+                            let gx = lx + gq.pos[0];
+                            let gy = ly + ascent + gq.pos[1];
+                            emit_textured_quad(
+                                &mut verts,
+                                gx, gy,
+                                gx + gq.size[0], gy + gq.size[1],
+                                gq.uv_min, gq.uv_max,
+                                bar.label_color,
+                                vp_w, vp_h,
+                            );
+                        }
+                    }
+
+                    // Background rectangle.
+                    emit_rounded_quad(
+                        &mut verts,
+                        bar_x, bar_y,
+                        bar_x + bar.width_px, bar_y + bar.height_px,
+                        bar.corner_radius,
+                        bar.background_color,
+                        vp_w, vp_h,
+                    );
+
+                    // Fill rectangle clipped to progress fraction.
+                    let fill_w = bar.width_px * bar.progress.clamp(0.0, 1.0);
+                    if fill_w > 0.5 {
+                        emit_rounded_quad(
+                            &mut verts,
+                            bar_x, bar_y,
+                            bar_x + fill_w, bar_y + bar.height_px,
+                            bar.corner_radius,
+                            bar.fill_color,
+                            vp_w, vp_h,
+                        );
+                    }
+                }
+
+                self.resources.glyph_atlas.upload_if_dirty(queue);
+
+                if !verts.is_empty() {
+                    let vertex_buf =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("loading_bar_vbuf"),
+                            contents: bytemuck::cast_slice(&verts),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        });
+                    let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
+                    let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
+                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("loading_bar_bg"),
+                        layout: bgl,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(
+                                    &self.resources.glyph_atlas.view,
+                                ),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(sampler),
+                            },
+                        ],
+                    });
+                    self.loading_bar_gpu_data = Some(crate::resources::LabelGpuData {
+                        vertex_buf,
+                        vertex_count: verts.len() as u32,
+                        bind_group,
+                    });
+                }
+            }
+        }
     }
 
     /// Upload per-frame data to GPU buffers and render the shadow pass.

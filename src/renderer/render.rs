@@ -125,6 +125,15 @@ impl ViewportRenderer {
                 render_pass.draw(0..rd.vertex_count, 0..1);
             }
         }
+        // Loading bars (drawn after rulers).
+        if let Some(ref lb) = self.loading_bar_gpu_data {
+            if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, &lb.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, lb.vertex_buf.slice(..));
+                render_pass.draw(0..lb.vertex_count, 0..1);
+            }
+        }
         // Phase 7 : overlay images (OverlayFrame, drawn last, no depth test).
         if !self.overlay_image_gpu_data.is_empty() {
             if let Some(pipeline) = &self.resources.screen_image_pipeline {
@@ -259,6 +268,15 @@ impl ViewportRenderer {
                 render_pass.set_bind_group(0, &rd.bind_group, &[]);
                 render_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
                 render_pass.draw(0..rd.vertex_count, 0..1);
+            }
+        }
+        // Loading bars (drawn after rulers).
+        if let Some(ref lb) = self.loading_bar_gpu_data {
+            if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, &lb.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, lb.vertex_buf.slice(..));
+                render_pass.draw(0..lb.vertex_count, 0..1);
             }
         }
         // Phase 7 : overlay images (OverlayFrame, drawn last, no depth test).
@@ -1976,6 +1994,7 @@ impl ViewportRenderer {
         let has_overlay = self.label_gpu_data.is_some()
             || self.scalar_bar_gpu_data.is_some()
             || self.ruler_gpu_data.is_some()
+            || self.loading_bar_gpu_data.is_some()
             || !self.overlay_image_gpu_data.is_empty();
         if has_overlay {
             let hdr_depth_view =
@@ -2018,6 +2037,11 @@ impl ViewportRenderer {
                     overlay_pass.set_bind_group(0, &rd.bind_group, &[]);
                     overlay_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
                     overlay_pass.draw(0..rd.vertex_count, 0..1);
+                }
+                if let Some(ref lb) = self.loading_bar_gpu_data {
+                    overlay_pass.set_bind_group(0, &lb.bind_group, &[]);
+                    overlay_pass.set_vertex_buffer(0, lb.vertex_buf.slice(..));
+                    overlay_pass.draw(0..lb.vertex_count, 0..1);
                 }
             }
             // Phase 7 : overlay images drawn last inside the overlay pass.

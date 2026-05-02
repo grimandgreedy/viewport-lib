@@ -98,7 +98,7 @@ use viewport_lib::{
     scene::{LayerId, Scene},
 };
 
-use viewport_lib::{ScalarBarAnchor, ScalarBarOrientation};
+use viewport_lib::{LoadingBarAnchor, LoadingBarItem, ScalarBarAnchor, ScalarBarOrientation};
 
 mod geometry;
 mod hdr_viewport_callback;
@@ -257,6 +257,8 @@ fn main() -> eframe::Result {
                 perf_scene_items_version: (u64::MAX, u64::MAX),
                 perf_built: false,
                 perf_gpu_culling: true,
+                perf_build_rx: None,
+                perf_build_progress: None,
                 interact_scene: Scene::new(),
                 interact_selection: Selection::new(),
                 interact_animator: CameraAnimator::with_default_damping(),
@@ -747,6 +749,10 @@ pub(crate) struct App {
     pub(crate) perf_scene_items_version: (u64, u64),
     pub(crate) perf_built: bool,
     pub(crate) perf_gpu_culling: bool,
+    /// Receives the completed (Scene, PickAccelerator) from the background build thread.
+    perf_build_rx: Option<std::sync::mpsc::Receiver<(Scene, viewport_lib::PickAccelerator)>>,
+    /// Shared progress counter written by the background build thread (objects placed so far).
+    perf_build_progress: Option<std::sync::Arc<std::sync::atomic::AtomicU32>>,
 
     // --- Showcase 4 ---
     pub(crate) interact_scene: Scene,
@@ -1230,6 +1236,26 @@ impl eframe::App for App {
                         }
                     });
             });
+
+        // Poll for a completed async perf scene build.
+        let completed = self
+            .perf_build_rx
+            .as_ref()
+            .and_then(|rx| rx.try_recv().ok());
+        if let Some((scene, pick_acc)) = completed {
+            self.perf_scene = scene;
+            self.pick_accelerator = Some(pick_acc);
+            // Pre-warm items cache so the first rendered frame has no stall.
+            self.perf_scene_items_cache = std::sync::Arc::from(
+                self.perf_scene.collect_render_items(&self.perf_selection),
+            );
+            self.perf_scene_items_version =
+                (self.perf_scene.version(), self.perf_selection.version());
+            self.perf_total_objects = 1_000_000;
+            self.perf_build_rx = None;
+            self.perf_build_progress = None;
+            self.perf_built = true;
+        }
 
         // Lazy scene builds for the active mode.
         self.ensure_scene_built(frame);
@@ -1792,6 +1818,11 @@ impl eframe::App for App {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
             }
 
+            // ----- Continuous repaint for background build progress -----
+            if self.perf_build_rx.is_some() {
+                ctx.request_repaint();
+            }
+
             // ----- Continuous repaint for animated camera -----
             if self.mode == ShowcaseMode::Interaction && self.interact_animator.is_animating() {
                 ctx.request_repaint();
@@ -1924,7 +1955,7 @@ impl App {
     fn ensure_scene_built(&mut self, frame: &eframe::Frame) {
         let needs = match self.mode {
             ShowcaseMode::SceneGraph => !self.scene_built,
-            ShowcaseMode::Performance => !self.perf_built,
+            ShowcaseMode::Performance => !self.perf_built && self.perf_build_rx.is_none(),
             ShowcaseMode::Interaction => !self.interact_built,
             ShowcaseMode::Advanced => !self.adv_built,
             ShowcaseMode::PostProcess => !self.pp_built,
@@ -1972,8 +2003,32 @@ impl App {
         match self.mode {
             ShowcaseMode::SceneGraph => self.build_scene_graph(renderer),
             ShowcaseMode::Performance => {
-                self.build_perf_scene(renderer);
+                // Upload the box mesh on the main thread (requires GPU access).
+                let mesh = self.upload_box(renderer);
+                self.perf_mesh = Some(mesh);
+                self.perf_scene = Scene::new();
+                self.perf_selection.clear();
                 self.camera.distance = 80.0;
+
+                // Capture the mesh AABB before releasing the renderer borrow.
+                let mesh_aabb = renderer.resources().mesh(mesh).map(|m| m.aabb);
+
+                let progress =
+                    std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+                let progress_clone = std::sync::Arc::clone(&progress);
+                let (tx, rx) = std::sync::mpsc::channel();
+
+                std::thread::spawn(move || {
+                    let result = showcase_03_performance::build_perf_scene_threaded(
+                        mesh,
+                        mesh_aabb,
+                        &progress_clone,
+                    );
+                    let _ = tx.send(result);
+                });
+
+                self.perf_build_progress = Some(progress);
+                self.perf_build_rx = Some(rx);
             }
             ShowcaseMode::Interaction => {
                 self.build_interact_scene(renderer);
@@ -4145,6 +4200,23 @@ impl App {
             }
             // Screen-anchored labels (title, legend, feature demos) sized to viewport.
             fd.overlays.labels.extend(self.build_label_screen_overlays(w, h));
+        }
+
+        // Loading bar while the async perf scene build is in flight.
+        if self.mode == ShowcaseMode::Performance {
+            if let Some(ref progress) = self.perf_build_progress {
+                let n = progress.load(std::sync::atomic::Ordering::Relaxed);
+                let label = format!(
+                    "Building scene\u{2026} {} / 1 000 000",
+                    showcase_03_performance::format_count(n),
+                );
+                fd.overlays.loading_bars.push(LoadingBarItem {
+                    progress: n as f32 / 1_000_000.0,
+                    label: Some(label),
+                    anchor: LoadingBarAnchor::BottomCenter,
+                    ..LoadingBarItem::default()
+                });
+            }
         }
 
         // Update stats and apply GPU culling toggle (Performance mode).

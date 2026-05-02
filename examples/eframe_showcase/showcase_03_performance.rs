@@ -7,59 +7,66 @@
 //! - Full FrameStats readout: CPU/GPU timings, culling state, draw counts
 //! - BVH-accelerated picking: click to select objects
 
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use eframe::egui;
-use viewport_lib::{FrameStats, Material, PickAccelerator, ViewportRenderer, scene::Scene};
+use viewport_lib::{Aabb, FrameStats, Material, MeshId, PickAccelerator, scene::Scene};
 
 use crate::App;
 
-impl App {
-    /// Build a large grid of boxes (all sharing one mesh) to demonstrate GPU instancing.
-    pub(crate) fn build_perf_scene(&mut self, renderer: &mut ViewportRenderer) {
-        self.perf_scene = Scene::new();
-        self.perf_selection.clear();
+/// Build the 1M-box scene on a background thread.
+///
+/// The mesh is already uploaded on the main thread before this is called.
+/// `mesh_aabb` is passed in so the BVH closure doesn't need GPU access.
+/// `progress` is incremented every 10 000 objects so the main thread can
+/// display a live loading bar.
+pub(crate) fn build_perf_scene_threaded(
+    mesh: MeshId,
+    mesh_aabb: Option<Aabb>,
+    progress: &AtomicU32,
+) -> (Scene, PickAccelerator) {
+    let spacing = 2.5_f32;
+    let colors: [[f32; 3]; 6] = [
+        [0.9, 0.3, 0.3],
+        [0.3, 0.9, 0.3],
+        [0.3, 0.3, 0.9],
+        [0.9, 0.9, 0.3],
+        [0.9, 0.5, 0.2],
+        [0.5, 0.3, 0.9],
+    ];
 
-        let mesh = self.upload_box(renderer);
-        self.perf_mesh = Some(mesh);
-
-        let spacing = 2.5_f32;
-        let colors: [[f32; 3]; 6] = [
-            [0.9, 0.3, 0.3],
-            [0.3, 0.9, 0.3],
-            [0.3, 0.3, 0.9],
-            [0.9, 0.9, 0.3],
-            [0.9, 0.5, 0.2],
-            [0.5, 0.3, 0.9],
-        ];
-
-        let (nx, ny, nz) = (100, 100, 100);
-        let mut count = 0u32;
-        for y in 0..ny {
-            for z in 0..nz {
-                for x in 0..nx {
-                    let pos = glam::Vec3::new(
-                        (x as f32 - nx as f32 / 2.0) * spacing,
-                        (z as f32 - nz as f32 / 2.0) * spacing,
-                        (y as f32) * spacing,
-                    );
-                    let transform = glam::Mat4::from_translation(pos);
-                    let color = colors[count as usize % colors.len()];
-                    let mat = Material::from_color(color);
-                    self.perf_scene.add(Some(mesh), transform, mat);
-                    count += 1;
+    let mut scene = Scene::new();
+    let (nx, ny, nz) = (100u32, 100u32, 100u32);
+    let mut count = 0u32;
+    for y in 0..ny {
+        for z in 0..nz {
+            for x in 0..nx {
+                let pos = glam::Vec3::new(
+                    (x as f32 - nx as f32 / 2.0) * spacing,
+                    (z as f32 - nz as f32 / 2.0) * spacing,
+                    (y as f32) * spacing,
+                );
+                let transform = glam::Mat4::from_translation(pos);
+                let color = colors[count as usize % colors.len()];
+                let mat = Material::from_color(color);
+                scene.add(Some(mesh), transform, mat);
+                count += 1;
+                if count % 10_000 == 0 {
+                    progress.store(count, Ordering::Relaxed);
                 }
             }
         }
-
-        self.perf_total_objects = count;
-
-        let resources = renderer.resources();
-        self.pick_accelerator = Some(PickAccelerator::build_from_scene(&self.perf_scene, |mid| {
-            resources.mesh(mid).map(|m| m.aabb)
-        }));
-
-        self.perf_built = true;
     }
+    progress.store(count, Ordering::Relaxed);
 
+    let pick_acc = PickAccelerator::build_from_scene(&scene, |mid| {
+        if mid == mesh { mesh_aabb } else { None }
+    });
+
+    (scene, pick_acc)
+}
+
+impl App {
     /// Side-panel controls for Showcase 3.
     pub(crate) fn perf_controls(&mut self, ui: &mut egui::Ui) {
         let s = self.last_stats;
@@ -161,7 +168,7 @@ fn perf_stat_row(ui: &mut egui::Ui, label: &str, value: &str) {
     });
 }
 
-fn format_count(n: u32) -> String {
+pub(crate) fn format_count(n: u32) -> String {
     format_large(n as u64)
 }
 
