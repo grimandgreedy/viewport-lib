@@ -1954,6 +1954,11 @@ impl ViewportGpuResources {
             instance_cull_bind_groups: std::collections::HashMap::new(),
             hdr_solid_instanced_cull_pipeline: None,
             oit_instanced_cull_pipeline: None,
+            // GPU culling shadow cascade extension (Phase 4).
+            shadow_instanced_cull_pipeline: None,
+            shadow_cull_instance_bgl: None,
+            shadow_vis_bufs: [None, None, None, None],
+            shadow_cull_instance_bgs: [None, None, None, None],
             // Post-processing shared infrastructure (None until ensure_hdr_shared is called).
             bloom_bgl: None,
             ssao_bgl: None,

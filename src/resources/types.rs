@@ -1498,6 +1498,17 @@ pub struct ViewportGpuResources {
     /// OIT-pass transparent instanced pipeline using `vs_main_cull` (indirect draw path).
     pub(crate) oit_instanced_cull_pipeline: Option<wgpu::RenderPipeline>,
 
+    // --- GPU culling : shadow cascade extension (Phase 4) ---
+    /// Shadow instanced cull pipeline (depth-only, uses `vs_shadow_cull`).
+    pub(crate) shadow_instanced_cull_pipeline: Option<wgpu::RenderPipeline>,
+    /// BGL for shadow cull instance group: binding 0 (instances) + binding 5 (visibility_indices).
+    pub(crate) shadow_cull_instance_bgl: Option<wgpu::BindGroupLayout>,
+    /// Per-cascade visibility index buffers for shadow GPU culling (same capacity as `visibility_index_buf`).
+    pub(crate) shadow_vis_bufs: [Option<wgpu::Buffer>; 4],
+    /// Per-cascade instance+visibility bind groups for shadow cull path.
+    /// Invalidated when `shadow_vis_bufs` are reallocated.
+    pub(crate) shadow_cull_instance_bgs: [Option<wgpu::BindGroup>; 4],
+
     // --- Post-processing shared infrastructure (BGLs / pipelines / samplers / static textures) ---
     // Viewport-sized textures, bind groups, and uniform buffers are stored in
     // per-viewport ViewportHdrState (see renderer::ViewportSlot).

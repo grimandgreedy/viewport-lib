@@ -25,8 +25,10 @@ pub(super) struct CullResources {
     write_indirect_args_pipeline: wgpu::ComputePipeline,
     /// Bind group layout for both cull pipelines (6 bindings, all COMPUTE).
     bgl: wgpu::BindGroupLayout,
-    /// 96-byte uniform buffer holding the 6-plane frustum for the current frame.
+    /// 96-byte uniform buffer holding the 6-plane camera frustum for the main pass.
     pub(super) frustum_buf: wgpu::Buffer,
+    /// Per-cascade frustum uniform buffers for shadow GPU culling (Phase 4).
+    pub(super) cascade_frustum_bufs: [wgpu::Buffer; 4],
 }
 
 impl CullResources {
@@ -79,11 +81,21 @@ impl CullResources {
             mapped_at_creation: false,
         });
 
+        let cascade_frustum_bufs = std::array::from_fn(|i| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(&format!("cull_cascade_frustum_buf_{i}")),
+                size: std::mem::size_of::<FrustumUniform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        });
+
         Self {
             cull_instances_pipeline,
             write_indirect_args_pipeline,
             bgl,
             frustum_buf,
+            cascade_frustum_bufs,
         }
     }
 
@@ -171,6 +183,91 @@ impl CullResources {
             pass.set_bind_group(0, &bind_group, &[]);
             let groups = batch_count.div_ceil(64);
             pass.dispatch_workgroups(groups, 1, 1);
+        }
+    }
+
+    /// Dispatch shadow cascade cull passes into `encoder` for one cascade.
+    ///
+    /// Reuses the same compute pipelines and BGL as the main pass. The bind group
+    /// binds `cascade_frustum_bufs[cascade_idx]` instead of the camera frustum, and
+    /// writes into `shadow_vis_buf` / `shadow_indirect_buf` instead of the main-pass
+    /// buffers. The shared `counter_buf` is zeroed by `write_indirect_args` at the
+    /// end of each cascade dispatch, so cascades can be chained in one encoder.
+    pub(super) fn dispatch_shadow(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        cascade_idx: usize,
+        frustum: &FrustumUniform,
+        aabb_buf: &wgpu::Buffer,
+        meta_buf: &wgpu::Buffer,
+        counter_buf: &wgpu::Buffer,
+        shadow_vis_buf: &wgpu::Buffer,
+        shadow_indirect_buf: &wgpu::Buffer,
+        instance_count: u32,
+        batch_count: u32,
+    ) {
+        queue.write_buffer(
+            &self.cascade_frustum_bufs[cascade_idx],
+            0,
+            bytemuck::cast_slice(std::slice::from_ref(frustum)),
+        );
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&format!("shadow_cull_bg_{cascade_idx}")),
+            layout: &self.bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.cascade_frustum_bufs[cascade_idx].as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: aabb_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: meta_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: counter_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: shadow_vis_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: shadow_indirect_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        // Pass 1: cull_instances — one thread per instance.
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some(&format!("shadow_cull_instances_pass_{cascade_idx}")),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.cull_instances_pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(instance_count.div_ceil(64), 1, 1);
+        }
+
+        // wgpu inserts an automatic storage-buffer barrier between compute passes.
+
+        // Pass 2: write_indirect_args — one thread per batch.
+        // Also zeroes batch_counters ready for the next cascade or next frame.
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some(&format!("shadow_write_indirect_args_pass_{cascade_idx}")),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.write_indirect_args_pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(batch_count.div_ceil(64), 1, 1);
         }
     }
 

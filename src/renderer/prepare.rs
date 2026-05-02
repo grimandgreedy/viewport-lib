@@ -1083,6 +1083,78 @@ impl ViewportRenderer {
         let skip_shadows = self.last_stats.missed_budget
             && self.performance_policy.allow_shadow_reduction;
         if lighting.shadows_enabled && !scene_items.is_empty() && !skip_shadows {
+            // ------------------------------------------------------------------
+            // Shadow GPU cull dispatch (Phase 4)
+            //
+            // For each active cascade, dispatch `cull_instances` + `write_indirect_args`
+            // with the cascade frustum. Results land in `shadow_vis_bufs[c]` and
+            // `shadow_indirect_bufs[c]`, consumed by the shadow render pass below.
+            // All cascade dispatches share the same `batch_counter_buf`; each
+            // `write_indirect_args` dispatch resets the counters for the next cascade.
+            // ------------------------------------------------------------------
+            if self.gpu_culling_enabled
+                && self.use_instancing
+                && !self.instanced_batches.is_empty()
+                && !self.cached_instance_data.is_empty()
+            {
+                // Mutable operations first.
+                if self.cull_resources.is_none() {
+                    self.cull_resources =
+                        Some(crate::renderer::indirect::CullResources::new(device));
+                }
+                resources.ensure_cull_instance_pipelines(device);
+                for c in 0..effective_cascade_count {
+                    resources.get_shadow_cull_instance_bind_group(device, c);
+                }
+
+                let instance_count = self.cached_instance_data.len() as u32;
+                let batch_count = self.instanced_batches.len() as u32;
+
+                if let (Some(aabb_buf), Some(meta_buf), Some(counter_buf)) = (
+                    resources.instance_aabb_buf.as_ref(),
+                    resources.batch_meta_buf.as_ref(),
+                    resources.batch_counter_buf.as_ref(),
+                ) {
+                    let cull = self.cull_resources.as_ref().unwrap();
+                    let mut shadow_cull_encoder =
+                        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("shadow_cull_encoder"),
+                        });
+                    for c in 0..effective_cascade_count {
+                        if let (Some(shadow_vis_buf), Some(shadow_indirect_buf)) = (
+                            resources.shadow_vis_bufs[c].as_ref(),
+                            resources.shadow_indirect_bufs[c].as_ref(),
+                        ) {
+                            let cpu_frustum =
+                                crate::camera::frustum::Frustum::from_view_proj(
+                                    &cascade_view_projs[c],
+                                );
+                            let frustum_uniform = crate::resources::FrustumUniform {
+                                planes: std::array::from_fn(|i| crate::resources::FrustumPlane {
+                                    normal: cpu_frustum.planes[i].normal.into(),
+                                    distance: cpu_frustum.planes[i].d,
+                                }),
+                            };
+                            cull.dispatch_shadow(
+                                &mut shadow_cull_encoder,
+                                device,
+                                queue,
+                                c,
+                                &frustum_uniform,
+                                aabb_buf,
+                                meta_buf,
+                                counter_buf,
+                                shadow_vis_buf,
+                                shadow_indirect_buf,
+                                instance_count,
+                                batch_count,
+                            );
+                        }
+                    }
+                    queue.submit(std::iter::once(shadow_cull_encoder.finish()));
+                }
+            }
+
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("shadow_pass_encoder"),
             });
@@ -1106,7 +1178,87 @@ impl ViewportRenderer {
                 let tile_px = tile_size as f32;
 
                 if self.use_instancing {
-                    if let (Some(pipeline), Some(instance_bg)) = (
+                    let use_shadow_indirect = self.gpu_culling_enabled
+                        && resources.shadow_instanced_cull_pipeline.is_some()
+                        && resources.shadow_vis_bufs[0].is_some();
+
+                    if use_shadow_indirect {
+                        // GPU-culled indirect shadow path (Phase 4).
+                        for cascade in 0..effective_cascade_count {
+                            let tile_col = (cascade % 2) as f32;
+                            let tile_row = (cascade / 2) as f32;
+                            shadow_pass.set_viewport(
+                                tile_col * tile_px,
+                                tile_row * tile_px,
+                                tile_px,
+                                tile_px,
+                                0.0,
+                                1.0,
+                            );
+                            shadow_pass.set_scissor_rect(
+                                (tile_col * tile_px) as u32,
+                                (tile_row * tile_px) as u32,
+                                tile_size,
+                                tile_size,
+                            );
+
+                            // Write cascade view-projection matrix.
+                            queue.write_buffer(
+                                resources.shadow_instanced_cascade_bufs[cascade]
+                                    .as_ref()
+                                    .expect("shadow_instanced_cascade_bufs not allocated"),
+                                0,
+                                bytemuck::cast_slice(
+                                    &cascade_view_projs[cascade].to_cols_array_2d(),
+                                ),
+                            );
+
+                            let Some(pipeline) =
+                                resources.shadow_instanced_cull_pipeline.as_ref()
+                            else {
+                                continue;
+                            };
+                            let Some(cascade_bg) =
+                                resources.shadow_instanced_cascade_bgs[cascade].as_ref()
+                            else {
+                                continue;
+                            };
+                            let Some(inst_cull_bg) =
+                                resources.shadow_cull_instance_bgs[cascade].as_ref()
+                            else {
+                                continue;
+                            };
+                            let Some(shadow_indirect_buf) =
+                                resources.shadow_indirect_bufs[cascade].as_ref()
+                            else {
+                                continue;
+                            };
+
+                            shadow_pass.set_pipeline(pipeline);
+                            shadow_pass.set_bind_group(0, cascade_bg, &[]);
+                            shadow_pass.set_bind_group(1, inst_cull_bg, &[]);
+
+                            for (bi, batch) in self.instanced_batches.iter().enumerate() {
+                                if batch.is_transparent {
+                                    continue;
+                                }
+                                let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+                                    continue;
+                                };
+                                shadow_pass
+                                    .set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                shadow_pass.set_index_buffer(
+                                    mesh.index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
+                                shadow_pass.draw_indexed_indirect(
+                                    shadow_indirect_buf,
+                                    bi as u64 * 20,
+                                );
+                                shadow_draws += 1;
+                            }
+                        }
+                    } else if let (Some(pipeline), Some(instance_bg)) = (
                         &resources.shadow_instanced_pipeline,
                         self.instanced_batches.first().and_then(|b| {
                             resources.instance_bind_groups.get(&(
@@ -1116,6 +1268,7 @@ impl ViewportRenderer {
                             ))
                         }),
                     ) {
+                        // Direct draw shadow path (fallback when GPU culling is off).
                         for cascade in 0..effective_cascade_count {
                             let tile_col = (cascade % 2) as f32;
                             let tile_row = (cascade / 2) as f32;
