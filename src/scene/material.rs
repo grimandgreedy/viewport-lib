@@ -40,8 +40,7 @@ impl Default for ParamVis {
 
 /// Procedural pattern for back-face rendering.
 ///
-/// Used with [`BackfacePolicy::Pattern`] to render a procedural pattern on back faces.
-/// The pattern is evaluated in world space so it remains stable as the camera moves.
+/// Used with [`PatternConfig`] to select which procedural pattern is drawn on back faces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackfacePattern {
     /// Alternating squares in world XY.
@@ -52,6 +51,45 @@ pub enum BackfacePattern {
     Crosshatch = 2,
     /// Horizontal stripes.
     Stripes = 3,
+}
+
+/// Configuration for procedural back-face patterns.
+///
+/// Used with [`BackfacePolicy::Pattern`]. The `scale` controls how many pattern cells
+/// fit across the object's longest bounding-box dimension, so the pattern always looks
+/// proportional regardless of the mesh's physical size.
+///
+/// Prefer using `..Default::default()` when constructing so that future fields
+/// added to this struct do not require changes at every call site:
+///
+/// ```rust
+/// # use viewport_lib::{PatternConfig, BackfacePattern};
+/// let cfg = PatternConfig {
+///     pattern: BackfacePattern::Hatching,
+///     color: [1.0, 0.5, 0.0],
+///     ..Default::default()
+/// };
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PatternConfig {
+    /// Which procedural pattern to draw on back faces.
+    pub pattern: BackfacePattern,
+    /// RGB foreground color for the pattern (linear 0..1).
+    pub color: [f32; 3],
+    /// Number of pattern cells across the object's longest bounding-box dimension.
+    ///
+    /// Default 8.0. Increase for finer detail, decrease for coarser.
+    pub scale: f32,
+}
+
+impl Default for PatternConfig {
+    fn default() -> Self {
+        Self {
+            pattern: BackfacePattern::Checker,
+            color: [1.0, 0.5, 0.0],
+            scale: 8.0,
+        }
+    }
 }
 
 /// Controls how back faces of a mesh are rendered.
@@ -77,16 +115,12 @@ pub enum BackfacePolicy {
     /// The base color is multiplied by `(1.0 - factor)`, so `Tint(0.3)` means
     /// back faces are 30% darker. The normal is flipped for correct lighting.
     Tint(f32),
-    /// Back faces are visible and rendered with a procedural pattern in the given RGB color.
+    /// Back faces are rendered with a procedural pattern scaled to the object's size.
     ///
-    /// The pattern alternates between the specified color and the object's base color.
+    /// The pattern density is relative to the object's world-space bounding box, so
+    /// the appearance stays consistent across meshes of different physical sizes.
     /// The normal is flipped for correct lighting.
-    Pattern {
-        /// Which procedural pattern to use.
-        pattern: BackfacePattern,
-        /// RGB color for the pattern foreground (linear 0..1).
-        color: [f32; 3],
-    },
+    Pattern(PatternConfig),
 }
 
 impl Default for BackfacePolicy {
@@ -287,10 +321,11 @@ mod tests {
     #[test]
     fn is_two_sided_pattern() {
         let m = Material {
-            backface_policy: BackfacePolicy::Pattern {
+            backface_policy: BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Hatching,
                 color: [0.5, 0.5, 0.5],
-            },
+                ..Default::default()
+            }),
             ..Default::default()
         };
         assert!(m.is_two_sided());

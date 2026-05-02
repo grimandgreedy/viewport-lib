@@ -66,6 +66,11 @@ impl Aabb {
         }
     }
 
+    /// Length of the longest side of the bounding box.
+    pub fn longest_side(&self) -> f32 {
+        (self.max - self.min).max_element()
+    }
+
     /// Returns true if the plane (defined by unit normal + signed distance)
     /// intersects this AABB : i.e., the AABB spans both sides of the plane.
     pub fn intersects_plane(&self, normal: glam::Vec3, distance: f32) -> bool {

@@ -16,8 +16,8 @@ mod viewport_callback;
 use eframe::egui;
 use viewport_lib::{
     AttributeData, AttributeKind, AttributeRef, BackfacePattern, BackfacePolicy, BuiltinColormap,
-    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, MeshData, SceneFrame,
-    SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer,
+    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, MeshData, PatternConfig,
+    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer,
     OrbitCameraController, primitives,
 };
 use std::sync::{Arc, Mutex};
@@ -93,10 +93,11 @@ impl App {
         item.colormap_id = Some(colormap_id);
         item.scalar_range = Some((0.0, 1.0));
         // Pattern backface policy: this makes is_two_sided() return true.
-        item.material.backface_policy = BackfacePolicy::Pattern {
+        item.material.backface_policy = BackfacePolicy::Pattern(PatternConfig {
             pattern: BackfacePattern::Checker,
             color: [0.08, 0.35, 0.90],
-        };
+            ..Default::default()
+        });
 
         Self {
             camera: Camera {
@@ -145,10 +146,11 @@ impl eframe::App for App {
                 self.use_pattern = !self.use_pattern;
                 let item = &mut self.scene_items[0];
                 item.material.backface_policy = if self.use_pattern {
-                    BackfacePolicy::Pattern {
+                    BackfacePolicy::Pattern(PatternConfig {
                         pattern: BackfacePattern::Checker,
                         color: [0.08, 0.35, 0.90],
-                    }
+                        ..Default::default()
+                    })
                 } else {
                     BackfacePolicy::Cull
                 };

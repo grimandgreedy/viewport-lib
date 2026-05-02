@@ -520,8 +520,7 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
         } else {
             let pattern_color = object.backface_color.rgb;
             let pattern_type = object.backface_policy - 4u;
-            let scale = 8.0;
-            let wp = in.world_pos * scale;
+            let wp = in.world_pos * object.backface_color.w;
             var use_pattern = false;
             if pattern_type == 0u {
                 let p = (i32(floor(wp.x)) + i32(floor(wp.z))) & 1;

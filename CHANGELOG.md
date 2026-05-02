@@ -1,6 +1,18 @@
 # Changelog
 ## [0.12.1]
 
+### Breaking changes
+- `BackfacePolicy::Pattern` is now a tuple variant wrapping `PatternConfig` instead of an inline struct. Migrate by wrapping the fields:
+  ```rust
+  // Before
+  BackfacePolicy::Pattern { pattern: BackfacePattern::Checker, color: [0.9, 0.2, 0.1] }
+  // After
+  BackfacePolicy::Pattern(PatternConfig { pattern: BackfacePattern::Checker, color: [0.9, 0.2, 0.1], ..Default::default() })
+  ```
+
+### Features
+- `PatternConfig`: new struct carrying pattern, color, and `scale` (cells across the object's longest world-space bounding-box dimension, default 8.0). Pattern density is now object-relative — a `scale` of 8.0 produces 8 cells across the object regardless of mesh units or physical size.
+
 ### Fixes
 - Scroll unit handling: all eframe examples now pass `ScrollUnits::Lines` for mouse wheel events and `ScrollUnits::Pixels` for trackpad events by reading `egui::MouseWheelUnit` from the `MouseWheel` event. Previously all eframe examples hardcoded `ScrollUnits::Pixels`, causing mouse wheel zoom to bypass the `PIXELS_PER_LINE` scaling and feel incorrect.
 - iced example: removed manual `* 28.0` line-to-pixel conversion; the library now applies the scaling internally via `ScrollUnits::Lines`.

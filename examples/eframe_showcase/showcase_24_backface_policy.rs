@@ -21,7 +21,7 @@ use eframe::egui;
 use glam::Mat4;
 use viewport_lib::{
     BackfacePattern, BackfacePolicy, ClipObject, LightSource, LightingSettings, Material,
-    SceneRenderItem, ViewportRenderer, scene::Scene,
+    PatternConfig, SceneRenderItem, ViewportRenderer, scene::Scene,
 };
 
 /// All backface policies demonstrated, one per column.
@@ -32,31 +32,35 @@ fn policies() -> Vec<(BackfacePolicy, &'static str)> {
         (BackfacePolicy::DifferentColor([1.0, 0.1, 0.1]), "DifferentColor"),
         (BackfacePolicy::Tint(0.4), "Tint"),
         (
-            BackfacePolicy::Pattern {
+            BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Checker,
                 color: [0.9, 0.2, 0.1],
-            },
+                ..Default::default()
+            }),
             "Checker",
         ),
         (
-            BackfacePolicy::Pattern {
+            BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Hatching,
                 color: [0.1, 0.5, 0.9],
-            },
+                ..Default::default()
+            }),
             "Hatching",
         ),
         (
-            BackfacePolicy::Pattern {
+            BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Crosshatch,
                 color: [0.1, 0.7, 0.2],
-            },
+                ..Default::default()
+            }),
             "Crosshatch",
         ),
         (
-            BackfacePolicy::Pattern {
+            BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Stripes,
                 color: [0.8, 0.6, 0.1],
-            },
+                ..Default::default()
+            }),
             "Stripes",
         ),
     ]

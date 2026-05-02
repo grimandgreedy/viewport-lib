@@ -606,11 +606,10 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
             // Tint: darken base_color by factor stored in backface_color.r.
             base_color = base_color * (1.0 - object.backface_color.r);
         } else {
-            // Pattern modes (4..7): procedural pattern in world space.
+            // Pattern modes (4..7): procedural pattern scaled to object size.
             let pattern_color = object.backface_color.rgb;
             let pattern_type = object.backface_policy - 4u;
-            let scale = 8.0;
-            let wp = in.world_pos * scale;
+            let wp = in.world_pos * object.backface_color.w;
             var use_pattern = false;
             if pattern_type == 0u {
                 // Checker: alternating squares in world XZ.

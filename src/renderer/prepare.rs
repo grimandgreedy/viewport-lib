@@ -464,8 +464,8 @@ impl ViewportRenderer {
                         crate::scene::material::BackfacePolicy::Identical => 1,
                         crate::scene::material::BackfacePolicy::DifferentColor(_) => 2,
                         crate::scene::material::BackfacePolicy::Tint(_) => 3,
-                        crate::scene::material::BackfacePolicy::Pattern { pattern, .. } => {
-                            4 + pattern as u32
+                        crate::scene::material::BackfacePolicy::Pattern(cfg) => {
+                            4 + cfg.pattern as u32
                         }
                     },
                     backface_color: match m.backface_policy {
@@ -475,8 +475,19 @@ impl ViewportRenderer {
                         crate::scene::material::BackfacePolicy::Tint(factor) => {
                             [factor, 0.0, 0.0, 1.0]
                         }
-                        crate::scene::material::BackfacePolicy::Pattern { color, .. } => {
-                            [color[0], color[1], color[2], 1.0]
+                        crate::scene::material::BackfacePolicy::Pattern(cfg) => {
+                            let world_extent = resources
+                                .mesh_store
+                                .get(item.mesh_id)
+                                .map(|mesh| {
+                                    mesh.aabb
+                                        .transformed(&glam::Mat4::from_cols_array_2d(&item.model))
+                                        .longest_side()
+                                })
+                                .unwrap_or(1.0)
+                                .max(1e-6);
+                            let world_scale = cfg.scale / world_extent;
+                            [cfg.color[0], cfg.color[1], cfg.color[2], world_scale]
                         }
                         _ => [0.0; 4],
                     },
