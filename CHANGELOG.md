@@ -14,6 +14,7 @@
 - `PatternConfig`: new struct carrying pattern, color, and `scale` (cells across the object's longest world-space bounding-box dimension, default 8.0). Pattern density is now object-relative — a `scale` of 8.0 produces 8 cells across the object regardless of mesh units or physical size.
 
 ### Fixes
+- Phantom shadows from stale GPU cull data: `cull_instances` and `write_indirect_args` compute shaders previously bounded their loops with `arrayLength()`, which returns the allocated buffer capacity (2× headroom). When switching to a scene with fewer objects, stale AABB entries from the previous, larger scene were still processed, injecting ghost shadow casters from old geometry. Fixed by adding `instance_count` and `batch_count` to `FrustumUniform`; the shaders now guard against the valid element count rather than the buffer size.
 - Scroll unit handling: all eframe examples now pass `ScrollUnits::Lines` for mouse wheel events and `ScrollUnits::Pixels` for trackpad events by reading `egui::MouseWheelUnit` from the `MouseWheel` event. Previously all eframe examples hardcoded `ScrollUnits::Pixels`, causing mouse wheel zoom to bypass the `PIXELS_PER_LINE` scaling and feel incorrect.
 - iced example: removed manual `* 28.0` line-to-pixel conversion; the library now applies the scaling internally via `ScrollUnits::Lines`.
 - Added `ScrollUnits::Pages` variant (one unit = viewport height in pixels) to cover `egui::MouseWheelUnit::Page` and equivalent page-scroll events from other frameworks.

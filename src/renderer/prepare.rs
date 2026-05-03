@@ -563,7 +563,18 @@ impl ViewportRenderer {
             // Phase 2: wireframe_mode removed from cache key : wireframe rendering
             // uses the per-object wireframe_pipeline, not the instanced path, so
             // instance data is now viewport-agnostic.
-            let cache_valid = frame.scene.generation == self.last_scene_generation
+            //
+            // Items with active_attribute, two-sided policy, matcap, or param_vis are
+            // excluded from the instanced batch filter. These flags are set on render
+            // items AFTER collect_render_items() (per-frame mutations), so they do NOT
+            // bump the scene generation. Force a cache miss whenever any such item exists
+            // so the batch membership stays correct as the active object changes.
+            let has_per_frame_mutations = has_scalar_items
+                || has_two_sided_items
+                || has_matcap_items
+                || has_param_vis_items;
+            let cache_valid = !has_per_frame_mutations
+                && frame.scene.generation == self.last_scene_generation
                 && frame.interaction.selection_generation == self.last_selection_generation
                 && scene_items.len() == self.last_scene_items_count;
 
@@ -775,6 +786,9 @@ impl ViewportRenderer {
                             normal: cpu_frustum.planes[i].normal.into(),
                             distance: cpu_frustum.planes[i].d,
                         }),
+                        instance_count,
+                        batch_count,
+                        _pad: [0; 2],
                     };
 
                     let cull = self.cull_resources.as_ref().unwrap();
@@ -1107,6 +1121,31 @@ impl ViewportRenderer {
         // ------------------------------------------------------------------
         let skip_shadows = self.last_stats.missed_budget
             && self.performance_policy.allow_shadow_reduction;
+
+        // When skipping the shadow pass (budget pressure or empty scene), clear the
+        // atlas to max depth so that stale values from a previous frame or a previous
+        // showcase don't produce phantom shadows.
+        if lighting.shadows_enabled && (skip_shadows || scene_items.is_empty()) {
+            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("shadow_clear_encoder"),
+            });
+            let _ = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("shadow_clear_pass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &resources.shadow_map_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            queue.submit(std::iter::once(enc.finish()));
+        }
+
         if lighting.shadows_enabled && !scene_items.is_empty() && !skip_shadows {
             // ------------------------------------------------------------------
             // Shadow GPU cull dispatch (Phase 4)
@@ -1159,6 +1198,9 @@ impl ViewportRenderer {
                                     normal: cpu_frustum.planes[i].normal.into(),
                                     distance: cpu_frustum.planes[i].d,
                                 }),
+                                instance_count,
+                                batch_count,
+                                _pad: [0; 2],
                             };
                             cull.dispatch_shadow(
                                 &mut shadow_cull_encoder,

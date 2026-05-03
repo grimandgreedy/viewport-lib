@@ -540,17 +540,27 @@ pub(crate) struct FrustumPlane {
 
 /// Six-plane frustum uniform uploaded to the GPU cull pass.
 ///
-/// Matches `FrustumUniform` in `cull.wgsl` (96 bytes = 6 × 16).
+/// Matches `FrustumUniform` in `cull.wgsl` (112 bytes = 6 × 16 + 4 + 4 + 8).
 /// Planes are in Gribb-Hartmann order: left, right, bottom, top, near, far.
 /// Each plane normal points inward; `distance` is the signed offset from origin
 /// along the normal (`d` in the CPU `Plane` struct).
+///
+/// `instance_count` and `batch_count` are the valid element counts in the
+/// AABB and batch-meta storage buffers, respectively. The cull shaders use
+/// these instead of `arrayLength()` to avoid processing stale data that
+/// remains in oversized (2× headroom) buffers after scene shrinks.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct FrustumUniform {
     pub(crate) planes: [FrustumPlane; 6],
+    /// Valid instance count in the AABB buffer (not the buffer capacity).
+    pub(crate) instance_count: u32,
+    /// Valid batch count in the batch-meta buffer (not the buffer capacity).
+    pub(crate) batch_count: u32,
+    pub(crate) _pad: [u32; 2],
 }
 
-const _: () = assert!(std::mem::size_of::<FrustumUniform>() == 96);
+const _: () = assert!(std::mem::size_of::<FrustumUniform>() == 112);
 
 /// Clip planes uniform for section-view clipping (binding 4 of camera bind group).
 ///

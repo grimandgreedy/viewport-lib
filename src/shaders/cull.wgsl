@@ -22,7 +22,10 @@ struct FrustumPlane {
 }
 
 struct FrustumUniform {
-    planes: array<FrustumPlane, 6>,
+    planes:         array<FrustumPlane, 6>,
+    instance_count: u32,
+    batch_count:    u32,
+    _pad:           vec2<u32>,
 }
 
 struct InstanceAabb {
@@ -74,7 +77,7 @@ fn aabb_outside_plane(aabb_min: vec3<f32>, aabb_max: vec3<f32>, plane: FrustumPl
 @compute @workgroup_size(64)
 fn cull_instances(@builtin(global_invocation_id) id: vec3<u32>) {
     let i = id.x;
-    if i >= arrayLength(&instance_aabbs) {
+    if i >= frustum.instance_count {
         return;
     }
 
@@ -100,7 +103,7 @@ fn cull_instances(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(64)
 fn write_indirect_args(@builtin(global_invocation_id) id: vec3<u32>) {
     let b = id.x;
-    if b >= arrayLength(&batch_metas) {
+    if b >= frustum.batch_count {
         return;
     }
 
