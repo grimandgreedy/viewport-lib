@@ -1814,6 +1814,7 @@ impl eframe::App for App {
             // (Annotation labels now render natively via OverlayFrame.)
             if self.mode == ShowcaseMode::BackfacePolicy {
                 self.draw_sa_labels(ui, rect);
+                self.draw_sa_row_labels(ui, rect);
             }
 
             // ----- Cursor feedback -----

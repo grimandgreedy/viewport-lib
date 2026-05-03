@@ -523,13 +523,17 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
             let wp = in.world_pos * object.backface_color.w;
             var use_pattern = false;
             if pattern_type == 0u {
+                // Checker: alternating squares in world XZ.
                 let p = (i32(floor(wp.x)) + i32(floor(wp.z))) & 1;
                 use_pattern = p != 0;
             } else if pattern_type == 1u {
+                // Hatching: diagonal lines at 45 degrees.
                 use_pattern = fract((wp.x + wp.z) * 0.5) < 0.4;
             } else if pattern_type == 2u {
+                // Crosshatch: two sets of diagonal lines.
                 use_pattern = fract((wp.x + wp.z) * 0.5) < 0.3 || fract((wp.x - wp.z) * 0.5) < 0.3;
             } else {
+                // Stripes: horizontal lines in world Z.
                 use_pattern = fract(wp.z * 0.5) < 0.4;
             }
             base_color = select(base_color, pattern_color, use_pattern);

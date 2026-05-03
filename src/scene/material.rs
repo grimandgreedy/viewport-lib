@@ -78,7 +78,7 @@ pub struct PatternConfig {
     pub color: [f32; 3],
     /// Number of pattern cells across the object's longest bounding-box dimension.
     ///
-    /// Default 8.0. Increase for finer detail, decrease for coarser.
+    /// Default 20.0. Increase for finer detail, decrease for coarser.
     pub scale: f32,
 }
 
@@ -87,7 +87,7 @@ impl Default for PatternConfig {
         Self {
             pattern: BackfacePattern::Checker,
             color: [1.0, 0.5, 0.0],
-            scale: 8.0,
+            scale: 20.0,
         }
     }
 }

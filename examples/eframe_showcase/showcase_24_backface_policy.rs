@@ -5,6 +5,7 @@
 //! - **Row 2 : Spheres** clipped through the center.
 //! - **Row 3 : Cones** clipped through the middle.
 //! - **Row 4 : Springs** clipped through the coils.
+//! - **Row 5 : Spheres** (normal winding) — zoom inside to see back faces with each policy.
 //!
 //! Columns (left to right):
 //! - **Cull** (default): back faces invisible, interior hollow.
@@ -147,6 +148,30 @@ impl App {
             );
         }
 
+        // --- Row 5 : Spheres with inverted winding (z = -7.5) ---
+        // Reversed winding makes the exterior surface a back face, so each policy is
+        // visible from outside without needing a clip plane. Normals are also flipped
+        // so the shader's N=-N restores the correct outward normal for lighting.
+        let mut sphere_inner_mesh = primitives::sphere(1.2, 32, 16);
+        for chunk in sphere_inner_mesh.indices.chunks_mut(3) {
+            chunk.swap(1, 2);
+        }
+        for n in &mut sphere_inner_mesh.normals {
+            *n = [-n[0], -n[1], -n[2]];
+        }
+        for (i, (policy, label)) in policies.iter().enumerate() {
+            let mesh_id = renderer
+                .resources_mut()
+                .upload_mesh_data(&self.device, &sphere_inner_mesh)
+                .expect("sa sphere inv upload");
+            self.sa_scene.add_named(
+                &format!("InnerSphere {label}"),
+                Some(mesh_id),
+                Mat4::from_translation(glam::Vec3::new(col_x[i], 1.5, -7.5)),
+                make_material(*policy),
+            );
+        }
+
         self.sa_built = true;
     }
 
@@ -155,17 +180,27 @@ impl App {
     // -------------------------------------------------------------------------
 
     pub(crate) fn controls_surface_appearance(&mut self, ui: &mut egui::Ui) {
-        ui.label("BackfacePolicy (clip plane reveals inside):");
+        ui.label("BackfacePolicy controls how back faces are rendered.");
+        ui.add_space(4.0);
         ui.indent("bp_desc", |ui| {
-            ui.label("Cull | Identical | DifferentColor | Tint");
-            ui.label("Checker | Hatching | Crosshatch | Stripes");
+            ui.label("Cull (default): back faces invisible. Correct for\nmost closed meshes — the interior is never seen.");
+            ui.add_space(2.0);
+            ui.label("Identical: back faces shaded same as front.");
+            ui.label("DifferentColor: back faces shaded in a set color.");
+            ui.label("Tint: back faces darkened by a factor.");
+            ui.label("Pattern: procedural pattern on back faces\n(Checker / Hatching / Crosshatch / Stripes).");
         });
         ui.separator();
-        ui.label("Toruses | Spheres | Cones | Springs (top to bottom)");
+        ui.label("Rows (top to bottom):");
+        ui.indent("row_desc", |ui| {
+            ui.label("Torus, Sphere, Cone, Spring — clipped at y=0\nto reveal interior back faces.");
+            ui.add_space(2.0);
+            ui.label("Sphere (inverted winding) — winding reversed\nso the back face is on the outside, making\neach policy visible without a clip plane.");
+        });
         ui.separator();
 
         ui.checkbox(&mut self.sa_clip_on, "Clip plane (y = 0)");
-        ui.label("Slices all shapes to reveal\nhow each policy treats back faces.");
+        ui.label("Slices the top four rows to reveal\nhow each policy treats back faces.");
     }
 
     // -------------------------------------------------------------------------
@@ -216,6 +251,52 @@ impl App {
                 egui::Color32::from_rgba_unmultiplied(220, 220, 220, 220),
             );
             let text_pos = pos - egui::vec2(galley.size().x / 2.0, galley.size().y);
+            let bg_rect = egui::Rect::from_min_size(
+                text_pos - egui::vec2(3.0, 2.0),
+                galley.size() + egui::vec2(6.0, 4.0),
+            );
+            painter.rect_filled(bg_rect, 3.0, egui::Color32::from_black_alpha(120));
+            painter.galley(text_pos, galley, egui::Color32::WHITE);
+        }
+    }
+
+    /// Draw row labels to the left of each object row using world-space projection.
+    pub(crate) fn draw_sa_row_labels(&self, ui: &egui::Ui, rect: egui::Rect) {
+        let rows: &[(&str, f32, f32)] = &[
+            ("Torus",   0.0, 4.5),
+            ("Sphere",  0.0, 1.5),
+            ("Cone",    0.0, -1.5),
+            ("Spring",  0.0, -4.5),
+            ("Sphere (inverted winding)",  1.5, -7.5),
+        ];
+
+        let policies = policies();
+        let col_count = policies.len();
+        // Left edge: one half-column to the left of the first column.
+        let left_x = (-(col_count as f32 - 1.0) / 2.0) * 3.0 - 2.0;
+
+        let painter = ui.painter_at(rect);
+        let view = self.camera.view_matrix();
+        let proj = self.camera.proj_matrix();
+        let vp_size = [rect.width(), rect.height()];
+
+        for (label, y, z) in rows {
+            let world_pos = glam::Vec3::new(left_x, *y, *z);
+            let clip = proj * view * world_pos.extend(1.0);
+            if clip.w <= 0.0 { continue; }
+            let ndc = glam::Vec3::new(clip.x, clip.y, clip.z) / clip.w;
+            if ndc.x.abs() > 1.0 || ndc.y.abs() > 1.0 { continue; }
+            let screen = glam::Vec2::new(
+                (ndc.x * 0.5 + 0.5) * vp_size[0],
+                (1.0 - (ndc.y * 0.5 + 0.5)) * vp_size[1],
+            );
+            let pos = egui::pos2(rect.left() + screen.x, rect.top() + screen.y);
+            let galley = painter.layout_no_wrap(
+                label.to_string(),
+                egui::FontId::proportional(13.0),
+                egui::Color32::from_rgba_unmultiplied(220, 220, 220, 220),
+            );
+            let text_pos = pos - egui::vec2(galley.size().x, galley.size().y / 2.0);
             let bg_rect = egui::Rect::from_min_size(
                 text_pos - egui::vec2(3.0, 2.0),
                 galley.size() + egui::vec2(6.0, 4.0),
