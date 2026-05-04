@@ -185,7 +185,8 @@ pub use resources::colormap_data::{
 };
 pub use resources::mesh_store::MeshId;
 pub use resources::sparse_volume::SparseVolumeGridData;
-pub use resources::volume_mesh::{TET_SENTINEL, VolumeMeshData};
+#[allow(deprecated)]
+pub use resources::volume_mesh::{CELL_SENTINEL, TET_SENTINEL, VolumeMeshData};
 pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColormap, BuiltinMatcap, CameraUniform,
     ClipVolumeUniform, ColormapId, ComputeFilterResult, FontError, FontHandle, GpuImplicitItem,

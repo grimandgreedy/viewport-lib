@@ -27,9 +27,9 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap, ColormapId, LightingSettings,
-    SceneRenderItem,
-    ClipObject, ClipShape, TET_SENTINEL, ViewportRenderer, VolumeMeshData,
+    AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap, CELL_SENTINEL, ColormapId,
+    LightingSettings, SceneRenderItem,
+    ClipObject, ClipShape, ViewportRenderer, VolumeMeshData,
 };
 
 // ---------------------------------------------------------------------------
@@ -45,10 +45,12 @@ pub(crate) enum VmMode {
     Tet,
     /// 6 tet cells from a single unit cube (no projection) - baseline check.
     TetSmall,
-    /// 48 tet cells on a 2×2×2 sphere (smaller grid).
-    TetSphere2,
     /// 162 tet cells, axis-aligned box (no sphere projection).
     TetBox,
+    /// 162 pyramid cells on a sphere (6 pyramids per cube, 3×3×3 grid).
+    Pyramid,
+    /// 54 wedge (triangular prism) cells on a sphere (2 wedges per cube, 3×3×3 grid).
+    Wedge,
 }
 
 /// Scalar field to colour by.
@@ -314,10 +316,10 @@ fn build_tet_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
                         cube_verts[tet[1]],
                         cube_verts[tet[2]],
                         cube_verts[tet[3]],
-                        TET_SENTINEL,
-                        TET_SENTINEL,
-                        TET_SENTINEL,
-                        TET_SENTINEL,
+                        CELL_SENTINEL,
+                        CELL_SENTINEL,
+                        CELL_SENTINEL,
+                        CELL_SENTINEL,
                     ]);
                     lat_scalars.push(lat);
                     lon_scalars.push(lon);
@@ -345,15 +347,16 @@ fn build_tet_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
 // Diagnostic builders
 // ---------------------------------------------------------------------------
 
-/// Generate vertex positions for an N×N×N axis-aligned grid (no projection).
-/// Vertices at integer coordinates [0, N].
+/// Generate vertex positions for an N×N×N axis-aligned grid centred at the origin.
+/// Vertices run from -N/2 to +N/2 on each axis.
 fn box_vertex_positions(n: usize) -> Vec<[f32; 3]> {
     let nv = n + 1;
+    let half = n as f32 / 2.0;
     let mut pos = Vec::with_capacity(nv * nv * nv);
     for iz in 0..nv {
         for iy in 0..nv {
             for ix in 0..nv {
-                pos.push([ix as f32, iy as f32, iz as f32]);
+                pos.push([ix as f32 - half, iy as f32 - half, iz as f32 - half]);
             }
         }
     }
@@ -414,10 +417,10 @@ fn build_tet_mesh_n(n: usize, positions: &[[f32; 3]]) -> VolumeMeshData {
                         cube_verts[tet[1]],
                         cube_verts[tet[2]],
                         cube_verts[tet[3]],
-                        TET_SENTINEL,
-                        TET_SENTINEL,
-                        TET_SENTINEL,
-                        TET_SENTINEL,
+                        CELL_SENTINEL,
+                        CELL_SENTINEL,
+                        CELL_SENTINEL,
+                        CELL_SENTINEL,
                     ]);
                     lat_scalars.push(lat);
                     lon_scalars.push(lon);
@@ -441,34 +444,156 @@ fn build_tet_mesh_n(n: usize, positions: &[[f32; 3]]) -> VolumeMeshData {
     data
 }
 
+// ---------------------------------------------------------------------------
+// Pyramid mesh builder
+// ---------------------------------------------------------------------------
+//
+// Each cube is split into 6 pyramids by adding a center vertex and connecting
+// it to each of the 6 quad faces.  Adjacent cubes share quad faces correctly
+// because the shared face uses the same 4 corner vertices in both cubes.
+//
+// Face winding follows the hex face table (outward from the cube face toward
+// the center), relying on the extractor's geometric winding correction.
+
+fn build_pyramid_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
+    let n_cells = GRID_N * GRID_N * GRID_N * 6;
+    let mut all_positions = positions.to_vec();
+    let mut data = VolumeMeshData::default();
+    data.cells.reserve(n_cells);
+    let mut lat_scalars: Vec<f32> = Vec::with_capacity(n_cells);
+    let mut lon_scalars: Vec<f32> = Vec::with_capacity(n_cells);
+    let mut radial_scalars: Vec<f32> = Vec::with_capacity(n_cells);
+    let mut direct_colors: Vec<[f32; 4]> = Vec::with_capacity(n_cells);
+
+    for iz in 0..GRID_N {
+        for iy in 0..GRID_N {
+            for ix in 0..GRID_N {
+                let c = [
+                    vid(ix, iy, iz),
+                    vid(ix + 1, iy, iz),
+                    vid(ix + 1, iy, iz + 1),
+                    vid(ix, iy, iz + 1),
+                    vid(ix, iy + 1, iz),
+                    vid(ix + 1, iy + 1, iz),
+                    vid(ix + 1, iy + 1, iz + 1),
+                    vid(ix, iy + 1, iz + 1),
+                ];
+
+                // Center vertex: average of the 8 projected sphere positions.
+                let mut px = 0.0f32;
+                let mut py_sum = 0.0f32;
+                let mut pz = 0.0f32;
+                for &vi in &c {
+                    let p = positions[vi as usize];
+                    px += p[0];
+                    py_sum += p[1];
+                    pz += p[2];
+                }
+                let center_idx = all_positions.len() as u32;
+                all_positions.push([px / 8.0, py_sum / 8.0, pz / 8.0]);
+
+                let [rcx, rcy, rcz] = cell_centroid_raw(ix, iy, iz);
+                let raw_len = (rcx * rcx + rcy * rcy + rcz * rcz).sqrt().max(1e-6);
+                let s = SPHERE_R / raw_len;
+                let py = rcy * s;
+                let lat = py / SPHERE_R * 0.5 + 0.5;
+                let lon = rcz.atan2(rcx) / std::f32::consts::TAU + 0.5;
+                let sat = 0.5 + 0.5 * (py / SPHERE_R).abs();
+                let color = hsv_to_rgba(lon, sat, 0.88);
+
+                // 6 pyramids: one per hex face.  Base quad winding matches the
+                // hex face table so outward normals face away from the cube.
+                data.push_pyramid([c[0], c[1], c[2], c[3]], center_idx); // bottom
+                data.push_pyramid([c[4], c[7], c[6], c[5]], center_idx); // top
+                data.push_pyramid([c[0], c[4], c[5], c[1]], center_idx); // front
+                data.push_pyramid([c[2], c[6], c[7], c[3]], center_idx); // back
+                data.push_pyramid([c[0], c[3], c[7], c[4]], center_idx); // left
+                data.push_pyramid([c[1], c[5], c[6], c[2]], center_idx); // right
+
+                for _ in 0..6 {
+                    lat_scalars.push(lat);
+                    lon_scalars.push(lon);
+                    radial_scalars.push(raw_len);
+                    direct_colors.push(color);
+                }
+            }
+        }
+    }
+
+    data.positions = all_positions;
+    data.cell_scalars.insert("latitude".to_string(), lat_scalars);
+    data.cell_scalars.insert("longitude".to_string(), lon_scalars);
+    data.cell_scalars.insert("radial".to_string(), radial_scalars);
+    data.cell_colors.insert("direct".to_string(), direct_colors);
+    data
+}
+
+// ---------------------------------------------------------------------------
+// Wedge (triangular prism) mesh builder
+// ---------------------------------------------------------------------------
+//
+// Each cube is split into 2 conforming wedges by cutting along the XY diagonal
+// (vertex 0 to vertex [ix+1,iy+1]).  Adjacent cubes share the diagonal cut
+// consistently so all interior faces cancel correctly.
+//
+// Extrusion direction is along Z (iz to iz+1).
+
+fn build_wedge_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
+    let n_cells = GRID_N * GRID_N * GRID_N * 2;
+    let mut data = VolumeMeshData::default();
+    data.cells.reserve(n_cells);
+    let mut lat_scalars: Vec<f32> = Vec::with_capacity(n_cells);
+    let mut lon_scalars: Vec<f32> = Vec::with_capacity(n_cells);
+    let mut radial_scalars: Vec<f32> = Vec::with_capacity(n_cells);
+    let mut direct_colors: Vec<[f32; 4]> = Vec::with_capacity(n_cells);
+
+    for iz in 0..GRID_N {
+        for iy in 0..GRID_N {
+            for ix in 0..GRID_N {
+                let a = vid(ix, iy, iz);
+                let b = vid(ix + 1, iy, iz);
+                let c = vid(ix + 1, iy + 1, iz);
+                let d = vid(ix, iy + 1, iz);
+                let a1 = vid(ix, iy, iz + 1);
+                let b1 = vid(ix + 1, iy, iz + 1);
+                let c1 = vid(ix + 1, iy + 1, iz + 1);
+                let d1 = vid(ix, iy + 1, iz + 1);
+
+                // Two wedges sharing the diagonal [a,c] / [a1,c1].
+                data.push_wedge([a, b, c], [a1, b1, c1]);
+                data.push_wedge([a, c, d], [a1, c1, d1]);
+
+                let [rcx, rcy, rcz] = cell_centroid_raw(ix, iy, iz);
+                let raw_len = (rcx * rcx + rcy * rcy + rcz * rcz).sqrt().max(1e-6);
+                let s = SPHERE_R / raw_len;
+                let py = rcy * s;
+                let lat = py / SPHERE_R * 0.5 + 0.5;
+                let lon = rcz.atan2(rcx) / std::f32::consts::TAU + 0.5;
+                let sat = 0.5 + 0.5 * (py / SPHERE_R).abs();
+                let color = hsv_to_rgba(lon, sat, 0.87);
+
+                for _ in 0..2 {
+                    lat_scalars.push(lat);
+                    lon_scalars.push(lon);
+                    radial_scalars.push(raw_len);
+                    direct_colors.push(color);
+                }
+            }
+        }
+    }
+
+    data.positions = positions.to_vec();
+    data.cell_scalars.insert("latitude".to_string(), lat_scalars);
+    data.cell_scalars.insert("longitude".to_string(), lon_scalars);
+    data.cell_scalars.insert("radial".to_string(), radial_scalars);
+    data.cell_colors.insert("direct".to_string(), direct_colors);
+    data
+}
+
 /// Single 1×1×1 cube split into 6 tets, no projection.
 fn build_tet_small() -> VolumeMeshData {
     let positions = box_vertex_positions(1);
     build_tet_mesh_n(1, &positions)
-}
-
-/// 2×2×2 tet grid projected onto a sphere.
-///
-/// Vertices placed at half-integer offsets {-1.5, -0.5, 0.5} so no vertex
-/// falls at the origin (safe for normalization).
-fn build_tet_sphere2() -> VolumeMeshData {
-    const N2: usize = 2;
-    const NV2: usize = N2 + 1;
-    let mut positions = Vec::with_capacity(NV2 * NV2 * NV2);
-    for iz in 0..NV2 {
-        for iy in 0..NV2 {
-            for ix in 0..NV2 {
-                // Half-integer offset: same pattern as sphere_vertex_positions().
-                let x = ix as f32 - 1.5;
-                let y = iy as f32 - 1.5;
-                let z = iz as f32 - 1.5;
-                let len = (x * x + y * y + z * z).sqrt();
-                let s = SPHERE_R / len;
-                positions.push([x * s, y * s, z * s]);
-            }
-        }
-    }
-    build_tet_mesh_n(N2, &positions)
 }
 
 /// 3×3×3 tet grid as a flat axis-aligned box (no sphere projection).
@@ -505,17 +630,23 @@ impl App {
             .upload_volume_mesh_data(&self.device, &tet_small_data)
             .expect("vm tet small upload");
 
-        let tet_sphere2_data = build_tet_sphere2();
-        self.vm_tet_sphere2_index = renderer
-            .resources_mut()
-            .upload_volume_mesh_data(&self.device, &tet_sphere2_data)
-            .expect("vm tet sphere2 upload");
-
         let tet_box_data = build_tet_box();
         self.vm_tet_box_index = renderer
             .resources_mut()
             .upload_volume_mesh_data(&self.device, &tet_box_data)
             .expect("vm tet box upload");
+
+        let pyramid_data = build_pyramid_mesh(&hex_positions);
+        self.vm_pyramid_index = renderer
+            .resources_mut()
+            .upload_volume_mesh_data(&self.device, &pyramid_data)
+            .expect("vm pyramid upload");
+
+        let wedge_data = build_wedge_mesh(&positions);
+        self.vm_wedge_index = renderer
+            .resources_mut()
+            .upload_volume_mesh_data(&self.device, &wedge_data)
+            .expect("vm wedge upload");
 
         self.vm_built = true;
     }
@@ -563,8 +694,15 @@ impl App {
                 build_tet_mesh(&positions)
             }
             VmMode::TetSmall => build_tet_small(),
-            VmMode::TetSphere2 => build_tet_sphere2(),
             VmMode::TetBox => build_tet_box(),
+            VmMode::Pyramid => {
+                let positions = cube_sphere_vertex_positions();
+                build_pyramid_mesh(&positions)
+            }
+            VmMode::Wedge => {
+                let positions = sphere_vertex_positions();
+                build_wedge_mesh(&positions)
+            }
         }
     }
 
@@ -586,8 +724,9 @@ impl App {
                     VmMode::Hex => self.vm_hex_index,
                     VmMode::Tet => self.vm_tet_index,
                     VmMode::TetSmall => self.vm_tet_small_index,
-                    VmMode::TetSphere2 => self.vm_tet_sphere2_index,
                     VmMode::TetBox => self.vm_tet_box_index,
+                    VmMode::Pyramid => self.vm_pyramid_index,
+                    VmMode::Wedge => self.vm_wedge_index,
                 },
             }
         } else {
@@ -595,8 +734,9 @@ impl App {
                 VmMode::Hex => self.vm_hex_index,
                 VmMode::Tet => self.vm_tet_index,
                 VmMode::TetSmall => self.vm_tet_small_index,
-                VmMode::TetSphere2 => self.vm_tet_sphere2_index,
                 VmMode::TetBox => self.vm_tet_box_index,
+                VmMode::Pyramid => self.vm_pyramid_index,
+                VmMode::Wedge => self.vm_wedge_index,
             }
         };
 
@@ -685,8 +825,9 @@ impl App {
         ui.label("Cell type:");
         ui.horizontal_wrapped(|ui| {
             ui.radio_value(&mut self.vm_mode, VmMode::Hex, "Hex sphere (27)");
+            ui.radio_value(&mut self.vm_mode, VmMode::Pyramid, "Pyramid sphere (162)");
+            ui.radio_value(&mut self.vm_mode, VmMode::Wedge, "Wedge sphere (54)");
             ui.radio_value(&mut self.vm_mode, VmMode::Tet, "Tet sphere 3³ (162)");
-            ui.radio_value(&mut self.vm_mode, VmMode::TetSphere2, "Tet sphere 2³ (48)");
             ui.radio_value(&mut self.vm_mode, VmMode::TetBox, "Tet box 3³ (162)");
             ui.radio_value(&mut self.vm_mode, VmMode::TetSmall, "Tet cube 1³ (6)");
         });
@@ -750,9 +891,10 @@ impl App {
         let (n_cells, note) = match self.vm_mode {
             VmMode::Hex => (27, "3³ hexes, cube-to-sphere warp"),
             VmMode::Tet => (162, "3³×6 tets on sphere"),
-            VmMode::TetSphere2 => (48, "2³×6 tets on sphere"),
             VmMode::TetBox => (162, "3³×6 tets, flat box"),
             VmMode::TetSmall => (6, "1³×6 tets, unit cube"),
+            VmMode::Pyramid => (162, "3³×6 pyramids on sphere"),
+            VmMode::Wedge => (54, "3³×2 wedges on sphere"),
         };
         ui.label(format!("{n_cells} cells · {note}"));
         ui.label("Interior faces are automatically discarded.");

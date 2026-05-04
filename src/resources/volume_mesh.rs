@@ -1,4 +1,4 @@
-//! Unstructured volume mesh processing : tet and hex cell topologies.
+//! Unstructured volume mesh processing : tet, pyramid, wedge, and hex cell topologies.
 //!
 //! Converts volumetric cell connectivity into a standard [`MeshData`] by
 //! extracting boundary faces (faces shared by exactly one cell) and computing
@@ -8,11 +8,14 @@
 //!
 //! # Cell conventions
 //!
-//! Every cell is stored as exactly **8 vertex indices**:
-//! - **Tet**: indices `[0..4]` are the 4 tet vertices; indices `[4..8]` are
-//!   `u32::MAX` (sentinel).
+//! Every cell is stored as exactly **8 vertex indices** using [`CELL_SENTINEL`]
+//! (`u32::MAX`) to pad unused slots:
+//! - **Tet**: indices `[0..4]` valid; `[4..8]` = `CELL_SENTINEL`
+//! - **Pyramid**: indices `[0..5]` valid; `[5..8]` = `CELL_SENTINEL`
+//! - **Wedge**: indices `[0..6]` valid; `[6..8]` = `CELL_SENTINEL`
 //! - **Hex**: all 8 indices are valid vertex positions.
-//! - **Mixed** meshes use the sentinel convention to distinguish per cell.
+//!
+//! Mixed meshes use the sentinel convention to distinguish cell type per cell.
 //!
 //! Hex face winding follows the standard VTK unstructured-grid ordering so that
 //! outward normals are consistent when all cells have positive volume.
@@ -21,16 +24,23 @@ use std::collections::HashMap;
 
 use super::types::{AttributeData, MeshData};
 
-/// Sentinel value that marks unused index slots in a tet cell stored as 8 indices.
-pub const TET_SENTINEL: u32 = u32::MAX;
+/// Sentinel value that marks unused index slots in a cell stored as 8 indices.
+///
+/// Slots beyond the cell's vertex count must be filled with this value.
+/// For example, a tet uses slots `[0..4]`; slots `[4..8]` must be `CELL_SENTINEL`.
+pub const CELL_SENTINEL: u32 = u32::MAX;
+
+/// Deprecated alias for [`CELL_SENTINEL`].
+#[deprecated(since = "0.13.0", note = "use `CELL_SENTINEL` instead")]
+pub const TET_SENTINEL: u32 = CELL_SENTINEL;
 
 /// Input data for an unstructured volume mesh (tets, hexes, or mixed).
 ///
-/// Each cell is represented as exactly 8 vertex indices.  For tetrahedral
-/// cells, fill the last four indices with [`TET_SENTINEL`] (`u32::MAX`).
+/// Each cell is represented as exactly 8 vertex indices.  For cells with fewer
+/// than 8 vertices, fill unused slots with [`CELL_SENTINEL`] (`u32::MAX`).
 ///
 /// ```
-/// use viewport_lib::{VolumeMeshData, TET_SENTINEL};
+/// use viewport_lib::{VolumeMeshData, CELL_SENTINEL};
 ///
 /// // Two tets sharing vertices 0-1-2
 /// let data = VolumeMeshData {
@@ -42,8 +52,8 @@ pub const TET_SENTINEL: u32 = u32::MAX;
 ///         [0.5, 0.5, -1.0],
 ///     ],
 ///     cells: vec![
-///         [0, 1, 2, 3, TET_SENTINEL, TET_SENTINEL, TET_SENTINEL, TET_SENTINEL],
-///         [0, 2, 1, 4, TET_SENTINEL, TET_SENTINEL, TET_SENTINEL, TET_SENTINEL],
+///         [0, 1, 2, 3, CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL],
+///         [0, 2, 1, 4, CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL],
 ///     ],
 ///     ..Default::default()
 /// };
@@ -57,7 +67,8 @@ pub struct VolumeMeshData {
     /// Cell connectivity : exactly 8 indices per cell.
     ///
     /// Tets: first 4 indices are the tet vertices; indices `[4..8]` must be
-    /// [`TET_SENTINEL`].  Hexes: all 8 indices are valid.
+    /// [`CELL_SENTINEL`].  Hexes: all 8 indices are valid.  Other cell types
+    /// use [`CELL_SENTINEL`] to pad unused slots (see module-level docs).
     pub cells: Vec<[u32; 8]>,
 
     /// Named per-cell scalar attributes (one `f32` per cell).
@@ -130,6 +141,79 @@ const HEX_FACES: [[usize; 4]; 6] = [
 const HEX_FACE_OPPOSITE: [usize; 6] = [1, 0, 3, 2, 5, 4];
 
 // ---------------------------------------------------------------------------
+// Pyramid face tables
+// ---------------------------------------------------------------------------
+//
+// VTK pyramid vertex numbering:
+//
+//        4 (apex)
+//       /|\
+//      / | \
+//     /  |  \
+//    3---+---2
+//    |       |
+//    0-------1
+//
+// One quad base face and four triangular side faces.
+// Winding correction in the extractor normalises outward direction.
+
+/// Quad base face of a pyramid (vertices 0-3).
+const PYRAMID_QUAD_FACE: [[usize; 4]; 1] = [
+    [0, 1, 2, 3], // base
+];
+
+/// Triangular side faces of a pyramid (apex = vertex 4).
+const PYRAMID_TRI_FACES: [[usize; 3]; 4] = [
+    [0, 4, 1], // front
+    [1, 4, 2], // right
+    [2, 4, 3], // back
+    [3, 4, 0], // left
+];
+
+/// Edges of a pyramid: 4 base + 4 lateral.
+const PYRAMID_EDGES: [[usize; 2]; 8] = [
+    [0, 1], [1, 2], [2, 3], [3, 0], // base ring
+    [0, 4], [1, 4], [2, 4], [3, 4], // lateral
+];
+
+// ---------------------------------------------------------------------------
+// Wedge (triangular prism) face tables
+// ---------------------------------------------------------------------------
+//
+// VTK wedge vertex numbering: 0,1,2 = bottom tri, 3,4,5 = top tri
+// (vertex 3 is directly above vertex 0, etc.)
+//
+//   3 --- 5
+//   |  \  |
+//   |   4 |
+//   |     |
+//   0 --- 2
+//    \   /
+//      1
+//
+// Two triangular end faces and three quad lateral faces.
+
+/// Triangular end faces of a wedge.
+const WEDGE_TRI_FACES: [[usize; 3]; 2] = [
+    [0, 2, 1], // bottom (outward = downward)
+    [3, 4, 5], // top    (outward = upward)
+];
+
+/// Quad lateral faces of a wedge.
+const WEDGE_QUAD_FACES: [[usize; 4]; 3] = [
+    [0, 1, 4, 3], // side 0
+    [1, 2, 5, 4], // side 1
+    [2, 0, 3, 5], // side 2
+];
+
+/// Edges of a wedge: 3 bottom + 3 top + 3 vertical.
+const WEDGE_EDGES: [[usize; 2]; 9] = [
+    [0, 1], [1, 2], [2, 0], // bottom tri
+    [3, 4], [4, 5], [5, 3], // top tri
+    [0, 3], [1, 4], [2, 5], // vertical
+];
+
+// ---------------------------------------------------------------------------
 // Boundary extraction
 // ---------------------------------------------------------------------------
 
@@ -199,49 +283,114 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> MeshData {
     let mut quad_face_map: HashMap<QuadFaceKey, QuadFaceRecord> = HashMap::new();
 
     for (cell_idx, cell) in data.cells.iter().enumerate() {
-        let is_tet = cell[4] == TET_SENTINEL;
+        let ct = cell_type(cell);
+        let nv = ct.vertex_count();
+        let centroid = cell_centroid(cell, nv, &data.positions);
 
-        if is_tet {
-            // 4 triangular faces
-            for (face_idx, face_local) in TET_FACES.iter().enumerate() {
-                let a = cell[face_local[0]];
-                let b = cell[face_local[1]];
-                let c = cell[face_local[2]];
-                let opposite = data.positions[cell[face_idx] as usize];
-                let key = face_key(a, b, c);
-                let entry = face_map.entry(key).or_insert(FaceRecord {
-                    cell_index: cell_idx,
-                    winding: [a, b, c],
-                    count: 0,
-                    interior_ref: opposite,
-                });
-                entry.count += 1;
+        match ct {
+            CellType::Tet => {
+                for (face_idx, face_local) in TET_FACES.iter().enumerate() {
+                    let a = cell[face_local[0]];
+                    let b = cell[face_local[1]];
+                    let c = cell[face_local[2]];
+                    // Opposite vertex is the best interior reference for tets.
+                    let interior_ref = data.positions[cell[face_idx] as usize];
+                    let key = face_key(a, b, c);
+                    let entry = face_map.entry(key).or_insert(FaceRecord {
+                        cell_index: cell_idx,
+                        winding: [a, b, c],
+                        count: 0,
+                        interior_ref,
+                    });
+                    entry.count += 1;
+                }
             }
-        } else {
-            // 6 quad faces. Deduplicate quads before triangulating; otherwise
-            // adjacent hexes can choose different diagonals for the same shared
-            // quad and leak interior triangles into the boundary surface.
-            for (face_idx, quad) in HEX_FACES.iter().enumerate() {
-                let v: [u32; 4] = [cell[quad[0]], cell[quad[1]], cell[quad[2]], cell[quad[3]]];
-                let interior_ref = {
-                    let opposite = &HEX_FACES[HEX_FACE_OPPOSITE[face_idx]];
-                    let mut c = [0.0f32; 3];
-                    for &local_vi in opposite {
-                        let p = data.positions[cell[local_vi] as usize];
-                        c[0] += p[0];
-                        c[1] += p[1];
-                        c[2] += p[2];
-                    }
-                    [c[0] / 4.0, c[1] / 4.0, c[2] / 4.0]
-                };
-                let key = quad_face_key(v[0], v[1], v[2], v[3]);
-                let entry = quad_face_map.entry(key).or_insert(QuadFaceRecord {
-                    cell_index: cell_idx,
-                    winding: v,
-                    count: 0,
-                    interior_ref,
-                });
-                entry.count += 1;
+            CellType::Pyramid => {
+                for face_local in &PYRAMID_TRI_FACES {
+                    let a = cell[face_local[0]];
+                    let b = cell[face_local[1]];
+                    let c = cell[face_local[2]];
+                    let key = face_key(a, b, c);
+                    let entry = face_map.entry(key).or_insert(FaceRecord {
+                        cell_index: cell_idx,
+                        winding: [a, b, c],
+                        count: 0,
+                        interior_ref: centroid,
+                    });
+                    entry.count += 1;
+                }
+                for quad_local in &PYRAMID_QUAD_FACE {
+                    let v = [
+                        cell[quad_local[0]],
+                        cell[quad_local[1]],
+                        cell[quad_local[2]],
+                        cell[quad_local[3]],
+                    ];
+                    let key = quad_face_key(v[0], v[1], v[2], v[3]);
+                    let entry = quad_face_map.entry(key).or_insert(QuadFaceRecord {
+                        cell_index: cell_idx,
+                        winding: v,
+                        count: 0,
+                        interior_ref: centroid,
+                    });
+                    entry.count += 1;
+                }
+            }
+            CellType::Wedge => {
+                for face_local in &WEDGE_TRI_FACES {
+                    let a = cell[face_local[0]];
+                    let b = cell[face_local[1]];
+                    let c = cell[face_local[2]];
+                    let key = face_key(a, b, c);
+                    let entry = face_map.entry(key).or_insert(FaceRecord {
+                        cell_index: cell_idx,
+                        winding: [a, b, c],
+                        count: 0,
+                        interior_ref: centroid,
+                    });
+                    entry.count += 1;
+                }
+                for quad_local in &WEDGE_QUAD_FACES {
+                    let v = [
+                        cell[quad_local[0]],
+                        cell[quad_local[1]],
+                        cell[quad_local[2]],
+                        cell[quad_local[3]],
+                    ];
+                    let key = quad_face_key(v[0], v[1], v[2], v[3]);
+                    let entry = quad_face_map.entry(key).or_insert(QuadFaceRecord {
+                        cell_index: cell_idx,
+                        winding: v,
+                        count: 0,
+                        interior_ref: centroid,
+                    });
+                    entry.count += 1;
+                }
+            }
+            CellType::Hex => {
+                for (face_idx, quad) in HEX_FACES.iter().enumerate() {
+                    let v: [u32; 4] =
+                        [cell[quad[0]], cell[quad[1]], cell[quad[2]], cell[quad[3]]];
+                    let interior_ref = {
+                        let opposite = &HEX_FACES[HEX_FACE_OPPOSITE[face_idx]];
+                        let mut c = [0.0f32; 3];
+                        for &local_vi in opposite {
+                            let p = data.positions[cell[local_vi] as usize];
+                            c[0] += p[0];
+                            c[1] += p[1];
+                            c[2] += p[2];
+                        }
+                        [c[0] / 4.0, c[1] / 4.0, c[2] / 4.0]
+                    };
+                    let key = quad_face_key(v[0], v[1], v[2], v[3]);
+                    let entry = quad_face_map.entry(key).or_insert(QuadFaceRecord {
+                        cell_index: cell_idx,
+                        winding: v,
+                        count: 0,
+                        interior_ref,
+                    });
+                    entry.count += 1;
+                }
             }
         }
     }
@@ -523,6 +672,67 @@ const HEX_EDGES: [[usize; 2]; 12] = [
     [0, 4], [1, 5], [2, 6], [3, 7], // vertical
 ];
 
+// ---------------------------------------------------------------------------
+// Cell type detection
+// ---------------------------------------------------------------------------
+
+/// Internal cell type, detected from sentinel slots.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CellType {
+    Tet,
+    Pyramid,
+    Wedge,
+    Hex,
+}
+
+impl CellType {
+    fn vertex_count(self) -> usize {
+        match self {
+            CellType::Tet => 4,
+            CellType::Pyramid => 5,
+            CellType::Wedge => 6,
+            CellType::Hex => 8,
+        }
+    }
+
+    fn edges(self) -> &'static [[usize; 2]] {
+        match self {
+            CellType::Tet => &TET_EDGES,
+            CellType::Pyramid => &PYRAMID_EDGES,
+            CellType::Wedge => &WEDGE_EDGES,
+            CellType::Hex => &HEX_EDGES,
+        }
+    }
+}
+
+/// Detect cell type from sentinel pattern in the 8-slot cell array.
+#[inline]
+fn cell_type(cell: &[u32; 8]) -> CellType {
+    if cell[4] == CELL_SENTINEL {
+        CellType::Tet
+    } else if cell[5] == CELL_SENTINEL {
+        CellType::Pyramid
+    } else if cell[6] == CELL_SENTINEL {
+        CellType::Wedge
+    } else {
+        CellType::Hex
+    }
+}
+
+/// Centroid of the first `nv` vertices of `cell`.
+#[inline]
+fn cell_centroid(cell: &[u32; 8], nv: usize, positions: &[[f32; 3]]) -> [f32; 3] {
+    let mut c = [0.0f32; 3];
+    for i in 0..nv {
+        let p = positions[cell[i] as usize];
+        c[0] += p[0];
+        c[1] += p[1];
+        c[2] += p[2];
+    }
+    let n = nv as f32;
+    [c[0] / n, c[1] / n, c[2] / n]
+}
+
 /// Signed distance from `p` to `plane` (`[nx, ny, nz, d]`).
 /// Positive means on the kept side (`dot(p, n) + d >= 0`).
 #[inline]
@@ -693,51 +903,119 @@ pub(crate) fn extract_clipped_volume_faces(
     let mut quad_face_map: HashMap<QuadFaceKey, QuadFaceRecord> = HashMap::new();
 
     for (cell_idx, cell) in data.cells.iter().enumerate() {
-        let is_tet = cell[4] == TET_SENTINEL;
-        let nv = if is_tet { 4 } else { 8 };
+        let ct = cell_type(cell);
+        let nv = ct.vertex_count();
         let kept_count = (0..nv).filter(|&i| vert_kept[cell[i] as usize]).count();
         if kept_count == 0 {
             continue;
         }
 
-        if is_tet {
-            for (face_idx, face_local) in TET_FACES.iter().enumerate() {
-                let a = cell[face_local[0]];
-                let b = cell[face_local[1]];
-                let c = cell[face_local[2]];
-                let opposite = data.positions[cell[face_idx] as usize];
-                let key = face_key(a, b, c);
-                let entry = face_map.entry(key).or_insert(FaceRecord {
-                    cell_index: cell_idx,
-                    winding: [a, b, c],
-                    count: 0,
-                    interior_ref: opposite,
-                });
-                entry.count += 1;
+        let centroid = cell_centroid(cell, nv, &data.positions);
+
+        match ct {
+            CellType::Tet => {
+                for (face_idx, face_local) in TET_FACES.iter().enumerate() {
+                    let a = cell[face_local[0]];
+                    let b = cell[face_local[1]];
+                    let c = cell[face_local[2]];
+                    // Opposite vertex is the best interior reference for tets.
+                    let interior_ref = data.positions[cell[face_idx] as usize];
+                    let key = face_key(a, b, c);
+                    let entry = face_map.entry(key).or_insert(FaceRecord {
+                        cell_index: cell_idx,
+                        winding: [a, b, c],
+                        count: 0,
+                        interior_ref,
+                    });
+                    entry.count += 1;
+                }
             }
-        } else {
-            for (face_idx, quad) in HEX_FACES.iter().enumerate() {
-                let v: [u32; 4] =
-                    [cell[quad[0]], cell[quad[1]], cell[quad[2]], cell[quad[3]]];
-                let interior_ref = {
-                    let opp = &HEX_FACES[HEX_FACE_OPPOSITE[face_idx]];
-                    let mut c = [0.0f32; 3];
-                    for &li in opp {
-                        let p = data.positions[cell[li] as usize];
-                        c[0] += p[0];
-                        c[1] += p[1];
-                        c[2] += p[2];
-                    }
-                    [c[0] / 4.0, c[1] / 4.0, c[2] / 4.0]
-                };
-                let key = quad_face_key(v[0], v[1], v[2], v[3]);
-                let entry = quad_face_map.entry(key).or_insert(QuadFaceRecord {
-                    cell_index: cell_idx,
-                    winding: v,
-                    count: 0,
-                    interior_ref,
-                });
-                entry.count += 1;
+            CellType::Pyramid => {
+                for face_local in &PYRAMID_TRI_FACES {
+                    let a = cell[face_local[0]];
+                    let b = cell[face_local[1]];
+                    let c = cell[face_local[2]];
+                    let key = face_key(a, b, c);
+                    let entry = face_map.entry(key).or_insert(FaceRecord {
+                        cell_index: cell_idx,
+                        winding: [a, b, c],
+                        count: 0,
+                        interior_ref: centroid,
+                    });
+                    entry.count += 1;
+                }
+                for quad_local in &PYRAMID_QUAD_FACE {
+                    let v = [
+                        cell[quad_local[0]],
+                        cell[quad_local[1]],
+                        cell[quad_local[2]],
+                        cell[quad_local[3]],
+                    ];
+                    let key = quad_face_key(v[0], v[1], v[2], v[3]);
+                    let entry = quad_face_map.entry(key).or_insert(QuadFaceRecord {
+                        cell_index: cell_idx,
+                        winding: v,
+                        count: 0,
+                        interior_ref: centroid,
+                    });
+                    entry.count += 1;
+                }
+            }
+            CellType::Wedge => {
+                for face_local in &WEDGE_TRI_FACES {
+                    let a = cell[face_local[0]];
+                    let b = cell[face_local[1]];
+                    let c = cell[face_local[2]];
+                    let key = face_key(a, b, c);
+                    let entry = face_map.entry(key).or_insert(FaceRecord {
+                        cell_index: cell_idx,
+                        winding: [a, b, c],
+                        count: 0,
+                        interior_ref: centroid,
+                    });
+                    entry.count += 1;
+                }
+                for quad_local in &WEDGE_QUAD_FACES {
+                    let v = [
+                        cell[quad_local[0]],
+                        cell[quad_local[1]],
+                        cell[quad_local[2]],
+                        cell[quad_local[3]],
+                    ];
+                    let key = quad_face_key(v[0], v[1], v[2], v[3]);
+                    let entry = quad_face_map.entry(key).or_insert(QuadFaceRecord {
+                        cell_index: cell_idx,
+                        winding: v,
+                        count: 0,
+                        interior_ref: centroid,
+                    });
+                    entry.count += 1;
+                }
+            }
+            CellType::Hex => {
+                for (face_idx, quad) in HEX_FACES.iter().enumerate() {
+                    let v: [u32; 4] =
+                        [cell[quad[0]], cell[quad[1]], cell[quad[2]], cell[quad[3]]];
+                    let interior_ref = {
+                        let opposite = &HEX_FACES[HEX_FACE_OPPOSITE[face_idx]];
+                        let mut c = [0.0f32; 3];
+                        for &local_vi in opposite {
+                            let p = data.positions[cell[local_vi] as usize];
+                            c[0] += p[0];
+                            c[1] += p[1];
+                            c[2] += p[2];
+                        }
+                        [c[0] / 4.0, c[1] / 4.0, c[2] / 4.0]
+                    };
+                    let key = quad_face_key(v[0], v[1], v[2], v[3]);
+                    let entry = quad_face_map.entry(key).or_insert(QuadFaceRecord {
+                        cell_index: cell_idx,
+                        winding: v,
+                        count: 0,
+                        interior_ref,
+                    });
+                    entry.count += 1;
+                }
             }
         }
     }
@@ -790,7 +1068,7 @@ pub(crate) fn extract_clipped_volume_faces(
     let cell_nv: Vec<usize> = data
         .cells
         .iter()
-        .map(|c| if c[4] == TET_SENTINEL { 4 } else { 8 })
+        .map(|c| cell_type(c).vertex_count())
         .collect();
     let cell_kept: Vec<usize> = data
         .cells
@@ -830,8 +1108,7 @@ pub(crate) fn extract_clipped_volume_faces(
             continue;
         }
 
-        let is_tet = cell[4] == TET_SENTINEL;
-        let edges: &[[usize; 2]] = if is_tet { &TET_EDGES } else { &HEX_EDGES };
+        let edges = cell_type(cell).edges();
 
         for (pi, &plane) in clip_planes.iter().enumerate() {
             // Collect one intersection point per edge that crosses this plane.
@@ -989,6 +1266,51 @@ pub(crate) fn extract_clipped_volume_faces(
 }
 
 // ---------------------------------------------------------------------------
+// VolumeMeshData helpers
+// ---------------------------------------------------------------------------
+
+impl VolumeMeshData {
+    /// Append a tetrahedral cell (4 vertices).
+    ///
+    /// Slots `[4..8]` are filled with [`CELL_SENTINEL`] automatically.
+    pub fn push_tet(&mut self, a: u32, b: u32, c: u32, d: u32) {
+        self.cells.push([
+            a, b, c, d,
+            CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL,
+        ]);
+    }
+
+    /// Append a pyramidal cell (square base + apex, 5 vertices).
+    ///
+    /// `base` holds the four base vertices in VTK order (counter-clockwise
+    /// when viewed from outside the cell); `apex` is the tip vertex.
+    /// Slots `[5..8]` are filled with [`CELL_SENTINEL`] automatically.
+    pub fn push_pyramid(&mut self, base: [u32; 4], apex: u32) {
+        self.cells.push([
+            base[0], base[1], base[2], base[3], apex,
+            CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL,
+        ]);
+    }
+
+    /// Append a wedge (triangular prism) cell (6 vertices).
+    ///
+    /// `tri0` and `tri1` are the bottom and top triangular faces; vertex
+    /// `tri1[i]` is directly above `tri0[i]`, forming the three lateral quad
+    /// faces.  Slots `[6..8]` are filled with [`CELL_SENTINEL`] automatically.
+    pub fn push_wedge(&mut self, tri0: [u32; 3], tri1: [u32; 3]) {
+        self.cells.push([
+            tri0[0], tri0[1], tri0[2], tri1[0], tri1[1], tri1[2],
+            CELL_SENTINEL, CELL_SENTINEL,
+        ]);
+    }
+
+    /// Append a hexahedral cell (8 vertices, VTK ordering).
+    pub fn push_hex(&mut self, verts: [u32; 8]) {
+        self.cells.push(verts);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1018,10 +1340,10 @@ mod tests {
                 1,
                 2,
                 3,
-                TET_SENTINEL,
-                TET_SENTINEL,
-                TET_SENTINEL,
-                TET_SENTINEL,
+                CELL_SENTINEL,
+                CELL_SENTINEL,
+                CELL_SENTINEL,
+                CELL_SENTINEL,
             ]],
             ..Default::default()
         }
@@ -1044,20 +1366,20 @@ mod tests {
                     1,
                     2,
                     3,
-                    TET_SENTINEL,
-                    TET_SENTINEL,
-                    TET_SENTINEL,
-                    TET_SENTINEL,
+                    CELL_SENTINEL,
+                    CELL_SENTINEL,
+                    CELL_SENTINEL,
+                    CELL_SENTINEL,
                 ],
                 [
                     0,
                     2,
                     1,
                     4,
-                    TET_SENTINEL,
-                    TET_SENTINEL,
-                    TET_SENTINEL,
-                    TET_SENTINEL,
+                    CELL_SENTINEL,
+                    CELL_SENTINEL,
+                    CELL_SENTINEL,
+                    CELL_SENTINEL,
                 ],
             ],
             ..Default::default()
@@ -1115,10 +1437,10 @@ mod tests {
                             cube_verts[tet[1]],
                             cube_verts[tet[2]],
                             cube_verts[tet[3]],
-                            TET_SENTINEL,
-                            TET_SENTINEL,
-                            TET_SENTINEL,
-                            TET_SENTINEL,
+                            CELL_SENTINEL,
+                            CELL_SENTINEL,
+                            CELL_SENTINEL,
+                            CELL_SENTINEL,
                         ]);
                     }
                 }
@@ -1172,10 +1494,10 @@ mod tests {
                             cube_verts[tet[1]],
                             cube_verts[tet[2]],
                             cube_verts[tet[3]],
-                            TET_SENTINEL,
-                            TET_SENTINEL,
-                            TET_SENTINEL,
-                            TET_SENTINEL,
+                            CELL_SENTINEL,
+                            CELL_SENTINEL,
+                            CELL_SENTINEL,
+                            CELL_SENTINEL,
                         ]);
                     }
                 }

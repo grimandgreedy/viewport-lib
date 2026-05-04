@@ -17,7 +17,7 @@ use crate::App;
 use eframe::egui;
 use viewport_lib::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColormap, ColormapId, GlyphItem,
-    PointCloudItem, SceneRenderItem, TET_SENTINEL, ViewportRenderer, VolumeMeshData,
+    PointCloudItem, SceneRenderItem, CELL_SENTINEL, ViewportRenderer, VolumeMeshData,
     volume_mesh_cell_vectors_to_glyphs, volume_mesh_vertex_vectors_to_glyphs,
 };
 
@@ -111,7 +111,7 @@ fn vertex_radial_vectors(positions: &[[f32; 3]]) -> Vec<[f32; 3]> {
 fn cell_radial_vectors(data: &VolumeMeshData) -> Vec<[f32; 3]> {
     data.cells.iter().map(|cell| {
         let valid: Vec<usize> = cell.iter()
-            .filter(|&&i| i != TET_SENTINEL && (i as usize) < data.positions.len())
+            .filter(|&&i| i != CELL_SENTINEL && (i as usize) < data.positions.len())
             .map(|&i| i as usize).collect();
         if valid.is_empty() { return [0.0, 1.0, 0.0]; }
         let inv = 1.0 / valid.len() as f32;

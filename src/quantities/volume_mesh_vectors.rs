@@ -13,7 +13,7 @@
 //! One world-space vector per cell (tet or hex). Glyphs are placed at cell centroids.
 //! Use [`volume_mesh_cell_vectors_to_glyphs`].
 
-use crate::resources::volume_mesh::{TET_SENTINEL, VolumeMeshData};
+use crate::resources::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
 use crate::GlyphItem;
 
 /// Convert per-vertex world-space vectors on a volume mesh to a [`GlyphItem`].
@@ -71,10 +71,10 @@ pub fn volume_mesh_cell_vectors_to_glyphs(
 
     for c in 0..n {
         let cell = &data.cells[c];
-        // Collect valid vertex indices (filter out TET_SENTINEL).
+        // Collect valid vertex indices (filter out CELL_SENTINEL).
         let valid: Vec<usize> = cell
             .iter()
-            .filter(|&&idx| idx != TET_SENTINEL)
+            .filter(|&&idx| idx != CELL_SENTINEL)
             .map(|&idx| idx as usize)
             .filter(|&idx| idx < data.positions.len())
             .collect();
@@ -149,7 +149,7 @@ mod tests {
                 [0.0, 4.0, 0.0],
                 [0.0, 0.0, 4.0],
             ],
-            cells: vec![[0, 1, 2, 3, TET_SENTINEL, TET_SENTINEL, TET_SENTINEL, TET_SENTINEL]],
+            cells: vec![[0, 1, 2, 3, CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL]],
             cell_scalars: HashMap::new(),
             cell_colors: HashMap::new(),
         };
