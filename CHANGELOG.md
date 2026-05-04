@@ -1,20 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
 ## [0.12.1]
 
-### Breaking changes
-- `BackfacePolicy::Pattern` is now a tuple variant wrapping `PatternConfig` instead of an inline struct. Migrate by wrapping the fields:
-  ```rust
-  // Before
-  BackfacePolicy::Pattern { pattern: BackfacePattern::Checker, color: [0.9, 0.2, 0.1] }
-  // After
-  BackfacePolicy::Pattern(PatternConfig { pattern: BackfacePattern::Checker, color: [0.9, 0.2, 0.1], ..Default::default() })
-  ```
 
 ### Features
 - `PatternConfig`: new struct carrying pattern, color, and `scale` (cells across the object's longest world-space bounding-box dimension, default 8.0). Pattern density is now object-relative — a `scale` of 8.0 produces 8 cells across the object regardless of mesh units or physical size.
 - Volume mesh filled clip: clipping a `VolumeMeshData` now produces real interior cross-sections instead of an open shell. Boundary faces on the kept side are preserved; intersected cells contribute CPU-generated section polygons coloured by per-cell scalar or direct-colour data. Supports multiple simultaneous clip planes via the same `[nx, ny, nz, d]` encoding used by `ClipPlanesUniform`.
   - New `ViewportGpuResources` methods: `upload_clipped_volume_mesh_data` and `replace_clipped_volume_mesh_data` for per-frame GPU slot management.
+- `VolumeMeshData` now supports pyramid (5-vertex) and wedge/triangular-prism (6-vertex) cells in addition to tets and hexes. Both cell types participate fully in boundary extraction, clipping, and per-cell scalar/color attribute remapping.
+- New `VolumeMeshData` push helpers: `push_tet`, `push_pyramid`, `push_wedge`, `push_hex`. Each method fills sentinel slots automatically, removing the footgun of manually padding the 8-slot cell array.
 - `ClipObject`: two new fields:
   - `edge_color: Option<[f32; 4]>` — independent RGBA colour for the plane border edge. When set, the edge uses this colour instead of deriving from `color`, allowing a visible outline with a fully transparent fill.
   - `clip_geometry: bool` — when `false`, the object renders its visual indicator but does not contribute to the GPU clip-plane uniform. Default: `true`. Allows a decorative plane edge with no effect on rendered geometry.
