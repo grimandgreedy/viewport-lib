@@ -1173,7 +1173,7 @@ impl RenderCamera {
             forward: forward.to_array(),
             orientation: cam.orientation,
             near: cam.znear,
-            far: cam.zfar,
+            far: cam.effective_zfar(),
             fov: cam.fov_y,
             aspect: cam.aspect,
         }

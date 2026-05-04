@@ -183,7 +183,7 @@ where
 
     let znear = camera.znear;
     // Effective far matches Camera::proj_matrix so NDC depths are consistent.
-    let effective_zfar = camera.zfar.max(camera.distance * 3.0);
+    let effective_zfar = camera.effective_zfar();
 
     // Finite-difference step for normal estimation.
     let eps = (options.hit_threshold * 100.0).max(1e-5_f32);

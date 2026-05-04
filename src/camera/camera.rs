@@ -252,11 +252,17 @@ impl Camera {
     /// In orthographic mode the viewing volume is derived from `distance` and
     /// `fov_y` so that switching between perspective and orthographic at the
     /// same distance produces a similar framing.
+    /// Effective far-plane distance : `zfar` floored to `distance * 3` so the
+    /// far plane always extends past the orbit centre regardless of zoom level.
+    pub fn effective_zfar(&self) -> f32 {
+        self.zfar.max(self.distance * 3.0)
+    }
+
     pub fn proj_matrix(&self) -> glam::Mat4 {
         // Ensure the far plane always extends past the orbit center regardless
         // of how far the user has zoomed out. zfar is a minimum; if the camera
         // distance exceeds it the stored value is stale.
-        let effective_zfar = self.zfar.max(self.distance * 3.0);
+        let effective_zfar = self.effective_zfar();
         match self.projection {
             Projection::Perspective => {
                 glam::Mat4::perspective_rh(self.fov_y, self.aspect, self.znear, effective_zfar)
