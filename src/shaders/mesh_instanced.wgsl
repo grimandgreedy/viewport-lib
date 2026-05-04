@@ -260,9 +260,13 @@ fn sample_shadow_csm(
 
     // Normal-offset depth bias: move the comparison point toward the light and
     // increase the offset at grazing angles to suppress sphere terminator acne.
+    // Scale by the cascade's world-space texel size so far cascades (coarser
+    // shadow map coverage) receive proportionally larger bias and do not
+    // self-shadow. cascade_vp[i][0][0] = 2 / world_extent_x for the ortho proj.
     let n_dot_l = dot(surface_normal, light_dir);
     let offset_sign = select(-1.0, 1.0, n_dot_l >= 0.0);
-    let normal_bias = mix(0.006, 0.0015, clamp(abs(n_dot_l), 0.0, 1.0));
+    let texel_world = 2.0 / (shadow_atlas.cascade_vp[cascade_idx][0][0] * shadow_atlas.atlas_size * (rect.z - rect.x));
+    let normal_bias = texel_world * mix(1.5, 0.5, clamp(abs(n_dot_l), 0.0, 1.0));
     let offset_world = world_pos + surface_normal * (offset_sign * normal_bias);
     let offset_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(offset_world, 1.0);
     let biased_depth = (offset_clip.xyz / offset_clip.w).z - lights_uniform.shadow_bias;
@@ -303,7 +307,9 @@ fn sample_shadow_csm(
         }
         return shadow / 32.0;
     } else {
-        let pcf_radius = 4.0 * texel_size;
+        // World-space constant PCF radius (~0.15m) -> same coverage per cascade,
+        // no seam snapping. See mesh.wgsl for derivation.
+        let pcf_radius = 0.15 * shadow_atlas.cascade_vp[cascade_idx][0][0] / 4.0;
         var shadow = 0.0;
         for (var i = 0u; i < 32u; i++) {
             let d = POISSON_DISK[i];
@@ -429,10 +435,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 
     // Use the geometric fragment normal for shadowing so the receiver test
     // matches the faceted mesh that was rasterized into the shadow atlas.
-    var shadow_normal = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
-    if dot(shadow_normal, N) < 0.0 {
-        shadow_normal = -shadow_normal;
-    }
+    // Use smooth vertex normal for shadow bias (see mesh.wgsl for rationale).
+    let shadow_normal = N;
 
     let V = normalize(camera.eye_pos - in.world_pos);
     let tint = vec4<f32>(1.0, 1.0, 1.0, 1.0);

@@ -306,9 +306,15 @@ fn sample_shadow_csm(
     // the receiver sample does not self-intersect the shadow caster. Increase
     // the offset near grazing angles, where curved surfaces are most prone to
     // shadow-terminator acne.
+    //
+    // Scale the bias by the cascade's world-space texel size so that far
+    // cascades (which cover much larger world areas per texel) get proportionally
+    // more bias. cascade_vp[i][0][0] = 2 / world_extent_x for the ortho proj,
+    // so world_per_texel = 2 / (scale * atlas_size * tile_fraction).
     let n_dot_l = dot(surface_normal, light_dir);
     let offset_sign = select(-1.0, 1.0, n_dot_l >= 0.0);
-    let normal_bias = mix(0.006, 0.0015, clamp(abs(n_dot_l), 0.0, 1.0));
+    let texel_world = 2.0 / (shadow_atlas.cascade_vp[cascade_idx][0][0] * shadow_atlas.atlas_size * (rect.z - rect.x));
+    let normal_bias = texel_world * mix(1.5, 0.5, clamp(abs(n_dot_l), 0.0, 1.0));
     let offset_world = world_pos + surface_normal * (offset_sign * normal_bias);
     let offset_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(offset_world, 1.0);
     let biased_depth = (offset_clip.xyz / offset_clip.w).z - lights_uniform.shadow_bias;
@@ -364,9 +370,14 @@ fn sample_shadow_csm(
         return shadow / 32.0;
     } else {
         // ---------------------------------------------------------------
-        // 32-sample Poisson-disk PCF at 4-texel radius, per-fragment rotation.
+        // 32-sample Poisson-disk PCF, per-fragment rotation.
+        // Radius is fixed in world-space (~0.15m) so the filter covers the
+        // same area in every cascade -> no seam snapping at cascade boundaries.
+        // Formula: world_radius * vp_x_scale / 4.0
+        //   where vp_x_scale = cascade_vp[i][0][0] = 2 / world_extent_x
+        //   and the /4 comes from: UV = world * tile_fraction(0.5) * vp_scale / 2.
         // ---------------------------------------------------------------
-        let pcf_radius = 4.0 * texel_size;
+        let pcf_radius = 0.15 * shadow_atlas.cascade_vp[cascade_idx][0][0] / 4.0;
         var shadow = 0.0;
         for (var i = 0u; i < 32u; i++) {
             let d = POISSON_DISK[i];
@@ -680,12 +691,12 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         return vec4<f32>(vis, obj_color.a);
     }
 
-    // Use the geometric fragment normal for shadowing so the receiver test
-    // matches the faceted mesh that was actually rasterized into the shadow map.
-    var shadow_normal = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
-    if dot(shadow_normal, N) < 0.0 {
-        shadow_normal = -shadow_normal;
-    }
+    // Use the smooth vertex normal for shadow bias. Screen-space derivatives
+    // (dpdx/dpdy) become unreliable when the surface covers few pixels (zoomed
+    // out) because edge fragments include helper invocations with undefined
+    // world_pos, producing garbage normals that flip offset_sign and cause
+    // self-shadowing. N is correctly interpolated and stable at all distances.
+    let shadow_normal = N;
 
     let V = normalize(camera.eye_pos - in.world_pos);
     let tint = vec4<f32>(1.0, 1.0, 1.0, 1.0);

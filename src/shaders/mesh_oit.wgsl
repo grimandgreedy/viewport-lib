@@ -269,7 +269,8 @@ fn sample_shadow_csm(
     let texel_size = 1.0 / shadow_atlas.atlas_size;
     let n_dot_l = dot(surface_normal, light_dir);
     let offset_sign = select(-1.0, 1.0, n_dot_l >= 0.0);
-    let normal_bias = mix(0.006, 0.0015, clamp(abs(n_dot_l), 0.0, 1.0));
+    let texel_world = 2.0 / (shadow_atlas.cascade_vp[cascade_idx][0][0] * shadow_atlas.atlas_size * (rect.z - rect.x));
+    let normal_bias = texel_world * mix(1.5, 0.5, clamp(abs(n_dot_l), 0.0, 1.0));
     let offset_world = world_pos + surface_normal * (offset_sign * normal_bias);
     let offset_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(offset_world, 1.0);
     let biased_depth = (offset_clip.xyz / offset_clip.w).z - lights_uniform.shadow_bias;
@@ -308,7 +309,9 @@ fn sample_shadow_csm(
         }
         return shadow / 32.0;
     } else {
-        let pcf_radius = 4.0 * texel_size;
+        // World-space constant PCF radius (~0.15m) -> same coverage per cascade,
+        // no seam snapping. See mesh.wgsl for derivation.
+        let pcf_radius = 0.15 * shadow_atlas.cascade_vp[cascade_idx][0][0] / 4.0;
         var shadow = 0.0;
         for (var i = 0u; i < 32u; i++) {
             let d = POISSON_DISK[i];
