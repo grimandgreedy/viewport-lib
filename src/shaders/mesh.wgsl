@@ -370,14 +370,9 @@ fn sample_shadow_csm(
         return shadow / 32.0;
     } else {
         // ---------------------------------------------------------------
-        // 32-sample Poisson-disk PCF, per-fragment rotation.
-        // Radius is fixed in world-space (~0.15m) so the filter covers the
-        // same area in every cascade -> no seam snapping at cascade boundaries.
-        // Formula: world_radius * vp_x_scale / 4.0
-        //   where vp_x_scale = cascade_vp[i][0][0] = 2 / world_extent_x
-        //   and the /4 comes from: UV = world * tile_fraction(0.5) * vp_scale / 2.
+        // 32-sample Poisson-disk PCF at 4-texel radius, per-fragment rotation.
         // ---------------------------------------------------------------
-        let pcf_radius = 0.15 * shadow_atlas.cascade_vp[cascade_idx][0][0] / 4.0;
+        let pcf_radius = 4.0 * texel_size;
         var shadow = 0.0;
         for (var i = 0u; i < 32u; i++) {
             let d = POISSON_DISK[i];

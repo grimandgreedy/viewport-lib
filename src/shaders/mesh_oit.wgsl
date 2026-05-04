@@ -309,9 +309,7 @@ fn sample_shadow_csm(
         }
         return shadow / 32.0;
     } else {
-        // World-space constant PCF radius (~0.15m) -> same coverage per cascade,
-        // no seam snapping. See mesh.wgsl for derivation.
-        let pcf_radius = 0.15 * shadow_atlas.cascade_vp[cascade_idx][0][0] / 4.0;
+        let pcf_radius = 4.0 * texel_size;
         var shadow = 0.0;
         for (var i = 0u; i < 32u; i++) {
             let d = POISSON_DISK[i];
