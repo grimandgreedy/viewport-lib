@@ -11,7 +11,7 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{Material, ViewportRenderer, scene::Scene};
+use viewport_lib::{BackfacePolicy, Material, ViewportRenderer, scene::Scene};
 
 impl App {
     pub(crate) fn build_ground_plane_scene(&mut self, renderer: &mut ViewportRenderer) {
@@ -34,6 +34,7 @@ impl App {
             let mut mat = Material::from_color(color);
             mat.roughness = 0.5;
             mat.metallic = 0.1;
+            mat.backface_policy = BackfacePolicy::Identical;
             self.gp_scene.add_named(
                 name,
                 Some(sphere_id),

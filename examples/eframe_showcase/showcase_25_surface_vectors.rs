@@ -15,7 +15,7 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    GlyphItem, LightingSettings, MeshData, SceneRenderItem,
+    BackfacePolicy, GlyphItem, LightingSettings, MeshData, SceneRenderItem,
     quantities::{edge_one_form_to_glyphs, face_intrinsic_to_glyphs, vertex_intrinsic_to_glyphs},
 };
 
@@ -198,6 +198,7 @@ impl App {
         };
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
+        item.material.backface_policy = BackfacePolicy::Identical;
         item
     }
 

@@ -508,8 +508,15 @@ fn main() -> eframe::Result {
                 vm_mode: showcase_26_volume_mesh::VmMode::Hex,
                 vm_tet_index: MeshId::from_index(0),
                 vm_hex_index: MeshId::from_index(0),
+                vm_tet_small_index: MeshId::from_index(0),
+                vm_tet_sphere2_index: MeshId::from_index(0),
+                vm_tet_box_index: MeshId::from_index(0),
                 vm_colormap: BuiltinColormap::Viridis,
                 vm_field: showcase_26_volume_mesh::VmField::Latitude,
+                vm_wireframe: false,
+                vm_clip_on: true,
+                vm_clip_axis: showcase_26_volume_mesh::VmClipAxis::Y,
+                vm_clip_offset: 0.0,
 
                 cnq_mode: showcase_28_curve_network_quantities::CnqMode::EdgeScalar,
                 cnq_line_width: 4.0,
@@ -1013,8 +1020,15 @@ pub(crate) struct App {
     vm_mode: showcase_26_volume_mesh::VmMode,
     vm_tet_index: MeshId,
     vm_hex_index: MeshId,
+    vm_tet_small_index: MeshId,
+    vm_tet_sphere2_index: MeshId,
+    vm_tet_box_index: MeshId,
     vm_colormap: BuiltinColormap,
     vm_field: showcase_26_volume_mesh::VmField,
+    vm_wireframe: bool,
+    vm_clip_on: bool,
+    vm_clip_axis: showcase_26_volume_mesh::VmClipAxis,
+    vm_clip_offset: f32,
 
     // --- Showcase 28 ---
     cnq_mode: showcase_28_curve_network_quantities::CnqMode,
@@ -3899,6 +3913,9 @@ impl App {
         if self.mode == ShowcaseMode::PickLevels {
             fd.viewport.wireframe_mode = self.pl_wireframe;
         }
+        if self.mode == ShowcaseMode::VolumeMesh {
+            fd.viewport.wireframe_mode = self.vm_wireframe;
+        }
         fd.viewport.show_grid = false;
         fd.viewport.show_axes_indicator = true;
         fd.viewport.background_color = bg_color;
@@ -3924,12 +3941,18 @@ impl App {
         if self.mode == ShowcaseMode::BackfacePolicy {
             adv_clip_objects.extend(self.sa_clip_objects());
         }
+        if self.mode == ShowcaseMode::VolumeMesh {
+            adv_clip_objects.extend(self.vm_clip_objects());
+        }
         fd.effects.clip_objects = adv_clip_objects;
         if self.mode == ShowcaseMode::NormalMaps {
             fd.effects.cap_fill_enabled = self.nm_cap_fill;
         }
         // Showcase 24 exists to show back face policies : cap fill would hide them.
         if self.mode == ShowcaseMode::BackfacePolicy {
+            fd.effects.cap_fill_enabled = false;
+        }
+        if self.mode == ShowcaseMode::VolumeMesh {
             fd.effects.cap_fill_enabled = false;
         }
         fd.interaction.gizmo_model = gizmo_model;

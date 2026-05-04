@@ -2,16 +2,17 @@
 //!
 //! Demonstrates Phase 9 : `VolumeMeshData` topology processing.
 //!
-//! A 3×3×3 structured grid of cells is projected onto a sphere.  The renderer
-//! sees only the **boundary surface** : interior faces shared by two cells are
-//! discarded automatically by [`upload_volume_mesh_data`].  Per-cell scalars
-//! and colors are remapped to the boundary faces so the existing Phase 2
-//! face-coloring path applies colormaps cell-by-cell with no new GPU work.
+//! A 3×3×3 structured grid of cells is visualised via its extracted boundary.
+//! Interior faces shared by two cells are discarded automatically by
+//! [`upload_volume_mesh_data`]. Per-cell scalars and colors are remapped to the
+//! boundary faces so the existing Phase 2 face-coloring path applies colormaps
+//! cell-by-cell with no new GPU work.
 //!
 //! ## Two modes
-//! - **Hex sphere** : 27 hexahedral cells; boundary = 54 quads = 108 triangles.
+//! - **Hex sphere** : 27 hexahedral cells mapped through a cube-to-sphere warp;
+//!   boundary = 54 quads = 108 triangles.
 //! - **Tet sphere** : same grid split into 6 tets per cube (Freudenthal) -> 162 tets;
-//!   boundary = 54 triangles (much coarser faceting, making tet structure clear).
+//!   boundary = 108 triangles with a different surface triangulation.
 //!
 //! ## Scalar fields
 //! - *Latitude*: normalised Y elevation on the sphere (cold poles, warm equator).
@@ -26,8 +27,9 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    AttributeKind, AttributeRef, BuiltinColormap, ColormapId, LightingSettings, SceneRenderItem,
-    TET_SENTINEL, ViewportRenderer, VolumeMeshData,
+    AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap, ColormapId, LightingSettings,
+    SceneRenderItem,
+    ClipObject, ClipShape, TET_SENTINEL, ViewportRenderer, VolumeMeshData,
 };
 
 // ---------------------------------------------------------------------------
@@ -37,10 +39,16 @@ use viewport_lib::{
 /// Which cell type is currently displayed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum VmMode {
-    /// 27 hexahedral cells.
+    /// 27 hexahedral cells on a sphere.
     Hex,
-    /// 135 tetrahedral cells (5 tets per cube).
+    /// 162 tetrahedral cells on a sphere (6 tets per cube, 3×3×3 grid).
     Tet,
+    /// 6 tet cells from a single unit cube (no projection) - baseline check.
+    TetSmall,
+    /// 48 tet cells on a 2×2×2 sphere (smaller grid).
+    TetSphere2,
+    /// 162 tet cells, axis-aligned box (no sphere projection).
+    TetBox,
 }
 
 /// Scalar field to colour by.
@@ -54,6 +62,14 @@ pub(crate) enum VmField {
     Radial,
     /// Direct per-cell RGBA colour (no colormap).
     DirectColor,
+}
+
+/// Axis for the showcase clip plane.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum VmClipAxis {
+    X,
+    Y,
+    Z,
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +114,40 @@ fn sphere_vertex_positions() -> Vec<[f32; 3]> {
                 let len = (x * x + y * y + z * z).sqrt();
                 let s = SPHERE_R / len; // always > 0 (min len ≈ 0.866)
                 pos.push([x * s, y * s, z * s]);
+            }
+        }
+    }
+    pos
+}
+
+/// Map a cube point in `[-1, 1]^3` to a sphere using the standard
+/// equal-angle cube-to-sphere approximation.
+fn cube_to_sphere([x, y, z]: [f32; 3]) -> [f32; 3] {
+    let x2 = x * x;
+    let y2 = y * y;
+    let z2 = z * z;
+    [
+        x * (1.0 - 0.5 * (y2 + z2) + (y2 * z2) / 3.0).sqrt(),
+        y * (1.0 - 0.5 * (z2 + x2) + (z2 * x2) / 3.0).sqrt(),
+        z * (1.0 - 0.5 * (x2 + y2) + (x2 * y2) / 3.0).sqrt(),
+    ]
+}
+
+/// Generate a 4×4×4 cube lattice and warp it into a sphere while preserving
+/// the interior layers, so the hex cells remain valid volume elements.
+fn cube_sphere_vertex_positions() -> Vec<[f32; 3]> {
+    let mut pos = Vec::with_capacity(GRID_V * GRID_V * GRID_V);
+
+    for iz in 0..GRID_V {
+        for iy in 0..GRID_V {
+            for ix in 0..GRID_V {
+                let p = [
+                    (ix as f32 - 1.5) / 1.5,
+                    (iy as f32 - 1.5) / 1.5,
+                    (iz as f32 - 1.5) / 1.5,
+                ];
+                let s = cube_to_sphere(p);
+                pos.push([s[0] * SPHERE_R, s[1] * SPHERE_R, s[2] * SPHERE_R]);
             }
         }
     }
@@ -290,15 +340,152 @@ fn build_tet_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
 }
 
 // ---------------------------------------------------------------------------
+// Diagnostic builders
+// ---------------------------------------------------------------------------
+
+/// Generate vertex positions for an N×N×N axis-aligned grid (no projection).
+/// Vertices at integer coordinates [0, N].
+fn box_vertex_positions(n: usize) -> Vec<[f32; 3]> {
+    let nv = n + 1;
+    let mut pos = Vec::with_capacity(nv * nv * nv);
+    for iz in 0..nv {
+        for iy in 0..nv {
+            for ix in 0..nv {
+                pos.push([ix as f32, iy as f32, iz as f32]);
+            }
+        }
+    }
+    pos
+}
+
+/// Vertex index for an N+1 vertex-per-axis grid.
+fn vid_n(ix: usize, iy: usize, iz: usize, nv: usize) -> u32 {
+    (iz * nv * nv + iy * nv + ix) as u32
+}
+
+/// Build a tet mesh from an arbitrary grid of size N using the given vertex positions.
+fn build_tet_mesh_n(n: usize, positions: &[[f32; 3]]) -> VolumeMeshData {
+    let nv = n + 1;
+    let total_cells = n * n * n * 6;
+    let mut cells: Vec<[u32; 8]> = Vec::with_capacity(total_cells);
+    let mut lat_scalars: Vec<f32> = Vec::with_capacity(total_cells);
+    let mut lon_scalars: Vec<f32> = Vec::with_capacity(total_cells);
+    let mut radial_scalars: Vec<f32> = Vec::with_capacity(total_cells);
+    let mut direct_colors: Vec<[f32; 4]> = Vec::with_capacity(total_cells);
+
+    for iz in 0..n {
+        for iy in 0..n {
+            for ix in 0..n {
+                let cube_verts = [
+                    vid_n(ix, iy, iz, nv),
+                    vid_n(ix + 1, iy, iz, nv),
+                    vid_n(ix + 1, iy, iz + 1, nv),
+                    vid_n(ix, iy, iz + 1, nv),
+                    vid_n(ix, iy + 1, iz, nv),
+                    vid_n(ix + 1, iy + 1, iz, nv),
+                    vid_n(ix + 1, iy + 1, iz + 1, nv),
+                    vid_n(ix, iy + 1, iz + 1, nv),
+                ];
+
+                // Centroid: average of all 8 cube vertices.
+                let mut cx = 0.0f32;
+                let mut cy = 0.0f32;
+                let mut cz = 0.0f32;
+                for &vi in &cube_verts {
+                    let p = positions[vi as usize];
+                    cx += p[0];
+                    cy += p[1];
+                    cz += p[2];
+                }
+                cx /= 8.0;
+                cy /= 8.0;
+                cz /= 8.0;
+                let raw_len = (cx * cx + cy * cy + cz * cz).sqrt().max(1e-6);
+
+                let lat = cy / raw_len * 0.5 + 0.5;
+                let lon = cz.atan2(cx) / std::f32::consts::TAU + 0.5;
+                let color = hsv_to_rgba(lon, 0.8, 0.85);
+
+                for tet in &TET_LOCAL {
+                    cells.push([
+                        cube_verts[tet[0]],
+                        cube_verts[tet[1]],
+                        cube_verts[tet[2]],
+                        cube_verts[tet[3]],
+                        TET_SENTINEL,
+                        TET_SENTINEL,
+                        TET_SENTINEL,
+                        TET_SENTINEL,
+                    ]);
+                    lat_scalars.push(lat);
+                    lon_scalars.push(lon);
+                    radial_scalars.push(raw_len);
+                    direct_colors.push(color);
+                }
+            }
+        }
+    }
+
+    let mut data = VolumeMeshData::default();
+    data.positions = positions.to_vec();
+    data.cells = cells;
+    data.cell_scalars
+        .insert("latitude".to_string(), lat_scalars);
+    data.cell_scalars
+        .insert("longitude".to_string(), lon_scalars);
+    data.cell_scalars
+        .insert("radial".to_string(), radial_scalars);
+    data.cell_colors.insert("direct".to_string(), direct_colors);
+    data
+}
+
+/// Single 1×1×1 cube split into 6 tets, no projection.
+fn build_tet_small() -> VolumeMeshData {
+    let positions = box_vertex_positions(1);
+    build_tet_mesh_n(1, &positions)
+}
+
+/// 2×2×2 tet grid projected onto a sphere.
+///
+/// Vertices placed at half-integer offsets {-1.5, -0.5, 0.5} so no vertex
+/// falls at the origin (safe for normalization).
+fn build_tet_sphere2() -> VolumeMeshData {
+    const N2: usize = 2;
+    const NV2: usize = N2 + 1;
+    let mut positions = Vec::with_capacity(NV2 * NV2 * NV2);
+    for iz in 0..NV2 {
+        for iy in 0..NV2 {
+            for ix in 0..NV2 {
+                // Half-integer offset: same pattern as sphere_vertex_positions().
+                let x = ix as f32 - 1.5;
+                let y = iy as f32 - 1.5;
+                let z = iz as f32 - 1.5;
+                let len = (x * x + y * y + z * z).sqrt();
+                let s = SPHERE_R / len;
+                positions.push([x * s, y * s, z * s]);
+            }
+        }
+    }
+    build_tet_mesh_n(N2, &positions)
+}
+
+/// 3×3×3 tet grid as a flat axis-aligned box (no sphere projection).
+fn build_tet_box() -> VolumeMeshData {
+    let positions = box_vertex_positions(GRID_N);
+    build_tet_mesh_n(GRID_N, &positions)
+}
+
+// ---------------------------------------------------------------------------
 // App impl
 // ---------------------------------------------------------------------------
 
 impl App {
-    /// Upload both hex and tet sphere meshes.
+    /// Upload all volume mesh variants.
     pub(crate) fn build_vm_scene(&mut self, renderer: &mut ViewportRenderer) {
+        let hex_positions = cube_sphere_vertex_positions();
         let positions = sphere_vertex_positions();
 
-        let hex_data = build_hex_mesh(&positions);
+        let hex_data = build_hex_mesh(&hex_positions);
         self.vm_hex_index = renderer
             .resources_mut()
             .upload_volume_mesh_data(&self.device, &hex_data)
@@ -309,6 +496,24 @@ impl App {
             .resources_mut()
             .upload_volume_mesh_data(&self.device, &tet_data)
             .expect("vm tet upload");
+
+        let tet_small_data = build_tet_small();
+        self.vm_tet_small_index = renderer
+            .resources_mut()
+            .upload_volume_mesh_data(&self.device, &tet_small_data)
+            .expect("vm tet small upload");
+
+        let tet_sphere2_data = build_tet_sphere2();
+        self.vm_tet_sphere2_index = renderer
+            .resources_mut()
+            .upload_volume_mesh_data(&self.device, &tet_sphere2_data)
+            .expect("vm tet sphere2 upload");
+
+        let tet_box_data = build_tet_box();
+        self.vm_tet_box_index = renderer
+            .resources_mut()
+            .upload_volume_mesh_data(&self.device, &tet_box_data)
+            .expect("vm tet box upload");
 
         self.vm_built = true;
     }
@@ -322,6 +527,9 @@ impl App {
         let mesh_id = match self.vm_mode {
             VmMode::Hex => self.vm_hex_index,
             VmMode::Tet => self.vm_tet_index,
+            VmMode::TetSmall => self.vm_tet_small_index,
+            VmMode::TetSphere2 => self.vm_tet_sphere2_index,
+            VmMode::TetBox => self.vm_tet_box_index,
         };
 
         let (active_attribute, colormap_id) = match self.vm_field {
@@ -359,7 +567,29 @@ impl App {
         item.mesh_id = mesh_id;
         item.active_attribute = active_attribute;
         item.colormap_id = colormap_id;
+        item.material.backface_policy = BackfacePolicy::Identical;
         vec![item]
+    }
+
+    pub(crate) fn vm_clip_objects(&self) -> Vec<ClipObject> {
+        if !self.vm_clip_on {
+            return vec![];
+        }
+
+        let normal = match self.vm_clip_axis {
+            VmClipAxis::X => [1.0, 0.0, 0.0],
+            VmClipAxis::Y => [0.0, 1.0, 0.0],
+            VmClipAxis::Z => [0.0, 0.0, 1.0],
+        };
+        let mut clip = ClipObject::plane(normal, self.vm_clip_offset);
+        clip.shape = ClipShape::Plane {
+            normal,
+            distance: self.vm_clip_offset,
+            cap_color: Some([0.72, 0.78, 0.86, 1.0]),
+        };
+        clip.color = Some([0.85, 0.9, 1.0, 0.18]);
+        clip.extent = 3.5;
+        vec![clip]
     }
 
     /// Lighting for the volume mesh showcase.
@@ -378,9 +608,12 @@ impl App {
 
     pub(crate) fn controls_volume_mesh(&mut self, ui: &mut egui::Ui) {
         ui.label("Cell type:");
-        ui.horizontal(|ui| {
-            ui.radio_value(&mut self.vm_mode, VmMode::Hex, "Hex (27 cells)");
-            ui.radio_value(&mut self.vm_mode, VmMode::Tet, "Tet (162 cells)");
+        ui.horizontal_wrapped(|ui| {
+            ui.radio_value(&mut self.vm_mode, VmMode::Hex, "Hex sphere (27)");
+            ui.radio_value(&mut self.vm_mode, VmMode::Tet, "Tet sphere 3³ (162)");
+            ui.radio_value(&mut self.vm_mode, VmMode::TetSphere2, "Tet sphere 2³ (48)");
+            ui.radio_value(&mut self.vm_mode, VmMode::TetBox, "Tet box 3³ (162)");
+            ui.radio_value(&mut self.vm_mode, VmMode::TetSmall, "Tet cube 1³ (6)");
         });
 
         ui.separator();
@@ -415,11 +648,33 @@ impl App {
         }
 
         ui.separator();
-        let n_cells = match self.vm_mode {
-            VmMode::Hex => 27,
-            VmMode::Tet => 162,
+        ui.checkbox(&mut self.vm_wireframe, "Wireframe");
+
+        ui.separator();
+        ui.checkbox(&mut self.vm_clip_on, "Clip plane");
+        if self.vm_clip_on {
+            ui.horizontal(|ui| {
+                ui.radio_value(&mut self.vm_clip_axis, VmClipAxis::X, "X");
+                ui.radio_value(&mut self.vm_clip_axis, VmClipAxis::Y, "Y");
+                ui.radio_value(&mut self.vm_clip_axis, VmClipAxis::Z, "Z");
+            });
+            ui.add(
+                egui::Slider::new(&mut self.vm_clip_offset, -1.75..=1.75)
+                    .text("Offset")
+                    .step_by(0.01),
+            );
+            ui.label("Keeps the positive side of the plane to reveal interior cells.");
+        }
+
+        ui.separator();
+        let (n_cells, note) = match self.vm_mode {
+            VmMode::Hex => (27, "3³ hexes, cube-to-sphere warp"),
+            VmMode::Tet => (162, "3³×6 tets on sphere"),
+            VmMode::TetSphere2 => (48, "2³×6 tets on sphere"),
+            VmMode::TetBox => (162, "3³×6 tets, flat box"),
+            VmMode::TetSmall => (6, "1³×6 tets, unit cube"),
         };
-        ui.label(format!("{n_cells} cells total · boundary surface only"));
+        ui.label(format!("{n_cells} cells · {note}"));
         ui.label("Interior faces are automatically discarded.");
     }
 }
