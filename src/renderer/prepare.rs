@@ -1497,7 +1497,11 @@ impl ViewportRenderer {
                 let mut count = 0u32;
                 let mut clip_vol_uniform: ClipVolumeUniform = bytemuck::Zeroable::zeroed(); // volume_type=0
 
-                for obj in viewport_fx.clip_objects.iter().filter(|o| o.enabled) {
+                for obj in viewport_fx
+                    .clip_objects
+                    .iter()
+                    .filter(|o| o.enabled && o.clip_geometry)
+                {
                     match obj.shape {
                         ClipShape::Plane {
                             normal, distance, ..
@@ -1808,9 +1812,10 @@ impl ViewportRenderer {
         let mut clip_plane_fill_buffers = Vec::new();
         let mut clip_plane_line_buffers = Vec::new();
         for obj in viewport_fx.clip_objects.iter().filter(|o| o.enabled) {
-            let Some(base_color) = obj.color else {
+            // Skip if neither fill nor edge color is set.
+            if obj.color.is_none() && obj.edge_color.is_none() {
                 continue;
-            };
+            }
             if let ClipShape::Plane {
                 normal, distance, ..
             } = obj.shape
@@ -1822,37 +1827,48 @@ impl ViewportRenderer {
                 let active = obj.active;
                 let hovered = obj.hovered || active;
 
-                let fill_color = if active {
-                    [
-                        base_color[0] * 0.5,
-                        base_color[1] * 0.5,
-                        base_color[2] * 0.5,
-                        base_color[3] * 0.5,
-                    ]
-                } else if hovered {
-                    [
-                        base_color[0] * 0.8,
-                        base_color[1] * 0.8,
-                        base_color[2] * 0.8,
-                        base_color[3] * 0.6,
-                    ]
+                // Fill quad: derived from `color`; transparent if not set.
+                let fill_color = if let Some(base_color) = obj.color {
+                    if active {
+                        [
+                            base_color[0] * 0.5,
+                            base_color[1] * 0.5,
+                            base_color[2] * 0.5,
+                            base_color[3] * 0.5,
+                        ]
+                    } else if hovered {
+                        [
+                            base_color[0] * 0.8,
+                            base_color[1] * 0.8,
+                            base_color[2] * 0.8,
+                            base_color[3] * 0.6,
+                        ]
+                    } else {
+                        [
+                            base_color[0] * 0.5,
+                            base_color[1] * 0.5,
+                            base_color[2] * 0.5,
+                            base_color[3] * 0.3,
+                        ]
+                    }
                 } else {
-                    [
-                        base_color[0] * 0.5,
-                        base_color[1] * 0.5,
-                        base_color[2] * 0.5,
-                        base_color[3] * 0.3,
-                    ]
+                    [0.0, 0.0, 0.0, 0.0]
                 };
+
+                // Border edge: use `edge_color` when set, otherwise derive from `color`.
+                let border_base = obj
+                    .edge_color
+                    .or(obj.color)
+                    .unwrap_or([1.0, 1.0, 1.0, 1.0]);
                 let border_color = if active {
-                    [base_color[0], base_color[1], base_color[2], 0.9]
+                    [border_base[0], border_base[1], border_base[2], 0.9]
                 } else if hovered {
-                    [base_color[0], base_color[1], base_color[2], 0.8]
+                    [border_base[0], border_base[1], border_base[2], 0.8]
                 } else {
                     [
-                        base_color[0] * 0.9,
-                        base_color[1] * 0.9,
-                        base_color[2] * 0.9,
+                        border_base[0] * 0.9,
+                        border_base[1] * 0.9,
+                        border_base[2] * 0.9,
                         0.6,
                     ]
                 };
@@ -1866,10 +1882,12 @@ impl ViewportRenderer {
                     _hovered: hovered,
                     _active: active,
                 };
-                clip_plane_fill_buffers.push(
-                    self.resources
-                        .create_clip_plane_fill_overlay(device, &overlay),
-                );
+                if obj.color.is_some() {
+                    clip_plane_fill_buffers.push(
+                        self.resources
+                            .create_clip_plane_fill_overlay(device, &overlay),
+                    );
+                }
                 clip_plane_line_buffers.push(
                     self.resources
                         .create_clip_plane_line_overlay(device, &overlay),
@@ -1878,6 +1896,7 @@ impl ViewportRenderer {
                 // Box/Sphere: generate wireframe polyline.
                 // ensure_polyline_pipeline must be called before upload_polyline; it is a
                 // no-op if already initialised, so calling it here is always safe.
+                let base_color = obj.color.unwrap_or([1.0, 1.0, 1.0, 1.0]);
                 self.resources.ensure_polyline_pipeline(device);
                 match obj.shape {
                     ClipShape::Box {

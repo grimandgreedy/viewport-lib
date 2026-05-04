@@ -517,6 +517,8 @@ fn main() -> eframe::Result {
                 vm_clip_on: true,
                 vm_clip_axis: showcase_26_volume_mesh::VmClipAxis::Y,
                 vm_clip_offset: 0.0,
+                vm_clip_angle: 0.0,
+                vm_clipped_index: None,
 
                 cnq_mode: showcase_28_curve_network_quantities::CnqMode::EdgeScalar,
                 cnq_line_width: 4.0,
@@ -1029,6 +1031,10 @@ pub(crate) struct App {
     vm_clip_on: bool,
     vm_clip_axis: showcase_26_volume_mesh::VmClipAxis,
     vm_clip_offset: f32,
+    /// Tilt angle in degrees: rotates the clip plane normal away from the selected axis.
+    vm_clip_angle: f32,
+    /// GPU mesh slot for the CPU-clipped volume mesh; allocated lazily on first clip.
+    vm_clipped_index: Option<MeshId>,
 
     // --- Showcase 28 ---
     cnq_mode: showcase_28_curve_network_quantities::CnqMode,
@@ -3744,6 +3750,43 @@ impl App {
             }
 
             ShowcaseMode::VolumeMesh => {
+                // Per-frame CPU clip section: regenerate the clipped mesh slot
+                // so section faces reflect the current plane position.
+                if self.vm_clip_on && self.vm_built {
+                    if let Some(rs) = frame.wgpu_render_state() {
+                        let mut guard = rs.renderer.write();
+                        if let Some(renderer) =
+                            guard.callback_resources.get_mut::<ViewportRenderer>()
+                        {
+                            let data = self.vm_active_data();
+                            let clip_planes = [self.vm_clip_plane()];
+                            match self.vm_clipped_index {
+                                None => {
+                                    if let Ok(id) = renderer
+                                        .resources_mut()
+                                        .upload_clipped_volume_mesh_data(
+                                            &rs.device,
+                                            &data,
+                                            &clip_planes,
+                                        )
+                                    {
+                                        self.vm_clipped_index = Some(id);
+                                    }
+                                }
+                                Some(id) => {
+                                    let _ = renderer
+                                        .resources_mut()
+                                        .replace_clipped_volume_mesh_data(
+                                            &rs.device,
+                                            id,
+                                            &data,
+                                            &clip_planes,
+                                        );
+                                }
+                            }
+                        }
+                    }
+                }
                 let items = self.vm_scene_items();
                 (items, Some(BG_COLOR), App::vm_lighting(), 0, 0)
             }

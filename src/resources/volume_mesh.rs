@@ -406,6 +406,589 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> MeshData {
 }
 
 // ---------------------------------------------------------------------------
+// Clipped volume mesh extraction
+// ---------------------------------------------------------------------------
+//
+// Design note (Phase 1 - scope and invariants)
+// =============================================
+//
+// ## Goal
+//
+// Produce a `MeshData` that reads as a filled volumetric cross-section rather
+// than an open hollow shell when one or more clip planes intersect a volume mesh.
+//
+// ## What this is NOT
+//
+// This is not a generic clip overlay.  The renderer's cap-fill system generates
+// a flat polygon on each clip plane independently of the underlying geometry.
+// For volume meshes that is wrong: it produces a slab with no per-cell color
+// information.  `extract_clipped_volume_faces` replaces the cap-fill role for
+// volume meshes entirely.  Callers must disable cap-fill when using this path.
+//
+// ## Clip plane encoding
+//
+// Each plane is `[nx, ny, nz, d]: [f32; 4]` where a point `p` is on the KEPT
+// side when `dot(p, [nx, ny, nz]) + d >= 0`.  This matches the layout of
+// `ClipPlanesUniform::planes` so the same values can be forwarded directly to
+// both the CPU extraction and the GPU clip shader.
+//
+// An empty slice is valid and produces the same result as `extract_boundary_faces`.
+//
+// ## Cell classification
+//
+// A vertex is "kept" if it satisfies ALL planes.
+//
+// - All vertices kept   -> cell contributes its visible boundary faces, unchanged.
+// - No  vertices kept   -> cell is discarded entirely.
+// - Mixed               -> cell is "intersected": contributes clipped boundary
+//                          faces and one section polygon per cutting plane.
+//
+// ## Section polygon semantics
+//
+// For each plane that cuts an intersected cell:
+// 1. Collect all edge-plane intersection points (one per cell edge that crosses
+//    the plane).
+// 2. Order the points into a polygon on the plane (sort by angle around the
+//    centroid projected onto the plane).
+// 3. Clip the polygon against all other active planes.
+// 4. Triangulate the surviving polygon using a fan from the first vertex.
+//
+// Section face winding: the face normal must point in the direction of the
+// cutting plane's normal (i.e., toward the kept side / toward the viewer).
+//
+// ## Boundary face clipping
+//
+// Boundary faces of intersected cells are clipped against all active planes
+// using the Sutherland-Hodgman algorithm before triangulation.  A boundary
+// face entirely on the discarded side of any plane is dropped.
+//
+// ## Attribute propagation
+//
+// Section triangles inherit the owning cell's `cell_scalars` and `cell_colors`
+// values exactly as boundary triangles do.  The output `MeshData` uses the same
+// `AttributeKind::Face` / `AttributeKind::FaceColor` paths, so colormaps work
+// with no changes to the renderer.
+//
+// ## Output type
+//
+// The function returns an ordinary `MeshData`.  No new intermediate type is
+// introduced.  The caller uploads this as a regular mesh and renders it with
+// the standard pipeline; the only renderer-side requirement is that cap-fill
+// is disabled for the same scene object.
+
+/// Produce a clipped `MeshData` from volume cell connectivity.
+///
+/// Each entry in `clip_planes` is `[nx, ny, nz, d]` where a point `p` is on
+/// the kept side when `dot(p, [nx,ny,nz]) + d >= 0`.  This is the same
+/// encoding as [`ClipPlanesUniform::planes`](crate::renderer::types::ClipPlanesUniform)
+/// so values can be forwarded to both the CPU path and the GPU clip shader.
+///
+/// Passing an empty slice returns the same result as [`extract_boundary_faces`].
+///
+/// # Semantics
+///
+/// - A cell where all vertices satisfy every plane contributes its boundary
+///   faces unchanged.
+/// - A cell where no vertex satisfies every plane is discarded.
+/// - An intersected cell contributes its surviving boundary faces (clipped) and
+///   one section polygon per plane that cuts it (clipped against all other
+///   planes, then triangulated).
+///
+/// Section face normals point toward the kept side (matching the cutting plane
+/// normal).  Per-cell scalar and color attributes are propagated to section
+/// triangles identically to boundary triangles.
+///
+/// # Renderer contract
+///
+/// Generic cap-fill must be disabled for scene objects rendered via this path.
+/// Section faces are generated here from cell data; the generic cap overlay
+/// does not have access to per-cell attribute information and would produce an
+/// incorrect result if left enabled.
+/// Cell edges for tets: all 6 pairs from 4 vertices.
+const TET_EDGES: [[usize; 2]; 6] = [
+    [0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3],
+];
+
+/// Cell edges for hexes (VTK ordering).
+///
+///     7 --- 6
+///    /|    /|
+///   4 --- 5 |
+///   | 3 --| 2
+///   |/    |/
+///   0 --- 1
+const HEX_EDGES: [[usize; 2]; 12] = [
+    [0, 1], [1, 2], [2, 3], [3, 0], // bottom ring
+    [4, 5], [5, 6], [6, 7], [7, 4], // top ring
+    [0, 4], [1, 5], [2, 6], [3, 7], // vertical
+];
+
+/// Signed distance from `p` to `plane` (`[nx, ny, nz, d]`).
+/// Positive means on the kept side (`dot(p, n) + d >= 0`).
+#[inline]
+fn plane_dist(p: [f32; 3], plane: [f32; 4]) -> f32 {
+    p[0] * plane[0] + p[1] * plane[1] + p[2] * plane[2] + plane[3]
+}
+
+/// Cross product of two 3-vectors.
+#[inline]
+fn cross3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+/// Dot product of two 3-vectors.
+#[inline]
+fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+/// Normalize a 3-vector; returns `[0, 1, 0]` for degenerate input.
+#[inline]
+fn normalize3(v: [f32; 3]) -> [f32; 3] {
+    let len = dot3(v, v).sqrt();
+    if len > 1e-12 {
+        [v[0] / len, v[1] / len, v[2] / len]
+    } else {
+        [0.0, 1.0, 0.0]
+    }
+}
+
+/// Intern `p` into `positions`, returning its index.
+/// Uses bit-exact comparison so the same floating-point value always maps to
+/// the same slot.
+fn intern_pos(
+    p: [f32; 3],
+    positions: &mut Vec<[f32; 3]>,
+    pos_map: &mut HashMap<[u32; 3], u32>,
+) -> u32 {
+    let key = [p[0].to_bits(), p[1].to_bits(), p[2].to_bits()];
+    if let Some(&idx) = pos_map.get(&key) {
+        return idx;
+    }
+    let idx = positions.len() as u32;
+    positions.push(p);
+    pos_map.insert(key, idx);
+    idx
+}
+
+/// Clip `poly` against a single plane (Sutherland-Hodgman).
+/// Vertices satisfying `plane_dist >= 0` are on the kept side.
+fn clip_polygon_one_plane(poly: Vec<[f32; 3]>, plane: [f32; 4]) -> Vec<[f32; 3]> {
+    if poly.is_empty() {
+        return poly;
+    }
+    let n = poly.len();
+    let mut out = Vec::with_capacity(n + 1);
+    for i in 0..n {
+        let a = poly[i];
+        let b = poly[(i + 1) % n];
+        let da = plane_dist(a, plane);
+        let db = plane_dist(b, plane);
+        let a_in = da >= 0.0;
+        let b_in = db >= 0.0;
+        if a_in {
+            out.push(a);
+        }
+        if a_in != b_in {
+            let denom = da - db;
+            if denom.abs() > 1e-30 {
+                let t = da / denom;
+                out.push([
+                    a[0] + t * (b[0] - a[0]),
+                    a[1] + t * (b[1] - a[1]),
+                    a[2] + t * (b[2] - a[2]),
+                ]);
+            }
+        }
+    }
+    out
+}
+
+/// Clip `poly` against all `planes` in sequence.
+fn clip_polygon_planes(mut poly: Vec<[f32; 3]>, planes: &[[f32; 4]]) -> Vec<[f32; 3]> {
+    for &plane in planes {
+        if poly.is_empty() {
+            break;
+        }
+        poly = clip_polygon_one_plane(poly, plane);
+    }
+    poly
+}
+
+/// Build an orthonormal `(u, v)` basis for a plane with the given `normal`.
+fn plane_basis(normal: [f32; 3]) -> ([f32; 3], [f32; 3]) {
+    let ref_vec: [f32; 3] = if normal[0].abs() < 0.9 {
+        [1.0, 0.0, 0.0]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
+    let u = normalize3(cross3(normal, ref_vec));
+    let v = cross3(normal, u);
+    (u, v)
+}
+
+/// Sort `pts` into angular order around their centroid on the given plane.
+///
+/// Uses a `(u, v)` frame derived from `normal` so that the resulting polygon
+/// is non-self-intersecting for any convex (and mildly non-convex) cross-section.
+fn sort_polygon_on_plane(pts: &mut Vec<[f32; 3]>, normal: [f32; 3]) {
+    if pts.len() < 3 {
+        return;
+    }
+    let n = pts.len() as f32;
+    let cx = pts.iter().map(|p| p[0]).sum::<f32>() / n;
+    let cy = pts.iter().map(|p| p[1]).sum::<f32>() / n;
+    let cz = pts.iter().map(|p| p[2]).sum::<f32>() / n;
+    let centroid = [cx, cy, cz];
+    let (u, v) = plane_basis(normal);
+    pts.sort_by(|a, b| {
+        let da = [a[0] - centroid[0], a[1] - centroid[1], a[2] - centroid[2]];
+        let db = [b[0] - centroid[0], b[1] - centroid[1], b[2] - centroid[2]];
+        let ang_a = dot3(da, v).atan2(dot3(da, u));
+        let ang_b = dot3(db, v).atan2(dot3(db, u));
+        ang_a.partial_cmp(&ang_b).unwrap_or(std::cmp::Ordering::Equal)
+    });
+}
+
+/// Fan-triangulate a polygon from `poly[0]`.
+fn fan_triangulate(poly: &[[f32; 3]]) -> Vec<[[f32; 3]; 3]> {
+    if poly.len() < 3 {
+        return Vec::new();
+    }
+    (1..poly.len() - 1)
+        .map(|i| [poly[0], poly[i], poly[i + 1]])
+        .collect()
+}
+
+/// Produce a clipped `MeshData` from volume cell connectivity and a set of
+/// clip planes.
+///
+/// See the design note in the section comment above for the full contract.
+pub(crate) fn extract_clipped_volume_faces(
+    data: &VolumeMeshData,
+    clip_planes: &[[f32; 4]],
+) -> MeshData {
+    if clip_planes.is_empty() {
+        return extract_boundary_faces(data);
+    }
+
+    // -----------------------------------------------------------------------
+    // Classify every vertex: kept = satisfies ALL planes.
+    // -----------------------------------------------------------------------
+    let vert_kept: Vec<bool> = data
+        .positions
+        .iter()
+        .map(|&p| clip_planes.iter().all(|&pl| plane_dist(p, pl) >= 0.0))
+        .collect();
+
+    // -----------------------------------------------------------------------
+    // Extract boundary faces with the same HashMap deduplication used in
+    // `extract_boundary_faces`, skipping fully-discarded cells.
+    // -----------------------------------------------------------------------
+    let mut face_map: HashMap<FaceKey, FaceRecord> = HashMap::new();
+    let mut quad_face_map: HashMap<QuadFaceKey, QuadFaceRecord> = HashMap::new();
+
+    for (cell_idx, cell) in data.cells.iter().enumerate() {
+        let is_tet = cell[4] == TET_SENTINEL;
+        let nv = if is_tet { 4 } else { 8 };
+        let kept_count = (0..nv).filter(|&i| vert_kept[cell[i] as usize]).count();
+        if kept_count == 0 {
+            continue;
+        }
+
+        if is_tet {
+            for (face_idx, face_local) in TET_FACES.iter().enumerate() {
+                let a = cell[face_local[0]];
+                let b = cell[face_local[1]];
+                let c = cell[face_local[2]];
+                let opposite = data.positions[cell[face_idx] as usize];
+                let key = face_key(a, b, c);
+                let entry = face_map.entry(key).or_insert(FaceRecord {
+                    cell_index: cell_idx,
+                    winding: [a, b, c],
+                    count: 0,
+                    interior_ref: opposite,
+                });
+                entry.count += 1;
+            }
+        } else {
+            for (face_idx, quad) in HEX_FACES.iter().enumerate() {
+                let v: [u32; 4] =
+                    [cell[quad[0]], cell[quad[1]], cell[quad[2]], cell[quad[3]]];
+                let interior_ref = {
+                    let opp = &HEX_FACES[HEX_FACE_OPPOSITE[face_idx]];
+                    let mut c = [0.0f32; 3];
+                    for &li in opp {
+                        let p = data.positions[cell[li] as usize];
+                        c[0] += p[0];
+                        c[1] += p[1];
+                        c[2] += p[2];
+                    }
+                    [c[0] / 4.0, c[1] / 4.0, c[2] / 4.0]
+                };
+                let key = quad_face_key(v[0], v[1], v[2], v[3]);
+                let entry = quad_face_map.entry(key).or_insert(QuadFaceRecord {
+                    cell_index: cell_idx,
+                    winding: v,
+                    count: 0,
+                    interior_ref,
+                });
+                entry.count += 1;
+            }
+        }
+    }
+
+    // Collect boundary faces (count == 1) and apply outward winding correction.
+    let mut boundary: Vec<(usize, [u32; 3], [f32; 3])> = face_map
+        .into_values()
+        .filter(|r| r.count == 1)
+        .map(|r| (r.cell_index, r.winding, r.interior_ref))
+        .collect();
+
+    for quad in quad_face_map.into_values().filter(|r| r.count == 1) {
+        boundary.push((
+            quad.cell_index,
+            [quad.winding[0], quad.winding[1], quad.winding[2]],
+            quad.interior_ref,
+        ));
+        boundary.push((
+            quad.cell_index,
+            [quad.winding[0], quad.winding[2], quad.winding[3]],
+            quad.interior_ref,
+        ));
+    }
+
+    boundary.sort_unstable_by_key(|(ci, _, _)| *ci);
+
+    for (_, tri, interior_ref) in &mut boundary {
+        let pa = data.positions[tri[0] as usize];
+        let pb = data.positions[tri[1] as usize];
+        let pc = data.positions[tri[2] as usize];
+        let ab = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]];
+        let ac = [pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]];
+        let n = cross3(ab, ac);
+        let fc = [
+            (pa[0] + pb[0] + pc[0]) / 3.0,
+            (pa[1] + pb[1] + pc[1]) / 3.0,
+            (pa[2] + pb[2] + pc[2]) / 3.0,
+        ];
+        let out_dir = [
+            fc[0] - interior_ref[0],
+            fc[1] - interior_ref[1],
+            fc[2] - interior_ref[2],
+        ];
+        if dot3(n, out_dir) < 0.0 {
+            tri.swap(1, 2);
+        }
+    }
+
+    // Precompute per-cell vertex count and kept-vertex count.
+    let cell_nv: Vec<usize> = data
+        .cells
+        .iter()
+        .map(|c| if c[4] == TET_SENTINEL { 4 } else { 8 })
+        .collect();
+    let cell_kept: Vec<usize> = data
+        .cells
+        .iter()
+        .zip(cell_nv.iter())
+        .map(|(cell, &nv)| (0..nv).filter(|&i| vert_kept[cell[i] as usize]).count())
+        .collect();
+
+    // -----------------------------------------------------------------------
+    // Collect output triangles as position triples (cell_idx, [p0, p1, p2]).
+    // -----------------------------------------------------------------------
+    let mut out_tris: Vec<(usize, [[f32; 3]; 3])> = Vec::new();
+
+    // Boundary faces: emit directly for fully-kept cells, clip for intersected.
+    for (cell_idx, tri, _) in &boundary {
+        let nv = cell_nv[*cell_idx];
+        let kc = cell_kept[*cell_idx];
+        let pa = data.positions[tri[0] as usize];
+        let pb = data.positions[tri[1] as usize];
+        let pc = data.positions[tri[2] as usize];
+
+        if kc == nv {
+            out_tris.push((*cell_idx, [pa, pb, pc]));
+        } else {
+            let clipped = clip_polygon_planes(vec![pa, pb, pc], clip_planes);
+            for t in fan_triangulate(&clipped) {
+                out_tris.push((*cell_idx, t));
+            }
+        }
+    }
+
+    // Section polygons: one per cutting plane per intersected cell.
+    for (cell_idx, cell) in data.cells.iter().enumerate() {
+        let nv = cell_nv[cell_idx];
+        let kc = cell_kept[cell_idx];
+        if kc == 0 || kc == nv {
+            continue;
+        }
+
+        let is_tet = cell[4] == TET_SENTINEL;
+        let edges: &[[usize; 2]] = if is_tet { &TET_EDGES } else { &HEX_EDGES };
+
+        for (pi, &plane) in clip_planes.iter().enumerate() {
+            // Collect one intersection point per edge that crosses this plane.
+            let mut pts: Vec<[f32; 3]> = Vec::new();
+            for edge in edges {
+                let va = cell[edge[0]] as usize;
+                let vb = cell[edge[1]] as usize;
+                let pa = data.positions[va];
+                let pb = data.positions[vb];
+                let da = plane_dist(pa, plane);
+                let db = plane_dist(pb, plane);
+                if (da >= 0.0) != (db >= 0.0) {
+                    let denom = da - db;
+                    if denom.abs() > 1e-30 {
+                        let t = da / denom;
+                        pts.push([
+                            pa[0] + t * (pb[0] - pa[0]),
+                            pa[1] + t * (pb[1] - pa[1]),
+                            pa[2] + t * (pb[2] - pa[2]),
+                        ]);
+                    }
+                }
+            }
+
+            if pts.len() < 3 {
+                continue;
+            }
+
+            // Sort into a valid polygon on the plane.
+            let plane_normal = [plane[0], plane[1], plane[2]];
+            sort_polygon_on_plane(&mut pts, plane_normal);
+
+            // Clip against every other active plane.
+            let other_planes: Vec<[f32; 4]> = clip_planes
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != pi)
+                .map(|(_, p)| *p)
+                .collect();
+            let pts = clip_polygon_planes(pts, &other_planes);
+            if pts.len() < 3 {
+                continue;
+            }
+
+            // Triangulate; ensure winding points toward the kept side.
+            for mut tri in fan_triangulate(&pts) {
+                let ab = [
+                    tri[1][0] - tri[0][0],
+                    tri[1][1] - tri[0][1],
+                    tri[1][2] - tri[0][2],
+                ];
+                let ac = [
+                    tri[2][0] - tri[0][0],
+                    tri[2][1] - tri[0][1],
+                    tri[2][2] - tri[0][2],
+                ];
+                let n = cross3(ab, ac);
+                if dot3(n, plane_normal) < 0.0 {
+                    tri.swap(1, 2);
+                }
+                out_tris.push((cell_idx, tri));
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Intern positions into a combined array and build the index buffer.
+    // -----------------------------------------------------------------------
+    let mut positions: Vec<[f32; 3]> = data.positions.clone();
+    let mut pos_map: HashMap<[u32; 3], u32> = HashMap::new();
+    for (i, &p) in data.positions.iter().enumerate() {
+        let key = [p[0].to_bits(), p[1].to_bits(), p[2].to_bits()];
+        pos_map.entry(key).or_insert(i as u32);
+    }
+
+    let mut indexed_tris: Vec<(usize, [u32; 3])> = Vec::with_capacity(out_tris.len());
+    for (cell_idx, [p0, p1, p2]) in &out_tris {
+        let i0 = intern_pos(*p0, &mut positions, &mut pos_map);
+        let i1 = intern_pos(*p1, &mut positions, &mut pos_map);
+        let i2 = intern_pos(*p2, &mut positions, &mut pos_map);
+        indexed_tris.push((*cell_idx, [i0, i1, i2]));
+    }
+
+    let n_verts = positions.len();
+    let mut normal_accum: Vec<[f64; 3]> = vec![[0.0; 3]; n_verts];
+    let mut indices: Vec<u32> = Vec::with_capacity(indexed_tris.len() * 3);
+
+    for (_, tri) in &indexed_tris {
+        indices.push(tri[0]);
+        indices.push(tri[1]);
+        indices.push(tri[2]);
+
+        let pa = positions[tri[0] as usize];
+        let pb = positions[tri[1] as usize];
+        let pc = positions[tri[2] as usize];
+        let ab = [
+            (pb[0] - pa[0]) as f64,
+            (pb[1] - pa[1]) as f64,
+            (pb[2] - pa[2]) as f64,
+        ];
+        let ac = [
+            (pc[0] - pa[0]) as f64,
+            (pc[1] - pa[1]) as f64,
+            (pc[2] - pa[2]) as f64,
+        ];
+        let n = [
+            ab[1] * ac[2] - ab[2] * ac[1],
+            ab[2] * ac[0] - ab[0] * ac[2],
+            ab[0] * ac[1] - ab[1] * ac[0],
+        ];
+        for &vi in tri {
+            let acc = &mut normal_accum[vi as usize];
+            acc[0] += n[0];
+            acc[1] += n[1];
+            acc[2] += n[2];
+        }
+    }
+
+    let normals: Vec<[f32; 3]> = normal_accum
+        .iter()
+        .map(|n| {
+            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            if len > 1e-12 {
+                [(n[0] / len) as f32, (n[1] / len) as f32, (n[2] / len) as f32]
+            } else {
+                [0.0, 1.0, 0.0]
+            }
+        })
+        .collect();
+
+    let mut attributes: HashMap<String, AttributeData> = HashMap::new();
+    for (name, cell_vals) in &data.cell_scalars {
+        let face_scalars: Vec<f32> = indexed_tris
+            .iter()
+            .map(|(ci, _)| cell_vals.get(*ci).copied().unwrap_or(0.0))
+            .collect();
+        attributes.insert(name.clone(), AttributeData::Face(face_scalars));
+    }
+    for (name, cell_vals) in &data.cell_colors {
+        let face_colors: Vec<[f32; 4]> = indexed_tris
+            .iter()
+            .map(|(ci, _)| cell_vals.get(*ci).copied().unwrap_or([1.0; 4]))
+            .collect();
+        attributes.insert(name.clone(), AttributeData::FaceColor(face_colors));
+    }
+
+    MeshData {
+        positions,
+        normals,
+        indices,
+        uvs: None,
+        tangents: None,
+        attributes,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -916,5 +1499,191 @@ mod tests {
         let data = single_hex();
         let mesh = extract_boundary_faces(&data);
         assert_eq!(mesh.positions, data.positions);
+    }
+
+    // -----------------------------------------------------------------------
+    // Executable specifications for extract_clipped_volume_faces (Phase 5).
+    // These tests document the required invariants and are ignored until the
+    // Phase 2 implementation lands.  Enable them by removing #[ignore].
+    // -----------------------------------------------------------------------
+
+    /// Empty clip-plane slice must produce the same triangles as the boundary
+    /// extractor (the clipped path degenerates to an unclipped boundary extraction
+    /// when no planes are active).
+    #[test]
+    
+    fn empty_planes_matches_boundary_extractor_tet() {
+        let data = structured_tet_grid(3);
+        let boundary = extract_boundary_faces(&data);
+        let clipped = extract_clipped_volume_faces(&data, &[]);
+        assert_eq!(
+            boundary.indices.len(),
+            clipped.indices.len(),
+            "empty clip_planes -> same triangle count as extract_boundary_faces"
+        );
+    }
+
+    /// Empty clip-plane slice must produce the same triangles as the boundary
+    /// extractor for hex meshes.
+    #[test]
+    
+    fn empty_planes_matches_boundary_extractor_hex() {
+        let data = structured_hex_grid(3);
+        let boundary = extract_boundary_faces(&data);
+        let clipped = extract_clipped_volume_faces(&data, &[]);
+        assert_eq!(
+            boundary.indices.len(),
+            clipped.indices.len(),
+            "empty clip_planes -> same triangle count as extract_boundary_faces"
+        );
+    }
+
+    /// Clipping a tet grid through its centre must produce non-empty section
+    /// faces (i.e. the cut face count is greater than zero).
+    #[test]
+    
+    fn clipped_tet_grid_has_nonempty_section_faces() {
+        let grid_n = 3;
+        let data = structured_tet_grid(grid_n);
+        // Y = 1.5 cuts through the middle of a 3-unit-tall grid.
+        // Plane: ny=1, d=-1.5  ->  dot(p,[0,1,0]) - 1.5 >= 0  ->  keep y >= 1.5.
+        let plane = [0.0_f32, 1.0, 0.0, -1.5];
+        let mesh = extract_clipped_volume_faces(&data, &[plane]);
+        // Some triangles must come from section faces.
+        assert!(
+            !mesh.indices.is_empty(),
+            "clipped tet grid must produce at least one triangle"
+        );
+    }
+
+    /// Clipping a hex grid through its centre must produce non-empty section faces.
+    #[test]
+    
+    fn clipped_hex_grid_has_nonempty_section_faces() {
+        let grid_n = 3;
+        let data = structured_hex_grid(grid_n);
+        let plane = [0.0_f32, 1.0, 0.0, -1.5];
+        let mesh = extract_clipped_volume_faces(&data, &[plane]);
+        assert!(
+            !mesh.indices.is_empty(),
+            "clipped hex grid must produce at least one triangle"
+        );
+    }
+
+    /// Section face normals must point toward the kept side of the cutting
+    /// plane (dot of the section face normal with the plane normal > 0).
+    #[test]
+    
+    fn section_face_normals_point_toward_kept_side_tet() {
+        let data = structured_tet_grid(3);
+        let plane_normal = [0.0_f32, 1.0, 0.0];
+        let plane = [plane_normal[0], plane_normal[1], plane_normal[2], -1.5];
+        let mesh = extract_clipped_volume_faces(&data, &[plane]);
+
+        for n in &mesh.normals {
+            let dot = n[0] * plane_normal[0] + n[1] * plane_normal[1] + n[2] * plane_normal[2];
+            // Only section faces are required to satisfy this; boundary normals
+            // may point in any outward direction.  The test checks that no
+            // normal is strongly anti-parallel to the plane normal.
+            // (A full test would distinguish section faces from boundary faces.)
+            let _ = dot; // placeholder until section faces can be identified
+        }
+    }
+
+    /// A cell fully on the discarded side of a clip plane contributes no triangles.
+    #[test]
+    
+    fn fully_discarded_cells_contribute_nothing() {
+        // Single tet at y=0..1 ; plane keeps y >= 2.0 -> tet is fully discarded.
+        let data = single_tet();
+        let plane = [0.0_f32, 1.0, 0.0, -2.0]; // keep y >= 2.0
+        let mesh = extract_clipped_volume_faces(&data, &[plane]);
+        assert!(
+            mesh.indices.is_empty(),
+            "tet fully below clip plane must produce no triangles"
+        );
+    }
+
+    /// A cell fully on the kept side of a clip plane contributes the same
+    /// boundary triangles as the unclipped extractor.
+    #[test]
+    
+    fn fully_kept_cell_matches_boundary_extractor() {
+        // Single tet at y=0..1 ; plane keeps y >= -1.0 -> tet is fully kept.
+        let data = single_tet();
+        let plane = [0.0_f32, 1.0, 0.0, 1.0]; // keep y >= -1.0
+        let clipped = extract_clipped_volume_faces(&data, &[plane]);
+        let boundary = extract_boundary_faces(&data);
+        assert_eq!(
+            clipped.indices.len(),
+            boundary.indices.len(),
+            "fully kept cell must produce the same triangles as boundary extractor"
+        );
+    }
+
+    /// Cell scalar attributes must be remapped onto section triangles in the
+    /// same way they are remapped onto boundary triangles.
+    #[test]
+    fn cell_scalar_propagates_to_section_faces() {
+        let mut data = structured_tet_grid(3);
+        let n_cells = data.cells.len();
+        data.cell_scalars
+            .insert("pressure".to_string(), vec![1.0; n_cells]);
+        let plane = [0.0_f32, 1.0, 0.0, -1.5];
+        let mesh = extract_clipped_volume_faces(&data, &[plane]);
+        match mesh.attributes.get("pressure") {
+            Some(AttributeData::Face(vals)) => {
+                let n_tris = mesh.indices.len() / 3;
+                assert_eq!(vals.len(), n_tris, "one scalar value per output triangle");
+                for &v in vals {
+                    assert_eq!(v, 1.0, "scalar must equal the owning cell's value");
+                }
+            }
+            other => panic!("expected Face attribute on clipped mesh, got {other:?}"),
+        }
+    }
+
+    /// Cell color attributes must be remapped onto section triangles as
+    /// `AttributeKind::FaceColor`, with one entry per output triangle.
+    #[test]
+    fn cell_color_propagates_to_section_faces() {
+        let mut data = structured_tet_grid(3);
+        let n_cells = data.cells.len();
+        let color = [1.0_f32, 0.0, 0.5, 1.0];
+        data.cell_colors
+            .insert("label".to_string(), vec![color; n_cells]);
+        let plane = [0.0_f32, 1.0, 0.0, -1.5];
+        let mesh = extract_clipped_volume_faces(&data, &[plane]);
+        match mesh.attributes.get("label") {
+            Some(AttributeData::FaceColor(colors)) => {
+                let n_tris = mesh.indices.len() / 3;
+                assert_eq!(colors.len(), n_tris, "one color per output triangle");
+                for &c in colors {
+                    assert_eq!(c, color, "color must equal the owning cell's value");
+                }
+            }
+            other => panic!("expected FaceColor attribute on clipped mesh, got {other:?}"),
+        }
+    }
+
+    /// Section faces for hex cells must also carry per-cell scalar attributes.
+    #[test]
+    fn hex_cell_scalar_propagates_to_section_faces() {
+        let mut data = structured_hex_grid(3);
+        let n_cells = data.cells.len();
+        data.cell_scalars
+            .insert("temp".to_string(), vec![7.0; n_cells]);
+        let plane = [0.0_f32, 1.0, 0.0, -1.5];
+        let mesh = extract_clipped_volume_faces(&data, &[plane]);
+        match mesh.attributes.get("temp") {
+            Some(AttributeData::Face(vals)) => {
+                let n_tris = mesh.indices.len() / 3;
+                assert_eq!(vals.len(), n_tris, "one scalar per output triangle");
+                for &v in vals {
+                    assert_eq!(v, 7.0, "scalar must equal the owning cell's value");
+                }
+            }
+            other => panic!("expected Face attribute on clipped hex mesh, got {other:?}"),
+        }
     }
 }

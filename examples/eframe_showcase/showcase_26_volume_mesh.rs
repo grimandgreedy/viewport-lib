@@ -220,7 +220,9 @@ fn build_hex_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
                 ]);
 
                 let [cx, cy, cz] = cell_centroid_raw(ix, iy, iz);
-                let raw_len = (cx * cx + cy * cy + cz * cz).sqrt();
+                // Clamp to avoid division by zero for the center cell whose
+                // centroid sits exactly at the origin.
+                let raw_len = (cx * cx + cy * cy + cz * cz).sqrt().max(1e-6);
 
                 // Projected centroid on sphere
                 let s = SPHERE_R / raw_len;
@@ -297,7 +299,7 @@ fn build_tet_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
                 ];
 
                 let [cx, cy, cz] = cell_centroid_raw(ix, iy, iz);
-                let raw_len = (cx * cx + cy * cy + cz * cz).sqrt();
+                let raw_len = (cx * cx + cy * cy + cz * cz).sqrt().max(1e-6);
                 let s = SPHERE_R / raw_len;
                 let py = cy * s;
 
@@ -518,18 +520,84 @@ impl App {
         self.vm_built = true;
     }
 
+    /// Compute the clip plane normal from the selected axis and tilt angle.
+    ///
+    /// At `vm_clip_angle = 0` the normal is the pure axis direction.
+    /// The angle tilts the normal within the plane spanned by the selected axis
+    /// and the next axis in the cycle (X->Y->Z->X), producing oblique sections:
+    ///
+    /// - Axis X: rotates [1,0,0] toward [0,1,0] (around Z)
+    /// - Axis Y: rotates [0,1,0] toward [0,0,1] (around X)
+    /// - Axis Z: rotates [0,0,1] toward [1,0,0] (around Y)
+    fn vm_clip_normal(&self) -> [f32; 3] {
+        let theta = self.vm_clip_angle.to_radians();
+        let (s, c) = (theta.sin(), theta.cos());
+        match self.vm_clip_axis {
+            VmClipAxis::X => [c, s, 0.0],
+            VmClipAxis::Y => [0.0, c, s],
+            VmClipAxis::Z => [s, 0.0, c],
+        }
+    }
+
+    /// Encode the active clip normal and offset as `[nx, ny, nz, d]`.
+    ///
+    /// Matches the `ClipPlanesUniform` format: a point `p` is on the kept side
+    /// when `dot(p, n) + d >= 0`.
+    pub(crate) fn vm_clip_plane(&self) -> [f32; 4] {
+        let [nx, ny, nz] = self.vm_clip_normal();
+        [nx, ny, nz, self.vm_clip_offset]
+    }
+
+    /// Rebuild the raw `VolumeMeshData` for the currently active mode.
+    ///
+    /// Intentionally cheap enough to call every frame for the showcase mesh
+    /// sizes (27–162 cells).
+    pub(crate) fn vm_active_data(&self) -> VolumeMeshData {
+        match self.vm_mode {
+            VmMode::Hex => {
+                let positions = cube_sphere_vertex_positions();
+                build_hex_mesh(&positions)
+            }
+            VmMode::Tet => {
+                let positions = sphere_vertex_positions();
+                build_tet_mesh(&positions)
+            }
+            VmMode::TetSmall => build_tet_small(),
+            VmMode::TetSphere2 => build_tet_sphere2(),
+            VmMode::TetBox => build_tet_box(),
+        }
+    }
+
     /// Build a [`SceneRenderItem`] for the active volume mesh.
+    ///
+    /// When clip is on and the clipped GPU slot is ready, routes to the
+    /// CPU-clipped mesh instead of the static boundary mesh.
     pub(crate) fn vm_scene_items(&self) -> Vec<SceneRenderItem> {
         if !self.vm_built {
             return vec![];
         }
 
-        let mesh_id = match self.vm_mode {
-            VmMode::Hex => self.vm_hex_index,
-            VmMode::Tet => self.vm_tet_index,
-            VmMode::TetSmall => self.vm_tet_small_index,
-            VmMode::TetSphere2 => self.vm_tet_sphere2_index,
-            VmMode::TetBox => self.vm_tet_box_index,
+        // Use the CPU-clipped slot when clipping is active and it has been
+        // uploaded.  Fall back to the static boundary mesh otherwise.
+        let mesh_id = if self.vm_clip_on {
+            match self.vm_clipped_index {
+                Some(id) => id,
+                None => match self.vm_mode {
+                    VmMode::Hex => self.vm_hex_index,
+                    VmMode::Tet => self.vm_tet_index,
+                    VmMode::TetSmall => self.vm_tet_small_index,
+                    VmMode::TetSphere2 => self.vm_tet_sphere2_index,
+                    VmMode::TetBox => self.vm_tet_box_index,
+                },
+            }
+        } else {
+            match self.vm_mode {
+                VmMode::Hex => self.vm_hex_index,
+                VmMode::Tet => self.vm_tet_index,
+                VmMode::TetSmall => self.vm_tet_small_index,
+                VmMode::TetSphere2 => self.vm_tet_sphere2_index,
+                VmMode::TetBox => self.vm_tet_box_index,
+            }
         };
 
         let (active_attribute, colormap_id) = match self.vm_field {
@@ -572,22 +640,29 @@ impl App {
     }
 
     pub(crate) fn vm_clip_objects(&self) -> Vec<ClipObject> {
+        // No GPU clip plane is emitted for geometry — the CPU extraction already
+        // handles it, and a co-planar GPU clip causes per-fragment floating-point
+        // noise on section faces.  Only the visual edge indicator is produced
+        // here (no fill quad, no cap-fill, no GPU clip plane written to the
+        // clip-planes uniform).
         if !self.vm_clip_on {
             return vec![];
         }
 
-        let normal = match self.vm_clip_axis {
-            VmClipAxis::X => [1.0, 0.0, 0.0],
-            VmClipAxis::Y => [0.0, 1.0, 0.0],
-            VmClipAxis::Z => [0.0, 0.0, 1.0],
-        };
+        let normal = self.vm_clip_normal();
         let mut clip = ClipObject::plane(normal, self.vm_clip_offset);
         clip.shape = ClipShape::Plane {
             normal,
             distance: self.vm_clip_offset,
-            cap_color: Some([0.72, 0.78, 0.86, 1.0]),
+            cap_color: None,
         };
-        clip.color = Some([0.85, 0.9, 1.0, 0.18]);
+        // Visual edge only — no fill quad, no GPU geometry clipping.
+        // Geometry is already clipped by the CPU extraction path; applying
+        // the GPU clip plane on top would cause floating-point noise on the
+        // section faces which lie exactly on the plane.
+        clip.color = None;
+        clip.edge_color = Some([0.75, 0.85, 1.0, 1.0]);
+        clip.clip_geometry = false;
         clip.extent = 3.5;
         vec![clip]
     }
@@ -662,6 +737,11 @@ impl App {
                 egui::Slider::new(&mut self.vm_clip_offset, -1.75..=1.75)
                     .text("Offset")
                     .step_by(0.01),
+            );
+            ui.add(
+                egui::Slider::new(&mut self.vm_clip_angle, -89.0..=89.0)
+                    .text("Angle (°)")
+                    .step_by(1.0),
             );
             ui.label("Keeps the positive side of the plane to reveal interior cells.");
         }

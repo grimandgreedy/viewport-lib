@@ -1,4 +1,5 @@
 # Changelog
+
 ## [0.12.1]
 
 ### Breaking changes
@@ -12,12 +13,19 @@
 
 ### Features
 - `PatternConfig`: new struct carrying pattern, color, and `scale` (cells across the object's longest world-space bounding-box dimension, default 8.0). Pattern density is now object-relative — a `scale` of 8.0 produces 8 cells across the object regardless of mesh units or physical size.
+- Volume mesh filled clip: clipping a `VolumeMeshData` now produces real interior cross-sections instead of an open shell. Boundary faces on the kept side are preserved; intersected cells contribute CPU-generated section polygons coloured by per-cell scalar or direct-colour data. Supports multiple simultaneous clip planes via the same `[nx, ny, nz, d]` encoding used by `ClipPlanesUniform`.
+  - New `ViewportGpuResources` methods: `upload_clipped_volume_mesh_data` and `replace_clipped_volume_mesh_data` for per-frame GPU slot management.
+- `ClipObject`: two new fields:
+  - `edge_color: Option<[f32; 4]>` — independent RGBA colour for the plane border edge. When set, the edge uses this colour instead of deriving from `color`, allowing a visible outline with a fully transparent fill.
+  - `clip_geometry: bool` — when `false`, the object renders its visual indicator but does not contribute to the GPU clip-plane uniform. Default: `true`. Allows a decorative plane edge with no effect on rendered geometry.
 
 ### Fixes
 - Phantom shadows from stale GPU cull data: `cull_instances` and `write_indirect_args` compute shaders previously bounded their loops with `arrayLength()`, which returns the allocated buffer capacity (2× headroom). When switching to a scene with fewer objects, stale AABB entries from the previous, larger scene were still processed, injecting ghost shadow casters from old geometry. Fixed by adding `instance_count` and `batch_count` to `FrustumUniform`; the shaders now guard against the valid element count rather than the buffer size.
 - Scroll unit handling: all eframe examples now pass `ScrollUnits::Lines` for mouse wheel events and `ScrollUnits::Pixels` for trackpad events by reading `egui::MouseWheelUnit` from the `MouseWheel` event. Previously all eframe examples hardcoded `ScrollUnits::Pixels`, causing mouse wheel zoom to bypass the `PIXELS_PER_LINE` scaling and feel incorrect.
 - iced example: removed manual `* 28.0` line-to-pixel conversion; the library now applies the scaling internally via `ScrollUnits::Lines`.
 - Added `ScrollUnits::Pages` variant (one unit = viewport height in pixels) to cover `egui::MouseWheelUnit::Page` and equivalent page-scroll events from other frameworks.
+- Clip plane overlay: the border edge previously used a hardcoded alpha (0.6) that ignored `color[3]`, so setting fill opacity to zero still rendered a visible edge. The fill quad is now skipped entirely when `color` is `None`, and the border falls back through `edge_color -> color -> white`.
+- Volume mesh latitude scalar: the center cell of a sphere mesh had its centroid exactly at the origin, producing a `NaN` latitude value that was invisible on the boundary surface but appeared as a hole in CPU-generated section faces. The centroid length is now clamped to `1e-6` before normalization.
 
 ## [0.12.0]
 

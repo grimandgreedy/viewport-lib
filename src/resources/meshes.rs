@@ -265,6 +265,43 @@ impl ViewportGpuResources {
         self.upload_mesh_data(device, &mesh_data)
     }
 
+    /// Upload a clipped volume mesh by extracting boundary and section faces for the
+    /// given clip planes and uploading the result via [`upload_mesh_data`](Self::upload_mesh_data).
+    ///
+    /// Each entry in `clip_planes` is `[nx, ny, nz, d]` where a point `p` is kept when
+    /// `dot(p, [nx,ny,nz]) + d >= 0`.  An empty slice is equivalent to
+    /// [`upload_volume_mesh_data`](Self::upload_volume_mesh_data).
+    ///
+    /// Returns the `MeshId`.  Reference cell attributes via
+    /// [`AttributeRef { kind: AttributeKind::Face, .. }`](crate::resources::AttributeRef).
+    pub fn upload_clipped_volume_mesh_data(
+        &mut self,
+        device: &wgpu::Device,
+        data: &crate::resources::volume_mesh::VolumeMeshData,
+        clip_planes: &[[f32; 4]],
+    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
+        let mesh_data =
+            crate::resources::volume_mesh::extract_clipped_volume_faces(data, clip_planes);
+        self.upload_mesh_data(device, &mesh_data)
+    }
+
+    /// Replace an existing mesh slot with a freshly-extracted clipped volume mesh.
+    ///
+    /// Equivalent to calling [`upload_clipped_volume_mesh_data`](Self::upload_clipped_volume_mesh_data)
+    /// and then [`replace_mesh_data`](Self::replace_mesh_data), but without allocating a new slot.
+    /// Use this for per-frame clip-plane updates to avoid leaking GPU memory.
+    pub fn replace_clipped_volume_mesh_data(
+        &mut self,
+        device: &wgpu::Device,
+        mesh_id: crate::resources::mesh_store::MeshId,
+        data: &crate::resources::volume_mesh::VolumeMeshData,
+        clip_planes: &[[f32; 4]],
+    ) -> crate::error::ViewportResult<()> {
+        let mesh_data =
+            crate::resources::volume_mesh::extract_clipped_volume_faces(data, clip_planes);
+        self.replace_mesh_data(device, mesh_id, &mesh_data)
+    }
+
     /// Upload a sparse voxel grid by extracting its boundary surface and uploading
     /// the result via [`upload_mesh_data`](Self::upload_mesh_data).
     ///

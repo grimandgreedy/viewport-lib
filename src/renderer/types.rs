@@ -83,8 +83,19 @@ pub enum ClipShape {
 pub struct ClipObject {
     /// The clipping shape (plane, box, or sphere).
     pub shape: ClipShape,
-    /// RGBA boundary color. `None` = no visual drawn.
+    /// RGBA fill color for the plane quad. `None` = no fill drawn.
+    ///
+    /// When both `color` and `edge_color` are `None`, no visual is drawn at all.
     pub color: Option<[f32; 4]>,
+    /// RGBA color for the plane border edge. `None` = derive from `color` (original behaviour).
+    ///
+    /// Set independently to show a visible edge while keeping the fill transparent.
+    pub edge_color: Option<[f32; 4]>,
+    /// Whether this object clips rendered geometry via the GPU clip-plane uniform.
+    ///
+    /// Set to `false` to produce only a visual indicator without affecting geometry.
+    /// Default: `true`.
+    pub clip_geometry: bool,
     /// Whether this object is active. Disabled objects are ignored entirely.
     pub enabled: bool,
     /// Visual and hit-test half-extent for `Plane` shapes (world units). Default `4.5`.
@@ -104,6 +115,8 @@ impl Default for ClipObject {
                 cap_color: None,
             },
             color: None,
+            edge_color: None,
+            clip_geometry: true,
             enabled: true,
             extent: 4.5,
             hovered: false,
