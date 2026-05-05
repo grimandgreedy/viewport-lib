@@ -403,6 +403,21 @@ impl ViewportRenderer {
             || has_wireframe_items
         {
             for item in scene_items {
+                // When instancing is active, skip items that will be rendered
+                // via the instanced path. They don't need per-object uniform
+                // writes; writing them anyway causes O(n) write_buffer calls
+                // for the whole scene whenever any single item is two-sided.
+                if self.use_instancing
+                    && !frame.viewport.wireframe_mode
+                    && item.active_attribute.is_none()
+                    && !item.material.is_two_sided()
+                    && item.material.matcap_id.is_none()
+                    && item.material.param_vis.is_none()
+                    && !item.render_as_wireframe
+                {
+                    continue;
+                }
+
                 if resources
                     .mesh_store
                     .get(item.mesh_id)
@@ -567,13 +582,20 @@ impl ViewportRenderer {
             // Items with active_attribute, two-sided policy, matcap, or param_vis are
             // excluded from the instanced batch filter. These flags are set on render
             // items AFTER collect_render_items() (per-frame mutations), so they do NOT
-            // bump the scene generation. Force a cache miss whenever any such item exists
-            // so the batch membership stays correct as the active object changes.
-            let has_per_frame_mutations = has_scalar_items
-                || has_two_sided_items
-                || has_matcap_items
-                || has_param_vis_items;
-            let cache_valid = !has_per_frame_mutations
+            // bump the scene generation. Use last_instancable_count as a cache key
+            // instead of a blanket has_per_frame_mutations flag; this allows scenes
+            // that mix instanced and non-instanced items (e.g. one two-sided mesh +
+            // many static boxes) to still hit the instanced batch cache on frames
+            // where the filtered set is unchanged.
+            let instancable_count = scene_items.iter().filter(|item| {
+                item.visible
+                    && item.active_attribute.is_none()
+                    && !item.material.is_two_sided()
+                    && item.material.matcap_id.is_none()
+                    && item.material.param_vis.is_none()
+                    && resources.mesh_store.get(item.mesh_id).is_some()
+            }).count();
+            let cache_valid = instancable_count == self.last_instancable_count
                 && frame.scene.generation == self.last_scene_generation
                 && frame.interaction.selection_generation == self.last_selection_generation
                 && scene_items.len() == self.last_scene_items_count;
@@ -715,6 +737,7 @@ impl ViewportRenderer {
                 self.last_scene_generation = frame.scene.generation;
                 self.last_selection_generation = frame.interaction.selection_generation;
                 self.last_scene_items_count = scene_items.len();
+                self.last_instancable_count = sorted_items.len();
 
                 for batch in &self.instanced_batches {
                     resources.get_instance_bind_group(

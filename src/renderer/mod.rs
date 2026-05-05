@@ -158,6 +158,11 @@ pub struct ViewportRenderer {
     /// Included in cache key so that frustum-culling changes (different visible set, different
     /// count) correctly invalidate the instance buffer even when scene_generation is stable.
     last_scene_items_count: usize,
+    /// Count of items that passed the instanced-path filter on the last rebuild.
+    /// Used in place of has_per_frame_mutations so scenes that mix instanced and
+    /// non-instanced items (e.g. one two-sided mesh + 10k static boxes) still hit
+    /// the instanced batch cache on frames where the filtered set is unchanged.
+    last_instancable_count: usize,
     /// Cached instance data from last rebuild (mirrors the GPU buffer contents).
     cached_instance_data: Vec<InstanceData>,
     /// Cached instanced batch descriptors from last rebuild.
@@ -288,6 +293,7 @@ impl ViewportRenderer {
             last_scene_generation: u64::MAX,
             last_selection_generation: u64::MAX,
             last_scene_items_count: usize::MAX,
+            last_instancable_count: usize::MAX,
             cached_instance_data: Vec::new(),
             cached_instanced_batches: Vec::new(),
             point_cloud_gpu_data: Vec::new(),
