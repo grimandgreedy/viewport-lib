@@ -114,6 +114,69 @@ impl ViewportGpuResources {
         self.dyn_res_linear_sampler = Some(sampler);
     }
 
+    /// Ensure the depth-stencil compatible upscale pipeline exists for use inside
+    /// eframe's paint render pass, which always has a `Depth24PlusStencil8` attachment.
+    ///
+    /// Identical to [`ensure_dyn_res_pipeline`](Self::ensure_dyn_res_pipeline) except
+    /// `depth_stencil` is set to read-only `Depth24PlusStencil8` so the pipeline is
+    /// compatible with any render pass that carries that depth attachment.
+    /// [`ensure_dyn_res_pipeline`](Self::ensure_dyn_res_pipeline) must be called first.
+    pub(crate) fn ensure_dyn_res_ds_pipeline(&mut self, device: &wgpu::Device) {
+        if self.dyn_res_upscale_ds_pipeline.is_some() {
+            return;
+        }
+
+        let bgl = self.dyn_res_upscale_bgl.as_ref().expect(
+            "ensure_dyn_res_pipeline must be called before ensure_dyn_res_ds_pipeline",
+        );
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("dyn_res_upscale_ds_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/dyn_res_upscale.wgsl").into(),
+            ),
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("dyn_res_upscale_ds_layout"),
+            bind_group_layouts: &[bgl],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("dyn_res_upscale_ds_pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: self.target_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Always,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+        self.dyn_res_upscale_ds_pipeline = Some(pipeline);
+    }
+
     /// Create a [`DynResTarget`] at `scaled_size`, bound for upscaling to
     /// `surface_size`. The shared pipeline must already exist (call
     /// [`ensure_dyn_res_pipeline`](Self::ensure_dyn_res_pipeline) first).

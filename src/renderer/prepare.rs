@@ -1039,14 +1039,11 @@ impl ViewportRenderer {
             let clip_objects_for_vol = &frame.effects.clip_objects;
             // Phase 5: under budget pressure with allow_volume_quality_reduction, double the
             // step size (half the sample count) to reduce GPU raymarch cost.
-            let vol_step_multiplier =
-                if self.last_stats.missed_budget
-                    && self.performance_policy.allow_volume_quality_reduction
-                {
-                    2.0_f32
-                } else {
-                    1.0_f32
-                };
+            let vol_step_multiplier = if self.degradation_volume_quality_reduced {
+                2.0_f32
+            } else {
+                1.0_f32
+            };
             for item in &frame.scene.volumes {
                 let gpu = resources.upload_volume_frame(
                     device,
@@ -1119,8 +1116,7 @@ impl ViewportRenderer {
         // Shadow depth pass : CSM: render each cascade into its atlas tile.
         // Phase 5: skip the pass entirely when over budget and shadow reduction is allowed.
         // ------------------------------------------------------------------
-        let skip_shadows = self.last_stats.missed_budget
-            && self.performance_policy.allow_shadow_reduction;
+        let skip_shadows = self.degradation_shadows_skipped;
 
         // When skipping the shadow pass (budget pressure or empty scene), clear the
         // atlas to max depth so that stale values from a previous frame or a previous
@@ -3051,31 +3047,131 @@ impl ViewportRenderer {
         let upload_bytes = self.resources.frame_upload_bytes;
         self.resources.frame_upload_bytes = 0;
 
+        // Resolve effective scale bounds and degradation flags.
+        // When a preset is set it overrides the individual fields; the individual
+        // fields are preserved so they restore when switching back to None.
+        let policy = self.performance_policy;
+        let (eff_min_scale, eff_max_scale, eff_allow_shadows, eff_allow_volumes, eff_allow_effects) =
+            match policy.preset {
+                Some(crate::renderer::stats::QualityPreset::High) => {
+                    (1.0_f32, 1.0_f32, false, false, false)
+                }
+                Some(crate::renderer::stats::QualityPreset::Medium) => {
+                    (0.75_f32, 1.0_f32, true, false, true)
+                }
+                Some(crate::renderer::stats::QualityPreset::Low) => {
+                    (0.5_f32, 0.75_f32, true, true, true)
+                }
+                None => (
+                    policy.min_render_scale,
+                    policy.max_render_scale,
+                    policy.allow_shadow_reduction,
+                    policy.allow_volume_quality_reduction,
+                    policy.allow_effect_throttling,
+                ),
+            };
+
+        // Capture mode: force max render scale and suppress all degradation.
+        // The adaptation controller is paused for the duration of the frame.
+        let in_capture = self.runtime_mode == crate::renderer::stats::RuntimeMode::Capture;
+        if in_capture {
+            self.current_render_scale = eff_max_scale;
+        }
+
+        // HDR path detection: post_process.enabled means render()/render_viewport()
+        // will be called. Dynamic resolution is not implemented for the HDR path
+        // (post-tonemap passes pair output_view with hdr_depth_view and require
+        // matching dimensions). Suppress the controller and pin render_scale to 1.0
+        // so FrameStats does not report a misleading value.
+        let hdr_active = frame.effects.post_process.enabled;
+
+        // When a preset is active, clamp current_render_scale to the preset's bounds
+        // immediately, without requiring allow_dynamic_resolution. This ensures the
+        // preset has a visible effect even when the adaptation controller is off.
+        // The controller can still adjust within these bounds when enabled.
+        if !in_capture && !hdr_active && policy.preset.is_some() {
+            self.current_render_scale =
+                self.current_render_scale.clamp(eff_min_scale, eff_max_scale);
+        }
+
+        // Tiered degradation ladder.
+        // Order: render scale -> shadows -> volumes -> effects.
+        // The tier advances one step per over-budget frame once render scale has
+        // reached its minimum (nothing more the controller can reduce).
+        // The tier retreats one step per frame that is comfortably under budget,
+        // reversing the ladder in the same order (effects first).
+        // Capture mode resets the tier; HDR path leaves it unchanged but flags
+        // are suppressed below regardless.
+        let missed_prev = self.last_stats.missed_budget;
+        let under_prev = !self.last_stats.missed_budget
+            && policy
+                .target_fps
+                .map(|fps| {
+                    let budget = 1000.0 / fps;
+                    let sig = self
+                        .last_stats
+                        .gpu_frame_ms
+                        .unwrap_or(self.last_stats.total_frame_ms);
+                    sig < budget * 0.8
+                })
+                .unwrap_or(true);
+        if in_capture {
+            self.degradation_tier = 0;
+        } else if !hdr_active {
+            let at_min = !policy.allow_dynamic_resolution
+                || self.current_render_scale <= eff_min_scale + 0.001;
+            if missed_prev && at_min {
+                self.degradation_tier = (self.degradation_tier + 1).min(3);
+            } else if under_prev {
+                self.degradation_tier = self.degradation_tier.saturating_sub(1);
+            }
+        }
+
+        // Derive per-pass flags from the current tier and effective policy.
+        // All flags are suppressed in Capture mode regardless of tier.
+        self.degradation_shadows_skipped =
+            !in_capture && self.degradation_tier >= 1 && eff_allow_shadows;
+        self.degradation_volume_quality_reduced =
+            !in_capture && self.degradation_tier >= 2 && eff_allow_volumes;
+        self.degradation_effects_throttled =
+            !in_capture && self.degradation_tier >= 3 && eff_allow_effects;
+
         let (scene_fx, viewport_fx) = frame.effects.split();
         self.prepare_scene_internal(device, queue, frame, &scene_fx);
         self.prepare_viewport_internal(device, queue, frame, &viewport_fx);
 
         let cpu_prepare_ms = prepare_start.elapsed().as_secs_f32() * 1000.0;
 
-        let policy = self.performance_policy;
         let budget_ms = policy.target_fps.map(|fps| 1000.0 / fps);
-        let missed_budget = budget_ms
-            .map(|b| total_frame_ms > b)
-            .unwrap_or(false);
 
-        // Adaptation controller: adjust render scale within policy bounds when enabled.
-        // Uses total_frame_ms from the *previous* frame so the controller reacts one
-        // frame after the overrun, which is the earliest it can have the measurement.
-        if policy.allow_dynamic_resolution {
+        // Controller signal: prefer gpu_frame_ms (excludes vsync wait, one-frame lag is
+        // acceptable). Fall back to total_frame_ms when GPU timestamps are unavailable:
+        // it reflects wall-clock frame duration and correctly fires over-budget at low
+        // frame rates. cpu_prepare_ms is not used as a fallback because it only measures
+        // CPU-side work and is low even when the GPU or driver is the bottleneck.
+        let controller_ms = self
+            .last_stats
+            .gpu_frame_ms
+            .unwrap_or(total_frame_ms);
+
+        // Capture mode always reports missed_budget = false; degradation is suppressed.
+        let missed_budget = !in_capture
+            && budget_ms.map(|b| controller_ms > b).unwrap_or(false);
+
+        // Adaptation controller: adjust render scale within effective bounds when enabled.
+        // Uses controller_ms from the previous frame (gpu_frame_ms when available,
+        // otherwise total_frame_ms). Paused in Capture mode and when the HDR path is
+        // active (see hdr_active above).
+        if policy.allow_dynamic_resolution && !in_capture && !hdr_active {
             if let Some(budget) = budget_ms {
-                if total_frame_ms > budget {
+                if controller_ms > budget {
                     // Over budget: step down quickly.
                     self.current_render_scale =
-                        (self.current_render_scale - 0.1).max(policy.min_render_scale);
-                } else if total_frame_ms < budget * 0.8 {
+                        (self.current_render_scale - 0.1).max(eff_min_scale);
+                } else if controller_ms < budget * 0.8 {
                     // Comfortably under budget: recover slowly to avoid oscillation.
                     self.current_render_scale =
-                        (self.current_render_scale + 0.05).min(policy.max_render_scale);
+                        (self.current_render_scale + 0.05).min(eff_max_scale);
                 }
             }
         }
@@ -3083,15 +3179,25 @@ impl ViewportRenderer {
         self.last_prepare_instant = Some(prepare_start);
         self.frame_counter = self.frame_counter.wrapping_add(1);
 
+        // On the HDR path the render_scale has no effect on output; report 1.0
+        // so consumers are not misled by a value that is changing but doing nothing.
+        let reported_render_scale = if hdr_active { 1.0 } else { self.current_render_scale };
+
         let stats = crate::renderer::stats::FrameStats {
             cpu_prepare_ms,
             // gpu_frame_ms is updated by the timestamp readback above when available;
             // propagate the most recent value from last_stats.
             gpu_frame_ms: self.last_stats.gpu_frame_ms,
             total_frame_ms,
-            render_scale: self.current_render_scale,
+            render_scale: reported_render_scale,
             missed_budget,
             upload_bytes,
+            shadows_skipped: self.degradation_shadows_skipped,
+            volume_quality_reduced: self.degradation_volume_quality_reduced,
+            // effects_throttled is set by the render path; carry forward here so
+            // prepare()-only callers still see the previous frame's value until
+            // paint_to()/render() updates it.
+            effects_throttled: self.degradation_effects_throttled,
             ..self.last_stats
         };
         self.last_stats = stats;

@@ -240,6 +240,21 @@ pub struct ViewportRenderer {
     indirect_readback_batch_count: u32,
     /// True when `indirect_readback_buf` holds unread data from the previous cull pass.
     indirect_readback_pending: bool,
+
+    // --- Per-pass degradation state (Phases 6 + 11) ---
+    /// Tiered degradation ladder position (0 = none, 1 = shadows, 2 = volumes, 3 = effects).
+    /// Advanced one step per over-budget frame once render scale hits minimum;
+    /// reversed one step per comfortably-under-budget frame.
+    degradation_tier: u8,
+    /// Whether the shadow pass was skipped this frame due to budget pressure.
+    /// Computed once per frame at the top of prepare() and used by both
+    /// prepare_scene_internal and reported in FrameStats.
+    degradation_shadows_skipped: bool,
+    /// Whether volume raymarch step size was doubled this frame due to budget pressure.
+    degradation_volume_quality_reduced: bool,
+    /// Whether SSAO, contact shadows, and bloom were skipped this frame.
+    /// Set in prepare(); read by the render path.
+    degradation_effects_throttled: bool,
 }
 
 impl ViewportRenderer {
@@ -304,6 +319,10 @@ impl ViewportRenderer {
             indirect_readback_buf: None,
             indirect_readback_batch_count: 0,
             indirect_readback_pending: false,
+            degradation_tier: 0,
+            degradation_shadows_skipped: false,
+            degradation_volume_quality_reduced: false,
+            degradation_effects_throttled: false,
         }
     }
 
@@ -380,6 +399,9 @@ impl ViewportRenderer {
     /// this value each frame.
     ///
     /// The value is clamped to `[policy.min_render_scale, policy.max_render_scale]`.
+    ///
+    /// Has no effect on the HDR render path (`render` / `render_viewport` with
+    /// `PostProcessSettings::enabled = true`). See `allow_dynamic_resolution`.
     pub fn set_render_scale(&mut self, scale: f32) {
         self.current_render_scale = scale.clamp(
             self.performance_policy.min_render_scale,

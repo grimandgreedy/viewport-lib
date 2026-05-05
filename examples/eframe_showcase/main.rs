@@ -605,9 +605,9 @@ fn main() -> eframe::Result {
                 pb_mode: RuntimeMode::Interactive,
                 pb_policy: PerformancePolicy::default(),
                 pb_manual_render_scale: 1.0,
-                pb_grid_resolution: 200,
+                pb_grid_resolution: 50,
                 pb_last_grid_resolution: 0,
-                pb_instance_count: 10000,
+                pb_instance_count: 1000,
                 pb_time: 0.0,
                 pb_mesh_id: None,
                 pb_static_mesh_id: None,
@@ -1764,7 +1764,7 @@ impl eframe::App for App {
                 ui.painter()
                     .add(eframe::egui_wgpu::Callback::new_paint_callback(
                         rect,
-                        viewport_callback::ViewportCallback { frame: frame_data },
+                        viewport_callback::ViewportCallback::new(frame_data),
                     ));
             }
 

@@ -291,6 +291,239 @@ impl ViewportRenderer {
         }
     }
 
+    /// Render the scene into an intermediate dyn-res texture for the LDR callback
+    /// render path (e.g. eframe's `CallbackTrait`).
+    ///
+    /// Call from `CallbackTrait::prepare` after [`prepare`](Self::prepare), passing the
+    /// `egui_encoder`. If `current_render_scale < 1.0`, the full scene is drawn into a
+    /// scaled intermediate texture and `true` is returned. Call
+    /// [`paint_dyn_res_blit`](Self::paint_dyn_res_blit) from `CallbackTrait::paint`
+    /// instead of [`paint`](Self::paint).
+    ///
+    /// If scale is 1.0 or above, nothing is encoded and `false` is returned. Call
+    /// [`paint`](Self::paint) as normal.
+    ///
+    /// The `egui_encoder` is submitted before the surface render pass begins, so the
+    /// intermediate texture is fully written before the blit reads it.
+    pub fn prepare_ldr_dyn_res(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        device: &wgpu::Device,
+        frame: &FrameData,
+    ) -> bool {
+        if self.current_render_scale >= 1.0 - 0.001 {
+            return false;
+        }
+
+        let vp_idx = frame.camera.viewport_index;
+        let w = (frame.camera.viewport_size[0] as u32).max(1);
+        let h = (frame.camera.viewport_size[1] as u32).max(1);
+        let sw = ((w as f32 * self.current_render_scale) as u32).max(1);
+        let sh = ((h as f32 * self.current_render_scale) as u32).max(1);
+
+        self.ensure_dyn_res_target(device, vp_idx, [sw, sh], [w, h]);
+        self.resources.ensure_dyn_res_ds_pipeline(device);
+
+        let bg_color = frame.viewport.background_color.unwrap_or([
+            65.0 / 255.0,
+            65.0 / 255.0,
+            65.0 / 255.0,
+            1.0,
+        ]);
+
+        {
+            let slot = &self.viewport_slots[vp_idx];
+            let dr = slot.dyn_res.as_ref().unwrap();
+            let color_view = &dr.color_view;
+            let depth_view = &dr.depth_view;
+            let camera_bg = &slot.camera_bind_group;
+            let grid_bg = &slot.grid_bind_group;
+
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("ldr_dyn_res_render_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: bg_color[0] as f64,
+                            g: bg_color[1] as f64,
+                            b: bg_color[2] as f64,
+                            a: bg_color[3] as f64,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Discard,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            emit_draw_calls!(
+                &self.resources,
+                &mut render_pass,
+                frame,
+                self.use_instancing,
+                &self.instanced_batches,
+                camera_bg,
+                grid_bg,
+                &self.compute_filter_results,
+                Some(slot)
+            );
+            emit_scivis_draw_calls!(
+                &self.resources,
+                &mut render_pass,
+                &self.point_cloud_gpu_data,
+                &self.glyph_gpu_data,
+                &self.polyline_gpu_data,
+                &self.volume_gpu_data,
+                &self.streamtube_gpu_data,
+                camera_bg
+            );
+            // Implicit surface.
+            if !self.implicit_gpu_data.is_empty() {
+                if let Some(pipeline) = &self.resources.implicit_pipeline {
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_bind_group(0, camera_bg, &[]);
+                    for gpu in &self.implicit_gpu_data {
+                        render_pass.set_bind_group(1, &gpu.bind_group, &[]);
+                        render_pass.draw(0..6, 0..1);
+                    }
+                }
+            }
+            // GPU marching cubes indirect draw.
+            if !self.mc_gpu_data.is_empty() {
+                if let Some(pipeline) = &self.resources.mc_surface_pipeline {
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_bind_group(0, camera_bg, &[]);
+                    for mc in &self.mc_gpu_data {
+                        let vol = &self.resources.mc_volumes[mc.volume_idx];
+                        render_pass.set_bind_group(1, &mc.render_bg, &[]);
+                        for slab in &vol.slabs {
+                            render_pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
+                            render_pass.draw_indirect(&slab.indirect_buf, 0);
+                        }
+                    }
+                }
+            }
+            // Sub-object highlight (LDR path).
+            if let Some(sub_hl) = slot.sub_highlight.as_ref() {
+                if let (Some(fill_pl), Some(edge_pl), Some(sprite_pl)) = (
+                    &self.resources.sub_highlight_fill_ldr_pipeline,
+                    &self.resources.sub_highlight_edge_ldr_pipeline,
+                    &self.resources.sub_highlight_sprite_ldr_pipeline,
+                ) {
+                    if sub_hl.fill_vertex_count > 0 {
+                        render_pass.set_pipeline(fill_pl);
+                        render_pass.set_bind_group(0, camera_bg, &[]);
+                        render_pass.set_bind_group(1, &sub_hl.fill_bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, sub_hl.fill_vertex_buf.slice(..));
+                        render_pass.draw(0..sub_hl.fill_vertex_count, 0..1);
+                    }
+                    if sub_hl.edge_segment_count > 0 {
+                        render_pass.set_pipeline(edge_pl);
+                        render_pass.set_bind_group(0, camera_bg, &[]);
+                        render_pass.set_bind_group(1, &sub_hl.edge_bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, sub_hl.edge_vertex_buf.slice(..));
+                        render_pass.draw(0..6, 0..sub_hl.edge_segment_count);
+                    }
+                    if sub_hl.sprite_point_count > 0 {
+                        render_pass.set_pipeline(sprite_pl);
+                        render_pass.set_bind_group(0, camera_bg, &[]);
+                        render_pass.set_bind_group(1, &sub_hl.sprite_bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, sub_hl.sprite_vertex_buf.slice(..));
+                        render_pass.draw(0..6, 0..sub_hl.sprite_point_count);
+                    }
+                }
+            }
+            // Screen-space image overlays.
+            if !self.screen_image_gpu_data.is_empty() {
+                if let Some(pipeline) = &self.resources.screen_image_pipeline {
+                    render_pass.set_pipeline(pipeline);
+                    for gpu in &self.screen_image_gpu_data {
+                        render_pass.set_bind_group(0, &gpu.bind_group, &[]);
+                        render_pass.draw(0..6, 0..1);
+                    }
+                }
+            }
+            // Overlay labels.
+            if let Some(ref ld) = self.label_gpu_data {
+                if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_bind_group(0, &ld.bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, ld.vertex_buf.slice(..));
+                    render_pass.draw(0..ld.vertex_count, 0..1);
+                }
+            }
+            // Scalar bars.
+            if let Some(ref sb) = self.scalar_bar_gpu_data {
+                if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_bind_group(0, &sb.bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, sb.vertex_buf.slice(..));
+                    render_pass.draw(0..sb.vertex_count, 0..1);
+                }
+            }
+            // Rulers.
+            if let Some(ref rd) = self.ruler_gpu_data {
+                if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_bind_group(0, &rd.bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
+                    render_pass.draw(0..rd.vertex_count, 0..1);
+                }
+            }
+            // Loading bars.
+            if let Some(ref lb) = self.loading_bar_gpu_data {
+                if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_bind_group(0, &lb.bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, lb.vertex_buf.slice(..));
+                    render_pass.draw(0..lb.vertex_count, 0..1);
+                }
+            }
+            // Overlay images (drawn last).
+            if !self.overlay_image_gpu_data.is_empty() {
+                if let Some(pipeline) = &self.resources.screen_image_pipeline {
+                    render_pass.set_pipeline(pipeline);
+                    for gpu in &self.overlay_image_gpu_data {
+                        render_pass.set_bind_group(0, &gpu.bind_group, &[]);
+                        render_pass.draw(0..6, 0..1);
+                    }
+                }
+            }
+        }
+
+        true
+    }
+
+    /// Blit the dyn-res intermediate texture into the provided render pass.
+    ///
+    /// Call from `CallbackTrait::paint` when
+    /// [`prepare_ldr_dyn_res`](Self::prepare_ldr_dyn_res) returned `true` for the same
+    /// frame. Emits a fullscreen upscale quad into `render_pass`.
+    pub fn paint_dyn_res_blit(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'static>,
+        frame: &FrameData,
+    ) {
+        let vp_idx = frame.camera.viewport_index;
+        if let Some(dr) = self.viewport_slots.get(vp_idx).and_then(|s| s.dyn_res.as_ref()) {
+            if let Some(pipeline) = &self.resources.dyn_res_upscale_ds_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, &dr.upscale_bind_group, &[]);
+                render_pass.draw(0..3, 0..1);
+            }
+        }
+    }
+
     /// High-level HDR render for a single viewport identified by `id`.
     ///
     /// Unlike [`render`](Self::render), this method does **not** call
@@ -402,8 +635,7 @@ impl ViewportRenderer {
                 label: Some("ldr_encoder"),
             });
 
-            let use_dyn_res = self.performance_policy.allow_dynamic_resolution
-                && self.current_render_scale < 1.0;
+            let use_dyn_res = self.current_render_scale < 1.0 - 0.001;
 
             if use_dyn_res {
                 let sw = ((w as f32 * self.current_render_scale) as u32).max(1);
@@ -1514,10 +1746,9 @@ impl ViewportRenderer {
             }
         }
 
-        // Phase 5 : effect throttling. When over budget and the policy permits it,
-        // skip non-essential effect passes (SSAO, contact shadows, bloom).
-        let throttle_effects = self.last_stats.missed_budget
-            && self.performance_policy.allow_effect_throttling;
+        // Phase 5 : effect throttling. Flag was computed in prepare() so that
+        // FrameStats reports exactly what fired rather than an approximation.
+        let throttle_effects = self.degradation_effects_throttled;
 
         // -----------------------------------------------------------------------
         // SSAO pass.

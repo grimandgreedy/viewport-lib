@@ -10,7 +10,8 @@ use std::collections::VecDeque;
 
 use eframe::egui;
 use viewport_lib::{
-    BackfacePolicy, Material, MeshData, RuntimeMode, SceneRenderItem, ViewportRenderer,
+    BackfacePolicy, Material, MeshData, QualityPreset, RuntimeMode, SceneRenderItem,
+    ViewportRenderer,
     scene::Scene,
     selection::Selection,
 };
@@ -214,45 +215,96 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
             "Dynamic resolution",
         ));
 
-        if app.pb_policy.allow_dynamic_resolution {
-            ui.add(
-                egui::Slider::new(&mut app.pb_policy.min_render_scale, 0.25..=1.0)
-                    .text("Min scale")
-                    .step_by(0.05),
-            );
-        } else {
-            ui.add(
-                egui::Slider::new(&mut app.pb_manual_render_scale, 0.25..=1.0)
-                    .text("Render scale")
-                    .step_by(0.05),
-            );
+        // Scale slider: hidden when a preset is active because the preset owns the
+        // scale bounds. Show the preset's range as informational text instead.
+        match app.pb_policy.preset {
+            Some(preset) => {
+                let (lo, hi) = match preset {
+                    QualityPreset::High => (1.0_f32, 1.0_f32),
+                    QualityPreset::Medium => (0.75, 1.0),
+                    QualityPreset::Low => (0.5, 0.75),
+                };
+                if (lo - hi).abs() < 0.001 {
+                    ui.label(format!("Scale: {lo:.2} (preset)"));
+                } else {
+                    ui.label(format!("Scale: {lo:.2} - {hi:.2} (preset)"));
+                }
+            }
+            None => {
+                if app.pb_policy.allow_dynamic_resolution {
+                    ui.add(
+                        egui::Slider::new(&mut app.pb_policy.min_render_scale, 0.25..=1.0)
+                            .text("Min scale")
+                            .step_by(0.05),
+                    );
+                } else {
+                    ui.add(
+                        egui::Slider::new(&mut app.pb_manual_render_scale, 0.25..=1.0)
+                            .text("Render scale")
+                            .step_by(0.05),
+                    );
+                }
+            }
         }
 
-        ui.add(egui::Checkbox::new(
-            &mut app.pb_policy.allow_shadow_reduction,
-            "Allow shadow reduction",
-        ));
-        ui.add(egui::Checkbox::new(
-            &mut app.pb_policy.allow_volume_quality_reduction,
-            "Allow volume quality reduction",
-        ));
-        ui.add(egui::Checkbox::new(
-            &mut app.pb_policy.allow_effect_throttling,
-            "Allow effect throttling",
-        ));
+        // --- Quality preset ---
+        // High/Medium/Low configure scale bounds and degradation flags as a unit.
+        // Custom exposes the individual knobs directly.
+        ui.label("Quality preset:");
+        ui.horizontal(|ui| {
+            for (label, value) in [
+                ("High", Some(QualityPreset::High)),
+                ("Medium", Some(QualityPreset::Medium)),
+                ("Low", Some(QualityPreset::Low)),
+                ("Custom", None),
+            ] {
+                if ui.radio(app.pb_policy.preset == value, label).clicked() {
+                    app.pb_policy.preset = value;
+                }
+            }
+        });
+
+        // Individual degradation knobs: enabled only in Custom mode.
+        let custom = app.pb_policy.preset.is_none();
+        ui.add_enabled(
+            custom,
+            egui::Checkbox::new(
+                &mut app.pb_policy.allow_shadow_reduction,
+                "Allow shadow reduction",
+            ),
+        );
+        ui.add_enabled(
+            custom,
+            egui::Checkbox::new(
+                &mut app.pb_policy.allow_volume_quality_reduction,
+                "Allow volume quality reduction",
+            ),
+        );
+        ui.add_enabled(
+            custom,
+            egui::Checkbox::new(
+                &mut app.pb_policy.allow_effect_throttling,
+                "Allow effect throttling",
+            ),
+        );
 
         ui.separator();
 
         // --- Load controls ---
-        ui.label("Grid resolution:");
+        // Grid resolution drives upload cost: the mesh is rebuilt and re-uploaded
+        // every frame in Playback mode. At high resolutions this can dominate
+        // frame time and quality controls will have little visible effect.
+        ui.label("Grid (upload load):");
         for &(res, label) in GRID_RESOLUTIONS {
             if ui.radio(app.pb_grid_resolution == res, label).clicked() {
                 app.pb_grid_resolution = res;
             }
         }
 
+        // Instance count drives render cost: a single instanced draw call, but
+        // more geometry and shadow work for the GPU to process.
         let old_count = app.pb_instance_count;
-        ui.label("Instance count:");
+        ui.label("Instances (render load):");
         for &(count, label) in INSTANCE_COUNTS {
             if ui.radio(app.pb_instance_count == count, label).clicked() {
                 app.pb_instance_count = count;
@@ -299,6 +351,30 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
                 ui.label("upload_bytes:");
                 ui.label(format!("{}", s.upload_bytes));
                 ui.end_row();
+
+                // Controller signal: gpu_frame_ms when available, else total_frame_ms.
+                ui.label("controller:");
+                match s.gpu_frame_ms {
+                    Some(g) => ui.label(format!("gpu {g:.2} ms")),
+                    None => ui.label(format!("wall-clock {:.2} ms", s.total_frame_ms)),
+                };
+                ui.end_row();
+
+                // Degradation tier derived from FrameStats flags.
+                let tier = if s.effects_throttled {
+                    "effects"
+                } else if s.volume_quality_reduced {
+                    "volumes"
+                } else if s.shadows_skipped {
+                    "shadows"
+                } else if s.render_scale < 0.999 {
+                    "scale"
+                } else {
+                    "none"
+                };
+                ui.label("tier:");
+                ui.label(tier);
+                ui.end_row();
             });
 
         // Render scale bar.
@@ -332,23 +408,25 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
         ui.separator();
 
         // Per-flag degradation dots.
+        // `active` reads directly from FrameStats so the dot reflects what
+        // actually fired, not an approximation based on missed_budget alone.
+        // `flag_on` reflects the effective policy (preset-derived when a preset is set).
         ui.label("Degradation:");
+        let (eff_allow_shadows, eff_allow_volumes, eff_allow_effects) =
+            match app.pb_policy.preset {
+                Some(QualityPreset::High) => (false, false, false),
+                Some(QualityPreset::Medium) => (true, false, true),
+                Some(QualityPreset::Low) => (true, true, true),
+                None => (
+                    app.pb_policy.allow_shadow_reduction,
+                    app.pb_policy.allow_volume_quality_reduction,
+                    app.pb_policy.allow_effect_throttling,
+                ),
+            };
         for (label, flag_on, active) in [
-            (
-                "shadows",
-                app.pb_policy.allow_shadow_reduction,
-                app.pb_policy.allow_shadow_reduction && s.missed_budget,
-            ),
-            (
-                "volumes",
-                app.pb_policy.allow_volume_quality_reduction,
-                app.pb_policy.allow_volume_quality_reduction && s.missed_budget,
-            ),
-            (
-                "effects",
-                app.pb_policy.allow_effect_throttling,
-                app.pb_policy.allow_effect_throttling && s.missed_budget,
-            ),
+            ("shadows", eff_allow_shadows, s.shadows_skipped),
+            ("volumes", eff_allow_volumes, s.volume_quality_reduced),
+            ("effects", eff_allow_effects, s.effects_throttled),
         ] {
             let color = if active {
                 egui::Color32::from_rgb(220, 55, 55)

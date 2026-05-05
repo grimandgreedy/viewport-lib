@@ -1836,8 +1836,12 @@ pub struct ViewportGpuResources {
     pub(crate) overlay_text_sampler: Option<wgpu::Sampler>,
 
     // --- Dynamic resolution render target (lazily created) ---
-    /// Upscale pipeline: renders the scaled intermediate color texture to the surface.
+    // Upscale pipeline: renders the scaled intermediate color texture to the surface.
+    // No depth attachment; used by render_frame_internal which controls its own encoder.
     pub(crate) dyn_res_upscale_pipeline: Option<wgpu::RenderPipeline>,
+    // Depth-stencil compatible variant for use inside eframe's paint render pass,
+    // which always provides a Depth24PlusStencil8 attachment. Depth writes disabled.
+    pub(crate) dyn_res_upscale_ds_pipeline: Option<wgpu::RenderPipeline>,
     /// Bind group layout for the upscale pass (texture + sampler).
     pub(crate) dyn_res_upscale_bgl: Option<wgpu::BindGroupLayout>,
     /// Linear-clamp sampler for the upscale blit.
