@@ -1,7 +1,8 @@
 //! Showcase 36: Playback Runtime Control
 //!
 //! Demonstrates the full runtime-control layer against a deliberate workload:
-//! - Deforming mesh: NxN sine-wave grid re-uploaded every frame in Playback mode
+//! - Deforming mesh: NxNxL sine-wave grid re-uploaded every frame in Playback mode
+//!   (L=1 is a flat 2D sheet; L>1 stacks multiple sheets for heavier upload load)
 //! - Static instanced box grid: independent draw-call load
 //! - Controls: RuntimeMode, PerformancePolicy sliders/toggles, load selectors
 //! - Stats: live FrameStats readout with 60-frame sparkline
@@ -26,12 +27,22 @@ pub(crate) const GRID_RESOLUTIONS: &[(usize, &str)] = &[
     (50, "50x50"),
     (100, "100x100"),
     (200, "200x200"),
+    (300, "300x300"),
+];
+
+pub(crate) const GRID_LAYERS: &[(usize, &str)] = &[
+    (1, "1 (2D)"),
+    (3, "3"),
+    (5, "5"),
+    (10, "10"),
 ];
 
 pub(crate) const INSTANCE_COUNTS: &[(usize, &str)] = &[
     (100, "100"),
     (1000, "1 000"),
     (10000, "10 000"),
+    (25000, "25 000"),
+    (50000, "50 000"),
 ];
 
 // ---------------------------------------------------------------------------
@@ -40,13 +51,14 @@ pub(crate) const INSTANCE_COUNTS: &[(usize, &str)] = &[
 
 pub(crate) fn build_pb_scene(app: &mut App, renderer: &mut ViewportRenderer) {
     // Upload placeholder deforming mesh (replaced each frame in Playback mode).
-    let deform_mesh = build_sine_grid(app.pb_grid_resolution, 0.0);
+    let deform_mesh = build_sine_grid(app.pb_grid_resolution, app.pb_grid_layers, 0.0);
     let mesh_id = renderer
         .resources_mut()
         .upload_mesh_data(&app.device, &deform_mesh)
         .expect("pb deforming mesh upload");
     app.pb_mesh_id = Some(mesh_id);
     app.pb_last_grid_resolution = app.pb_grid_resolution;
+    app.pb_last_grid_layers = app.pb_grid_layers;
 
     // Upload one shared box mesh for the static grid.
     let box_id = renderer
@@ -110,47 +122,60 @@ pub(crate) fn pb_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
 // Deforming grid mesh
 // ---------------------------------------------------------------------------
 
-/// Build a `resolution x resolution` sine-wave grid mesh at time `t`.
+/// Build a `resolution x resolution x layers` sine-wave grid mesh at time `t`.
+///
+/// `layers = 1` produces a single flat 2D sheet. `layers > 1` stacks multiple
+/// sheets along Z, each with a phase offset of `layer * 0.5` radians, to
+/// increase upload cost without changing the visual footprint much.
 ///
 /// Each vertex has an analytical normal derived from the gradient of the
 /// displacement field, so normals update correctly every frame.
-pub(crate) fn build_sine_grid(resolution: usize, t: f32) -> MeshData {
+pub(crate) fn build_sine_grid(resolution: usize, layers: usize, t: f32) -> MeshData {
     let n = resolution.max(2);
+    let l = layers.max(1);
     let half = (n as f32 - 1.0) * 0.5;
-    let scale = 4.0_f32; // half-extent of the grid in world units
+    let scale = 4.0_f32; // half-extent of each sheet in world units
+    let layer_spacing = 2.5_f32;
 
-    let vert_count = (n + 1) * (n + 1);
-    let mut positions = Vec::with_capacity(vert_count);
-    let mut normals = Vec::with_capacity(vert_count);
-    let mut indices = Vec::with_capacity(n * n * 6);
+    let verts_per_layer = (n + 1) * (n + 1);
+    let tris_per_layer = n * n * 6;
+    let mut positions = Vec::with_capacity(verts_per_layer * l);
+    let mut normals = Vec::with_capacity(verts_per_layer * l);
+    let mut indices = Vec::with_capacity(tris_per_layer * l);
 
-    for row in 0..=n {
-        for col in 0..=n {
-            let x = (col as f32 - half) / half * scale;
-            let y = (row as f32 - half) / half * scale;
+    for layer in 0..l {
+        let phase = layer as f32 * 0.5;
+        let z_offset = (layer as f32 - (l as f32 - 1.0) * 0.5) * layer_spacing;
+        let vert_base = (layer * verts_per_layer) as u32;
+        let stride = (n + 1) as u32;
 
-            let ax = x * 1.2 + t * 2.0;
-            let ay = y * 0.9 + t * 1.7;
-            let z = ax.sin() * 0.6 + ay.sin() * 0.4;
+        for row in 0..=n {
+            for col in 0..=n {
+                let x = (col as f32 - half) / half * scale;
+                let y = (row as f32 - half) / half * scale;
 
-            positions.push([x, y, z]);
+                let ax = x * 1.2 + t * 2.0 + phase;
+                let ay = y * 0.9 + t * 1.7 + phase;
+                let z = z_offset + ax.sin() * 0.6 + ay.sin() * 0.4;
 
-            // Gradient: dz/dx, dz/dy.
-            let dzdx = ax.cos() * 1.2 * 0.6;
-            let dzdy = ay.cos() * 0.9 * 0.4;
-            let nv = glam::Vec3::new(-dzdx, -dzdy, 1.0).normalize();
-            normals.push([nv.x, nv.y, nv.z]);
+                positions.push([x, y, z]);
+
+                // Gradient: dz/dx, dz/dy.
+                let dzdx = ax.cos() * 1.2 * 0.6;
+                let dzdy = ay.cos() * 0.9 * 0.4;
+                let nv = glam::Vec3::new(-dzdx, -dzdy, 1.0).normalize();
+                normals.push([nv.x, nv.y, nv.z]);
+            }
         }
-    }
 
-    let stride = (n + 1) as u32;
-    for row in 0..n as u32 {
-        for col in 0..n as u32 {
-            let tl = row * stride + col;
-            let tr = tl + 1;
-            let bl = tl + stride;
-            let br = bl + 1;
-            indices.extend_from_slice(&[tl, bl, tr, tr, bl, br]);
+        for row in 0..n as u32 {
+            for col in 0..n as u32 {
+                let tl = vert_base + row * stride + col;
+                let tr = tl + 1;
+                let bl = tl + stride;
+                let br = bl + 1;
+                indices.extend_from_slice(&[tl, bl, tr, tr, bl, br]);
+            }
         }
     }
 
@@ -301,6 +326,14 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
             }
         }
 
+        // Layers stacks multiple NxN sheets to multiply upload cost.
+        ui.label("Layers:");
+        for &(layers, label) in GRID_LAYERS {
+            if ui.radio(app.pb_grid_layers == layers, label).clicked() {
+                app.pb_grid_layers = layers;
+            }
+        }
+
         // Instance count drives render cost: a single instanced draw call, but
         // more geometry and shadow work for the GPU to process.
         let old_count = app.pb_instance_count;
@@ -350,6 +383,10 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
 
                 ui.label("upload_bytes:");
                 ui.label(format!("{}", s.upload_bytes));
+                ui.end_row();
+
+                ui.label("upload_ms:");
+                ui.label(format!("{:.2} ms", app.pb_upload_ms));
                 ui.end_row();
 
                 // Controller signal: gpu_frame_ms when available, else total_frame_ms.

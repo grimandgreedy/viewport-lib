@@ -1,8 +1,17 @@
 # Changelog
 
-## [Unreleased]
+## [0.12.2]
 
 ### Features
+- new `ViewportGpuResources` method that writes positions and normals directly into an existing mesh's GPU vertex buffer without reallocating. Use this for deforming meshes where topology is stable across frames: the index buffer, edge buffer, and bind groups are all reused. The normal line visualization buffer is also updated in place if present (`write_mesh_positions_normals`).
+- `prepare_ldr_dyn_res` / `paint_dyn_res_blit`: new `ViewportRenderer` methods for integrating dynamic resolution into frameworks where the surface render pass is externally owned. `prepare_ldr_dyn_res` encodes the scaled scene pass into the pre-pass command encoder; `paint_dyn_res_blit` upscales the result inside the surface pass. See the Rendering Variants table in `docs/overviews/src-architecture.md`.
+
+### Performance
+- `replace_mesh_data` now detects when the new vertex and index counts match the existing mesh (and no attributes are being updated) and writes to the existing GPU buffers in place instead of allocating new ones. For repeated updates of topology-stable meshes this eliminates the GPU memory allocation cycle entirely.
+- Instanced scene preparation no longer triggers per-object uniform re-uploads for every item when a single two-sided or non-instancable mesh is present. The `has_per_frame_mutations` cache key is replaced with `instancable_count`, so the instanced batch rebuilds only when the number of instancable objects actually changes.
+
+### Fixes
+- Dynamic resolution controller signal: fallback when GPU timestamps are unavailable is now `total_frame_ms` (wall-clock frame time) rather than `cpu_prepare_ms`, giving the controller a meaningful budget signal on backends that do not support timestamp queries.
 
 ## [0.12.1]
 

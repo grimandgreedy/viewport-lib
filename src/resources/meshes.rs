@@ -128,9 +128,120 @@ impl ViewportGpuResources {
         Ok(id)
     }
 
+    /// Write new positions and normals into an existing mesh without reallocating GPU buffers.
+    ///
+    /// The vertex count must match the original upload exactly. Use this for deforming meshes
+    /// where topology is stable across frames: the index buffer, edge buffer, and bind groups
+    /// are all reused. Color, UVs, and tangents are written as defaults (white, zero, [0,0,0,1]).
+    ///
+    /// The normal line visualization buffer is also updated in place if it was created at upload time.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::MeshIndexOutOfBounds`](crate::error::ViewportError::MeshIndexOutOfBounds)
+    /// if `mesh_id` is out of range, [`ViewportError::MeshLengthMismatch`](crate::error::ViewportError::MeshLengthMismatch)
+    /// if `positions` and `normals` differ in length or do not match the existing vertex count.
+    pub fn write_mesh_positions_normals(
+        &mut self,
+        queue: &wgpu::Queue,
+        mesh_id: crate::resources::mesh_store::MeshId,
+        positions: &[[f32; 3]],
+        normals: &[[f32; 3]],
+    ) -> crate::error::ViewportResult<()> {
+        use bytemuck::cast_slice;
+
+        if !self.mesh_store.contains(mesh_id) {
+            return Err(crate::error::ViewportError::MeshIndexOutOfBounds {
+                index: mesh_id.index(),
+                count: self.mesh_store.len(),
+            });
+        }
+        if positions.len() != normals.len() {
+            return Err(crate::error::ViewportError::MeshLengthMismatch {
+                positions: positions.len(),
+                normals: normals.len(),
+            });
+        }
+
+        let existing_vertex_count = {
+            let mesh = self.mesh_store.get(mesh_id).unwrap();
+            (mesh.vertex_buffer.size() / std::mem::size_of::<Vertex>() as u64) as usize
+        };
+        if positions.len() != existing_vertex_count {
+            return Err(crate::error::ViewportError::MeshLengthMismatch {
+                positions: positions.len(),
+                normals: existing_vertex_count,
+            });
+        }
+
+        let vertices: Vec<Vertex> = positions
+            .iter()
+            .zip(normals.iter())
+            .map(|(p, n)| Vertex {
+                position: *p,
+                normal: *n,
+                color: [1.0, 1.0, 1.0, 1.0],
+                uv: [0.0, 0.0],
+                tangent: [0.0, 0.0, 0.0, 1.0],
+            })
+            .collect();
+
+        let has_normal_lines =
+            self.mesh_store.get(mesh_id).unwrap().normal_line_buffer.is_some();
+        let normal_line_verts: Option<Vec<Vertex>> = if has_normal_lines {
+            let normal_length = 0.1_f32;
+            let normal_color = [0.627_f32, 0.769, 1.0, 1.0];
+            let mut verts = Vec::with_capacity(positions.len() * 2);
+            for (p, n) in positions.iter().zip(normals.iter()) {
+                let tip = [
+                    p[0] + n[0] * normal_length,
+                    p[1] + n[1] * normal_length,
+                    p[2] + n[2] * normal_length,
+                ];
+                verts.push(Vertex {
+                    position: *p,
+                    normal: *n,
+                    color: normal_color,
+                    uv: [0.0, 0.0],
+                    tangent: [0.0, 0.0, 0.0, 1.0],
+                });
+                verts.push(Vertex {
+                    position: tip,
+                    normal: *n,
+                    color: normal_color,
+                    uv: [0.0, 0.0],
+                    tangent: [0.0, 0.0, 0.0, 1.0],
+                });
+            }
+            Some(verts)
+        } else {
+            None
+        };
+
+        let aabb = crate::scene::aabb::Aabb::from_positions(positions);
+        let mesh = self.mesh_store.get_mut(mesh_id).unwrap();
+        queue.write_buffer(&mesh.vertex_buffer, 0, cast_slice(&vertices));
+        if let (Some(nl_buf), Some(nl_verts)) = (&mesh.normal_line_buffer, &normal_line_verts) {
+            queue.write_buffer(nl_buf, 0, cast_slice(nl_verts.as_slice()));
+        }
+        mesh.aabb = aabb;
+        if let Some(ref mut cp) = mesh.cpu_positions {
+            *cp = positions.to_vec();
+        }
+
+        self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()) as u64;
+        if let Some(ref nl) = normal_line_verts {
+            self.frame_upload_bytes += (nl.len() * std::mem::size_of::<Vertex>()) as u64;
+        }
+
+        Ok(())
+    }
+
     /// Replace the mesh at `mesh_index` with new geometry data.
     ///
-    /// Used when primitive parameters change (re-tessellation).
+    /// When the new vertex and index counts match the existing mesh and no attributes are
+    /// present, the existing GPU buffers are reused and data is written in place, avoiding
+    /// GPU memory allocation. When topology changes, new buffers are allocated.
     ///
     /// # Errors
     ///
@@ -139,6 +250,7 @@ impl ViewportGpuResources {
     pub fn replace_mesh_data(
         &mut self,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         mesh_id: crate::resources::mesh_store::MeshId,
         data: &MeshData,
     ) -> crate::error::ViewportResult<()> {
@@ -184,6 +296,55 @@ impl ViewportGpuResources {
                 }
             })
             .collect();
+
+        // Fast path: when topology is unchanged and no attributes need updating, write
+        // directly to the existing GPU buffers to avoid re-allocation.
+        {
+            let existing = self.mesh_store.get(mesh_id).unwrap();
+            let existing_vc =
+                (existing.vertex_buffer.size() / std::mem::size_of::<Vertex>() as u64) as usize;
+            let in_place = existing_vc == vertices.len()
+                && existing.index_count as usize == data.indices.len()
+                && data.attributes.is_empty();
+
+            if in_place {
+                use bytemuck::cast_slice;
+                let edge_indices =
+                    crate::resources::extra_impls::generate_edge_indices(&data.indices);
+                let normal_line_verts = Self::build_normal_lines(data);
+                let aabb = crate::scene::aabb::Aabb::from_positions(&data.positions);
+
+                let mesh = self.mesh_store.get_mut(mesh_id).unwrap();
+                queue.write_buffer(&mesh.vertex_buffer, 0, cast_slice(&vertices));
+                queue.write_buffer(&mesh.index_buffer, 0, cast_slice(data.indices.as_slice()));
+                let edge_byte_len =
+                    (edge_indices.len() * std::mem::size_of::<u32>()) as u64;
+                if edge_byte_len <= mesh.edge_index_buffer.size() {
+                    queue.write_buffer(
+                        &mesh.edge_index_buffer,
+                        0,
+                        cast_slice(&edge_indices),
+                    );
+                    mesh.edge_index_count = edge_indices.len() as u32;
+                }
+                if let Some(ref nl_buf) = mesh.normal_line_buffer {
+                    queue.write_buffer(nl_buf, 0, cast_slice(&normal_line_verts));
+                }
+                mesh.aabb = aabb;
+                mesh.cpu_positions = Some(data.positions.clone());
+                mesh.cpu_indices = Some(data.indices.clone());
+
+                self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
+                    + data.indices.len() * std::mem::size_of::<u32>()) as u64;
+                tracing::debug!(
+                    mesh_index = mesh_id.index(),
+                    vertices = data.positions.len(),
+                    "mesh updated in place"
+                );
+                return Ok(());
+            }
+        }
+
         let normal_line_verts = Self::build_normal_lines(data);
         let mut new_mesh = Self::create_mesh_with_normals(
             device,
@@ -293,13 +454,14 @@ impl ViewportGpuResources {
     pub fn replace_clipped_volume_mesh_data(
         &mut self,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         mesh_id: crate::resources::mesh_store::MeshId,
         data: &crate::resources::volume_mesh::VolumeMeshData,
         clip_planes: &[[f32; 4]],
     ) -> crate::error::ViewportResult<()> {
         let mesh_data =
             crate::resources::volume_mesh::extract_clipped_volume_faces(data, clip_planes);
-        self.replace_mesh_data(device, mesh_id, &mesh_data)
+        self.replace_mesh_data(device, queue, mesh_id, &mesh_data)
     }
 
     /// Upload a sparse voxel grid by extracting its boundary surface and uploading

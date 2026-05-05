@@ -77,7 +77,7 @@ impl App {
             // Overwrite the existing slot.
             let _ = renderer
                 .resources_mut()
-                .replace_mesh_data(&self.device, idx, &iso_mesh);
+                .replace_mesh_data(&self.device, &self.queue, idx, &iso_mesh);
         } else {
             // Allocate a new slot.
             if let Ok(idx) = renderer

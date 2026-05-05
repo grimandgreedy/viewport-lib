@@ -607,6 +607,8 @@ fn main() -> eframe::Result {
                 pb_manual_render_scale: 1.0,
                 pb_grid_resolution: 50,
                 pb_last_grid_resolution: 0,
+                pb_grid_layers: 1,
+                pb_last_grid_layers: 0,
                 pb_instance_count: 1000,
                 pb_time: 0.0,
                 pb_mesh_id: None,
@@ -614,6 +616,7 @@ fn main() -> eframe::Result {
                 pb_scene: Scene::new(),
                 pb_last_stats: FrameStats::default(),
                 pb_stats_history: std::collections::VecDeque::new(),
+                pb_upload_ms: 0.0,
             }))
         }),
     )
@@ -1151,6 +1154,8 @@ pub(crate) struct App {
     pub(crate) pb_manual_render_scale: f32,
     pub(crate) pb_grid_resolution: usize,
     pub(crate) pb_last_grid_resolution: usize,
+    pub(crate) pb_grid_layers: usize,
+    pub(crate) pb_last_grid_layers: usize,
     pub(crate) pb_instance_count: usize,
     pub(crate) pb_time: f32,
     pub(crate) pb_mesh_id: Option<MeshId>,
@@ -1158,6 +1163,7 @@ pub(crate) struct App {
     pub(crate) pb_scene: Scene,
     pub(crate) pb_last_stats: FrameStats,
     pub(crate) pb_stats_history: std::collections::VecDeque<f32>,
+    pub(crate) pb_upload_ms: f32,
 }
 
 // ---------------------------------------------------------------------------
@@ -3780,6 +3786,7 @@ impl App {
                                         .resources_mut()
                                         .replace_clipped_volume_mesh_data(
                                             &rs.device,
+                                            &rs.queue,
                                             id,
                                             &data,
                                             &clip_planes,
@@ -3851,8 +3858,9 @@ impl App {
 
             ShowcaseMode::PlaybackRuntime => {
                 // Apply renderer settings and update deforming mesh.
-                let need_mesh_update = self.pb_mode == RuntimeMode::Playback
-                    || self.pb_grid_resolution != self.pb_last_grid_resolution;
+                let topology_changed = self.pb_grid_resolution != self.pb_last_grid_resolution
+                    || self.pb_grid_layers != self.pb_last_grid_layers;
+                let need_mesh_update = self.pb_mode == RuntimeMode::Playback || topology_changed;
                 if let Some(rs) = frame.wgpu_render_state() {
                     let mut guard = rs.renderer.write();
                     if let Some(renderer) =
@@ -3860,17 +3868,33 @@ impl App {
                     {
                         if need_mesh_update {
                             if let Some(mesh_id) = self.pb_mesh_id {
+                                let t0 = std::time::Instant::now();
                                 let mesh = showcase_36_playback_runtime::build_sine_grid(
                                     self.pb_grid_resolution,
+                                    self.pb_grid_layers,
                                     self.pb_time,
                                 );
-                                let _ = renderer.resources_mut().replace_mesh_data(
-                                    &rs.device,
-                                    mesh_id,
-                                    &mesh,
-                                );
-                                self.pb_last_grid_resolution = self.pb_grid_resolution;
+                                if topology_changed {
+                                    let _ = renderer.resources_mut().replace_mesh_data(
+                                        &rs.device,
+                                        &rs.queue,
+                                        mesh_id,
+                                        &mesh,
+                                    );
+                                    self.pb_last_grid_resolution = self.pb_grid_resolution;
+                                    self.pb_last_grid_layers = self.pb_grid_layers;
+                                } else {
+                                    let _ = renderer.resources_mut().write_mesh_positions_normals(
+                                        &rs.queue,
+                                        mesh_id,
+                                        &mesh.positions,
+                                        &mesh.normals,
+                                    );
+                                }
+                                self.pb_upload_ms = t0.elapsed().as_secs_f32() * 1000.0;
                             }
+                        } else {
+                            self.pb_upload_ms = 0.0;
                         }
                         renderer.set_runtime_mode(self.pb_mode);
                         renderer.set_performance_policy(self.pb_policy);

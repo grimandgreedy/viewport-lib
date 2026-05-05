@@ -130,14 +130,14 @@ fn upload_mesh_data_invalid_index() {
 
 #[test]
 fn replace_mesh_data_bad_index() {
-    let Some((device, _queue)) = headless_device() else {
+    let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
     let result = renderer
         .resources_mut()
-        .replace_mesh_data(&device, MeshId::from_index(999), &box_mesh());
+        .replace_mesh_data(&device, &queue, MeshId::from_index(999), &box_mesh());
     assert!(matches!(
         result.unwrap_err(),
         ViewportError::MeshIndexOutOfBounds { index: 999, .. }
