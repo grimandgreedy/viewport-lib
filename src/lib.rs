@@ -2,8 +2,8 @@
 //! `viewport-lib` : a 3D viewport library for `wgpu` applications.
 //!
 //! Built on `wgpu` and `glam`, with no required UI toolkit. The crate provides
-//! the renderer, camera, picking, and interaction pieces; host applications keep
-//! control of their own windowing and event loop.
+//! the renderer, camera, picking, and interaction code; host applications keep
+//! their own windowing and event loop.
 //!
 //! # Quick start (single viewport)
 //!

@@ -8,14 +8,14 @@
 
 
 ### Features
-- `PatternConfig`: new struct carrying pattern, color, and `scale` (cells across the object's longest world-space bounding-box dimension, default 8.0). Pattern density is now object-relative — a `scale` of 8.0 produces 8 cells across the object regardless of mesh units or physical size.
+- `PatternConfig`: new struct carrying pattern, color, and `scale` (cells across the object's longest world-space bounding-box dimension, default 8.0). Pattern density is now object-relative -- a `scale` of 8.0 produces 8 cells across the object regardless of mesh units or physical size.
 - Volume mesh filled clip: clipping a `VolumeMeshData` now produces real interior cross-sections instead of an open shell. Boundary faces on the kept side are preserved; intersected cells contribute CPU-generated section polygons coloured by per-cell scalar or direct-colour data. Supports multiple simultaneous clip planes via the same `[nx, ny, nz, d]` encoding used by `ClipPlanesUniform`.
   - New `ViewportGpuResources` methods: `upload_clipped_volume_mesh_data` and `replace_clipped_volume_mesh_data` for per-frame GPU slot management.
 - `VolumeMeshData` now supports pyramid (5-vertex) and wedge/triangular-prism (6-vertex) cells in addition to tets and hexes. Both cell types participate fully in boundary extraction, clipping, and per-cell scalar/color attribute remapping.
 - New `VolumeMeshData` push helpers: `push_tet`, `push_pyramid`, `push_wedge`, `push_hex`. Each method fills sentinel slots automatically, removing the footgun of manually padding the 8-slot cell array.
 - `ClipObject`: two new fields:
-  - `edge_color: Option<[f32; 4]>` — independent RGBA colour for the plane border edge. When set, the edge uses this colour instead of deriving from `color`, allowing a visible outline with a fully transparent fill.
-  - `clip_geometry: bool` — when `false`, the object renders its visual indicator but does not contribute to the GPU clip-plane uniform. Default: `true`. Allows a decorative plane edge with no effect on rendered geometry.
+  - `edge_color: Option<[f32; 4]>` - independent RGBA colour for the plane border edge. When set, the edge uses this colour instead of deriving from `color`, allowing a visible outline with a fully transparent fill.
+  - `clip_geometry: bool` - when `false`, the object renders its visual indicator but does not contribute to the GPU clip-plane uniform. Default: `true`. Allows a decorative plane edge with no effect on rendered geometry.
 
 ### Fixes
 - Phantom shadows from stale GPU cull data: `cull_instances` and `write_indirect_args` compute shaders previously bounded their loops with `arrayLength()`, which returns the allocated buffer capacity (2× headroom). When switching to a scene with fewer objects, stale AABB entries from the previous, larger scene were still processed, injecting ghost shadow casters from old geometry. Fixed by adding `instance_count` and `batch_count` to `FrustumUniform`; the shaders now guard against the valid element count rather than the buffer size.
@@ -52,18 +52,7 @@
 - Adaptation controller: automatically adjusts render scale within `[min_render_scale, max_render_scale]` when `allow_dynamic_resolution` is true and the frame misses the target budget.
 - Dynamic resolution: when `allow_dynamic_resolution` is true and `current_render_scale < 1.0`, the LDR render path draws into a scaled intermediate texture that is bilinearly upscaled to the surface. HDR path unaffected (it already has its own intermediate texture).
 - GPU timestamp queries: `gpu_frame_ms` is populated with the previous frame's scene-pass GPU time on backends that support `TIMESTAMP_QUERY`. Lags by one frame due to async readback.
-- Per-pass degradation knobs: `allow_shadow_reduction` skips the shadow pass, `allow_volume_quality_reduction` doubles the volume raymarch step size, and `allow_effect_throttling` skips SSAO, contact shadows, and bloom — each when the previous frame missed the target budget.
-
-## [0.11.0]
-
-### Features
-- `RuntimeMode` enum: switch between `Interactive`, `Playback`, `Paused`, and `Capture` modes via `set_runtime_mode()`. Picking is throttled to every 4th frame in `Playback` mode.
-- `PerformancePolicy`: configure target FPS, render scale bounds, and per-pass degradation flags via `set_performance_policy()`.
-- `FrameStats` extended: `cpu_prepare_ms`, `gpu_frame_ms`, `total_frame_ms`, `render_scale`, `missed_budget`, `upload_bytes` returned from `prepare()`.
-- Adaptation controller: automatically adjusts render scale within `[min_render_scale, max_render_scale]` when `allow_dynamic_resolution` is true and the frame misses the target budget.
-- Dynamic resolution: when `allow_dynamic_resolution` is true and `current_render_scale < 1.0`, the LDR render path draws into a scaled intermediate texture that is bilinearly upscaled to the surface. HDR path unaffected (it already has its own intermediate texture).
-- GPU timestamp queries: `gpu_frame_ms` is populated with the previous frame's scene-pass GPU time on backends that support `TIMESTAMP_QUERY`. Lags by one frame due to async readback.
-- Per-pass degradation knobs: `allow_shadow_reduction` skips the shadow pass, `allow_volume_quality_reduction` doubles the volume raymarch step size, and `allow_effect_throttling` skips SSAO, contact shadows, and bloom — each when the previous frame missed the target budget.
+- Per-pass degradation knobs: `allow_shadow_reduction` skips the shadow pass, `allow_volume_quality_reduction` doubles the volume raymarch step size, and `allow_effect_throttling` skips SSAO, contact shadows, and bloom - each when the previous frame missed the target budget.
 
 ## [0.10.1]
 

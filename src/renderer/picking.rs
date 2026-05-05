@@ -39,7 +39,7 @@ impl ViewportRenderer {
             return None;
         }
 
-        // Resolve scene items from the SurfaceSubmission seam.
+        // Read scene items from the surface submission.
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
             SurfaceSubmission::Flat(items) => items.as_ref(),
         };

@@ -1,10 +1,9 @@
 //! Per-frame viewport context for the new input pipeline.
 
 /// Per-frame viewport context passed to [`super::controller::OrbitCameraController::begin_frame`]
-/// (and the lower-level [`super::viewport_input::ViewportInput::begin_frame`]).
+/// (and [`super::viewport_input::ViewportInput::begin_frame`]).
 ///
-/// Makes viewport ownership explicit so the library can apply consistent
-/// hover / focus policies without each host app re-implementing them.
+/// Carries the hover, focus, and size state needed to interpret viewport input.
 #[derive(Debug, Clone, Copy)]
 pub struct ViewportContext {
     /// Whether the pointer is currently hovering over the viewport.

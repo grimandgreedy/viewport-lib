@@ -1,4 +1,4 @@
-//! Framework-agnostic viewport events for the new input pipeline.
+//! Viewport events for the new input pipeline.
 
 use super::binding::{KeyCode, Modifiers, MouseButton};
 
@@ -22,11 +22,11 @@ pub enum ScrollUnits {
     Pages,
 }
 
-/// A framework-agnostic event delivered to the viewport input pipeline.
+/// An event delivered to the viewport input pipeline.
 ///
 /// Host applications translate their native windowing events into
 /// `ViewportEvent` values and push them to [`super::controller::OrbitCameraController`]
-/// (or [`super::viewport_input::ViewportInput`] for the lower-level path).
+/// (or [`super::viewport_input::ViewportInput`] for direct input handling).
 #[derive(Debug, Clone)]
 pub enum ViewportEvent {
     /// The pointer moved to the given viewport-local position.

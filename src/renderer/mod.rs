@@ -134,8 +134,7 @@ pub(crate) struct ViewportSlot {
     pub sub_highlight_generation: u64,
 }
 
-/// High-level renderer wrapping all GPU resources and providing framework-agnostic
-/// `prepare()` and `paint()` methods.
+/// Renderer wrapping all GPU resources and providing `prepare()` and `paint()` methods.
 pub struct ViewportRenderer {
     resources: ViewportGpuResources,
     /// Instanced batches prepared for the current frame. Empty when using per-object path.

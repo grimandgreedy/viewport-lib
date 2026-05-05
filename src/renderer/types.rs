@@ -1256,11 +1256,11 @@ impl CameraFrame {
     }
 }
 
-/// Surface submission seam for world-space geometry.
+/// Surface submission type for world-space geometry.
 ///
-/// For 0.2.0, only `Flat` submission is supported. This enum exists to
-/// provide an explicit seam for future large-scene or chunked submission
-/// without changing the `SceneFrame` public type.
+/// For 0.2.0, only `Flat` submission is supported. This enum leaves room for
+/// future large-scene or chunked submission without changing the `SceneFrame`
+/// public type.
 #[non_exhaustive]
 pub enum SurfaceSubmission {
     /// A flat, reference-counted list of scene render items.
@@ -1281,8 +1281,8 @@ impl Default for SurfaceSubmission {
 /// World-space scene content for one frame.
 ///
 /// Groups all renderable world-space content submitted to the renderer.
-/// Surfaces are submitted through the [`SurfaceSubmission`] seam; scientific
-/// visualization primitives are first-class members alongside surfaces.
+/// Surfaces are submitted through [`SurfaceSubmission`]; scientific
+/// visualization primitives sit alongside them.
 #[non_exhaustive]
 pub struct SceneFrame {
     /// Scene version counter from `Scene::version()`. Default: 0 (triggers rebuild on first frame).
@@ -2266,7 +2266,7 @@ macro_rules! emit_draw_calls {
         let camera_bg: &wgpu::BindGroup = $camera_bg;
         let grid_bg: &wgpu::BindGroup = $grid_bg;
 
-        // Resolve scene items from the SurfaceSubmission seam.
+        // Read scene items from the surface submission.
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
             SurfaceSubmission::Flat(items) => items.as_ref(),
         };

@@ -1,7 +1,6 @@
-//! High-level orbit/pan/zoom camera controller.
+//! Orbit/pan/zoom camera controller.
 //!
-//! [`OrbitCameraController`] is the ergonomic entry point for standard viewport
-//! camera navigation. It wraps [`super::viewport_input::ViewportInput`] and
+//! [`OrbitCameraController`] wraps [`super::viewport_input::ViewportInput`] and
 //! applies resolved orbit / pan / zoom actions directly to a [`crate::Camera`].
 
 use crate::Camera;

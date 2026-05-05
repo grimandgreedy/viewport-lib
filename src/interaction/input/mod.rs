@@ -6,7 +6,7 @@
 //!
 //! # New input pipeline (recommended)
 //!
-//! The new pipeline provides a higher-level, framework-agnostic path:
+//! The new pipeline works like this:
 //!
 //! 1. Translate native events to [`ViewportEvent`]
 //! 2. Feed into [`OrbitCameraController`] (or lower-level [`ViewportInput`])
