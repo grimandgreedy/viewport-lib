@@ -1,6 +1,6 @@
 # viewport-lib
 
-`viewport-lib` is a gpu-accelerated 3D viewport library for rust. The library gives you a renderer, camera, picking-tools, light sources, gizmos and scene primitives.
+`viewport-lib` is a gpu-accelerated 3D viewport library for rust. It works with any GUI framework that gives you access to a wgpu device, queue, and render target: `eframe`/`egui`, `winit`, `Iced`, `Slint`, and others.
 
 <table>
   <tr>
@@ -17,21 +17,21 @@
   </tr>
 </table>
 
-Whichever gui library you choose to use (`winit`, `eframe`, `Iced`, `Slint`, etc.), the integration model stays the same in each case:
-- `viewport-lib` owns rendering and viewport-side maths;
-- your application owns the window, event loop, and tool state;
+`viewport-lib` covers rendering, cameras, and post-processing. Your application owns the window, event loop, and tool state.
 
 
-**WARNING**: `viewport-lib` has only recently been extracted as a stand-alone library from a separate project and the API is still somewhat unstable. When things become more solid I will release v1.0.0
+
+**WARNING**: The viewport has only recently been extracted as a stand-alone library from a separate project and the API is still somewhat unstable. When things become more solid I will release v1.0.0
 
 ## Core features
-- mesh, point cloud, polyline, and volume rendering
-- directional lighting, shadow mapping, and post-processing
-- material shading, normal maps, transparency, outlines, and x-ray views
-- clip planes, section views, scalar coloring, and colormaps
-- arcball camera, view presets, framing, and smooth camera animation
-- CPU/GPU picking, rectangle selection, transform gizmos, and snapping
-- annotations, axes indicators
+
+- **Geometry**: mesh, point cloud, polyline, volume, glyph, and streamtube rendering
+- **Lighting**: directional, point, and spot lights; shadow maps;
+- **Materials**: PBR and Blinn-Phong shading, normal maps, transparency
+- **Scene tools**: clip planes, section views, scalar coloring, and colourmaps
+- **Camera**: arcball orbit, orthographic projection, view presets, smooth animation, and frame-to-selection
+- **Interaction**: CPU/GPU picking, rectangle selection, transform gizmos, and snapping
+- **Overlays**: labels, scalar bar, rulers, and axes indicator
 
 
 ## Examples
