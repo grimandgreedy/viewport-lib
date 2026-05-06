@@ -56,13 +56,6 @@ path = "examples/winit_viewport/main.rs"
 name = "winit-minimal"
 path = "examples/winit_minimal/main.rs"
 
-[[example]]
-name = "winit-primitives"
-path = "examples/winit_primitives/main.rs"
-
-[[example]]
-name = "winit-showcase"
-path = "examples/winit_showcase/main.rs"
 
 [[example]]
 name = "eframe-minimal"

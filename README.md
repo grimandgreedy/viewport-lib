@@ -150,4 +150,4 @@ orbit.begin_frame(ViewportContext { hovered, focused, viewport_size: [width, hei
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0. See [LICENSE](LICENSE) for details.
+This project is licensed under the GNU General Public License v3.0. See [LICENSE](LICENSE) for details. Get in contact for details on purchasing a commercial license.
