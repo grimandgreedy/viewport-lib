@@ -36,6 +36,7 @@
 use crate::camera::camera::{Camera, Projection};
 use crate::renderer::{ImageAnchor, ScreenImageItem};
 use glam::Vec3;
+use rayon::prelude::*;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -117,7 +118,7 @@ pub fn march_implicit_surface<F>(
     sdf: F,
 ) -> ScreenImageItem
 where
-    F: Fn(Vec3) -> f32,
+    F: Fn(Vec3) -> f32 + Sync,
 {
     let color = options.surface_color;
     march_impl(camera, options, move |p| (sdf(p), color))
@@ -142,7 +143,7 @@ pub fn march_implicit_surface_color<F>(
     sdf_color: F,
 ) -> ScreenImageItem
 where
-    F: Fn(Vec3) -> (f32, [u8; 4]),
+    F: Fn(Vec3) -> (f32, [u8; 4]) + Sync,
 {
     march_impl(camera, options, sdf_color)
 }
@@ -153,7 +154,7 @@ where
 
 fn march_impl<F>(camera: &Camera, options: &ImplicitRenderOptions, sdf_color: F) -> ScreenImageItem
 where
-    F: Fn(Vec3) -> (f32, [u8; 4]),
+    F: Fn(Vec3) -> (f32, [u8; 4]) + Sync,
 {
     let w = options.width.max(1);
     let h = options.height.max(1);
@@ -196,8 +197,14 @@ where
     let mut pixels = vec![[0u8; 4]; count];
     let mut depths = vec![1.0_f32; count];
 
-    for py in 0..h {
-        for px in 0..w {
+    pixels
+        .par_iter_mut()
+        .zip(depths.par_iter_mut())
+        .enumerate()
+        .for_each(|(idx, (pix, dep))| {
+            let px = (idx as u32) % w;
+            let py = (idx as u32) / w;
+
             // NDC: x in [-1, 1] left->right, y in [-1, 1] bottom->top.
             let ndc_x = (px as f32 + 0.5) / w as f32 * 2.0 - 1.0;
             let ndc_y = 1.0 - (py as f32 + 0.5) / h as f32 * 2.0;
@@ -234,22 +241,21 @@ where
                 }
             }
 
-            let idx = (py * w + px) as usize;
             if hit {
                 // Normal from central differences.
-                let nx = sdf_color(hit_pos + Vec3::X * eps).0
+                let gx = sdf_color(hit_pos + Vec3::X * eps).0
                     - sdf_color(hit_pos - Vec3::X * eps).0;
-                let ny = sdf_color(hit_pos + Vec3::Y * eps).0
+                let gy = sdf_color(hit_pos + Vec3::Y * eps).0
                     - sdf_color(hit_pos - Vec3::Y * eps).0;
-                let nz = sdf_color(hit_pos + Vec3::Z * eps).0
+                let gz = sdf_color(hit_pos + Vec3::Z * eps).0
                     - sdf_color(hit_pos - Vec3::Z * eps).0;
-                let normal = Vec3::new(nx, ny, nz).normalize_or_zero();
+                let normal = Vec3::new(gx, gy, gz).normalize_or_zero();
 
                 // Diffuse + ambient shading.
                 let diffuse = normal.dot(LIGHT).max(0.0);
                 let shade = (AMBIENT + (1.0 - AMBIENT) * diffuse).min(1.0);
 
-                pixels[idx] = [
+                *pix = [
                     (hit_color[0] as f32 * shade) as u8,
                     (hit_color[1] as f32 * shade) as u8,
                     (hit_color[2] as f32 * shade) as u8,
@@ -260,7 +266,7 @@ where
                 // Formula from Phase 12 showcase: zfar*(d-znear)/(d*(zfar-znear))
                 // where d is the positive view-space depth.
                 let view_depth = (hit_pos - eye).dot(forward);
-                depths[idx] = if view_depth > znear {
+                *dep = if view_depth > znear {
                     (effective_zfar * (view_depth - znear)
                         / (view_depth * (effective_zfar - znear)))
                         .clamp(0.0, 1.0)
@@ -268,12 +274,11 @@ where
                     0.0
                 };
             } else {
-                pixels[idx] = options.background;
+                *pix = options.background;
                 // Far-plane depth: never occludes scene geometry.
-                depths[idx] = 1.0;
+                *dep = 1.0;
             }
-        }
-    }
+        });
 
     ScreenImageItem {
         pixels,

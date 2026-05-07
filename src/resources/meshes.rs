@@ -1,4 +1,5 @@
 use super::*;
+use rayon::prelude::*;
 
 impl ViewportGpuResources {
     /// Create a GpuMesh from vertex/index slices and register it into the resource list.
@@ -799,57 +800,128 @@ impl ViewportGpuResources {
         indices: &[u32],
     ) -> Vec<[f32; 4]> {
         let n = positions.len();
-        let mut tan1 = vec![[0.0f32; 3]; n];
-        let mut tan2 = vec![[0.0f32; 3]; n];
-
         let tri_count = indices.len() / 3;
-        for t in 0..tri_count {
-            let i0 = indices[t * 3] as usize;
-            let i1 = indices[t * 3 + 1] as usize;
-            let i2 = indices[t * 3 + 2] as usize;
 
-            let p0 = positions[i0];
-            let p1 = positions[i1];
-            let p2 = positions[i2];
-            let uv0 = uvs[i0];
-            let uv1 = uvs[i1];
-            let uv2 = uvs[i2];
+        // Phase 1: accumulate sdir/tdir contributions per vertex.
+        // Above 1024 triangles: parallel fold/reduce with thread-local arrays.
+        // Below: sequential loop to avoid per-thread allocation overhead.
+        let (tan1, tan2) = if tri_count >= 1024 {
+            indices
+                .par_chunks(3)
+                .fold(
+                    || (vec![[0.0f32; 3]; n], vec![[0.0f32; 3]; n]),
+                    |(mut t1, mut t2), chunk| {
+                        if chunk.len() < 3 {
+                            return (t1, t2);
+                        }
+                        let i0 = chunk[0] as usize;
+                        let i1 = chunk[1] as usize;
+                        let i2 = chunk[2] as usize;
 
-            let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
-            let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
-            let du1 = uv1[0] - uv0[0];
-            let dv1 = uv1[1] - uv0[1];
-            let du2 = uv2[0] - uv0[0];
-            let dv2 = uv2[1] - uv0[1];
+                        let p0 = positions[i0];
+                        let p1 = positions[i1];
+                        let p2 = positions[i2];
+                        let uv0 = uvs[i0];
+                        let uv1 = uvs[i1];
+                        let uv2 = uvs[i2];
 
-            let det = du1 * dv2 - du2 * dv1;
-            if det.abs() < 1e-10 {
-                continue;
-            }
-            let r = 1.0 / det;
+                        let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+                        let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+                        let du1 = uv1[0] - uv0[0];
+                        let dv1 = uv1[1] - uv0[1];
+                        let du2 = uv2[0] - uv0[0];
+                        let dv2 = uv2[1] - uv0[1];
 
-            let sdir = [
-                (dv2 * e1[0] - dv1 * e2[0]) * r,
-                (dv2 * e1[1] - dv1 * e2[1]) * r,
-                (dv2 * e1[2] - dv1 * e2[2]) * r,
-            ];
-            let tdir = [
-                (du1 * e2[0] - du2 * e1[0]) * r,
-                (du1 * e2[1] - du2 * e1[1]) * r,
-                (du1 * e2[2] - du2 * e1[2]) * r,
-            ];
+                        let det = du1 * dv2 - du2 * dv1;
+                        if det.abs() < 1e-10 {
+                            return (t1, t2);
+                        }
+                        let r = 1.0 / det;
 
-            for &vi in &[i0, i1, i2] {
-                for k in 0..3 {
-                    tan1[vi][k] += sdir[k];
+                        let sdir = [
+                            (dv2 * e1[0] - dv1 * e2[0]) * r,
+                            (dv2 * e1[1] - dv1 * e2[1]) * r,
+                            (dv2 * e1[2] - dv1 * e2[2]) * r,
+                        ];
+                        let tdir = [
+                            (du1 * e2[0] - du2 * e1[0]) * r,
+                            (du1 * e2[1] - du2 * e1[1]) * r,
+                            (du1 * e2[2] - du2 * e1[2]) * r,
+                        ];
+
+                        for &vi in &[i0, i1, i2] {
+                            for k in 0..3 {
+                                t1[vi][k] += sdir[k];
+                                t2[vi][k] += tdir[k];
+                            }
+                        }
+                        (t1, t2)
+                    },
+                )
+                .reduce(
+                    || (vec![[0.0f32; 3]; n], vec![[0.0f32; 3]; n]),
+                    |(mut a1, mut a2), (b1, b2)| {
+                        for i in 0..n {
+                            for k in 0..3 {
+                                a1[i][k] += b1[i][k];
+                                a2[i][k] += b2[i][k];
+                            }
+                        }
+                        (a1, a2)
+                    },
+                )
+        } else {
+            let mut tan1 = vec![[0.0f32; 3]; n];
+            let mut tan2 = vec![[0.0f32; 3]; n];
+            for t in 0..tri_count {
+                let i0 = indices[t * 3] as usize;
+                let i1 = indices[t * 3 + 1] as usize;
+                let i2 = indices[t * 3 + 2] as usize;
+
+                let p0 = positions[i0];
+                let p1 = positions[i1];
+                let p2 = positions[i2];
+                let uv0 = uvs[i0];
+                let uv1 = uvs[i1];
+                let uv2 = uvs[i2];
+
+                let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+                let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+                let du1 = uv1[0] - uv0[0];
+                let dv1 = uv1[1] - uv0[1];
+                let du2 = uv2[0] - uv0[0];
+                let dv2 = uv2[1] - uv0[1];
+
+                let det = du1 * dv2 - du2 * dv1;
+                if det.abs() < 1e-10 {
+                    continue;
                 }
-                for k in 0..3 {
-                    tan2[vi][k] += tdir[k];
+                let r = 1.0 / det;
+
+                let sdir = [
+                    (dv2 * e1[0] - dv1 * e2[0]) * r,
+                    (dv2 * e1[1] - dv1 * e2[1]) * r,
+                    (dv2 * e1[2] - dv1 * e2[2]) * r,
+                ];
+                let tdir = [
+                    (du1 * e2[0] - du2 * e1[0]) * r,
+                    (du1 * e2[1] - du2 * e1[1]) * r,
+                    (du1 * e2[2] - du2 * e1[2]) * r,
+                ];
+
+                for &vi in &[i0, i1, i2] {
+                    for k in 0..3 {
+                        tan1[vi][k] += sdir[k];
+                        tan2[vi][k] += tdir[k];
+                    }
                 }
             }
-        }
+            (tan1, tan2)
+        };
 
+        // Phase 2: Gram-Schmidt orthogonalization per vertex -- trivially parallel.
         (0..n)
+            .into_par_iter()
             .map(|i| {
                 let n_v = normals[i];
                 let t = tan1[i];

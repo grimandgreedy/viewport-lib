@@ -18,6 +18,7 @@
 //! ```
 
 use crate::resources::MeshData;
+use rayon::prelude::*;
 use std::collections::HashMap;
 
 /// A structured 3D scalar field on a regular grid.
@@ -127,8 +128,11 @@ fn gradient_at(volume: &VolumeData, pos: [f32; 3]) -> [f32; 3] {
 /// Returns a [`MeshData`] with positions, normals (from volume gradient), and triangle
 /// indices. The mesh can be uploaded to the viewport via the standard mesh pipeline.
 ///
-/// Vertices along shared edges are deduplicated via an edge-vertex cache, producing
-/// a clean mesh suitable for smooth rendering.
+/// For volumes larger than 64x64x64 cells the extraction is parallelized via
+/// Z-slab decomposition. Edges on slab boundaries are independently interpolated
+/// by each adjacent slab, producing a small number of geometrically coincident
+/// but topologically disconnected vertices along each Z-boundary. For rendering
+/// this is invisible.
 pub fn extract_isosurface(volume: &VolumeData, isovalue: f32) -> MeshData {
     let [nx, ny, nz] = volume.dims;
     if nx < 2 || ny < 2 || nz < 2 {
@@ -142,15 +146,66 @@ pub fn extract_isosurface(volume: &VolumeData, isovalue: f32) -> MeshData {
         };
     }
 
+    const SLAB_THRESHOLD: usize = 64 * 64 * 64;
+    let cell_count = (nx - 1) as usize * (ny - 1) as usize * (nz - 1) as usize;
+
+    let (positions, normals, indices) = if cell_count >= SLAB_THRESHOLD {
+        // Parallel Z-slab decomposition: divide the nz-1 cell layers into
+        // independent slabs, each with its own edge cache. Slab outputs are
+        // concatenated with adjusted index offsets after the parallel phase.
+        let nz_cells = (nz - 1) as usize;
+        let num_threads = rayon::current_num_threads();
+        let slab_height = (nz_cells / num_threads).max(1);
+
+        let slabs: Vec<_> = (0..nz_cells)
+            .step_by(slab_height)
+            .collect::<Vec<_>>()
+            .par_iter()
+            .map(|&iz_start| {
+                let iz_end = (iz_start + slab_height).min(nz_cells);
+                extract_isosurface_slab(volume, isovalue, iz_start as u32, iz_end as u32)
+            })
+            .collect();
+
+        let mut positions: Vec<[f32; 3]> = Vec::new();
+        let mut normals: Vec<[f32; 3]> = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
+        for (slab_pos, slab_nrm, slab_idx) in slabs {
+            let offset = positions.len() as u32;
+            positions.extend_from_slice(&slab_pos);
+            normals.extend_from_slice(&slab_nrm);
+            indices.extend(slab_idx.into_iter().map(|i| i + offset));
+        }
+        (positions, normals, indices)
+    } else {
+        extract_isosurface_slab(volume, isovalue, 0, nz - 1)
+    };
+
+    MeshData {
+        positions,
+        normals,
+        indices,
+        uvs: None,
+        tangents: None,
+        attributes: HashMap::new(),
+    }
+}
+
+/// Process one Z-slab of cells: `iz_start..iz_end` (exclusive end).
+fn extract_isosurface_slab(
+    volume: &VolumeData,
+    isovalue: f32,
+    iz_start: u32,
+    iz_end: u32,
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+    let [nx, ny, _nz] = volume.dims;
+
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
-
-    // Edge-vertex cache: key = (cell_x, cell_y, cell_z, edge_id) -> vertex index.
-    // We encode shared edges using the canonical lower-corner + axis direction.
     let mut edge_cache: HashMap<(u32, u32, u32, u8), u32> = HashMap::new();
 
-    for iz in 0..(nz - 1) {
+    for iz in iz_start..iz_end {
         for iy in 0..(ny - 1) {
             for ix in 0..(nx - 1) {
                 // 8 corner values in standard marching cubes order (Bourke numbering).
@@ -229,14 +284,7 @@ pub fn extract_isosurface(volume: &VolumeData, isovalue: f32) -> MeshData {
         }
     }
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: None,
-        tangents: None,
-        attributes: HashMap::new(),
-    }
+    (positions, normals, indices)
 }
 
 /// Compute world-space positions for the 8 corners of a cell.

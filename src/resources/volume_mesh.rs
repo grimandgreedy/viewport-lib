@@ -47,20 +47,18 @@ pub const TET_SENTINEL: u32 = CELL_SENTINEL;
 /// use viewport_lib::{VolumeMeshData, CELL_SENTINEL};
 ///
 /// // Two tets sharing vertices 0-1-2
-/// let data = VolumeMeshData {
-///     positions: vec![
-///         [0.0, 0.0, 0.0],
-///         [1.0, 0.0, 0.0],
-///         [0.5, 1.0, 0.0],
-///         [0.5, 0.5, 1.0],
-///         [0.5, 0.5, -1.0],
-///     ],
-///     cells: vec![
-///         [0, 1, 2, 3, CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL],
-///         [0, 2, 1, 4, CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL],
-///     ],
-///     ..Default::default()
-/// };
+/// let mut data = VolumeMeshData::default();
+/// data.positions = vec![
+///     [0.0, 0.0, 0.0],
+///     [1.0, 0.0, 0.0],
+///     [0.5, 1.0, 0.0],
+///     [0.5, 0.5, 1.0],
+///     [0.5, 0.5, -1.0],
+/// ];
+/// data.cells = vec![
+///     [0, 1, 2, 3, CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL],
+///     [0, 2, 1, 4, CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL],
+/// ];
 /// ```
 #[non_exhaustive]
 #[derive(Default)]
@@ -648,12 +646,14 @@ const TET_EDGES: [[usize; 2]; 6] = [
 
 /// Cell edges for hexes (VTK ordering).
 ///
+/// ```text
 ///     7 --- 6
 ///    /|    /|
 ///   4 --- 5 |
 ///   | 3 --| 2
 ///   |/    |/
 ///   0 --- 1
+/// ```
 const HEX_EDGES: [[usize; 2]; 12] = [
     [0, 1], [1, 2], [2, 3], [3, 0], // bottom ring
     [4, 5], [5, 6], [6, 7], [7, 4], // top ring
