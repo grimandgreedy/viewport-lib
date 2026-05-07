@@ -22,7 +22,11 @@
 
 use std::collections::HashMap;
 
+use rayon::prelude::*;
+
 use super::types::{AttributeData, MeshData};
+
+const PARALLEL_THRESHOLD: usize = 1024;
 
 /// Sentinel value that marks unused index slots in a cell stored as 8 indices.
 ///
@@ -223,6 +227,10 @@ type FaceKey = (u32, u32, u32);
 /// Canonical key for a quad face, sorted by vertex index.
 type QuadFaceKey = (u32, u32, u32, u32);
 
+// (sorted_key, cell_idx, winding, interior_ref)
+type TriEntry = (FaceKey, usize, [u32; 3], [f32; 3]);
+type QuadEntry = (QuadFaceKey, usize, [u32; 4], [f32; 3]);
+
 /// Build a sorted key from three vertex indices.
 #[inline]
 fn face_key(a: u32, b: u32, c: u32) -> FaceKey {
@@ -239,32 +247,161 @@ fn quad_face_key(a: u32, b: u32, c: u32, d: u32) -> QuadFaceKey {
     (arr[0], arr[1], arr[2], arr[3])
 }
 
-/// Internal face record stored in the hash map during boundary extraction.
-struct FaceRecord {
-    /// Index of the first cell that produced this face.
-    cell_index: usize,
-    /// Original winding (preserves outward normal direction).
-    winding: [u32; 3],
-    /// How many cells have contributed this face.  >1 means interior.
-    count: u32,
-    /// Interior reference point of the owning cell, used for winding correction.
-    ///
-    /// For tet faces this is the vertex opposite the face, which is a more
-    /// reliable inward reference than the cell centroid. For hex faces this
-    /// remains the cell centroid.
-    interior_ref: [f32; 3],
+/// Generate all triangular face entries for a single cell.
+fn generate_tri_entries(cell_idx: usize, cell: &[u32; 8], positions: &[[f32; 3]]) -> Vec<TriEntry> {
+    let ct = cell_type(cell);
+    let nv = ct.vertex_count();
+    let mut out = Vec::new();
+    match ct {
+        CellType::Tet => {
+            for (face_idx, face_local) in TET_FACES.iter().enumerate() {
+                let a = cell[face_local[0]];
+                let b = cell[face_local[1]];
+                let c = cell[face_local[2]];
+                // Opposite vertex is the best interior reference for tets.
+                let interior_ref = positions[cell[face_idx] as usize];
+                out.push((face_key(a, b, c), cell_idx, [a, b, c], interior_ref));
+            }
+        }
+        CellType::Pyramid => {
+            let centroid = cell_centroid(cell, nv, positions);
+            for face_local in &PYRAMID_TRI_FACES {
+                let a = cell[face_local[0]];
+                let b = cell[face_local[1]];
+                let c = cell[face_local[2]];
+                out.push((face_key(a, b, c), cell_idx, [a, b, c], centroid));
+            }
+        }
+        CellType::Wedge => {
+            let centroid = cell_centroid(cell, nv, positions);
+            for face_local in &WEDGE_TRI_FACES {
+                let a = cell[face_local[0]];
+                let b = cell[face_local[1]];
+                let c = cell[face_local[2]];
+                out.push((face_key(a, b, c), cell_idx, [a, b, c], centroid));
+            }
+        }
+        CellType::Hex => {} // hex has no triangular faces
+    }
+    out
 }
 
-/// Internal quad-face record stored for hex boundary extraction.
-struct QuadFaceRecord {
-    /// Index of the first cell that produced this face.
-    cell_index: usize,
-    /// Original quad winding.
-    winding: [u32; 4],
-    /// How many cells contributed this face. >1 means interior.
-    count: u32,
-    /// Interior reference point used for triangle winding correction.
-    interior_ref: [f32; 3],
+/// Generate all quad face entries for a single cell.
+fn generate_quad_entries(cell_idx: usize, cell: &[u32; 8], positions: &[[f32; 3]]) -> Vec<QuadEntry> {
+    let ct = cell_type(cell);
+    let nv = ct.vertex_count();
+    let mut out = Vec::new();
+    match ct {
+        CellType::Tet => {} // tet has no quad faces
+        CellType::Pyramid => {
+            let centroid = cell_centroid(cell, nv, positions);
+            for quad_local in &PYRAMID_QUAD_FACE {
+                let v = [
+                    cell[quad_local[0]],
+                    cell[quad_local[1]],
+                    cell[quad_local[2]],
+                    cell[quad_local[3]],
+                ];
+                out.push((quad_face_key(v[0], v[1], v[2], v[3]), cell_idx, v, centroid));
+            }
+        }
+        CellType::Wedge => {
+            let centroid = cell_centroid(cell, nv, positions);
+            for quad_local in &WEDGE_QUAD_FACES {
+                let v = [
+                    cell[quad_local[0]],
+                    cell[quad_local[1]],
+                    cell[quad_local[2]],
+                    cell[quad_local[3]],
+                ];
+                out.push((quad_face_key(v[0], v[1], v[2], v[3]), cell_idx, v, centroid));
+            }
+        }
+        CellType::Hex => {
+            for (face_idx, quad) in HEX_FACES.iter().enumerate() {
+                let v: [u32; 4] =
+                    [cell[quad[0]], cell[quad[1]], cell[quad[2]], cell[quad[3]]];
+                let interior_ref = {
+                    let opposite = &HEX_FACES[HEX_FACE_OPPOSITE[face_idx]];
+                    let mut c = [0.0f32; 3];
+                    for &local_vi in opposite {
+                        let p = positions[cell[local_vi] as usize];
+                        c[0] += p[0];
+                        c[1] += p[1];
+                        c[2] += p[2];
+                    }
+                    [c[0] / 4.0, c[1] / 4.0, c[2] / 4.0]
+                };
+                out.push((quad_face_key(v[0], v[1], v[2], v[3]), cell_idx, v, interior_ref));
+            }
+        }
+    }
+    out
+}
+
+/// Collect entries that appear exactly once (boundary faces) from a sorted slice.
+fn collect_boundary_tri(entries: &[TriEntry]) -> Vec<(usize, [u32; 3], [f32; 3])> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < entries.len() {
+        let key = entries[i].0;
+        let mut j = i + 1;
+        while j < entries.len() && entries[j].0 == key {
+            j += 1;
+        }
+        if j - i == 1 {
+            out.push((entries[i].1, entries[i].2, entries[i].3));
+        }
+        i = j;
+    }
+    out
+}
+
+/// Collect quad entries that appear exactly once (boundary faces) from a sorted slice.
+fn collect_boundary_quad(entries: &[QuadEntry]) -> Vec<(usize, [u32; 4], [f32; 3])> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < entries.len() {
+        let key = entries[i].0;
+        let mut j = i + 1;
+        while j < entries.len() && entries[j].0 == key {
+            j += 1;
+        }
+        if j - i == 1 {
+            out.push((entries[i].1, entries[i].2, entries[i].3));
+        }
+        i = j;
+    }
+    out
+}
+
+/// Ensure the triangle winding produces an outward-facing normal relative to
+/// `interior_ref` (a point inside the owning cell).
+#[inline]
+fn correct_winding(tri: &mut [u32; 3], interior_ref: &[f32; 3], positions: &[[f32; 3]]) {
+    let pa = positions[tri[0] as usize];
+    let pb = positions[tri[1] as usize];
+    let pc = positions[tri[2] as usize];
+    let ab = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]];
+    let ac = [pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]];
+    let normal = [
+        ab[1] * ac[2] - ab[2] * ac[1],
+        ab[2] * ac[0] - ab[0] * ac[2],
+        ab[0] * ac[1] - ab[1] * ac[0],
+    ];
+    let fc = [
+        (pa[0] + pb[0] + pc[0]) / 3.0,
+        (pa[1] + pb[1] + pc[1]) / 3.0,
+        (pa[2] + pb[2] + pc[2]) / 3.0,
+    ];
+    let out = [
+        fc[0] - interior_ref[0],
+        fc[1] - interior_ref[1],
+        fc[2] - interior_ref[2],
+    ];
+    if normal[0] * out[0] + normal[1] * out[1] + normal[2] * out[2] < 0.0 {
+        tri.swap(1, 2);
+    }
 }
 
 /// Convert [`VolumeMeshData`] into a standard [`MeshData`] by extracting the
@@ -276,196 +413,56 @@ struct QuadFaceRecord {
 pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> MeshData {
     let n_verts = data.positions.len();
 
-    // Accumulate triangles here; we'll build index buffer from unique vertices later.
-    // Strategy: collect boundary triangles as (winding, cell_index) then build
-    // a flat non-indexed triangle list and compute normals.
-    let mut face_map: HashMap<FaceKey, FaceRecord> = HashMap::new();
-    let mut quad_face_map: HashMap<QuadFaceKey, QuadFaceRecord> = HashMap::new();
-
-    for (cell_idx, cell) in data.cells.iter().enumerate() {
-        let ct = cell_type(cell);
-        let nv = ct.vertex_count();
-        let centroid = cell_centroid(cell, nv, &data.positions);
-
-        match ct {
-            CellType::Tet => {
-                for (face_idx, face_local) in TET_FACES.iter().enumerate() {
-                    let a = cell[face_local[0]];
-                    let b = cell[face_local[1]];
-                    let c = cell[face_local[2]];
-                    // Opposite vertex is the best interior reference for tets.
-                    let interior_ref = data.positions[cell[face_idx] as usize];
-                    let key = face_key(a, b, c);
-                    let entry = face_map.entry(key).or_insert(FaceRecord {
-                        cell_index: cell_idx,
-                        winding: [a, b, c],
-                        count: 0,
-                        interior_ref,
-                    });
-                    entry.count += 1;
-                }
-            }
-            CellType::Pyramid => {
-                for face_local in &PYRAMID_TRI_FACES {
-                    let a = cell[face_local[0]];
-                    let b = cell[face_local[1]];
-                    let c = cell[face_local[2]];
-                    let key = face_key(a, b, c);
-                    let entry = face_map.entry(key).or_insert(FaceRecord {
-                        cell_index: cell_idx,
-                        winding: [a, b, c],
-                        count: 0,
-                        interior_ref: centroid,
-                    });
-                    entry.count += 1;
-                }
-                for quad_local in &PYRAMID_QUAD_FACE {
-                    let v = [
-                        cell[quad_local[0]],
-                        cell[quad_local[1]],
-                        cell[quad_local[2]],
-                        cell[quad_local[3]],
-                    ];
-                    let key = quad_face_key(v[0], v[1], v[2], v[3]);
-                    let entry = quad_face_map.entry(key).or_insert(QuadFaceRecord {
-                        cell_index: cell_idx,
-                        winding: v,
-                        count: 0,
-                        interior_ref: centroid,
-                    });
-                    entry.count += 1;
-                }
-            }
-            CellType::Wedge => {
-                for face_local in &WEDGE_TRI_FACES {
-                    let a = cell[face_local[0]];
-                    let b = cell[face_local[1]];
-                    let c = cell[face_local[2]];
-                    let key = face_key(a, b, c);
-                    let entry = face_map.entry(key).or_insert(FaceRecord {
-                        cell_index: cell_idx,
-                        winding: [a, b, c],
-                        count: 0,
-                        interior_ref: centroid,
-                    });
-                    entry.count += 1;
-                }
-                for quad_local in &WEDGE_QUAD_FACES {
-                    let v = [
-                        cell[quad_local[0]],
-                        cell[quad_local[1]],
-                        cell[quad_local[2]],
-                        cell[quad_local[3]],
-                    ];
-                    let key = quad_face_key(v[0], v[1], v[2], v[3]);
-                    let entry = quad_face_map.entry(key).or_insert(QuadFaceRecord {
-                        cell_index: cell_idx,
-                        winding: v,
-                        count: 0,
-                        interior_ref: centroid,
-                    });
-                    entry.count += 1;
-                }
-            }
-            CellType::Hex => {
-                for (face_idx, quad) in HEX_FACES.iter().enumerate() {
-                    let v: [u32; 4] =
-                        [cell[quad[0]], cell[quad[1]], cell[quad[2]], cell[quad[3]]];
-                    let interior_ref = {
-                        let opposite = &HEX_FACES[HEX_FACE_OPPOSITE[face_idx]];
-                        let mut c = [0.0f32; 3];
-                        for &local_vi in opposite {
-                            let p = data.positions[cell[local_vi] as usize];
-                            c[0] += p[0];
-                            c[1] += p[1];
-                            c[2] += p[2];
-                        }
-                        [c[0] / 4.0, c[1] / 4.0, c[2] / 4.0]
-                    };
-                    let key = quad_face_key(v[0], v[1], v[2], v[3]);
-                    let entry = quad_face_map.entry(key).or_insert(QuadFaceRecord {
-                        cell_index: cell_idx,
-                        winding: v,
-                        count: 0,
-                        interior_ref,
-                    });
-                    entry.count += 1;
-                }
-            }
+    // Generate face entries (parallel above threshold, sequential below).
+    let (mut tri_entries, mut quad_entries) = if data.cells.len() >= PARALLEL_THRESHOLD {
+        let tri = data
+            .cells
+            .par_iter()
+            .enumerate()
+            .flat_map_iter(|(ci, cell)| generate_tri_entries(ci, cell, &data.positions))
+            .collect();
+        let quad = data
+            .cells
+            .par_iter()
+            .enumerate()
+            .flat_map_iter(|(ci, cell)| generate_quad_entries(ci, cell, &data.positions))
+            .collect();
+        (tri, quad)
+    } else {
+        let mut tri: Vec<TriEntry> = Vec::new();
+        let mut quad: Vec<QuadEntry> = Vec::new();
+        for (ci, cell) in data.cells.iter().enumerate() {
+            tri.extend(generate_tri_entries(ci, cell, &data.positions));
+            quad.extend(generate_quad_entries(ci, cell, &data.positions));
         }
-    }
+        (tri, quad)
+    };
 
-    // Collect boundary triangles (count == 1) in a stable order.
-    let mut boundary: Vec<(usize, [u32; 3], [f32; 3])> = face_map
-        .into_values()
-        .filter(|r| r.count == 1)
-        .map(|r| (r.cell_index, r.winding, r.interior_ref))
-        .collect();
+    tri_entries.par_sort_unstable_by_key(|e| e.0);
+    quad_entries.par_sort_unstable_by_key(|e| e.0);
 
-    for quad in quad_face_map.into_values().filter(|r| r.count == 1) {
-        boundary.push((
-            quad.cell_index,
-            [quad.winding[0], quad.winding[1], quad.winding[2]],
-            quad.interior_ref,
-        ));
-        boundary.push((
-            quad.cell_index,
-            [quad.winding[0], quad.winding[2], quad.winding[3]],
-            quad.interior_ref,
-        ));
+    // Collect boundary faces (count == 1) via linear scan.
+    let mut boundary: Vec<(usize, [u32; 3], [f32; 3])> = collect_boundary_tri(&tri_entries);
+    for (ci, winding, iref) in collect_boundary_quad(&quad_entries) {
+        boundary.push((ci, [winding[0], winding[1], winding[2]], iref));
+        boundary.push((ci, [winding[0], winding[2], winding[3]], iref));
     }
 
     // Sort by cell index for deterministic output (useful for testing).
-    boundary.sort_unstable_by_key(|(cell_idx, _, _)| *cell_idx);
+    boundary.sort_unstable_by_key(|(ci, _, _)| *ci);
 
-    // Geometric winding correction: ensure each boundary face's normal points
-    // outward (away from the owning cell centroid). This is a safety net for
-    // degenerate cells or unexpected orientations, and is also the primary
-    // correctness mechanism for tet faces where the table winding may be inward.
-    for (_, tri, interior_ref) in &mut boundary {
-        let pa = data.positions[tri[0] as usize];
-        let pb = data.positions[tri[1] as usize];
-        let pc = data.positions[tri[2] as usize];
-
-        // Face normal (cross product of two edges; not normalized).
-        let ab = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]];
-        let ac = [pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]];
-        let normal = [
-            ab[1] * ac[2] - ab[2] * ac[1],
-            ab[2] * ac[0] - ab[0] * ac[2],
-            ab[0] * ac[1] - ab[1] * ac[0],
-        ];
-
-        // Direction from an interior point of the owning cell to the face
-        // centroid (outward reference).
-        let fc = [
-            (pa[0] + pb[0] + pc[0]) / 3.0,
-            (pa[1] + pb[1] + pc[1]) / 3.0,
-            (pa[2] + pb[2] + pc[2]) / 3.0,
-        ];
-        let out = [
-            fc[0] - interior_ref[0],
-            fc[1] - interior_ref[1],
-            fc[2] - interior_ref[2],
-        ];
-
-        // If the face normal points inward, flip the winding.
-        let dot = normal[0] * out[0] + normal[1] * out[1] + normal[2] * out[2];
-        if dot < 0.0 {
-            tri.swap(1, 2);
-        }
-    }
+    // Geometric winding correction (parallel): ensure each boundary face's normal
+    // points outward. This is the primary correctness mechanism for tets where
+    // the table winding may be inward.
+    boundary
+        .par_iter_mut()
+        .for_each(|(_, tri, iref)| correct_winding(tri, iref, &data.positions));
 
     let n_boundary_tris = boundary.len();
 
-    // Build flat triangle lists (positions & indices).
-    // We re-use original vertex indices and build a compact index buffer.
-    // To avoid the complexity of deduplication, we use the original vertex
-    // indices directly and build an index buffer.  Normal accumulation uses
-    // the original vertex indices.
-
+    // Build index buffer and accumulate area-weighted normals (sequential:
+    // normal_accum has shared per-vertex writes).
     let mut indices: Vec<u32> = Vec::with_capacity(n_boundary_tris * 3);
-    // Track which original vertices are used by boundary faces.
     let mut normal_accum: Vec<[f64; 3]> = vec![[0.0; 3]; n_verts];
 
     for (_, tri, _) in &boundary {
@@ -473,11 +470,9 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> MeshData {
         indices.push(tri[1]);
         indices.push(tri[2]);
 
-        // Accumulate area-weighted face normal to each vertex.
         let pa = data.positions[tri[0] as usize];
         let pb = data.positions[tri[1] as usize];
         let pc = data.positions[tri[2] as usize];
-
         let ab = [
             (pb[0] - pa[0]) as f64,
             (pb[1] - pa[1]) as f64,
@@ -488,7 +483,6 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> MeshData {
             (pc[1] - pa[1]) as f64,
             (pc[2] - pa[2]) as f64,
         ];
-        // Cross product (area-weighted normal)
         let n = [
             ab[1] * ac[2] - ab[2] * ac[1],
             ab[2] * ac[0] - ab[0] * ac[2],
@@ -502,7 +496,6 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> MeshData {
         }
     }
 
-    // Normalize accumulated normals.
     let mut normals: Vec<[f32; 3]> = normal_accum
         .iter()
         .map(|n| {
@@ -514,24 +507,19 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> MeshData {
                     (n[2] / len) as f32,
                 ]
             } else {
-                [0.0, 1.0, 0.0] // degenerate fallback
+                [0.0, 1.0, 0.0]
             }
         })
         .collect();
 
-    // Ensure normals vec length matches positions.
     normals.resize(n_verts, [0.0, 1.0, 0.0]);
-
-    // ---------------------------------------------------------------------------
-    // Build per-cell -> per-face attribute remapping
-    // ---------------------------------------------------------------------------
 
     let mut attributes: HashMap<String, AttributeData> = HashMap::new();
 
     for (name, cell_vals) in &data.cell_scalars {
         let face_scalars: Vec<f32> = boundary
             .iter()
-            .map(|(cell_idx, _, _)| cell_vals.get(*cell_idx).copied().unwrap_or(0.0))
+            .map(|(ci, _, _)| cell_vals.get(*ci).copied().unwrap_or(0.0))
             .collect();
         attributes.insert(name.clone(), AttributeData::Face(face_scalars));
     }
@@ -539,7 +527,7 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> MeshData {
     for (name, cell_vals) in &data.cell_colors {
         let face_colors: Vec<[f32; 4]> = boundary
             .iter()
-            .map(|(cell_idx, _, _)| cell_vals.get(*cell_idx).copied().unwrap_or([1.0; 4]))
+            .map(|(ci, _, _)| cell_vals.get(*ci).copied().unwrap_or([1.0; 4]))
             .collect();
         attributes.insert(name.clone(), AttributeData::FaceColor(face_colors));
     }
@@ -874,11 +862,76 @@ fn fan_triangulate(poly: &[[f32; 3]]) -> Vec<[[f32; 3]; 3]> {
         .collect()
 }
 
+/// Generate section triangles for a single intersected cell across all clip planes.
+fn generate_section_tris(
+    cell_idx: usize,
+    cell: &[u32; 8],
+    positions: &[[f32; 3]],
+    clip_planes: &[[f32; 4]],
+) -> Vec<(usize, [[f32; 3]; 3])> {
+    let mut out = Vec::new();
+    let edges = cell_type(cell).edges();
+
+    for (pi, &plane) in clip_planes.iter().enumerate() {
+        let mut pts: Vec<[f32; 3]> = Vec::new();
+        for edge in edges {
+            let pa = positions[cell[edge[0]] as usize];
+            let pb = positions[cell[edge[1]] as usize];
+            let da = plane_dist(pa, plane);
+            let db = plane_dist(pb, plane);
+            if (da >= 0.0) != (db >= 0.0) {
+                let denom = da - db;
+                if denom.abs() > 1e-30 {
+                    let t = da / denom;
+                    pts.push([
+                        pa[0] + t * (pb[0] - pa[0]),
+                        pa[1] + t * (pb[1] - pa[1]),
+                        pa[2] + t * (pb[2] - pa[2]),
+                    ]);
+                }
+            }
+        }
+        if pts.len() < 3 {
+            continue;
+        }
+        let plane_normal = [plane[0], plane[1], plane[2]];
+        sort_polygon_on_plane(&mut pts, plane_normal);
+        let other_planes: Vec<[f32; 4]> = clip_planes
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != pi)
+            .map(|(_, p)| *p)
+            .collect();
+        let pts = clip_polygon_planes(pts, &other_planes);
+        if pts.len() < 3 {
+            continue;
+        }
+        for mut tri in fan_triangulate(&pts) {
+            let ab = [
+                tri[1][0] - tri[0][0],
+                tri[1][1] - tri[0][1],
+                tri[1][2] - tri[0][2],
+            ];
+            let ac = [
+                tri[2][0] - tri[0][0],
+                tri[2][1] - tri[0][1],
+                tri[2][2] - tri[0][2],
+            ];
+            let n = cross3(ab, ac);
+            if dot3(n, plane_normal) < 0.0 {
+                tri.swap(1, 2);
+            }
+            out.push((cell_idx, tri));
+        }
+    }
+    out
+}
+
 /// Produce a clipped `MeshData` from volume cell connectivity and a set of
 /// clip planes.
 ///
 /// See the design note in the section comment above for the full contract.
-pub(crate) fn extract_clipped_volume_faces(
+pub fn extract_clipped_volume_faces(
     data: &VolumeMeshData,
     clip_planes: &[[f32; 4]],
 ) -> MeshData {
@@ -886,185 +939,71 @@ pub(crate) fn extract_clipped_volume_faces(
         return extract_boundary_faces(data);
     }
 
-    // -----------------------------------------------------------------------
-    // Classify every vertex: kept = satisfies ALL planes.
-    // -----------------------------------------------------------------------
+    // Classify every vertex: kept = satisfies ALL planes (parallel).
     let vert_kept: Vec<bool> = data
         .positions
-        .iter()
+        .par_iter()
         .map(|&p| clip_planes.iter().all(|&pl| plane_dist(p, pl) >= 0.0))
         .collect();
 
-    // -----------------------------------------------------------------------
-    // Extract boundary faces with the same HashMap deduplication used in
-    // `extract_boundary_faces`, skipping fully-discarded cells.
-    // -----------------------------------------------------------------------
-    let mut face_map: HashMap<FaceKey, FaceRecord> = HashMap::new();
-    let mut quad_face_map: HashMap<QuadFaceKey, QuadFaceRecord> = HashMap::new();
-
-    for (cell_idx, cell) in data.cells.iter().enumerate() {
-        let ct = cell_type(cell);
-        let nv = ct.vertex_count();
-        let kept_count = (0..nv).filter(|&i| vert_kept[cell[i] as usize]).count();
-        if kept_count == 0 {
-            continue;
+    // Generate face entries, skipping fully-discarded cells.
+    let (mut tri_entries, mut quad_entries) = if data.cells.len() >= PARALLEL_THRESHOLD {
+        let vk = &vert_kept;
+        let tri = data
+            .cells
+            .par_iter()
+            .enumerate()
+            .flat_map_iter(|(ci, cell)| {
+                let nv = cell_type(cell).vertex_count();
+                if (0..nv).all(|i| !vk[cell[i] as usize]) {
+                    return Vec::new();
+                }
+                generate_tri_entries(ci, cell, &data.positions)
+            })
+            .collect();
+        let quad = data
+            .cells
+            .par_iter()
+            .enumerate()
+            .flat_map_iter(|(ci, cell)| {
+                let nv = cell_type(cell).vertex_count();
+                if (0..nv).all(|i| !vk[cell[i] as usize]) {
+                    return Vec::new();
+                }
+                generate_quad_entries(ci, cell, &data.positions)
+            })
+            .collect();
+        (tri, quad)
+    } else {
+        let mut tri: Vec<TriEntry> = Vec::new();
+        let mut quad: Vec<QuadEntry> = Vec::new();
+        for (ci, cell) in data.cells.iter().enumerate() {
+            let nv = cell_type(cell).vertex_count();
+            let kc = (0..nv).filter(|&i| vert_kept[cell[i] as usize]).count();
+            if kc == 0 {
+                continue;
+            }
+            tri.extend(generate_tri_entries(ci, cell, &data.positions));
+            quad.extend(generate_quad_entries(ci, cell, &data.positions));
         }
+        (tri, quad)
+    };
 
-        let centroid = cell_centroid(cell, nv, &data.positions);
+    tri_entries.par_sort_unstable_by_key(|e| e.0);
+    quad_entries.par_sort_unstable_by_key(|e| e.0);
 
-        match ct {
-            CellType::Tet => {
-                for (face_idx, face_local) in TET_FACES.iter().enumerate() {
-                    let a = cell[face_local[0]];
-                    let b = cell[face_local[1]];
-                    let c = cell[face_local[2]];
-                    // Opposite vertex is the best interior reference for tets.
-                    let interior_ref = data.positions[cell[face_idx] as usize];
-                    let key = face_key(a, b, c);
-                    let entry = face_map.entry(key).or_insert(FaceRecord {
-                        cell_index: cell_idx,
-                        winding: [a, b, c],
-                        count: 0,
-                        interior_ref,
-                    });
-                    entry.count += 1;
-                }
-            }
-            CellType::Pyramid => {
-                for face_local in &PYRAMID_TRI_FACES {
-                    let a = cell[face_local[0]];
-                    let b = cell[face_local[1]];
-                    let c = cell[face_local[2]];
-                    let key = face_key(a, b, c);
-                    let entry = face_map.entry(key).or_insert(FaceRecord {
-                        cell_index: cell_idx,
-                        winding: [a, b, c],
-                        count: 0,
-                        interior_ref: centroid,
-                    });
-                    entry.count += 1;
-                }
-                for quad_local in &PYRAMID_QUAD_FACE {
-                    let v = [
-                        cell[quad_local[0]],
-                        cell[quad_local[1]],
-                        cell[quad_local[2]],
-                        cell[quad_local[3]],
-                    ];
-                    let key = quad_face_key(v[0], v[1], v[2], v[3]);
-                    let entry = quad_face_map.entry(key).or_insert(QuadFaceRecord {
-                        cell_index: cell_idx,
-                        winding: v,
-                        count: 0,
-                        interior_ref: centroid,
-                    });
-                    entry.count += 1;
-                }
-            }
-            CellType::Wedge => {
-                for face_local in &WEDGE_TRI_FACES {
-                    let a = cell[face_local[0]];
-                    let b = cell[face_local[1]];
-                    let c = cell[face_local[2]];
-                    let key = face_key(a, b, c);
-                    let entry = face_map.entry(key).or_insert(FaceRecord {
-                        cell_index: cell_idx,
-                        winding: [a, b, c],
-                        count: 0,
-                        interior_ref: centroid,
-                    });
-                    entry.count += 1;
-                }
-                for quad_local in &WEDGE_QUAD_FACES {
-                    let v = [
-                        cell[quad_local[0]],
-                        cell[quad_local[1]],
-                        cell[quad_local[2]],
-                        cell[quad_local[3]],
-                    ];
-                    let key = quad_face_key(v[0], v[1], v[2], v[3]);
-                    let entry = quad_face_map.entry(key).or_insert(QuadFaceRecord {
-                        cell_index: cell_idx,
-                        winding: v,
-                        count: 0,
-                        interior_ref: centroid,
-                    });
-                    entry.count += 1;
-                }
-            }
-            CellType::Hex => {
-                for (face_idx, quad) in HEX_FACES.iter().enumerate() {
-                    let v: [u32; 4] =
-                        [cell[quad[0]], cell[quad[1]], cell[quad[2]], cell[quad[3]]];
-                    let interior_ref = {
-                        let opposite = &HEX_FACES[HEX_FACE_OPPOSITE[face_idx]];
-                        let mut c = [0.0f32; 3];
-                        for &local_vi in opposite {
-                            let p = data.positions[cell[local_vi] as usize];
-                            c[0] += p[0];
-                            c[1] += p[1];
-                            c[2] += p[2];
-                        }
-                        [c[0] / 4.0, c[1] / 4.0, c[2] / 4.0]
-                    };
-                    let key = quad_face_key(v[0], v[1], v[2], v[3]);
-                    let entry = quad_face_map.entry(key).or_insert(QuadFaceRecord {
-                        cell_index: cell_idx,
-                        winding: v,
-                        count: 0,
-                        interior_ref,
-                    });
-                    entry.count += 1;
-                }
-            }
-        }
+    let mut boundary: Vec<(usize, [u32; 3], [f32; 3])> = collect_boundary_tri(&tri_entries);
+    for (ci, winding, iref) in collect_boundary_quad(&quad_entries) {
+        boundary.push((ci, [winding[0], winding[1], winding[2]], iref));
+        boundary.push((ci, [winding[0], winding[2], winding[3]], iref));
     }
-
-    // Collect boundary faces (count == 1) and apply outward winding correction.
-    let mut boundary: Vec<(usize, [u32; 3], [f32; 3])> = face_map
-        .into_values()
-        .filter(|r| r.count == 1)
-        .map(|r| (r.cell_index, r.winding, r.interior_ref))
-        .collect();
-
-    for quad in quad_face_map.into_values().filter(|r| r.count == 1) {
-        boundary.push((
-            quad.cell_index,
-            [quad.winding[0], quad.winding[1], quad.winding[2]],
-            quad.interior_ref,
-        ));
-        boundary.push((
-            quad.cell_index,
-            [quad.winding[0], quad.winding[2], quad.winding[3]],
-            quad.interior_ref,
-        ));
-    }
-
     boundary.sort_unstable_by_key(|(ci, _, _)| *ci);
 
-    for (_, tri, interior_ref) in &mut boundary {
-        let pa = data.positions[tri[0] as usize];
-        let pb = data.positions[tri[1] as usize];
-        let pc = data.positions[tri[2] as usize];
-        let ab = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]];
-        let ac = [pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]];
-        let n = cross3(ab, ac);
-        let fc = [
-            (pa[0] + pb[0] + pc[0]) / 3.0,
-            (pa[1] + pb[1] + pc[1]) / 3.0,
-            (pa[2] + pb[2] + pc[2]) / 3.0,
-        ];
-        let out_dir = [
-            fc[0] - interior_ref[0],
-            fc[1] - interior_ref[1],
-            fc[2] - interior_ref[2],
-        ];
-        if dot3(n, out_dir) < 0.0 {
-            tri.swap(1, 2);
-        }
-    }
+    boundary
+        .par_iter_mut()
+        .for_each(|(_, tri, iref)| correct_winding(tri, iref, &data.positions));
 
-    // Precompute per-cell vertex count and kept-vertex count.
+    // Precompute per-cell vertex and kept-vertex counts.
     let cell_nv: Vec<usize> = data
         .cells
         .iter()
@@ -1077,106 +1016,43 @@ pub(crate) fn extract_clipped_volume_faces(
         .map(|(cell, &nv)| (0..nv).filter(|&i| vert_kept[cell[i] as usize]).count())
         .collect();
 
-    // -----------------------------------------------------------------------
-    // Collect output triangles as position triples (cell_idx, [p0, p1, p2]).
-    // -----------------------------------------------------------------------
-    let mut out_tris: Vec<(usize, [[f32; 3]; 3])> = Vec::new();
-
-    // Boundary faces: emit directly for fully-kept cells, clip for intersected.
-    for (cell_idx, tri, _) in &boundary {
-        let nv = cell_nv[*cell_idx];
-        let kc = cell_kept[*cell_idx];
-        let pa = data.positions[tri[0] as usize];
-        let pb = data.positions[tri[1] as usize];
-        let pc = data.positions[tri[2] as usize];
-
-        if kc == nv {
-            out_tris.push((*cell_idx, [pa, pb, pc]));
-        } else {
-            let clipped = clip_polygon_planes(vec![pa, pb, pc], clip_planes);
-            for t in fan_triangulate(&clipped) {
-                out_tris.push((*cell_idx, t));
+    // Boundary faces: emit directly for fully-kept cells, clip for intersected (parallel).
+    let mut out_tris: Vec<(usize, [[f32; 3]; 3])> = boundary
+        .par_iter()
+        .flat_map_iter(|(cell_idx, tri, _)| {
+            let nv = cell_nv[*cell_idx];
+            let kc = cell_kept[*cell_idx];
+            let pa = data.positions[tri[0] as usize];
+            let pb = data.positions[tri[1] as usize];
+            let pc = data.positions[tri[2] as usize];
+            if kc == nv {
+                vec![(*cell_idx, [pa, pb, pc])]
+            } else {
+                let clipped = clip_polygon_planes(vec![pa, pb, pc], clip_planes);
+                fan_triangulate(&clipped)
+                    .into_iter()
+                    .map(|t| (*cell_idx, t))
+                    .collect()
             }
-        }
-    }
+        })
+        .collect();
 
-    // Section polygons: one per cutting plane per intersected cell.
-    for (cell_idx, cell) in data.cells.iter().enumerate() {
-        let nv = cell_nv[cell_idx];
-        let kc = cell_kept[cell_idx];
-        if kc == 0 || kc == nv {
-            continue;
-        }
+    // Section polygons: one per cutting plane per intersected cell (parallel).
+    let section_tris: Vec<(usize, [[f32; 3]; 3])> = data
+        .cells
+        .par_iter()
+        .enumerate()
+        .filter(|(ci, _)| {
+            let kc = cell_kept[*ci];
+            kc > 0 && kc < cell_nv[*ci]
+        })
+        .flat_map_iter(|(ci, cell)| {
+            generate_section_tris(ci, cell, &data.positions, clip_planes)
+        })
+        .collect();
+    out_tris.extend(section_tris);
 
-        let edges = cell_type(cell).edges();
-
-        for (pi, &plane) in clip_planes.iter().enumerate() {
-            // Collect one intersection point per edge that crosses this plane.
-            let mut pts: Vec<[f32; 3]> = Vec::new();
-            for edge in edges {
-                let va = cell[edge[0]] as usize;
-                let vb = cell[edge[1]] as usize;
-                let pa = data.positions[va];
-                let pb = data.positions[vb];
-                let da = plane_dist(pa, plane);
-                let db = plane_dist(pb, plane);
-                if (da >= 0.0) != (db >= 0.0) {
-                    let denom = da - db;
-                    if denom.abs() > 1e-30 {
-                        let t = da / denom;
-                        pts.push([
-                            pa[0] + t * (pb[0] - pa[0]),
-                            pa[1] + t * (pb[1] - pa[1]),
-                            pa[2] + t * (pb[2] - pa[2]),
-                        ]);
-                    }
-                }
-            }
-
-            if pts.len() < 3 {
-                continue;
-            }
-
-            // Sort into a valid polygon on the plane.
-            let plane_normal = [plane[0], plane[1], plane[2]];
-            sort_polygon_on_plane(&mut pts, plane_normal);
-
-            // Clip against every other active plane.
-            let other_planes: Vec<[f32; 4]> = clip_planes
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| *i != pi)
-                .map(|(_, p)| *p)
-                .collect();
-            let pts = clip_polygon_planes(pts, &other_planes);
-            if pts.len() < 3 {
-                continue;
-            }
-
-            // Triangulate; ensure winding points toward the kept side.
-            for mut tri in fan_triangulate(&pts) {
-                let ab = [
-                    tri[1][0] - tri[0][0],
-                    tri[1][1] - tri[0][1],
-                    tri[1][2] - tri[0][2],
-                ];
-                let ac = [
-                    tri[2][0] - tri[0][0],
-                    tri[2][1] - tri[0][1],
-                    tri[2][2] - tri[0][2],
-                ];
-                let n = cross3(ab, ac);
-                if dot3(n, plane_normal) < 0.0 {
-                    tri.swap(1, 2);
-                }
-                out_tris.push((cell_idx, tri));
-            }
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Intern positions into a combined array and build the index buffer.
-    // -----------------------------------------------------------------------
+    // Intern positions and build the index buffer (sequential: shared HashMap).
     let mut positions: Vec<[f32; 3]> = data.positions.clone();
     let mut pos_map: HashMap<[u32; 3], u32> = HashMap::new();
     for (i, &p) in data.positions.iter().enumerate() {

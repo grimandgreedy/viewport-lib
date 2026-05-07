@@ -55,4 +55,4 @@ pub use self::implicit::{
 pub use self::gpu_marching_cubes::{GpuMarchingCubesJob, VolumeGpuId};
 pub use self::sparse_volume::SparseVolumeGridData;
 #[allow(deprecated)]
-pub use self::volume_mesh::{CELL_SENTINEL, TET_SENTINEL, VolumeMeshData};
+pub use self::volume_mesh::{CELL_SENTINEL, TET_SENTINEL, VolumeMeshData, extract_clipped_volume_faces};
