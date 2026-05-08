@@ -191,6 +191,12 @@ pub struct Material {
     /// surfaces. Use [`BackfacePolicy::DifferentColor`] to highlight back faces in a
     /// distinct color : helpful for diagnosing mesh orientation errors.
     pub backface_policy: BackfacePolicy,
+    /// Skip all lighting and output the raw surface color directly. Default `false`.
+    ///
+    /// When `true`, the fragment shader bypasses Blinn-Phong, PBR, and matcap shading
+    /// and returns the base color (or colormap value) unchanged. Useful for 2D chart
+    /// overlays, pre-lit data, and flat UI geometry.
+    pub unlit: bool,
 }
 
 impl Default for Material {
@@ -211,6 +217,7 @@ impl Default for Material {
             matcap_id: None,
             param_vis: None,
             backface_policy: BackfacePolicy::Cull,
+            unlit: false,
         }
     }
 }

@@ -468,7 +468,7 @@ impl ViewportRenderer {
                     use_nan_color: if item.nan_color.is_some() { 1 } else { 0 },
                     use_matcap: if m.matcap_id.is_some() { 1 } else { 0 },
                     matcap_blendable: m.matcap_id.map_or(0, |id| if id.blendable { 1 } else { 0 }),
-                    _pad2: 0,
+                    unlit: if m.unlit { 1 } else { 0 },
                     use_face_color: u32::from(item.active_attribute.as_ref().map_or(false, |a| {
                         a.kind == crate::resources::AttributeKind::FaceColor
                     })),
@@ -531,7 +531,7 @@ impl ViewportRenderer {
                     use_nan_color: 0,
                     use_matcap: 0,
                     matcap_blendable: 0,
-                    _pad2: 0,
+                    unlit: 0,
                     use_face_color: 0,
                     uv_vis_mode: 0,
                     uv_vis_scale: 8.0,
@@ -672,6 +672,8 @@ impl ViewportRenderer {
                                     roughness: m.roughness,
                                     has_normal_map: if m.normal_map_id.is_some() { 1 } else { 0 },
                                     has_ao_map: if m.ao_map_id.is_some() { 1 } else { 0 },
+                                    unlit: if m.unlit { 1 } else { 0 },
+                                    _pad_inst: [0; 3],
                                 });
                             }
 

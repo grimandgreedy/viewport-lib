@@ -79,6 +79,10 @@ struct InstanceData {
     roughness: f32,
     has_normal_map: u32,
     has_ao_map: u32,
+    unlit: u32,
+    _pad_inst0: u32,
+    _pad_inst1: u32,
+    _pad_inst2: u32,
 };
 
 struct ClipVolumeUB {
@@ -313,6 +317,16 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
 
     var ao_factor = 1.0;
     if inst.has_ao_map != 0u { ao_factor = textureSample(ao_map, obj_sampler, in.uv).r; }
+
+    // Unlit: skip all lighting, return raw color directly through OIT.
+    if inst.unlit != 0u {
+        let alpha = obj_color.a;
+        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
+        var oit_out: OitOut;
+        oit_out.accum  = vec4<f32>(base_color * alpha, alpha) * w;
+        oit_out.reveal = alpha;
+        return oit_out;
+    }
 
     let V = normalize(camera.eye_pos - in.world_pos);
     let tint = vec4<f32>(1.0);

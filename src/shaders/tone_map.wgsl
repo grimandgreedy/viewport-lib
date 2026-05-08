@@ -7,9 +7,9 @@ struct ToneMapUniform {
     bloom_enabled:           u32,
     ssao_enabled:            u32,
     contact_shadows_enabled: u32,
-    _pad0:                   u32,
-    _pad1:                   u32,
-    _pad2:                   u32,
+    edl_enabled:             u32,
+    edl_radius:              f32,
+    edl_strength:            f32,
     background_color:        vec4<f32>,
 }
 
@@ -91,6 +91,33 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if params.contact_shadows_enabled != 0u {
         let cs = textureSample(cs_texture, hdr_sampler, in.uv).r;
         color = color * cs;
+    }
+
+    // Eye-Dome Lighting: darken pixels at depth discontinuities.
+    if params.edl_enabled != 0u {
+        let dims_i = vec2<i32>(depth_dims);
+        let log_dc = log(depth + 0.0001);
+        let edl_r = i32(max(1.0, round(params.edl_radius)));
+        var edl_nc: vec2<i32>;
+        var edl_sum = 0.0;
+        edl_nc = clamp(depth_coord + vec2<i32>( edl_r,      0), vec2<i32>(0), dims_i - vec2<i32>(1));
+        edl_sum += max(0.0, log(textureLoad(depth_texture, edl_nc, 0) + 0.0001) - log_dc);
+        edl_nc = clamp(depth_coord + vec2<i32>( edl_r,  edl_r), vec2<i32>(0), dims_i - vec2<i32>(1));
+        edl_sum += max(0.0, log(textureLoad(depth_texture, edl_nc, 0) + 0.0001) - log_dc);
+        edl_nc = clamp(depth_coord + vec2<i32>(      0,  edl_r), vec2<i32>(0), dims_i - vec2<i32>(1));
+        edl_sum += max(0.0, log(textureLoad(depth_texture, edl_nc, 0) + 0.0001) - log_dc);
+        edl_nc = clamp(depth_coord + vec2<i32>(-edl_r,  edl_r), vec2<i32>(0), dims_i - vec2<i32>(1));
+        edl_sum += max(0.0, log(textureLoad(depth_texture, edl_nc, 0) + 0.0001) - log_dc);
+        edl_nc = clamp(depth_coord + vec2<i32>(-edl_r,      0), vec2<i32>(0), dims_i - vec2<i32>(1));
+        edl_sum += max(0.0, log(textureLoad(depth_texture, edl_nc, 0) + 0.0001) - log_dc);
+        edl_nc = clamp(depth_coord + vec2<i32>(-edl_r, -edl_r), vec2<i32>(0), dims_i - vec2<i32>(1));
+        edl_sum += max(0.0, log(textureLoad(depth_texture, edl_nc, 0) + 0.0001) - log_dc);
+        edl_nc = clamp(depth_coord + vec2<i32>(      0, -edl_r), vec2<i32>(0), dims_i - vec2<i32>(1));
+        edl_sum += max(0.0, log(textureLoad(depth_texture, edl_nc, 0) + 0.0001) - log_dc);
+        edl_nc = clamp(depth_coord + vec2<i32>( edl_r, -edl_r), vec2<i32>(0), dims_i - vec2<i32>(1));
+        edl_sum += max(0.0, log(textureLoad(depth_texture, edl_nc, 0) + 0.0001) - log_dc);
+        let edl_factor = clamp(edl_sum * params.edl_strength, 0.0, 1.0);
+        color = color * (1.0 - edl_factor);
     }
 
     // Pre-tone-mapping exposure.

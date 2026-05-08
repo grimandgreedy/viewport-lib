@@ -210,6 +210,15 @@ pub struct PostProcessSettings {
     pub contact_shadow_steps: u32,
     /// Depth thickness threshold for occlusion test. Default: 0.1.
     pub contact_shadow_thickness: f32,
+    /// Enable Eye-Dome Lighting depth enhancement. Requires `enabled = true`.
+    ///
+    /// Samples a ring of 8 depth neighbors and darkens pixels at depth discontinuities,
+    /// making point clouds and surface edges easier to read at any viewing distance.
+    pub edl_enabled: bool,
+    /// EDL sample ring radius in pixels. Default: 1.0.
+    pub edl_radius: f32,
+    /// EDL darkening strength (0.0 = none, higher = stronger). Default: 1.0.
+    pub edl_strength: f32,
 }
 
 impl Default for PostProcessSettings {
@@ -228,6 +237,9 @@ impl Default for PostProcessSettings {
             contact_shadow_max_distance: 0.5,
             contact_shadow_steps: 16,
             contact_shadow_thickness: 0.1,
+            edl_enabled: false,
+            edl_radius: 1.0,
+            edl_strength: 1.0,
         }
     }
 }
@@ -713,6 +725,31 @@ impl Default for PolylineItem {
             edge_vectors: Vec::new(),
             vector_scale: 1.0,
         }
+    }
+}
+
+/// Build a `PolylineItem` that draws the 12 edges of an axis-aligned bounding box.
+///
+/// Produces 6 strips: bottom face loop (5 pts), top face loop (5 pts), and
+/// 4 vertical edges (2 pts each). Pass `color` as RGBA in linear space.
+pub fn aabb_wireframe_polyline(aabb: &crate::scene::aabb::Aabb, color: [f32; 4]) -> PolylineItem {
+    let mn = aabb.min;
+    let mx = aabb.max;
+    PolylineItem {
+        positions: vec![
+            // Bottom face loop
+            [mn.x, mn.y, mn.z], [mx.x, mn.y, mn.z], [mx.x, mx.y, mn.z], [mn.x, mx.y, mn.z], [mn.x, mn.y, mn.z],
+            // Top face loop
+            [mn.x, mn.y, mx.z], [mx.x, mn.y, mx.z], [mx.x, mx.y, mx.z], [mn.x, mx.y, mx.z], [mn.x, mn.y, mx.z],
+            // Vertical edges
+            [mn.x, mn.y, mn.z], [mn.x, mn.y, mx.z],
+            [mx.x, mn.y, mn.z], [mx.x, mn.y, mx.z],
+            [mx.x, mx.y, mn.z], [mx.x, mx.y, mx.z],
+            [mn.x, mx.y, mn.z], [mn.x, mx.y, mx.z],
+        ],
+        strip_lengths: vec![5, 5, 2, 2, 2, 2],
+        default_color: color,
+        ..Default::default()
     }
 }
 

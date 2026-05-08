@@ -280,7 +280,7 @@ fn main() -> eframe::Result {
                 pp_built: false,
                 pp_shadow_pcss: true,
                 pp_point_light_on: true,
-                pp_dir_intensity: 4.0,
+                pp_dir_intensity: 0.6,
                 nm_scene: Scene::new(),
                 nm_built: false,
                 nm_mapped_nodes: Vec::new(),
@@ -306,6 +306,10 @@ fn main() -> eframe::Result {
                 lights_hemi_intensity: 1.0,
                 lights_sky_color: [1.0, 1.0, 1.0],
                 lights_ground_color: [1.0, 1.0, 1.0],
+                lights_edl_enabled: false,
+                lights_edl_radius: 1.0,
+                lights_edl_strength: 1.0,
+                lights_unlit_sphere: false,
                 scalar_scene: Scene::new(),
                 scalar_built: false,
                 scalar_selection: Selection::new(),
@@ -832,6 +836,10 @@ pub(crate) struct App {
     lights_hemi_intensity: f32,
     lights_sky_color: [f32; 3],
     lights_ground_color: [f32; 3],
+    lights_edl_enabled: bool,
+    lights_edl_radius: f32,
+    lights_edl_strength: f32,
+    lights_unlit_sphere: bool,
 
     // --- Showcase 12 ---
     pub(crate) scalar_scene: Scene,
@@ -1757,6 +1765,7 @@ impl eframe::App for App {
             if self.mode == ShowcaseMode::BackfacePolicy
                 || self.mode == ShowcaseMode::DepthCompositeImages
                 || self.mode == ShowcaseMode::ImplicitSurface
+                || self.mode == ShowcaseMode::Lights
             {
                 ui.painter()
                     .add(eframe::egui_wgpu::Callback::new_paint_callback(
@@ -3056,6 +3065,28 @@ impl App {
                 ui.color_edit_button_rgb(&mut self.lights_ground_color);
             });
         }
+
+        ui.separator();
+        ui.label("Eye-Dome Lighting");
+        ui.checkbox(&mut self.lights_edl_enabled, "EDL enabled");
+        if self.lights_edl_enabled {
+            ui.add(
+                egui::Slider::new(&mut self.lights_edl_radius, 0.5..=8.0)
+                    .text("Radius (px)")
+                    .step_by(0.5),
+            );
+            ui.add(
+                egui::Slider::new(&mut self.lights_edl_strength, 0.0..=5.0)
+                    .text("Strength"),
+            );
+        }
+
+        ui.separator();
+        ui.label("Unlit shading");
+        if ui.checkbox(&mut self.lights_unlit_sphere, "Unlit sphere (corner)").changed() {
+            // Force scene rebuild so the material flag takes effect.
+            self.lights_built = false;
+        }
     }
 
     fn set_scalar_active_object(&mut self, index: usize) {
@@ -4266,6 +4297,24 @@ impl App {
                 rc.far = (self.camera.distance * 3.0).max(60.0);
                 rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
                 fd.camera.render_camera = rc;
+            }
+            ShowcaseMode::Lights => {
+                // Cap the far plane so depth values span a useful range for EDL.
+                // Without this, all scene geometry clusters near depth 0.99, making
+                // the log-space neighbor differences too small to see.
+                let mut rc = RenderCamera::from_camera(&self.camera);
+                rc.far = (self.camera.distance * 3.0).max(30.0);
+                rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
+                fd.camera.render_camera = rc;
+                if self.lights_edl_enabled {
+                    fd.effects.post_process = PostProcessSettings {
+                        enabled: true,
+                        edl_enabled: true,
+                        edl_radius: self.lights_edl_radius,
+                        edl_strength: self.lights_edl_strength,
+                        ..PostProcessSettings::default()
+                    };
+                }
             }
             ShowcaseMode::BackfacePolicy => {}
             _ => {}

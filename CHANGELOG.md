@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.12.3] (current, unreleased)
+
+### Features
+- Eye-Dome Lighting (EDL): depth-discontinuity shading pass in the tone-map composite step. Enable via `PostProcessSettings::edl_enabled`; tune edge sharpness with `edl_radius` (pixel ring distance, default 1.0) and `edl_strength` (darkening scale, default 1.0). Implemented entirely in `tone_map.wgsl` with no additional textures or passes.
+- `Material::unlit`: set to `true` to skip all lighting (Blinn-Phong, PBR, matcap) and output the raw base color directly. Works on both the direct and instanced draw paths.
+- `aabb_wireframe_polyline(aabb, color) -> PolylineItem`: convenience function that builds the 12 edges of an AABB as a `PolylineItem` (6 strips: bottom loop, top loop, 4 vertical edges).
+
+### Performance
+- Volume mesh boundary extraction is now significantly faster on large meshes. HashMap face deduplication is replaced with a sort + linear scan, and the entry generation, sort, and winding-correction steps are parallelized with rayon. Both `extract_boundary_faces` and `extract_clipped_volume_faces` use the new path; meshes below 1024 cells fall back to sequential execution automatically.
+- `march_implicit_surface` / `march_implicit_surface_color`: pixel loop is now parallel via rayon. Each pixel owns its own output slot so there is no coordination overhead; all existing tests pass unchanged.
+- `compute_tangents`: phase 2 (Gram-Schmidt normalization) is always parallel; phase 1 (sdir/tdir accumulation) uses a per-thread fold/reduce above 1024 triangles and a sequential loop below.
+- `extract_isosurface`: uses Z-slab decomposition above 64x64x64 cells. Each slab gets its own edge cache and runs in parallel; slab outputs are concatenated with adjusted index offsets. Edges on slab boundaries are independently interpolated by each adjacent slab (geometrically coincident, invisible when rendered).
+
 ## [0.12.2]
 
 ### Features

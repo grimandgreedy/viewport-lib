@@ -431,7 +431,7 @@ pub(crate) struct ObjectUniform {
     pub(crate) use_nan_color: u32,       //   4 bytes, offset 160
     pub(crate) use_matcap: u32,          //   4 bytes, offset 164
     pub(crate) matcap_blendable: u32,    //   4 bytes, offset 168
-    pub(crate) _pad2: u32,               //   4 bytes, offset 172
+    pub(crate) unlit: u32,               //   4 bytes, offset 172
     pub(crate) use_face_color: u32,      //   4 bytes, offset 176
     pub(crate) uv_vis_mode: u32,         //   4 bytes, offset 180
     pub(crate) uv_vis_scale: f32,        //   4 bytes, offset 184
@@ -461,6 +461,8 @@ pub(crate) struct InstanceData {
     pub(crate) roughness: f32,       //   4 bytes, offset 116
     pub(crate) has_normal_map: u32,  //   4 bytes, offset 120
     pub(crate) has_ao_map: u32,      //   4 bytes, offset 124
+    pub(crate) unlit: u32,           //   4 bytes, offset 128
+    pub(crate) _pad_inst: [u32; 3],  //  12 bytes, offset 132
 }
 
 /// Per-instance GPU data for the object-ID pick pass (Phase K).
@@ -749,7 +751,9 @@ pub(crate) struct ToneMapUniform {
     pub(crate) bloom_enabled: u32,
     pub(crate) ssao_enabled: u32,
     pub(crate) contact_shadows_enabled: u32,
-    pub(crate) _pad_tm: [u32; 3],
+    pub(crate) edl_enabled: u32,
+    pub(crate) edl_radius: f32,
+    pub(crate) edl_strength: f32,
     pub(crate) background_color: [f32; 4],
 }
 

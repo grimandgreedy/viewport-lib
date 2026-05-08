@@ -104,7 +104,7 @@ struct Object {
     use_nan_color: u32,         // offset 160
     use_matcap: u32,            // offset 164
     matcap_blendable: u32,      // offset 168
-    _pad2: u32,                 // offset 172
+    unlit: u32,                 // offset 172
     use_face_color: u32,        // offset 176
     uv_vis_mode: u32,           // offset 180 : 0=off 1=checker 2=grid 3=localcheck 4=localrad
     uv_vis_scale: f32,          // offset 184 : tile frequency multiplier
@@ -684,6 +684,11 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     if object.uv_vis_mode != 0u {
         let vis = param_vis_color(in.uv, object.uv_vis_mode, object.uv_vis_scale);
         return vec4<f32>(vis, obj_color.a);
+    }
+
+    // Unlit: skip all lighting, return raw color directly.
+    if object.unlit != 0u {
+        return vec4<f32>(base_color, obj_color.a);
     }
 
     // Use the smooth vertex normal for shadow bias. Screen-space derivatives

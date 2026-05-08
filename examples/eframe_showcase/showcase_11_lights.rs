@@ -1,7 +1,9 @@
 //! Showcase 11: Lights : build method.
 //!
-//! A flat ground plane plus a 3×3 grid of white spheres : neutral surfaces that make
+//! A flat ground plane plus a 3x3 grid of white spheres : neutral surfaces that make
 //! light color, cone angle, and attenuation directly visible.
+//! One additional sphere in the corner uses `Material::unlit` to show the raw base
+//! color without any lighting contribution.
 
 use crate::App;
 use crate::geometry::make_box_with_uvs;
@@ -29,7 +31,7 @@ impl App {
             },
         );
 
-        // 3×3 grid of spheres.
+        // 3x3 grid of lit spheres.
         let sphere_mesh = viewport_lib::primitives::sphere(0.6, 32, 16);
         let sphere_id = renderer
             .resources_mut()
@@ -53,6 +55,32 @@ impl App {
                     },
                 );
             }
+        }
+
+        // Unlit sphere in the corner : shows the raw base color regardless of scene
+        // lighting when the toggle is on.  A second lit sphere of the same color is
+        // placed beside it so the difference is visible.
+        if self.lights_unlit_sphere {
+            self.lights_scene.add_named(
+                "Unlit Sphere",
+                Some(sphere_id),
+                glam::Mat4::from_translation(glam::Vec3::new(6.0, -6.0, 0.6)),
+                {
+                    let mut m = Material::from_color([0.2, 0.7, 1.0]);
+                    m.unlit = true;
+                    m
+                },
+            );
+            self.lights_scene.add_named(
+                "Lit Sphere (same color)",
+                Some(sphere_id),
+                glam::Mat4::from_translation(glam::Vec3::new(6.0, -2.0, 0.6)),
+                {
+                    let mut m = Material::from_color([0.2, 0.7, 1.0]);
+                    m.roughness = 0.35;
+                    m
+                },
+            );
         }
 
         self.lights_built = true;

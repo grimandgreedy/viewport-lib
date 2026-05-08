@@ -859,7 +859,9 @@ impl ViewportRenderer {
             bloom_enabled: if pp.bloom { 1 } else { 0 },
             ssao_enabled: if pp.ssao { 1 } else { 0 },
             contact_shadows_enabled: if pp.contact_shadows { 1 } else { 0 },
-            _pad_tm: [0; 3],
+            edl_enabled: if pp.edl_enabled { 1 } else { 0 },
+            edl_radius: pp.edl_radius,
+            edl_strength: pp.edl_strength,
             background_color: bg_color,
         };
         {

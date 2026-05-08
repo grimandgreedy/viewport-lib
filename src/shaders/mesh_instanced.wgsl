@@ -79,6 +79,10 @@ struct InstanceData {
     roughness: f32,
     has_normal_map: u32,
     has_ao_map: u32,
+    unlit: u32,
+    _pad_inst0: u32,
+    _pad_inst1: u32,
+    _pad_inst2: u32,
 };
 
 struct ClipVolumeUB {
@@ -430,6 +434,11 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 
     var ao_factor = 1.0;
     if inst.has_ao_map != 0u { ao_factor = textureSample(ao_map, obj_sampler, in.uv).r; }
+
+    // Unlit: skip all lighting, return raw color directly.
+    if inst.unlit != 0u {
+        return vec4<f32>(base_color, obj_color.a);
+    }
 
     // Use the geometric fragment normal for shadowing so the receiver test
     // matches the faceted mesh that was rasterized into the shadow atlas.
