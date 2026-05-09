@@ -13,9 +13,43 @@ use crate::App;
 use eframe::egui;
 use viewport_lib::{BackfacePolicy, Material, ViewportRenderer, scene::Scene};
 
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct GroundPlaneState {
+    pub scene:          Scene,
+    pub built:          bool,
+    pub mode:           GpMode,
+    pub height:         f32,
+    pub color:          [f32; 4],
+    pub tile_size:      f32,
+    pub shadow_color:   [f32; 4],
+    pub shadow_opacity: f32,
+}
+
+impl Default for GroundPlaneState {
+    fn default() -> Self {
+        Self {
+            scene:          Scene::new(),
+            built:          false,
+            mode:           GpMode::Tile,
+            height:         0.0,
+            color:          [0.3, 0.3, 0.3, 1.0],
+            tile_size:      1.0,
+            shadow_color:   [0.0, 0.0, 0.0, 1.0],
+            shadow_opacity: 0.5,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build
+// ---------------------------------------------------------------------------
+
 impl App {
     pub(crate) fn build_ground_plane_scene(&mut self, renderer: &mut ViewportRenderer) {
-        self.gp_scene = Scene::new();
+        self.gp_state.scene = Scene::new();
 
         let sphere = viewport_lib::geometry::primitives::sphere(1.0, 32, 16);
         let sphere_id = renderer
@@ -35,7 +69,7 @@ impl App {
             mat.roughness = 0.5;
             mat.metallic = 0.1;
             mat.backface_policy = BackfacePolicy::Identical;
-            self.gp_scene.add_named(
+            self.gp_state.scene.add_named(
                 name,
                 Some(sphere_id),
                 glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 1.5)),
@@ -43,52 +77,62 @@ impl App {
             );
         }
 
-        self.gp_built = true;
-    }
-
-    pub(crate) fn controls_ground_plane(&mut self, ui: &mut egui::Ui) {
-        ui.label("Ground plane mode:");
-        ui.horizontal_wrapped(|ui| {
-            for (label, mode) in [
-                ("None", GpMode::None),
-                ("ShadowOnly", GpMode::ShadowOnly),
-                ("Tile", GpMode::Tile),
-                ("SolidColor", GpMode::SolidColor),
-            ] {
-                if ui.selectable_label(self.gp_mode == mode, label).clicked() {
-                    self.gp_mode = mode;
-                }
-            }
-        });
-
-        ui.separator();
-        ui.label("Height (Z):");
-        ui.add(egui::Slider::new(&mut self.gp_height, -3.0..=3.0).step_by(0.1));
-
-        match self.gp_mode {
-            GpMode::Tile => {
-                ui.separator();
-                ui.label("Tile color:");
-                ui.color_edit_button_rgba_unmultiplied(&mut self.gp_color);
-                ui.label("Tile size:");
-                ui.add(egui::Slider::new(&mut self.gp_tile_size, 0.1..=5.0).step_by(0.1));
-            }
-            GpMode::SolidColor => {
-                ui.separator();
-                ui.label("Surface color:");
-                ui.color_edit_button_rgba_unmultiplied(&mut self.gp_color);
-            }
-            GpMode::ShadowOnly => {
-                ui.separator();
-                ui.label("Shadow color:");
-                ui.color_edit_button_rgba_unmultiplied(&mut self.gp_shadow_color);
-                ui.label("Shadow opacity:");
-                ui.add(egui::Slider::new(&mut self.gp_shadow_opacity, 0.0..=1.0).step_by(0.05));
-            }
-            GpMode::None => {}
-        }
+        self.gp_state.built = true;
     }
 }
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_ground_plane(app: &mut App, ui: &mut egui::Ui) {
+    let s = &mut app.gp_state;
+
+    ui.label("Ground plane mode:");
+    ui.horizontal_wrapped(|ui| {
+        for (label, mode) in [
+            ("None", GpMode::None),
+            ("ShadowOnly", GpMode::ShadowOnly),
+            ("Tile", GpMode::Tile),
+            ("SolidColor", GpMode::SolidColor),
+        ] {
+            if ui.selectable_label(s.mode == mode, label).clicked() {
+                s.mode = mode;
+            }
+        }
+    });
+
+    ui.separator();
+    ui.label("Height (Z):");
+    ui.add(egui::Slider::new(&mut s.height, -3.0..=3.0).step_by(0.1));
+
+    match s.mode {
+        GpMode::Tile => {
+            ui.separator();
+            ui.label("Tile color:");
+            ui.color_edit_button_rgba_unmultiplied(&mut s.color);
+            ui.label("Tile size:");
+            ui.add(egui::Slider::new(&mut s.tile_size, 0.1..=5.0).step_by(0.1));
+        }
+        GpMode::SolidColor => {
+            ui.separator();
+            ui.label("Surface color:");
+            ui.color_edit_button_rgba_unmultiplied(&mut s.color);
+        }
+        GpMode::ShadowOnly => {
+            ui.separator();
+            ui.label("Shadow color:");
+            ui.color_edit_button_rgba_unmultiplied(&mut s.shadow_color);
+            ui.label("Shadow opacity:");
+            ui.add(egui::Slider::new(&mut s.shadow_opacity, 0.0..=1.0).step_by(0.05));
+        }
+        GpMode::None => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ground plane mode enum
+// ---------------------------------------------------------------------------
 
 /// Ground plane mode selection (mirrors `viewport_lib::GroundPlaneMode`).
 #[derive(Clone, Copy, PartialEq, Eq, Default)]

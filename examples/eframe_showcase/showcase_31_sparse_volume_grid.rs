@@ -269,6 +269,32 @@ fn build_terrain() -> SparseVolumeGridData {
 }
 
 // ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct SvgState {
+    pub built:      bool,
+    pub mesh_id:    MeshId,
+    pub shell_id:   MeshId,
+    pub terrain_id: MeshId,
+    pub colormap:   BuiltinColormap,
+    pub field:      SvgField,
+}
+
+impl Default for SvgState {
+    fn default() -> Self {
+        Self {
+            built:      false,
+            mesh_id:    MeshId::from_index(0),
+            shell_id:   MeshId::from_index(0),
+            terrain_id: MeshId::from_index(0),
+            colormap:   BuiltinColormap::Viridis,
+            field:      SvgField::CellHeight,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // App methods
 // ---------------------------------------------------------------------------
 
@@ -277,46 +303,46 @@ impl App {
     /// first shown.
     pub(crate) fn build_svg_scene(&mut self, renderer: &mut ViewportRenderer) {
         let sphere = build_sphere_grid();
-        self.svg_mesh_id = renderer
+        self.svg_state.mesh_id = renderer
             .resources_mut()
             .upload_sparse_volume_grid_data(&self.device, &sphere)
             .expect("svg sphere upload");
 
         let shell = build_hollow_shell();
-        self.svg_shell_id = renderer
+        self.svg_state.shell_id = renderer
             .resources_mut()
             .upload_sparse_volume_grid_data(&self.device, &shell)
             .expect("svg shell upload");
 
         let terrain = build_terrain();
-        self.svg_terrain_id = renderer
+        self.svg_state.terrain_id = renderer
             .resources_mut()
             .upload_sparse_volume_grid_data(&self.device, &terrain)
             .expect("svg terrain upload");
 
-        self.svg_built = true;
+        self.svg_state.built = true;
     }
 
     /// Produce scene items for all three shapes with the active attribute mode.
     pub(crate) fn svg_scene_items(&self) -> Vec<SceneRenderItem> {
-        if !self.svg_built {
+        if !self.svg_state.built {
             return vec![];
         }
 
-        let (active_attribute, colormap_id) = match self.svg_field {
+        let (active_attribute, colormap_id) = match self.svg_state.field {
             SvgField::CellHeight => (
                 Some(AttributeRef {
                     name: "height".to_string(),
                     kind: AttributeKind::Face,
                 }),
-                Some(ColormapId(self.svg_colormap as usize)),
+                Some(ColormapId(self.svg_state.colormap as usize)),
             ),
             SvgField::NodeDistance => (
                 Some(AttributeRef {
                     name: "distance".to_string(),
                     kind: AttributeKind::Face,
                 }),
-                Some(ColormapId(self.svg_colormap as usize)),
+                Some(ColormapId(self.svg_state.colormap as usize)),
             ),
             SvgField::CellHue => (
                 Some(AttributeRef {
@@ -329,9 +355,9 @@ impl App {
 
         // Three objects placed side by side along X.
         [
-            (self.svg_mesh_id, translate(-9.0, 0.0, 0.0)),
-            (self.svg_shell_id, translate(0.0, 0.0, 0.0)),
-            (self.svg_terrain_id, translate(9.0, 0.0, 0.0)),
+            (self.svg_state.mesh_id, translate(-9.0, 0.0, 0.0)),
+            (self.svg_state.shell_id, translate(0.0, 0.0, 0.0)),
+            (self.svg_state.terrain_id, translate(9.0, 0.0, 0.0)),
         ]
         .into_iter()
         .map(|(mesh_id, model)| {
@@ -360,21 +386,23 @@ impl App {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Controls panel
-    // -------------------------------------------------------------------------
+}
 
-    pub(crate) fn controls_sparse_volume_grid(&mut self, ui: &mut egui::Ui) {
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_sparse_volume_grid(app: &mut App, ui: &mut egui::Ui) {
         ui.label("Attribute source (applied to all three shapes):");
         for (field, label) in [
             (SvgField::CellHeight, "Cell height (cell_scalars)"),
             (SvgField::NodeDistance, "Node distance / elevation (node_scalars)"),
             (SvgField::CellHue, "Cell hue (cell_colors, direct RGBA)"),
         ] {
-            ui.radio_value(&mut self.svg_field, field, label);
+            ui.radio_value(&mut app.svg_state.field, field, label);
         }
 
-        if self.svg_field != SvgField::CellHue {
+        if app.svg_state.field != SvgField::CellHue {
             ui.separator();
             ui.label("Colormap:");
             ui.horizontal_wrapped(|ui| {
@@ -389,7 +417,7 @@ impl App {
                     BuiltinColormap::Rainbow,
                     BuiltinColormap::Jet,
                 ] {
-                    ui.radio_value(&mut self.svg_colormap, cm, format!("{cm:?}"));
+                    ui.radio_value(&mut app.svg_state.colormap, cm, format!("{cm:?}"));
                 }
             });
         }
@@ -399,8 +427,3 @@ impl App {
         ui.label("Centre : hollow shell (54 cells, outer + inner surfaces).");
         ui.label("Right : voxel terrain (column heightmap).");
     }
-}
-
-// Suppress unused-import warning: MeshId is used in the App struct fields
-// declared in main.rs, not here directly.
-const _: () = { let _ = std::mem::size_of::<MeshId>(); };

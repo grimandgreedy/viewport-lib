@@ -13,7 +13,7 @@
 //! the world-space depth of the center sphere.  Toggle modes to see how the
 //! depth test admits the near sphere and occludes the far sphere.
 
-use crate::App;
+use crate::{App, MeshId};
 use eframe::egui;
 use viewport_lib::{
     Camera, ImageAnchor, LightKind, LightSource, LightingSettings, Material,
@@ -35,11 +35,35 @@ pub enum DcMode {
     DepthComposite,
 }
 
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct DcState {
+    pub built:  bool,
+    pub mesh_id: MeshId,
+    pub mode:    DcMode,
+    pub pixels:  Vec<[u8; 4]>,
+    pub depths:  Vec<f32>,
+}
+
+impl Default for DcState {
+    fn default() -> Self {
+        Self {
+            built:   false,
+            mesh_id: MeshId::from_index(0),
+            mode:    DcMode::DepthComposite,
+            pixels:  Vec::new(),
+            depths:  Vec::new(),
+        }
+    }
+}
+
 impl App {
     pub(crate) fn build_dc_scene(&mut self, renderer: &mut ViewportRenderer) {
         // One sphere mesh reused at three positions via the model matrix.
         let mesh = viewport_lib::primitives::sphere(SPHERE_RADIUS, 32, 16);
-        self.dc_mesh_id = renderer
+        self.dc_state.mesh_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &mesh)
             .expect("dc sphere mesh");
@@ -88,15 +112,21 @@ impl App {
             }
         }
 
-        self.dc_pixels = pixels;
-        self.dc_depths = depths;
-        self.dc_built = true;
+        self.dc_state.pixels = pixels;
+        self.dc_state.depths = depths;
+        self.dc_state.built = true;
     }
 
-    pub(crate) fn controls_dc(&mut self, ui: &mut egui::Ui) {
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_dc(app: &mut App, ui: &mut egui::Ui) {
         ui.label("Mode:");
-        ui.radio_value(&mut self.dc_mode, DcMode::Plain, "Plain overlay (always on top)");
-        ui.radio_value(&mut self.dc_mode, DcMode::DepthComposite, "Depth composite (depth-tested)");
+        ui.radio_value(&mut app.dc_state.mode, DcMode::Plain, "Plain overlay (always on top)");
+        ui.radio_value(&mut app.dc_state.mode, DcMode::DepthComposite, "Depth composite (depth-tested)");
 
         ui.separator();
         ui.label("The heatmap sits at the depth of the blue center sphere.");
@@ -104,10 +134,11 @@ impl App {
         ui.label("Green (left)  : closer than overlay : visible through it in DC mode.");
         ui.label("Blue (center) : at the overlay depth.");
         ui.label("Orange (right): farther than overlay : hidden behind it in DC mode.");
-    }
+}
 
+impl App {
     pub(crate) fn dc_scene_items(&self) -> Vec<SceneRenderItem> {
-        if !self.dc_built {
+        if !self.dc_state.built {
             return vec![];
         }
 
@@ -120,7 +151,7 @@ impl App {
 
         spheres.iter().map(|(pos, color)| {
             let mut item = SceneRenderItem::default();
-            item.mesh_id = self.dc_mesh_id;
+            item.mesh_id = self.dc_state.mesh_id;
             item.model = glam::Mat4::from_translation(*pos).to_cols_array_2d();
             item.material = {
                 let mut m = Material::from_color(*color);
@@ -132,18 +163,18 @@ impl App {
     }
 
     pub(crate) fn dc_push_screen_image(&self, fd: &mut viewport_lib::FrameData) {
-        if !self.dc_built {
+        if !self.dc_state.built {
             return;
         }
         let mut img = ScreenImageItem::default();
-        img.pixels = self.dc_pixels.clone();
+        img.pixels = self.dc_state.pixels.clone();
         img.width  = IMG_W;
         img.height = IMG_H;
         img.anchor = ImageAnchor::Center;
         img.scale  = 1.7;   // ~870 x 435 screen pixels; covers all three spheres
         img.alpha  = 1.0;
-        if self.dc_mode == DcMode::DepthComposite {
-            img.depth = Some(self.dc_depths.clone());
+        if self.dc_state.mode == DcMode::DepthComposite {
+            img.depth = Some(self.dc_state.depths.clone());
         }
         fd.scene.screen_images.push(img);
     }

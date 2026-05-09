@@ -1,4 +1,40 @@
-//! Showcase 35: Overlay Composition : ScalarBarItem + RulerItem + LabelItem together.
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct OvlState {
+    pub colormap:        viewport_lib::BuiltinColormap,
+    pub bar_orientation: viewport_lib::ScalarBarOrientation,
+    pub bar_anchor:      viewport_lib::ScalarBarAnchor,
+    pub tick_count:      u32,
+    pub bar_size:        f32,
+    pub bg_color:        [f32; 4],
+    pub show_ruler:      bool,
+    pub show_labels:     bool,
+    pub cloud_positions: Vec<[f32; 3]>,
+    pub cloud_scalars:   Vec<f32>,
+    pub cloud_built:     bool,
+}
+
+impl Default for OvlState {
+    fn default() -> Self {
+        Self {
+            colormap:        viewport_lib::BuiltinColormap::Viridis,
+            bar_orientation: viewport_lib::ScalarBarOrientation::Vertical,
+            bar_anchor:      viewport_lib::ScalarBarAnchor::BottomRight,
+            tick_count:      5,
+            bar_size:        200.0,
+            bg_color:        [0.0, 0.0, 0.0, 0.63],
+            show_ruler:      true,
+            show_labels:     true,
+            cloud_positions: Vec::new(),
+            cloud_scalars:   Vec::new(),
+            cloud_built:     false,
+        }
+    }
+}
+
+// Showcase 35: Overlay Composition : ScalarBarItem + RulerItem + LabelItem together.
 
 use crate::App;
 use eframe::egui;
@@ -28,14 +64,14 @@ pub(crate) fn controls_overlay(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Colormap:");
     let selected_name = ALL_COLORMAPS
         .iter()
-        .find(|(c, _)| *c == app.ovl_colormap)
+        .find(|(c, _)| *c == app.ovl_state.colormap)
         .map(|(_, n)| *n)
         .unwrap_or("Unknown");
     egui::ComboBox::from_id_salt("ovl_colormap")
         .selected_text(selected_name)
         .show_ui(ui, |ui| {
             for (cmap, name) in ALL_COLORMAPS {
-                ui.selectable_value(&mut app.ovl_colormap, *cmap, *name);
+                ui.selectable_value(&mut app.ovl_state.colormap, *cmap, *name);
             }
         });
 
@@ -43,21 +79,21 @@ pub(crate) fn controls_overlay(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Bar orientation:");
     if ui
         .radio(
-            app.ovl_bar_orientation == ScalarBarOrientation::Vertical,
+            app.ovl_state.bar_orientation == ScalarBarOrientation::Vertical,
             "Vertical",
         )
         .clicked()
     {
-        app.ovl_bar_orientation = ScalarBarOrientation::Vertical;
+        app.ovl_state.bar_orientation = ScalarBarOrientation::Vertical;
     }
     if ui
         .radio(
-            app.ovl_bar_orientation == ScalarBarOrientation::Horizontal,
+            app.ovl_state.bar_orientation == ScalarBarOrientation::Horizontal,
             "Horizontal",
         )
         .clicked()
     {
-        app.ovl_bar_orientation = ScalarBarOrientation::Horizontal;
+        app.ovl_state.bar_orientation = ScalarBarOrientation::Horizontal;
     }
 
     ui.separator();
@@ -68,33 +104,33 @@ pub(crate) fn controls_overlay(app: &mut App, ui: &mut egui::Ui) {
         ("Bottom-Left", ScalarBarAnchor::BottomLeft),
         ("Bottom-Right", ScalarBarAnchor::BottomRight),
     ] {
-        if ui.radio(app.ovl_bar_anchor == anchor, label).clicked() {
-            app.ovl_bar_anchor = anchor;
+        if ui.radio(app.ovl_state.bar_anchor == anchor, label).clicked() {
+            app.ovl_state.bar_anchor = anchor;
         }
     }
 
     ui.separator();
     ui.label("Bar size (px):");
-    ui.add(egui::Slider::new(&mut app.ovl_bar_size, 80.0..=400.0).suffix(" px"));
+    ui.add(egui::Slider::new(&mut app.ovl_state.bar_size, 80.0..=400.0).suffix(" px"));
 
     ui.separator();
     ui.label("Tick count:");
-    ui.add(egui::Slider::new(&mut app.ovl_tick_count, 2..=10));
+    ui.add(egui::Slider::new(&mut app.ovl_state.tick_count, 2..=10));
 
     ui.separator();
     ui.label("Background colour:");
-    let mut rgb = [app.ovl_bg_color[0], app.ovl_bg_color[1], app.ovl_bg_color[2]];
+    let mut rgb = [app.ovl_state.bg_color[0], app.ovl_state.bg_color[1], app.ovl_state.bg_color[2]];
     if ui.color_edit_button_rgb(&mut rgb).changed() {
-        app.ovl_bg_color[0] = rgb[0];
-        app.ovl_bg_color[1] = rgb[1];
-        app.ovl_bg_color[2] = rgb[2];
+        app.ovl_state.bg_color[0] = rgb[0];
+        app.ovl_state.bg_color[1] = rgb[1];
+        app.ovl_state.bg_color[2] = rgb[2];
     }
     ui.label("Background opacity:");
-    ui.add(egui::Slider::new(&mut app.ovl_bg_color[3], 0.0..=1.0));
+    ui.add(egui::Slider::new(&mut app.ovl_state.bg_color[3], 0.0..=1.0));
 
     ui.separator();
-    ui.checkbox(&mut app.ovl_show_ruler, "Show ruler");
-    ui.checkbox(&mut app.ovl_show_labels, "Show callout labels");
+    ui.checkbox(&mut app.ovl_state.show_ruler, "Show ruler");
+    ui.checkbox(&mut app.ovl_state.show_labels, "Show callout labels");
 }
 
 // ---------------------------------------------------------------------------
@@ -128,23 +164,23 @@ pub(crate) fn build_ovl_cloud() -> (Vec<[f32; 3]>, Vec<f32>) {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn build_overlay_frame(app: &App) -> (Vec<LabelItem>, ScalarBarItem, Option<RulerItem>) {
-    let colormap_id = ColormapId(app.ovl_colormap as usize);
+    let colormap_id = ColormapId(app.ovl_state.colormap as usize);
 
     let bar = ScalarBarItem {
         colormap_id,
         scalar_min: -1.5,
         scalar_max: 1.5,
         title: Some("Height (m)".into()),
-        anchor: app.ovl_bar_anchor,
-        orientation: app.ovl_bar_orientation,
-        tick_count: app.ovl_tick_count,
-        bar_length_px: app.ovl_bar_size,
-        background_color: app.ovl_bg_color,
+        anchor: app.ovl_state.bar_anchor,
+        orientation: app.ovl_state.bar_orientation,
+        tick_count: app.ovl_state.tick_count,
+        bar_length_px: app.ovl_state.bar_size,
+        background_color: app.ovl_state.bg_color,
         ..ScalarBarItem::default()
     };
 
     let mut labels = Vec::new();
-    if app.ovl_show_labels {
+    if app.ovl_state.show_labels {
         for (text, pos, color) in [
             ("Peak +1.5 m", [1.57_f32, 0.0, 1.5_f32], [0.3_f32, 1.0, 0.5, 1.0_f32]),
             ("Trough -1.5 m", [-1.57, 3.14, -1.5], [1.0, 0.4, 0.3, 1.0]),
@@ -166,7 +202,7 @@ pub(crate) fn build_overlay_frame(app: &App) -> (Vec<LabelItem>, ScalarBarItem, 
         }
     }
 
-    let ruler = if app.ovl_show_ruler {
+    let ruler = if app.ovl_state.show_ruler {
         Some(RulerItem {
             start: [1.57, 0.0, 0.0],
             end: [-1.57, 3.14, 0.0],

@@ -8,7 +8,7 @@
 use crate::App;
 use crate::geometry::make_uv_sphere;
 use eframe::egui;
-use viewport_lib::{BuiltinMatcap, Material, ViewportRenderer, scene::Scene};
+use viewport_lib::{BuiltinMatcap, Material, MatcapId, NodeId, ViewportRenderer, scene::Scene};
 
 /// All eight built-in presets with their display name and blendable flag.
 pub(crate) const BUILTIN_PRESETS: [(BuiltinMatcap, &str, bool); 8] = [
@@ -22,6 +22,41 @@ pub(crate) const BUILTIN_PRESETS: [(BuiltinMatcap, &str, bool); 8] = [
     (BuiltinMatcap::Normal, "Normal", false),
 ];
 
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct MatcapState {
+    pub scene:              Scene,
+    pub built:              bool,
+    /// NodeId for each of the 8 built-in preset spheres (matches BUILTIN_PRESETS order).
+    pub builtin_node_ids:   [NodeId; 8],
+    pub custom_node:        Option<NodeId>,
+    pub custom_id:          Option<MatcapId>,
+    /// Base color applied to blendable matcap spheres.
+    pub blendable_color:    [f32; 3],
+    /// Hue (0..360) for the custom matcap.
+    pub custom_hue:         f32,
+}
+
+impl Default for MatcapState {
+    fn default() -> Self {
+        Self {
+            scene:           Scene::new(),
+            built:           false,
+            builtin_node_ids: [0; 8],
+            custom_node:     None,
+            custom_id:       None,
+            blendable_color: [0.7, 0.7, 0.7],
+            custom_hue:      200.0,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build
+// ---------------------------------------------------------------------------
+
 impl App {
     /// Build Showcase 19: Matcap Shading demo.
     ///
@@ -30,7 +65,7 @@ impl App {
     ///   Bottom row (z = -1.5): Ceramic · Jade · Mud · Normal       : static
     ///   Center-front (y = -3.5): Custom procedural matcap upload demo
     pub(crate) fn build_matcap_scene(&mut self, renderer: &mut ViewportRenderer) {
-        self.matcap_scene = Scene::new();
+        self.matcap_state.scene = Scene::new();
 
         // The non-instanced path stores per-object GPU state (object_uniform_buf,
         // object_bind_group) directly on the GpuMesh.  All objects sharing the same
@@ -60,29 +95,29 @@ impl App {
             let sphere_id = upload_sphere(renderer, &self.device);
             let matcap_id = renderer.resources().builtin_matcap_id(*preset);
             let mat = {
-                let mut m = Material::from_color(self.matcap_blendable_color);
+                let mut m = Material::from_color(self.matcap_state.blendable_color);
                 m.matcap_id = Some(matcap_id);
                 m
             };
-            let node_id = self.matcap_scene.add_named(
+            let node_id = self.matcap_state.scene.add_named(
                 *label,
                 Some(sphere_id),
                 glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, z)),
                 mat,
             );
-            self.matcap_builtin_node_ids[i] = node_id;
+            self.matcap_state.builtin_node_ids[i] = node_id;
         }
 
         // Custom matcap: procedurally generated at startup with the current hue.
-        let custom_rgba = generate_custom_matcap(256, self.matcap_custom_hue);
+        let custom_rgba = generate_custom_matcap(256, self.matcap_state.custom_hue);
         let custom_id = renderer
             .resources_mut()
             .upload_matcap(&self.device, &self.queue, &custom_rgba, false)
             .expect("custom matcap upload");
-        self.matcap_custom_id = Some(custom_id);
+        self.matcap_state.custom_id = Some(custom_id);
 
         let custom_sphere_id = upload_sphere(renderer, &self.device);
-        let custom_node = self.matcap_scene.add_named(
+        let custom_node = self.matcap_state.scene.add_named(
             "Custom",
             Some(custom_sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, -3.5, 0.0)),
@@ -92,21 +127,21 @@ impl App {
                 m
             },
         );
-        self.matcap_custom_node = Some(custom_node);
+        self.matcap_state.custom_node = Some(custom_node);
 
-        self.matcap_built = true;
+        self.matcap_state.built = true;
     }
 
     /// Re-upload the custom matcap with the current hue and update the scene node.
     pub(crate) fn rebuild_custom_matcap(&mut self, renderer: &mut ViewportRenderer) {
-        let rgba = generate_custom_matcap(256, self.matcap_custom_hue);
+        let rgba = generate_custom_matcap(256, self.matcap_state.custom_hue);
         let id = renderer
             .resources_mut()
             .upload_matcap(&self.device, &self.queue, &rgba, false)
             .expect("custom matcap re-upload");
-        self.matcap_custom_id = Some(id);
-        if let Some(node_id) = self.matcap_custom_node {
-            self.matcap_scene.set_material(node_id, {
+        self.matcap_state.custom_id = Some(id);
+        if let Some(node_id) = self.matcap_state.custom_node {
+            self.matcap_state.scene.set_material(node_id, {
                 let mut m = Material::default();
                 m.matcap_id = Some(id);
                 m
@@ -114,66 +149,72 @@ impl App {
         }
     }
 
-    /// Push the current `matcap_blendable_color` to all blendable preset nodes.
+    /// Push the current `blendable_color` to all blendable preset nodes.
     pub(crate) fn update_matcap_blendable_colors(&mut self, renderer: &mut ViewportRenderer) {
         for (i, (preset, _, blendable)) in BUILTIN_PRESETS.iter().enumerate() {
             if !blendable {
                 continue;
             }
             let matcap_id = renderer.resources().builtin_matcap_id(*preset);
-            self.matcap_scene
-                .set_material(self.matcap_builtin_node_ids[i], {
-                    let mut m = Material::from_color(self.matcap_blendable_color);
+            self.matcap_state.scene.set_material(
+                self.matcap_state.builtin_node_ids[i],
+                {
+                    let mut m = Material::from_color(self.matcap_state.blendable_color);
                     m.matcap_id = Some(matcap_id);
                     m
-                });
+                },
+            );
         }
     }
+}
 
-    pub(crate) fn controls_matcap(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
-        ui.label("Eight built-in matcap presets arranged in two rows:");
-        ui.label("  North (z+): Clay · Wax · Candy · Flat  (blendable)");
-        ui.label("  South (z-): Ceramic · Jade · Mud · Normal  (static)");
-        ui.label("  Front (y-): custom procedural upload");
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
 
-        ui.separator();
-        ui.label("Blendable base color:");
-        ui.horizontal(|ui| {
-            let mut col = self.matcap_blendable_color;
-            let changed = ui.color_edit_button_rgb(&mut col).changed();
-            if changed {
-                self.matcap_blendable_color = col;
-                let rs = frame.wgpu_render_state().expect("wgpu must be enabled");
-                let mut guard = rs.renderer.write();
-                let renderer = guard
-                    .callback_resources
-                    .get_mut::<ViewportRenderer>()
-                    .expect("ViewportRenderer");
-                self.update_matcap_blendable_colors(renderer);
-            }
-        });
-        ui.label("(tints Clay, Wax, Candy, Flat)");
+pub(crate) fn controls_matcap(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Frame) {
+    ui.label("Eight built-in matcap presets arranged in two rows:");
+    ui.label("  North (z+): Clay · Wax · Candy · Flat  (blendable)");
+    ui.label("  South (z-): Ceramic · Jade · Mud · Normal  (static)");
+    ui.label("  Front (y-): custom procedural upload");
 
-        ui.separator();
-        ui.label("Custom matcap hue:");
-        let hue_changed = ui
-            .add(
-                egui::Slider::new(&mut self.matcap_custom_hue, 0.0..=360.0)
-                    .suffix("°")
-                    .step_by(1.0),
-            )
-            .changed();
-        if ui.button("Rebuild custom matcap").clicked() || hue_changed {
+    ui.separator();
+    ui.label("Blendable base color:");
+    ui.horizontal(|ui| {
+        let mut col = app.matcap_state.blendable_color;
+        let changed = ui.color_edit_button_rgb(&mut col).changed();
+        if changed {
+            app.matcap_state.blendable_color = col;
             let rs = frame.wgpu_render_state().expect("wgpu must be enabled");
             let mut guard = rs.renderer.write();
             let renderer = guard
                 .callback_resources
                 .get_mut::<ViewportRenderer>()
                 .expect("ViewportRenderer");
-            self.rebuild_custom_matcap(renderer);
+            app.update_matcap_blendable_colors(renderer);
         }
-        ui.label("Generated via upload_matcap().");
+    });
+    ui.label("(tints Clay, Wax, Candy, Flat)");
+
+    ui.separator();
+    ui.label("Custom matcap hue:");
+    let hue_changed = ui
+        .add(
+            egui::Slider::new(&mut app.matcap_state.custom_hue, 0.0..=360.0)
+                .suffix("°")
+                .step_by(1.0),
+        )
+        .changed();
+    if ui.button("Rebuild custom matcap").clicked() || hue_changed {
+        let rs = frame.wgpu_render_state().expect("wgpu must be enabled");
+        let mut guard = rs.renderer.write();
+        let renderer = guard
+            .callback_resources
+            .get_mut::<ViewportRenderer>()
+            .expect("ViewportRenderer");
+        app.rebuild_custom_matcap(renderer);
     }
+    ui.label("Generated via upload_matcap().");
 }
 
 // ---------------------------------------------------------------------------

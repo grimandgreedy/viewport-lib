@@ -18,13 +18,43 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    AttributeData, BuiltinColormap, Material, ViewportRenderer, scene::Scene,
+    AttributeData, BuiltinColormap, Material, MeshId, NodeId, ViewportRenderer, scene::Scene,
 };
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct FaceAttrState {
+    pub scene:        Scene,
+    pub built:        bool,
+    pub mesh_indices: [MeshId; 3],
+    pub node_ids:     [NodeId; 3],
+    pub colormap:     BuiltinColormap,
+    pub opacity:      f32,
+}
+
+impl Default for FaceAttrState {
+    fn default() -> Self {
+        Self {
+            scene:        Scene::new(),
+            built:        false,
+            mesh_indices: [MeshId::from_index(0); 3],
+            node_ids:     [0; 3],
+            colormap:     BuiltinColormap::Viridis,
+            opacity:      1.0,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build
+// ---------------------------------------------------------------------------
 
 impl App {
     /// Build Showcase 20: Per-Face Attributes demo.
     pub(crate) fn build_face_attr_scene(&mut self, renderer: &mut ViewportRenderer) {
-        self.face_scene = Scene::new();
+        self.face_state.scene = Scene::new();
 
         // Low-poly sphere so flat facets are clearly visible.
         // Build a reference copy to derive scalar data, then make three
@@ -98,7 +128,7 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &mesh0)
             .expect("face attr mesh 0");
-        let node0 = self.face_scene.add_named(
+        let node0 = self.face_state.scene.add_named(
             "Vertex (interpolated)",
             Some(idx0),
             glam::Mat4::from_translation(glam::Vec3::new(-5.0, 0.0, 0.0)),
@@ -114,7 +144,7 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &mesh1)
             .expect("face attr mesh 1");
-        let node1 = self.face_scene.add_named(
+        let node1 = self.face_state.scene.add_named(
             "Face (flat)",
             Some(idx1),
             glam::Mat4::IDENTITY,
@@ -130,7 +160,7 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &mesh2)
             .expect("face attr mesh 2");
-        let node2 = self.face_scene.add_named(
+        let node2 = self.face_state.scene.add_named(
             "FaceColor (direct RGBA)",
             Some(idx2),
             glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)),
@@ -141,56 +171,60 @@ impl App {
             },
         );
 
-        self.face_mesh_indices = [idx0, idx1, idx2];
-        self.face_node_ids = [node0, node1, node2];
-        self.face_built = true;
+        self.face_state.mesh_indices = [idx0, idx1, idx2];
+        self.face_state.node_ids = [node0, node1, node2];
+        self.face_state.built = true;
     }
+}
 
-    pub(crate) fn controls_face_attr(&mut self, ui: &mut egui::Ui) {
-        ui.label("Three spheres : same geometry, three attribute kinds:");
-        ui.add_space(2.0);
-        ui.label("  Left   : Vertex  (Gouraud-interpolated)");
-        ui.label("  Centre : Face    (flat per-triangle)");
-        ui.label("  Right  : FaceColor (direct RGBA, no colormap)");
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
 
-        ui.separator();
-        ui.label("Colormap  (Vertex + Face objects):");
-        egui::ComboBox::from_id_salt("face_attr_colormap")
-            .selected_text(format!("{:?}", self.face_colormap))
-            .show_ui(ui, |ui| {
-                for cm in [
-                    BuiltinColormap::Viridis,
-                    BuiltinColormap::Plasma,
-                    BuiltinColormap::Magma,
-                    BuiltinColormap::Inferno,
-                    BuiltinColormap::Turbo,
-                    BuiltinColormap::Greyscale,
-                    BuiltinColormap::Coolwarm,
-                    BuiltinColormap::RdBu,
-                    BuiltinColormap::Rainbow,
-                    BuiltinColormap::Jet,
-                ] {
-                    ui.selectable_value(&mut self.face_colormap, cm, format!("{cm:?}"));
-                }
-            });
+pub(crate) fn controls_face_attr(app: &mut App, ui: &mut egui::Ui) {
+    ui.label("Three spheres : same geometry, three attribute kinds:");
+    ui.add_space(2.0);
+    ui.label("  Left   : Vertex  (Gouraud-interpolated)");
+    ui.label("  Centre : Face    (flat per-triangle)");
+    ui.label("  Right  : FaceColor (direct RGBA, no colormap)");
 
-        ui.separator();
-        ui.label("FaceColor opacity  (tests OIT path < 1.0):");
-        ui.add(egui::Slider::new(&mut self.face_opacity, 0.05_f32..=1.0).step_by(0.05));
+    ui.separator();
+    ui.label("Colormap  (Vertex + Face objects):");
+    egui::ComboBox::from_id_salt("face_attr_colormap")
+        .selected_text(format!("{:?}", app.face_state.colormap))
+        .show_ui(ui, |ui| {
+            for cm in [
+                BuiltinColormap::Viridis,
+                BuiltinColormap::Plasma,
+                BuiltinColormap::Magma,
+                BuiltinColormap::Inferno,
+                BuiltinColormap::Turbo,
+                BuiltinColormap::Greyscale,
+                BuiltinColormap::Coolwarm,
+                BuiltinColormap::RdBu,
+                BuiltinColormap::Rainbow,
+                BuiltinColormap::Jet,
+            ] {
+                ui.selectable_value(&mut app.face_state.colormap, cm, format!("{cm:?}"));
+            }
+        });
 
-        ui.separator();
-        ui.weak(
-            "Vertex and Face use the same scalar\n\
-             (face-centroid Z).  The flat-shading\n\
-             difference is visible along triangle edges.\n\
-             The uniform-coloured rings at the poles are\n\
-             expected: all UV-sphere pole-cap triangles\n\
-             share the same centroid Z, so they map to\n\
-             a single colour.  The Vertex sphere has no\n\
-             ring because Gouraud interpolation reaches\n\
-             the pole vertex directly.",
-        );
-    }
+    ui.separator();
+    ui.label("FaceColor opacity  (tests OIT path < 1.0):");
+    ui.add(egui::Slider::new(&mut app.face_state.opacity, 0.05_f32..=1.0).step_by(0.05));
+
+    ui.separator();
+    ui.weak(
+        "Vertex and Face use the same scalar\n\
+         (face-centroid Z).  The flat-shading\n\
+         difference is visible along triangle edges.\n\
+         The uniform-coloured rings at the poles are\n\
+         expected: all UV-sphere pole-cap triangles\n\
+         share the same centroid Z, so they map to\n\
+         a single colour.  The Vertex sphere has no\n\
+         ring because Gouraud interpolation reaches\n\
+         the pole vertex directly.",
+    );
 }
 
 // ---------------------------------------------------------------------------

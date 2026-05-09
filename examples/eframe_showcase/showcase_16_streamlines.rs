@@ -6,138 +6,87 @@
 //! velocity field. The same path data is submitted either as `PolylineItem` or
 //! `StreamtubeItem` depending on a toggle.
 
-use crate::{App, StreamRenderMode};
+use crate::App;
 use eframe::egui;
 use viewport_lib::{BuiltinColormap, ColormapId, PolylineItem, RibbonItem, StreamtubeItem, TubeItem};
+
+// ---------------------------------------------------------------------------
+// Enum
+// ---------------------------------------------------------------------------
+
+/// Render mode for Showcase 16 (streamlines).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StreamRenderMode {
+    Polylines,
+    Streamtube,
+    GeneralTube,
+    Ribbon,
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct StreamlinesState {
+    pub built:            bool,
+    pub use_tubes:        bool,
+    pub render_mode:      StreamRenderMode,
+    pub tube_radius:      f32,
+    pub line_width:       f32,
+    pub color_by_speed:   bool,
+    pub colormap:         BuiltinColormap,
+    /// Flat RGBA color used when `color_by_speed` is false, and as tube color.
+    pub flat_color:       [f32; 4],
+    pub seed_count:       usize,
+    pub step_size:        f32,
+    /// Cross-section resolution for GeneralTube mode (number of sides).
+    pub tube_sides:       u32,
+    /// Half-width of the ribbon in Ribbon mode.
+    pub ribbon_width:     f32,
+    /// CPU-side streamline paths (one `Vec<[f32;3]>` per seed).
+    pub paths:            Vec<Vec<[f32; 3]>>,
+    /// Per-vertex speed values parallel to `paths`.
+    pub scalars:          Vec<Vec<f32>>,
+}
+
+impl Default for StreamlinesState {
+    fn default() -> Self {
+        Self {
+            built:          false,
+            use_tubes:      false,
+            render_mode:    StreamRenderMode::Polylines,
+            tube_radius:    0.06,
+            line_width:     4.0,
+            color_by_speed: true,
+            colormap:       BuiltinColormap::Viridis,
+            flat_color:     [0.4, 0.7, 1.0, 1.0],
+            seed_count:     32,
+            step_size:      0.08,
+            tube_sides:     8,
+            ribbon_width:   0.15,
+            paths:          Vec::new(),
+            scalars:        Vec::new(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build
+// ---------------------------------------------------------------------------
 
 impl App {
     /// One-time CPU setup for Showcase 16.
     ///
     /// Generates stream paths from the current seed count and integration step.
-    /// The result is stored in `stream_paths` and `stream_scalars` (per-vertex speed).
+    /// The result is stored in `stream_state.paths` and `stream_state.scalars` (per-vertex speed).
     pub(crate) fn build_stream_scene(&mut self) {
-        let (paths, scalars) = integrate_streamlines(self.stream_seed_count, self.stream_step_size);
-        self.stream_paths = paths;
-        self.stream_scalars = scalars;
-        self.stream_built = true;
-    }
-
-    // -------------------------------------------------------------------------
-    // Controls panel
-    // -------------------------------------------------------------------------
-
-    pub(crate) fn controls_streamlines(&mut self, ui: &mut egui::Ui) {
-        ui.label("Render mode:");
-        ui.horizontal(|ui| {
-            if ui.radio(self.stream_render_mode == StreamRenderMode::Polylines, "Polylines").clicked() {
-                self.stream_render_mode = StreamRenderMode::Polylines;
-                self.stream_use_tubes = false;
-            }
-            if ui.radio(self.stream_render_mode == StreamRenderMode::Streamtube, "Streamtube").clicked() {
-                self.stream_render_mode = StreamRenderMode::Streamtube;
-                self.stream_use_tubes = true;
-            }
-            if ui.radio(self.stream_render_mode == StreamRenderMode::GeneralTube, "General Tube").clicked() {
-                self.stream_render_mode = StreamRenderMode::GeneralTube;
-                self.stream_use_tubes = false;
-            }
-            if ui.radio(self.stream_render_mode == StreamRenderMode::Ribbon, "Ribbon").clicked() {
-                self.stream_render_mode = StreamRenderMode::Ribbon;
-                self.stream_use_tubes = false;
-            }
-        });
-
-        ui.separator();
-
-        match self.stream_render_mode {
-            StreamRenderMode::Polylines => {
-                ui.label("Line width (px):");
-                ui.add(egui::Slider::new(&mut self.stream_line_width, 0.5..=8.0).step_by(0.5));
-            }
-            StreamRenderMode::Streamtube => {
-                ui.label("Tube radius:");
-                ui.add(egui::Slider::new(&mut self.stream_tube_radius, 0.01..=0.3).step_by(0.01));
-            }
-            StreamRenderMode::GeneralTube => {
-                ui.label("Tube radius:");
-                ui.add(egui::Slider::new(&mut self.stream_tube_radius, 0.01..=0.3).step_by(0.01));
-                ui.label("Cross-section sides:");
-                ui.add(egui::Slider::new(&mut self.stream_tube_sides, 3..=24).step_by(1.0));
-            }
-            StreamRenderMode::Ribbon => {
-                ui.label("Ribbon half-width:");
-                ui.add(egui::Slider::new(&mut self.stream_ribbon_width, 0.02..=0.5).step_by(0.01));
-            }
-        }
-
-        ui.separator();
-        ui.label("Coloring:");
-
-        // StreamtubeItem only supports flat color; scalar coloring requires Polylines or
-        // GeneralTube (which bakes per-vertex colors CPU-side via TubeItem).
-        let scalar_coloring_supported = self.stream_render_mode != StreamRenderMode::Streamtube;
-
-        if scalar_coloring_supported {
-            ui.horizontal(|ui| {
-                if ui
-                    .radio(!self.stream_color_by_speed, "Flat color")
-                    .clicked()
-                {
-                    self.stream_color_by_speed = false;
-                }
-                if ui.radio(self.stream_color_by_speed, "Speed").clicked() {
-                    self.stream_color_by_speed = true;
-                }
-            });
-        } else {
-            // Force flat color when switching to Streamtube mode.
-            self.stream_color_by_speed = false;
-        }
-
-        if self.stream_color_by_speed {
-            ui.label("Colormap:");
-            for (preset, label) in [
-                (BuiltinColormap::Viridis, "Viridis"),
-                (BuiltinColormap::Plasma, "Plasma"),
-                (BuiltinColormap::Magma, "Magma"),
-                (BuiltinColormap::Inferno, "Inferno"),
-                (BuiltinColormap::Turbo, "Turbo"),
-                (BuiltinColormap::Greyscale, "Greyscale"),
-                (BuiltinColormap::Coolwarm, "Coolwarm"),
-                (BuiltinColormap::RdBu, "RdBu"),
-                (BuiltinColormap::Rainbow, "Rainbow"),
-                (BuiltinColormap::Jet, "Jet"),
-            ] {
-                if ui.radio(self.stream_colormap == preset, label).clicked() {
-                    self.stream_colormap = preset;
-                }
-            }
-        } else {
-            ui.label("Tube/line color:");
-            let mut rgb = [
-                self.stream_flat_color[0],
-                self.stream_flat_color[1],
-                self.stream_flat_color[2],
-            ];
-            if ui.color_edit_button_rgb(&mut rgb).changed() {
-                self.stream_flat_color[0] = rgb[0];
-                self.stream_flat_color[1] = rgb[1];
-                self.stream_flat_color[2] = rgb[2];
-            }
-        }
-
-        ui.separator();
-        ui.label("Seed count:");
-        let seed_response =
-            ui.add(egui::Slider::new(&mut self.stream_seed_count, 8..=64).step_by(4.0));
-        ui.label("Integration step:");
-        let step_response =
-            ui.add(egui::Slider::new(&mut self.stream_step_size, 0.02..=0.2).step_by(0.01));
-
-        // Regenerate paths when seed or step sliders are released.
-        if seed_response.drag_stopped() || step_response.drag_stopped() {
-            self.build_stream_scene();
-        }
+        let (paths, scalars) = integrate_streamlines(
+            self.stream_state.seed_count,
+            self.stream_state.step_size,
+        );
+        self.stream_state.paths = paths;
+        self.stream_state.scalars = scalars;
+        self.stream_state.built = true;
     }
 
     // -------------------------------------------------------------------------
@@ -146,66 +95,178 @@ impl App {
 
     /// Build a `PolylineItem` from cached stream paths and current control state.
     pub(crate) fn make_stream_polyline_item(&self) -> PolylineItem {
-        let (positions, strip_lengths, scalars) =
-            flatten_paths(&self.stream_paths, &self.stream_scalars);
+        let s = &self.stream_state;
+        let (positions, strip_lengths, scalars) = flatten_paths(&s.paths, &s.scalars);
         let mut item = PolylineItem::default();
         item.positions = positions;
         item.strip_lengths = strip_lengths;
-        item.line_width = self.stream_line_width;
-        if self.stream_color_by_speed {
+        item.line_width = s.line_width;
+        if s.color_by_speed {
             item.scalars = scalars;
-            item.colormap_id = Some(ColormapId(self.stream_colormap as usize));
+            item.colormap_id = Some(ColormapId(s.colormap as usize));
         } else {
-            item.default_color = self.stream_flat_color;
+            item.default_color = s.flat_color;
         }
         item
     }
 
     /// Build a `TubeItem` from cached stream paths for the GeneralTube mode.
     pub(crate) fn make_stream_general_tube_item(&self) -> TubeItem {
-        let (positions, strip_lengths, scalars) =
-            flatten_paths(&self.stream_paths, &self.stream_scalars);
+        let s = &self.stream_state;
+        let (positions, strip_lengths, scalars) = flatten_paths(&s.paths, &s.scalars);
         let mut item = TubeItem::default();
         item.positions = positions;
         item.strip_lengths = strip_lengths;
-        item.radius = self.stream_tube_radius;
-        item.sides = self.stream_tube_sides;
-        if self.stream_color_by_speed {
+        item.radius = s.tube_radius;
+        item.sides = s.tube_sides;
+        if s.color_by_speed {
             item.scalars = scalars;
-            item.colormap_id = Some(ColormapId(self.stream_colormap as usize));
+            item.colormap_id = Some(ColormapId(s.colormap as usize));
         } else {
-            item.color = self.stream_flat_color;
+            item.color = s.flat_color;
         }
         item
     }
 
     /// Build a `StreamtubeItem` from cached stream paths and current control state.
     pub(crate) fn make_stream_tube_item(&self) -> StreamtubeItem {
-        let (positions, strip_lengths, _scalars) =
-            flatten_paths(&self.stream_paths, &self.stream_scalars);
+        let s = &self.stream_state;
+        let (positions, strip_lengths, _scalars) = flatten_paths(&s.paths, &s.scalars);
         let mut item = StreamtubeItem::default();
         item.positions = positions;
         item.strip_lengths = strip_lengths;
-        item.radius = self.stream_tube_radius;
-        item.color = self.stream_flat_color;
+        item.radius = s.tube_radius;
+        item.color = s.flat_color;
         item
     }
 
     /// Build a `RibbonItem` from cached stream paths and current control state.
     pub(crate) fn make_stream_ribbon_item(&self) -> RibbonItem {
-        let (positions, strip_lengths, scalars) =
-            flatten_paths(&self.stream_paths, &self.stream_scalars);
+        let s = &self.stream_state;
+        let (positions, strip_lengths, scalars) = flatten_paths(&s.paths, &s.scalars);
         let mut item = RibbonItem::default();
         item.positions = positions;
         item.strip_lengths = strip_lengths;
-        item.width = self.stream_ribbon_width;
-        if self.stream_color_by_speed {
+        item.width = s.ribbon_width;
+        if s.color_by_speed {
             item.scalars = scalars;
-            item.colormap_id = Some(ColormapId(self.stream_colormap as usize));
+            item.colormap_id = Some(ColormapId(s.colormap as usize));
         } else {
-            item.color = self.stream_flat_color;
+            item.color = s.flat_color;
         }
         item
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_streamlines(app: &mut App, ui: &mut egui::Ui) {
+    let s = &mut app.stream_state;
+
+    ui.label("Render mode:");
+    ui.horizontal(|ui| {
+        if ui.radio(s.render_mode == StreamRenderMode::Polylines, "Polylines").clicked() {
+            s.render_mode = StreamRenderMode::Polylines;
+            s.use_tubes = false;
+        }
+        if ui.radio(s.render_mode == StreamRenderMode::Streamtube, "Streamtube").clicked() {
+            s.render_mode = StreamRenderMode::Streamtube;
+            s.use_tubes = true;
+        }
+        if ui.radio(s.render_mode == StreamRenderMode::GeneralTube, "General Tube").clicked() {
+            s.render_mode = StreamRenderMode::GeneralTube;
+            s.use_tubes = false;
+        }
+        if ui.radio(s.render_mode == StreamRenderMode::Ribbon, "Ribbon").clicked() {
+            s.render_mode = StreamRenderMode::Ribbon;
+            s.use_tubes = false;
+        }
+    });
+
+    ui.separator();
+
+    match s.render_mode {
+        StreamRenderMode::Polylines => {
+            ui.label("Line width (px):");
+            ui.add(egui::Slider::new(&mut s.line_width, 0.5..=8.0).step_by(0.5));
+        }
+        StreamRenderMode::Streamtube => {
+            ui.label("Tube radius:");
+            ui.add(egui::Slider::new(&mut s.tube_radius, 0.01..=0.3).step_by(0.01));
+        }
+        StreamRenderMode::GeneralTube => {
+            ui.label("Tube radius:");
+            ui.add(egui::Slider::new(&mut s.tube_radius, 0.01..=0.3).step_by(0.01));
+            ui.label("Cross-section sides:");
+            ui.add(egui::Slider::new(&mut s.tube_sides, 3..=24).step_by(1.0));
+        }
+        StreamRenderMode::Ribbon => {
+            ui.label("Ribbon half-width:");
+            ui.add(egui::Slider::new(&mut s.ribbon_width, 0.02..=0.5).step_by(0.01));
+        }
+    }
+
+    ui.separator();
+    ui.label("Coloring:");
+
+    // StreamtubeItem only supports flat color; scalar coloring requires Polylines or
+    // GeneralTube (which bakes per-vertex colors CPU-side via TubeItem).
+    let scalar_coloring_supported = s.render_mode != StreamRenderMode::Streamtube;
+
+    if scalar_coloring_supported {
+        ui.horizontal(|ui| {
+            if ui.radio(!s.color_by_speed, "Flat color").clicked() {
+                s.color_by_speed = false;
+            }
+            if ui.radio(s.color_by_speed, "Speed").clicked() {
+                s.color_by_speed = true;
+            }
+        });
+    } else {
+        // Force flat color when switching to Streamtube mode.
+        s.color_by_speed = false;
+    }
+
+    if s.color_by_speed {
+        ui.label("Colormap:");
+        for (preset, label) in [
+            (BuiltinColormap::Viridis, "Viridis"),
+            (BuiltinColormap::Plasma, "Plasma"),
+            (BuiltinColormap::Magma, "Magma"),
+            (BuiltinColormap::Inferno, "Inferno"),
+            (BuiltinColormap::Turbo, "Turbo"),
+            (BuiltinColormap::Greyscale, "Greyscale"),
+            (BuiltinColormap::Coolwarm, "Coolwarm"),
+            (BuiltinColormap::RdBu, "RdBu"),
+            (BuiltinColormap::Rainbow, "Rainbow"),
+            (BuiltinColormap::Jet, "Jet"),
+        ] {
+            if ui.radio(s.colormap == preset, label).clicked() {
+                s.colormap = preset;
+            }
+        }
+    } else {
+        ui.label("Tube/line color:");
+        let mut rgb = [s.flat_color[0], s.flat_color[1], s.flat_color[2]];
+        if ui.color_edit_button_rgb(&mut rgb).changed() {
+            s.flat_color[0] = rgb[0];
+            s.flat_color[1] = rgb[1];
+            s.flat_color[2] = rgb[2];
+        }
+    }
+
+    ui.separator();
+    ui.label("Seed count:");
+    let seed_response = ui.add(egui::Slider::new(&mut s.seed_count, 8..=64).step_by(4.0));
+    ui.label("Integration step:");
+    let step_response = ui.add(egui::Slider::new(&mut s.step_size, 0.02..=0.2).step_by(0.01));
+    let need_rebuild = seed_response.drag_stopped() || step_response.drag_stopped();
+
+    // Regenerate paths when seed or step sliders are released.
+    if need_rebuild {
+        app.build_stream_scene();
     }
 }
 

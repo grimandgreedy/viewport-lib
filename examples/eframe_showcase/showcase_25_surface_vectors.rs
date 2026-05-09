@@ -15,7 +15,7 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BackfacePolicy, GlyphItem, LightingSettings, MeshData, SceneRenderItem,
+    BackfacePolicy, GlyphItem, LightingSettings, MeshData, MeshId, SceneRenderItem,
     quantities::{edge_one_form_to_glyphs, face_intrinsic_to_glyphs, vertex_intrinsic_to_glyphs},
 };
 
@@ -35,22 +35,56 @@ pub(crate) enum SvMode {
 }
 
 // ---------------------------------------------------------------------------
-// App state (fields stored in the main App struct, declared here)
+// State
 // ---------------------------------------------------------------------------
-//
-// The main App struct holds:
-//   sv_built:        bool
-//   sv_mode:         SvMode
-//   sv_scale:        f32
-//   sv_scene:        Scene
-//   sv_mesh_index:   [usize; 3]   : [sphere, torus, plane]
-//   sv_positions:    [Vec<[f32;3]>; 3]
-//   sv_normals:      [Vec<[f32;3]>; 3]
-//   sv_tangents:     [Option<Vec<[f32;4]>>; 3]
-//   sv_indices:      [Vec<u32>; 3]
-//   sv_vertex_vecs:  Vec<[f32; 2]>     : mode 0 data
-//   sv_face_vecs:    Vec<[f32; 2]>     : mode 1 data
-//   sv_edge_vals:    Vec<f32>          : mode 2 data
+
+pub(crate) struct SvState {
+    pub built:         bool,
+    pub mode:          SvMode,
+    pub scale:         f32,
+    pub density:       f32,
+    pub glyph_density: f32,
+    /// Mesh upload indices: [sphere, torus, plane].
+    pub mesh_index:    [MeshId; 3],
+    /// CPU-side positions for each mesh.
+    pub positions:     [Vec<[f32; 3]>; 3],
+    /// CPU-side normals for each mesh.
+    pub normals:       [Vec<[f32; 3]>; 3],
+    /// CPU-side explicit tangents (sphere only; others None).
+    pub tangents:      [Option<Vec<[f32; 4]>>; 3],
+    /// CPU-side indices for each mesh.
+    pub indices:       [Vec<u32>; 3],
+    /// Per-vertex intrinsic 2D vectors (sphere / vertex mode).
+    pub vertex_vecs:   Vec<[f32; 2]>,
+    /// Per-face intrinsic 2D vectors (torus / face mode).
+    pub face_vecs:     Vec<[f32; 2]>,
+    /// Per-directed-edge one-form values (plane / edge mode).
+    pub edge_vals:     Vec<f32>,
+}
+
+impl Default for SvState {
+    fn default() -> Self {
+        Self {
+            built:         false,
+            mode:          SvMode::VertexIntrinsic,
+            scale:         0.15,
+            density:       1.0,
+            glyph_density: -1.0,
+            mesh_index:    [MeshId::from_index(0); 3],
+            positions:     [Vec::new(), Vec::new(), Vec::new()],
+            normals:       [Vec::new(), Vec::new(), Vec::new()],
+            tangents:      [None, None, None],
+            indices:       [Vec::new(), Vec::new(), Vec::new()],
+            vertex_vecs:   Vec::new(),
+            face_vecs:     Vec::new(),
+            edge_vals:     Vec::new(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build
+// ---------------------------------------------------------------------------
 
 impl App {
     // -------------------------------------------------------------------------
@@ -80,21 +114,21 @@ impl App {
             .upload_mesh_data(&self.device, &plane)
             .expect("sv plane");
 
-        self.sv_mesh_index = [sphere_idx, torus_idx, plane_idx];
+        self.sv_state.mesh_index = [sphere_idx, torus_idx, plane_idx];
 
-        self.sv_built = true;
+        self.sv_state.built = true;
 
         // Generate glyph data at the current density.
         self.rebuild_sv_glyph_data();
     }
 
     /// Regenerate glyph source data (positions, normals, indices, quantity
-    /// vectors) at the current `sv_density`. Called on first build and
+    /// vectors) at the current `sv_state.density`. Called on first build and
     /// whenever the density slider changes.
     pub(crate) fn rebuild_sv_glyph_data(&mut self) {
         use viewport_lib::geometry::primitives;
 
-        let d = self.sv_density;
+        let d = self.sv_state.density;
 
         // Scale segment counts by density.
         let sphere_lon = (48.0 * d).round().max(6.0) as u32;
@@ -114,77 +148,26 @@ impl App {
         // --- Plane (edge one-form) ---
         let (plane, edge_vals) = make_plane_with_source_one_form(plane_n);
 
-        self.sv_positions = [
+        self.sv_state.positions = [
             sphere.positions.clone(),
             torus.positions.clone(),
             plane.positions.clone(),
         ];
-        self.sv_normals = [
+        self.sv_state.normals = [
             sphere.normals.clone(),
             torus.normals.clone(),
             plane.normals.clone(),
         ];
-        self.sv_tangents = [None, None, None];
-        self.sv_indices = [
+        self.sv_state.tangents = [None, None, None];
+        self.sv_state.indices = [
             sphere.indices.clone(),
             torus.indices.clone(),
             plane.indices.clone(),
         ];
-        self.sv_vertex_vecs = vertex_vecs;
-        self.sv_face_vecs = face_vecs;
-        self.sv_edge_vals = edge_vals;
-        self.sv_glyph_density = d;
-    }
-
-    // -------------------------------------------------------------------------
-    // Controls
-    // -------------------------------------------------------------------------
-
-    pub(crate) fn controls_surface_vectors(&mut self, ui: &mut egui::Ui) {
-        ui.label("Quantity type:");
-        for (mode, label) in [
-            (SvMode::VertexIntrinsic, "Vertex intrinsic (sphere)"),
-            (SvMode::FaceIntrinsic, "Face intrinsic (torus)"),
-            (SvMode::EdgeOneForm, "Edge one-form (plane)"),
-        ] {
-            if ui.radio(self.sv_mode == mode, label).clicked() {
-                self.sv_mode = mode;
-            }
-        }
-
-        ui.separator();
-        ui.label("Arrow scale:");
-        ui.add(egui::Slider::new(&mut self.sv_scale, 0.01..=1.0).step_by(0.01));
-
-        let count = self.sv_vector_count();
-        ui.label("Density:");
-        let density_changed = ui
-            .add(
-                egui::Slider::new(&mut self.sv_density, 0.1..=2.0)
-                    .step_by(0.1)
-                    .suffix(format!(" ({count} vectors)")),
-            )
-            .changed();
-        if density_changed {
-            self.rebuild_sv_glyph_data();
-        }
-
-        ui.separator();
-        match self.sv_mode {
-            SvMode::VertexIntrinsic => {
-                ui.label("Vortex tangent field.");
-                ui.label("Each vertex carries a 2D (u,v) vector in its tangent frame, forming a pure-rotation flow around the sphere's poles.");
-            }
-            SvMode::FaceIntrinsic => {
-                ui.label("Poloidal flow field.");
-                ui.label("Each triangle carries a 2D (u,v) vector in its face tangent frame. The vectors follow the poloidal direction of the torus.");
-            }
-            SvMode::EdgeOneForm => {
-                ui.label("Diverging source field.");
-                ui.label("Each directed edge carries a scalar one-form value. Whitney reconstruction recovers a vector field pointing outward from the origin.");
-            }
-        }
-
+        self.sv_state.vertex_vecs = vertex_vecs;
+        self.sv_state.face_vecs = face_vecs;
+        self.sv_state.edge_vals = edge_vals;
+        self.sv_state.glyph_density = d;
     }
 
     // -------------------------------------------------------------------------
@@ -193,10 +176,10 @@ impl App {
 
     /// Mesh surface render item for the active sub-mode.
     pub(crate) fn sv_surface_item(&self) -> SceneRenderItem {
-        let mesh_id = match self.sv_mode {
-            SvMode::VertexIntrinsic => self.sv_mesh_index[0],
-            SvMode::FaceIntrinsic => self.sv_mesh_index[1],
-            SvMode::EdgeOneForm => self.sv_mesh_index[2],
+        let mesh_id = match self.sv_state.mode {
+            SvMode::VertexIntrinsic => self.sv_state.mesh_index[0],
+            SvMode::FaceIntrinsic   => self.sv_state.mesh_index[1],
+            SvMode::EdgeOneForm     => self.sv_state.mesh_index[2],
         };
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
@@ -206,41 +189,41 @@ impl App {
 
     /// Total number of vectors in the full glyph set for the active mode.
     fn sv_total_count(&self) -> usize {
-        match self.sv_mode {
-            SvMode::VertexIntrinsic => self.sv_vertex_vecs.len(),
-            SvMode::FaceIntrinsic => self.sv_face_vecs.len(),
-            SvMode::EdgeOneForm => self.sv_indices[2].len() / 3,
+        match self.sv_state.mode {
+            SvMode::VertexIntrinsic => self.sv_state.vertex_vecs.len(),
+            SvMode::FaceIntrinsic   => self.sv_state.face_vecs.len(),
+            SvMode::EdgeOneForm     => self.sv_state.indices[2].len() / 3,
         }
     }
 
     /// Number of vectors that will be shown at the current density.
     pub(crate) fn sv_vector_count(&self) -> usize {
         let total = self.sv_total_count();
-        (total as f32 * self.sv_density).ceil().max(1.0) as usize
+        (total as f32 * self.sv_state.density).ceil().max(1.0) as usize
     }
 
     /// Build the [`GlyphItem`] for the active sub-mode.
     pub(crate) fn sv_glyph_item(&self) -> GlyphItem {
-        match self.sv_mode {
+        match self.sv_state.mode {
             SvMode::VertexIntrinsic => vertex_intrinsic_to_glyphs(
-                &self.sv_positions[0],
-                &self.sv_normals[0],
-                self.sv_tangents[0].as_deref(),
-                &self.sv_vertex_vecs,
-                self.sv_scale,
+                &self.sv_state.positions[0],
+                &self.sv_state.normals[0],
+                self.sv_state.tangents[0].as_deref(),
+                &self.sv_state.vertex_vecs,
+                self.sv_state.scale,
             ),
             SvMode::FaceIntrinsic => face_intrinsic_to_glyphs(
-                &self.sv_positions[1],
-                &self.sv_normals[1],
-                &self.sv_indices[1],
-                &self.sv_face_vecs,
-                self.sv_scale,
+                &self.sv_state.positions[1],
+                &self.sv_state.normals[1],
+                &self.sv_state.indices[1],
+                &self.sv_state.face_vecs,
+                self.sv_state.scale,
             ),
             SvMode::EdgeOneForm => edge_one_form_to_glyphs(
-                &self.sv_positions[2],
-                &self.sv_indices[2],
-                &self.sv_edge_vals,
-                self.sv_scale,
+                &self.sv_state.positions[2],
+                &self.sv_state.indices[2],
+                &self.sv_state.edge_vals,
+                self.sv_state.scale,
             ),
         }
     }
@@ -257,12 +240,62 @@ impl App {
 }
 
 // ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_surface_vectors(app: &mut App, ui: &mut egui::Ui) {
+    ui.label("Quantity type:");
+    for (mode, label) in [
+        (SvMode::VertexIntrinsic, "Vertex intrinsic (sphere)"),
+        (SvMode::FaceIntrinsic, "Face intrinsic (torus)"),
+        (SvMode::EdgeOneForm, "Edge one-form (plane)"),
+    ] {
+        if ui.radio(app.sv_state.mode == mode, label).clicked() {
+            app.sv_state.mode = mode;
+        }
+    }
+
+    ui.separator();
+    ui.label("Arrow scale:");
+    ui.add(egui::Slider::new(&mut app.sv_state.scale, 0.01..=1.0).step_by(0.01));
+
+    let count = app.sv_vector_count();
+    ui.label("Density:");
+    let density_changed = ui
+        .add(
+            egui::Slider::new(&mut app.sv_state.density, 0.1..=2.0)
+                .step_by(0.1)
+                .suffix(format!(" ({count} vectors)")),
+        )
+        .changed();
+    if density_changed {
+        app.rebuild_sv_glyph_data();
+    }
+
+    ui.separator();
+    match app.sv_state.mode {
+        SvMode::VertexIntrinsic => {
+            ui.label("Vortex tangent field.");
+            ui.label("Each vertex carries a 2D (u,v) vector in its tangent frame, forming a pure-rotation flow around the sphere's poles.");
+        }
+        SvMode::FaceIntrinsic => {
+            ui.label("Poloidal flow field.");
+            ui.label("Each triangle carries a 2D (u,v) vector in its face tangent frame. The vectors follow the poloidal direction of the torus.");
+        }
+        SvMode::EdgeOneForm => {
+            ui.label("Diverging source field.");
+            ui.label("Each directed edge carries a scalar one-form value. Whitney reconstruction recovers a vector field pointing outward from the origin.");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Procedural geometry helpers
 // ---------------------------------------------------------------------------
 
 /// Compute per-vertex intrinsic vectors for a vortex field rotating around Z.
 ///
-/// The desired 3D world vector at each vertex is `n × Z` (azimuthal direction).
+/// The desired 3D world vector at each vertex is `n x Z` (azimuthal direction).
 /// We project it into the Gram-Schmidt tangent frame that the quantities API
 /// will use internally (when `tangents` is `None`), so the encoded `(u, v)`
 /// round-trips correctly through `vertex_intrinsic_to_glyphs`.
@@ -274,7 +307,7 @@ fn make_sphere_vortex_intrinsic(_positions: &[[f32; 3]], normals: &[[f32; 3]]) -
         .iter()
         .map(|&n| {
             let normal = glam::Vec3::from(n);
-            // Azimuthal direction (vortex around Z): normal × Z, projected onto the
+            // Azimuthal direction (vortex around Z): normal x Z, projected onto the
             // tangent plane and normalised.
             let az = normal.cross(up);
             let az = (az - az.dot(normal) * normal).normalize_or_zero();
@@ -392,7 +425,7 @@ fn make_torus_face_vectors(torus: &MeshData, major_r: f32) -> Vec<[f32; 2]> {
     vecs
 }
 
-/// Generate an N×N quad grid plane in the XY plane (Z=0) and a one-form that
+/// Generate an N x N quad grid plane in the XY plane (Z=0) and a one-form that
 /// encodes a diverging source field centred at the origin.
 ///
 /// Returns `(mesh, edge_values)` where `edge_values` has 3 entries per triangle
@@ -406,7 +439,7 @@ fn make_plane_with_source_one_form(n: usize) -> (MeshData, Vec<f32>) {
     let mut normals = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
-    // Grid of (n+1)×(n+1) vertices in the XY plane.
+    // Grid of (n+1)x(n+1) vertices in the XY plane.
     for row in 0..=(n as i32) {
         for col in 0..=(n as i32) {
             let x = (col as f32 / n as f32 - 0.5) * 2.0 * extent;
@@ -430,7 +463,7 @@ fn make_plane_with_source_one_form(n: usize) -> (MeshData, Vec<f32>) {
     }
 
     // One-form: the integral of the radial field F = (x, y, 0) over each edge is
-    //   w(i->j) = ∫ F·dl = 0.5 * (F(pi) + F(pj)) · (pj - pi)   (midpoint rule)
+    //   w(i->j) = integral F.dl = 0.5 * (F(pi) + F(pj)) . (pj - pi)   (midpoint rule)
     let num_tris = indices.len() / 3;
     let mut edge_values = Vec::with_capacity(3 * num_tris);
 
@@ -461,7 +494,7 @@ fn make_plane_with_source_one_form(n: usize) -> (MeshData, Vec<f32>) {
 }
 
 /// Line integral of the radial field F=(x,y,0) along the straight edge (p->q):
-/// ∫₀¹ F(p + t(q-p))·(q-p) dt = 0.5 * (F(p)+F(q))·(q-p)
+/// integral_0^1 F(p + t(q-p)).(q-p) dt = 0.5 * (F(p)+F(q)).(q-p)
 fn edge_line_integral(p: glam::Vec3, q: glam::Vec3) -> f32 {
     let fp = glam::Vec3::new(p.x, p.y, 0.0);
     let fq = glam::Vec3::new(q.x, q.y, 0.0);

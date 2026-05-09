@@ -28,9 +28,82 @@ use crate::App;
 use eframe::egui;
 use viewport_lib::{
     AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap, CELL_SENTINEL, ColormapId,
-    LightingSettings, ProjectedTetId, SceneRenderItem, TransparentVolumeMeshItem,
+    LightingSettings, MeshId, ProjectedTetId, SceneRenderItem, TransparentVolumeMeshItem,
     ClipObject, ClipShape, ViewportRenderer, VolumeMeshData,
 };
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct VmState {
+    pub built:          bool,
+    pub mode:           VmMode,
+    pub tet_index:      MeshId,
+    pub hex_index:      MeshId,
+    pub tet_small_index: MeshId,
+    pub tet_box_index:  MeshId,
+    pub pyramid_index:  MeshId,
+    pub wedge_index:    MeshId,
+    pub colormap:       BuiltinColormap,
+    pub field:          VmField,
+    pub wireframe:      bool,
+    pub clip_on:        bool,
+    pub clip_axis:      VmClipAxis,
+    pub clip_offset:    f32,
+    /// Tilt angle in degrees: rotates the clip plane normal away from the selected axis.
+    pub clip_angle:     f32,
+    /// GPU mesh slot for the CPU-clipped volume mesh; allocated lazily on first clip.
+    pub clipped_index:  Option<MeshId>,
+    /// Projected-tet handles per cell type (uploaded at startup with raw positions).
+    pub pt_hex_id:      Option<ProjectedTetId>,
+    pub pt_tet_id:      Option<ProjectedTetId>,
+    pub pt_tet_small_id: Option<ProjectedTetId>,
+    pub pt_tet_box_id:  Option<ProjectedTetId>,
+    pub pt_pyramid_id:  Option<ProjectedTetId>,
+    pub pt_wedge_id:    Option<ProjectedTetId>,
+    /// Whether to render in transparent (projected-tet) mode.
+    pub transparent:    bool,
+    /// Beer-Lambert extinction coefficient for transparent mode.
+    pub density:        f32,
+    /// Scalar field last used for the PT upload; triggers a rebuild when it differs from field.
+    pub pt_field:       VmField,
+    /// Colormap last used for the PT upload; triggers a rebuild when it differs from colormap.
+    pub pt_colormap:    BuiltinColormap,
+}
+
+impl Default for VmState {
+    fn default() -> Self {
+        Self {
+            built:           false,
+            mode:            VmMode::Hex,
+            tet_index:       MeshId::from_index(0),
+            hex_index:       MeshId::from_index(0),
+            tet_small_index: MeshId::from_index(0),
+            tet_box_index:   MeshId::from_index(0),
+            pyramid_index:   MeshId::from_index(0),
+            wedge_index:     MeshId::from_index(0),
+            colormap:        BuiltinColormap::Viridis,
+            field:           VmField::Latitude,
+            wireframe:       false,
+            clip_on:         true,
+            clip_axis:       VmClipAxis::Y,
+            clip_offset:     0.0,
+            clip_angle:      0.0,
+            clipped_index:   None,
+            pt_hex_id:       None,
+            pt_tet_id:       None,
+            pt_tet_small_id: None,
+            pt_tet_box_id:   None,
+            pt_pyramid_id:   None,
+            pt_wedge_id:     None,
+            transparent:     false,
+            density:         0.5,
+            pt_field:        VmField::Latitude,
+            pt_colormap:     BuiltinColormap::Viridis,
+        }
+    }
+}
 
 /// Map a VmField to the VolumeMeshData scalar attribute name used for projected-tet rendering.
 /// DirectColor has no scalar attribute; falls back to "radial".
@@ -639,37 +712,37 @@ impl App {
         let positions = sphere_vertex_positions();
 
         let hex_data = build_hex_mesh(&hex_positions);
-        self.vm_hex_index = renderer
+        self.vm_state.hex_index = renderer
             .resources_mut()
             .upload_volume_mesh_data(&self.device, &hex_data)
             .expect("vm hex upload");
 
         let tet_data = build_tet_mesh(&positions);
-        self.vm_tet_index = renderer
+        self.vm_state.tet_index = renderer
             .resources_mut()
             .upload_volume_mesh_data(&self.device, &tet_data)
             .expect("vm tet upload");
 
         let tet_small_data = build_tet_small();
-        self.vm_tet_small_index = renderer
+        self.vm_state.tet_small_index = renderer
             .resources_mut()
             .upload_volume_mesh_data(&self.device, &tet_small_data)
             .expect("vm tet small upload");
 
         let tet_box_data = build_tet_box();
-        self.vm_tet_box_index = renderer
+        self.vm_state.tet_box_index = renderer
             .resources_mut()
             .upload_volume_mesh_data(&self.device, &tet_box_data)
             .expect("vm tet box upload");
 
         let pyramid_data = build_pyramid_mesh(&hex_positions);
-        self.vm_pyramid_index = renderer
+        self.vm_state.pyramid_index = renderer
             .resources_mut()
             .upload_volume_mesh_data(&self.device, &pyramid_data)
             .expect("vm pyramid upload");
 
         let wedge_data = build_wedge_mesh(&positions);
-        self.vm_wedge_index = renderer
+        self.vm_state.wedge_index = renderer
             .resources_mut()
             .upload_volume_mesh_data(&self.device, &wedge_data)
             .expect("vm wedge upload");
@@ -684,8 +757,8 @@ impl App {
         // matches the opaque surface. Tet/Wedge use box positions because pure radial
         // sphere projection puts all vertices on the sphere surface, collapsing tet
         // volumes to zero.
-        let attr = vm_pt_scalar_attr(self.vm_field);
-        let colormap_id = ColormapId(self.vm_colormap as usize);
+        let attr = vm_pt_scalar_attr(self.vm_state.field);
+        let colormap_id = ColormapId(self.vm_state.colormap as usize);
 
         let mut pt_upload = |data: &VolumeMeshData| -> Option<ProjectedTetId> {
             renderer
@@ -694,14 +767,14 @@ impl App {
                 .ok()
         };
 
-        self.vm_pt_hex_id       = pt_upload(&pt_data_for_mode(VmMode::Hex));
-        self.vm_pt_tet_id       = pt_upload(&pt_data_for_mode(VmMode::Tet));
-        self.vm_pt_tet_small_id = pt_upload(&pt_data_for_mode(VmMode::TetSmall));
-        self.vm_pt_tet_box_id   = pt_upload(&pt_data_for_mode(VmMode::TetBox));
-        self.vm_pt_pyramid_id   = pt_upload(&pt_data_for_mode(VmMode::Pyramid));
-        self.vm_pt_wedge_id     = pt_upload(&pt_data_for_mode(VmMode::Wedge));
+        self.vm_state.pt_hex_id       = pt_upload(&pt_data_for_mode(VmMode::Hex));
+        self.vm_state.pt_tet_id       = pt_upload(&pt_data_for_mode(VmMode::Tet));
+        self.vm_state.pt_tet_small_id = pt_upload(&pt_data_for_mode(VmMode::TetSmall));
+        self.vm_state.pt_tet_box_id   = pt_upload(&pt_data_for_mode(VmMode::TetBox));
+        self.vm_state.pt_pyramid_id   = pt_upload(&pt_data_for_mode(VmMode::Pyramid));
+        self.vm_state.pt_wedge_id     = pt_upload(&pt_data_for_mode(VmMode::Wedge));
 
-        self.vm_built = true;
+        self.vm_state.built = true;
     }
 
     /// Compute the clip plane normal from the selected axis and tilt angle.
@@ -714,9 +787,9 @@ impl App {
     /// - Axis Y: rotates [0,1,0] toward [0,0,1] (around X)
     /// - Axis Z: rotates [0,0,1] toward [1,0,0] (around Y)
     fn vm_clip_normal(&self) -> [f32; 3] {
-        let theta = self.vm_clip_angle.to_radians();
+        let theta = self.vm_state.clip_angle.to_radians();
         let (s, c) = (theta.sin(), theta.cos());
-        match self.vm_clip_axis {
+        match self.vm_state.clip_axis {
             VmClipAxis::X => [c, s, 0.0],
             VmClipAxis::Y => [0.0, c, s],
             VmClipAxis::Z => [s, 0.0, c],
@@ -729,7 +802,7 @@ impl App {
     /// when `dot(p, n) + d >= 0`.
     pub(crate) fn vm_clip_plane(&self) -> [f32; 4] {
         let [nx, ny, nz] = self.vm_clip_normal();
-        [nx, ny, nz, self.vm_clip_offset]
+        [nx, ny, nz, self.vm_state.clip_offset]
     }
 
     /// Rebuild the raw `VolumeMeshData` for the currently active mode.
@@ -737,7 +810,7 @@ impl App {
     /// Intentionally cheap enough to call every frame for the showcase mesh
     /// sizes (27–162 cells).
     pub(crate) fn vm_active_data(&self) -> VolumeMeshData {
-        match self.vm_mode {
+        match self.vm_state.mode {
             VmMode::Hex => {
                 let positions = cube_sphere_vertex_positions();
                 build_hex_mesh(&positions)
@@ -764,60 +837,60 @@ impl App {
     /// When clip is on and the clipped GPU slot is ready, routes to the
     /// CPU-clipped mesh instead of the static boundary mesh.
     pub(crate) fn vm_scene_items(&self) -> Vec<SceneRenderItem> {
-        if !self.vm_built {
+        if !self.vm_state.built {
             return vec![];
         }
         // Transparent mode renders via the projected-tet pass; suppress the opaque surface.
-        if self.vm_transparent {
+        if self.vm_state.transparent {
             return vec![];
         }
 
         // Use the CPU-clipped slot when clipping is active and it has been
         // uploaded.  Fall back to the static boundary mesh otherwise.
-        let mesh_id = if self.vm_clip_on {
-            match self.vm_clipped_index {
+        let mesh_id = if self.vm_state.clip_on {
+            match self.vm_state.clipped_index {
                 Some(id) => id,
-                None => match self.vm_mode {
-                    VmMode::Hex => self.vm_hex_index,
-                    VmMode::Tet => self.vm_tet_index,
-                    VmMode::TetSmall => self.vm_tet_small_index,
-                    VmMode::TetBox => self.vm_tet_box_index,
-                    VmMode::Pyramid => self.vm_pyramid_index,
-                    VmMode::Wedge => self.vm_wedge_index,
+                None => match self.vm_state.mode {
+                    VmMode::Hex => self.vm_state.hex_index,
+                    VmMode::Tet => self.vm_state.tet_index,
+                    VmMode::TetSmall => self.vm_state.tet_small_index,
+                    VmMode::TetBox => self.vm_state.tet_box_index,
+                    VmMode::Pyramid => self.vm_state.pyramid_index,
+                    VmMode::Wedge => self.vm_state.wedge_index,
                 },
             }
         } else {
-            match self.vm_mode {
-                VmMode::Hex => self.vm_hex_index,
-                VmMode::Tet => self.vm_tet_index,
-                VmMode::TetSmall => self.vm_tet_small_index,
-                VmMode::TetBox => self.vm_tet_box_index,
-                VmMode::Pyramid => self.vm_pyramid_index,
-                VmMode::Wedge => self.vm_wedge_index,
+            match self.vm_state.mode {
+                VmMode::Hex => self.vm_state.hex_index,
+                VmMode::Tet => self.vm_state.tet_index,
+                VmMode::TetSmall => self.vm_state.tet_small_index,
+                VmMode::TetBox => self.vm_state.tet_box_index,
+                VmMode::Pyramid => self.vm_state.pyramid_index,
+                VmMode::Wedge => self.vm_state.wedge_index,
             }
         };
 
-        let (active_attribute, colormap_id) = match self.vm_field {
+        let (active_attribute, colormap_id) = match self.vm_state.field {
             VmField::Latitude => (
                 Some(AttributeRef {
                     name: "latitude".to_string(),
                     kind: AttributeKind::Face,
                 }),
-                Some(ColormapId(self.vm_colormap as usize)),
+                Some(ColormapId(self.vm_state.colormap as usize)),
             ),
             VmField::Longitude => (
                 Some(AttributeRef {
                     name: "longitude".to_string(),
                     kind: AttributeKind::Face,
                 }),
-                Some(ColormapId(self.vm_colormap as usize)),
+                Some(ColormapId(self.vm_state.colormap as usize)),
             ),
             VmField::Radial => (
                 Some(AttributeRef {
                     name: "radial".to_string(),
                     kind: AttributeKind::Face,
                 }),
-                Some(ColormapId(self.vm_colormap as usize)),
+                Some(ColormapId(self.vm_state.colormap as usize)),
             ),
             VmField::DirectColor => (
                 Some(AttributeRef {
@@ -860,12 +933,12 @@ impl App {
             VmMode::Wedge,
         ] {
             let id = match mode {
-                VmMode::Hex      => self.vm_pt_hex_id,
-                VmMode::Tet      => self.vm_pt_tet_id,
-                VmMode::TetSmall => self.vm_pt_tet_small_id,
-                VmMode::TetBox   => self.vm_pt_tet_box_id,
-                VmMode::Pyramid  => self.vm_pt_pyramid_id,
-                VmMode::Wedge    => self.vm_pt_wedge_id,
+                VmMode::Hex      => self.vm_state.pt_hex_id,
+                VmMode::Tet      => self.vm_state.pt_tet_id,
+                VmMode::TetSmall => self.vm_state.pt_tet_small_id,
+                VmMode::TetBox   => self.vm_state.pt_tet_box_id,
+                VmMode::Pyramid  => self.vm_state.pt_pyramid_id,
+                VmMode::Wedge    => self.vm_state.pt_wedge_id,
             };
             if let Some(id) = id {
                 let data = pt_data_for_mode(mode);
@@ -879,19 +952,19 @@ impl App {
     /// Returns a `TransparentVolumeMeshItem` for the projected-tet pass when
     /// transparent mode is active, or `None` otherwise.
     pub(crate) fn vm_transparent_item(&self) -> Option<TransparentVolumeMeshItem> {
-        if !self.vm_transparent || !self.vm_built {
+        if !self.vm_state.transparent || !self.vm_state.built {
             return None;
         }
-        let id = match self.vm_mode {
-            VmMode::Hex      => self.vm_pt_hex_id,
-            VmMode::Tet      => self.vm_pt_tet_id,
-            VmMode::TetSmall => self.vm_pt_tet_small_id,
-            VmMode::TetBox   => self.vm_pt_tet_box_id,
-            VmMode::Pyramid  => self.vm_pt_pyramid_id,
-            VmMode::Wedge    => self.vm_pt_wedge_id,
+        let id = match self.vm_state.mode {
+            VmMode::Hex      => self.vm_state.pt_hex_id,
+            VmMode::Tet      => self.vm_state.pt_tet_id,
+            VmMode::TetSmall => self.vm_state.pt_tet_small_id,
+            VmMode::TetBox   => self.vm_state.pt_tet_box_id,
+            VmMode::Pyramid  => self.vm_state.pt_pyramid_id,
+            VmMode::Wedge    => self.vm_state.pt_wedge_id,
         }?;
         let mut item = TransparentVolumeMeshItem::new(id);
-        item.density = self.vm_density;
+        item.density = self.vm_state.density;
         Some(item)
     }
 
@@ -901,15 +974,15 @@ impl App {
         // noise on section faces.  Only the visual edge indicator is produced
         // here (no fill quad, no cap-fill, no GPU clip plane written to the
         // clip-planes uniform).
-        if !self.vm_clip_on {
+        if !self.vm_state.clip_on {
             return vec![];
         }
 
         let normal = self.vm_clip_normal();
-        let mut clip = ClipObject::plane(normal, self.vm_clip_offset);
+        let mut clip = ClipObject::plane(normal, self.vm_state.clip_offset);
         clip.shape = ClipShape::Plane {
             normal,
-            distance: self.vm_clip_offset,
+            distance: self.vm_state.clip_offset,
             cap_color: None,
         };
         clip.color = None;
@@ -918,7 +991,7 @@ impl App {
         // clip plane must be active to cull the projected-tet fragments.
         // In opaque mode, CPU extraction already handles clipping and enabling
         // the GPU clip on top causes floating-point noise on the section faces.
-        clip.clip_geometry = self.vm_transparent;
+        clip.clip_geometry = self.vm_state.transparent;
         clip.extent = 3.5;
         vec![clip]
     }
@@ -933,19 +1006,21 @@ impl App {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Controls panel
-    // -------------------------------------------------------------------------
+}
 
-    pub(crate) fn controls_volume_mesh(&mut self, ui: &mut egui::Ui) {
-        ui.label("Cell type:");
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_volume_mesh(app: &mut App, ui: &mut egui::Ui) {
+    ui.label("Cell type:");
         ui.horizontal_wrapped(|ui| {
-            ui.radio_value(&mut self.vm_mode, VmMode::Hex, "Hex sphere (27)");
-            ui.radio_value(&mut self.vm_mode, VmMode::Pyramid, "Pyramid sphere (162)");
-            ui.radio_value(&mut self.vm_mode, VmMode::Wedge, "Wedge sphere (54)");
-            ui.radio_value(&mut self.vm_mode, VmMode::Tet, "Tet sphere 3³ (162)");
-            ui.radio_value(&mut self.vm_mode, VmMode::TetBox, "Tet box 3³ (162)");
-            ui.radio_value(&mut self.vm_mode, VmMode::TetSmall, "Tet cube 1³ (6)");
+            ui.radio_value(&mut app.vm_state.mode, VmMode::Hex, "Hex sphere (27)");
+            ui.radio_value(&mut app.vm_state.mode, VmMode::Pyramid, "Pyramid sphere (162)");
+            ui.radio_value(&mut app.vm_state.mode, VmMode::Wedge, "Wedge sphere (54)");
+            ui.radio_value(&mut app.vm_state.mode, VmMode::Tet, "Tet sphere 3³ (162)");
+            ui.radio_value(&mut app.vm_state.mode, VmMode::TetBox, "Tet box 3³ (162)");
+            ui.radio_value(&mut app.vm_state.mode, VmMode::TetSmall, "Tet cube 1³ (6)");
         });
 
         ui.separator();
@@ -956,10 +1031,10 @@ impl App {
             (VmField::Radial, "Radial distance (scalar)"),
             (VmField::DirectColor, "Direct cell colors (RGBA)"),
         ] {
-            ui.radio_value(&mut self.vm_field, field, label);
+            ui.radio_value(&mut app.vm_state.field, field, label);
         }
 
-        if !matches!(self.vm_field, VmField::DirectColor) {
+        if !matches!(app.vm_state.field, VmField::DirectColor) {
             ui.separator();
             ui.label("Colormap:");
             ui.horizontal_wrapped(|ui| {
@@ -974,39 +1049,39 @@ impl App {
                     BuiltinColormap::Rainbow,
                     BuiltinColormap::Jet,
                 ] {
-                    ui.radio_value(&mut self.vm_colormap, cm, format!("{cm:?}"));
+                    ui.radio_value(&mut app.vm_state.colormap, cm, format!("{cm:?}"));
                 }
             });
         }
 
         ui.separator();
-        ui.checkbox(&mut self.vm_transparent, "Transparent (projected tetrahedra)");
-        if self.vm_transparent {
+        ui.checkbox(&mut app.vm_state.transparent, "Transparent (projected tetrahedra)");
+        if app.vm_state.transparent {
             ui.add(
-                egui::Slider::new(&mut self.vm_density, 0.0..=1.0)
+                egui::Slider::new(&mut app.vm_state.density, 0.0..=1.0)
                     .text("Density")
                     .step_by(0.01),
             );
         }
 
         ui.separator();
-        ui.checkbox(&mut self.vm_wireframe, "Wireframe");
+        ui.checkbox(&mut app.vm_state.wireframe, "Wireframe");
 
         ui.separator();
-        ui.checkbox(&mut self.vm_clip_on, "Clip plane");
-        if self.vm_clip_on {
+        ui.checkbox(&mut app.vm_state.clip_on, "Clip plane");
+        if app.vm_state.clip_on {
             ui.horizontal(|ui| {
-                ui.radio_value(&mut self.vm_clip_axis, VmClipAxis::X, "X");
-                ui.radio_value(&mut self.vm_clip_axis, VmClipAxis::Y, "Y");
-                ui.radio_value(&mut self.vm_clip_axis, VmClipAxis::Z, "Z");
+                ui.radio_value(&mut app.vm_state.clip_axis, VmClipAxis::X, "X");
+                ui.radio_value(&mut app.vm_state.clip_axis, VmClipAxis::Y, "Y");
+                ui.radio_value(&mut app.vm_state.clip_axis, VmClipAxis::Z, "Z");
             });
             ui.add(
-                egui::Slider::new(&mut self.vm_clip_offset, -1.75..=1.75)
+                egui::Slider::new(&mut app.vm_state.clip_offset, -1.75..=1.75)
                     .text("Offset")
                     .step_by(0.01),
             );
             ui.add(
-                egui::Slider::new(&mut self.vm_clip_angle, -89.0..=89.0)
+                egui::Slider::new(&mut app.vm_state.clip_angle, -89.0..=89.0)
                     .text("Angle (°)")
                     .step_by(1.0),
             );
@@ -1014,7 +1089,7 @@ impl App {
         }
 
         ui.separator();
-        let (n_cells, note) = match self.vm_mode {
+        let (n_cells, note) = match app.vm_state.mode {
             VmMode::Hex => (27, "3³ hexes, cube-to-sphere warp"),
             VmMode::Tet => (162, "3³×6 tets on sphere"),
             VmMode::TetBox => (162, "3³×6 tets, flat box"),
@@ -1024,5 +1099,4 @@ impl App {
         };
         ui.label(format!("{n_cells} cells · {note}"));
         ui.label("Interior faces are automatically discarded.");
-    }
 }

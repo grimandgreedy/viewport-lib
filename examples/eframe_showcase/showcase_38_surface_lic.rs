@@ -28,6 +28,7 @@ use std::collections::HashMap;
 use viewport_lib::{
     AttributeData, BackfacePolicy, FrameData, Material, MeshData, MeshId, SurfaceLICConfig,
     SurfaceLICItem, ViewportRenderer,
+    scene::Scene,
 };
 use crate::App;
 
@@ -35,8 +36,9 @@ use crate::App;
 // State
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
 pub(crate) struct LicState {
+    pub built:    bool,
+    pub scene:    Scene,
     /// mesh_ids[row][col]: row = surface type, col = flow scenario.
     pub mesh_ids: [[Option<MeshId>; 3]; 3],
     pub steps:     u32,
@@ -48,6 +50,8 @@ pub(crate) struct LicState {
 impl Default for LicState {
     fn default() -> Self {
         Self {
+            built:    false,
+            scene:    Scene::new(),
             mesh_ids: [[None; 3]; 3],
             steps:     20,
             step_size: 1.5,
@@ -268,7 +272,7 @@ fn upload_mesh(
     };
     let id = renderer.resources_mut().upload_mesh_data(&app.device, &mesh)
         .expect("LIC mesh upload");
-    app.lic_scene.add(Some(id), transform(col, row), make_material(row));
+    app.lic_state.scene.add(Some(id), transform(col, row), make_material(row));
     id
 }
 
@@ -277,7 +281,7 @@ fn upload_mesh(
 // ---------------------------------------------------------------------------
 
 pub(crate) fn build_lic_scene(app: &mut App, renderer: &mut ViewportRenderer) {
-    app.lic_scene = viewport_lib::scene::Scene::new();
+    app.lic_state.scene = Scene::new();
     let mut ids = [[None; 3]; 3];
 
     let terrain_size = 4.8f32;
@@ -320,7 +324,7 @@ pub(crate) fn build_lic_scene(app: &mut App, renderer: &mut ViewportRenderer) {
     }
 
     app.lic_state.mesh_ids = ids;
-    app.lic_built = true;
+    app.lic_state.built = true;
 }
 
 // ---------------------------------------------------------------------------

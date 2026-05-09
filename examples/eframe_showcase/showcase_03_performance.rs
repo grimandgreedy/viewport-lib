@@ -10,9 +10,56 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use eframe::egui;
-use viewport_lib::{Aabb, Material, MeshId, PickAccelerator, scene::Scene};
+use viewport_lib::{
+    Aabb, FrameStats, Material, MeshId, PickAccelerator, SceneRenderItem, selection::Selection,
+    scene::Scene,
+};
 
 use crate::App;
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct PerfState {
+    pub scene:               Scene,
+    pub selection:           Selection,
+    pub pick_accelerator:    Option<PickAccelerator>,
+    pub mesh:                Option<MeshId>,
+    pub last_stats:          FrameStats,
+    pub total_objects:       u32,
+    pub scene_items_cache:   std::sync::Arc<[SceneRenderItem]>,
+    pub scene_items_version: (u64, u64),
+    pub built:               bool,
+    pub gpu_culling:         bool,
+    /// Receives the completed (Scene, PickAccelerator) from the background build thread.
+    pub build_rx:            Option<std::sync::mpsc::Receiver<(Scene, PickAccelerator)>>,
+    /// Shared progress counter written by the background build thread (objects placed so far).
+    pub build_progress:      Option<std::sync::Arc<AtomicU32>>,
+}
+
+impl Default for PerfState {
+    fn default() -> Self {
+        Self {
+            scene:               Scene::new(),
+            selection:           Selection::new(),
+            pick_accelerator:    None,
+            mesh:                None,
+            last_stats:          FrameStats::default(),
+            total_objects:       0,
+            scene_items_cache:   std::sync::Arc::from([]),
+            scene_items_version: (u64::MAX, u64::MAX),
+            built:               false,
+            gpu_culling:         true,
+            build_rx:            None,
+            build_progress:      None,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Background scene build
+// ---------------------------------------------------------------------------
 
 /// Build the 1M-box scene on a background thread.
 ///
@@ -66,92 +113,93 @@ pub(crate) fn build_perf_scene_threaded(
     (scene, pick_acc)
 }
 
-impl App {
-    /// Side-panel controls for Showcase 3.
-    pub(crate) fn perf_controls(&mut self, ui: &mut egui::Ui) {
-        let s = self.last_stats;
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
 
-        // --- GPU culling toggle ---
-        ui.heading("GPU-Driven Culling");
-        let culling_label = if s.gpu_culling_active {
-            egui::RichText::new("Active").color(egui::Color32::from_rgb(100, 220, 100))
-        } else {
-            egui::RichText::new("Disabled").color(egui::Color32::from_rgb(220, 120, 80))
-        };
-        ui.horizontal(|ui| {
-            ui.label("Status:");
-            ui.label(culling_label);
-        });
-        ui.checkbox(&mut self.perf_gpu_culling, "Enable GPU-driven culling");
-        ui.add_space(4.0);
+pub(crate) fn controls_performance(app: &mut App, ui: &mut egui::Ui) {
+    let s = app.perf_state.last_stats;
 
-        // --- Culling stats ---
-        ui.separator();
-        ui.heading("Culling");
-        perf_stat_row(ui, "Total instances", &format_count(self.perf_total_objects));
-        if s.gpu_culling_active {
-            // GPU readback gives the exact post-cull count (one frame lag).
-            let gpu_vis = s.gpu_visible_instances.unwrap_or(s.visible_objects);
-            let gpu_culled = self.perf_total_objects.saturating_sub(gpu_vis);
-            perf_stat_row(ui, "Visible (GPU)", &format_count(gpu_vis));
-            perf_stat_row(ui, "Culled (GPU)", &format_count(gpu_culled));
-        } else {
-            perf_stat_row(ui, "Visible (CPU)", &format_count(s.visible_objects));
-            perf_stat_row(
-                ui,
-                "Culled (CPU)",
-                &format_count(self.perf_total_objects.saturating_sub(s.visible_objects)),
-            );
-        }
-        ui.add_space(4.0);
+    // --- GPU culling toggle ---
+    ui.heading("GPU-Driven Culling");
+    let culling_label = if s.gpu_culling_active {
+        egui::RichText::new("Active").color(egui::Color32::from_rgb(100, 220, 100))
+    } else {
+        egui::RichText::new("Disabled").color(egui::Color32::from_rgb(220, 120, 80))
+    };
+    ui.horizontal(|ui| {
+        ui.label("Status:");
+        ui.label(culling_label);
+    });
+    ui.checkbox(&mut app.perf_state.gpu_culling, "Enable GPU-driven culling");
+    ui.add_space(4.0);
 
-        // --- Draw path ---
-        ui.separator();
-        ui.heading("Draw Path");
-        perf_stat_row(ui, "Draw calls", &format_count(s.draw_calls));
-        perf_stat_row(ui, "Instanced batches", &format_count(s.instanced_batches));
-        perf_stat_row(ui, "Shadow draw calls", &format_count(s.shadow_draw_calls));
-        perf_stat_row(ui, "Triangles submitted", &format_large(s.triangles_submitted));
-        ui.add_space(4.0);
-
-        // --- Timings ---
-        ui.separator();
-        ui.heading("Timings");
-        perf_stat_row(ui, "CPU prepare", &format!("{:.2} ms", s.cpu_prepare_ms));
+    // --- Culling stats ---
+    ui.separator();
+    ui.heading("Culling");
+    perf_stat_row(ui, "Total instances", &format_count(app.perf_state.total_objects));
+    if s.gpu_culling_active {
+        // GPU readback gives the exact post-cull count (one frame lag).
+        let gpu_vis = s.gpu_visible_instances.unwrap_or(s.visible_objects);
+        let gpu_culled = app.perf_state.total_objects.saturating_sub(gpu_vis);
+        perf_stat_row(ui, "Visible (GPU)", &format_count(gpu_vis));
+        perf_stat_row(ui, "Culled (GPU)", &format_count(gpu_culled));
+    } else {
+        perf_stat_row(ui, "Visible (CPU)", &format_count(s.visible_objects));
         perf_stat_row(
             ui,
-            "GPU scene",
-            &s.gpu_frame_ms
-                .map(|ms| format!("{ms:.2} ms"))
-                .unwrap_or_else(|| "n/a".into()),
+            "Culled (CPU)",
+            &format_count(app.perf_state.total_objects.saturating_sub(s.visible_objects)),
         );
-        perf_stat_row(ui, "Frame total", &format!("{:.2} ms", s.total_frame_ms));
-        let fps = if s.total_frame_ms > 0.0 {
-            format!("{:.0}", 1000.0 / s.total_frame_ms)
-        } else {
-            "—".into()
-        };
-        perf_stat_row(ui, "FPS (approx)", &fps);
-        ui.add_space(4.0);
+    }
+    ui.add_space(4.0);
 
-        // --- Renderer state ---
-        ui.separator();
-        ui.heading("Renderer");
-        perf_stat_row(
-            ui,
-            "Render scale",
-            &format!("{:.0}%", s.render_scale * 100.0),
-        );
-        perf_stat_row(ui, "Budget missed", if s.missed_budget { "yes" } else { "no" });
-        perf_stat_row(ui, "Upload bytes", &format_bytes(s.upload_bytes));
-        ui.add_space(4.0);
+    // --- Draw path ---
+    ui.separator();
+    ui.heading("Draw Path");
+    perf_stat_row(ui, "Draw calls", &format_count(s.draw_calls));
+    perf_stat_row(ui, "Instanced batches", &format_count(s.instanced_batches));
+    perf_stat_row(ui, "Shadow draw calls", &format_count(s.shadow_draw_calls));
+    perf_stat_row(ui, "Triangles submitted", &format_large(s.triangles_submitted));
+    ui.add_space(4.0);
 
-        // --- Picking ---
-        ui.separator();
-        ui.label("Click objects to select them.");
-        if ui.button("Clear Selection").clicked() {
-            self.perf_selection.clear();
-        }
+    // --- Timings ---
+    ui.separator();
+    ui.heading("Timings");
+    perf_stat_row(ui, "CPU prepare", &format!("{:.2} ms", s.cpu_prepare_ms));
+    perf_stat_row(
+        ui,
+        "GPU scene",
+        &s.gpu_frame_ms
+            .map(|ms| format!("{ms:.2} ms"))
+            .unwrap_or_else(|| "n/a".into()),
+    );
+    perf_stat_row(ui, "Frame total", &format!("{:.2} ms", s.total_frame_ms));
+    let fps = if s.total_frame_ms > 0.0 {
+        format!("{:.0}", 1000.0 / s.total_frame_ms)
+    } else {
+        "-".into()
+    };
+    perf_stat_row(ui, "FPS (approx)", &fps);
+    ui.add_space(4.0);
+
+    // --- Renderer state ---
+    ui.separator();
+    ui.heading("Renderer");
+    perf_stat_row(
+        ui,
+        "Render scale",
+        &format!("{:.0}%", s.render_scale * 100.0),
+    );
+    perf_stat_row(ui, "Budget missed", if s.missed_budget { "yes" } else { "no" });
+    perf_stat_row(ui, "Upload bytes", &format_bytes(s.upload_bytes));
+    ui.add_space(4.0);
+
+    // --- Picking ---
+    ui.separator();
+    ui.label("Click objects to select them.");
+    if ui.button("Clear Selection").clicked() {
+        app.perf_state.selection.clear();
     }
 }
 

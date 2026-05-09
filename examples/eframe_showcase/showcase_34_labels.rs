@@ -125,12 +125,38 @@ const PARTS: &[GearboxPart] = &[
 // Build scene (geometry + world-anchored part labels only)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct LblState {
+    pub scene:              viewport_lib::scene::Scene,
+    pub built:              bool,
+    pub labels:             Vec<viewport_lib::LabelItem>,
+    pub show_part_labels:   bool,
+    pub show_hud_labels:    bool,
+    pub show_feature_demos: bool,
+}
+
+impl Default for LblState {
+    fn default() -> Self {
+        Self {
+            scene:              viewport_lib::scene::Scene::new(),
+            built:              false,
+            labels:             Vec::new(),
+            show_part_labels:   true,
+            show_hud_labels:    true,
+            show_feature_demos: true,
+        }
+    }
+}
+
 impl App {
     pub(crate) fn build_labels_scene(&mut self, renderer: &mut ViewportRenderer) {
         use viewport_lib::scene::Scene;
 
-        self.lbl_scene = Scene::new();
-        self.lbl_labels = Vec::new();
+        self.lbl_state.scene = Scene::new();
+        self.lbl_state.labels = Vec::new();
 
         for part in PARTS {
             let mesh = make_box_with_uvs(part.size[0], part.size[1], part.size[2]);
@@ -145,14 +171,14 @@ impl App {
                 part.pos[2],
             ];
 
-            self.lbl_scene.add_named(
+            self.lbl_state.scene.add_named(
                 part.name,
                 Some(id),
                 glam::Mat4::from_translation(glam::Vec3::from(exploded_pos)),
                 Material::from_color(part.color),
             );
 
-            self.lbl_labels.push(LabelItem {
+            self.lbl_state.labels.push(LabelItem {
                 world_anchor: Some(exploded_pos),
                 text: format!("{}: {}", part.name, part.detail),
                 color: part.label_color,
@@ -171,7 +197,7 @@ impl App {
             });
         }
 
-        self.lbl_built = true;
+        self.lbl_state.built = true;
     }
 
     /// Generate screen-anchored labels (title, legend, feature demos) sized to
@@ -182,7 +208,7 @@ impl App {
         let cx = vp_w * 0.5; // viewport centre X
 
         // -- Title (centered at top) --
-        if self.lbl_show_hud_labels {
+        if self.lbl_state.show_hud_labels {
             out.push(LabelItem {
                 screen_anchor: Some([cx, 36.0]),
                 text: "Gearbox Assembly: Exploded View".into(),
@@ -211,7 +237,7 @@ impl App {
             });
         }
 
-        if !self.lbl_show_feature_demos {
+        if !self.lbl_state.show_feature_demos {
             return out;
         }
 
@@ -421,14 +447,20 @@ impl App {
         out
     }
 
-    pub(crate) fn controls_labels(&mut self, ui: &mut eframe::egui::Ui) {
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_labels(app: &mut App, ui: &mut eframe::egui::Ui) {
         ui.label("Exploded gearbox assembly with");
         ui.label("native overlay label features.");
         ui.separator();
 
-        ui.checkbox(&mut self.lbl_show_part_labels, "Part labels");
-        ui.checkbox(&mut self.lbl_show_feature_demos, "Feature demos");
-        ui.checkbox(&mut self.lbl_show_hud_labels, "Title + legend");
+        ui.checkbox(&mut app.lbl_state.show_part_labels, "Part labels");
+        ui.checkbox(&mut app.lbl_state.show_feature_demos, "Feature demos");
+        ui.checkbox(&mut app.lbl_state.show_hud_labels, "Title + legend");
 
         ui.separator();
         ui.label("Feature rows (left side):");
@@ -446,4 +478,3 @@ impl App {
         ui.label("  Casing, gasket, shafts, gears,");
         ui.label("  bearings, mounting flange");
     }
-}

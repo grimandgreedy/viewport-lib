@@ -22,7 +22,7 @@
 use eframe::egui;
 use viewport_lib::{
     AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap, ColormapId, FrameData,
-    SceneRenderItem, TensorGlyphItem, ViewportRenderer, VolumeMeshData,
+    MeshId, SceneRenderItem, TensorGlyphItem, ViewportRenderer, VolumeMeshData,
 };
 use crate::App;
 
@@ -62,6 +62,8 @@ const GLYPH_COLORMAPS: &[(BuiltinColormap, &str)] = &[
 
 #[derive(Debug, Clone)]
 pub(crate) struct TensorGlyphState {
+    pub built:    bool,
+    pub mesh_id:  Option<MeshId>,
     pub scale:    f32,
     pub density:  f32,
     pub colormap: BuiltinColormap,
@@ -70,6 +72,8 @@ pub(crate) struct TensorGlyphState {
 impl Default for TensorGlyphState {
     fn default() -> Self {
         Self {
+            built:    false,
+            mesh_id:  None,
             scale:    0.45,
             density:  1.0,
             colormap: BuiltinColormap::RdBu,
@@ -237,12 +241,12 @@ fn build_beam_mesh(y_center: f32) -> VolumeMeshData {
 
 pub(crate) fn build_tensor_glyph_scene(app: &mut App, renderer: &mut ViewportRenderer) {
     let data = build_beam_mesh(Y_TOP);
-    app.tg_mesh_id = renderer
+    app.tg_state.mesh_id = renderer
         .resources_mut()
         .upload_volume_mesh_data(&app.device, &data)
         .ok();
 
-    app.tg_built = true;
+    app.tg_state.built = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -308,7 +312,7 @@ pub(crate) fn submit_tensor_glyphs(app: &App, fd: &mut FrameData) {
 
 /// Build the surface render item for the beam (called from build_frame_data).
 pub(crate) fn beam_scene_items(app: &App) -> Vec<SceneRenderItem> {
-    let Some(mesh_id) = app.tg_mesh_id else { return vec![]; };
+    let Some(mesh_id) = app.tg_state.mesh_id else { return vec![]; };
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.active_attribute = Some(AttributeRef {

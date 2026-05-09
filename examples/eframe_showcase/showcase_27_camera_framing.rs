@@ -14,7 +14,7 @@
 //! current view as a new keyframe, clear the track, or scrub the playback
 //! position manually.
 
-use crate::{App, AuxSubMode};
+use crate::App;
 use crate::geometry::make_box_with_uvs;
 use eframe::egui;
 use viewport_lib::{
@@ -22,6 +22,17 @@ use viewport_lib::{
     LightingSettings, Material, ScreenImageItem, TurntableController, ViewportRenderer,
     interpolate_camera,
 };
+
+/// Sub-mode for Showcase 27 (camera framing).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AuxSubMode {
+    /// Camera framing and HUD (original showcase content).
+    Framing,
+    /// Continuous turntable orbit.
+    Turntable,
+    /// Keyframe track playback.
+    Track,
+}
 
 const COLOR_A: [f32; 4] = [0.4, 0.7, 1.0, 1.0];
 const COLOR_B: [f32; 4] = [1.0, 0.6, 0.3, 1.0];
@@ -53,10 +64,48 @@ fn build_demo_track(frustums: &[CameraFrustumItem]) -> CameraTrack {
     track
 }
 
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct AuxState {
+    pub built:             bool,
+    pub scene:             viewport_lib::scene::Scene,
+    pub frustums:          Vec<viewport_lib::CameraFrustumItem>,
+    pub img_alpha:         f32,
+    pub img_scale:         f32,
+    pub active_frustum:    Option<usize>,
+    pub sub_mode:          AuxSubMode,
+    pub turntable:         TurntableController,
+    pub turntable_running: bool,
+    pub track:             CameraTrack,
+    pub track_t:           f64,
+    pub track_playing:     bool,
+}
+
+impl Default for AuxState {
+    fn default() -> Self {
+        Self {
+            built:             false,
+            scene:             viewport_lib::scene::Scene::new(),
+            frustums:          Vec::new(),
+            img_alpha:         1.0,
+            img_scale:         1.0,
+            active_frustum:    None,
+            sub_mode:          AuxSubMode::Framing,
+            turntable:         TurntableController::new(0.5, 1.1),
+            turntable_running: false,
+            track:             CameraTrack::new(),
+            track_t:           0.0,
+            track_playing:     false,
+        }
+    }
+}
+
 impl App {
     pub(crate) fn build_aux_scene(&mut self, renderer: &mut ViewportRenderer) {
         use viewport_lib::scene::Scene;
-        self.aux_scene = Scene::new();
+        self.aux_state.scene = Scene::new();
         let up = glam::Vec3::Z;
 
         // Platform : 14 x 12 slab, top face at Z = 0.
@@ -64,7 +113,7 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &make_box_with_uvs(14.0, 12.0, 0.25))
             .expect("aux platform");
-        self.aux_scene.add_named(
+        self.aux_state.scene.add_named(
             "Platform",
             Some(platform_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.125)),
@@ -80,7 +129,7 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &make_box_with_uvs(12.0, 0.35, 2.4))
             .expect("aux wall");
-        self.aux_scene.add_named(
+        self.aux_state.scene.add_named(
             "Wall",
             Some(wall_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.2)),
@@ -102,7 +151,7 @@ impl App {
             .expect("aux box");
 
         // South side (Y < 0) : warm colours.
-        self.aux_scene.add_named(
+        self.aux_state.scene.add_named(
             "South Sphere",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(-2.5, -3.0, 0.6)),
@@ -112,7 +161,7 @@ impl App {
                 m
             },
         );
-        self.aux_scene.add_named(
+        self.aux_state.scene.add_named(
             "South Box",
             Some(box_id),
             glam::Mat4::from_translation(glam::Vec3::new(2.5, -2.5, 0.6)),
@@ -124,7 +173,7 @@ impl App {
         );
 
         // North side (Y > 0) : cool colours.
-        self.aux_scene.add_named(
+        self.aux_state.scene.add_named(
             "North Sphere",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(2.5, 3.0, 0.6)),
@@ -134,7 +183,7 @@ impl App {
                 m
             },
         );
-        self.aux_scene.add_named(
+        self.aux_state.scene.add_named(
             "North Box",
             Some(box_id),
             glam::Mat4::from_translation(glam::Vec3::new(-2.5, 3.0, 0.6)),
@@ -175,12 +224,12 @@ impl App {
         fc.far = 4.5;
         fc.color = COLOR_C;
 
-        self.aux_frustums = vec![fa, fb, fc];
+        self.aux_state.frustums = vec![fa, fb, fc];
 
         // Pre-build the demo track from the three frustum positions.
-        self.aux_track = build_demo_track(&self.aux_frustums);
+        self.aux_state.track = build_demo_track(&self.aux_state.frustums);
 
-        self.aux_built = true;
+        self.aux_state.built = true;
     }
 
     pub(crate) fn aux_lighting() -> LightingSettings {
@@ -200,7 +249,13 @@ impl App {
         }
     }
 
-    pub(crate) fn controls_aux(&mut self, ui: &mut egui::Ui) {
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_aux(app: &mut App, ui: &mut egui::Ui) {
         // Sub-mode selector.
         ui.horizontal(|ui| {
             for (mode, label) in [
@@ -209,27 +264,27 @@ impl App {
                 (AuxSubMode::Track, "Track"),
             ] {
                 if ui
-                    .selectable_label(self.aux_sub_mode == mode, label)
+                    .selectable_label(app.aux_state.sub_mode == mode, label)
                     .clicked()
-                    && self.aux_sub_mode != mode
+                    && app.aux_state.sub_mode != mode
                 {
-                    self.aux_sub_mode = mode;
+                    app.aux_state.sub_mode = mode;
                     // Stop any active motion when switching modes.
-                    self.aux_turntable_running = false;
-                    self.aux_track_playing = false;
+                    app.aux_state.turntable_running = false;
+                    app.aux_state.track_playing = false;
                 }
             }
         });
         ui.separator();
 
-        match self.aux_sub_mode {
-            AuxSubMode::Framing => self.controls_aux_framing(ui),
-            AuxSubMode::Turntable => self.controls_aux_turntable(ui),
-            AuxSubMode::Track => self.controls_aux_track(ui),
+        match app.aux_state.sub_mode {
+            AuxSubMode::Framing => controls_aux_framing(app, ui),
+            AuxSubMode::Turntable => controls_aux_turntable(app, ui),
+            AuxSubMode::Track => controls_aux_track(app, ui),
         }
     }
 
-    fn controls_aux_framing(&mut self, ui: &mut egui::Ui) {
+fn controls_aux_framing(app: &mut App, ui: &mut egui::Ui) {
         ui.label(egui::RichText::new("Camera Framing").strong());
         ui.label(
             "A walled platform with warm objects (south) and cool objects (north). \
@@ -245,8 +300,8 @@ impl App {
 
         ui.add_space(4.0);
         let names = ["A - blue (south)", "B - orange (north)", "C - green (along wall)"];
-        for i in 0..self.aux_frustums.len() {
-            let active = self.aux_active_frustum == Some(i);
+        for i in 0..app.aux_state.frustums.len() {
+            let active = app.aux_state.active_frustum == Some(i);
             if ui
                 .selectable_label(active, format!("Look through {}", names[i]))
                 .clicked()
@@ -255,7 +310,7 @@ impl App {
             }
         }
         if ui
-            .selectable_label(self.aux_active_frustum.is_none(), "Overview")
+            .selectable_label(app.aux_state.active_frustum.is_none(), "Overview")
             .clicked()
         {
             action = Some(AuxAction::Overview);
@@ -269,20 +324,20 @@ impl App {
 
         match action {
             Some(AuxAction::LookThrough(i)) => {
-                let t = self.aux_frustums[i].camera_view_target();
-                self.cam_animator
-                    .fly_to(&self.camera, t.center, t.distance, t.orientation, 1.2);
-                self.aux_active_frustum = Some(i);
+                let t = app.aux_state.frustums[i].camera_view_target();
+                app.cam_animator
+                    .fly_to(&app.camera, t.center, t.distance, t.orientation, 1.2);
+                app.aux_state.active_frustum = Some(i);
             }
             Some(AuxAction::Overview) => {
-                self.cam_animator.fly_to(
-                    &self.camera,
+                app.cam_animator.fly_to(
+                    &app.camera,
                     glam::Vec3::new(0.0, 0.0, 0.5),
                     30.0,
                     glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
                     1.2,
                 );
-                self.aux_active_frustum = None;
+                app.aux_state.active_frustum = None;
             }
             None => {}
         }
@@ -294,7 +349,7 @@ impl App {
              Dim brackets indicate overview mode.",
         );
         ui.add_space(2.0);
-        match self.aux_active_frustum {
+        match app.aux_state.active_frustum {
             None => {
                 ui.label("(overview : click 'Look through' to activate a camera)");
             }
@@ -306,11 +361,11 @@ impl App {
             }
         }
         ui.add_space(4.0);
-        ui.add(egui::Slider::new(&mut self.aux_img_alpha, 0.0..=1.0).text("Overlay alpha"));
-        ui.add(egui::Slider::new(&mut self.aux_img_scale, 0.25..=4.0).text("Overlay scale"));
+        ui.add(egui::Slider::new(&mut app.aux_state.img_alpha, 0.0..=1.0).text("Overlay alpha"));
+        ui.add(egui::Slider::new(&mut app.aux_state.img_scale, 0.25..=4.0).text("Overlay scale"));
     }
 
-    fn controls_aux_turntable(&mut self, ui: &mut egui::Ui) {
+fn controls_aux_turntable(app: &mut App, ui: &mut egui::Ui) {
         ui.label(egui::RichText::new("Turntable Camera").strong());
         ui.label(
             "Continuously orbits around the scene center at a fixed elevation. \
@@ -320,14 +375,14 @@ impl App {
 
         let speed_changed = ui
             .add(
-                egui::Slider::new(&mut self.aux_turntable.angular_velocity, -3.0..=3.0)
+                egui::Slider::new(&mut app.aux_state.turntable.angular_velocity, -3.0..=3.0)
                     .text("Speed (rad/s)")
 ,
             )
             .changed();
         let tilt_changed = ui
             .add(
-                egui::Slider::new(&mut self.aux_turntable.tilt, 0.1..=1.8)
+                egui::Slider::new(&mut app.aux_state.turntable.tilt, 0.1..=1.8)
                     .text("Tilt (rad)")
 ,
             )
@@ -335,33 +390,33 @@ impl App {
 
         // If sliders changed while running, reapply the orientation immediately
         // so the preview updates without waiting for the next frame.
-        if (speed_changed || tilt_changed) && self.aux_turntable_running {
-            let az = self.aux_turntable.azimuth;
-            let tilt = self.aux_turntable.tilt;
-            self.camera.set_orientation(
+        if (speed_changed || tilt_changed) && app.aux_state.turntable_running {
+            let az = app.aux_state.turntable.azimuth;
+            let tilt = app.aux_state.turntable.tilt;
+            app.camera.set_orientation(
                 glam::Quat::from_rotation_z(az) * glam::Quat::from_rotation_x(tilt),
             );
         }
 
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            let label = if self.aux_turntable_running { "Stop" } else { "Start" };
+            let label = if app.aux_state.turntable_running { "Stop" } else { "Start" };
             if ui.button(label).clicked() {
-                if self.aux_turntable_running {
-                    self.aux_turntable_running = false;
+                if app.aux_state.turntable_running {
+                    app.aux_state.turntable_running = false;
                 } else {
                     // Sync azimuth/tilt from the current camera orientation before starting.
-                    self.aux_turntable = TurntableController::from_camera(
-                        &self.camera,
-                        self.aux_turntable.angular_velocity,
+                    app.aux_state.turntable = TurntableController::from_camera(
+                        &app.camera,
+                        app.aux_state.turntable.angular_velocity,
                     );
-                    self.aux_turntable_running = true;
+                    app.aux_state.turntable_running = true;
                 }
             }
             if ui.button("Reset to overview").clicked() {
-                self.aux_turntable_running = false;
-                self.cam_animator.fly_to(
-                    &self.camera,
+                app.aux_state.turntable_running = false;
+                app.cam_animator.fly_to(
+                    &app.camera,
                     glam::Vec3::new(0.0, 0.0, 0.5),
                     30.0,
                     glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
@@ -371,17 +426,17 @@ impl App {
         });
 
         ui.add_space(4.0);
-        if self.aux_turntable_running {
+        if app.aux_state.turntable_running {
             ui.label(format!(
                 "Azimuth: {:.2} rad",
-                self.aux_turntable.azimuth
+                app.aux_state.turntable.azimuth
             ));
         } else {
             ui.label("(stopped)");
         }
     }
 
-    fn controls_aux_track(&mut self, ui: &mut egui::Ui) {
+fn controls_aux_track(app: &mut App, ui: &mut egui::Ui) {
         ui.label(egui::RichText::new("Camera Track").strong());
         ui.label(
             "Keyframe animation with Catmull-Rom interpolation. \
@@ -389,28 +444,28 @@ impl App {
         );
         ui.add_space(4.0);
 
-        let duration = self.aux_track.duration();
+        let duration = app.aux_state.track.duration();
 
         // Playback controls.
         ui.horizontal(|ui| {
-            let play_label = if self.aux_track_playing { "Stop" } else { "Play" };
+            let play_label = if app.aux_state.track_playing { "Stop" } else { "Play" };
             if ui.button(play_label).clicked() {
-                if self.aux_track_playing {
-                    self.aux_track_playing = false;
-                } else if self.aux_track.len() >= 2 {
-                    self.aux_track_t = 0.0;
-                    self.aux_track_playing = true;
+                if app.aux_state.track_playing {
+                    app.aux_state.track_playing = false;
+                } else if app.aux_state.track.len() >= 2 {
+                    app.aux_state.track_t = 0.0;
+                    app.aux_state.track_playing = true;
                 }
             }
             if ui.button("Rewind").clicked() {
-                self.aux_track_t = 0.0;
-                self.aux_track_playing = false;
+                app.aux_state.track_t = 0.0;
+                app.aux_state.track_playing = false;
             }
         });
 
         // Scrub bar.
         if duration > 0.0 {
-            let mut t_f32 = self.aux_track_t as f32;
+            let mut t_f32 = app.aux_state.track_t as f32;
             if ui
                 .add(
                     egui::Slider::new(&mut t_f32, 0.0..=(duration as f32))
@@ -419,24 +474,24 @@ impl App {
                 )
                 .changed()
             {
-                self.aux_track_t = t_f32 as f64;
-                self.aux_track_playing = false;
+                app.aux_state.track_t = t_f32 as f64;
+                app.aux_state.track_playing = false;
                 // Apply scrubbed position immediately.
-                let target = interpolate_camera(&self.aux_track, self.aux_track_t);
-                self.camera.center = target.center;
-                self.camera.set_distance(target.distance);
-                self.camera.set_orientation(target.orientation);
+                let target = interpolate_camera(&app.aux_state.track, app.aux_state.track_t);
+                app.camera.center = target.center;
+                app.camera.set_distance(target.distance);
+                app.camera.set_orientation(target.orientation);
             }
         }
 
         ui.add_space(4.0);
         ui.label(format!(
             "Track: {} keyframes, {:.1} s duration",
-            self.aux_track.len(),
+            app.aux_state.track.len(),
             duration
         ));
         if duration > 0.0 {
-            ui.label(format!("Playback: {:.2} / {:.2} s", self.aux_track_t, duration));
+            ui.label(format!("Playback: {:.2} / {:.2} s", app.aux_state.track_t, duration));
         }
 
         ui.separator();
@@ -446,33 +501,34 @@ impl App {
             if ui.button("Add current view").clicked() {
                 let t = if duration > 0.0 { duration + 2.5 } else { 0.0 };
                 let target = CameraTarget {
-                    center: self.camera.center,
-                    distance: self.camera.distance,
-                    orientation: self.camera.orientation,
+                    center: app.camera.center,
+                    distance: app.camera.distance,
+                    orientation: app.camera.orientation,
                 };
-                self.aux_track.push(t, target);
+                app.aux_state.track.push(t, target);
             }
             if ui.button("Reset to demo").clicked() {
-                self.aux_track_playing = false;
-                self.aux_track_t = 0.0;
-                self.aux_track = build_demo_track(&self.aux_frustums);
+                app.aux_state.track_playing = false;
+                app.aux_state.track_t = 0.0;
+                app.aux_state.track = build_demo_track(&app.aux_state.frustums);
             }
             if ui.button("Clear").clicked() {
-                self.aux_track_playing = false;
-                self.aux_track_t = 0.0;
-                self.aux_track = CameraTrack::new();
+                app.aux_state.track_playing = false;
+                app.aux_state.track_t = 0.0;
+                app.aux_state.track = CameraTrack::new();
             }
         });
-    }
+}
 
+impl App {
     pub(crate) fn aux_push_screen_images(&self, fd: &mut viewport_lib::FrameData) {
         // HUD overlay only shown in Framing mode.
-        if self.aux_sub_mode != AuxSubMode::Framing {
+        if self.aux_state.sub_mode != AuxSubMode::Framing {
             return;
         }
-        let (color, size, arm_len, thick) = match self.aux_active_frustum {
+        let (color, size, arm_len, thick) = match self.aux_state.active_frustum {
             Some(idx) => {
-                let fc = self.aux_frustums[idx].color;
+                let fc = self.aux_state.frustums[idx].color;
                 let c = [
                     (fc[0] * 255.0) as u8,
                     (fc[1] * 255.0) as u8,
@@ -495,19 +551,19 @@ impl App {
             item.width = size;
             item.height = size;
             item.anchor = anchor;
-            item.scale = self.aux_img_scale;
-            item.alpha = self.aux_img_alpha;
+            item.scale = self.aux_state.img_scale;
+            item.alpha = self.aux_state.img_alpha;
             fd.scene.screen_images.push(item);
         }
 
-        if self.aux_active_frustum.is_some() {
+        if self.aux_state.active_frustum.is_some() {
             let mut item = ScreenImageItem::default();
             item.pixels = crosshair_pixels(color, 40, 3, 5);
             item.width = 40;
             item.height = 40;
             item.anchor = ImageAnchor::Center;
-            item.scale = self.aux_img_scale;
-            item.alpha = self.aux_img_alpha;
+            item.scale = self.aux_state.img_scale;
+            item.alpha = self.aux_state.img_alpha;
             fd.scene.screen_images.push(item);
         }
     }

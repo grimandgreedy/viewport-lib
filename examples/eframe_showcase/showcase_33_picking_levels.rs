@@ -156,15 +156,63 @@ fn unit_box_mesh_data() -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
 // Build scene
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct PlState {
+    pub scene:       viewport_lib::scene::Scene,
+    pub selection:   viewport_lib::Selection,
+    pub sub_selection: viewport_lib::SubSelection,
+    pub built:       bool,
+    pub level:       PlPickLevel,
+    pub cube_mesh_id: MeshId,
+    pub hemi_mesh_id: MeshId,
+    pub mesh_lookup: std::collections::HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
+    pub wireframe:   bool,
+    pub shift_held:  bool,
+    pub drag_start:  Option<glam::Vec2>,
+    pub node_names:  Vec<(NodeId, String)>,
+    pub last_hit:    Option<PlHitInfo>,
+    pub hit_marker:  Option<glam::Vec3>,
+    pub pc_positions: Vec<[f32; 3]>,
+    pub volume_id:   Option<viewport_lib::VolumeId>,
+    pub volume_data: Option<viewport_lib::VolumeData>,
+}
+
+impl Default for PlState {
+    fn default() -> Self {
+        Self {
+            scene:         viewport_lib::scene::Scene::new(),
+            selection:     viewport_lib::Selection::new(),
+            sub_selection: viewport_lib::SubSelection::new(),
+            built:         false,
+            level:         PlPickLevel::default(),
+            cube_mesh_id:  MeshId::from_index(0),
+            hemi_mesh_id:  MeshId::from_index(0),
+            mesh_lookup:   std::collections::HashMap::new(),
+            wireframe:     true,
+            shift_held:    false,
+            drag_start:    None,
+            node_names:    Vec::new(),
+            last_hit:      None,
+            hit_marker:    None,
+            pc_positions:  Vec::new(),
+            volume_id:     None,
+            volume_data:   None,
+        }
+    }
+}
+
 impl App {
     pub(crate) fn build_pl_scene(&mut self, renderer: &mut ViewportRenderer) {
-        self.pl_scene = viewport_lib::scene::Scene::new();
-        self.pl_selection = viewport_lib::Selection::new();
-        self.pl_sub_selection = viewport_lib::SubSelection::new();
-        self.pl_node_names.clear();
-        self.pl_mesh_lookup.clear();
-        self.pl_last_hit = None;
-        self.pl_hit_marker = None;
+        self.pl_state.scene = viewport_lib::scene::Scene::new();
+        self.pl_state.selection = viewport_lib::Selection::new();
+        self.pl_state.sub_selection = viewport_lib::SubSelection::new();
+        self.pl_state.node_names.clear();
+        self.pl_state.mesh_lookup.clear();
+        self.pl_state.last_hit = None;
+        self.pl_state.hit_marker = None;
 
         // --- Cube mesh ---
         let (cp, cn, ci) = unit_box_mesh_data();
@@ -176,8 +224,8 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &cube_mesh)
             .expect("pl cube mesh");
-        self.pl_cube_mesh_id = cube_id;
-        self.pl_mesh_lookup.insert(cube_id.index() as u64, (cp, ci));
+        self.pl_state.cube_mesh_id = cube_id;
+        self.pl_state.mesh_lookup.insert(cube_id.index() as u64, (cp, ci));
 
         // --- Hemisphere mesh ---
         let (hp, hn, hi) = hemisphere(1.5, 8, 20);
@@ -189,8 +237,8 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &hemi_mesh)
             .expect("pl hemi mesh");
-        self.pl_hemi_mesh_id = hemi_id;
-        self.pl_mesh_lookup.insert(hemi_id.index() as u64, (hp, hi));
+        self.pl_state.hemi_mesh_id = hemi_id;
+        self.pl_state.mesh_lookup.insert(hemi_id.index() as u64, (hp, hi));
 
         // --- Scene objects: Cube A, Hemi A, Hemi B, Cube B ---
         let configs: &[(&str, MeshId, glam::Vec3, [f32; 3])] = &[
@@ -203,8 +251,8 @@ impl App {
         for (name, mesh_id, pos, color) in configs {
             let transform = glam::Mat4::from_translation(*pos);
             let mat = Material::from_color(*color);
-            let node_id = self.pl_scene.add_named(name, Some(*mesh_id), transform, mat);
-            self.pl_node_names.push((node_id, name.to_string()));
+            let node_id = self.pl_state.scene.add_named(name, Some(*mesh_id), transform, mat);
+            self.pl_state.node_names.push((node_id, name.to_string()));
         }
 
         // --- Point cloud: 6x5 grid above the scene ---
@@ -218,7 +266,7 @@ impl App {
                 ]);
             }
         }
-        self.pl_pc_positions = pc;
+        self.pl_state.pc_positions = pc;
 
         // --- Volume: 16x16x16 sphere-shaped scalar field ---
         let dims: [u32; 3] = [16, 16, 16];
@@ -243,15 +291,15 @@ impl App {
         let vol_id = renderer
             .resources_mut()
             .upload_volume(&self.device, &self.queue, &vol_data, dims);
-        self.pl_volume_id = Some(vol_id);
-        self.pl_volume_data = Some(VolumeData {
+        self.pl_state.volume_id = Some(vol_id);
+        self.pl_state.volume_data = Some(VolumeData {
             data: vol_data,
             dims,
             origin: [0.0, 0.0, 0.0],
             spacing: [0.25, 0.25, 0.25],
         });
 
-        self.pl_built = true;
+        self.pl_state.built = true;
     }
 }
 
@@ -272,99 +320,99 @@ impl App {
 
         let mesh_lookup = self.pl_pick_mesh_lookup();
 
-        match self.pl_level {
+        match self.pl_state.level {
             PlPickLevel::Object => {
                 let hit = viewport_lib::picking::pick_scene_nodes_cpu(
-                    ray_origin, ray_dir, &self.pl_scene, &mesh_lookup,
+                    ray_origin, ray_dir, &self.pl_state.scene, &mesh_lookup,
                 );
                 if let Some(hit) = hit {
                     if shift {
-                        self.pl_selection.toggle(hit.id);
+                        self.pl_state.selection.toggle(hit.id);
                     } else {
-                        self.pl_selection.select_one(hit.id);
+                        self.pl_state.selection.select_one(hit.id);
                     }
-                    self.pl_sub_selection.clear();
-                    self.pl_last_hit = Some(PlHitInfo {
+                    self.pl_state.sub_selection.clear();
+                    self.pl_state.last_hit = Some(PlHitInfo {
                         object_name: self.pl_node_name(hit.id),
                         world_pos: hit.world_pos,
                         normal: hit.normal,
                         sub_object: None,
                         scalar_value: None,
                     });
-                    self.pl_hit_marker = Some(hit.world_pos);
+                    self.pl_state.hit_marker = Some(hit.world_pos);
                 } else if !shift {
-                    self.pl_selection.clear();
-                    self.pl_sub_selection.clear();
-                    self.pl_last_hit = None;
-                    self.pl_hit_marker = None;
+                    self.pl_state.selection.clear();
+                    self.pl_state.sub_selection.clear();
+                    self.pl_state.last_hit = None;
+                    self.pl_state.hit_marker = None;
                 }
             }
 
             PlPickLevel::Face => {
                 let hit = viewport_lib::picking::pick_scene_nodes_cpu(
-                    ray_origin, ray_dir, &self.pl_scene, &mesh_lookup,
+                    ray_origin, ray_dir, &self.pl_state.scene, &mesh_lookup,
                 );
                 if let Some(hit) = hit {
                     if let Some(sub) = hit.sub_object {
                         if shift {
-                            self.pl_sub_selection.toggle(hit.id, sub);
+                            self.pl_state.sub_selection.toggle(hit.id, sub);
                         } else {
-                            self.pl_selection.clear();
-                            self.pl_sub_selection.select_one(hit.id, sub);
+                            self.pl_state.selection.clear();
+                            self.pl_state.sub_selection.select_one(hit.id, sub);
                         }
                     }
-                    self.pl_last_hit = Some(PlHitInfo {
+                    self.pl_state.last_hit = Some(PlHitInfo {
                         object_name: self.pl_node_name(hit.id),
                         world_pos: hit.world_pos,
                         normal: hit.normal,
                         sub_object: hit.sub_object,
                         scalar_value: None,
                     });
-                    self.pl_hit_marker = Some(hit.world_pos);
+                    self.pl_state.hit_marker = Some(hit.world_pos);
                 } else if !shift {
-                    self.pl_selection.clear();
-                    self.pl_sub_selection.clear();
-                    self.pl_last_hit = None;
-                    self.pl_hit_marker = None;
+                    self.pl_state.selection.clear();
+                    self.pl_state.sub_selection.clear();
+                    self.pl_state.last_hit = None;
+                    self.pl_state.hit_marker = None;
                 }
             }
 
             PlPickLevel::Vertex => {
                 let hit = viewport_lib::picking::pick_scene_nodes_cpu(
-                    ray_origin, ray_dir, &self.pl_scene, &mesh_lookup,
+                    ray_origin, ray_dir, &self.pl_state.scene, &mesh_lookup,
                 );
                 if let Some(hit) = hit {
                     let vertex_sub = self.pl_nearest_vertex(&hit);
                     if let Some(sub) = vertex_sub {
                         if shift {
-                            self.pl_sub_selection.toggle(hit.id, sub);
+                            self.pl_state.sub_selection.toggle(hit.id, sub);
                         } else {
-                            self.pl_selection.clear();
-                            self.pl_sub_selection.select_one(hit.id, sub);
+                            self.pl_state.selection.clear();
+                            self.pl_state.sub_selection.select_one(hit.id, sub);
                         }
                     }
                     let marker = vertex_sub
                         .and_then(|s| self.pl_vertex_world_pos(hit.id, s))
                         .unwrap_or(hit.world_pos);
-                    self.pl_last_hit = Some(PlHitInfo {
+                    self.pl_state.last_hit = Some(PlHitInfo {
                         object_name: self.pl_node_name(hit.id),
                         world_pos: marker,
                         normal: hit.normal,
                         sub_object: vertex_sub,
                         scalar_value: None,
                     });
-                    self.pl_hit_marker = Some(marker);
+                    self.pl_state.hit_marker = Some(marker);
                 } else if !shift {
-                    self.pl_selection.clear();
-                    self.pl_sub_selection.clear();
-                    self.pl_last_hit = None;
-                    self.pl_hit_marker = None;
+                    self.pl_state.selection.clear();
+                    self.pl_state.sub_selection.clear();
+                    self.pl_state.last_hit = None;
+                    self.pl_state.hit_marker = None;
                 }
             }
 
             PlPickLevel::Voxel => {
                 // Build the VolumeItem matching what the renderer submits.
-                let hit = self.pl_volume_id.zip(self.pl_volume_data.as_ref()).and_then(|(vol_id, vol_data)| {
+                let hit = self.pl_state.volume_id.zip(self.pl_state.volume_data.as_ref()).and_then(|(vol_id, vol_data)| {
                     let mut item = viewport_lib::VolumeItem::default();
                     item.volume_id = vol_id;
                     item.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0))
@@ -380,24 +428,24 @@ impl App {
                 if let Some(hit) = hit {
                     let sub = hit.sub_object.unwrap();
                     if shift {
-                        self.pl_sub_selection.toggle(2, sub);
+                        self.pl_state.sub_selection.toggle(2, sub);
                     } else {
-                        self.pl_selection.clear();
-                        self.pl_sub_selection.select_one(2, sub);
+                        self.pl_state.selection.clear();
+                        self.pl_state.sub_selection.select_one(2, sub);
                     }
-                    self.pl_last_hit = Some(PlHitInfo {
+                    self.pl_state.last_hit = Some(PlHitInfo {
                         object_name: "Volume".to_string(),
                         world_pos: hit.world_pos,
                         normal: hit.normal,
                         sub_object: hit.sub_object,
                         scalar_value: hit.scalar_value,
                     });
-                    self.pl_hit_marker = Some(hit.world_pos);
+                    self.pl_state.hit_marker = Some(hit.world_pos);
                 } else if !shift {
-                    self.pl_selection.clear();
-                    self.pl_sub_selection.clear();
-                    self.pl_last_hit = None;
-                    self.pl_hit_marker = None;
+                    self.pl_state.selection.clear();
+                    self.pl_state.sub_selection.clear();
+                    self.pl_state.last_hit = None;
+                    self.pl_state.hit_marker = None;
                 }
             }
 
@@ -407,7 +455,7 @@ impl App {
                 let rect_max = pos + glam::Vec2::splat(half);
 
                 let mut pc_item = viewport_lib::PointCloudItem::default();
-                pc_item.positions = self.pl_pc_positions.clone();
+                pc_item.positions = self.pl_state.pc_positions.clone();
                 pc_item.id = 1;
 
                 let result = viewport_lib::picking::pick_rect(
@@ -423,7 +471,7 @@ impl App {
                     subs.iter()
                         .filter_map(|s| if let SubObjectRef::Point(i) = s { Some(*i) } else { None })
                         .min_by_key(|&i| {
-                            let p = glam::Vec3::from(self.pl_pc_positions[i as usize]);
+                            let p = glam::Vec3::from(self.pl_state.pc_positions[i as usize]);
                             let clip = view_proj * p.extend(1.0);
                             let ndc = if clip.w > 0.0 {
                                 glam::Vec2::new(clip.x / clip.w, -clip.y / clip.w)
@@ -438,25 +486,25 @@ impl App {
                 if let Some(pt_idx) = nearest {
                     let sub = SubObjectRef::Point(pt_idx);
                     if shift {
-                        self.pl_sub_selection.toggle(1, sub);
+                        self.pl_state.sub_selection.toggle(1, sub);
                     } else {
-                        self.pl_selection.clear();
-                        self.pl_sub_selection.select_one(1, sub);
+                        self.pl_state.selection.clear();
+                        self.pl_state.sub_selection.select_one(1, sub);
                     }
-                    let world_pos = glam::Vec3::from(self.pl_pc_positions[pt_idx as usize]);
-                    self.pl_last_hit = Some(PlHitInfo {
+                    let world_pos = glam::Vec3::from(self.pl_state.pc_positions[pt_idx as usize]);
+                    self.pl_state.last_hit = Some(PlHitInfo {
                         object_name: "Point Cloud".to_string(),
                         world_pos,
                         normal: glam::Vec3::Y,
                         sub_object: Some(sub),
                         scalar_value: None,
                     });
-                    self.pl_hit_marker = Some(world_pos);
+                    self.pl_state.hit_marker = Some(world_pos);
                 } else if !shift {
-                    self.pl_selection.clear();
-                    self.pl_sub_selection.clear();
-                    self.pl_last_hit = None;
-                    self.pl_hit_marker = None;
+                    self.pl_state.selection.clear();
+                    self.pl_state.sub_selection.clear();
+                    self.pl_state.last_hit = None;
+                    self.pl_state.hit_marker = None;
                 }
             }
         }
@@ -479,26 +527,26 @@ impl App {
         let r_max = glam::Vec2::new(rect_min.x.max(rect_max.x), rect_min.y.max(rect_max.y));
 
         if !shift {
-            self.pl_selection.clear();
-            self.pl_sub_selection.clear();
+            self.pl_state.selection.clear();
+            self.pl_state.sub_selection.clear();
         }
 
-        match self.pl_level {
+        match self.pl_state.level {
             PlPickLevel::Object => {
                 // Use box_select (object-level by position).
                 let objects: Vec<&dyn viewport_lib::traits::ViewportObject> =
-                    self.pl_scene.nodes().map(|n| n as &dyn viewport_lib::traits::ViewportObject).collect();
+                    self.pl_state.scene.nodes().map(|n| n as &dyn viewport_lib::traits::ViewportObject).collect();
                 let hits = viewport_lib::picking::box_select(
                     r_min, r_max, &objects, view_proj, vp_size,
                 );
                 for id in hits {
-                    self.pl_selection.add(id);
+                    self.pl_state.selection.add(id);
                 }
             }
 
             PlPickLevel::Face => {
                 let mesh_lookup_usize = self.pl_pick_mesh_lookup_usize();
-                let scene_items = self.pl_scene.collect_render_items(&viewport_lib::Selection::new());
+                let scene_items = self.pl_state.scene.collect_render_items(&viewport_lib::Selection::new());
                 let result = viewport_lib::picking::pick_rect(
                     r_min, r_max,
                     &scene_items,
@@ -510,7 +558,7 @@ impl App {
                 for (obj_id, subs) in &result.hits {
                     for &sub in subs {
                         if sub.is_face() {
-                            self.pl_sub_selection.add(*obj_id, sub);
+                            self.pl_state.sub_selection.add(*obj_id, sub);
                         }
                     }
                 }
@@ -518,12 +566,12 @@ impl App {
 
             PlPickLevel::Vertex => {
                 // Collect all vertices that project into the rect.
-                for node in self.pl_scene.nodes() {
+                for node in self.pl_state.scene.nodes() {
                     let node_id = viewport_lib::traits::ViewportObject::id(node);
                     let mesh_key = viewport_lib::traits::ViewportObject::mesh_id(node);
                     let model = viewport_lib::traits::ViewportObject::model_matrix(node);
                     if let Some(key) = mesh_key {
-                        if let Some((positions, _)) = self.pl_mesh_lookup.get(&key) {
+                        if let Some((positions, _)) = self.pl_state.mesh_lookup.get(&key) {
                             for (vi, pos) in positions.iter().enumerate() {
                                 let world = model.transform_point3(glam::Vec3::from(*pos));
                                 let clip = view_proj * world.extend(1.0);
@@ -535,7 +583,7 @@ impl App {
                                 if screen.x >= r_min.x && screen.x <= r_max.x
                                     && screen.y >= r_min.y && screen.y <= r_max.y
                                 {
-                                    self.pl_sub_selection.add(node_id, SubObjectRef::Vertex(vi as u32));
+                                    self.pl_state.sub_selection.add(node_id, SubObjectRef::Vertex(vi as u32));
                                 }
                             }
                         }
@@ -545,7 +593,7 @@ impl App {
 
             PlPickLevel::Point => {
                 // Project point cloud positions into the rect.
-                for (i, pos) in self.pl_pc_positions.iter().enumerate() {
+                for (i, pos) in self.pl_state.pc_positions.iter().enumerate() {
                     let world = glam::Vec3::from(*pos);
                     let clip = view_proj * world.extend(1.0);
                     if clip.w <= 0.0 {
@@ -556,7 +604,7 @@ impl App {
                     if screen.x >= r_min.x && screen.x <= r_max.x
                         && screen.y >= r_min.y && screen.y <= r_max.y
                     {
-                        self.pl_sub_selection.add(1, SubObjectRef::Point(i as u32));
+                        self.pl_state.sub_selection.add(1, SubObjectRef::Point(i as u32));
                     }
                 }
             }
@@ -565,7 +613,7 @@ impl App {
                 // Project each above-threshold voxel center to screen space and
                 // collect those whose projection falls inside the selection rect.
                 if let (Some(vol_id), Some(vol_data)) =
-                    (self.pl_volume_id, self.pl_volume_data.as_ref())
+                    (self.pl_state.volume_id, self.pl_state.volume_data.as_ref())
                 {
                     let _ = vol_id; // id carried by VolumeItem, not needed here
                     let model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0));
@@ -610,7 +658,7 @@ impl App {
                                     && screen.y >= r_min.y
                                     && screen.y <= r_max.y
                                 {
-                                    self.pl_sub_selection
+                                    self.pl_state.sub_selection
                                         .add(2, SubObjectRef::Voxel(flat));
                                 }
                             }
@@ -620,8 +668,8 @@ impl App {
             }
         }
 
-        self.pl_last_hit = None;
-        self.pl_hit_marker = None;
+        self.pl_state.last_hit = None;
+        self.pl_state.hit_marker = None;
     }
 }
 
@@ -632,12 +680,12 @@ impl App {
 impl App {
     /// Mesh lookup map for `pick_scene_nodes_cpu` (key = u64 mesh id).
     pub(crate) fn pl_pick_mesh_lookup(&self) -> HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)> {
-        self.pl_mesh_lookup.clone()
+        self.pl_state.mesh_lookup.clone()
     }
 
     /// Mesh lookup map for `pick_rect` (key = usize mesh index).
     fn pl_pick_mesh_lookup_usize(&self) -> HashMap<usize, (Vec<[f32; 3]>, Vec<u32>)> {
-        self.pl_mesh_lookup
+        self.pl_state.mesh_lookup
             .iter()
             .map(|(&k, v)| (k as usize, v.clone()))
             .collect()
@@ -645,7 +693,7 @@ impl App {
 
     /// Display name for a node ID.
     pub(crate) fn pl_node_name(&self, id: NodeId) -> String {
-        self.pl_node_names
+        self.pl_state.node_names
             .iter()
             .find(|(nid, _)| *nid == id)
             .map(|(_, n)| n.clone())
@@ -654,7 +702,7 @@ impl App {
 
     /// World-space model matrix for a node ID.
     pub(crate) fn pl_node_model_matrix(&self, id: NodeId) -> glam::Mat4 {
-        for node in self.pl_scene.nodes() {
+        for node in self.pl_state.scene.nodes() {
             if viewport_lib::traits::ViewportObject::id(node) == id {
                 return viewport_lib::traits::ViewportObject::model_matrix(node);
             }
@@ -664,7 +712,7 @@ impl App {
 
     /// Mesh key (u64) for a node ID.
     fn pl_node_mesh_key(&self, id: NodeId) -> Option<u64> {
-        for node in self.pl_scene.nodes() {
+        for node in self.pl_state.scene.nodes() {
             if viewport_lib::traits::ViewportObject::id(node) == id {
                 return viewport_lib::traits::ViewportObject::mesh_id(node);
             }
@@ -679,7 +727,7 @@ impl App {
             _ => return None,
         };
         let key = self.pl_node_mesh_key(hit.id)?;
-        let (positions, indices) = self.pl_mesh_lookup.get(&key)?;
+        let (positions, indices) = self.pl_state.mesh_lookup.get(&key)?;
         let n_tri = indices.len() / 3;
         if n_tri == 0 {
             return None;
@@ -710,7 +758,7 @@ impl App {
     pub(crate) fn pl_vertex_world_pos(&self, node_id: NodeId, sub: SubObjectRef) -> Option<glam::Vec3> {
         if let SubObjectRef::Vertex(vi) = sub {
             let key = self.pl_node_mesh_key(node_id)?;
-            let (positions, _) = self.pl_mesh_lookup.get(&key)?;
+            let (positions, _) = self.pl_state.mesh_lookup.get(&key)?;
             let pos = positions.get(vi as usize)?;
             let model = self.pl_node_model_matrix(node_id);
             Some(model.transform_point3(glam::Vec3::from(*pos)))
@@ -722,28 +770,27 @@ impl App {
 }
 
 // ---------------------------------------------------------------------------
-// Controls panel
+// Controls
 // ---------------------------------------------------------------------------
 
-impl App {
-    pub(crate) fn controls_pick_levels(&mut self, ui: &mut egui::Ui) {
+pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
         ui.label("Pick Level:");
         ui.horizontal(|ui| {
-            ui.radio_value(&mut self.pl_level, PlPickLevel::Object, "Object");
-            ui.radio_value(&mut self.pl_level, PlPickLevel::Face,   "Face");
-            ui.radio_value(&mut self.pl_level, PlPickLevel::Vertex, "Vertex");
-            ui.radio_value(&mut self.pl_level, PlPickLevel::Point,  "Point");
-            ui.radio_value(&mut self.pl_level, PlPickLevel::Voxel,  "Voxel");
+            ui.radio_value(&mut app.pl_state.level, PlPickLevel::Object, "Object");
+            ui.radio_value(&mut app.pl_state.level, PlPickLevel::Face,   "Face");
+            ui.radio_value(&mut app.pl_state.level, PlPickLevel::Vertex, "Vertex");
+            ui.radio_value(&mut app.pl_state.level, PlPickLevel::Point,  "Point");
+            ui.radio_value(&mut app.pl_state.level, PlPickLevel::Voxel,  "Voxel");
         });
 
         ui.separator();
-        ui.checkbox(&mut self.pl_wireframe, "Wireframe overlay");
+        ui.checkbox(&mut app.pl_state.wireframe, "Wireframe overlay");
 
         if ui.button("Clear selection").clicked() {
-            self.pl_selection.clear();
-            self.pl_sub_selection.clear();
-            self.pl_last_hit = None;
-            self.pl_hit_marker = None;
+            app.pl_state.selection.clear();
+            app.pl_state.sub_selection.clear();
+            app.pl_state.last_hit = None;
+            app.pl_state.hit_marker = None;
         }
 
         ui.separator();
@@ -754,7 +801,7 @@ impl App {
 
         ui.separator();
 
-        if let Some(hit) = &self.pl_last_hit {
+        if let Some(hit) = &app.pl_state.last_hit {
             ui.label(egui::RichText::new("Last Hit").strong());
             ui.label(format!("Object: {}", hit.object_name));
             match hit.sub_object {
@@ -774,8 +821,8 @@ impl App {
                 ui.label(format!("Scalar: {sv:.3}"));
             }
         } else {
-            let sel_count = self.pl_selection.len()
-                + self.pl_sub_selection.iter().count();
+            let sel_count = app.pl_state.selection.len()
+                + app.pl_state.sub_selection.iter().count();
             if sel_count > 0 {
                 ui.label(format!("{sel_count} item(s) selected"));
             } else {
@@ -783,4 +830,3 @@ impl App {
             }
         }
     }
-}

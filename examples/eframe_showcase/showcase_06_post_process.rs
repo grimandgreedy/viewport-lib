@@ -1,4 +1,4 @@
-//! Showcase 6: Post-Processing : build method.
+//! Showcase 6: Post-Processing : build and controls.
 //!
 //! Note: the full HDR pipeline (`renderer.render()`) requires direct access to the
 //! surface texture view, which is not available via eframe's paint callback.
@@ -7,15 +7,52 @@
 
 use crate::App;
 use crate::geometry::make_uv_sphere;
-use viewport_lib::{Material, ViewportRenderer};
+use eframe::egui;
+use viewport_lib::{Material, ViewportRenderer, scene::Scene};
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct PostProcessState {
+    pub built:          bool,
+    pub scene:          Scene,
+    pub shadow_pcss:    bool,
+    pub point_light_on: bool,
+    pub dir_intensity:  f32,
+    pub dof_enabled:    bool,
+    pub dof_focal_dist: f32,
+    pub dof_focal_range: f32,
+    pub dof_max_blur:   f32,
+}
+
+impl Default for PostProcessState {
+    fn default() -> Self {
+        Self {
+            built:          false,
+            scene:          Scene::new(),
+            shadow_pcss:    true,
+            point_light_on: true,
+            dir_intensity:  0.6,
+            dof_enabled:    false,
+            dof_focal_dist: 5.0,
+            dof_focal_range: 1.0,
+            dof_max_blur:   8.0,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build
+// ---------------------------------------------------------------------------
 
 impl App {
     /// Build the scene for Showcase 6 (post-processing / PBR scene).
     pub(crate) fn build_pp_scene(&mut self, renderer: &mut ViewportRenderer) {
-        self.pp_scene = viewport_lib::scene::Scene::new();
+        self.pp_state.scene = Scene::new();
 
         let m = self.upload_box(renderer);
-        self.pp_scene.add_named(
+        self.pp_state.scene.add_named(
             "Ground",
             Some(m),
             glam::Mat4::from_scale_rotation_translation(
@@ -27,7 +64,7 @@ impl App {
         );
 
         let m = self.upload_box(renderer);
-        self.pp_scene.add_named(
+        self.pp_state.scene.add_named(
             "Gold (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(-1.2, -1.2, 0.0)),
@@ -35,7 +72,7 @@ impl App {
         );
 
         let m = self.upload_box(renderer);
-        self.pp_scene.add_named(
+        self.pp_state.scene.add_named(
             "Brushed Steel (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(1.2, -1.2, 0.0)),
@@ -43,7 +80,7 @@ impl App {
         );
 
         let m = self.upload_box(renderer);
-        self.pp_scene.add_named(
+        self.pp_state.scene.add_named(
             "Chrome (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(-1.2, 1.2, 0.0)),
@@ -51,7 +88,7 @@ impl App {
         );
 
         let m = self.upload_box(renderer);
-        self.pp_scene.add_named(
+        self.pp_state.scene.add_named(
             "Ceramic (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(1.2, 1.2, 0.0)),
@@ -63,7 +100,7 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere)
             .expect("pp sphere upload");
-        self.pp_scene.add_named(
+        self.pp_state.scene.add_named(
             "Sphere Test",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(3.0, 0.0, 0.1)),
@@ -71,7 +108,7 @@ impl App {
         );
 
         let m = self.upload_box(renderer);
-        self.pp_scene.add_named(
+        self.pp_state.scene.add_named(
             "Pillar",
             Some(m),
             glam::Mat4::from_scale_rotation_translation(
@@ -82,6 +119,41 @@ impl App {
             Material::pbr([0.7, 0.7, 0.75], 0.1, 0.7),
         );
 
-        self.pp_built = true;
+        self.pp_state.built = true;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_post_process(app: &mut App, ui: &mut egui::Ui) {
+    ui.label("Lighting:");
+    ui.add(egui::Slider::new(&mut app.pp_state.dir_intensity, 0.0..=5.0).text("Dir. intensity"));
+    ui.checkbox(&mut app.pp_state.point_light_on, "Point light");
+
+    ui.separator();
+    ui.label("Shadows:");
+    ui.checkbox(&mut app.pp_state.shadow_pcss, "PCSS (soft shadows)");
+
+    ui.separator();
+    ui.label("Depth of Field:");
+    ui.checkbox(&mut app.pp_state.dof_enabled, "Enable DoF");
+    if app.pp_state.dof_enabled {
+        ui.add(
+            egui::Slider::new(&mut app.pp_state.dof_focal_dist, 0.5..=30.0)
+                .text("Focal distance"),
+        );
+        ui.add(
+            egui::Slider::new(&mut app.pp_state.dof_focal_range, 0.1..=10.0)
+                .text("Focal range"),
+        );
+        ui.add(
+            egui::Slider::new(&mut app.pp_state.dof_max_blur, 1.0..=20.0)
+                .text("Max blur (px)"),
+        );
+    }
+
+    ui.separator();
+    ui.weak("Bloom, SSAO, and FXAA can be enabled via PostProcessSettings\nbut are not wired to controls in this showcase.");
 }

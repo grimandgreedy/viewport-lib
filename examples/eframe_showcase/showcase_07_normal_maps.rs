@@ -1,4 +1,4 @@
-//! Showcase 7: Normal Maps + AO Maps : build method.
+//! Showcase 7: Normal Maps + AO Maps : build and controls.
 //!
 //! Demonstrates normal-mapped and AO-mapped surfaces on a variety of shapes:
 //! a sphere, a cube, and a flat wall panel, all on a tiled ground plane.
@@ -10,13 +10,47 @@ use crate::geometry::{
     make_box_with_uvs, make_brick_ao_map, make_brick_normal_map, make_tile_ao_map,
     make_tile_normal_map, make_uv_sphere,
 };
-use viewport_lib::{BackfacePolicy, Material, ViewportRenderer, scene::Scene};
+use eframe::egui;
+use viewport_lib::{BackfacePolicy, Material, NodeId, ViewportRenderer, scene::Scene};
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct NormalMapsState {
+    pub built:        bool,
+    pub scene:        Scene,
+    /// (node_id, normal_map_id, ao_map_id) for every mapped object.
+    pub mapped_nodes: Vec<(NodeId, u64, u64)>,
+    pub normal_on:    bool,
+    pub ao_on:        bool,
+    pub clip_enabled: bool,
+    pub cap_fill:     bool,
+}
+
+impl Default for NormalMapsState {
+    fn default() -> Self {
+        Self {
+            built:        false,
+            scene:        Scene::new(),
+            mapped_nodes: Vec::new(),
+            normal_on:    true,
+            ao_on:        true,
+            clip_enabled: false,
+            cap_fill:     true,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build
+// ---------------------------------------------------------------------------
 
 impl App {
     /// Build Showcase 7: Normal Maps + AO Maps demo.
     pub(crate) fn build_nm_scene(&mut self, renderer: &mut ViewportRenderer) {
-        self.nm_scene = Scene::new();
-        self.nm_mapped_nodes.clear();
+        self.nm_state.scene = Scene::new();
+        self.nm_state.mapped_nodes.clear();
 
         // Upload maps at 128x128 for better detail.
         let brick_nm_data = make_brick_normal_map(128, 128);
@@ -73,7 +107,7 @@ impl App {
         // --- Scene objects ---
 
         // Ground : tiled normal + AO.
-        let ground_node = self.nm_scene.add_named(
+        let ground_node = self.nm_state.scene.add_named(
             "Ground (Tile)",
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.075)),
@@ -85,11 +119,11 @@ impl App {
                 mat
             },
         );
-        self.nm_mapped_nodes
+        self.nm_state.mapped_nodes
             .push((ground_node, tile_nm_id, tile_ao_id));
 
         // Brick sphere : left.
-        let sphere_node = self.nm_scene.add_named(
+        let sphere_node = self.nm_state.scene.add_named(
             "Sphere (Brick)",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.0)),
@@ -101,11 +135,11 @@ impl App {
                 mat
             },
         );
-        self.nm_mapped_nodes
+        self.nm_state.mapped_nodes
             .push((sphere_node, brick_nm_id, brick_ao_id));
 
         // Tile cube : right.
-        let cube_node = self.nm_scene.add_named(
+        let cube_node = self.nm_state.scene.add_named(
             "Cube (Tile)",
             Some(cube_id),
             glam::Mat4::from_translation(glam::Vec3::new(2.5, 0.0, 0.8)),
@@ -117,11 +151,11 @@ impl App {
                 mat
             },
         );
-        self.nm_mapped_nodes
+        self.nm_state.mapped_nodes
             .push((cube_node, tile_nm_id, tile_ao_id));
 
         // Brick wall panel : behind.
-        let wall_node = self.nm_scene.add_named(
+        let wall_node = self.nm_state.scene.add_named(
             "Wall (Brick)",
             Some(wall_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, -2.0, 3.5)),
@@ -133,7 +167,7 @@ impl App {
                 mat
             },
         );
-        self.nm_mapped_nodes
+        self.nm_state.mapped_nodes
             .push((wall_node, brick_nm_id, brick_ao_id));
 
         // Plain sphere for comparison : separate mesh upload to avoid per-object
@@ -144,7 +178,7 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &plain_sphere)
             .expect("plain sphere mesh upload");
-        self.nm_scene.add_named(
+        self.nm_state.scene.add_named(
             "Sphere (No Maps)",
             Some(plain_sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(-3.0, 2.5, 1.0)),
@@ -155,9 +189,44 @@ impl App {
             },
         );
 
-        self.nm_normal_on = true;
-        self.nm_ao_on = true;
-        self.nm_clip_enabled = false;
-        self.nm_built = true;
+        self.nm_state.normal_on = true;
+        self.nm_state.ao_on = true;
+        self.nm_state.clip_enabled = false;
+        self.nm_state.built = true;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_normal_maps(app: &mut App, ui: &mut egui::Ui) {
+    if ui.checkbox(&mut app.nm_state.normal_on, "Normal map").changed() {
+        let on = app.nm_state.normal_on;
+        for &(node_id, nm_id, _) in &app.nm_state.mapped_nodes.clone() {
+            if let Some(node) = app.nm_state.scene.node(node_id) {
+                let mut mat = *node.material();
+                mat.normal_map_id = if on { Some(nm_id) } else { None };
+                app.nm_state.scene.set_material(node_id, mat);
+            }
+        }
+    }
+
+    if ui.checkbox(&mut app.nm_state.ao_on, "AO map").changed() {
+        let on = app.nm_state.ao_on;
+        for &(node_id, _, ao_id) in &app.nm_state.mapped_nodes.clone() {
+            if let Some(node) = app.nm_state.scene.node(node_id) {
+                let mut mat = *node.material();
+                mat.ao_map_id = if on { Some(ao_id) } else { None };
+                app.nm_state.scene.set_material(node_id, mat);
+            }
+        }
+    }
+
+    ui.checkbox(&mut app.nm_state.clip_enabled, "Clip plane");
+    if app.nm_state.clip_enabled {
+        ui.checkbox(&mut app.nm_state.cap_fill, "Cap fill");
+    }
+
+    ui.separator();
 }

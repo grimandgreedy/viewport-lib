@@ -1,19 +1,48 @@
-//! Showcase 8: Shadow Demo : build method.
+//! Showcase 8: Shadow Demo : build and controls.
 
 use crate::App;
 use crate::geometry::{make_box_with_uvs, make_uv_sphere};
-use viewport_lib::{Material, ViewportRenderer};
+use eframe::egui;
+use viewport_lib::{Material, ViewportRenderer, scene::Scene};
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct ShadowsState {
+    pub built:         bool,
+    pub scene:         Scene,
+    pub cascade_count: u32,
+    pub pcss_on:       bool,
+    pub contact_on:    bool,
+}
+
+impl Default for ShadowsState {
+    fn default() -> Self {
+        Self {
+            built:         false,
+            scene:         Scene::new(),
+            cascade_count: 4,
+            pcss_on:       false,
+            contact_on:    false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build
+// ---------------------------------------------------------------------------
 
 impl App {
     pub(crate) fn build_shadow_scene(&mut self, renderer: &mut ViewportRenderer) {
-        self.shd_scene = viewport_lib::scene::Scene::new();
+        self.shd_state.scene = Scene::new();
 
         let ground_mesh = make_box_with_uvs(20.0, 20.0, 0.2);
         let ground_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &ground_mesh)
             .expect("ground mesh upload");
-        self.shd_scene.add_named(
+        self.shd_state.scene.add_named(
             "Ground",
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.1)),
@@ -68,7 +97,7 @@ impl App {
             } else {
                 box_id
             };
-            self.shd_scene.add_named(
+            self.shd_state.scene.add_named(
                 name,
                 Some(mesh_id),
                 glam::Mat4::from_translation(*pos),
@@ -81,13 +110,51 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &pillar_mesh)
             .expect("pillar mesh upload");
-        self.shd_scene.add_named(
+        self.shd_state.scene.add_named(
             "Tall Pillar",
             Some(pillar_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, -6.0, 1.5)),
             Material::pbr([0.65, 0.65, 0.70], 0.0, 0.6),
         );
 
-        self.shd_built = true;
+        self.shd_state.built = true;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_shadows(app: &mut App, ui: &mut egui::Ui) {
+    ui.label(format!("Cascades: {}", app.shd_state.cascade_count));
+    ui.horizontal(|ui| {
+        if ui
+            .button("-")
+            .on_hover_text("Decrease cascade count")
+            .clicked()
+        {
+            app.shd_state.cascade_count = (app.shd_state.cascade_count - 1).max(1);
+        }
+        if ui
+            .button("+")
+            .on_hover_text("Increase cascade count")
+            .clicked()
+        {
+            app.shd_state.cascade_count = (app.shd_state.cascade_count + 1).min(4);
+        }
+    });
+
+    ui.separator();
+    ui.label("Filter:");
+    ui.horizontal(|ui| {
+        if ui.radio(!app.shd_state.pcss_on, "PCF").clicked() {
+            app.shd_state.pcss_on = false;
+        }
+        if ui.radio(app.shd_state.pcss_on, "PCSS").clicked() {
+            app.shd_state.pcss_on = true;
+        }
+    });
+
+    ui.separator();
+    ui.checkbox(&mut app.shd_state.contact_on, "Contact Shadows");
 }

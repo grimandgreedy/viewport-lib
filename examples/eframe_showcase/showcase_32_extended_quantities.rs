@@ -13,7 +13,7 @@
 //! is large near the equator and per-point transparency follows a sinusoidal longitude
 //! pattern, producing transparent stripes.
 
-use crate::App;
+use crate::{App, MeshId};
 use eframe::egui;
 use viewport_lib::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColormap, ColormapId, GlyphItem,
@@ -144,6 +144,42 @@ fn make_pc_data(n: usize) -> (Vec<[f32; 3]>, Vec<f32>, Vec<f32>, Vec<f32>) {
 }
 
 // ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct EqState {
+    pub built:           bool,
+    pub sub_mode:        EqSubMode,
+    pub edge_mesh_ids:   [MeshId; 3],
+    pub vm_mesh_id:      MeshId,
+    pub vm_data:         viewport_lib::VolumeMeshData,
+    pub pc_positions:    Vec<[f32; 3]>,
+    pub pc_scalars:      Vec<f32>,
+    pub pc_radii:        Vec<f32>,
+    pub pc_transp:       Vec<f32>,
+    pub pc_bg_mesh_id:   MeshId,
+    pub colormap:        BuiltinColormap,
+}
+
+impl Default for EqState {
+    fn default() -> Self {
+        Self {
+            built:         false,
+            sub_mode:      EqSubMode::EdgeCornerScalars,
+            edge_mesh_ids: [MeshId::from_index(0); 3],
+            vm_mesh_id:    MeshId::from_index(0),
+            vm_data:       viewport_lib::VolumeMeshData::default(),
+            pc_positions:  Vec::new(),
+            pc_scalars:    Vec::new(),
+            pc_radii:      Vec::new(),
+            pc_transp:     Vec::new(),
+            pc_bg_mesh_id: MeshId::from_index(0),
+            colormap:      BuiltinColormap::Viridis,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // App impl
 // ---------------------------------------------------------------------------
 
@@ -155,40 +191,46 @@ impl App {
 
         let mut em = viewport_lib::primitives::sphere(2.0, 48, 24);
         em.attributes.insert("edge_z".into(), AttributeData::Edge(ev));
-        self.eq_edge_mesh_ids[0] = renderer.resources_mut()
+        self.eq_state.edge_mesh_ids[0] = renderer.resources_mut()
             .upload_mesh_data(&self.device, &em).expect("edge mesh");
 
         let mut hm = viewport_lib::primitives::sphere(2.0, 48, 24);
         hm.attributes.insert("halfedge_z".into(), AttributeData::Halfedge(cv.clone()));
-        self.eq_edge_mesh_ids[1] = renderer.resources_mut()
+        self.eq_state.edge_mesh_ids[1] = renderer.resources_mut()
             .upload_mesh_data(&self.device, &hm).expect("halfedge mesh");
 
         let mut cm = viewport_lib::primitives::sphere(2.0, 48, 24);
         cm.attributes.insert("corner_z".into(), AttributeData::Corner(cv));
-        self.eq_edge_mesh_ids[2] = renderer.resources_mut()
+        self.eq_state.edge_mesh_ids[2] = renderer.resources_mut()
             .upload_mesh_data(&self.device, &cm).expect("corner mesh");
 
         let vm_data = make_hex_sphere_volume_mesh();
-        self.eq_vm_mesh_id = renderer.resources_mut()
+        self.eq_state.vm_mesh_id = renderer.resources_mut()
             .upload_volume_mesh_data(&self.device, &vm_data).expect("vm mesh");
-        self.eq_vm_data = vm_data;
+        self.eq_state.vm_data = vm_data;
 
         let (p, s, r, t) = make_pc_data(5_000);
-        self.eq_pc_positions = p;
-        self.eq_pc_scalars = s;
-        self.eq_pc_radii = r;
-        self.eq_pc_transp = t;
+        self.eq_state.pc_positions = p;
+        self.eq_state.pc_scalars = s;
+        self.eq_state.pc_radii = r;
+        self.eq_state.pc_transp = t;
 
         // Opaque background sphere slightly smaller than the point-cloud shell (r=2.0).
         // Placed in the middle so back-facing points are occluded.
         let bg_sphere = viewport_lib::primitives::sphere(1.75, 32, 16);
-        self.eq_pc_bg_mesh_id = renderer.resources_mut()
+        self.eq_state.pc_bg_mesh_id = renderer.resources_mut()
             .upload_mesh_data(&self.device, &bg_sphere).expect("pc bg sphere");
 
-        self.eq_built = true;
+        self.eq_state.built = true;
     }
 
-    pub(crate) fn controls_eq(&mut self, ui: &mut egui::Ui) {
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_eq(app: &mut App, ui: &mut egui::Ui) {
         ui.label("Sub-mode:");
         ui.horizontal_wrapped(|ui| {
             for (label, mode) in [
@@ -196,13 +238,13 @@ impl App {
                 ("Volume Vectors", EqSubMode::VolumeMeshVectors),
                 ("PC Radius+Alpha", EqSubMode::PointCloudRadiusTransparency),
             ] {
-                if ui.radio(self.eq_sub_mode == mode, label).clicked() {
-                    self.eq_sub_mode = mode;
+                if ui.radio(app.eq_state.sub_mode == mode, label).clicked() {
+                    app.eq_state.sub_mode = mode;
                 }
             }
         });
         ui.separator();
-        match self.eq_sub_mode {
+        match app.eq_state.sub_mode {
             EqSubMode::EdgeCornerScalars => {
                 ui.label("Left: Edge : smooth gradient (Z midpoints averaged to vertices)");
                 ui.label("Centre/Right: Halfedge & Corner : repeating 3-colour triangle pattern");
@@ -210,8 +252,8 @@ impl App {
                 ui.separator();
                 ui.label("Colormap:");
                 for cm in [BuiltinColormap::Viridis, BuiltinColormap::Plasma, BuiltinColormap::Coolwarm] {
-                    if ui.radio(self.eq_colormap == cm, format!("{cm:?}")).clicked() {
-                        self.eq_colormap = cm;
+                    if ui.radio(app.eq_state.colormap == cm, format!("{cm:?}")).clicked() {
+                        app.eq_state.colormap = cm;
                     }
                 }
             }
@@ -224,8 +266,9 @@ impl App {
                 ui.label("Transparency: sinusoidal longitude stripes.");
             }
         }
-    }
+}
 
+impl App {
     pub(crate) fn eq_scene_items(
         &self,
     ) -> (Vec<SceneRenderItem>, Vec<GlyphItem>, Vec<PointCloudItem>) {
@@ -233,15 +276,15 @@ impl App {
         let mut glyph_items: Vec<GlyphItem> = Vec::new();
         let mut pc_items: Vec<PointCloudItem> = Vec::new();
 
-        match self.eq_sub_mode {
+        match self.eq_state.sub_mode {
             EqSubMode::EdgeCornerScalars => {
-                let cm_id = Some(ColormapId(self.eq_colormap as usize));
+                let cm_id = Some(ColormapId(self.eq_state.colormap as usize));
                 let offsets = [-5.0f32, 0.0, 5.0];
                 let names = ["edge_z", "halfedge_z", "corner_z"];
                 let kinds = [AttributeKind::Edge, AttributeKind::Halfedge, AttributeKind::Corner];
                 for i in 0..3 {
                     let mut item = SceneRenderItem::default();
-                    item.mesh_id = self.eq_edge_mesh_ids[i];
+                    item.mesh_id = self.eq_state.edge_mesh_ids[i];
                     item.model = glam::Mat4::from_translation(glam::vec3(offsets[i], 0.0, 0.0))
                         .to_cols_array_2d();
                     item.active_attribute = Some(AttributeRef {
@@ -255,20 +298,20 @@ impl App {
             }
             EqSubMode::VolumeMeshVectors => {
                 let mut item = SceneRenderItem::default();
-                item.mesh_id = self.eq_vm_mesh_id;
+                item.mesh_id = self.eq_state.vm_mesh_id;
                 item.visible = true;
                 scene_items.push(item);
                 // Vertex vectors: blue (Viridis at 0.15).
-                let vv = vertex_radial_vectors(&self.eq_vm_data.positions);
-                let mut vg = volume_mesh_vertex_vectors_to_glyphs(&self.eq_vm_data.positions, &vv, 0.4);
+                let vv = vertex_radial_vectors(&self.eq_state.vm_data.positions);
+                let mut vg = volume_mesh_vertex_vectors_to_glyphs(&self.eq_state.vm_data.positions, &vv, 0.4);
                 vg.scalars = vec![0.15; vg.positions.len()];
                 vg.scalar_range = Some((0.0, 1.0));
                 vg.colormap_id = Some(ColormapId(BuiltinColormap::Viridis as usize));
                 glyph_items.push(vg);
                 // Cell vectors: orange (Plasma at 0.65).  Use Plasma to guarantee a
                 // warm hue clearly distinct from the blue vertex arrows.
-                let cv = cell_radial_vectors(&self.eq_vm_data);
-                let mut cg = volume_mesh_cell_vectors_to_glyphs(&self.eq_vm_data, &cv, 1.5);
+                let cv = cell_radial_vectors(&self.eq_state.vm_data);
+                let mut cg = volume_mesh_cell_vectors_to_glyphs(&self.eq_state.vm_data, &cv, 1.5);
                 cg.scalars = vec![0.65; cg.positions.len()];
                 cg.scalar_range = Some((0.0, 1.0));
                 cg.colormap_id = Some(ColormapId(BuiltinColormap::Plasma as usize));
@@ -277,15 +320,15 @@ impl App {
             EqSubMode::PointCloudRadiusTransparency => {
                 // Opaque sphere behind the point cloud to occlude back-facing points.
                 let mut bg = SceneRenderItem::default();
-                bg.mesh_id = self.eq_pc_bg_mesh_id;
+                bg.mesh_id = self.eq_state.pc_bg_mesh_id;
                 bg.visible = true;
                 scene_items.push(bg);
 
                 let mut pc = PointCloudItem::default();
-                pc.positions = self.eq_pc_positions.clone();
-                pc.scalars = self.eq_pc_scalars.clone();
-                pc.radii = self.eq_pc_radii.clone();
-                pc.transparencies = self.eq_pc_transp.clone();
+                pc.positions = self.eq_state.pc_positions.clone();
+                pc.scalars = self.eq_state.pc_scalars.clone();
+                pc.radii = self.eq_state.pc_radii.clone();
+                pc.transparencies = self.eq_state.pc_transp.clone();
                 pc_items.push(pc);
             }
         }

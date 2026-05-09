@@ -1,83 +1,4 @@
 //! Feature showcase for `viewport-lib` using `eframe` / `egui`.
-//!
-//! Showcase modes are selected from the top panel (buttons 1–9).
-//!
-//! ## Showcase 1 : Rendering Basics
-//!   - Directional / point light toggle
-//!   - Orthographic / perspective projection toggle
-//!   - Blinn-Phong lighting with specular highlights
-//!
-//! ## Showcase 2 : Scene Graph + Materials
-//!   - Cycle materials on selected nodes
-//!   - Toggle transparency / normal visualisation / hemisphere ambient
-//!   - Cycle background colour
-//!   - Add child node to selection (hierarchy demo)
-//!   - Remove selected node; toggle layer B visibility
-//!   - Click to select objects
-//!
-//! ## Showcase 3 : Performance at Scale
-//!   - 1 000 000 boxes (100×100×100 grid) sharing a single mesh : GPU instancing
-//!   - BVH-accelerated picking: click to select objects
-//!   - Live FrameStats in the side panel
-//!
-//! ## Showcase 4 : Professional Interaction
-//!   - Smooth camera with exponential damping (orbit/pan/zoom inertia)
-//!   - Animated fly-to view presets (Front/Back/Left/Right/Top/Bottom/Isometric)
-//!   - Zoom-to-fit selection (or entire scene)
-//!   - Translate / Rotate / Scale gizmo with axis constraints
-//!   - Gizmo space toggle (World / Local)
-//!   - Snap configurations (off -> 0.5 u translation -> 15° rotation)
-//!
-//! ## Showcase 5 : Advanced Rendering
-//!   - PBR vs Blinn-Phong comparison (left/right split)
-//!   - Section-view clip plane (clips x < 0)
-//!   - Selection outline (orange stencil ring)
-//!   - X-ray mode (selected objects visible through occluders)
-//!
-//! ## Showcase 6 : Post-Processing
-//!   - PBR scene with multiple material types
-//!   - Tone mapping selection (Reinhard / ACES / Khronos Neutral)
-//!   - Exposure, bloom, SSAO, FXAA toggles
-//!   (Note: full HDR pipeline requires direct surface access : not available in
-//!   the eframe callback model; settings are applied where supported by the LDR path.)
-//!
-//! ## Showcase 7 : Normal Maps + AO
-//!   - Sphere with procedural brick normal map + AO vs plain reference sphere
-//!   - Cube with tile normal map + AO
-//!   - Toggle normal map / AO on/off; clip plane
-//!
-//! ## Showcase 8 : Shadows
-//!   - Cascaded shadow maps with PCF / PCSS filtering
-//!   - Cascade count control (1–4)
-//!   - Contact shadows toggle
-//!
-//! ## Showcase 9 : Annotation Labels
-//!   - Native `LabelItem` rendering via `OverlayFrame`
-//!   - World-anchored labels with leader lines and background boxes
-//!   - Behind-camera labels are automatically culled by the renderer
-//!
-//! ## Showcase 10 : Camera Tools
-//!   - Seven `ViewPreset` named views (Front/Back/Left/Right/Top/Bottom/Isometric)
-//!   - Animated fly-to transitions with selectable easing curve
-//!   - Animated / instant toggle to compare smooth vs snapped transitions
-//!   - `ViewPreset::preferred_projection()` switches ortho/persp automatically
-//!   - Explicit projection radio + per-frame FOV slider (perspective only)
-//!
-//! ## Showcase 19 : Matcap Shading
-//!
-//! ## Showcase 20 : Per-Face Attributes
-//!   - Left:   Vertex attribute (Gouraud-interpolated scalar, colormapped)
-//!   - Centre: Face attribute (flat per-triangle scalar, same data : no interpolation)
-//!   - Right:  FaceColor attribute (direct per-face RGBA, no colormap)
-//!   - Opacity slider on the FaceColor object exercises the OIT blending path
-//!   - All eight built-in matcap presets (Clay/Wax/Candy/Flat blendable; Ceramic/Jade/Mud/Normal static)
-//!   - Base-color picker shows how blendable presets tint with `base_color`
-//!   - Custom procedural matcap uploaded via `upload_matcap()` with a user-controlled hue
-//!
-//! ## Common Camera Controls
-//!   - Left-drag or Middle-drag: Orbit
-//!   - Right-drag or Shift+Middle-drag: Pan
-//!   - Scroll wheel: Zoom
 
 use std::collections::HashMap;
 
@@ -85,27 +6,29 @@ use eframe::egui;
 use viewport_lib::{
     Action, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap,
     ButtonState, Camera,
-    CameraAnimator, CameraFrame, CameraTrack, ClipAxis, ClipObject, ColormapId,
-    Easing, FrameData, FrameStats,
-    Gizmo, GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode,
-    KeyCode, LightKind, LightSource, LightingSettings, ManipResult, ManipulationContext,
-    ManipulationController, MatcapId, Material, MeshData, MeshId, NodeId, OrbitCameraController,
-    PerformancePolicy, PickAccelerator, PickId, PointCloudItem, PostProcessSettings, ProjectedTetId,
-    Projection, RenderCamera, RuntimeMode, SceneFrame,
+    CameraAnimator, CameraFrame, ClipObject, ColormapId,
+    FrameData,
+    GizmoAxis, GizmoInfo, GizmoMode, GlyphItem, GroundPlane, GroundPlaneMode,
+    LightKind, LightSource, LightingSettings, ManipResult, ManipulationContext,
+    MeshData, MeshId, OrbitCameraController,
+    PickId, PointCloudItem, PostProcessSettings,
+    RenderCamera, RuntimeMode, SceneFrame,
     SceneRenderItem, ScrollUnits, Selection, ShadowFilter, SubSelectionRef,
-    TurntableController,
-    ViewPreset, ViewportContext,
-    ViewportEvent, ViewportRenderer, VolumeData, VolumeId,
+    ViewportContext,
+    ViewportEvent, ViewportRenderer,
     geometry::isoline::IsolineItem,
     gizmo::{self, compute_gizmo_scale},
-    scene::{LayerId, Scene},
+    scene::Scene,
 };
 
-use viewport_lib::{LoadingBarAnchor, LoadingBarItem, ScalarBarAnchor, ScalarBarOrientation};
+use viewport_lib::{LoadingBarAnchor, LoadingBarItem};
 
 mod geometry;
+mod gizmo_helpers;
 mod hdr_viewport_callback;
 mod multi_viewport_callback;
+mod shared;
+mod showcase_01_basic;
 mod showcase_02_scene_graph;
 mod showcase_03_performance;
 mod showcase_04_interaction;
@@ -212,21 +135,7 @@ fn main() -> eframe::Result {
             // needs the full post-processing pipeline via HdrViewportCallback).
             hdr_viewport_callback::init_hdr_blit_resources(wgpu_render_state, format);
 
-            // Pre-upload box meshes for Showcase 1 (4 independent slots).
-            let box_mesh = unit_box_mesh();
-            let mut mesh_indices = Vec::new();
-            {
-                let mut guard = wgpu_render_state.renderer.write();
-                if let Some(vr) = guard.callback_resources.get_mut::<ViewportRenderer>() {
-                    for _ in 0..4 {
-                        let idx = vr
-                            .resources_mut()
-                            .upload_mesh_data(&device, &box_mesh)
-                            .expect("showcase 1 box mesh");
-                        mesh_indices.push(idx);
-                    }
-                }
-            }
+            let box_mesh = viewport_lib::primitives::cube(1.0);
 
             Ok(Box::new(App {
                 device,
@@ -242,481 +151,78 @@ fn main() -> eframe::Result {
                 mode: ShowcaseMode::Basic,
                 mode_gen: 0,
                 show_keybinds: false,
-                mesh_indices,
-                use_point_light: false,
-                scene: Scene::new(),
-                selection: Selection::new(),
+                basic_state: showcase_01_basic::BasicState::default(),
+                sg_state: showcase_02_scene_graph::SgState::default(),
                 box_mesh_data: box_mesh,
-                material_cycle: 0,
-                bg_cycle: 0,
-                sg_outline_width: 4.0,
-
-                layer_b: None,
-                layer_b_visible: true,
-                scene_built: false,
-                perf_scene: Scene::new(),
-                perf_selection: Selection::new(),
-                pick_accelerator: None,
-                perf_mesh: None,
-                last_stats: FrameStats::default(),
-                perf_total_objects: 0,
-                perf_scene_items_cache: std::sync::Arc::from([]),
-                perf_scene_items_version: (u64::MAX, u64::MAX),
-                perf_built: false,
-                perf_gpu_culling: true,
-                perf_build_rx: None,
-                perf_build_progress: None,
-                interact_scene: Scene::new(),
-                interact_selection: Selection::new(),
-                interact_animator: CameraAnimator::with_default_damping(),
-                interact_gizmo: Gizmo::new(),
-                manip: ManipulationController::new(),
-                interact_transforms_snapshot: HashMap::new(),
-                interact_left_held: false,
-                interact_built: false,
-                interact_gizmo_center: None,
-                interact_gizmo_scale: 1.0,
-                interact_spline: viewport_lib::SplineWidget::new(vec![
-                    glam::Vec3::new(-2.0, 0.0, 1.5),
-                    glam::Vec3::new(-0.5, 1.5, 1.5),
-                    glam::Vec3::new(0.5, -1.5, 1.5),
-                    glam::Vec3::new(2.0, 0.0, 1.5),
-                ]),
-                last_cursor_viewport: glam::Vec2::ZERO,
-                adv_scene: Scene::new(),
-                adv_selection: Selection::new(),
-                adv_clip_enabled: false,
-                adv_outline_on: true,
-                adv_xray_on: false,
-                adv_built: false,
-                pp_scene: Scene::new(),
-                pp_built: false,
-                pp_shadow_pcss: true,
-                pp_point_light_on: true,
-                pp_dir_intensity: 0.6,
-                pp_dof_enabled: false,
-                pp_dof_focal_dist: 5.0,
-                pp_dof_focal_range: 1.0,
-                pp_dof_max_blur: 8.0,
-                nm_scene: Scene::new(),
-                nm_built: false,
-                nm_mapped_nodes: Vec::new(),
-                nm_normal_on: true,
-                nm_ao_on: true,
-                nm_clip_enabled: false,
-                nm_cap_fill: true,
-                shd_scene: Scene::new(),
-                shd_built: false,
-                shd_cascade_count: 4,
-                shd_pcss_on: false,
-                shd_contact_on: false,
-                ann_scene: Scene::new(),
-                ann_built: false,
-                ann_labels: Vec::new(),
-                cam_tools_scene: Scene::new(),
-                cam_tools_built: false,
+                perf_state: showcase_03_performance::PerfState::default(),
+                interact_state: showcase_04_interaction::InteractState::default(),
+                adv_state: showcase_05_advanced_rendering::AdvancedState::default(),
+                pp_state: showcase_06_post_process::PostProcessState::default(),
+                nm_state: showcase_07_normal_maps::NormalMapsState::default(),
+                shd_state: showcase_08_shadows::ShadowsState::default(),
+                ann_state: showcase_09_annotation::AnnotationState::default(),
+                ct_state: showcase_10_camera_tools::CameraToolsState::default(),
                 cam_animator: CameraAnimator::with_default_damping(),
-                lights_scene: Scene::new(),
-                lights_sources: vec![LightSource::default()],
-                lights_built: false,
-                lights_hemi_on: true,
-                lights_hemi_intensity: 1.0,
-                lights_sky_color: [1.0, 1.0, 1.0],
-                lights_ground_color: [1.0, 1.0, 1.0],
-                lights_edl_enabled: false,
-                lights_edl_radius: 1.0,
-                lights_edl_strength: 1.0,
-                lights_unlit_sphere: false,
-                scalar_scene: Scene::new(),
-                scalar_built: false,
-                scalar_selection: Selection::new(),
-                scalar_colormap: viewport_lib::BuiltinColormap::Viridis,
-                scalar_range_auto: true,
-                scalar_range: (0.0, 1.0),
-                scalar_nan_on: false,
-                scalar_bar_anchor: ScalarBarAnchor::BottomRight,
-                scalar_bar_orientation: ScalarBarOrientation::Vertical,
-                scalar_node_ids: [0; 3],
-                scalar_mesh_indices: [MeshId::from_index(0); 3],
-                scalar_pick_positions: [Vec::new(), Vec::new(), Vec::new()],
-                scalar_pick_indices: [Vec::new(), Vec::new(), Vec::new()],
-                scalar_values: [Vec::new(), Vec::new(), Vec::new()],
-                scalar_active_object: 0,
-                mv_scene: Scene::new(),
-                mv_selection: Selection::new(),
-                mv_cameras: [
-                    // TL: Perspective
-                    Camera {
-                        center: glam::Vec3::ZERO,
-                        distance: 12.0,
-                        orientation: glam::Quat::from_rotation_z(0.6)
-                            * glam::Quat::from_rotation_x(1.1),
-                        ..Camera::default()
-                    },
-                    // TR: Top (orthographic, looking -Z)
-                    Camera {
-                        center: glam::Vec3::ZERO,
-                        distance: 10.0,
-                        orientation: glam::Quat::IDENTITY,
-                        projection: viewport_lib::Projection::Orthographic,
-                        ..Camera::default()
-                    },
-                    // BL: Front (orthographic, looking -Y)
-                    Camera {
-                        center: glam::Vec3::ZERO,
-                        distance: 10.0,
-                        orientation: glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-                        projection: viewport_lib::Projection::Orthographic,
-                        ..Camera::default()
-                    },
-                    // BR: Right (orthographic, looking -X)
-                    Camera {
-                        center: glam::Vec3::ZERO,
-                        distance: 10.0,
-                        orientation: glam::Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2)
-                            * glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-                        projection: viewport_lib::Projection::Orthographic,
-                        ..Camera::default()
-                    },
-                ],
-                mv_controllers: [
-                    OrbitCameraController::viewport_all(),
-                    OrbitCameraController::viewport_all(),
-                    OrbitCameraController::viewport_all(),
-                    OrbitCameraController::viewport_all(),
-                ],
-                mv_viewports: None,
-                mv_built: false,
-                mv_gizmo: Gizmo::new(),
-                mv_hovered_quad: 0,
-                mv_cursor_local: glam::Vec2::ZERO,
-                mv_gizmo_center: None,
-                mv_gizmo_scales: [1.0; 4],
-                mv_manip: ManipulationController::new(),
-                mv_transforms_snapshot: HashMap::new(),
-                mv_left_held: false,
-                iso_scene: Scene::new(),
-                iso_mesh_index: MeshId::from_index(0),
-                iso_positions: Vec::new(),
-                iso_indices: Vec::new(),
-                iso_scalars: Vec::new(),
-                iso_grid_resolution: 128,
-                iso_contour_count: 8,
-                iso_line_color: [0.0, 0.0, 0.0, 1.0],
-                iso_line_width: 1.5,
-                iso_show_surface_color: true,
-                iso_depth_bias: 0.005,
-                iso_built: false,
-                pc_built: false,
-                pc_sub_mode: PcSubMode::PointCloud,
-                pc_point_size: 4.0,
-                pc_colormap: BuiltinColormap::Viridis,
-                pc_scalar_range_manual: false,
-                pc_scalar_range: (2.6, 3.4),
-                pc_glyph_type: GlyphType::Arrow,
-                pc_glyph_scale: 1.0,
-                pc_glyph_magnitude_scale: true,
-                pc_cloud_positions: Vec::new(),
-                pc_cloud_scalars: Vec::new(),
-                pc_field_positions: Vec::new(),
-                pc_field_vectors: Vec::new(),
-                pc_gaussian_radius_min: 2.0,
-                pc_gaussian_radius_max: 12.0,
-                pc_ssao_enabled: false,
-                stream_built: false,
-                stream_use_tubes: false,
-                stream_render_mode: StreamRenderMode::Polylines,
-                stream_tube_radius: 0.06,
-                stream_tube_sides: 8,
-                stream_ribbon_width: 0.15,
-                stream_line_width: 4.0,
-                stream_color_by_speed: true,
-                stream_colormap: BuiltinColormap::Viridis,
-                stream_flat_color: [0.4, 0.7, 1.0, 1.0],
-                stream_seed_count: 32,
-                stream_step_size: 0.08,
-                stream_paths: Vec::new(),
-                stream_scalars: Vec::new(),
-                vol_built: false,
-                vol_volume_id: None,
-                vol_iso_mesh_index: None,
-                vol_field: VolumeData {
-                    data: Vec::new(),
-                    dims: [1, 1, 1],
-                    origin: [0.0; 3],
-                    spacing: [1.0; 3],
-                },
-                vol_mode: showcase_17_volume::VolumeMode::VolumeOnly,
-                vol_isovalue: 0.35,
-                vol_color_lut: BuiltinColormap::Viridis,
-                vol_opacity_scale: 1.0,
-                vol_threshold: (0.05, 1.0),
-                vol_step_scale: 1.0,
-                vol_shading: true,
-                vol_nan_on: false,
-                vol_iso_material: {
-                    let mut m = Material::from_color([0.6, 0.8, 1.0]);
-                    m.roughness = 0.4;
-                    m
-                },
-                vol_show_slice: false,
-                vol_slice_axis: 2,
-                vol_slice_offset: 0.5,
-                vol_slice_lut: BuiltinColormap::Viridis,
-                vol_slice_opacity: 1.0,
-                clipvol_scene: Scene::new(),
-                clipvol_built: false,
-                clipvol_sub_mode: showcase_18_clip_volumes::ClipVolSubMode::BoxClip,
-                clipvol_box_center: [0.0; 3],
-                clipvol_box_half_extents: [2.5, 2.5, 2.5],
-                clipvol_box_yaw: 0.0,
-                clipvol_sphere_center: [0.0; 3],
-                clipvol_sphere_radius: 2.8,
-                clipvol_plane: {
-                    let mut co = ClipObject::plane([0.0, 0.0, 1.0], 0.0);
-                    co.color = Some([0.45, 0.82, 1.0, 0.5]);
-                    co
-                },
-                clipvol_plane_axis: ClipAxis::Z,
-                clipvol_gizmo: Gizmo::new(),
-                clipvol_gizmo_center: None,
-                clipvol_gizmo_scale: 1.0,
-                clipvol_gizmo_drag_active: false,
-                clipvol_show_overlay: true,
-                matcap_scene: Scene::new(),
-                matcap_built: false,
+                lights_state: showcase_11_lights::LightsState::default(),
+                scalar_state: showcase_12_scalar_fields::ScalarFieldsState::default(),
+                mv_state: showcase_13_multi_viewport::MvState::default(),
+                iso_state: showcase_14_isolines::IsolinesState::default(),
+                pc_state: showcase_15_point_clouds::PointCloudsState::default(),
+                stream_state: showcase_16_streamlines::StreamlinesState::default(),
+                vol_state: showcase_17_volume::VolumeState::default(),
+                clipvol_state: showcase_18_clip_volumes::ClipVolState::default(),
+                matcap_state: showcase_19_matcap::MatcapState::default(),
 
-                matcap_builtin_node_ids: [0u64; 8],
-                matcap_custom_node: None,
-                matcap_custom_id: None,
-                matcap_blendable_color: [0.7, 0.7, 0.7],
-                matcap_custom_hue: 200.0,
+                face_state: showcase_20_face_attributes::FaceAttrState::default(),
 
-                face_scene: Scene::new(),
-                face_built: false,
+                texture_state: showcase_21_textures::TextureState::default(),
 
-                texture_scene: Scene::new(),
-                texture_built: false,
-                texture_plane_node: 0,
-                face_mesh_indices: [MeshId::from_index(0); 3],
-                face_node_ids: [0; 3],
-                face_colormap: BuiltinColormap::Viridis,
-                face_opacity: 1.0,
+                param_vis_state: showcase_22_parameterization::ParamVisState::default(),
 
-                param_vis_scene: Scene::new(),
-                param_vis_built: false,
-                param_vis_node_ids: [0u64; 16],
-                param_vis_scale: 8.0,
-                param_vis_on: true,
+                gp_state: showcase_23_ground_plane::GroundPlaneState::default(),
 
-                gp_scene: Scene::new(),
-                gp_built: false,
-                gp_mode: showcase_23_ground_plane::GpMode::Tile,
-                gp_height: 0.0,
-                gp_color: [0.3, 0.3, 0.3, 1.0],
-                gp_tile_size: 1.0,
-                gp_shadow_color: [0.0, 0.0, 0.0, 1.0],
-                gp_shadow_opacity: 0.5,
+                sa_state: showcase_24_backface_policy::SaState::default(),
 
-                sa_built: false,
-                sa_scene: Scene::new(),
-                sa_clip_on: true,
+                sv_state: showcase_25_surface_vectors::SvState::default(),
 
-                sv_built: false,
-                sv_mode: showcase_25_surface_vectors::SvMode::VertexIntrinsic,
-                sv_scale: 0.15,
-                sv_density: 1.0,
-                sv_glyph_density: -1.0,
-                sv_mesh_index: [MeshId::from_index(0); 3],
-                sv_positions: [Vec::new(), Vec::new(), Vec::new()],
-                sv_normals: [Vec::new(), Vec::new(), Vec::new()],
-                sv_tangents: [None, None, None],
-                sv_indices: [Vec::new(), Vec::new(), Vec::new()],
-                sv_vertex_vecs: Vec::new(),
-                sv_face_vecs: Vec::new(),
-                sv_edge_vals: Vec::new(),
+                vm_state: showcase_26_volume_mesh::VmState::default(),
 
-                vm_built: false,
-                vm_mode: showcase_26_volume_mesh::VmMode::Hex,
-                vm_tet_index: MeshId::from_index(0),
-                vm_hex_index: MeshId::from_index(0),
-                vm_tet_small_index: MeshId::from_index(0),
-                vm_tet_box_index: MeshId::from_index(0),
-                vm_pyramid_index: MeshId::from_index(0),
-                vm_wedge_index: MeshId::from_index(0),
-                vm_colormap: BuiltinColormap::Viridis,
-                vm_field: showcase_26_volume_mesh::VmField::Latitude,
-                vm_wireframe: false,
-                vm_clip_on: true,
-                vm_clip_axis: showcase_26_volume_mesh::VmClipAxis::Y,
-                vm_clip_offset: 0.0,
-                vm_clip_angle: 0.0,
-                vm_clipped_index: None,
-                vm_pt_hex_id:      None,
-                vm_pt_tet_id:      None,
-                vm_pt_tet_small_id: None,
-                vm_pt_tet_box_id:  None,
-                vm_pt_pyramid_id:  None,
-                vm_pt_wedge_id:    None,
-                vm_transparent: false,
-                vm_density: 0.5,
-                vm_pt_field:    showcase_26_volume_mesh::VmField::Latitude,
-                vm_pt_colormap: BuiltinColormap::Viridis,
+                cnq_state: showcase_28_curve_network_quantities::CnqState::default(),
 
-                cnq_mode: showcase_28_curve_network_quantities::CnqMode::EdgeScalar,
-                cnq_line_width: 4.0,
+                dc_state: showcase_29_depth_composite_images::DcState::default(),
 
-                dc_built: false,
-                dc_mesh_id: MeshId::from_index(0),
-                dc_mode: showcase_29_depth_composite_images::DcMode::DepthComposite,
-                dc_pixels: Vec::new(),
-                dc_depths: Vec::new(),
+                is_state: showcase_30_implicit_surface::IsState::default(),
 
-                is_built: false,
-                is_mesh_id: MeshId::from_index(0),
-                is_mc_mesh_id: None,
-                is_depth_composite: true,
-                is_resolution_div: 2,
-                is_sdf_variant: showcase_30_implicit_surface::IsSdfVariant::GpuImplicit,
-                is_gmc_volume_id: None,
-                is_gmc_isovalue: 0.0,
+                eq_state: showcase_32_extended_quantities::EqState::default(),
 
-                eq_built: false,
-                eq_sub_mode: showcase_32_extended_quantities::EqSubMode::EdgeCornerScalars,
-                eq_edge_mesh_ids: [MeshId::from_index(0); 3],
-                eq_vm_mesh_id: MeshId::from_index(0),
-                eq_vm_data: viewport_lib::VolumeMeshData::default(),
-                eq_pc_positions: Vec::new(),
-                eq_pc_scalars: Vec::new(),
-                eq_pc_radii: Vec::new(),
-                eq_pc_transp: Vec::new(),
-                eq_pc_bg_mesh_id: MeshId::from_index(0),
-                eq_colormap: BuiltinColormap::Viridis,
+                svg_state: showcase_31_sparse_volume_grid::SvgState::default(),
 
-                svg_built: false,
-                svg_mesh_id: MeshId::from_index(0),
-                svg_shell_id: MeshId::from_index(0),
-                svg_terrain_id: MeshId::from_index(0),
-                svg_colormap: BuiltinColormap::Viridis,
-                svg_field: showcase_31_sparse_volume_grid::SvgField::CellHeight,
+                aux_state: showcase_27_camera_framing::AuxState::default(),
 
-                aux_built: false,
-                aux_scene: Scene::new(),
-                aux_frustums: Vec::new(),
-                aux_img_alpha: 1.0,
-                aux_img_scale: 1.0,
-                aux_active_frustum: None,
-                aux_sub_mode: AuxSubMode::Framing,
-                aux_turntable: TurntableController::new(0.5, 1.1),
-                aux_turntable_running: false,
-                aux_track: CameraTrack::new(),
-                aux_track_t: 0.0,
-                aux_track_playing: false,
+                pl_state: showcase_33_picking_levels::PlState::default(),
+                lbl_state: showcase_34_labels::LblState::default(),
 
-                pl_scene: viewport_lib::scene::Scene::new(),
-                pl_selection: Selection::new(),
-                pl_sub_selection: viewport_lib::SubSelection::new(),
-                pl_built: false,
-                pl_level: showcase_33_picking_levels::PlPickLevel::default(),
-                pl_cube_mesh_id: MeshId::from_index(0),
-                pl_hemi_mesh_id: MeshId::from_index(0),
-                pl_mesh_lookup: std::collections::HashMap::new(),
-                pl_wireframe: true,
-                pl_shift_held: false,
-                pl_drag_start: None,
-                pl_node_names: Vec::new(),
-                pl_last_hit: None,
-                pl_hit_marker: None,
-                pl_pc_positions: Vec::new(),
-                pl_volume_id: None,
-                pl_volume_data: None,
-                lbl_scene: viewport_lib::scene::Scene::new(),
-                lbl_built: false,
-                lbl_labels: Vec::new(),
-                lbl_show_part_labels: true,
-                lbl_show_hud_labels: true,
-                lbl_show_feature_demos: true,
+                ovl_state: showcase_35_overlay::OvlState::default(),
 
-                ovl_colormap: viewport_lib::BuiltinColormap::Viridis,
-                ovl_bar_orientation: ScalarBarOrientation::Vertical,
-                ovl_bar_anchor: ScalarBarAnchor::BottomRight,
-                ovl_tick_count: 5,
-                ovl_bar_size: 200.0,
-                ovl_bg_color: [0.0, 0.0, 0.0, 0.63],
-                ovl_show_ruler: true,
-                ovl_show_labels: true,
-                ovl_cloud_positions: Vec::new(),
-                ovl_cloud_scalars: Vec::new(),
-                ovl_cloud_built: false,
+                pb_state: showcase_36_playback_runtime::PbState::default(),
 
-                pb_built: false,
-                pb_mode: RuntimeMode::Interactive,
-                pb_policy: PerformancePolicy::default(),
-                pb_manual_render_scale: 1.0,
-                pb_grid_resolution: 50,
-                pb_last_grid_resolution: 0,
-                pb_grid_layers: 1,
-                pb_last_grid_layers: 0,
-                pb_instance_count: 1000,
-                pb_time: 0.0,
-                pb_mesh_id: None,
-                pb_static_mesh_id: None,
-                pb_scene: Scene::new(),
-                pb_last_stats: FrameStats::default(),
-                pb_stats_history: std::collections::VecDeque::new(),
-                pb_upload_ms: 0.0,
-
-                pw_built: false,
-                pw_scene: Scene::new(),
                 pw_state: showcase_37_probe_widgets::ProbeWidgetState::new(),
 
-                lic_built: false,
-                lic_scene: Scene::new(),
                 lic_state: showcase_38_surface_lic::LicState::default(),
 
-                tg_built: false,
                 tg_state: showcase_39_tensor_glyphs::TensorGlyphState::default(),
-                tg_mesh_id: None,
 
-                warp_built: false,
-                warp_mesh_ids: [MeshId::from_index(0); 3],
-                warp_scale: 0.5,
+                warp_state: showcase_40_vertex_warp::VertexWarpState::default(),
             }))
         }),
     )
 }
 
+use showcase_27_camera_framing::AuxSubMode;
+
 // ---------------------------------------------------------------------------
 // Showcase mode
 // ---------------------------------------------------------------------------
-
-/// Sub-mode for Showcase 15 (Point Clouds & Glyphs).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PcSubMode {
-    PointCloud,
-    VectorField,
-    GaussianSplat,
-}
-
-/// Render mode for Showcase 16 (streamlines).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum StreamRenderMode {
-    Polylines,
-    Streamtube,
-    GeneralTube,
-    Ribbon,
-}
-
-/// Sub-mode for Showcase 27 (camera framing).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AuxSubMode {
-    /// Camera framing and HUD (original showcase content).
-    Framing,
-    /// Continuous turntable orbit.
-    Turntable,
-    /// Keyframe track playback.
-    Track,
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ShowcaseMode {
@@ -821,6 +327,8 @@ pub(crate) struct App {
 
     camera: Camera,
     controller: OrbitCameraController,
+    /// Smooth camera animator used by CameraTools and Auxiliary showcases.
+    cam_animator: CameraAnimator,
     mode: ShowcaseMode,
     /// Increments on every mode switch; used as scene generation for showcases
     /// that build items manually (no Scene struct) so the renderer's instance
@@ -829,512 +337,126 @@ pub(crate) struct App {
     show_keybinds: bool,
 
     // --- Showcase 1 ---
-    mesh_indices: Vec<MeshId>,
-    use_point_light: bool,
+    pub(crate) basic_state: showcase_01_basic::BasicState,
 
     // --- Showcase 2 ---
-    scene: Scene,
-    selection: Selection,
+    pub(crate) sg_state: showcase_02_scene_graph::SgState,
     /// Shared box MeshData for on-demand uploads in later showcases.
     pub(crate) box_mesh_data: MeshData,
-    material_cycle: usize,
-    bg_cycle: usize,
-    sg_outline_width: f32,
-    pub(crate) layer_b: Option<LayerId>,
-    layer_b_visible: bool,
-    pub(crate) scene_built: bool,
 
     // --- Showcase 3 ---
-    pub(crate) perf_scene: Scene,
-    pub(crate) perf_selection: Selection,
-    pub(crate) pick_accelerator: Option<PickAccelerator>,
-    pub(crate) perf_mesh: Option<MeshId>,
-    last_stats: FrameStats,
-    pub(crate) perf_total_objects: u32,
-    pub(crate) perf_scene_items_cache: std::sync::Arc<[SceneRenderItem]>,
-    pub(crate) perf_scene_items_version: (u64, u64),
-    pub(crate) perf_built: bool,
-    pub(crate) perf_gpu_culling: bool,
-    /// Receives the completed (Scene, PickAccelerator) from the background build thread.
-    perf_build_rx: Option<std::sync::mpsc::Receiver<(Scene, viewport_lib::PickAccelerator)>>,
-    /// Shared progress counter written by the background build thread (objects placed so far).
-    perf_build_progress: Option<std::sync::Arc<std::sync::atomic::AtomicU32>>,
+    pub(crate) perf_state: showcase_03_performance::PerfState,
 
     // --- Showcase 4 ---
-    pub(crate) interact_scene: Scene,
-    pub(crate) interact_selection: Selection,
-    interact_animator: CameraAnimator,
-    interact_gizmo: Gizmo,
-    manip: ManipulationController,
-    /// Per-node local-transform snapshots for Cancel/ConstraintChanged restore.
-    interact_transforms_snapshot: HashMap<NodeId, glam::Mat4>,
-    /// True while the left mouse button is held (raw, before egui drag threshold).
-    interact_left_held: bool,
-    pub(crate) interact_built: bool,
-    interact_gizmo_center: Option<glam::Vec3>,
-    interact_gizmo_scale: f32,
-    /// Spline widget shown in the Interaction showcase (Phase 8.3).
-    pub(crate) interact_spline: viewport_lib::SplineWidget,
-    last_cursor_viewport: glam::Vec2,
+    pub(crate) interact_state: showcase_04_interaction::InteractState,
 
     // --- Showcase 5 ---
-    pub(crate) adv_scene: Scene,
-    pub(crate) adv_selection: Selection,
-    adv_clip_enabled: bool,
-    adv_outline_on: bool,
-    adv_xray_on: bool,
-    pub(crate) adv_built: bool,
+    pub(crate) adv_state: showcase_05_advanced_rendering::AdvancedState,
 
     // --- Showcase 6 ---
-    pub(crate) pp_scene: Scene,
-    pub(crate) pp_built: bool,
-    pp_shadow_pcss: bool,
-    pp_point_light_on: bool,
-    pp_dir_intensity: f32,
-    pp_dof_enabled: bool,
-    pp_dof_focal_dist: f32,
-    pp_dof_focal_range: f32,
-    pp_dof_max_blur: f32,
+    pub(crate) pp_state: showcase_06_post_process::PostProcessState,
 
     // --- Showcase 7 ---
-    pub(crate) nm_scene: Scene,
-    pub(crate) nm_built: bool,
-    /// (node_id, normal_map_id, ao_map_id) for every mapped object.
-    pub(crate) nm_mapped_nodes: Vec<(NodeId, u64, u64)>,
-    pub(crate) nm_normal_on: bool,
-    pub(crate) nm_ao_on: bool,
-    pub(crate) nm_clip_enabled: bool,
-    pub(crate) nm_cap_fill: bool,
+    pub(crate) nm_state: showcase_07_normal_maps::NormalMapsState,
 
     // --- Showcase 8 ---
-    pub(crate) shd_scene: Scene,
-    pub(crate) shd_built: bool,
-    pub(crate) shd_cascade_count: u32,
-    shd_pcss_on: bool,
-    shd_contact_on: bool,
+    pub(crate) shd_state: showcase_08_shadows::ShadowsState,
 
     // --- Showcase 9 ---
-    pub(crate) ann_scene: Scene,
-    pub(crate) ann_built: bool,
-    pub(crate) ann_labels: Vec<viewport_lib::LabelItem>,
+    pub(crate) ann_state: showcase_09_annotation::AnnotationState,
 
     // --- Showcase 10 ---
-    pub(crate) cam_tools_scene: Scene,
-    pub(crate) cam_tools_built: bool,
-    cam_animator: CameraAnimator,
+    pub(crate) ct_state: showcase_10_camera_tools::CameraToolsState,
 
     // --- Showcase 11 ---
-    pub(crate) lights_scene: Scene,
-    pub(crate) lights_sources: Vec<LightSource>,
-    pub(crate) lights_built: bool,
-    lights_hemi_on: bool,
-    lights_hemi_intensity: f32,
-    lights_sky_color: [f32; 3],
-    lights_ground_color: [f32; 3],
-    lights_edl_enabled: bool,
-    lights_edl_radius: f32,
-    lights_edl_strength: f32,
-    lights_unlit_sphere: bool,
+    pub(crate) lights_state: showcase_11_lights::LightsState,
 
     // --- Showcase 12 ---
-    pub(crate) scalar_scene: Scene,
-    pub(crate) scalar_built: bool,
-    scalar_selection: Selection,
-    /// ColormapId selected by the user; resolved at build time via builtin_colormap_id.
-    scalar_colormap: viewport_lib::BuiltinColormap,
-    scalar_range_auto: bool,
-    scalar_range: (f32, f32),
-    scalar_nan_on: bool,
-    scalar_bar_anchor: ScalarBarAnchor,
-    scalar_bar_orientation: ScalarBarOrientation,
-    /// Stable node IDs for the scalar-field objects (sphere, wave grid, box).
-    pub(crate) scalar_node_ids: [NodeId; 3],
-    /// Mesh indices for the three scalar-field objects (sphere, wave grid, box).
-    pub(crate) scalar_mesh_indices: [MeshId; 3],
-    /// CPU-side triangle positions for picking each scalar-field object.
-    pub(crate) scalar_pick_positions: [Vec<[f32; 3]>; 3],
-    /// CPU-side triangle indices for picking each scalar-field object.
-    pub(crate) scalar_pick_indices: [Vec<u32>; 3],
-    /// CPU-side scalar values for each mesh (for range computation).
-    pub(crate) scalar_values: [Vec<f32>; 3],
-    scalar_active_object: usize,
+    pub(crate) scalar_state: showcase_12_scalar_fields::ScalarFieldsState,
 
     // --- Showcase 13 ---
-    pub(crate) mv_scene: Scene,
-    pub(crate) mv_selection: Selection,
-    pub(crate) mv_cameras: [Camera; 4],
-    mv_controllers: [OrbitCameraController; 4],
-    pub(crate) mv_viewports: Option<[viewport_lib::ViewportId; 4]>,
-    pub(crate) mv_built: bool,
-    mv_gizmo: Gizmo,
-    mv_hovered_quad: usize,
-    mv_cursor_local: glam::Vec2,
-    pub(crate) mv_gizmo_center: Option<glam::Vec3>,
-    mv_gizmo_scales: [f32; 4],
-    mv_manip: ManipulationController,
-    mv_transforms_snapshot: HashMap<NodeId, glam::Mat4>,
-    mv_left_held: bool,
+    pub(crate) mv_state: showcase_13_multi_viewport::MvState,
 
     // --- Showcase 14 ---
-    pub(crate) iso_scene: Scene,
-    pub(crate) iso_mesh_index: MeshId,
-    /// CPU-side positions for IsolineItem re-submission.
-    pub(crate) iso_positions: Vec<[f32; 3]>,
-    /// CPU-side indices for IsolineItem re-submission.
-    pub(crate) iso_indices: Vec<u32>,
-    /// CPU-side scalar values for IsolineItem re-submission.
-    pub(crate) iso_scalars: Vec<f32>,
-    iso_grid_resolution: u32,
-    iso_contour_count: usize,
-    iso_line_color: [f32; 4],
-    iso_line_width: f32,
-    iso_show_surface_color: bool,
-    iso_depth_bias: f32,
-    pub(crate) iso_built: bool,
+    pub(crate) iso_state: showcase_14_isolines::IsolinesState,
 
     // --- Showcase 15 ---
-    pub(crate) pc_built: bool,
-    pc_sub_mode: PcSubMode,
-    pc_point_size: f32,
-    pc_colormap: BuiltinColormap,
-    pc_scalar_range_manual: bool,
-    pc_scalar_range: (f32, f32),
-    pc_glyph_type: GlyphType,
-    pc_glyph_scale: f32,
-    pc_glyph_magnitude_scale: bool,
-    /// CPU-side point cloud positions (generated once, submitted every frame).
-    pub(crate) pc_cloud_positions: Vec<[f32; 3]>,
-    /// CPU-side point cloud scalar values (one per point).
-    pub(crate) pc_cloud_scalars: Vec<f32>,
-    /// CPU-side vector field base positions.
-    pub(crate) pc_field_positions: Vec<[f32; 3]>,
-    /// CPU-side vector field direction+magnitude vectors.
-    pub(crate) pc_field_vectors: Vec<[f32; 3]>,
-    /// Minimum pixel radius for Gaussian splat mode (mapped from scalar_range min).
-    pc_gaussian_radius_min: f32,
-    /// Maximum pixel radius for Gaussian splat mode (mapped from scalar_range max).
-    pc_gaussian_radius_max: f32,
-    /// Enable SSAO for point cloud showcase (requires HDR render path).
-    pc_ssao_enabled: bool,
+    pub(crate) pc_state: showcase_15_point_clouds::PointCloudsState,
 
     // --- Showcase 16 ---
-    pub(crate) stream_built: bool,
-    stream_use_tubes: bool,
-    stream_render_mode: StreamRenderMode,
-    stream_tube_radius: f32,
-    stream_line_width: f32,
-    stream_color_by_speed: bool,
-    stream_colormap: BuiltinColormap,
-    /// Flat RGBA color used when `stream_color_by_speed` is false, and as tube color.
-    stream_flat_color: [f32; 4],
-    stream_seed_count: usize,
-    stream_step_size: f32,
-    /// Cross-section resolution for GeneralTube mode (number of sides).
-    stream_tube_sides: u32,
-    /// Half-width of the ribbon in Ribbon mode.
-    stream_ribbon_width: f32,
-    /// CPU-side streamline paths (one `Vec<[f32;3]>` per seed).
-    pub(crate) stream_paths: Vec<Vec<[f32; 3]>>,
-    /// Per-vertex speed values parallel to `stream_paths`.
-    pub(crate) stream_scalars: Vec<Vec<f32>>,
+    pub(crate) stream_state: showcase_16_streamlines::StreamlinesState,
 
     // --- Showcase 17 ---
-    pub(crate) vol_built: bool,
-    pub(crate) vol_volume_id: Option<VolumeId>,
-    pub(crate) vol_iso_mesh_index: Option<MeshId>,
-    /// CPU-side field kept for re-extraction on isovalue change.
-    pub(crate) vol_field: VolumeData,
-    vol_mode: showcase_17_volume::VolumeMode,
-    vol_isovalue: f32,
-    vol_color_lut: BuiltinColormap,
-    vol_opacity_scale: f32,
-    vol_threshold: (f32, f32),
-    vol_step_scale: f32,
-    vol_shading: bool,
-    vol_nan_on: bool,
-    vol_iso_material: Material,
-    /// Whether to overlay an image slice on the volume scene.
-    vol_show_slice: bool,
-    /// Axis for the image slice (0=X, 1=Y, 2=Z).
-    vol_slice_axis: u32,
-    /// Normalized [0,1] position of the slice along the axis.
-    vol_slice_offset: f32,
-    /// Colormap for the image slice LUT.
-    vol_slice_lut: BuiltinColormap,
-    /// Opacity of the image slice quad.
-    vol_slice_opacity: f32,
+    pub(crate) vol_state: showcase_17_volume::VolumeState,
 
     // --- Showcase 18 ---
-    pub(crate) clipvol_scene: Scene,
-    pub(crate) clipvol_built: bool,
-    clipvol_sub_mode: showcase_18_clip_volumes::ClipVolSubMode,
-    clipvol_box_center: [f32; 3],
-    clipvol_box_half_extents: [f32; 3],
-    clipvol_box_yaw: f32,
-    clipvol_sphere_center: [f32; 3],
-    clipvol_sphere_radius: f32,
-    /// The clip object used in interactive-plane sub-mode.
-    pub(crate) clipvol_plane: ClipObject,
-    clipvol_plane_axis: ClipAxis,
-    /// Gizmo state for clip volume manipulation.
-    clipvol_gizmo: Gizmo,
-    /// Cached gizmo center for hit-testing (updated end of each frame).
-    clipvol_gizmo_center: Option<glam::Vec3>,
-    /// Gizmo screen-space scale (updated end of each frame).
-    clipvol_gizmo_scale: f32,
-    /// True while a gizmo drag is in progress (suppresses orbit).
-    clipvol_gizmo_drag_active: bool,
-    /// Whether to show the clip object overlay (wireframe / fill quad).
-    clipvol_show_overlay: bool,
+    pub(crate) clipvol_state: showcase_18_clip_volumes::ClipVolState,
 
     // --- Showcase 19 ---
-    pub(crate) matcap_scene: Scene,
-    pub(crate) matcap_built: bool,
+    pub(crate) matcap_state: showcase_19_matcap::MatcapState,
 
     // --- Showcase 20 ---
-    pub(crate) face_scene: Scene,
-    pub(crate) face_built: bool,
+    pub(crate) face_state: showcase_20_face_attributes::FaceAttrState,
 
     // --- Showcase 21 ---
-    pub(crate) texture_scene: Scene,
-    pub(crate) texture_built: bool,
-    pub(crate) texture_plane_node: NodeId,
+    pub(crate) texture_state: showcase_21_textures::TextureState,
 
     // --- Showcase 22 ---
-    pub(crate) param_vis_scene: Scene,
-    pub(crate) param_vis_built: bool,
-    /// Node IDs for the 16 param-vis objects (4 modes × 4 mesh types: sphere/cube/torus/plane).
-    pub(crate) param_vis_node_ids: [NodeId; 16],
-    param_vis_scale: f32,
-    param_vis_on: bool,
+    pub(crate) param_vis_state: showcase_22_parameterization::ParamVisState,
     // --- Showcase 23 ---
-    pub(crate) gp_scene: Scene,
-    pub(crate) gp_built: bool,
-    gp_mode: showcase_23_ground_plane::GpMode,
-    gp_height: f32,
-    gp_color: [f32; 4],
-    gp_tile_size: f32,
-    gp_shadow_color: [f32; 4],
-    gp_shadow_opacity: f32,
+    pub(crate) gp_state: showcase_23_ground_plane::GroundPlaneState,
 
     // --- Showcase 24 ---
-    pub(crate) sa_built: bool,
-    pub(crate) sa_scene: Scene,
-    sa_clip_on: bool,
+    pub(crate) sa_state: showcase_24_backface_policy::SaState,
 
     // --- Showcase 25 ---
-    pub(crate) sv_built: bool,
-    sv_mode: showcase_25_surface_vectors::SvMode,
-    sv_scale: f32,
-    sv_density: f32,
-    sv_glyph_density: f32,
-    /// Mesh upload indices: [sphere, torus, plane].
-    pub(crate) sv_mesh_index: [MeshId; 3],
-    /// CPU-side positions for each mesh.
-    pub(crate) sv_positions: [Vec<[f32; 3]>; 3],
-    /// CPU-side normals for each mesh.
-    pub(crate) sv_normals: [Vec<[f32; 3]>; 3],
-    /// CPU-side explicit tangents (sphere only; others None).
-    pub(crate) sv_tangents: [Option<Vec<[f32; 4]>>; 3],
-    /// CPU-side indices for each mesh.
-    pub(crate) sv_indices: [Vec<u32>; 3],
-    /// Per-vertex intrinsic 2D vectors (sphere / vertex mode).
-    pub(crate) sv_vertex_vecs: Vec<[f32; 2]>,
-    /// Per-face intrinsic 2D vectors (torus / face mode).
-    pub(crate) sv_face_vecs: Vec<[f32; 2]>,
-    /// Per-directed-edge one-form values (plane / edge mode).
-    pub(crate) sv_edge_vals: Vec<f32>,
+    pub(crate) sv_state: showcase_25_surface_vectors::SvState,
 
     // --- Showcase 26 ---
-    pub(crate) vm_built: bool,
-    vm_mode: showcase_26_volume_mesh::VmMode,
-    vm_tet_index: MeshId,
-    vm_hex_index: MeshId,
-    vm_tet_small_index: MeshId,
-    vm_tet_box_index: MeshId,
-    vm_pyramid_index: MeshId,
-    vm_wedge_index: MeshId,
-    vm_colormap: BuiltinColormap,
-    vm_field: showcase_26_volume_mesh::VmField,
-    vm_wireframe: bool,
-    vm_clip_on: bool,
-    vm_clip_axis: showcase_26_volume_mesh::VmClipAxis,
-    vm_clip_offset: f32,
-    /// Tilt angle in degrees: rotates the clip plane normal away from the selected axis.
-    vm_clip_angle: f32,
-    /// GPU mesh slot for the CPU-clipped volume mesh; allocated lazily on first clip.
-    vm_clipped_index: Option<MeshId>,
-    /// Projected-tet handles per cell type (uploaded at startup with raw positions).
-    vm_pt_hex_id:      Option<ProjectedTetId>,
-    vm_pt_tet_id:      Option<ProjectedTetId>,
-    vm_pt_tet_small_id: Option<ProjectedTetId>,
-    vm_pt_tet_box_id:  Option<ProjectedTetId>,
-    vm_pt_pyramid_id:  Option<ProjectedTetId>,
-    vm_pt_wedge_id:    Option<ProjectedTetId>,
-    /// Whether to render in transparent (projected-tet) mode.
-    vm_transparent: bool,
-    /// Beer-Lambert extinction coefficient for transparent mode.
-    vm_density: f32,
-    /// Scalar field last used for the PT upload; triggers a rebuild when it differs from vm_field.
-    vm_pt_field: showcase_26_volume_mesh::VmField,
-    /// Colormap last used for the PT upload; triggers a rebuild when it differs from vm_colormap.
-    vm_pt_colormap: BuiltinColormap,
+    pub(crate) vm_state: showcase_26_volume_mesh::VmState,
 
     // --- Showcase 28 ---
-    cnq_mode: showcase_28_curve_network_quantities::CnqMode,
-    cnq_line_width: f32,
+    pub(crate) cnq_state: showcase_28_curve_network_quantities::CnqState,
 
     // --- Showcase 29 ---
-    dc_built: bool,
-    dc_mesh_id: MeshId,
-    dc_mode: showcase_29_depth_composite_images::DcMode,
-    dc_pixels: Vec<[u8; 4]>,
-    dc_depths: Vec<f32>,
+    dc_state: showcase_29_depth_composite_images::DcState,
 
     // --- Showcase 30 ---
-    is_built: bool,
-    is_mesh_id: MeshId,
-    is_mc_mesh_id: Option<MeshId>,
-    is_depth_composite: bool,
-    is_resolution_div: u32,
-    is_sdf_variant: showcase_30_implicit_surface::IsSdfVariant,
-    is_gmc_volume_id: Option<viewport_lib::VolumeGpuId>,
-    is_gmc_isovalue: f32,
+    is_state: showcase_30_implicit_surface::IsState,
 
     // --- Showcase 31 ---
-    pub(crate) svg_built: bool,
-    pub(crate) svg_mesh_id: MeshId,
-    pub(crate) svg_shell_id: MeshId,
-    pub(crate) svg_terrain_id: MeshId,
-    pub(crate) svg_colormap: BuiltinColormap,
-    pub(crate) svg_field: showcase_31_sparse_volume_grid::SvgField,
+    pub(crate) svg_state: showcase_31_sparse_volume_grid::SvgState,
 
     // --- Showcase 27 ---
-    pub(crate) aux_built: bool,
-    pub(crate) aux_scene: viewport_lib::scene::Scene,
-    pub(crate) aux_frustums: Vec<viewport_lib::CameraFrustumItem>,
-    aux_img_alpha: f32,
-    aux_img_scale: f32,
-    pub(crate) aux_active_frustum: Option<usize>,
-    /// Active sub-mode for showcase 27.
-    pub(crate) aux_sub_mode: AuxSubMode,
-    /// Turntable controller (active when aux_sub_mode == Turntable).
-    pub(crate) aux_turntable: TurntableController,
-    /// Whether the turntable is currently spinning.
-    aux_turntable_running: bool,
-    /// Camera keyframe track for playback demo.
-    pub(crate) aux_track: CameraTrack,
-    /// Current playback time within the track.
-    aux_track_t: f64,
-    /// Whether track playback is running.
-    aux_track_playing: bool,
+    pub(crate) aux_state: showcase_27_camera_framing::AuxState,
 
-    /// Mesh upload indices for the three face-attribute spheres.
-    pub(crate) face_mesh_indices: [MeshId; 3],
-    /// Node IDs for the three face-attribute spheres.
-    pub(crate) face_node_ids: [NodeId; 3],
-    face_colormap: BuiltinColormap,
-    /// Opacity for the FaceColor object (tests OIT path when < 1.0).
-    face_opacity: f32,
-    /// NodeId for each of the 8 built-in preset spheres (matches BUILTIN_PRESETS order).
-    pub(crate) matcap_builtin_node_ids: [NodeId; 8],
-    pub(crate) matcap_custom_node: Option<NodeId>,
-    pub(crate) matcap_custom_id: Option<MatcapId>,
-    /// Base color applied to blendable matcap spheres.
-    pub(crate) matcap_blendable_color: [f32; 3],
-    /// Hue (0..360) for the custom matcap.
-    pub(crate) matcap_custom_hue: f32,
 
     // --- Showcase 32 ---
-    pub(crate) eq_built: bool,
-    pub(crate) eq_sub_mode: showcase_32_extended_quantities::EqSubMode,
-    pub(crate) eq_edge_mesh_ids: [MeshId; 3],
-    pub(crate) eq_vm_mesh_id: MeshId,
-    pub(crate) eq_vm_data: viewport_lib::VolumeMeshData,
-    pub(crate) eq_pc_positions: Vec<[f32; 3]>,
-    pub(crate) eq_pc_scalars: Vec<f32>,
-    pub(crate) eq_pc_radii: Vec<f32>,
-    pub(crate) eq_pc_transp: Vec<f32>,
-    pub(crate) eq_pc_bg_mesh_id: MeshId,
-    pub(crate) eq_colormap: BuiltinColormap,
+    pub(crate) eq_state: showcase_32_extended_quantities::EqState,
 
     // --- Showcase 33 ---
-    pub(crate) pl_scene: viewport_lib::scene::Scene,
-    pub(crate) pl_selection: Selection,
-    pub(crate) pl_sub_selection: viewport_lib::SubSelection,
-    pub(crate) pl_built: bool,
-    pub(crate) pl_level: showcase_33_picking_levels::PlPickLevel,
-    pub(crate) pl_cube_mesh_id: MeshId,
-    pub(crate) pl_hemi_mesh_id: MeshId,
-    pub(crate) pl_mesh_lookup: std::collections::HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
-    pub(crate) pl_wireframe: bool,
-    pub(crate) pl_shift_held: bool,
-    pub(crate) pl_drag_start: Option<glam::Vec2>,
-    pub(crate) pl_node_names: Vec<(NodeId, String)>,
-    pub(crate) pl_last_hit: Option<showcase_33_picking_levels::PlHitInfo>,
-    pub(crate) pl_hit_marker: Option<glam::Vec3>,
-    pub(crate) pl_pc_positions: Vec<[f32; 3]>,
-    pub(crate) pl_volume_id: Option<viewport_lib::VolumeId>,
-    pub(crate) pl_volume_data: Option<viewport_lib::VolumeData>,
+    pub(crate) pl_state: showcase_33_picking_levels::PlState,
 
     // --- Showcase 34 ---
-    pub(crate) lbl_scene: viewport_lib::scene::Scene,
-    pub(crate) lbl_built: bool,
-    pub(crate) lbl_labels: Vec<viewport_lib::LabelItem>,
-    pub(crate) lbl_show_part_labels: bool,
-    pub(crate) lbl_show_hud_labels: bool,
-    pub(crate) lbl_show_feature_demos: bool,
+    pub(crate) lbl_state: showcase_34_labels::LblState,
 
     // --- Showcase 35 ---
-    pub(crate) ovl_colormap: viewport_lib::BuiltinColormap,
-    pub(crate) ovl_bar_orientation: viewport_lib::ScalarBarOrientation,
-    pub(crate) ovl_bar_anchor: viewport_lib::ScalarBarAnchor,
-    pub(crate) ovl_tick_count: u32,
-    pub(crate) ovl_bar_size: f32,
-    pub(crate) ovl_bg_color: [f32; 4],
-    pub(crate) ovl_show_ruler: bool,
-    pub(crate) ovl_show_labels: bool,
-    pub(crate) ovl_cloud_positions: Vec<[f32; 3]>,
-    pub(crate) ovl_cloud_scalars: Vec<f32>,
-    pub(crate) ovl_cloud_built: bool,
+    pub(crate) ovl_state: showcase_35_overlay::OvlState,
 
     // --- Showcase 36 ---
-    pub(crate) pb_built: bool,
-    pub(crate) pb_mode: RuntimeMode,
-    pub(crate) pb_policy: PerformancePolicy,
-    pub(crate) pb_manual_render_scale: f32,
-    pub(crate) pb_grid_resolution: usize,
-    pub(crate) pb_last_grid_resolution: usize,
-    pub(crate) pb_grid_layers: usize,
-    pub(crate) pb_last_grid_layers: usize,
-    pub(crate) pb_instance_count: usize,
-    pub(crate) pb_time: f32,
-    pub(crate) pb_mesh_id: Option<MeshId>,
-    pub(crate) pb_static_mesh_id: Option<MeshId>,
-    pub(crate) pb_scene: Scene,
-    pub(crate) pb_last_stats: FrameStats,
-    pub(crate) pb_stats_history: std::collections::VecDeque<f32>,
-    pub(crate) pb_upload_ms: f32,
+    pub(crate) pb_state: showcase_36_playback_runtime::PbState,
 
     // --- Showcase 37 ---
-    pub(crate) pw_built: bool,
-    pub(crate) pw_scene: Scene,
     pub(crate) pw_state: showcase_37_probe_widgets::ProbeWidgetState,
 
     // --- Showcase 38 ---
-    pub(crate) lic_built: bool,
-    pub(crate) lic_scene: Scene,
     pub(crate) lic_state: showcase_38_surface_lic::LicState,
 
     // --- Showcase 39 ---
-    pub(crate) tg_built: bool,
     pub(crate) tg_state: showcase_39_tensor_glyphs::TensorGlyphState,
-    pub(crate) tg_mesh_id: Option<MeshId>,
 
     // --- Showcase 40 ---
-    pub(crate) warp_built: bool,
-    pub(crate) warp_mesh_ids: [MeshId; 3],
-    pub(crate) warp_scale: f32,
+    pub(crate) warp_state: showcase_40_vertex_warp::VertexWarpState,
 }
 
 // ---------------------------------------------------------------------------
@@ -1390,7 +512,7 @@ impl eframe::App for App {
             self.cycle_selection_tab();
         }
         if escape_pressed && self.mode == ShowcaseMode::Auxiliary {
-            self.aux_active_frustum = None;
+            self.aux_state.active_frustum = None;
         }
 
         // ---- Keybinds window ----
@@ -1438,22 +560,22 @@ impl eframe::App for App {
 
         // Poll for a completed async perf scene build.
         let completed = self
-            .perf_build_rx
+            .perf_state.build_rx
             .as_ref()
-            .and_then(|rx| rx.try_recv().ok());
+            .and_then(|rx: &std::sync::mpsc::Receiver<_>| rx.try_recv().ok());
         if let Some((scene, pick_acc)) = completed {
-            self.perf_scene = scene;
-            self.pick_accelerator = Some(pick_acc);
+            self.perf_state.scene = scene;
+            self.perf_state.pick_accelerator = Some(pick_acc);
             // Pre-warm items cache so the first rendered frame has no stall.
-            self.perf_scene_items_cache = std::sync::Arc::from(
-                self.perf_scene.collect_render_items(&self.perf_selection),
+            self.perf_state.scene_items_cache = std::sync::Arc::from(
+                self.perf_state.scene.collect_render_items(&self.perf_state.selection),
             );
-            self.perf_scene_items_version =
-                (self.perf_scene.version(), self.perf_selection.version());
-            self.perf_total_objects = 1_000_000;
-            self.perf_build_rx = None;
-            self.perf_build_progress = None;
-            self.perf_built = true;
+            self.perf_state.scene_items_version =
+                (self.perf_state.scene.version(), self.perf_state.selection.version());
+            self.perf_state.total_objects = 1_000_000;
+            self.perf_state.build_rx = None;
+            self.perf_state.build_progress = None;
+            self.perf_state.built = true;
         }
 
         // Lazy scene builds for the active mode.
@@ -1524,7 +646,7 @@ impl eframe::App for App {
 
         // ---- Central panel: 3-D viewport ----
         let panel_bg = if self.mode == ShowcaseMode::SceneGraph {
-            background_color(self.bg_cycle)
+            showcase_02_scene_graph::background_color(self.sg_state.bg_cycle)
         } else {
             BG_COLOR
         };
@@ -1554,7 +676,7 @@ impl eframe::App for App {
             });
 
             // Translate egui events -> ViewportEvents.
-            let manip_active_for_text = self.manip.is_active();
+            let manip_active_for_text = self.interact_state.manip.is_active();
             ui.input(|i| {
                 let mods = viewport_lib::Modifiers {
                     alt: i.modifiers.alt,
@@ -1566,7 +688,7 @@ impl eframe::App for App {
 
                 if let Some(pos) = i.pointer.interact_pos() {
                     let local = glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top());
-                    self.last_cursor_viewport = local;
+                    self.interact_state.last_cursor_viewport = local;
                     self.controller
                         .push_event(ViewportEvent::PointerMoved { position: local });
                 }
@@ -1579,7 +701,7 @@ impl eframe::App for App {
                             repeat,
                             ..
                         } if self.mode == ShowcaseMode::Interaction => {
-                            if let Some(kc) = egui_key_to_keycode(*key) {
+                            if let Some(kc) = shared::egui_key_to_keycode(*key) {
                                 self.controller.push_event(ViewportEvent::Key {
                                     key: kc,
                                     state: if *pressed {
@@ -1619,9 +741,9 @@ impl eframe::App for App {
                             // Track raw left-button held state for ManipulationContext.
                             if *button == egui::PointerButton::Primary {
                                 if *pressed {
-                                    self.interact_left_held = true;
+                                    self.interact_state.left_held = true;
                                 } else {
-                                    self.interact_left_held = false;
+                                    self.interact_state.left_held = false;
                                 }
                             }
 
@@ -1632,7 +754,7 @@ impl eframe::App for App {
                             {
                                 let local =
                                     glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top());
-                                if let Some(center) = self.clipvol_gizmo_center {
+                                if let Some(center) = self.clipvol_state.gizmo_center {
                                     let w = rect.width();
                                     let h = rect.height();
                                     let vp_inv = self.camera.view_proj_matrix().inverse();
@@ -1643,16 +765,16 @@ impl eframe::App for App {
                                             vp_inv,
                                         );
                                     let orient = self.clipvol_gizmo_orient();
-                                    let hit = self.clipvol_gizmo.hit_test_oriented(
+                                    let hit = self.clipvol_state.gizmo.hit_test_oriented(
                                         ray_origin,
                                         ray_dir,
                                         center,
-                                        self.clipvol_gizmo_scale,
+                                        self.clipvol_state.gizmo_scale,
                                         orient,
                                     );
                                     if hit != GizmoAxis::None {
-                                        self.clipvol_gizmo.active_axis = hit;
-                                        self.clipvol_gizmo_drag_active = true;
+                                        self.clipvol_state.gizmo.active_axis = hit;
+                                        self.clipvol_state.gizmo_drag_active = true;
                                     }
                                 }
                             }
@@ -1661,10 +783,10 @@ impl eframe::App for App {
                             if self.mode == ShowcaseMode::ClipVolumes
                                 && *button == egui::PointerButton::Primary
                                 && !pressed
-                                && self.clipvol_gizmo_drag_active
+                                && self.clipvol_state.gizmo_drag_active
                             {
-                                self.clipvol_gizmo_drag_active = false;
-                                self.clipvol_gizmo.active_axis = GizmoAxis::None;
+                                self.clipvol_state.gizmo_drag_active = false;
+                                self.clipvol_state.gizmo.active_axis = GizmoAxis::None;
                             }
 
                             // PickLevels: track drag start for rubber-band box select.
@@ -1676,7 +798,7 @@ impl eframe::App for App {
                                     pos.x - rect.left(),
                                     pos.y - rect.top(),
                                 );
-                                self.pl_drag_start = Some(local);
+                                self.pl_state.drag_start = Some(local);
                             }
 
                             let state = if *pressed {
@@ -1716,12 +838,12 @@ impl eframe::App for App {
 
             // ----- PickLevels: update shift state and fire box-select on drag end -----
             if self.mode == ShowcaseMode::PickLevels {
-                self.pl_shift_held = ctx.input(|i| i.modifiers.shift);
+                self.pl_state.shift_held = ctx.input(|i| i.modifiers.shift);
                 if response.drag_stopped() {
-                    if let Some(drag_start) = self.pl_drag_start.take() {
-                        let drag_end = self.last_cursor_viewport;
+                    if let Some(drag_start) = self.pl_state.drag_start.take() {
+                        let drag_end = self.interact_state.last_cursor_viewport;
                         if (drag_end - drag_start).length() > 4.0 {
-                            let shift = self.pl_shift_held;
+                            let shift = self.pl_state.shift_held;
                             self.handle_pl_box_select(
                                 drag_start, drag_end,
                                 rect.width(), rect.height(),
@@ -1732,13 +854,13 @@ impl eframe::App for App {
                 }
                 // Clear drag start if the button was released below egui's drag threshold.
                 if !ctx.input(|i| i.pointer.primary_down()) {
-                    self.pl_drag_start = None;
+                    self.pl_state.drag_start = None;
                 }
             }
 
             // ----- Clip-vol gizmo drag (Showcase 18) -----
             if self.mode == ShowcaseMode::ClipVolumes
-                && self.clipvol_gizmo_drag_active
+                && self.clipvol_state.gizmo_drag_active
                 && response.dragged()
             {
                 let drag_delta = response.drag_delta();
@@ -1752,22 +874,22 @@ impl eframe::App for App {
             // ----- Advance camera animator (Showcases 4 and 10) -----
             if self.mode == ShowcaseMode::Interaction {
                 let dt = ctx.input(|i| i.stable_dt.min(1.0 / 30.0));
-                self.interact_animator.update(dt, &mut self.camera);
+                self.interact_state.animator.update(dt, &mut self.camera);
             }
             if self.mode == ShowcaseMode::CameraTools || self.mode == ShowcaseMode::Auxiliary {
                 let dt = ctx.input(|i| i.stable_dt.min(1.0 / 30.0));
                 self.cam_animator.update(dt, &mut self.camera);
                 if self.mode == ShowcaseMode::Auxiliary {
-                    match self.aux_sub_mode {
-                        AuxSubMode::Turntable if self.aux_turntable_running => {
-                            self.aux_turntable.update(dt, &mut self.camera);
+                    match self.aux_state.sub_mode {
+                        AuxSubMode::Turntable if self.aux_state.turntable_running => {
+                            self.aux_state.turntable.update(dt, &mut self.camera);
                         }
-                        AuxSubMode::Track if self.aux_track_playing => {
-                            self.aux_track_t += dt as f64;
-                            if self.aux_track_t > self.aux_track.duration() {
-                                self.aux_track_t = 0.0;
+                        AuxSubMode::Track if self.aux_state.track_playing => {
+                            self.aux_state.track_t += dt as f64;
+                            if self.aux_state.track_t > self.aux_state.track.duration() {
+                                self.aux_state.track_t = 0.0;
                             }
-                            let target = viewport_lib::interpolate_camera(&self.aux_track, self.aux_track_t);
+                            let target = viewport_lib::interpolate_camera(&self.aux_state.track, self.aux_state.track_t);
                             self.camera.center = target.center;
                             self.camera.set_distance(target.distance);
                             self.camera.set_orientation(target.orientation);
@@ -1782,17 +904,17 @@ impl eframe::App for App {
             // For Interaction mode, orbit resolution is integrated here so that
             // the same ActionFrame drives both camera and gizmo.
             if self.mode == ShowcaseMode::Interaction {
-                if self.interact_built {
+                if self.interact_state.built {
                     let w = rect.width();
                     let h = rect.height();
                     let viewport_size = glam::Vec2::new(w, h);
                     let view_proj = self.camera.proj_matrix() * self.camera.view_matrix();
 
                     // Per-frame gizmo hover when no session is active.
-                    if !self.manip.is_active() {
-                        if let Some(center) = self.interact_gizmo_center {
+                    if !self.interact_state.manip.is_active() {
+                        if let Some(center) = self.interact_state.gizmo_center {
                             let ray_origin = self.camera.eye_position();
-                            let cursor = self.last_cursor_viewport;
+                            let cursor = self.interact_state.last_cursor_viewport;
                             let ndc_x = (cursor.x / w.max(1.0)) * 2.0 - 1.0;
                             let ndc_y = 1.0 - (cursor.y / h.max(1.0)) * 2.0;
                             let inv_vp = view_proj.inverse();
@@ -1800,35 +922,35 @@ impl eframe::App for App {
                                 inv_vp.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
                             let ray_dir =
                                 (far - ray_origin).normalize_or_zero();
-                            let orient = gizmo_orientation(
-                                &self.interact_gizmo,
-                                &self.interact_selection,
-                                &self.interact_scene,
+                            let orient = gizmo_helpers::gizmo_orientation(
+                                &self.interact_state.gizmo,
+                                &self.interact_state.selection,
+                                &self.interact_state.scene,
                             );
-                            self.interact_gizmo.hovered_axis =
-                                self.interact_gizmo.hit_test_oriented(
+                            self.interact_state.gizmo.hovered_axis =
+                                self.interact_state.gizmo.hit_test_oriented(
                                     ray_origin,
                                     ray_dir,
                                     center,
-                                    self.interact_gizmo_scale,
+                                    self.interact_state.gizmo_scale,
                                     orient,
                                 );
                         } else {
-                            self.interact_gizmo.hovered_axis = GizmoAxis::None;
+                            self.interact_state.gizmo.hovered_axis = GizmoAxis::None;
                         }
                     }
 
                     // Build GizmoInfo.
-                    let orient = gizmo_orientation(
-                        &self.interact_gizmo,
-                        &self.interact_selection,
-                        &self.interact_scene,
+                    let orient = gizmo_helpers::gizmo_orientation(
+                        &self.interact_state.gizmo,
+                        &self.interact_state.selection,
+                        &self.interact_state.scene,
                     );
-                    let gizmo_info = self.interact_gizmo_center.map(|center| GizmoInfo {
+                    let gizmo_info = self.interact_state.gizmo_center.map(|center| GizmoInfo {
                         center,
-                        scale: self.interact_gizmo_scale,
+                        scale: self.interact_state.gizmo_scale,
                         orientation: orient,
-                        mode: self.interact_gizmo.mode,
+                        mode: self.interact_state.gizmo.mode,
                     });
 
                     // Build ManipulationContext.
@@ -1837,27 +959,27 @@ impl eframe::App for App {
                     let manip_ctx = ManipulationContext {
                         camera: self.camera.clone(),
                         viewport_size,
-                        cursor_viewport: Some(self.last_cursor_viewport),
+                        cursor_viewport: Some(self.interact_state.last_cursor_viewport),
                         pointer_delta,
-                        selection_center: self.interact_gizmo_center,
+                        selection_center: self.interact_state.gizmo_center,
                         gizmo: gizmo_info,
                         drag_started: response.drag_started(),
-                        dragging: self.interact_left_held,
+                        dragging: self.interact_state.left_held,
                         clicked: response.clicked(),
                     };
 
                     // Orbit: resolve (no camera movement) while manipulation is active.
-                    let action_frame = if self.manip.is_active() {
+                    let action_frame = if self.interact_state.manip.is_active() {
                         self.controller.resolve()
                     } else {
                         self.controller.apply_to_camera(&mut self.camera)
                     };
 
                     // Tab cycles gizmo mode when no session is active.
-                    if !self.manip.is_active()
+                    if !self.interact_state.manip.is_active()
                         && action_frame.is_active(Action::CycleGizmoMode)
                     {
-                        self.interact_gizmo.mode = match self.interact_gizmo.mode {
+                        self.interact_state.gizmo.mode = match self.interact_state.gizmo.mode {
                             GizmoMode::Translate => GizmoMode::Rotate,
                             GizmoMode::Rotate => GizmoMode::Scale,
                             GizmoMode::Scale => GizmoMode::Translate,
@@ -1865,7 +987,7 @@ impl eframe::App for App {
                         };
                     }
 
-                    match self.manip.update(&action_frame, manip_ctx) {
+                    match self.interact_state.manip.update(&action_frame, manip_ctx) {
                         ManipResult::Update(delta) => {
                             self.apply_interact_delta(delta);
                         }
@@ -1876,7 +998,7 @@ impl eframe::App for App {
                             self.save_interact_snapshots();
                         }
                         ManipResult::None => {
-                            if !self.manip.is_active() {
+                            if !self.interact_state.manip.is_active() {
                                 // Keep snapshots current so G/R/S always starts clean.
                                 self.save_interact_snapshots();
                             }
@@ -1884,8 +1006,8 @@ impl eframe::App for App {
                     }
 
                     // Click-to-select: only when no session is active.
-                    if response.clicked() && !self.manip.is_active() {
-                        let pick_pos = self.last_cursor_viewport;
+                    if response.clicked() && !self.interact_state.manip.is_active() {
+                        let pick_pos = self.interact_state.last_cursor_viewport;
                         self.handle_click_select(pick_pos, w, h);
                     }
                 } else {
@@ -1894,8 +1016,8 @@ impl eframe::App for App {
             } else {
                 // ----- Apply / resolve orbit controller (non-Interaction modes) -----
                 let suppress_orbit =
-                    (self.mode == ShowcaseMode::ClipVolumes && self.clipvol_gizmo_drag_active)
-                    || (self.mode == ShowcaseMode::PickLevels && self.pl_drag_start.is_some())
+                    (self.mode == ShowcaseMode::ClipVolumes && self.clipvol_state.gizmo_drag_active)
+                    || (self.mode == ShowcaseMode::PickLevels && self.pl_state.drag_start.is_some())
                     || (self.mode == ShowcaseMode::ProbeWidgets && self.pw_state.suppress_orbit);
                 if suppress_orbit {
                     self.controller.resolve();
@@ -1907,27 +1029,27 @@ impl eframe::App for App {
             self.camera.set_aspect_ratio(rect.width(), rect.height());
 
             // ----- Spline widget update (Showcase 4) -----
-            if self.mode == ShowcaseMode::Interaction && self.interact_built {
+            if self.mode == ShowcaseMode::Interaction && self.interact_state.built {
                 let render_cam = CameraFrame::from_camera(&self.camera, [rect.width(), rect.height()]).render_camera;
                 let widget_ctx = viewport_lib::WidgetContext {
                     camera: render_cam,
                     viewport_size: glam::Vec2::new(rect.width(), rect.height()),
-                    cursor_viewport: self.last_cursor_viewport,
+                    cursor_viewport: self.interact_state.last_cursor_viewport,
                     drag_started: response.drag_started(),
                     dragging: response.dragged(),
                     released: response.drag_stopped(),
                     double_clicked: false,
                 };
-                self.interact_spline.update(&widget_ctx);
+                self.interact_state.spline.update(&widget_ctx);
             }
 
             // ----- Probe widgets update (Showcase 37) -----
-            if self.mode == ShowcaseMode::ProbeWidgets && self.pw_built {
+            if self.mode == ShowcaseMode::ProbeWidgets && self.pw_state.built {
                 let render_cam = CameraFrame::from_camera(&self.camera, [rect.width(), rect.height()]).render_camera;
                 let widget_ctx = viewport_lib::WidgetContext {
                     camera: render_cam,
                     viewport_size: glam::Vec2::new(rect.width(), rect.height()),
-                    cursor_viewport: self.last_cursor_viewport,
+                    cursor_viewport: self.interact_state.last_cursor_viewport,
                     drag_started: response.drag_started(),
                     dragging: response.dragged(),
                     released: response.drag_stopped(),
@@ -1938,7 +1060,7 @@ impl eframe::App for App {
 
             // ----- Click-to-select (non-Interaction modes) -----
             if response.clicked() && self.mode != ShowcaseMode::Interaction {
-                let pick_pos = self.last_cursor_viewport;
+                let pick_pos = self.interact_state.last_cursor_viewport;
                 self.handle_click_select(pick_pos, rect.width(), rect.height());
             }
 
@@ -1947,15 +1069,15 @@ impl eframe::App for App {
 
             // ----- Update gizmo_center cache for next frame's hit-testing -----
             if self.mode == ShowcaseMode::Interaction {
-                self.interact_gizmo_center =
-                    gizmo::gizmo_center_from_selection(&self.interact_selection, |id| {
-                        self.interact_scene.node(id).map(|n| {
+                self.interact_state.gizmo_center =
+                    gizmo::gizmo_center_from_selection(&self.interact_state.selection, |id| {
+                        self.interact_state.scene.node(id).map(|n| {
                             let t = n.world_transform();
                             glam::Vec3::new(t.w_axis.x, t.w_axis.y, t.w_axis.z)
                         })
                     });
-                if let Some(center) = self.interact_gizmo_center {
-                    self.interact_gizmo_scale = compute_gizmo_scale(
+                if let Some(center) = self.interact_state.gizmo_center {
+                    self.interact_state.gizmo_scale = compute_gizmo_scale(
                         center,
                         self.camera.eye_position(),
                         self.camera.fov_y,
@@ -1963,10 +1085,10 @@ impl eframe::App for App {
                     );
                 }
             }
-            if self.mode == ShowcaseMode::ClipVolumes && self.clipvol_built {
-                self.clipvol_gizmo_center = self.clip_gizmo_center();
-                if let Some(center) = self.clipvol_gizmo_center {
-                    self.clipvol_gizmo_scale = compute_gizmo_scale(
+            if self.mode == ShowcaseMode::ClipVolumes && self.clipvol_state.built {
+                self.clipvol_state.gizmo_center = self.clip_gizmo_center();
+                if let Some(center) = self.clipvol_state.gizmo_center {
+                    self.clipvol_state.gizmo_scale = compute_gizmo_scale(
                         center,
                         self.camera.eye_position(),
                         self.camera.fov_y,
@@ -2006,8 +1128,8 @@ impl eframe::App for App {
 
             // ----- PickLevels: rubber-band drag rect overlay -----
             if self.mode == ShowcaseMode::PickLevels {
-                if let Some(drag_start) = self.pl_drag_start {
-                    let drag_end = self.last_cursor_viewport;
+                if let Some(drag_start) = self.pl_state.drag_start {
+                    let drag_end = self.interact_state.last_cursor_viewport;
                     if response.dragged() && (drag_end - drag_start).length() > 4.0 {
                         let a = egui::pos2(rect.left() + drag_start.x, rect.top() + drag_start.y);
                         let b = egui::pos2(rect.left() + drag_end.x, rect.top() + drag_end.y);
@@ -2028,7 +1150,7 @@ impl eframe::App for App {
 
             // ----- Manipulation mode overlay (Showcase 4) -----
             if self.mode == ShowcaseMode::Interaction {
-                if let Some(ms) = self.manip.state() {
+                if let Some(ms) = self.interact_state.manip.state() {
                     let kind_label = match ms.kind {
                         viewport_lib::ManipulationKind::Move => "Move",
                         viewport_lib::ManipulationKind::Rotate => "Rotate",
@@ -2083,12 +1205,12 @@ impl eframe::App for App {
             }
 
             // ----- Continuous repaint for background build progress -----
-            if self.perf_build_rx.is_some() {
+            if self.perf_state.build_rx.is_some() {
                 ctx.request_repaint();
             }
 
             // ----- Continuous repaint for animated camera -----
-            if self.mode == ShowcaseMode::Interaction && self.interact_animator.is_animating() {
+            if self.mode == ShowcaseMode::Interaction && self.interact_state.animator.is_animating() {
                 ctx.request_repaint();
             }
             if (self.mode == ShowcaseMode::CameraTools || self.mode == ShowcaseMode::Auxiliary)
@@ -2098,10 +1220,10 @@ impl eframe::App for App {
             }
             // ----- Playback runtime: advance time and request repaint -----
             if self.mode == ShowcaseMode::PlaybackRuntime
-                && self.pb_mode == RuntimeMode::Playback
+                && self.pb_state.mode == RuntimeMode::Playback
             {
                 let dt = ctx.input(|i| i.stable_dt.min(1.0 / 15.0));
-                self.pb_time += dt;
+                self.pb_state.time += dt;
                 ctx.request_repaint();
             }
         });
@@ -2168,16 +1290,16 @@ impl App {
     fn cycle_selection_tab(&mut self) {
         if self.mode == ShowcaseMode::Auxiliary {
             // Cycle: overview -> A -> B -> C -> overview -> ...
-            let next = match self.aux_active_frustum {
+            let next = match self.aux_state.active_frustum {
                 None => Some(0),
-                Some(i) if i + 1 < self.aux_frustums.len() => Some(i + 1),
+                Some(i) if i + 1 < self.aux_state.frustums.len() => Some(i + 1),
                 _ => None,
             };
             match next {
                 Some(i) => {
-                    let t = self.aux_frustums[i].camera_view_target();
+                    let t = self.aux_state.frustums[i].camera_view_target();
                     self.cam_animator.fly_to(&self.camera, t.center, t.distance, t.orientation, 0.8);
-                    self.aux_active_frustum = Some(i);
+                    self.aux_state.active_frustum = Some(i);
                 }
                 None => {
                     self.cam_animator.fly_to(
@@ -2186,14 +1308,14 @@ impl App {
                         glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
                         0.8,
                     );
-                    self.aux_active_frustum = None;
+                    self.aux_state.active_frustum = None;
                 }
             }
             return;
         }
         let (scene, selection) = match self.mode {
-            ShowcaseMode::SceneGraph => (&self.scene, &mut self.selection),
-            ShowcaseMode::Advanced => (&self.adv_scene, &mut self.adv_selection),
+            ShowcaseMode::SceneGraph => (&self.sg_state.scene, &mut self.sg_state.selection),
+            ShowcaseMode::Advanced => (&self.adv_state.scene, &mut self.adv_state.selection),
             _ => return,
         };
         let walk = scene.walk_depth_first();
@@ -2222,44 +1344,45 @@ impl App {
 
     fn ensure_scene_built(&mut self, frame: &eframe::Frame) {
         let needs = match self.mode {
-            ShowcaseMode::SceneGraph => !self.scene_built,
-            ShowcaseMode::Performance => !self.perf_built && self.perf_build_rx.is_none(),
-            ShowcaseMode::Interaction => !self.interact_built,
-            ShowcaseMode::Advanced => !self.adv_built,
-            ShowcaseMode::PostProcess => !self.pp_built,
-            ShowcaseMode::NormalMaps => !self.nm_built,
-            ShowcaseMode::Shadows => !self.shd_built,
-            ShowcaseMode::Annotation => !self.ann_built,
-            ShowcaseMode::CameraTools => !self.cam_tools_built,
-            ShowcaseMode::Lights => !self.lights_built,
-            ShowcaseMode::ScalarFields => !self.scalar_built,
-            ShowcaseMode::MultiViewport => !self.mv_built || self.mv_viewports.is_none(),
-            ShowcaseMode::Isolines => !self.iso_built,
-            ShowcaseMode::PointClouds => !self.pc_built,
-            ShowcaseMode::Streamlines => !self.stream_built,
-            ShowcaseMode::Volume => !self.vol_built,
-            ShowcaseMode::ClipVolumes => !self.clipvol_built,
-            ShowcaseMode::Matcap => !self.matcap_built,
-            ShowcaseMode::FaceAttributes => !self.face_built,
-            ShowcaseMode::Textures => !self.texture_built,
-            ShowcaseMode::ParamVis => !self.param_vis_built,
-            ShowcaseMode::GroundPlane => !self.gp_built,
-            ShowcaseMode::BackfacePolicy => !self.sa_built,
-            ShowcaseMode::SurfaceVectors => !self.sv_built,
-            ShowcaseMode::VolumeMesh => !self.vm_built,
-            ShowcaseMode::Auxiliary => !self.aux_built,
-            ShowcaseMode::DepthCompositeImages => !self.dc_built,
-            ShowcaseMode::ImplicitSurface => !self.is_built,
-            ShowcaseMode::SparseVolumeGrid => !self.svg_built,
-            ShowcaseMode::ExtendedQuantities => !self.eq_built,
-            ShowcaseMode::PickLevels => !self.pl_built,
-            ShowcaseMode::Labels => !self.lbl_built,
-            ShowcaseMode::Overlay => !self.ovl_cloud_built,
-            ShowcaseMode::PlaybackRuntime => !self.pb_built,
-            ShowcaseMode::ProbeWidgets => !self.pw_built,
-            ShowcaseMode::SurfaceLIC => !self.lic_built,
-            ShowcaseMode::TensorGlyphs => !self.tg_built,
-            ShowcaseMode::VertexWarp => !self.warp_built,
+            ShowcaseMode::SceneGraph => !self.sg_state.built,
+            ShowcaseMode::Performance => !self.perf_state.built && self.perf_state.build_rx.is_none(),
+            ShowcaseMode::Interaction => !self.interact_state.built,
+            ShowcaseMode::Advanced => !self.adv_state.built,
+            ShowcaseMode::PostProcess => !self.pp_state.built,
+            ShowcaseMode::NormalMaps => !self.nm_state.built,
+            ShowcaseMode::Shadows => !self.shd_state.built,
+            ShowcaseMode::Annotation => !self.ann_state.built,
+            ShowcaseMode::CameraTools => !self.ct_state.built,
+            ShowcaseMode::Lights => !self.lights_state.built,
+            ShowcaseMode::ScalarFields => !self.scalar_state.built,
+            ShowcaseMode::MultiViewport => !self.mv_state.built || self.mv_state.viewports.is_none(),
+            ShowcaseMode::Isolines => !self.iso_state.built,
+            ShowcaseMode::PointClouds => !self.pc_state.built,
+            ShowcaseMode::Streamlines => !self.stream_state.built,
+            ShowcaseMode::Volume => !self.vol_state.built,
+            ShowcaseMode::ClipVolumes => !self.clipvol_state.built,
+            ShowcaseMode::Matcap => !self.matcap_state.built,
+            ShowcaseMode::FaceAttributes => !self.face_state.built,
+            ShowcaseMode::Textures => !self.texture_state.built,
+            ShowcaseMode::ParamVis => !self.param_vis_state.built,
+            ShowcaseMode::GroundPlane => !self.gp_state.built,
+            ShowcaseMode::BackfacePolicy => !self.sa_state.built,
+            ShowcaseMode::SurfaceVectors => !self.sv_state.built,
+            ShowcaseMode::VolumeMesh => !self.vm_state.built,
+            ShowcaseMode::Auxiliary => !self.aux_state.built,
+            ShowcaseMode::DepthCompositeImages => !self.dc_state.built,
+            ShowcaseMode::ImplicitSurface => !self.is_state.built,
+            ShowcaseMode::SparseVolumeGrid => !self.svg_state.built,
+            ShowcaseMode::ExtendedQuantities => !self.eq_state.built,
+            ShowcaseMode::PickLevels => !self.pl_state.built,
+            ShowcaseMode::Labels => !self.lbl_state.built,
+            ShowcaseMode::Overlay => !self.ovl_state.cloud_built,
+            ShowcaseMode::PlaybackRuntime => !self.pb_state.built,
+            ShowcaseMode::ProbeWidgets => !self.pw_state.built,
+            ShowcaseMode::SurfaceLIC => !self.lic_state.built,
+            ShowcaseMode::TensorGlyphs => !self.tg_state.built,
+            ShowcaseMode::VertexWarp => !self.warp_state.built,
+            ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
         if !needs {
@@ -2273,13 +1396,14 @@ impl App {
             .expect("ViewportRenderer must be registered");
 
         match self.mode {
+            ShowcaseMode::Basic => self.build_basic_scene(renderer),
             ShowcaseMode::SceneGraph => self.build_scene_graph(renderer),
             ShowcaseMode::Performance => {
                 // Upload the box mesh on the main thread (requires GPU access).
                 let mesh = self.upload_box(renderer);
-                self.perf_mesh = Some(mesh);
-                self.perf_scene = Scene::new();
-                self.perf_selection.clear();
+                self.perf_state.mesh = Some(mesh);
+                self.perf_state.scene = Scene::new();
+                self.perf_state.selection.clear();
                 self.camera.distance = 80.0;
 
                 // Capture the mesh AABB before releasing the renderer borrow.
@@ -2299,8 +1423,8 @@ impl App {
                     let _ = tx.send(result);
                 });
 
-                self.perf_build_progress = Some(progress);
-                self.perf_build_rx = Some(rx);
+                self.perf_state.build_progress = Some(progress);
+                self.perf_state.build_rx = Some(rx);
             }
             ShowcaseMode::Interaction => {
                 self.build_interact_scene(renderer);
@@ -2387,14 +1511,14 @@ impl App {
                 };
             }
             ShowcaseMode::MultiViewport => {
-                if self.mv_viewports.is_none() {
+                if self.mv_state.viewports.is_none() {
                     let vp0 = renderer.create_viewport(&rs.device);
                     let vp1 = renderer.create_viewport(&rs.device);
                     let vp2 = renderer.create_viewport(&rs.device);
                     let vp3 = renderer.create_viewport(&rs.device);
-                    self.mv_viewports = Some([vp0, vp1, vp2, vp3]);
+                    self.mv_state.viewports = Some([vp0, vp1, vp2, vp3]);
                 }
-                if !self.mv_built {
+                if !self.mv_state.built {
                     self.build_mv_scene(renderer);
                 }
             }
@@ -2581,9 +1705,9 @@ impl App {
             }
             ShowcaseMode::Overlay => {
                 let (positions, scalars) = showcase_35_overlay::build_ovl_cloud();
-                self.ovl_cloud_positions = positions;
-                self.ovl_cloud_scalars = scalars;
-                self.ovl_cloud_built = true;
+                self.ovl_state.cloud_positions = positions;
+                self.ovl_state.cloud_scalars = scalars;
+                self.ovl_state.cloud_built = true;
                 self.camera = Camera {
                     center: glam::Vec3::new(0.0, 1.57, 0.0),
                     distance: 9.0,
@@ -2659,40 +1783,40 @@ impl App {
         ui.separator();
 
         match self.mode {
-            ShowcaseMode::Basic => self.controls_basic(ui),
-            ShowcaseMode::SceneGraph => self.controls_scene_graph(ui, frame),
-            ShowcaseMode::Performance => self.controls_performance(ui),
-            ShowcaseMode::Interaction => self.controls_interaction(ui),
-            ShowcaseMode::Advanced => self.controls_advanced(ui),
-            ShowcaseMode::PostProcess => self.controls_post_process(ui),
-            ShowcaseMode::NormalMaps => self.controls_normal_maps(ui, frame),
-            ShowcaseMode::Shadows => self.controls_shadows(ui),
-            ShowcaseMode::Annotation => self.controls_annotation(ui),
-            ShowcaseMode::CameraTools => self.controls_camera_tools(ui),
-            ShowcaseMode::Lights => self.controls_lights(ui),
-            ShowcaseMode::ScalarFields => self.controls_scalar_fields(ui),
-            ShowcaseMode::MultiViewport => self.controls_mv(ui),
-            ShowcaseMode::Isolines => self.controls_isolines(ui),
-            ShowcaseMode::PointClouds => self.controls_point_clouds(ui),
-            ShowcaseMode::Streamlines => self.controls_streamlines(ui),
-            ShowcaseMode::Volume => self.controls_volume(ui, frame),
-            ShowcaseMode::ClipVolumes => self.controls_clipvol(ui),
-            ShowcaseMode::Matcap => self.controls_matcap(ui, frame),
-            ShowcaseMode::FaceAttributes => self.controls_face_attr(ui),
-            ShowcaseMode::Textures => self.controls_textures(ui),
-            ShowcaseMode::ParamVis => self.controls_param_vis(ui),
-            ShowcaseMode::GroundPlane => self.controls_ground_plane(ui),
-            ShowcaseMode::BackfacePolicy => self.controls_surface_appearance(ui),
-            ShowcaseMode::SurfaceVectors => self.controls_surface_vectors(ui),
-            ShowcaseMode::VolumeMesh => self.controls_volume_mesh(ui),
-            ShowcaseMode::Auxiliary => self.controls_aux(ui),
-            ShowcaseMode::CurveNetworkQuantities => self.controls_cnq(ui),
-            ShowcaseMode::DepthCompositeImages => self.controls_dc(ui),
-            ShowcaseMode::ImplicitSurface => self.controls_implicit(ui),
-            ShowcaseMode::SparseVolumeGrid => self.controls_sparse_volume_grid(ui),
-            ShowcaseMode::ExtendedQuantities => self.controls_eq(ui),
-            ShowcaseMode::PickLevels => self.controls_pick_levels(ui),
-            ShowcaseMode::Labels => self.controls_labels(ui),
+            ShowcaseMode::Basic => showcase_01_basic::controls_basic(self, ui),
+            ShowcaseMode::SceneGraph => showcase_02_scene_graph::controls_scene_graph(self, ui, frame),
+            ShowcaseMode::Performance => showcase_03_performance::controls_performance(self, ui),
+            ShowcaseMode::Interaction => showcase_04_interaction::controls_interaction(self, ui),
+            ShowcaseMode::Advanced => showcase_05_advanced_rendering::controls_advanced(self, ui),
+            ShowcaseMode::PostProcess => showcase_06_post_process::controls_post_process(self, ui),
+            ShowcaseMode::NormalMaps => showcase_07_normal_maps::controls_normal_maps(self, ui),
+            ShowcaseMode::Shadows => showcase_08_shadows::controls_shadows(self, ui),
+            ShowcaseMode::Annotation => showcase_09_annotation::controls_annotation(self, ui),
+            ShowcaseMode::CameraTools => showcase_10_camera_tools::controls_camera_tools(self, ui),
+            ShowcaseMode::Lights => showcase_11_lights::controls_lights(self, ui),
+            ShowcaseMode::ScalarFields => showcase_12_scalar_fields::controls_scalar_fields(self, ui),
+            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::controls_mv(self, ui),
+            ShowcaseMode::Isolines => showcase_14_isolines::controls_isolines(self, ui),
+            ShowcaseMode::PointClouds => showcase_15_point_clouds::controls_point_clouds(self, ui),
+            ShowcaseMode::Streamlines => showcase_16_streamlines::controls_streamlines(self, ui),
+            ShowcaseMode::Volume => showcase_17_volume::controls_volume(self, ui, frame),
+            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::controls_clipvol(self, ui),
+            ShowcaseMode::Matcap => showcase_19_matcap::controls_matcap(self, ui, frame),
+            ShowcaseMode::FaceAttributes => showcase_20_face_attributes::controls_face_attr(self, ui),
+            ShowcaseMode::Textures => showcase_21_textures::controls_textures(self, ui),
+            ShowcaseMode::ParamVis => showcase_22_parameterization::controls_param_vis(self, ui),
+            ShowcaseMode::GroundPlane => showcase_23_ground_plane::controls_ground_plane(self, ui),
+            ShowcaseMode::BackfacePolicy => showcase_24_backface_policy::controls_surface_appearance(self, ui),
+            ShowcaseMode::SurfaceVectors => showcase_25_surface_vectors::controls_surface_vectors(self, ui),
+            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::controls_volume_mesh(self, ui),
+            ShowcaseMode::Auxiliary => showcase_27_camera_framing::controls_aux(self, ui),
+            ShowcaseMode::CurveNetworkQuantities => showcase_28_curve_network_quantities::controls_cnq(self, ui),
+            ShowcaseMode::DepthCompositeImages => showcase_29_depth_composite_images::controls_dc(self, ui),
+            ShowcaseMode::ImplicitSurface => showcase_30_implicit_surface::controls_implicit(self, ui),
+            ShowcaseMode::SparseVolumeGrid => showcase_31_sparse_volume_grid::controls_sparse_volume_grid(self, ui),
+            ShowcaseMode::ExtendedQuantities => showcase_32_extended_quantities::controls_eq(self, ui),
+            ShowcaseMode::PickLevels => showcase_33_picking_levels::controls_pick_levels(self, ui),
+            ShowcaseMode::Labels => showcase_34_labels::controls_labels(self, ui),
             ShowcaseMode::Overlay => showcase_35_overlay::controls_overlay(self, ui),
             ShowcaseMode::PlaybackRuntime => {
                 showcase_36_playback_runtime::controls_pb(self, ui, frame)
@@ -2704,843 +1828,6 @@ impl App {
         }
     }
 
-    fn controls_basic(&mut self, ui: &mut egui::Ui) {
-        ui.label("Projection:");
-        ui.horizontal(|ui| {
-            if ui
-                .radio(
-                    self.camera.projection == Projection::Perspective,
-                    "Perspective",
-                )
-                .clicked()
-            {
-                self.camera.projection = Projection::Perspective;
-            }
-            if ui
-                .radio(
-                    self.camera.projection == Projection::Orthographic,
-                    "Orthographic",
-                )
-                .clicked()
-            {
-                self.camera.projection = Projection::Orthographic;
-            }
-        });
-        ui.separator();
-        ui.label("Light:");
-        ui.horizontal(|ui| {
-            if ui.radio(!self.use_point_light, "Directional").clicked() {
-                self.use_point_light = false;
-            }
-            if ui.radio(self.use_point_light, "Point").clicked() {
-                self.use_point_light = true;
-            }
-        });
-    }
-
-    fn controls_scene_graph(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
-        let sel = self.selection.len();
-        let nodes = self.scene.node_count();
-        ui.label(format!("Nodes: {nodes}  Selected: {sel}"));
-        ui.separator();
-
-        if ui.button("Cycle Material").clicked() {
-            self.material_cycle += 1;
-            let mat = material_preset(self.material_cycle);
-            for &id in self.selection.iter() {
-                self.scene.set_material(id, mat);
-            }
-        }
-
-        if ui.button("Toggle Transparency").clicked() {
-            for &id in self.selection.iter() {
-                if let Some(node) = self.scene.node(id) {
-                    let mut mat = *node.material();
-                    mat.opacity = if mat.opacity < 1.0 { 1.0 } else { 0.4 };
-                    self.scene.set_material(id, mat);
-                }
-            }
-        }
-
-        if ui.button("Toggle Normal Vis").clicked() {
-            for &id in self.selection.iter() {
-                if let Some(node) = self.scene.node(id) {
-                    let show = !node.show_normals();
-                    self.scene.set_show_normals(id, show);
-                }
-            }
-        }
-
-        ui.separator();
-
-        ui.label("Outline width (px):");
-        ui.add(egui::Slider::new(&mut self.sg_outline_width, 1.0..=8.0).step_by(0.5));
-
-        ui.separator();
-
-        if ui.button("Cycle Background").clicked() {
-            self.bg_cycle += 1;
-        }
-
-        ui.separator();
-
-        if ui.button("Add Child to Selected").clicked() {
-            if let Some(parent_id) = self.selection.primary() {
-                let rs = frame.wgpu_render_state().unwrap();
-                let mut guard = rs.renderer.write();
-                let renderer = guard
-                    .callback_resources
-                    .get_mut::<ViewportRenderer>()
-                    .unwrap();
-                let mesh = self.upload_box(renderer);
-                let local = glam::Mat4::from_scale_rotation_translation(
-                    glam::Vec3::splat(0.5),
-                    glam::Quat::IDENTITY,
-                    glam::Vec3::new(1.5, 0.0, 1.5),
-                );
-                let child_id = self.scene.add_named(
-                    "Child",
-                    Some(mesh),
-                    local,
-                    Material::from_color([1.0, 0.6, 0.2]),
-                );
-                self.scene.set_parent(child_id, Some(parent_id));
-                self.selection.select_one(child_id);
-            }
-        }
-
-        if ui.button("Remove Selected").clicked() {
-            if let Some(id) = self.selection.primary() {
-                let removed = self.scene.remove(id);
-                for rid in &removed {
-                    self.selection.remove(*rid);
-                }
-            }
-        }
-
-        ui.separator();
-
-        if ui
-            .checkbox(&mut self.layer_b_visible, "Layer B Visible")
-            .changed()
-        {
-            self.scene
-                .set_layer_visible(self.layer_b.unwrap(), self.layer_b_visible);
-        }
-
-        ui.separator();
-
-        if ui.button("Cycle Selection (Tab)").clicked() {
-            let walk = self.scene.walk_depth_first();
-            if !walk.is_empty() {
-                let current = self.selection.primary();
-                let next_idx = match current {
-                    Some(id) => {
-                        let pos = walk.iter().position(|(nid, _)| *nid == id);
-                        pos.map(|i| (i + 1) % walk.len()).unwrap_or(0)
-                    }
-                    None => 0,
-                };
-                self.selection.select_one(walk[next_idx].0);
-            }
-        }
-
-        if ui.button("Clear Selection").clicked() {
-            self.selection.clear();
-        }
-    }
-
-    fn controls_performance(&mut self, ui: &mut egui::Ui) {
-        self.perf_controls(ui);
-    }
-
-    fn controls_interaction(&mut self, ui: &mut egui::Ui) {
-        ui.label("Gizmo Mode:");
-        ui.horizontal(|ui| {
-            if ui
-                .radio(
-                    self.interact_gizmo.mode == GizmoMode::Translate,
-                    "Translate",
-                )
-                .clicked()
-            {
-                self.interact_gizmo.mode = GizmoMode::Translate;
-            }
-            if ui
-                .radio(self.interact_gizmo.mode == GizmoMode::Rotate, "Rotate")
-                .clicked()
-            {
-                self.interact_gizmo.mode = GizmoMode::Rotate;
-            }
-            if ui
-                .radio(self.interact_gizmo.mode == GizmoMode::Scale, "Scale")
-                .clicked()
-            {
-                self.interact_gizmo.mode = GizmoMode::Scale;
-            }
-        });
-
-        ui.separator();
-
-        ui.label("Gizmo Space:");
-        ui.horizontal(|ui| {
-            if ui
-                .radio(self.interact_gizmo.space == GizmoSpace::World, "World")
-                .clicked()
-            {
-                self.interact_gizmo.space = GizmoSpace::World;
-            }
-            if ui
-                .radio(self.interact_gizmo.space == GizmoSpace::Local, "Local")
-                .clicked()
-            {
-                self.interact_gizmo.space = GizmoSpace::Local;
-            }
-        });
-
-        ui.separator();
-        ui.label("Shortcuts: G move · R rotate · S scale");
-        ui.label("X / Y / Z : constrain axis  ·  Enter / click : confirm  ·  Esc : cancel");
-        ui.separator();
-        ui.label("View presets:");
-        egui::Grid::new("view_presets_grid")
-            .num_columns(4)
-            .show(ui, |ui| {
-                for (label, preset) in [
-                    ("Front", ViewPreset::Front),
-                    ("Back", ViewPreset::Back),
-                    ("Left", ViewPreset::Left),
-                    ("Right", ViewPreset::Right),
-                    ("Top", ViewPreset::Top),
-                    ("Bottom", ViewPreset::Bottom),
-                    ("Iso", ViewPreset::Isometric),
-                ] {
-                    if ui.button(label).clicked() {
-                        self.interact_animator.fly_to_full(
-                            &self.camera,
-                            self.camera.center,
-                            self.camera.distance,
-                            preset.orientation(),
-                            preset.preferred_projection(),
-                            0.6,
-                            Easing::EaseInOutCubic,
-                        );
-                    }
-                }
-            });
-
-        ui.separator();
-
-        if ui.button("Zoom to Fit").clicked() {
-            self.zoom_to_fit_interact();
-        }
-
-        ui.separator();
-
-        if ui.button("Clear Selection").clicked() {
-            self.interact_selection.clear();
-        }
-    }
-
-    fn controls_advanced(&mut self, ui: &mut egui::Ui) {
-        let sel = self.adv_selection.len();
-        ui.label(format!("Selected: {sel}"));
-        ui.separator();
-
-        if ui
-            .checkbox(&mut self.adv_clip_enabled, "Clip plane (x < 0)")
-            .changed()
-        {}
-        if ui
-            .checkbox(&mut self.adv_outline_on, "Selection outline")
-            .changed()
-        {}
-        if ui
-            .checkbox(&mut self.adv_xray_on, "X-ray selected")
-            .changed()
-        {}
-
-        ui.separator();
-
-        if ui.button("Cycle Selection (Tab)").clicked() {
-            let walk = self.adv_scene.walk_depth_first();
-            if !walk.is_empty() {
-                let current = self.adv_selection.primary();
-                let next_idx = match current {
-                    Some(id) => {
-                        let pos = walk.iter().position(|(nid, _)| *nid == id);
-                        pos.map(|i| (i + 1) % walk.len()).unwrap_or(0)
-                    }
-                    None => 0,
-                };
-                self.adv_selection.select_one(walk[next_idx].0);
-            }
-        }
-
-        if ui.button("Clear Selection").clicked() {
-            self.adv_selection.clear();
-        }
-    }
-
-    fn controls_post_process(&mut self, ui: &mut egui::Ui) {
-        ui.label("Lighting:");
-        ui.add(egui::Slider::new(&mut self.pp_dir_intensity, 0.0..=5.0).text("Dir. intensity"));
-        ui.checkbox(&mut self.pp_point_light_on, "Point light");
-
-        ui.separator();
-        ui.label("Shadows:");
-        ui.checkbox(&mut self.pp_shadow_pcss, "PCSS (soft shadows)");
-
-        ui.separator();
-        ui.label("Depth of Field:");
-        ui.checkbox(&mut self.pp_dof_enabled, "Enable DoF");
-        if self.pp_dof_enabled {
-            ui.add(
-                egui::Slider::new(&mut self.pp_dof_focal_dist, 0.5..=30.0)
-                    .text("Focal distance"),
-            );
-            ui.add(
-                egui::Slider::new(&mut self.pp_dof_focal_range, 0.1..=10.0)
-                    .text("Focal range"),
-            );
-            ui.add(
-                egui::Slider::new(&mut self.pp_dof_max_blur, 1.0..=20.0)
-                    .text("Max blur (px)"),
-            );
-        }
-
-        ui.separator();
-        ui.weak("Bloom, SSAO, and FXAA can be enabled via PostProcessSettings\nbut are not wired to controls in this showcase.");
-    }
-
-    fn controls_normal_maps(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
-        if ui.checkbox(&mut self.nm_normal_on, "Normal map").changed() {
-            let on = self.nm_normal_on;
-            for &(node_id, nm_id, _) in &self.nm_mapped_nodes.clone() {
-                if let Some(node) = self.nm_scene.node(node_id) {
-                    let mut mat = *node.material();
-                    mat.normal_map_id = if on { Some(nm_id) } else { None };
-                    self.nm_scene.set_material(node_id, mat);
-                }
-            }
-        }
-
-        if ui.checkbox(&mut self.nm_ao_on, "AO map").changed() {
-            let on = self.nm_ao_on;
-            for &(node_id, _, ao_id) in &self.nm_mapped_nodes.clone() {
-                if let Some(node) = self.nm_scene.node(node_id) {
-                    let mut mat = *node.material();
-                    mat.ao_map_id = if on { Some(ao_id) } else { None };
-                    self.nm_scene.set_material(node_id, mat);
-                }
-            }
-        }
-
-        ui.checkbox(&mut self.nm_clip_enabled, "Clip plane");
-        if self.nm_clip_enabled {
-            ui.checkbox(&mut self.nm_cap_fill, "Cap fill");
-        }
-
-        ui.separator();
-        let _ = frame;
-    }
-
-    fn controls_shadows(&mut self, ui: &mut egui::Ui) {
-        ui.label(format!("Cascades: {}", self.shd_cascade_count));
-        ui.horizontal(|ui| {
-            if ui
-                .button("-")
-                .on_hover_text("Decrease cascade count")
-                .clicked()
-            {
-                self.shd_cascade_count = (self.shd_cascade_count - 1).max(1);
-            }
-            if ui
-                .button("+")
-                .on_hover_text("Increase cascade count")
-                .clicked()
-            {
-                self.shd_cascade_count = (self.shd_cascade_count + 1).min(4);
-            }
-        });
-
-        ui.separator();
-        ui.label("Filter:");
-        ui.horizontal(|ui| {
-            if ui.radio(!self.shd_pcss_on, "PCF").clicked() {
-                self.shd_pcss_on = false;
-            }
-            if ui.radio(self.shd_pcss_on, "PCSS").clicked() {
-                self.shd_pcss_on = true;
-            }
-        });
-
-        ui.separator();
-        ui.checkbox(&mut self.shd_contact_on, "Contact Shadows");
-    }
-
-    fn controls_annotation(&mut self, ui: &mut egui::Ui) {
-        ui.label("Labels render natively via OverlayFrame.");
-        ui.separator();
-        for (i, label) in self.ann_labels.iter().enumerate() {
-            let status = if let Some(wa) = label.world_anchor {
-                let view = self.camera.view_matrix();
-                let proj = self.camera.proj_matrix();
-                let pos = glam::Vec3::from(wa);
-                let clip = proj * view * pos.extend(1.0);
-                let visible = clip.w > 0.0 && {
-                    let ndc = glam::Vec3::new(clip.x, clip.y, clip.z) / clip.w;
-                    ndc.x.abs() <= 1.0 && ndc.y.abs() <= 1.0
-                };
-                if visible { "visible" } else { "clipped" }
-            } else {
-                "screen-anchored"
-            };
-            ui.label(format!("L{i}: \"{}\" : {status}", label.text));
-        }
-    }
-
-    fn controls_camera_tools(&mut self, ui: &mut egui::Ui) {
-        ui.label("Named Views:");
-        egui::Grid::new("cam_view_presets")
-            .num_columns(4)
-            .show(ui, |ui| {
-                for (label, preset) in [
-                    ("Front", ViewPreset::Front),
-                    ("Back", ViewPreset::Back),
-                    ("Left", ViewPreset::Left),
-                    ("Right", ViewPreset::Right),
-                    ("Top", ViewPreset::Top),
-                    ("Bottom", ViewPreset::Bottom),
-                    ("Iso", ViewPreset::Isometric),
-                ] {
-                    if ui.button(label).clicked() {
-                        self.cam_animator.fly_to_full(
-                            &self.camera,
-                            self.camera.center,
-                            self.camera.distance,
-                            preset.orientation(),
-                            preset.preferred_projection(),
-                            0.6,
-                            Easing::EaseInOutCubic,
-                        );
-                    }
-                }
-            });
-        ui.separator();
-        ui.label("Projection:");
-        ui.horizontal(|ui| {
-            if ui
-                .radio(
-                    self.camera.projection == Projection::Perspective,
-                    "Perspective",
-                )
-                .clicked()
-            {
-                self.camera.projection = Projection::Perspective;
-            }
-            if ui
-                .radio(
-                    self.camera.projection == Projection::Orthographic,
-                    "Orthographic",
-                )
-                .clicked()
-            {
-                self.camera.projection = Projection::Orthographic;
-            }
-        });
-        if self.camera.projection == Projection::Perspective {
-            ui.separator();
-            let mut fov_deg = self.camera.fov_y.to_degrees();
-            ui.label(format!("FOV: {fov_deg:.0}°"));
-            if ui
-                .add(egui::Slider::new(&mut fov_deg, 20.0_f32..=120.0_f32).suffix("°"))
-                .changed()
-            {
-                self.camera.fov_y = fov_deg.to_radians();
-            }
-        }
-        ui.separator();
-        ui.label("The colored boxes identify each axis:");
-        ui.label("Red = +X,  Green = +Y,  Blue = +Z");
-    }
-
-    fn controls_lights(&mut self, ui: &mut egui::Ui) {
-        ui.label(format!("Lights: {}", self.lights_sources.len()));
-        ui.separator();
-
-        ui.horizontal(|ui| {
-            if ui.button("+ Directional").clicked() && self.lights_sources.len() < 8 {
-                self.lights_sources.push(LightSource {
-                    kind: LightKind::Directional {
-                        direction: [0.4, 0.3, 1.5],
-                    },
-                    color: [1.0, 1.0, 1.0],
-                    intensity: 1.0,
-                });
-            }
-            if ui.button("+ Point").clicked() && self.lights_sources.len() < 8 {
-                self.lights_sources.push(LightSource {
-                    kind: LightKind::Point {
-                        position: [0.0, 3.0, 3.0],
-                        range: 15.0,
-                    },
-                    color: [1.0, 0.9, 0.7],
-                    intensity: 2.0,
-                });
-            }
-            if ui.button("+ Spot").clicked() && self.lights_sources.len() < 8 {
-                self.lights_sources.push(LightSource {
-                    kind: LightKind::Spot {
-                        position: [0.0, 3.0, 6.0],
-                        direction: [0.0, 0.0, -1.0],
-                        range: 20.0,
-                        inner_angle: 0.25,
-                        outer_angle: 0.45,
-                    },
-                    color: [0.8, 0.95, 1.0],
-                    intensity: 3.0,
-                });
-            }
-        });
-
-        if ui.button("Reset to Default").clicked() {
-            self.lights_sources = vec![LightSource::default()];
-        }
-
-        ui.separator();
-
-        egui::ScrollArea::vertical()
-            .max_height(300.0)
-            .show(ui, |ui| {
-                let mut to_remove: Option<usize> = None;
-                let count = self.lights_sources.len();
-                for i in 0..count {
-                    let kind_label = match self.lights_sources[i].kind {
-                        LightKind::Directional { .. } => "Directional",
-                        LightKind::Point { .. } => "Point",
-                        LightKind::Spot { .. } => "Spot",
-                        _ => "Unknown",
-                    };
-                    egui::CollapsingHeader::new(format!("Light {i} ({kind_label})"))
-                        .id_salt(i)
-                        .show(ui, |ui| {
-                            let src = &mut self.lights_sources[i];
-
-                            // Color
-                            ui.horizontal(|ui| {
-                                ui.label("Color:");
-                                let mut c = src.color;
-                                if ui.color_edit_button_rgb(&mut c).changed() {
-                                    src.color = c;
-                                }
-                            });
-
-                            // Intensity
-                            ui.horizontal(|ui| {
-                                ui.label("Intensity:");
-                                ui.add(egui::Slider::new(&mut src.intensity, 0.0..=10.0));
-                            });
-
-                            // Kind-specific params
-                            #[allow(clippy::match_wildcard_for_catch_all)]
-                            match &mut src.kind {
-                                LightKind::Directional { direction } => {
-                                    ui.label("Direction (toward light):");
-                                    ui.horizontal(|ui| {
-                                        ui.label("X:");
-                                        ui.add(egui::DragValue::new(&mut direction[0]).speed(0.02));
-                                        ui.label("Y:");
-                                        ui.add(egui::DragValue::new(&mut direction[1]).speed(0.02));
-                                        ui.label("Z:");
-                                        ui.add(egui::DragValue::new(&mut direction[2]).speed(0.02));
-                                    });
-                                }
-                                LightKind::Point { position, range } => {
-                                    ui.label("Position:");
-                                    ui.horizontal(|ui| {
-                                        ui.label("X:");
-                                        ui.add(egui::DragValue::new(&mut position[0]).speed(0.1));
-                                        ui.label("Y:");
-                                        ui.add(egui::DragValue::new(&mut position[1]).speed(0.1));
-                                        ui.label("Z:");
-                                        ui.add(egui::DragValue::new(&mut position[2]).speed(0.1));
-                                    });
-                                    ui.horizontal(|ui| {
-                                        ui.label("Range:");
-                                        ui.add(egui::Slider::new(range, 1.0..=50.0));
-                                    });
-                                }
-                                LightKind::Spot {
-                                    position,
-                                    direction,
-                                    range,
-                                    inner_angle,
-                                    outer_angle,
-                                } => {
-                                    ui.label("Position:");
-                                    ui.horizontal(|ui| {
-                                        ui.label("X:");
-                                        ui.add(egui::DragValue::new(&mut position[0]).speed(0.1));
-                                        ui.label("Y:");
-                                        ui.add(egui::DragValue::new(&mut position[1]).speed(0.1));
-                                        ui.label("Z:");
-                                        ui.add(egui::DragValue::new(&mut position[2]).speed(0.1));
-                                    });
-                                    ui.label("Direction:");
-                                    ui.horizontal(|ui| {
-                                        ui.label("X:");
-                                        ui.add(egui::DragValue::new(&mut direction[0]).speed(0.02));
-                                        ui.label("Y:");
-                                        ui.add(egui::DragValue::new(&mut direction[1]).speed(0.02));
-                                        ui.label("Z:");
-                                        ui.add(egui::DragValue::new(&mut direction[2]).speed(0.02));
-                                    });
-                                    ui.horizontal(|ui| {
-                                        ui.label("Range:");
-                                        ui.add(egui::Slider::new(range, 1.0..=50.0));
-                                    });
-                                    let mut inner_deg = inner_angle.to_degrees();
-                                    let mut outer_deg = outer_angle.to_degrees();
-                                    ui.horizontal(|ui| {
-                                        ui.label("Inner cone:");
-                                        if ui
-                                            .add(
-                                                egui::Slider::new(&mut inner_deg, 1.0..=45.0)
-                                                    .suffix("°"),
-                                            )
-                                            .changed()
-                                        {
-                                            *inner_angle = inner_deg.to_radians();
-                                        }
-                                    });
-                                    ui.horizontal(|ui| {
-                                        ui.label("Outer cone:");
-                                        if ui
-                                            .add(
-                                                egui::Slider::new(&mut outer_deg, 2.0..=89.0)
-                                                    .suffix("°"),
-                                            )
-                                            .changed()
-                                        {
-                                            *outer_angle = outer_deg.to_radians();
-                                        }
-                                    });
-                                }
-                                _ => {}
-                            }
-
-                            if ui.button("Remove").clicked() {
-                                to_remove = Some(i);
-                            }
-                        });
-                }
-                if let Some(idx) = to_remove {
-                    self.lights_sources.remove(idx);
-                }
-            });
-
-        ui.separator();
-        ui.checkbox(&mut self.lights_hemi_on, "Hemisphere Ambient");
-        if self.lights_hemi_on {
-            ui.add(egui::Slider::new(&mut self.lights_hemi_intensity, 0.0..=1.0).text("Intensity"));
-            ui.horizontal(|ui| {
-                ui.label("Sky:");
-                ui.color_edit_button_rgb(&mut self.lights_sky_color);
-            });
-            ui.horizontal(|ui| {
-                ui.label("Ground:");
-                ui.color_edit_button_rgb(&mut self.lights_ground_color);
-            });
-        }
-
-        ui.separator();
-        ui.label("Unlit shading");
-        ui.checkbox(&mut self.lights_unlit_sphere, "Unlit sphere (corner)");
-
-        ui.separator();
-        ui.label("Eye-Dome Lighting");
-        ui.checkbox(&mut self.lights_edl_enabled, "EDL enabled");
-        if self.lights_edl_enabled {
-            ui.add(
-                egui::Slider::new(&mut self.lights_edl_radius, 0.5..=8.0)
-                    .text("Radius (px)")
-                    .step_by(0.5),
-            );
-            ui.add(
-                egui::Slider::new(&mut self.lights_edl_strength, 0.0..=5.0)
-                    .text("Strength"),
-            );
-        }
-
-    }
-
-    fn set_scalar_active_object(&mut self, index: usize) {
-        self.scalar_active_object = index;
-        self.scalar_range_auto = true;
-
-        let node_id = self.scalar_node_ids[index];
-        if node_id != 0 {
-            self.scalar_selection.select_one(node_id);
-        } else {
-            self.scalar_selection.clear();
-        }
-
-        if !self.scalar_values[index].is_empty() {
-            let min = self.scalar_values[index]
-                .iter()
-                .cloned()
-                .fold(f32::INFINITY, f32::min);
-            let max = self.scalar_values[index]
-                .iter()
-                .cloned()
-                .fold(f32::NEG_INFINITY, f32::max);
-            self.scalar_range = (min, max);
-        }
-    }
-
-    fn controls_scalar_fields(&mut self, ui: &mut egui::Ui) {
-        ui.label("Object:");
-        for (i, label) in ["0: Sphere (height)", "1: Wave Grid", "2: Box (distance)"]
-            .iter()
-            .enumerate()
-        {
-            if ui.radio(self.scalar_active_object == i, *label).clicked() {
-                self.set_scalar_active_object(i);
-            }
-        }
-
-        ui.separator();
-        ui.label("Colormap:");
-        for (preset, label) in [
-            (viewport_lib::BuiltinColormap::Viridis, "Viridis"),
-            (viewport_lib::BuiltinColormap::Plasma, "Plasma"),
-            (viewport_lib::BuiltinColormap::Greyscale, "Greyscale"),
-            (viewport_lib::BuiltinColormap::Coolwarm, "Coolwarm"),
-            (viewport_lib::BuiltinColormap::Rainbow, "Rainbow"),
-        ] {
-            if ui.radio(self.scalar_colormap == preset, label).clicked() {
-                self.scalar_colormap = preset;
-            }
-        }
-
-        ui.separator();
-        ui.checkbox(&mut self.scalar_range_auto, "Auto Range");
-        if !self.scalar_range_auto {
-            ui.horizontal(|ui| {
-                ui.label("Min:");
-                ui.add(egui::DragValue::new(&mut self.scalar_range.0).speed(0.01));
-            });
-            ui.horizontal(|ui| {
-                ui.label("Max:");
-                ui.add(egui::DragValue::new(&mut self.scalar_range.1).speed(0.01));
-            });
-        } else {
-            let i = self.scalar_active_object;
-            if !self.scalar_values[i].is_empty() {
-                let min = self.scalar_values[i]
-                    .iter()
-                    .cloned()
-                    .fold(f32::INFINITY, f32::min);
-                let max = self.scalar_values[i]
-                    .iter()
-                    .cloned()
-                    .fold(f32::NEG_INFINITY, f32::max);
-                ui.label(format!("Range: [{min:.2}, {max:.2}]"));
-            }
-        }
-
-        ui.separator();
-        ui.checkbox(&mut self.scalar_nan_on, "Show NaN color (purple)");
-        ui.label("(box object: values < threshold set to NaN)");
-
-        ui.separator();
-        ui.label("Scalar Bar:");
-        for (anchor, label) in [
-            (ScalarBarAnchor::TopLeft, "Top-Left"),
-            (ScalarBarAnchor::TopRight, "Top-Right"),
-            (ScalarBarAnchor::BottomLeft, "Bottom-Left"),
-            (ScalarBarAnchor::BottomRight, "Bottom-Right"),
-        ] {
-            if ui.radio(self.scalar_bar_anchor == anchor, label).clicked() {
-                self.scalar_bar_anchor = anchor;
-            }
-        }
-        ui.horizontal(|ui| {
-            if ui
-                .radio(
-                    self.scalar_bar_orientation == ScalarBarOrientation::Vertical,
-                    "Vertical",
-                )
-                .clicked()
-            {
-                self.scalar_bar_orientation = ScalarBarOrientation::Vertical;
-            }
-            if ui
-                .radio(
-                    self.scalar_bar_orientation == ScalarBarOrientation::Horizontal,
-                    "Horizontal",
-                )
-                .clicked()
-            {
-                self.scalar_bar_orientation = ScalarBarOrientation::Horizontal;
-            }
-        });
-    }
-
-    fn controls_isolines(&mut self, ui: &mut egui::Ui) {
-        ui.label("Mesh resolution:");
-        let res_resp = ui.add(
-            egui::Slider::new(&mut self.iso_grid_resolution, 16..=256)
-                .text("quads/side")
-                .logarithmic(true),
-        );
-        if res_resp.drag_stopped() || res_resp.lost_focus() {
-            self.iso_built = false;
-        }
-
-        ui.separator();
-        ui.label("Contour levels:");
-        ui.add(egui::Slider::new(&mut self.iso_contour_count, 2..=20).text("levels"));
-
-        ui.separator();
-
-        ui.label("Line color:");
-        let mut color = egui::Color32::from_rgba_unmultiplied(
-            (self.iso_line_color[0] * 255.0) as u8,
-            (self.iso_line_color[1] * 255.0) as u8,
-            (self.iso_line_color[2] * 255.0) as u8,
-            (self.iso_line_color[3] * 255.0) as u8,
-        );
-        if ui.color_edit_button_srgba(&mut color).changed() {
-            let [r, g, b, a] = color.to_array();
-            self.iso_line_color = [
-                r as f32 / 255.0,
-                g as f32 / 255.0,
-                b as f32 / 255.0,
-                a as f32 / 255.0,
-            ];
-        }
-
-        ui.separator();
-
-        ui.label("Line width (px):");
-        ui.add(egui::Slider::new(&mut self.iso_line_width, 0.5..=5.0).step_by(0.25));
-
-        ui.separator();
-
-        ui.checkbox(&mut self.iso_show_surface_color, "Surface scalar coloring");
-        ui.label("(grey when off, wave-colored when on)");
-
-        ui.separator();
-
-        ui.label("Depth bias:");
-        ui.add(
-            egui::Slider::new(&mut self.iso_depth_bias, 0.0..=0.05)
-                .step_by(0.001)
-                .text("(z-fighting offset)"),
-        );
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3566,26 +1853,9 @@ impl App {
 
         let (scene_items, bg_color, lighting, scene_gen, sel_gen) = match self.mode {
             ShowcaseMode::Basic => {
-                let positions = [
-                    [-1.5, -1.5, 0.0f32],
-                    [1.5, -1.5, 0.0],
-                    [-1.5, 1.5, 0.0],
-                    [1.5, 1.5, 0.0],
-                ];
-                let items: Vec<SceneRenderItem> = self
-                    .mesh_indices
-                    .iter()
-                    .zip(&positions)
-                    .map(|(&mesh_id, pos)| {
-                        let model = glam::Mat4::from_translation(glam::Vec3::from(*pos));
-                        let mut item = SceneRenderItem::default();
-                        item.mesh_id = mesh_id;
-                        item.model = model.to_cols_array_2d();
-                        item
-                    })
-                    .collect();
+                let items = self.basic_scene_items();
 
-                let lights = if self.use_point_light {
+                let lights = if self.basic_state.use_point_light {
                     vec![LightSource {
                         kind: LightKind::Point {
                             position: [5.0, 5.0, 5.0],
@@ -3607,34 +1877,34 @@ impl App {
             }
 
             ShowcaseMode::SceneGraph => {
-                let items = self.scene.collect_render_items(&self.selection);
-                let bg = background_color(self.bg_cycle);
+                let items = self.sg_state.scene.collect_render_items(&self.sg_state.selection);
+                let bg = showcase_02_scene_graph::background_color(self.sg_state.bg_cycle);
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
                     sky_color: [1.0, 1.0, 1.0],
                     ground_color: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
-                scene_graph_outline = !self.selection.is_empty();
-                scene_graph_outline_width = self.sg_outline_width;
-                let sg = self.scene.version();
-                let ss = self.selection.version();
+                scene_graph_outline = !self.sg_state.selection.is_empty();
+                scene_graph_outline_width = self.sg_state.outline_width;
+                let sg = self.sg_state.scene.version();
+                let ss = self.sg_state.selection.version();
                 (items, Some(bg), lighting, sg, ss)
             }
 
             ShowcaseMode::Performance => {
-                let current_ver = (self.perf_scene.version(), self.perf_selection.version());
-                if current_ver != self.perf_scene_items_version {
-                    self.perf_scene_items_cache = std::sync::Arc::from(
-                        self.perf_scene.collect_render_items(&self.perf_selection),
+                let current_ver = (self.perf_state.scene.version(), self.perf_state.selection.version());
+                if current_ver != self.perf_state.scene_items_version {
+                    self.perf_state.scene_items_cache = std::sync::Arc::from(
+                        self.perf_state.scene.collect_render_items(&self.perf_state.selection),
                     );
-                    self.perf_scene_items_version = current_ver;
+                    self.perf_state.scene_items_version = current_ver;
                 }
                 // Arc::clone is a single atomic refcount increment — no data copy.
-                perf_arc = Some(std::sync::Arc::clone(&self.perf_scene_items_cache));
-                let sg = self.perf_scene.version();
-                let ss = self.perf_selection.version();
-                perf_outline = !self.perf_selection.is_empty();
+                perf_arc = Some(std::sync::Arc::clone(&self.perf_state.scene_items_cache));
+                let sg = self.perf_state.scene.version();
+                let ss = self.perf_state.selection.version();
+                perf_outline = !self.perf_state.selection.is_empty();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
                     sky_color: [1.0, 1.0, 1.0],
@@ -3646,11 +1916,11 @@ impl App {
 
             ShowcaseMode::Interaction => {
                 let items = self
-                    .interact_scene
-                    .collect_render_items(&self.interact_selection);
-                interact_outline = !self.interact_selection.is_empty();
-                let sg = self.interact_scene.version();
-                let ss = self.interact_selection.version();
+                    .interact_state.scene
+                    .collect_render_items(&self.interact_state.selection);
+                interact_outline = !self.interact_state.selection.is_empty();
+                let sg = self.interact_state.scene.version();
+                let ss = self.interact_state.selection.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
                     sky_color: [1.0, 1.0, 1.0],
@@ -3661,14 +1931,14 @@ impl App {
             }
 
             ShowcaseMode::Advanced => {
-                let items = self.adv_scene.collect_render_items(&self.adv_selection);
-                if self.adv_clip_enabled {
+                let items = self.adv_state.scene.collect_render_items(&self.adv_state.selection);
+                if self.adv_state.clip_enabled {
                     adv_clip_objects.push(ClipObject::plane([1.0, 0.0, 0.0], 0.0));
                 }
-                adv_outline = self.adv_outline_on && !self.adv_selection.is_empty();
-                adv_xray = self.adv_xray_on && !self.adv_selection.is_empty();
-                let sg = self.adv_scene.version();
-                let ss = self.adv_selection.version();
+                adv_outline = self.adv_state.outline_on && !self.adv_state.selection.is_empty();
+                adv_xray = self.adv_state.xray_on && !self.adv_state.selection.is_empty();
+                let sg = self.adv_state.scene.version();
+                let ss = self.adv_state.selection.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
                     sky_color: [1.0, 1.0, 1.0],
@@ -3679,15 +1949,15 @@ impl App {
             }
 
             ShowcaseMode::PostProcess => {
-                let items = self.pp_scene.collect_render_items(&Selection::new());
+                let items = self.pp_state.scene.collect_render_items(&Selection::new());
                 let mut lights = vec![LightSource {
                     kind: LightKind::Directional {
                         direction: [0.6, 0.4, 1.0],
                     },
-                    intensity: self.pp_dir_intensity,
+                    intensity: self.pp_state.dir_intensity,
                     ..LightSource::default()
                 }];
-                if self.pp_point_light_on {
+                if self.pp_state.point_light_on {
                     lights.push(LightSource {
                         kind: LightKind::Point {
                             position: [3.0, 3.0, 3.0],
@@ -3701,7 +1971,7 @@ impl App {
                 let lighting = LightingSettings {
                     lights,
                     shadows_enabled: true,
-                    shadow_filter: if self.pp_shadow_pcss {
+                    shadow_filter: if self.pp_state.shadow_pcss {
                         ShadowFilter::Pcss
                     } else {
                         ShadowFilter::Pcf
@@ -3711,13 +1981,13 @@ impl App {
                     ground_color: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
-                let sg = self.pp_scene.version();
+                let sg = self.pp_state.scene.version();
                 (items, Some(BG_COLOR), lighting, sg, 0)
             }
 
             ShowcaseMode::NormalMaps => {
-                let items = self.nm_scene.collect_render_items(&Selection::new());
-                if self.nm_clip_enabled {
+                let items = self.nm_state.scene.collect_render_items(&Selection::new());
+                if self.nm_state.clip_enabled {
                     adv_clip_objects.push(ClipObject::plane([1.0, 0.0, 0.0], 0.0));
                 }
                 let lighting = LightingSettings {
@@ -3745,12 +2015,12 @@ impl App {
                     ground_color: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
-                let sg = self.nm_scene.version();
+                let sg = self.nm_state.scene.version();
                 (items, Some(BG_COLOR), lighting, sg, 0)
             }
 
             ShowcaseMode::Shadows => {
-                let items = self.shd_scene.collect_render_items(&Selection::new());
+                let items = self.shd_state.scene.collect_render_items(&Selection::new());
                 let lighting = LightingSettings {
                     lights: vec![LightSource {
                         kind: LightKind::Directional {
@@ -3760,8 +2030,8 @@ impl App {
                         ..LightSource::default()
                     }],
                     shadows_enabled: true,
-                    shadow_cascade_count: self.shd_cascade_count,
-                    shadow_filter: if self.shd_pcss_on {
+                    shadow_cascade_count: self.shd_state.cascade_count,
+                    shadow_filter: if self.shd_state.pcss_on {
                         ShadowFilter::Pcss
                     } else {
                         ShadowFilter::Pcf
@@ -3771,13 +2041,13 @@ impl App {
                     ground_color: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
-                let sg = self.shd_scene.version();
+                let sg = self.shd_state.scene.version();
                 (items, Some(BG_COLOR), lighting, sg, 0)
             }
 
             ShowcaseMode::Annotation => {
-                let items = self.ann_scene.collect_render_items(&Selection::new());
-                let sg = self.ann_scene.version();
+                let items = self.ann_state.scene.collect_render_items(&Selection::new());
+                let sg = self.ann_state.scene.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
                     sky_color: [1.0, 1.0, 1.0],
@@ -3788,8 +2058,8 @@ impl App {
             }
 
             ShowcaseMode::CameraTools => {
-                let items = self.cam_tools_scene.collect_render_items(&Selection::new());
-                let sg = self.cam_tools_scene.version();
+                let items = self.ct_state.scene.collect_render_items(&Selection::new());
+                let sg = self.ct_state.scene.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
                     sky_color: [1.0, 1.0, 1.0],
@@ -3800,22 +2070,22 @@ impl App {
             }
 
             ShowcaseMode::Lights => {
-                let mut items = self.lights_scene.collect_render_items(&Selection::new());
-                if !self.lights_unlit_sphere {
+                let mut items = self.lights_state.scene.collect_render_items(&Selection::new());
+                if !self.lights_state.unlit_sphere {
                     items.retain(|item| !item.material.unlit);
                 }
                 let lighting = LightingSettings {
-                    lights: self.lights_sources.clone(),
-                    hemisphere_intensity: if self.lights_hemi_on {
-                        self.lights_hemi_intensity
+                    lights: self.lights_state.sources.clone(),
+                    hemisphere_intensity: if self.lights_state.hemi_on {
+                        self.lights_state.hemi_intensity
                     } else {
                         0.0
                     },
-                    sky_color: self.lights_sky_color,
-                    ground_color: self.lights_ground_color,
+                    sky_color: self.lights_state.sky_color,
+                    ground_color: self.lights_state.ground_color,
                     ..LightingSettings::default()
                 };
-                let sg = self.lights_scene.version();
+                let sg = self.lights_state.scene.version();
                 (items, Some(BG_COLOR), lighting, sg, 0)
             }
 
@@ -3823,9 +2093,9 @@ impl App {
                 unreachable!("MultiViewport is handled before build_frame_data")
             }
             ShowcaseMode::Isolines => {
-                let mut items = self.iso_scene.collect_render_items(&Selection::new());
+                let mut items = self.iso_state.scene.collect_render_items(&Selection::new());
                 // Apply scalar coloring or flat grey depending on toggle.
-                if self.iso_show_surface_color {
+                if self.iso_state.show_surface_color {
                     for item in items.iter_mut() {
                         item.active_attribute = Some(AttributeRef {
                             name: "wave".to_string(),
@@ -3839,7 +2109,7 @@ impl App {
                         item.material.backface_policy = BackfacePolicy::Identical;
                     }
                 }
-                let sg = self.iso_scene.version();
+                let sg = self.iso_state.scene.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
                     sky_color: [1.0, 1.0, 1.0],
@@ -3866,7 +2136,7 @@ impl App {
 
             ShowcaseMode::Volume => {
                 // Isosurface mesh items go into surface_items when visible.
-                let surface_items = if self.vol_mode != showcase_17_volume::VolumeMode::VolumeOnly {
+                let surface_items = if self.vol_state.mode != showcase_17_volume::VolumeMode::VolumeOnly {
                     self.make_iso_surface_item().into_iter().collect()
                 } else {
                     vec![]
@@ -3881,13 +2151,13 @@ impl App {
             }
 
             ShowcaseMode::ClipVolumes => {
-                let mut items = self.clipvol_scene.collect_render_items(&Selection::new());
+                let mut items = self.clipvol_state.scene.collect_render_items(&Selection::new());
                 // Identical backface policy on all sub-modes: makes the sphere and ground
                 // plane visible from the inside when clipped, showing the cut cross-section.
                 for item in items.iter_mut() {
                     item.material.backface_policy = BackfacePolicy::Identical;
                 }
-                let sg = self.clipvol_scene.version();
+                let sg = self.clipvol_state.scene.version();
                 let lighting = LightingSettings {
                     lights: vec![LightSource {
                         kind: LightKind::Directional {
@@ -3907,23 +2177,23 @@ impl App {
             ShowcaseMode::ScalarFields => {
                 const ATTR_NAMES: [&str; 3] = ["height", "wave", "distance"];
                 let mut items = self
-                    .scalar_scene
-                    .collect_render_items(&self.scalar_selection);
-                let colormap_id = viewport_lib::ColormapId(self.scalar_colormap as usize);
-                let active_node_id = self.scalar_node_ids[self.scalar_active_object];
-                let wave_node_id = self.scalar_node_ids[1];
+                    .scalar_state.scene
+                    .collect_render_items(&self.scalar_state.selection);
+                let colormap_id = viewport_lib::ColormapId(self.scalar_state.colormap as usize);
+                let active_node_id = self.scalar_state.node_ids[self.scalar_state.active_object];
+                let wave_node_id = self.scalar_state.node_ids[1];
                 if let Some(item) = items.iter_mut().find(|item| item.pick_id == PickId(active_node_id)) {
                     item.active_attribute = Some(viewport_lib::AttributeRef {
-                        name: ATTR_NAMES[self.scalar_active_object].to_string(),
+                        name: ATTR_NAMES[self.scalar_state.active_object].to_string(),
                         kind: viewport_lib::AttributeKind::Vertex,
                     });
                     item.colormap_id = Some(colormap_id);
-                    item.scalar_range = if self.scalar_range_auto {
+                    item.scalar_range = if self.scalar_state.range_auto {
                         None
                     } else {
-                        Some(self.scalar_range)
+                        Some(self.scalar_state.range)
                     };
-                    item.nan_color = if self.scalar_nan_on {
+                    item.nan_color = if self.scalar_state.nan_on {
                         Some([0.85, 0.1, 0.85, 1.0])
                     } else {
                         None
@@ -3932,7 +2202,7 @@ impl App {
                 if let Some(item) = items.iter_mut().find(|item| item.pick_id == PickId(wave_node_id)) {
                     item.material.backface_policy = BackfacePolicy::Identical;
                 }
-                let sg = self.scalar_scene.version();
+                let sg = self.scalar_state.scene.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
                     sky_color: [1.0, 1.0, 1.0],
@@ -3944,13 +2214,13 @@ impl App {
                     Some(BG_COLOR),
                     lighting,
                     sg,
-                    self.scalar_selection.version(),
+                    self.scalar_state.selection.version(),
                 )
             }
 
             ShowcaseMode::Matcap => {
-                let items = self.matcap_scene.collect_render_items(&Selection::new());
-                let sg = self.matcap_scene.version();
+                let items = self.matcap_state.scene.collect_render_items(&Selection::new());
+                let sg = self.matcap_state.scene.version();
                 // Lighting is not used by matcap-shaded objects, but we still
                 // need minimal settings for the framework.
                 let lighting = LightingSettings {
@@ -3963,12 +2233,12 @@ impl App {
             }
 
             ShowcaseMode::Textures => {
-                let mut items = self.texture_scene.collect_render_items(&Selection::new());
-                let plane_node = self.texture_plane_node;
+                let mut items = self.texture_state.scene.collect_render_items(&Selection::new());
+                let plane_node = self.texture_state.plane_node;
                 if let Some(item) = items.iter_mut().find(|i| i.pick_id == PickId(plane_node)) {
                     item.material.backface_policy = BackfacePolicy::Identical;
                 }
-                let sg = self.texture_scene.version();
+                let sg = self.texture_state.scene.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 1.5,
                     sky_color: [1.0, 1.0, 1.0],
@@ -3979,8 +2249,8 @@ impl App {
             }
 
             ShowcaseMode::ParamVis => {
-                let items = self.param_vis_scene.collect_render_items(&Selection::new());
-                let sg = self.param_vis_scene.version();
+                let items = self.param_vis_state.scene.collect_render_items(&Selection::new());
+                let sg = self.param_vis_state.scene.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
                     sky_color: [1.0, 1.0, 1.0],
@@ -3991,8 +2261,8 @@ impl App {
             }
 
             ShowcaseMode::GroundPlane => {
-                let items = self.gp_scene.collect_render_items(&Selection::new());
-                let sg = self.gp_scene.version();
+                let items = self.gp_state.scene.collect_render_items(&Selection::new());
+                let sg = self.gp_state.scene.version();
                 let lighting = LightingSettings {
                     lights: vec![LightSource {
                         kind: LightKind::Directional {
@@ -4011,14 +2281,14 @@ impl App {
             }
 
             ShowcaseMode::FaceAttributes => {
-                let mut items = self.face_scene.collect_render_items(&Selection::new());
-                let colormap_id = ColormapId(self.face_colormap as usize);
+                let mut items = self.face_state.scene.collect_render_items(&Selection::new());
+                let colormap_id = ColormapId(self.face_state.colormap as usize);
 
                 // Node 0: Vertex attribute (interpolated)
                 // scalar_range left as None : renderer auto-detects from attribute_ranges.
                 if let Some(item) = items
                     .iter_mut()
-                    .find(|i| i.pick_id == PickId(self.face_node_ids[0]))
+                    .find(|i| i.pick_id == PickId(self.face_state.node_ids[0]))
                 {
                     item.active_attribute = Some(AttributeRef {
                         name: "scalar".to_string(),
@@ -4031,7 +2301,7 @@ impl App {
                 // scalar_range left as None : renderer auto-detects from attribute_ranges.
                 if let Some(item) = items
                     .iter_mut()
-                    .find(|i| i.pick_id == PickId(self.face_node_ids[1]))
+                    .find(|i| i.pick_id == PickId(self.face_state.node_ids[1]))
                 {
                     item.active_attribute = Some(AttributeRef {
                         name: "scalar".to_string(),
@@ -4043,16 +2313,16 @@ impl App {
                 // Node 2: FaceColor attribute (direct RGBA, no colormap)
                 if let Some(item) = items
                     .iter_mut()
-                    .find(|i| i.pick_id == PickId(self.face_node_ids[2]))
+                    .find(|i| i.pick_id == PickId(self.face_state.node_ids[2]))
                 {
                     item.active_attribute = Some(AttributeRef {
                         name: "color".to_string(),
                         kind: AttributeKind::FaceColor,
                     });
-                    item.material.opacity = self.face_opacity;
+                    item.material.opacity = self.face_state.opacity;
                 }
 
-                let sg = self.face_scene.version();
+                let sg = self.face_state.scene.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.4,
                     sky_color: [1.0, 1.0, 1.0],
@@ -4064,12 +2334,12 @@ impl App {
 
             ShowcaseMode::BackfacePolicy => {
                 let items = self.sa_scene_items();
-                let sg = self.sa_scene.version();
+                let sg = self.sa_state.scene.version();
                 (items, Some(BG_COLOR), App::sa_lighting(), sg, 0)
             }
 
             ShowcaseMode::SurfaceVectors => {
-                let surface_item = if self.sv_built {
+                let surface_item = if self.sv_state.built {
                     vec![self.sv_surface_item()]
                 } else {
                     vec![]
@@ -4080,7 +2350,7 @@ impl App {
             ShowcaseMode::VolumeMesh => {
                 // Per-frame CPU clip section: regenerate the clipped mesh slot
                 // so section faces reflect the current plane position.
-                if self.vm_clip_on && self.vm_built {
+                if self.vm_state.clip_on && self.vm_state.built {
                     if let Some(rs) = frame.wgpu_render_state() {
                         let mut guard = rs.renderer.write();
                         if let Some(renderer) =
@@ -4088,7 +2358,7 @@ impl App {
                         {
                             let data = self.vm_active_data();
                             let clip_planes = [self.vm_clip_plane()];
-                            match self.vm_clipped_index {
+                            match self.vm_state.clipped_index {
                                 None => {
                                     if let Ok(id) = renderer
                                         .resources_mut()
@@ -4098,7 +2368,7 @@ impl App {
                                             &clip_planes,
                                         )
                                     {
-                                        self.vm_clipped_index = Some(id);
+                                        self.vm_state.clipped_index = Some(id);
                                     }
                                 }
                                 Some(id) => {
@@ -4117,9 +2387,9 @@ impl App {
                     }
                 }
                 // Rebuild PT meshes when the scalar field or colormap changes.
-                let pt_needs_rebuild = self.vm_built
-                    && (self.vm_field != self.vm_pt_field
-                        || self.vm_colormap != self.vm_pt_colormap);
+                let pt_needs_rebuild = self.vm_state.built
+                    && (self.vm_state.field != self.vm_state.pt_field
+                        || self.vm_state.colormap != self.vm_state.pt_colormap);
                 if pt_needs_rebuild {
                     if let Some(rs) = frame.wgpu_render_state() {
                         let mut guard = rs.renderer.write();
@@ -4129,11 +2399,11 @@ impl App {
                             self.rebuild_pt_meshes(
                                 renderer,
                                 &rs.device,
-                                self.vm_field,
-                                self.vm_colormap,
+                                self.vm_state.field,
+                                self.vm_state.colormap,
                             );
-                            self.vm_pt_field = self.vm_field;
-                            self.vm_pt_colormap = self.vm_colormap;
+                            self.vm_state.pt_field = self.vm_state.field;
+                            self.vm_state.pt_colormap = self.vm_state.colormap;
                         }
                     }
                 }
@@ -4143,7 +2413,7 @@ impl App {
             }
 
             ShowcaseMode::Auxiliary => {
-                let items = self.aux_scene.collect_render_items(&Selection::new());
+                let items = self.aux_state.scene.collect_render_items(&Selection::new());
                 (items, Some(BG_COLOR), App::aux_lighting(), 0, 0)
             }
 
@@ -4171,20 +2441,20 @@ impl App {
             }
 
             ShowcaseMode::PickLevels => {
-                let items = self.pl_scene.collect_render_items(&self.pl_selection);
-                let sg = self.pl_scene.version();
+                let items = self.pl_state.scene.collect_render_items(&self.pl_state.selection);
+                let sg = self.pl_state.scene.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
                     sky_color: [1.0, 1.0, 1.0],
                     ground_color: [0.8, 0.8, 0.8],
                     ..LightingSettings::default()
                 };
-                (items, Some(BG_COLOR), lighting, sg, self.pl_selection.version())
+                (items, Some(BG_COLOR), lighting, sg, self.pl_state.selection.version())
             }
 
             ShowcaseMode::Labels => {
-                let items = self.lbl_scene.collect_render_items(&Selection::new());
-                let sg = self.lbl_scene.version();
+                let items = self.lbl_state.scene.collect_render_items(&Selection::new());
+                let sg = self.lbl_state.scene.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
                     sky_color: [1.0, 1.0, 1.0],
@@ -4200,21 +2470,21 @@ impl App {
 
             ShowcaseMode::PlaybackRuntime => {
                 // Apply renderer settings and update deforming mesh.
-                let topology_changed = self.pb_grid_resolution != self.pb_last_grid_resolution
-                    || self.pb_grid_layers != self.pb_last_grid_layers;
-                let need_mesh_update = self.pb_mode == RuntimeMode::Playback || topology_changed;
+                let topology_changed = self.pb_state.grid_resolution != self.pb_state.last_grid_resolution
+                    || self.pb_state.grid_layers != self.pb_state.last_grid_layers;
+                let need_mesh_update = self.pb_state.mode == RuntimeMode::Playback || topology_changed;
                 if let Some(rs) = frame.wgpu_render_state() {
                     let mut guard = rs.renderer.write();
                     if let Some(renderer) =
                         guard.callback_resources.get_mut::<ViewportRenderer>()
                     {
                         if need_mesh_update {
-                            if let Some(mesh_id) = self.pb_mesh_id {
+                            if let Some(mesh_id) = self.pb_state.mesh_id {
                                 let t0 = std::time::Instant::now();
                                 let mesh = showcase_36_playback_runtime::build_sine_grid(
-                                    self.pb_grid_resolution,
-                                    self.pb_grid_layers,
-                                    self.pb_time,
+                                    self.pb_state.grid_resolution,
+                                    self.pb_state.grid_layers,
+                                    self.pb_state.time,
                                 );
                                 if topology_changed {
                                     let _ = renderer.resources_mut().replace_mesh_data(
@@ -4223,8 +2493,8 @@ impl App {
                                         mesh_id,
                                         &mesh,
                                     );
-                                    self.pb_last_grid_resolution = self.pb_grid_resolution;
-                                    self.pb_last_grid_layers = self.pb_grid_layers;
+                                    self.pb_state.last_grid_resolution = self.pb_state.grid_resolution;
+                                    self.pb_state.last_grid_layers = self.pb_state.grid_layers;
                                 } else {
                                     let _ = renderer.resources_mut().write_mesh_positions_normals(
                                         &rs.queue,
@@ -4233,24 +2503,24 @@ impl App {
                                         &mesh.normals,
                                     );
                                 }
-                                self.pb_upload_ms = t0.elapsed().as_secs_f32() * 1000.0;
+                                self.pb_state.upload_ms = t0.elapsed().as_secs_f32() * 1000.0;
                             }
                         } else {
-                            self.pb_upload_ms = 0.0;
+                            self.pb_state.upload_ms = 0.0;
                         }
-                        renderer.set_runtime_mode(self.pb_mode);
-                        renderer.set_performance_policy(self.pb_policy);
-                        if !self.pb_policy.allow_dynamic_resolution {
-                            renderer.set_render_scale(self.pb_manual_render_scale);
+                        renderer.set_runtime_mode(self.pb_state.mode);
+                        renderer.set_performance_policy(self.pb_state.policy);
+                        if !self.pb_state.policy.allow_dynamic_resolution {
+                            renderer.set_render_scale(self.pb_state.manual_render_scale);
                         }
-                        self.pb_last_stats = renderer.last_frame_stats();
+                        self.pb_state.last_stats = renderer.last_frame_stats();
                     }
                 }
 
                 // Update rolling stats history.
-                self.pb_stats_history.push_back(self.pb_last_stats.total_frame_ms);
-                if self.pb_stats_history.len() > 60 {
-                    self.pb_stats_history.pop_front();
+                self.pb_state.stats_history.push_back(self.pb_state.last_stats.total_frame_ms);
+                if self.pb_state.stats_history.len() > 60 {
+                    self.pb_state.stats_history.pop_front();
                 }
 
                 let items = showcase_36_playback_runtime::pb_scene_items(self);
@@ -4260,31 +2530,31 @@ impl App {
                     ground_color: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
-                let sg = self.pb_scene.version();
+                let sg = self.pb_state.scene.version();
                 (items, Some(BG_COLOR), lighting, sg, 0)
             }
 
             ShowcaseMode::ProbeWidgets => {
-                let items = self.pw_scene.collect_render_items(&Selection::new());
+                let items = self.pw_state.scene.collect_render_items(&Selection::new());
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.6,
                     sky_color: [1.0, 1.0, 1.0],
                     ground_color: [0.8, 0.8, 0.8],
                     ..LightingSettings::default()
                 };
-                let sg = self.pw_scene.version();
+                let sg = self.pw_state.scene.version();
                 (items, Some(BG_COLOR), lighting, sg, 0)
             }
 
             ShowcaseMode::SurfaceLIC => {
-                let items = self.lic_scene.collect_render_items(&Selection::new());
+                let items = self.lic_state.scene.collect_render_items(&Selection::new());
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
                     sky_color: [1.0, 1.0, 1.0],
                     ground_color: [0.7, 0.7, 0.7],
                     ..LightingSettings::default()
                 };
-                let sg = self.lic_scene.version();
+                let sg = self.lic_state.scene.version();
                 (items, Some(BG_COLOR), lighting, sg, 0)
             }
 
@@ -4308,41 +2578,41 @@ impl App {
         // Gizmo matrices for Interaction and ClipVolumes modes.
         let (gizmo_model, gizmo_mode, gizmo_space_orient, gizmo_hovered) =
             if self.mode == ShowcaseMode::Interaction {
-                let center = self.interact_gizmo_center;
+                let center = self.interact_state.gizmo_center;
                 let model = center.map(|c| {
                     glam::Mat4::from_scale_rotation_translation(
-                        glam::Vec3::splat(self.interact_gizmo_scale),
+                        glam::Vec3::splat(self.interact_state.gizmo_scale),
                         glam::Quat::IDENTITY,
                         c,
                     )
                 });
-                let orient = gizmo_orientation(
-                    &self.interact_gizmo,
-                    &self.interact_selection,
-                    &self.interact_scene,
+                let orient = gizmo_helpers::gizmo_orientation(
+                    &self.interact_state.gizmo,
+                    &self.interact_state.selection,
+                    &self.interact_state.scene,
                 );
-                let hovered = if let Some(state) = self.manip.state() {
+                let hovered = if let Some(state) = self.interact_state.manip.state() {
                     state.axis.unwrap_or(GizmoAxis::None)
                 } else {
-                    self.interact_gizmo.hovered_axis
+                    self.interact_state.gizmo.hovered_axis
                 };
-                (model, self.interact_gizmo.mode, orient, hovered)
-            } else if self.mode == ShowcaseMode::ClipVolumes && self.clipvol_built {
-                let center = self.clipvol_gizmo_center;
+                (model, self.interact_state.gizmo.mode, orient, hovered)
+            } else if self.mode == ShowcaseMode::ClipVolumes && self.clipvol_state.built {
+                let center = self.clipvol_state.gizmo_center;
                 let orient = self.clipvol_gizmo_orient();
                 let model = center.map(|c| {
                     glam::Mat4::from_scale_rotation_translation(
-                        glam::Vec3::splat(self.clipvol_gizmo_scale),
+                        glam::Vec3::splat(self.clipvol_state.gizmo_scale),
                         glam::Quat::IDENTITY,
                         c,
                     )
                 });
-                let hovered = if self.clipvol_gizmo.active_axis != GizmoAxis::None {
-                    self.clipvol_gizmo.active_axis
+                let hovered = if self.clipvol_state.gizmo.active_axis != GizmoAxis::None {
+                    self.clipvol_state.gizmo.active_axis
                 } else {
-                    self.clipvol_gizmo.hovered_axis
+                    self.clipvol_state.gizmo.hovered_axis
                 };
-                (model, self.clipvol_gizmo.mode, orient, hovered)
+                (model, self.clipvol_state.gizmo.mode, orient, hovered)
             } else {
                 (
                     None,
@@ -4362,10 +2632,10 @@ impl App {
         );
         fd.effects.lighting = lighting;
         if self.mode == ShowcaseMode::PickLevels {
-            fd.viewport.wireframe_mode = self.pl_wireframe;
+            fd.viewport.wireframe_mode = self.pl_state.wireframe;
         }
         if self.mode == ShowcaseMode::VolumeMesh {
-            fd.viewport.wireframe_mode = self.vm_wireframe;
+            fd.viewport.wireframe_mode = self.vm_state.wireframe;
         }
         fd.viewport.show_grid = false;
         fd.viewport.show_axes_indicator = true;
@@ -4375,17 +2645,17 @@ impl App {
         if self.mode == ShowcaseMode::GroundPlane {
             use showcase_23_ground_plane::GpMode;
             fd.effects.ground_plane = GroundPlane {
-                mode: match self.gp_mode {
+                mode: match self.gp_state.mode {
                     GpMode::None => GroundPlaneMode::None,
                     GpMode::ShadowOnly => GroundPlaneMode::ShadowOnly,
                     GpMode::Tile => GroundPlaneMode::Tile,
                     GpMode::SolidColor => GroundPlaneMode::SolidColor,
                 },
-                height: self.gp_height,
-                color: self.gp_color,
-                tile_size: self.gp_tile_size,
-                shadow_color: self.gp_shadow_color,
-                shadow_opacity: self.gp_shadow_opacity,
+                height: self.gp_state.height,
+                color: self.gp_state.color,
+                tile_size: self.gp_state.tile_size,
+                shadow_color: self.gp_state.shadow_color,
+                shadow_opacity: self.gp_state.shadow_opacity,
             };
         }
         // Clip objects for Showcase 24 (Surface Appearance).
@@ -4397,7 +2667,7 @@ impl App {
         }
         fd.effects.clip_objects = adv_clip_objects;
         if self.mode == ShowcaseMode::NormalMaps {
-            fd.effects.cap_fill_enabled = self.nm_cap_fill;
+            fd.effects.cap_fill_enabled = self.nm_state.cap_fill;
         }
         // Showcase 24 exists to show back face policies : cap fill would hide them.
         if self.mode == ShowcaseMode::BackfacePolicy {
@@ -4414,8 +2684,8 @@ impl App {
             || perf_outline
             || scene_graph_outline
             || interact_outline
-            || (self.mode == ShowcaseMode::ScalarFields && !self.scalar_selection.is_empty())
-            || (self.mode == ShowcaseMode::PickLevels && !self.pl_selection.is_empty());
+            || (self.mode == ShowcaseMode::ScalarFields && !self.scalar_state.selection.is_empty())
+            || (self.mode == ShowcaseMode::PickLevels && !self.pl_state.selection.is_empty());
         if scene_graph_outline {
             fd.interaction.outline_width_px = scene_graph_outline_width;
         }
@@ -4434,8 +2704,8 @@ impl App {
 
         // Volume item (Showcase 17) : submitted every frame when in volume mode.
         if self.mode == ShowcaseMode::Volume
-            && self.vol_built
-            && self.vol_mode != showcase_17_volume::VolumeMode::IsosurfaceOnly
+            && self.vol_state.built
+            && self.vol_state.mode != showcase_17_volume::VolumeMode::IsosurfaceOnly
         {
             if let Some(vol_item) = self.make_volume_item() {
                 fd.scene.volumes.push(vol_item);
@@ -4443,22 +2713,23 @@ impl App {
         }
 
         // Image slice (Showcase 17) : submitted every frame when enabled.
-        if self.mode == ShowcaseMode::Volume && self.vol_built && self.vol_show_slice {
+        if self.mode == ShowcaseMode::Volume && self.vol_state.built && self.vol_state.show_slice {
             if let Some(slice_item) = self.make_image_slice_item() {
                 fd.scene.image_slices.push(slice_item);
             }
         }
 
         // Clip volume (Showcase 18) : set every frame from current state.
-        if self.mode == ShowcaseMode::ClipVolumes && self.clipvol_built {
+        if self.mode == ShowcaseMode::ClipVolumes && self.clipvol_state.built {
             if let Some(clip_obj) = self.make_clip_object() {
                 fd.effects.clip_objects.push(clip_obj);
             }
         }
 
         // Streamline / tube items (Showcase 16) : submitted every frame.
-        if self.mode == ShowcaseMode::Streamlines && self.stream_built {
-            match self.stream_render_mode {
+        if self.mode == ShowcaseMode::Streamlines && self.stream_state.built {
+            use showcase_16_streamlines::StreamRenderMode;
+            match self.stream_state.render_mode {
                 StreamRenderMode::Polylines => {
                     fd.scene.polylines.push(self.make_stream_polyline_item());
                 }
@@ -4475,61 +2746,61 @@ impl App {
         }
 
         // Spline widget polyline + handles (Showcase 4) : submitted every frame.
-        if self.mode == ShowcaseMode::Interaction && self.interact_built {
-            fd.scene.polylines.push(self.interact_spline.polyline_item(9900));
+        if self.mode == ShowcaseMode::Interaction && self.interact_state.built {
+            fd.scene.polylines.push(self.interact_state.spline.polyline_item(9900));
             let render_cam = CameraFrame::from_camera(&self.camera, [w, h]).render_camera;
             let spline_ctx = viewport_lib::WidgetContext {
                 camera: render_cam,
                 viewport_size: glam::Vec2::new(w, h),
-                cursor_viewport: self.last_cursor_viewport,
+                cursor_viewport: self.interact_state.last_cursor_viewport,
                 drag_started: false,
                 dragging: false,
                 released: false,
                 double_clicked: false,
             };
-            fd.scene.glyphs.push(self.interact_spline.handle_glyphs(9901, &spline_ctx));
+            fd.scene.glyphs.push(self.interact_state.spline.handle_glyphs(9901, &spline_ctx));
         }
 
         // Surface vector glyphs (Showcase 25) : submitted every frame.
-        if self.mode == ShowcaseMode::SurfaceVectors && self.sv_built {
+        if self.mode == ShowcaseMode::SurfaceVectors && self.sv_state.built {
             fd.scene.glyphs.push(self.sv_glyph_item());
         }
 
         // Extended quantity glyphs and point clouds (Showcase 32) : submitted every frame.
-        if self.mode == ShowcaseMode::ExtendedQuantities && self.eq_built {
+        if self.mode == ShowcaseMode::ExtendedQuantities && self.eq_state.built {
             fd.scene.glyphs.extend(eq_glyphs);
             fd.scene.point_clouds.extend(eq_pcs);
         }
 
         // Picking Levels (Showcase 33) : point cloud, sub-selection highlights, and hit marker.
-        if self.mode == ShowcaseMode::PickLevels && self.pl_built {
+        if self.mode == ShowcaseMode::PickLevels && self.pl_state.built {
             // Background point cloud (blue, pickable via id=1).
-            if !self.pl_pc_positions.is_empty() {
+            if !self.pl_state.pc_positions.is_empty() {
                 let mut pc = PointCloudItem::default();
-                pc.positions = self.pl_pc_positions.clone();
+                pc.positions = self.pl_state.pc_positions.clone();
                 pc.point_size = 6.0;
                 pc.default_color = [0.5, 0.8, 1.0, 1.0];
                 pc.id = 1;
                 fd.scene.point_clouds.push(pc);
             }
             // Sub-object highlight pass (face fill, edge outline, vertex/point sprites).
-            if !self.pl_sub_selection.is_empty() {
+            if !self.pl_state.sub_selection.is_empty() {
                 let mut mesh_lookup: HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)> = HashMap::new();
                 let mut model_matrices: HashMap<u64, glam::Mat4> = HashMap::new();
-                for node in self.pl_scene.nodes() {
+                for node in self.pl_state.scene.nodes() {
                     let node_id = viewport_lib::traits::ViewportObject::id(node);
                     let model = viewport_lib::traits::ViewportObject::model_matrix(node);
                     model_matrices.insert(node_id, model);
                     if let Some(mesh_key) = viewport_lib::traits::ViewportObject::mesh_id(node) {
-                        if let Some(data) = self.pl_mesh_lookup.get(&mesh_key) {
+                        if let Some(data) = self.pl_state.mesh_lookup.get(&mesh_key) {
                             mesh_lookup.insert(node_id, data.clone());
                         }
                     }
                 }
                 let mut point_positions: HashMap<u64, Vec<[f32; 3]>> = HashMap::new();
-                point_positions.insert(1, self.pl_pc_positions.clone());
+                point_positions.insert(1, self.pl_state.pc_positions.clone());
                 let mut voxel_lookup: HashMap<u64, viewport_lib::VolumeSelectionInfo> = HashMap::new();
-                if self.pl_volume_id.is_some() {
+                if self.pl_state.volume_id.is_some() {
                     voxel_lookup.insert(2, viewport_lib::VolumeSelectionInfo {
                         dims: [16, 16, 16],
                         bbox_min: [0.0, 0.0, 0.0],
@@ -4539,7 +2810,7 @@ impl App {
                     });
                 }
                 fd.interaction.sub_selection = Some(SubSelectionRef::new(
-                    &self.pl_sub_selection,
+                    &self.pl_state.sub_selection,
                     mesh_lookup,
                     model_matrices,
                     point_positions,
@@ -4550,8 +2821,8 @@ impl App {
                 fd.interaction.sub_highlight_vertex_size_px = 14.0;
             }
             // Orange crosshair marker: only in Object level (sub-levels use highlight dots).
-            if self.pl_level == showcase_33_picking_levels::PlPickLevel::Object {
-                if let Some(marker_pos) = self.pl_hit_marker {
+            if self.pl_state.level == showcase_33_picking_levels::PlPickLevel::Object {
+                if let Some(marker_pos) = self.pl_state.hit_marker {
                     let mut marker = PointCloudItem::default();
                     marker.positions = vec![marker_pos.to_array()];
                     marker.point_size = 16.0;
@@ -4560,7 +2831,7 @@ impl App {
                 }
             }
             // Volume render (always submitted when built).
-            if let Some(vol_id) = self.pl_volume_id {
+            if let Some(vol_id) = self.pl_state.volume_id {
                 let mut vol = viewport_lib::VolumeItem::default();
                 vol.volume_id = vol_id;
                 vol.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0))
@@ -4578,7 +2849,7 @@ impl App {
 
         // Curve network quantities (Showcase 28) : submitted every frame.
         if self.mode == ShowcaseMode::CurveNetworkQuantities {
-            fd.scene.polylines.push(self.make_cnq_polyline_item());
+            fd.scene.polylines.push(showcase_28_curve_network_quantities::make_cnq_polyline_item(self));
         }
 
         // Depth-composite screen image (Showcase 29) : submitted every frame.
@@ -4594,15 +2865,15 @@ impl App {
         }
 
         // Auxiliary frustums and screen images (Showcase 27) : submitted every frame.
-        if self.mode == ShowcaseMode::Auxiliary && self.aux_built {
-            fd.scene.camera_frustums = self.aux_frustums.clone();
+        if self.mode == ShowcaseMode::Auxiliary && self.aux_state.built {
+            fd.scene.camera_frustums = self.aux_state.frustums.clone();
             self.aux_push_screen_images(&mut fd);
         }
 
         // Point cloud / glyph items (Showcase 15) : submitted every frame.
-        if self.mode == ShowcaseMode::PointClouds && self.pc_built {
-            use crate::PcSubMode;
-            match self.pc_sub_mode {
+        if self.mode == ShowcaseMode::PointClouds && self.pc_state.built {
+            use showcase_15_point_clouds::PcSubMode;
+            match self.pc_state.sub_mode {
                 PcSubMode::PointCloud => {
                     fd.scene.point_clouds.push(self.make_pc_point_cloud_item());
                 }
@@ -4613,7 +2884,7 @@ impl App {
                     fd.scene.point_clouds.push(self.make_pc_gaussian_item());
                 }
             }
-            if self.pc_ssao_enabled {
+            if self.pc_state.ssao_enabled {
                 fd.effects.post_process = PostProcessSettings {
                     enabled: true,
                     ssao: true,
@@ -4623,31 +2894,31 @@ impl App {
         }
 
         // Isoline items (Showcase 14) : submitted every frame with current settings.
-        if self.mode == ShowcaseMode::Isolines && self.iso_built {
+        if self.mode == ShowcaseMode::Isolines && self.iso_state.built {
             let scalar_min = self
-                .iso_scalars
+                .iso_state.scalars
                 .iter()
                 .cloned()
                 .fold(f32::INFINITY, f32::min);
             let scalar_max = self
-                .iso_scalars
+                .iso_state.scalars
                 .iter()
                 .cloned()
                 .fold(f32::NEG_INFINITY, f32::max);
             let range = scalar_max - scalar_min;
-            let isovalues: Vec<f32> = (0..self.iso_contour_count)
+            let isovalues: Vec<f32> = (0..self.iso_state.contour_count)
                 .map(|i| {
-                    scalar_min + range * (i as f32 + 1.0) / (self.iso_contour_count as f32 + 1.0)
+                    scalar_min + range * (i as f32 + 1.0) / (self.iso_state.contour_count as f32 + 1.0)
                 })
                 .collect();
             let mut iso_item = IsolineItem::default();
-            iso_item.positions = self.iso_positions.clone();
-            iso_item.indices = self.iso_indices.clone();
-            iso_item.scalars = self.iso_scalars.clone();
+            iso_item.positions = self.iso_state.positions.clone();
+            iso_item.indices = self.iso_state.indices.clone();
+            iso_item.scalars = self.iso_state.scalars.clone();
             iso_item.isovalues = isovalues;
-            iso_item.color = self.iso_line_color;
-            iso_item.line_width = self.iso_line_width;
-            iso_item.depth_bias = self.iso_depth_bias;
+            iso_item.color = self.iso_state.line_color;
+            iso_item.line_width = self.iso_state.line_width;
+            iso_item.depth_bias = self.iso_state.depth_bias;
             fd.scene.isolines.push(iso_item);
         }
 
@@ -4663,13 +2934,13 @@ impl App {
                 rc.far = (self.camera.distance * 3.0).max(60.0);
                 rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
                 fd.camera.render_camera = rc;
-                if self.pp_dof_enabled {
+                if self.pp_state.dof_enabled {
                     fd.effects.post_process = PostProcessSettings {
                         enabled: true,
                         dof_enabled: true,
-                        dof_focal_distance: self.pp_dof_focal_dist,
-                        dof_focal_range: self.pp_dof_focal_range,
-                        dof_max_blur_radius: self.pp_dof_max_blur,
+                        dof_focal_distance: self.pp_state.dof_focal_dist,
+                        dof_focal_range: self.pp_state.dof_focal_range,
+                        dof_max_blur_radius: self.pp_state.dof_max_blur,
                         ..PostProcessSettings::default()
                     };
                 }
@@ -4677,7 +2948,7 @@ impl App {
             ShowcaseMode::Shadows => {
                 fd.effects.post_process = PostProcessSettings {
                     enabled: false,
-                    contact_shadows: self.shd_contact_on,
+                    contact_shadows: self.shd_state.contact_on,
                     contact_shadow_max_distance: 0.18,
                     contact_shadow_steps: 32,
                     contact_shadow_thickness: 0.04,
@@ -4718,12 +2989,12 @@ impl App {
                 rc.far = (self.camera.distance * 3.0).max(30.0);
                 rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
                 fd.camera.render_camera = rc;
-                if self.lights_edl_enabled {
+                if self.lights_state.edl_enabled {
                     fd.effects.post_process = PostProcessSettings {
                         enabled: true,
                         edl_enabled: true,
-                        edl_radius: self.lights_edl_radius,
-                        edl_strength: self.lights_edl_strength,
+                        edl_radius: self.lights_state.edl_radius,
+                        edl_strength: self.lights_state.edl_strength,
                         ..PostProcessSettings::default()
                     };
                 }
@@ -4733,10 +3004,10 @@ impl App {
         }
 
         // Overlay labels (Showcase 9 and 34): populate OverlayFrame.
-        if self.mode == ShowcaseMode::Annotation && self.ann_built {
-            fd.overlays.labels = self.ann_labels.clone();
+        if self.mode == ShowcaseMode::Annotation && self.ann_state.built {
+            fd.overlays.labels = self.ann_state.labels.clone();
         }
-        if self.mode == ShowcaseMode::ScalarFields && self.scalar_built {
+        if self.mode == ShowcaseMode::ScalarFields && self.scalar_state.built {
             fd.overlays.scalar_bars = vec![self.scalar_bar_item()];
         }
         if self.mode == ShowcaseMode::Overlay {
@@ -4746,20 +3017,20 @@ impl App {
             if let Some(r) = ruler {
                 fd.overlays.rulers = vec![r];
             }
-            if self.ovl_cloud_built {
+            if self.ovl_state.cloud_built {
                 let mut pc = PointCloudItem::default();
-                pc.positions = self.ovl_cloud_positions.clone();
-                pc.scalars = self.ovl_cloud_scalars.clone();
+                pc.positions = self.ovl_state.cloud_positions.clone();
+                pc.scalars = self.ovl_state.cloud_scalars.clone();
                 pc.scalar_range = Some((-1.5, 1.5));
-                pc.colormap_id = Some(ColormapId(self.ovl_colormap as usize));
+                pc.colormap_id = Some(ColormapId(self.ovl_state.colormap as usize));
                 pc.point_size = 4.0;
                 fd.scene.point_clouds.push(pc);
             }
         }
-        if self.mode == ShowcaseMode::Labels && self.lbl_built {
+        if self.mode == ShowcaseMode::Labels && self.lbl_state.built {
             // World-anchored part labels (built once, filtered by toggle).
-            if self.lbl_show_part_labels {
-                fd.overlays.labels.extend(self.lbl_labels.iter().cloned());
+            if self.lbl_state.show_part_labels {
+                fd.overlays.labels.extend(self.lbl_state.labels.iter().cloned());
             }
             // Screen-anchored labels (title, legend, feature demos) sized to viewport.
             fd.overlays.labels.extend(self.build_label_screen_overlays(w, h));
@@ -4767,7 +3038,7 @@ impl App {
 
         // Loading bar while the async perf scene build is in flight.
         if self.mode == ShowcaseMode::Performance {
-            if let Some(ref progress) = self.perf_build_progress {
+            if let Some(ref progress) = self.perf_state.build_progress {
                 let n = progress.load(std::sync::atomic::Ordering::Relaxed);
                 let label = format!(
                     "Building scene\u{2026} {} / 1 000 000",
@@ -4787,21 +3058,21 @@ impl App {
             let rs = frame.wgpu_render_state().unwrap();
             let mut guard = rs.renderer.write();
             if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
-                if self.perf_gpu_culling {
+                if self.perf_state.gpu_culling {
                     renderer.enable_gpu_driven_culling();
                 } else {
                     renderer.disable_gpu_driven_culling();
                 }
-                self.last_stats = renderer.last_frame_stats();
+                self.perf_state.last_stats = renderer.last_frame_stats();
             }
         }
         // Probe widget render items (Showcase 37) : submitted every frame.
-        if self.mode == ShowcaseMode::ProbeWidgets && self.pw_built {
+        if self.mode == ShowcaseMode::ProbeWidgets && self.pw_state.built {
             let render_cam = CameraFrame::from_camera(&self.camera, [w, h]).render_camera;
             let widget_ctx = viewport_lib::WidgetContext {
                 camera: render_cam,
                 viewport_size: glam::Vec2::new(w, h),
-                cursor_viewport: self.last_cursor_viewport,
+                cursor_viewport: self.interact_state.last_cursor_viewport,
                 drag_started: false,
                 dragging: false,
                 released: false,
@@ -4874,7 +3145,7 @@ impl App {
         // Surface LIC render items (Showcase 38) : submitted every frame when built.
         // LIC compositing happens inside the tone-map pass, so the HDR pipeline
         // must be active (post_process.enabled = true).
-        if self.mode == ShowcaseMode::SurfaceLIC && self.lic_built {
+        if self.mode == ShowcaseMode::SurfaceLIC && self.lic_state.built {
             showcase_38_surface_lic::submit_lic_items(self, &mut fd);
             if !fd.scene.lic_items.is_empty() {
                 fd.effects.post_process.enabled = true;
@@ -4882,7 +3153,7 @@ impl App {
         }
 
         // Tensor glyph items (Showcase 39) : submitted every frame when built.
-        if self.mode == ShowcaseMode::TensorGlyphs && self.tg_built {
+        if self.mode == ShowcaseMode::TensorGlyphs && self.tg_state.built {
             showcase_39_tensor_glyphs::submit_tensor_glyphs(self, &mut fd);
         }
 
@@ -4905,7 +3176,7 @@ impl App {
         match self.mode {
             ShowcaseMode::SceneGraph => {
                 let mut mesh_lookup = std::collections::HashMap::new();
-                for node in self.scene.nodes() {
+                for node in self.sg_state.scene.nodes() {
                     if let Some(mid) = viewport_lib::traits::ViewportObject::mesh_id(node) {
                         mesh_lookup.entry(mid).or_insert_with(|| {
                             (
@@ -4918,19 +3189,19 @@ impl App {
                 let hit = viewport_lib::picking::pick_scene_nodes_cpu(
                     ray_origin,
                     ray_dir,
-                    &self.scene,
+                    &self.sg_state.scene,
                     &mesh_lookup,
                 );
                 if let Some(hit) = hit {
-                    self.selection.select_one(hit.id);
+                    self.sg_state.selection.select_one(hit.id);
                 } else {
-                    self.selection.clear();
+                    self.sg_state.selection.clear();
                 }
             }
 
             ShowcaseMode::Performance => {
                 let mut mesh_lookup = std::collections::HashMap::new();
-                if let Some(mesh) = self.perf_mesh {
+                if let Some(mesh) = self.perf_state.mesh {
                     mesh_lookup.insert(
                         mesh.index() as u64,
                         (
@@ -4939,7 +3210,7 @@ impl App {
                         ),
                     );
                 }
-                let hit = if let Some(ref mut accel) = self.pick_accelerator {
+                let hit = if let Some(ref mut accel) = self.perf_state.pick_accelerator {
                     viewport_lib::bvh::pick_scene_accelerated_cpu(
                         ray_origin,
                         ray_dir,
@@ -4950,15 +3221,15 @@ impl App {
                     None
                 };
                 if let Some(hit) = hit {
-                    self.perf_selection.select_one(hit.id);
+                    self.perf_state.selection.select_one(hit.id);
                 } else {
-                    self.perf_selection.clear();
+                    self.perf_state.selection.clear();
                 }
             }
 
             ShowcaseMode::Interaction => {
                 let mut mesh_lookup = std::collections::HashMap::new();
-                for node in self.interact_scene.nodes() {
+                for node in self.interact_state.scene.nodes() {
                     if let Some(mid) = viewport_lib::traits::ViewportObject::mesh_id(node) {
                         mesh_lookup.entry(mid).or_insert_with(|| {
                             (
@@ -4971,19 +3242,19 @@ impl App {
                 let hit = viewport_lib::picking::pick_scene_nodes_cpu(
                     ray_origin,
                     ray_dir,
-                    &self.interact_scene,
+                    &self.interact_state.scene,
                     &mesh_lookup,
                 );
                 if let Some(hit) = hit {
-                    self.interact_selection.select_one(hit.id);
+                    self.interact_state.selection.select_one(hit.id);
                 } else {
-                    self.interact_selection.clear();
+                    self.interact_state.selection.clear();
                 }
             }
 
             ShowcaseMode::Advanced => {
                 let mut mesh_lookup = std::collections::HashMap::new();
-                for node in self.adv_scene.nodes() {
+                for node in self.adv_state.scene.nodes() {
                     if let Some(mid) = viewport_lib::traits::ViewportObject::mesh_id(node) {
                         mesh_lookup.entry(mid).or_insert_with(|| {
                             (
@@ -4996,50 +3267,50 @@ impl App {
                 let hit = viewport_lib::picking::pick_scene_nodes_cpu(
                     ray_origin,
                     ray_dir,
-                    &self.adv_scene,
+                    &self.adv_state.scene,
                     &mesh_lookup,
                 );
                 if let Some(hit) = hit {
-                    self.adv_selection.select_one(hit.id);
+                    self.adv_state.selection.select_one(hit.id);
                 } else {
-                    self.adv_selection.clear();
+                    self.adv_state.selection.clear();
                 }
             }
 
             ShowcaseMode::ScalarFields => {
                 let mut mesh_lookup = std::collections::HashMap::new();
-                for i in 0..self.scalar_mesh_indices.len() {
+                for i in 0..self.scalar_state.mesh_indices.len() {
                     mesh_lookup.insert(
-                        self.scalar_mesh_indices[i].index() as u64,
+                        self.scalar_state.mesh_indices[i].index() as u64,
                         (
-                            self.scalar_pick_positions[i].clone(),
-                            self.scalar_pick_indices[i].clone(),
+                            self.scalar_state.pick_positions[i].clone(),
+                            self.scalar_state.pick_indices[i].clone(),
                         ),
                     );
                 }
                 let hit = viewport_lib::picking::pick_scene_nodes_cpu(
                     ray_origin,
                     ray_dir,
-                    &self.scalar_scene,
+                    &self.scalar_state.scene,
                     &mesh_lookup,
                 );
                 if let Some(hit) = hit {
                     if let Some(index) = self
-                        .scalar_node_ids
+                        .scalar_state.node_ids
                         .iter()
                         .position(|&node_id| node_id == hit.id)
                     {
-                        self.set_scalar_active_object(index);
+                        self.scalar_state.set_active_object(index);
                     } else {
-                        self.scalar_selection.select_one(hit.id);
+                        self.scalar_state.selection.select_one(hit.id);
                     }
                 } else {
-                    self.scalar_selection.clear();
+                    self.scalar_state.selection.clear();
                 }
             }
 
             ShowcaseMode::PickLevels => {
-                let shift = self.pl_shift_held;
+                let shift = self.pl_state.shift_held;
                 self.handle_pl_click(pos, w, h, shift);
             }
 
@@ -5048,574 +3319,3 @@ impl App {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Manipulation helpers (Showcase 4)
-// ---------------------------------------------------------------------------
-
-impl App {
-    /// Apply a [`viewport_lib::TransformDelta`] to all selected scene nodes.
-    ///
-    /// Rotation and scale pivot around `interact_gizmo_center`.
-    /// When `position_override` or `scale_override` is set (numeric input), the
-    /// snapshot is restored first and the override applied as an absolute value.
-    fn apply_interact_delta(&mut self, delta: viewport_lib::TransformDelta) {
-        let Some(center) = self.interact_gizmo_center else {
-            return;
-        };
-
-        let has_pos_override = delta.position_override.iter().any(|v| v.is_some());
-        let has_scale_override = delta.scale_override.iter().any(|v| v.is_some());
-
-        if has_pos_override || has_scale_override {
-            // Numeric input: restore snapshot so the override is applied from
-            // the pre-session position, not accumulated on top of previous deltas.
-            self.restore_interact_snapshots();
-        }
-
-        let translation = if has_pos_override {
-            glam::Vec3::new(
-                delta.position_override[0].unwrap_or(0.0),
-                delta.position_override[1].unwrap_or(0.0),
-                delta.position_override[2].unwrap_or(0.0),
-            )
-        } else {
-            delta.translation
-        };
-
-        let scale = if has_scale_override {
-            glam::Vec3::new(
-                delta.scale_override[0].unwrap_or(1.0),
-                delta.scale_override[1].unwrap_or(1.0),
-                delta.scale_override[2].unwrap_or(1.0),
-            )
-        } else {
-            delta.scale
-        };
-
-        let rot_mat = glam::Mat4::from_quat(delta.rotation);
-        let scale_mat = glam::Mat4::from_scale(scale);
-        let translate_mat = glam::Mat4::from_translation(translation);
-        let to_pivot = glam::Mat4::from_translation(-center);
-        let from_pivot = glam::Mat4::from_translation(center);
-
-        for id in self.interact_selection.iter().copied().collect::<Vec<_>>() {
-            if let Some(node) = self.interact_scene.node(id) {
-                let cur = node.local_transform();
-                let new_t = translate_mat * from_pivot * rot_mat * scale_mat * to_pivot * cur;
-                self.interact_scene.set_local_transform(id, new_t);
-            }
-        }
-        self.interact_scene.update_transforms();
-    }
-
-    /// Snapshot the current local transforms of all selected nodes.
-    fn save_interact_snapshots(&mut self) {
-        self.interact_transforms_snapshot.clear();
-        for id in self.interact_selection.iter().copied().collect::<Vec<_>>() {
-            if let Some(node) = self.interact_scene.node(id) {
-                self.interact_transforms_snapshot.insert(id, node.local_transform());
-            }
-        }
-    }
-
-    /// Restore local transforms from the last snapshot (used by Cancel / ConstraintChanged).
-    fn restore_interact_snapshots(&mut self) {
-        let ids: Vec<_> = self.interact_transforms_snapshot.keys().copied().collect();
-        for id in ids {
-            if let Some(&t) = self.interact_transforms_snapshot.get(&id) {
-                self.interact_scene.set_local_transform(id, t);
-            }
-        }
-        self.interact_scene.update_transforms();
-    }
-
-    // -----------------------------------------------------------------------
-    // Showcase 13 : Multi-Viewport manipulation helpers
-    // -----------------------------------------------------------------------
-
-    /// Apply a [`viewport_lib::TransformDelta`] to all selected mv scene nodes.
-    pub(crate) fn apply_mv_delta(
-        &mut self,
-        delta: viewport_lib::TransformDelta,
-        hq: usize,
-    ) {
-        let Some(center) = self.mv_gizmo_center else {
-            return;
-        };
-
-        let has_pos_override = delta.position_override.iter().any(|v| v.is_some());
-        let has_scale_override = delta.scale_override.iter().any(|v| v.is_some());
-
-        if has_pos_override || has_scale_override {
-            self.restore_mv_snapshots();
-        }
-
-        let translation = if has_pos_override {
-            glam::Vec3::new(
-                delta.position_override[0].unwrap_or(0.0),
-                delta.position_override[1].unwrap_or(0.0),
-                delta.position_override[2].unwrap_or(0.0),
-            )
-        } else {
-            delta.translation
-        };
-
-        let scale = if has_scale_override {
-            glam::Vec3::new(
-                delta.scale_override[0].unwrap_or(1.0),
-                delta.scale_override[1].unwrap_or(1.0),
-                delta.scale_override[2].unwrap_or(1.0),
-            )
-        } else {
-            delta.scale
-        };
-
-        let _ = hq; // scale pivot uses world gizmo center, not quad-specific
-        let rot_mat = glam::Mat4::from_quat(delta.rotation);
-        let scale_mat = glam::Mat4::from_scale(scale);
-        let translate_mat = glam::Mat4::from_translation(translation);
-        let to_pivot = glam::Mat4::from_translation(-center);
-        let from_pivot = glam::Mat4::from_translation(center);
-
-        for id in self.mv_selection.iter().copied().collect::<Vec<_>>() {
-            if let Some(node) = self.mv_scene.node(id) {
-                let cur = node.local_transform();
-                let new_t = translate_mat * from_pivot * rot_mat * scale_mat * to_pivot * cur;
-                self.mv_scene.set_local_transform(id, new_t);
-            }
-        }
-        self.mv_scene.update_transforms();
-    }
-
-    /// Snapshot the current local transforms of all selected mv nodes.
-    pub(crate) fn save_mv_snapshots(&mut self) {
-        self.mv_transforms_snapshot.clear();
-        for id in self.mv_selection.iter().copied().collect::<Vec<_>>() {
-            if let Some(node) = self.mv_scene.node(id) {
-                self.mv_transforms_snapshot.insert(id, node.local_transform());
-            }
-        }
-    }
-
-    /// Restore local transforms from the last mv snapshot.
-    pub(crate) fn restore_mv_snapshots(&mut self) {
-        let ids: Vec<_> = self.mv_transforms_snapshot.keys().copied().collect();
-        for id in ids {
-            if let Some(&t) = self.mv_transforms_snapshot.get(&id) {
-                self.mv_scene.set_local_transform(id, t);
-            }
-        }
-        self.mv_scene.update_transforms();
-    }
-
-    fn zoom_to_fit_interact(&mut self) {
-        // Needs renderer resources for mesh AABBs : but we don't have frame here.
-        // Fall back to fitting all node world positions.
-        let mut min = glam::Vec3::splat(f32::INFINITY);
-        let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
-        let mut any = false;
-
-        let iter_nodes: Vec<_> = if !self.interact_selection.is_empty() {
-            self.interact_selection.iter().copied().collect()
-        } else {
-            self.interact_scene
-                .walk_depth_first()
-                .iter()
-                .map(|(id, _)| *id)
-                .collect()
-        };
-
-        for nid in iter_nodes {
-            if let Some(node) = self.interact_scene.node(nid) {
-                let t = node.world_transform();
-                let pos = glam::Vec3::new(t.w_axis.x, t.w_axis.y, t.w_axis.z);
-                min = min.min(pos - glam::Vec3::splat(0.6));
-                max = max.max(pos + glam::Vec3::splat(0.6));
-                any = true;
-            }
-        }
-
-        if any {
-            let aabb = viewport_lib::Aabb { min, max };
-            let target = self.camera.fit_aabb_target(&aabb);
-            self.interact_animator.fly_to(
-                &self.camera,
-                target.center,
-                target.distance,
-                target.orientation,
-                0.6,
-            );
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Clip-vol gizmo helpers (Showcase 18)
-// ---------------------------------------------------------------------------
-
-impl App {
-    /// Compute the world-space gizmo center for the active clip sub-mode.
-    pub(crate) fn clip_gizmo_center(&self) -> Option<glam::Vec3> {
-        use showcase_18_clip_volumes::ClipVolSubMode;
-        use viewport_lib::ClipShape;
-        match self.clipvol_sub_mode {
-            ClipVolSubMode::BoxClip => Some(glam::Vec3::from(self.clipvol_box_center)),
-            ClipVolSubMode::SphereClip => Some(glam::Vec3::from(self.clipvol_sphere_center)),
-            ClipVolSubMode::InteractivePlane => {
-                if let ClipShape::Plane {
-                    normal, distance, ..
-                } = self.clipvol_plane.shape
-                {
-                    // Shader clips where dot(p, n) + distance < 0, so the plane
-                    // sits at -normal * distance from the origin.
-                    Some(glam::Vec3::from(normal) * (-distance))
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
-    /// Compute the gizmo orientation quaternion for the active clip sub-mode.
-    pub(crate) fn clipvol_gizmo_orient(&self) -> glam::Quat {
-        use showcase_18_clip_volumes::ClipVolSubMode;
-        use viewport_lib::ClipShape;
-        match self.clipvol_sub_mode {
-            ClipVolSubMode::BoxClip => {
-                glam::Quat::from_rotation_z(self.clipvol_box_yaw.to_radians())
-            }
-            ClipVolSubMode::SphereClip => glam::Quat::IDENTITY,
-            ClipVolSubMode::InteractivePlane => {
-                if let ClipShape::Plane { normal, .. } = self.clipvol_plane.shape {
-                    let n = glam::Vec3::from(normal).normalize_or_zero();
-                    if n.length_squared() > 0.001 {
-                        glam::Quat::from_rotation_arc(glam::Vec3::Z, n)
-                    } else {
-                        glam::Quat::IDENTITY
-                    }
-                } else {
-                    glam::Quat::IDENTITY
-                }
-            }
-        }
-    }
-
-    fn apply_clipvol_gizmo_drag(&mut self, dx: f32, dy: f32, w: f32, h: f32) {
-        use showcase_18_clip_volumes::ClipVolSubMode;
-        use viewport_lib::ClipShape;
-
-        let Some(center) = self.clipvol_gizmo_center else {
-            return;
-        };
-        let drag_delta = glam::Vec2::new(dx, dy);
-        let viewport_size = glam::Vec2::new(w, h);
-        let vp = self.camera.view_proj_matrix();
-        let view = self.camera.view_matrix();
-        let axis = self.clipvol_gizmo.active_axis;
-        let orient = self.clipvol_gizmo_orient();
-
-        let axis_dir = |a: GizmoAxis| -> glam::Vec3 {
-            let base = match a {
-                GizmoAxis::X => glam::Vec3::X,
-                GizmoAxis::Y => glam::Vec3::Y,
-                GizmoAxis::Z => glam::Vec3::Z,
-                _ => glam::Vec3::X,
-            };
-            orient * base
-        };
-
-        match self.clipvol_gizmo.mode {
-            GizmoMode::Translate => {
-                let delta = match axis {
-                    GizmoAxis::X | GizmoAxis::Y | GizmoAxis::Z => {
-                        let dir = axis_dir(axis);
-                        let amount = gizmo::project_drag_onto_axis(
-                            drag_delta,
-                            dir,
-                            vp,
-                            center,
-                            viewport_size,
-                        );
-                        dir * amount
-                    }
-                    GizmoAxis::XY => gizmo::project_drag_onto_plane(
-                        drag_delta,
-                        orient * glam::Vec3::X,
-                        orient * glam::Vec3::Y,
-                        vp,
-                        center,
-                        viewport_size,
-                    ),
-                    GizmoAxis::XZ => gizmo::project_drag_onto_plane(
-                        drag_delta,
-                        orient * glam::Vec3::X,
-                        orient * glam::Vec3::Z,
-                        vp,
-                        center,
-                        viewport_size,
-                    ),
-                    GizmoAxis::YZ => gizmo::project_drag_onto_plane(
-                        drag_delta,
-                        orient * glam::Vec3::Y,
-                        orient * glam::Vec3::Z,
-                        vp,
-                        center,
-                        viewport_size,
-                    ),
-                    GizmoAxis::Screen => gizmo::project_drag_onto_screen_plane(
-                        drag_delta,
-                        self.camera.right(),
-                        self.camera.up(),
-                        vp,
-                        center,
-                        viewport_size,
-                    ),
-                    _ => glam::Vec3::ZERO,
-                };
-                match self.clipvol_sub_mode {
-                    ClipVolSubMode::BoxClip => {
-                        self.clipvol_box_center[0] += delta.x;
-                        self.clipvol_box_center[1] += delta.y;
-                        self.clipvol_box_center[2] += delta.z;
-                    }
-                    ClipVolSubMode::SphereClip => {
-                        self.clipvol_sphere_center[0] += delta.x;
-                        self.clipvol_sphere_center[1] += delta.y;
-                        self.clipvol_sphere_center[2] += delta.z;
-                    }
-                    ClipVolSubMode::InteractivePlane => {
-                        if let ClipShape::Plane {
-                            ref mut distance,
-                            ref normal,
-                            ..
-                        } = self.clipvol_plane.shape
-                        {
-                            let n = glam::Vec3::from(*normal).normalize_or_zero();
-                            // Plane sits at -normal*distance; moving by delta means
-                            // new_distance = distance - delta.dot(n).
-                            *distance -= delta.dot(n);
-                        }
-                    }
-                }
-            }
-
-            GizmoMode::Rotate => {
-                let angle = match axis {
-                    GizmoAxis::X | GizmoAxis::Y | GizmoAxis::Z => {
-                        let dir = axis_dir(axis);
-                        gizmo::project_drag_onto_rotation(drag_delta, dir, view)
-                    }
-                    _ => 0.0,
-                };
-                if angle.abs() > 1e-6 {
-                    match self.clipvol_sub_mode {
-                        ClipVolSubMode::BoxClip => {
-                            self.clipvol_box_yaw += angle.to_degrees();
-                        }
-                        ClipVolSubMode::InteractivePlane => {
-                            if let ClipShape::Plane {
-                                ref mut normal,
-                                ref mut distance,
-                                ..
-                            } = self.clipvol_plane.shape
-                            {
-                                let n = glam::Vec3::from(*normal);
-                                let rot_axis = axis_dir(axis);
-                                let rot = glam::Quat::from_axis_angle(rot_axis, angle);
-                                let new_n = (rot * n).normalize_or_zero();
-                                // Plane sits at anchor = -n * distance. Keep the anchor
-                                // fixed: new anchor = -new_n * new_distance = -n * distance
-                                // -> new_distance = -(-n * distance).dot(new_n) / |new_n|²
-                                //                = (n * distance).dot(new_n)
-                                let anchor = n * (-*distance);
-                                *distance = -(anchor.dot(new_n));
-                                *normal = new_n.to_array();
-                            }
-                        }
-                        ClipVolSubMode::SphereClip => {}
-                    }
-                }
-            }
-
-            GizmoMode::Scale => {
-                let amount = match axis {
-                    GizmoAxis::X | GizmoAxis::Y | GizmoAxis::Z => {
-                        let dir = axis_dir(axis);
-                        gizmo::project_drag_onto_axis(drag_delta, dir, vp, center, viewport_size)
-                    }
-                    _ => 0.0,
-                };
-                if amount.abs() > 1e-6 {
-                    match self.clipvol_sub_mode {
-                        ClipVolSubMode::BoxClip => {
-                            let scale = 1.0 + amount;
-                            match axis {
-                                GizmoAxis::X => {
-                                    self.clipvol_box_half_extents[0] =
-                                        (self.clipvol_box_half_extents[0] * scale).max(0.1);
-                                }
-                                GizmoAxis::Y => {
-                                    self.clipvol_box_half_extents[1] =
-                                        (self.clipvol_box_half_extents[1] * scale).max(0.1);
-                                }
-                                GizmoAxis::Z => {
-                                    self.clipvol_box_half_extents[2] =
-                                        (self.clipvol_box_half_extents[2] * scale).max(0.1);
-                                }
-                                _ => {}
-                            }
-                        }
-                        ClipVolSubMode::SphereClip => {
-                            self.clipvol_sphere_radius =
-                                (self.clipvol_sphere_radius + amount).max(0.1);
-                        }
-                        ClipVolSubMode::InteractivePlane => {}
-                    }
-                }
-            }
-
-            _ => {}
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Shared mesh upload helper
-// ---------------------------------------------------------------------------
-
-impl App {
-    /// Upload a new box mesh slot into the renderer. Used by showcase build methods.
-    pub(crate) fn upload_box(&self, renderer: &mut ViewportRenderer) -> MeshId {
-        let idx = renderer
-            .resources_mut()
-            .upload_mesh_data(&self.device, &self.box_mesh_data)
-            .expect("box mesh upload");
-        idx
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Material and background presets
-// ---------------------------------------------------------------------------
-
-fn material_preset(index: usize) -> Material {
-    match index % 4 {
-        0 => Material::default(),
-        1 => {
-            let mut m = Material::from_color([0.8, 0.2, 0.2]);
-            m.specular = 0.8;
-            m.shininess = 64.0;
-            m.ambient = 0.1;
-            m
-        }
-        2 => {
-            let mut m = Material::from_color([0.2, 0.4, 0.9]);
-            m.opacity = 0.5;
-            m.specular = 0.9;
-            m.shininess = 128.0;
-            m
-        }
-        3 => {
-            let mut m = Material::from_color([0.3, 0.7, 0.3]);
-            m.specular = 0.1;
-            m.shininess = 8.0;
-            m.diffuse = 0.9;
-            m
-        }
-        _ => unreachable!(),
-    }
-}
-
-fn background_color(index: usize) -> [f32; 4] {
-    match index % 3 {
-        0 => BG_COLOR,
-        1 => [0.05, 0.08, 0.15, 1.0],
-        2 => [0.18, 0.16, 0.14, 1.0],
-        _ => unreachable!(),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Gizmo orientation helper
-// ---------------------------------------------------------------------------
-
-fn egui_key_to_keycode(key: egui::Key) -> Option<KeyCode> {
-    match key {
-        egui::Key::A => Some(KeyCode::A),
-        egui::Key::D => Some(KeyCode::D),
-        egui::Key::E => Some(KeyCode::E),
-        egui::Key::F => Some(KeyCode::F),
-        egui::Key::G => Some(KeyCode::G),
-        egui::Key::Q => Some(KeyCode::Q),
-        egui::Key::R => Some(KeyCode::R),
-        egui::Key::S => Some(KeyCode::S),
-        egui::Key::W => Some(KeyCode::W),
-        egui::Key::X => Some(KeyCode::X),
-        egui::Key::Y => Some(KeyCode::Y),
-        egui::Key::Z => Some(KeyCode::Z),
-        egui::Key::Tab => Some(KeyCode::Tab),
-        egui::Key::Enter => Some(KeyCode::Enter),
-        egui::Key::Escape => Some(KeyCode::Escape),
-        egui::Key::Backspace => Some(KeyCode::Backspace),
-        egui::Key::Backtick => Some(KeyCode::Backtick),
-        egui::Key::Comma => Some(KeyCode::Comma),
-        egui::Key::Period => Some(KeyCode::Period),
-        egui::Key::OpenBracket => Some(KeyCode::LeftBracket),
-        egui::Key::CloseBracket => Some(KeyCode::RightBracket),
-        egui::Key::Slash => Some(KeyCode::Slash),
-        _ => None,
-    }
-}
-
-fn gizmo_orientation(gizmo: &Gizmo, selection: &Selection, scene: &Scene) -> glam::Quat {
-    match gizmo.space {
-        GizmoSpace::World => glam::Quat::IDENTITY,
-        GizmoSpace::Local => selection
-            .primary()
-            .and_then(|id| scene.node(id))
-            .map(|n| glam::Quat::from_mat4(&n.world_transform()))
-            .unwrap_or(glam::Quat::IDENTITY),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Unit box mesh
-// ---------------------------------------------------------------------------
-
-fn unit_box_mesh() -> MeshData {
-    #[rustfmt::skip]
-    let positions: Vec<[f32; 3]> = vec![
-        [-0.5, -0.5,  0.5], [ 0.5, -0.5,  0.5], [ 0.5,  0.5,  0.5], [-0.5,  0.5,  0.5],
-        [ 0.5, -0.5, -0.5], [-0.5, -0.5, -0.5], [-0.5,  0.5, -0.5], [ 0.5,  0.5, -0.5],
-        [-0.5,  0.5,  0.5], [ 0.5,  0.5,  0.5], [ 0.5,  0.5, -0.5], [-0.5,  0.5, -0.5],
-        [-0.5, -0.5, -0.5], [ 0.5, -0.5, -0.5], [ 0.5, -0.5,  0.5], [-0.5, -0.5,  0.5],
-        [ 0.5, -0.5,  0.5], [ 0.5, -0.5, -0.5], [ 0.5,  0.5, -0.5], [ 0.5,  0.5,  0.5],
-        [-0.5, -0.5, -0.5], [-0.5, -0.5,  0.5], [-0.5,  0.5,  0.5], [-0.5,  0.5, -0.5],
-    ];
-
-    #[rustfmt::skip]
-    let normals: Vec<[f32; 3]> = vec![
-        [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0],
-        [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0],
-        [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0],
-        [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0],
-        [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0],
-        [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0],
-    ];
-
-    #[rustfmt::skip]
-    let indices: Vec<u32> = vec![
-        0,  1,  2,  0,  2,  3,
-        4,  5,  6,  4,  6,  7,
-        8,  9,  10, 8,  10, 11,
-        12, 13, 14, 12, 14, 15,
-        16, 17, 18, 16, 18, 19,
-        20, 21, 22, 20, 22, 23,
-    ];
-
-    let mut mesh = MeshData::default();
-    mesh.positions = positions;
-    mesh.normals = normals;
-    mesh.indices = indices;
-    mesh
-}

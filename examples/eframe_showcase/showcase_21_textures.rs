@@ -13,16 +13,40 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{Material, ViewportRenderer, scene::Scene};
+use viewport_lib::{Material, NodeId, ViewportRenderer, scene::Scene};
 
-// Percy photo : pre-converted to raw RGBA (2203 × 2009).
+// Percy photo : pre-converted to raw RGBA (2203 x 2009).
 const PERCY_WIDTH: u32 = 2203;
 const PERCY_HEIGHT: u32 = 2009;
 const PERCY_RGBA: &[u8] = include_bytes!("percy.rgba");
 
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct TextureState {
+    pub scene:      Scene,
+    pub built:      bool,
+    pub plane_node: NodeId,
+}
+
+impl Default for TextureState {
+    fn default() -> Self {
+        Self {
+            scene:      Scene::new(),
+            built:      false,
+            plane_node: 0,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build
+// ---------------------------------------------------------------------------
+
 impl App {
     pub(crate) fn build_texture_scene(&mut self, renderer: &mut ViewportRenderer) {
-        self.texture_scene = Scene::new();
+        self.texture_state.scene = Scene::new();
 
         let res = renderer.resources_mut();
 
@@ -42,7 +66,7 @@ impl App {
             .upload_mesh_data(&self.device, &plane)
             .expect("plane mesh upload");
 
-        self.texture_plane_node = self.texture_scene.add_named(
+        self.texture_state.plane_node = self.texture_state.scene.add_named(
             "Percy Plane",
             Some(plane_id),
             glam::Mat4::from_translation(glam::Vec3::new(-3.0, 0.0, 3.0)),
@@ -54,7 +78,7 @@ impl App {
                 m
             },
         );
-        // (two-sided set in build_frame_data via texture_plane_node)
+        // (two-sided set in build_frame_data via texture_state.plane_node)
 
         // --- Checkerboard on a sphere ---
         let checker = make_checkerboard(256, 8, [220, 220, 220, 255], [40, 40, 40, 255]);
@@ -67,7 +91,7 @@ impl App {
             .upload_mesh_data(&self.device, &sphere)
             .expect("sphere mesh upload");
 
-        self.texture_scene.add_named(
+        self.texture_state.scene.add_named(
             "Checker Sphere",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(3.0, 0.0, 3.0)),
@@ -93,7 +117,7 @@ impl App {
             .upload_mesh_data(&self.device, &cube)
             .expect("cube mesh upload");
 
-        self.texture_scene.add_named(
+        self.texture_state.scene.add_named(
             "Gradient Cube",
             Some(cube_id),
             glam::Mat4::from_translation(glam::Vec3::new(-3.0, 0.0, -3.0)),
@@ -117,7 +141,7 @@ impl App {
             .upload_mesh_data(&self.device, &torus)
             .expect("torus mesh upload");
 
-        self.texture_scene.add_named(
+        self.texture_state.scene.add_named(
             "Stripe Torus",
             Some(torus_id),
             glam::Mat4::from_translation(glam::Vec3::new(3.0, 0.0, -3.0)),
@@ -132,26 +156,30 @@ impl App {
             },
         );
 
-        self.texture_built = true;
+        self.texture_state.built = true;
     }
+}
 
-    pub(crate) fn controls_textures(&mut self, ui: &mut egui::Ui) {
-        ui.label("UV-mapped image textures on four primitives:");
-        ui.label("  Back-left:  plane : Percy photo");
-        ui.label("  Left:    sphere : procedural checkerboard");
-        ui.label("  Right:   cube : procedural color gradient");
-        ui.label("  Front:   torus : procedural stripes");
-        ui.separator();
-        ui.label("Textures are uploaded as raw RGBA via upload_texture().");
-        ui.label("The photo is stored as pre-converted raw RGBA bytes.");
-    }
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_textures(_app: &mut App, ui: &mut egui::Ui) {
+    ui.label("UV-mapped image textures on four primitives:");
+    ui.label("  Back-left:  plane : Percy photo");
+    ui.label("  Left:    sphere : procedural checkerboard");
+    ui.label("  Right:   cube : procedural color gradient");
+    ui.label("  Front:   torus : procedural stripes");
+    ui.separator();
+    ui.label("Textures are uploaded as raw RGBA via upload_texture().");
+    ui.label("The photo is stored as pre-converted raw RGBA bytes.");
 }
 
 // ---------------------------------------------------------------------------
 // Procedural texture generators
 // ---------------------------------------------------------------------------
 
-/// Checkerboard: `cells` × `cells` grid alternating between `a` and `b`.
+/// Checkerboard: `cells` x `cells` grid alternating between `a` and `b`.
 fn make_checkerboard(size: usize, cells: usize, a: [u8; 4], b: [u8; 4]) -> Vec<u8> {
     let mut out = Vec::with_capacity(size * size * 4);
     for row in 0..size {

@@ -36,6 +36,8 @@ pub(crate) enum PwSubMode {
 }
 
 pub(crate) struct ProbeWidgetState {
+    pub built: bool,
+    pub scene: Scene,
     pub sub_mode: PwSubMode,
     // Phase 2 widgets
     pub probe: LineProbeWidget,
@@ -105,6 +107,8 @@ impl ProbeWidgetState {
         let selected = vec![false; CLOUD_N];
 
         Self {
+            built: false,
+            scene: Scene::new(),
             sub_mode: PwSubMode::Sphere,
             probe,
             sphere,
@@ -270,9 +274,8 @@ fn generate_cloud(n: usize) -> Vec<[f32; 3]> {
 
 impl App {
     pub(crate) fn build_probe_widgets_scene(&mut self, _renderer: &mut ViewportRenderer) {
-        self.pw_scene = Scene::new();
         self.pw_state = ProbeWidgetState::new();
-        self.pw_built = true;
+        self.pw_state.built = true;
     }
 
     pub(crate) fn update_probe_widgets(&mut self, ctx_widget: WidgetContext) {

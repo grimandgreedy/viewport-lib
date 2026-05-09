@@ -11,8 +11,8 @@ use std::collections::VecDeque;
 
 use eframe::egui;
 use viewport_lib::{
-    BackfacePolicy, Material, MeshData, QualityPreset, RuntimeMode, SceneRenderItem,
-    ViewportRenderer,
+    BackfacePolicy, FrameStats, Material, MeshData, MeshId, PerformancePolicy, QualityPreset,
+    RuntimeMode, SceneRenderItem, ViewportRenderer,
     scene::Scene,
     selection::Selection,
 };
@@ -46,39 +46,85 @@ pub(crate) const INSTANCE_COUNTS: &[(usize, &str)] = &[
 ];
 
 // ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct PbState {
+    pub built:               bool,
+    pub mode:                RuntimeMode,
+    pub policy:              PerformancePolicy,
+    pub manual_render_scale: f32,
+    pub grid_resolution:     usize,
+    pub last_grid_resolution: usize,
+    pub grid_layers:         usize,
+    pub last_grid_layers:    usize,
+    pub instance_count:      usize,
+    pub time:                f32,
+    pub mesh_id:             Option<MeshId>,
+    pub static_mesh_id:      Option<MeshId>,
+    pub scene:               Scene,
+    pub last_stats:          FrameStats,
+    pub stats_history:       VecDeque<f32>,
+    pub upload_ms:           f32,
+}
+
+impl Default for PbState {
+    fn default() -> Self {
+        Self {
+            built:                false,
+            mode:                 RuntimeMode::Interactive,
+            policy:               PerformancePolicy::default(),
+            manual_render_scale:  1.0,
+            grid_resolution:      50,
+            last_grid_resolution: 0,
+            grid_layers:          1,
+            last_grid_layers:     0,
+            instance_count:       1000,
+            time:                 0.0,
+            mesh_id:              None,
+            static_mesh_id:       None,
+            scene:                Scene::new(),
+            last_stats:           FrameStats::default(),
+            stats_history:        VecDeque::new(),
+            upload_ms:            0.0,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Scene construction (called once from ensure_scene_built)
 // ---------------------------------------------------------------------------
 
 pub(crate) fn build_pb_scene(app: &mut App, renderer: &mut ViewportRenderer) {
     // Upload placeholder deforming mesh (replaced each frame in Playback mode).
-    let deform_mesh = build_sine_grid(app.pb_grid_resolution, app.pb_grid_layers, 0.0);
+    let deform_mesh = build_sine_grid(app.pb_state.grid_resolution, app.pb_state.grid_layers, 0.0);
     let mesh_id = renderer
         .resources_mut()
         .upload_mesh_data(&app.device, &deform_mesh)
         .expect("pb deforming mesh upload");
-    app.pb_mesh_id = Some(mesh_id);
-    app.pb_last_grid_resolution = app.pb_grid_resolution;
-    app.pb_last_grid_layers = app.pb_grid_layers;
+    app.pb_state.mesh_id = Some(mesh_id);
+    app.pb_state.last_grid_resolution = app.pb_state.grid_resolution;
+    app.pb_state.last_grid_layers = app.pb_state.grid_layers;
 
     // Upload one shared box mesh for the static grid.
     let box_id = renderer
         .resources_mut()
         .upload_mesh_data(&app.device, &app.box_mesh_data)
         .expect("pb static box mesh upload");
-    app.pb_static_mesh_id = Some(box_id);
+    app.pb_state.static_mesh_id = Some(box_id);
 
     rebuild_pb_static_scene(app);
-    app.pb_built = true;
+    app.pb_state.built = true;
 }
 
 /// Rebuild the static instanced box scene to match `pb_instance_count`.
 /// Call whenever pb_instance_count changes (and after pb_static_mesh_id is set).
 pub(crate) fn rebuild_pb_static_scene(app: &mut App) {
-    app.pb_scene = Scene::new();
-    let Some(mid) = app.pb_static_mesh_id else {
+    app.pb_state.scene = Scene::new();
+    let Some(mid) = app.pb_state.static_mesh_id else {
         return;
     };
-    let n = app.pb_instance_count;
+    let n = app.pb_state.instance_count;
     let per_row = (n as f32).sqrt().ceil() as usize;
     let spacing = 2.5_f32;
     let mat = Material::from_color([0.4, 0.55, 0.85]);
@@ -89,7 +135,7 @@ pub(crate) fn rebuild_pb_static_scene(app: &mut App) {
         let y = (row as f32 - per_row as f32 * 0.5) * spacing;
         let z = -4.0; // below the deforming grid
         let t = glam::Mat4::from_translation(glam::Vec3::new(x, y, z));
-        app.pb_scene.add(Some(mid), t, mat);
+        app.pb_state.scene.add(Some(mid), t, mat);
     }
 }
 
@@ -101,7 +147,7 @@ pub(crate) fn pb_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
     let mut items = Vec::new();
 
     // Deforming mesh: single item placed at origin.
-    if let Some(mid) = app.pb_mesh_id {
+    if let Some(mid) = app.pb_state.mesh_id {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mid;
         let mut mat = Material::from_color([0.9, 0.55, 0.2]);
@@ -113,7 +159,7 @@ pub(crate) fn pb_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
 
     // Static instanced boxes.
     let empty_sel = Selection::new();
-    items.extend(app.pb_scene.collect_render_items(&empty_sel));
+    items.extend(app.pb_state.scene.collect_render_items(&empty_sel));
 
     items
 }
@@ -195,7 +241,7 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
     if let Some(rs) = frame.wgpu_render_state() {
         let guard = rs.renderer.read();
         if let Some(renderer) = guard.callback_resources.get::<ViewportRenderer>() {
-            app.pb_last_stats = renderer.last_frame_stats();
+            app.pb_state.last_stats = renderer.last_frame_stats();
         }
     }
 
@@ -208,8 +254,8 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
                 ("Playback", RuntimeMode::Playback),
                 ("Paused", RuntimeMode::Paused),
             ] {
-                if ui.radio(app.pb_mode == mode, label).clicked() {
-                    app.pb_mode = mode;
+                if ui.radio(app.pb_state.mode == mode, label).clicked() {
+                    app.pb_state.mode = mode;
                 }
             }
         });
@@ -220,29 +266,29 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
         ui.label("Target FPS:");
         ui.horizontal(|ui| {
             if ui
-                .radio(app.pb_policy.target_fps.is_none(), "Uncapped")
+                .radio(app.pb_state.policy.target_fps.is_none(), "Uncapped")
                 .clicked()
             {
-                app.pb_policy.target_fps = None;
+                app.pb_state.policy.target_fps = None;
             }
             for fps in [60.0_f32, 30.0, 15.0] {
                 if ui
-                    .radio(app.pb_policy.target_fps == Some(fps), format!("{fps:.0}"))
+                    .radio(app.pb_state.policy.target_fps == Some(fps), format!("{fps:.0}"))
                     .clicked()
                 {
-                    app.pb_policy.target_fps = Some(fps);
+                    app.pb_state.policy.target_fps = Some(fps);
                 }
             }
         });
 
         ui.add(egui::Checkbox::new(
-            &mut app.pb_policy.allow_dynamic_resolution,
+            &mut app.pb_state.policy.allow_dynamic_resolution,
             "Dynamic resolution",
         ));
 
         // Scale slider: hidden when a preset is active because the preset owns the
         // scale bounds. Show the preset's range as informational text instead.
-        match app.pb_policy.preset {
+        match app.pb_state.policy.preset {
             Some(preset) => {
                 let (lo, hi) = match preset {
                     QualityPreset::High => (1.0_f32, 1.0_f32),
@@ -256,15 +302,15 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
                 }
             }
             None => {
-                if app.pb_policy.allow_dynamic_resolution {
+                if app.pb_state.policy.allow_dynamic_resolution {
                     ui.add(
-                        egui::Slider::new(&mut app.pb_policy.min_render_scale, 0.25..=1.0)
+                        egui::Slider::new(&mut app.pb_state.policy.min_render_scale, 0.25..=1.0)
                             .text("Min scale")
                             .step_by(0.05),
                     );
                 } else {
                     ui.add(
-                        egui::Slider::new(&mut app.pb_manual_render_scale, 0.25..=1.0)
+                        egui::Slider::new(&mut app.pb_state.manual_render_scale, 0.25..=1.0)
                             .text("Render scale")
                             .step_by(0.05),
                     );
@@ -283,32 +329,32 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
                 ("Low", Some(QualityPreset::Low)),
                 ("Custom", None),
             ] {
-                if ui.radio(app.pb_policy.preset == value, label).clicked() {
-                    app.pb_policy.preset = value;
+                if ui.radio(app.pb_state.policy.preset == value, label).clicked() {
+                    app.pb_state.policy.preset = value;
                 }
             }
         });
 
         // Individual degradation knobs: enabled only in Custom mode.
-        let custom = app.pb_policy.preset.is_none();
+        let custom = app.pb_state.policy.preset.is_none();
         ui.add_enabled(
             custom,
             egui::Checkbox::new(
-                &mut app.pb_policy.allow_shadow_reduction,
+                &mut app.pb_state.policy.allow_shadow_reduction,
                 "Allow shadow reduction",
             ),
         );
         ui.add_enabled(
             custom,
             egui::Checkbox::new(
-                &mut app.pb_policy.allow_volume_quality_reduction,
+                &mut app.pb_state.policy.allow_volume_quality_reduction,
                 "Allow volume quality reduction",
             ),
         );
         ui.add_enabled(
             custom,
             egui::Checkbox::new(
-                &mut app.pb_policy.allow_effect_throttling,
+                &mut app.pb_state.policy.allow_effect_throttling,
                 "Allow effect throttling",
             ),
         );
@@ -321,36 +367,36 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
         // frame time and quality controls will have little visible effect.
         ui.label("Grid (upload load):");
         for &(res, label) in GRID_RESOLUTIONS {
-            if ui.radio(app.pb_grid_resolution == res, label).clicked() {
-                app.pb_grid_resolution = res;
+            if ui.radio(app.pb_state.grid_resolution == res, label).clicked() {
+                app.pb_state.grid_resolution = res;
             }
         }
 
         // Layers stacks multiple NxN sheets to multiply upload cost.
         ui.label("Layers:");
         for &(layers, label) in GRID_LAYERS {
-            if ui.radio(app.pb_grid_layers == layers, label).clicked() {
-                app.pb_grid_layers = layers;
+            if ui.radio(app.pb_state.grid_layers == layers, label).clicked() {
+                app.pb_state.grid_layers = layers;
             }
         }
 
         // Instance count drives render cost: a single instanced draw call, but
         // more geometry and shadow work for the GPU to process.
-        let old_count = app.pb_instance_count;
+        let old_count = app.pb_state.instance_count;
         ui.label("Instances (render load):");
         for &(count, label) in INSTANCE_COUNTS {
-            if ui.radio(app.pb_instance_count == count, label).clicked() {
-                app.pb_instance_count = count;
+            if ui.radio(app.pb_state.instance_count == count, label).clicked() {
+                app.pb_state.instance_count = count;
             }
         }
-        if app.pb_instance_count != old_count && app.pb_built {
+        if app.pb_state.instance_count != old_count && app.pb_state.built {
             rebuild_pb_static_scene(app);
         }
 
         ui.separator();
 
         // --- Stats readout ---
-        let s = app.pb_last_stats;
+        let s = app.pb_state.last_stats;
         ui.label("Frame stats:");
 
         egui::Grid::new("pb_stats_grid")
@@ -386,7 +432,7 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
                 ui.end_row();
 
                 ui.label("upload_ms:");
-                ui.label(format!("{:.2} ms", app.pb_upload_ms));
+                ui.label(format!("{:.2} ms", app.pb_state.upload_ms));
                 ui.end_row();
 
                 // Controller signal: gpu_frame_ms when available, else total_frame_ms.
@@ -450,14 +496,14 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
         // `flag_on` reflects the effective policy (preset-derived when a preset is set).
         ui.label("Degradation:");
         let (eff_allow_shadows, eff_allow_volumes, eff_allow_effects) =
-            match app.pb_policy.preset {
+            match app.pb_state.policy.preset {
                 Some(QualityPreset::High) => (false, false, false),
                 Some(QualityPreset::Medium) => (true, false, true),
                 Some(QualityPreset::Low) => (true, true, true),
                 None => (
-                    app.pb_policy.allow_shadow_reduction,
-                    app.pb_policy.allow_volume_quality_reduction,
-                    app.pb_policy.allow_effect_throttling,
+                    app.pb_state.policy.allow_shadow_reduction,
+                    app.pb_state.policy.allow_volume_quality_reduction,
+                    app.pb_state.policy.allow_effect_throttling,
                 ),
             };
         for (label, flag_on, active) in [
@@ -484,7 +530,7 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
 
         // Sparkline: last 60 frames of total_frame_ms.
         ui.label("Frame time (60f):");
-        draw_sparkline(ui, &app.pb_stats_history, app.pb_policy.target_fps);
+        draw_sparkline(ui, &app.pb_state.stats_history, app.pb_state.policy.target_fps);
     });
 }
 

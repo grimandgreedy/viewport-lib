@@ -17,9 +17,29 @@
 use eframe::egui;
 use viewport_lib::{
     AttributeData, BackfacePolicy, LightKind, LightSource, LightingSettings,
-    SceneRenderItem, ViewportRenderer, primitives,
+    MeshId, SceneRenderItem, ViewportRenderer, primitives,
 };
 use crate::App;
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct VertexWarpState {
+    pub built:    bool,
+    pub mesh_ids: [MeshId; 3],
+    pub scale:    f32,
+}
+
+impl Default for VertexWarpState {
+    fn default() -> Self {
+        Self {
+            built:    false,
+            mesh_ids: [MeshId::from_index(0); 3],
+            scale:    0.5,
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Build
@@ -63,8 +83,8 @@ pub(crate) fn build_warp_scene(app: &mut App, renderer: &mut ViewportRenderer) {
         renderer.resources_mut().upload_mesh_data(&app.device, &mesh).expect("warp sphere y20")
     };
 
-    app.warp_mesh_ids = [plane_id, sphere_4lobe_id, sphere_y20_id];
-    app.warp_built = true;
+    app.warp_state.mesh_ids = [plane_id, sphere_4lobe_id, sphere_y20_id];
+    app.warp_state.built = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -73,7 +93,7 @@ pub(crate) fn build_warp_scene(app: &mut App, renderer: &mut ViewportRenderer) {
 
 pub(crate) fn controls_warp(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Warp scale:");
-    ui.add(egui::Slider::new(&mut app.warp_scale, -1.5..=1.5).step_by(0.01));
+    ui.add(egui::Slider::new(&mut app.warp_state.scale, -1.5..=1.5).step_by(0.01));
 
     ui.separator();
 
@@ -90,11 +110,11 @@ pub(crate) fn controls_warp(app: &mut App, ui: &mut egui::Ui) {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn warp_scene_items(app: &App) -> Vec<SceneRenderItem> {
-    if !app.warp_built {
+    if !app.warp_state.built {
         return vec![];
     }
 
-    let [plane_id, lobe_id, y20_id] = app.warp_mesh_ids;
+    let [plane_id, lobe_id, y20_id] = app.warp_state.mesh_ids;
 
     // Colors: coral, steel blue, sage green.
     let colors: [[f32; 3]; 3] = [
@@ -113,7 +133,7 @@ pub(crate) fn warp_scene_items(app: &App) -> Vec<SceneRenderItem> {
         item.material.base_color = color;
         item.material.specular = 0.15;
         item.warp_attribute = Some("warp".to_string());
-        item.warp_scale = app.warp_scale;
+        item.warp_scale = app.warp_state.scale;
         item
     }).collect()
 }
