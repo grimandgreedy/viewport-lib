@@ -1957,4 +1957,182 @@ mod tests {
             other => panic!("expected Face attribute on clipped hex mesh, got {other:?}"),
         }
     }
+
+    // -----------------------------------------------------------------------
+    // decompose_to_tetrahedra
+    // -----------------------------------------------------------------------
+
+    fn single_pyramid() -> VolumeMeshData {
+        // Square base at y=0, apex at y=1.
+        let mut data = VolumeMeshData {
+            positions: vec![
+                [0.0, 0.0, 0.0], // 0
+                [1.0, 0.0, 0.0], // 1
+                [1.0, 0.0, 1.0], // 2
+                [0.0, 0.0, 1.0], // 3
+                [0.5, 1.0, 0.5], // 4 apex
+            ],
+            ..Default::default()
+        };
+        data.push_pyramid([0, 1, 2, 3], 4);
+        data
+    }
+
+    fn single_wedge() -> VolumeMeshData {
+        // Two triangular faces: tri0 at y=0, tri1 at y=1.
+        let mut data = VolumeMeshData {
+            positions: vec![
+                [0.0, 0.0, 0.0], // 0
+                [1.0, 0.0, 0.0], // 1
+                [0.5, 0.0, 1.0], // 2
+                [0.0, 1.0, 0.0], // 3
+                [1.0, 1.0, 0.0], // 4
+                [0.5, 1.0, 1.0], // 5
+            ],
+            ..Default::default()
+        };
+        data.push_wedge([0, 1, 2], [3, 4, 5]);
+        data
+    }
+
+    fn tet_volume(p: [[f32; 3]; 4]) -> f32 {
+        // Signed volume = dot(v1, cross(v2, v3)) / 6 where vi = pi - p0.
+        let v = |i: usize| -> [f32; 3] {
+            [
+                p[i][0] - p[0][0],
+                p[i][1] - p[0][1],
+                p[i][2] - p[0][2],
+            ]
+        };
+        let (a, b, c) = (v(1), v(2), v(3));
+        let cross = [
+            b[1] * c[2] - b[2] * c[1],
+            b[2] * c[0] - b[0] * c[2],
+            b[0] * c[1] - b[1] * c[0],
+        ];
+        (a[0] * cross[0] + a[1] * cross[1] + a[2] * cross[2]) / 6.0
+    }
+
+    #[test]
+    fn decompose_tet_yields_one_tet() {
+        let data = single_tet();
+        let (tets, scalars) = decompose_to_tetrahedra(&data, "");
+        assert_eq!(tets.len(), 1);
+        assert_eq!(scalars.len(), 1);
+    }
+
+    #[test]
+    fn decompose_hex_yields_six_tets() {
+        let data = single_hex();
+        let (tets, scalars) = decompose_to_tetrahedra(&data, "");
+        assert_eq!(tets.len(), 6);
+        assert_eq!(scalars.len(), 6);
+    }
+
+    #[test]
+    fn decompose_pyramid_yields_two_tets() {
+        let data = single_pyramid();
+        let (tets, scalars) = decompose_to_tetrahedra(&data, "");
+        assert_eq!(tets.len(), 2);
+        assert_eq!(scalars.len(), 2);
+    }
+
+    #[test]
+    fn decompose_wedge_yields_three_tets() {
+        let data = single_wedge();
+        let (tets, scalars) = decompose_to_tetrahedra(&data, "");
+        assert_eq!(tets.len(), 3);
+        assert_eq!(scalars.len(), 3);
+    }
+
+    #[test]
+    fn decompose_output_tets_have_nonzero_volume() {
+        for data in [single_tet(), single_hex(), single_pyramid(), single_wedge()] {
+            let (tets, _) = decompose_to_tetrahedra(&data, "");
+            for (i, t) in tets.iter().enumerate() {
+                let vol = tet_volume(*t).abs();
+                assert!(
+                    vol > 1e-6,
+                    "tet {i} has near-zero volume {vol}: {t:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn decompose_hex_volume_equals_cell_volume() {
+        // The 6-tet decomposition of a unit cube must sum to 1.0.
+        let data = single_hex();
+        let (tets, _) = decompose_to_tetrahedra(&data, "");
+        let total: f32 = tets.iter().map(|t| tet_volume(*t).abs()).sum();
+        assert!(
+            (total - 1.0).abs() < 1e-5,
+            "unit hex volume should be 1.0, got {total}"
+        );
+    }
+
+    #[test]
+    fn decompose_scalar_propagates_to_child_tets() {
+        let mut data = single_hex();
+        data.cell_scalars.insert("temp".to_string(), vec![42.0]);
+        let (_, scalars) = decompose_to_tetrahedra(&data, "temp");
+        assert_eq!(scalars.len(), 6);
+        for &s in &scalars {
+            assert_eq!(s, 42.0, "all child tets must inherit the cell scalar");
+        }
+    }
+
+    #[test]
+    fn decompose_missing_attribute_falls_back_to_zero() {
+        let data = single_hex();
+        let (_, scalars) = decompose_to_tetrahedra(&data, "nonexistent");
+        for &s in &scalars {
+            assert_eq!(s, 0.0, "missing attribute must produce 0.0 per tet");
+        }
+    }
+
+    #[test]
+    fn decompose_mixed_mesh_tet_counts_sum_correctly() {
+        // One tet + one hex + one pyramid + one wedge = 1+6+2+3 = 12 tets.
+        let mut data = VolumeMeshData {
+            positions: vec![
+                // tet verts (0..3)
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.5, 1.0, 0.0],
+                [0.5, 0.5, 1.0],
+                // hex verts (4..11): unit cube offset at x=2
+                [2.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [3.0, 0.0, 1.0],
+                [2.0, 0.0, 1.0],
+                [2.0, 1.0, 0.0],
+                [3.0, 1.0, 0.0],
+                [3.0, 1.0, 1.0],
+                [2.0, 1.0, 1.0],
+                // pyramid verts (12..16): square base + apex, offset at x=4
+                [4.0, 0.0, 0.0],
+                [5.0, 0.0, 0.0],
+                [5.0, 0.0, 1.0],
+                [4.0, 0.0, 1.0],
+                [4.5, 1.0, 0.5],
+                // wedge verts (17..22): offset at x=6
+                [6.0, 0.0, 0.0],
+                [7.0, 0.0, 0.0],
+                [6.5, 0.0, 1.0],
+                [6.0, 1.0, 0.0],
+                [7.0, 1.0, 0.0],
+                [6.5, 1.0, 1.0],
+            ],
+            ..Default::default()
+        };
+        data.push_tet(0, 1, 2, 3);
+        data.push_hex([4, 5, 6, 7, 8, 9, 10, 11]);
+        data.push_pyramid([12, 13, 14, 15], 16);
+        data.push_wedge([17, 18, 19], [20, 21, 22]);
+
+        let (tets, scalars) = decompose_to_tetrahedra(&data, "");
+        assert_eq!(tets.len(), 12, "1+6+2+3 = 12 tets");
+        assert_eq!(scalars.len(), 12);
+    }
 }
