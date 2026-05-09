@@ -905,6 +905,21 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
+        // Sprite billboard GPU data upload.
+        // ------------------------------------------------------------------
+        self.sprite_gpu_data.clear();
+        if !frame.scene.sprite_items.is_empty() {
+            resources.ensure_sprite_pipelines(device);
+            for item in &frame.scene.sprite_items {
+                if item.positions.is_empty() {
+                    continue;
+                }
+                let gd = resources.upload_sprite(device, queue, item);
+                self.sprite_gpu_data.push(gd);
+            }
+        }
+
+        // ------------------------------------------------------------------
         // SciVis Phase 5 : tensor glyph GPU data upload.
         // ------------------------------------------------------------------
         self.tensor_glyph_gpu_data.clear();

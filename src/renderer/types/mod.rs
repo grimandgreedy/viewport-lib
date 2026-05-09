@@ -543,7 +543,7 @@ macro_rules! emit_draw_calls {
 ///
 /// Called by both `paint` and `paint_to` after `emit_draw_calls!` to render scivis layers.
 macro_rules! emit_scivis_draw_calls {
-    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $volume_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $image_slice_gpu_data:expr, $tensor_glyph_gpu_data:expr, $ribbon_gpu_data:expr, $volume_surface_slice_gpu_data:expr) => {{
+    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $volume_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $image_slice_gpu_data:expr, $tensor_glyph_gpu_data:expr, $ribbon_gpu_data:expr, $volume_surface_slice_gpu_data:expr, $sprite_gpu_data:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let camera_bg: &wgpu::BindGroup = $camera_bg;
@@ -711,6 +711,32 @@ macro_rules! emit_scivis_draw_calls {
                     render_pass
                         .set_index_buffer(ribbon.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..ribbon.index_count, 0, 0..1);
+                }
+            }
+        }
+
+        // Sprite billboard pass: depth-write items first, then transparent items.
+        if !$sprite_gpu_data.is_empty() {
+            // Depth-write batch (opaque-style markers).
+            if let Some(ref pipeline) = resources.sprite_pipeline_depth_write {
+                let mut set = false;
+                for sprite in $sprite_gpu_data.iter() {
+                    if !sprite.depth_write { continue; }
+                    if !set { render_pass.set_pipeline(pipeline); render_pass.set_bind_group(0, camera_bg, &[]); set = true; }
+                    render_pass.set_bind_group(1, &sprite.bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
+                    render_pass.draw(0..6, 0..sprite.sprite_count);
+                }
+            }
+            // No-depth-write batch (transparent effects, default).
+            if let Some(ref pipeline) = resources.sprite_pipeline {
+                let mut set = false;
+                for sprite in $sprite_gpu_data.iter() {
+                    if sprite.depth_write { continue; }
+                    if !set { render_pass.set_pipeline(pipeline); render_pass.set_bind_group(0, camera_bg, &[]); set = true; }
+                    render_pass.set_bind_group(1, &sprite.bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
+                    render_pass.draw(0..6, 0..sprite.sprite_count);
                 }
             }
         }

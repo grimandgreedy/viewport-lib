@@ -1077,3 +1077,91 @@ impl Default for ComputeFilterItem {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Sprite and particle billboard rendering
+// ---------------------------------------------------------------------------
+
+/// Controls whether sprite sizes are measured in screen-space pixels or world-space units.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpriteSizeMode {
+    /// Sizes in screen-space pixels. Sprites maintain constant apparent size at all distances.
+    #[default]
+    ScreenSpace,
+    /// Sizes in world-space units. Sprites shrink with distance like regular geometry.
+    WorldSpace,
+}
+
+/// A batch of instanced billboard sprites rendered as camera-facing textured quads.
+///
+/// Each instance is one billboard at a world-space position. All instances in the batch share
+/// one texture (or render as solid-color quads when `texture_id` is `None`). Per-instance
+/// color, size, rotation, and atlas UV rect are specified via parallel `Vec` fields; empty
+/// vecs fall back to the batch defaults.
+///
+/// # Particle effects
+///
+/// Submit a new `SpriteItem` each frame with updated `positions` and `colors` to animate
+/// CPU-simulated particle effects. The host application owns simulation state (velocity,
+/// lifetime, emission); the renderer only handles drawing.
+///
+/// # Texture atlases
+///
+/// Set `uv_rects` to select sub-regions of the texture per sprite, enabling flip-book
+/// animation or mixed icon sets from a single atlas texture.
+#[non_exhaustive]
+#[derive(Clone)]
+pub struct SpriteItem {
+    /// Texture ID from [`ViewportGpuResources::upload_texture`].
+    /// `None` renders solid-color quads using `colors` / `default_color` only.
+    pub texture_id: Option<u64>,
+    /// World-space positions, one per sprite instance.
+    pub positions: Vec<[f32; 3]>,
+    /// Per-instance RGBA color tints. Empty = use `default_color` for all.
+    /// Multiplied with the texture sample (or used directly when `texture_id` is `None`).
+    pub colors: Vec<[f32; 4]>,
+    /// Per-instance sizes. Empty = use `default_size` for all.
+    /// Interpretation depends on `size_mode`.
+    pub sizes: Vec<f32>,
+    /// Per-instance rotation angles in radians, CCW around the camera-forward axis.
+    /// Empty = no rotation applied.
+    pub rotations: Vec<f32>,
+    /// Per-instance UV rects `[u0, v0, u1, v1]` selecting atlas sub-regions.
+    /// Empty = full texture `[0.0, 0.0, 1.0, 1.0]` for all.
+    pub uv_rects: Vec<[f32; 4]>,
+    /// Fallback RGBA color tint used when `colors` is empty. Default: opaque white.
+    pub default_color: [f32; 4],
+    /// Default size when `sizes` is empty. Pixels (ScreenSpace) or world units (WorldSpace).
+    pub default_size: f32,
+    /// Whether sizes are in screen-space pixels or world-space units.
+    pub size_mode: SpriteSizeMode,
+    /// World-space model transform applied to all positions. Default: identity.
+    pub model: [[f32; 4]; 4],
+    /// Whether this batch writes to the depth buffer. Default: `false`.
+    ///
+    /// Set `false` for transparent or additive particle effects so sprites do not occlude
+    /// each other based on submission order. Set `true` for opaque world-space markers
+    /// that should participate in depth testing normally.
+    pub depth_write: bool,
+    /// Picking ID. `0` = not pickable.
+    pub id: u64,
+}
+
+impl Default for SpriteItem {
+    fn default() -> Self {
+        Self {
+            texture_id: None,
+            positions: Vec::new(),
+            colors: Vec::new(),
+            sizes: Vec::new(),
+            rotations: Vec::new(),
+            uv_rects: Vec::new(),
+            default_color: [1.0, 1.0, 1.0, 1.0],
+            default_size: 32.0,
+            size_mode: SpriteSizeMode::ScreenSpace,
+            model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            depth_write: false,
+            id: 0,
+        }
+    }
+}
+

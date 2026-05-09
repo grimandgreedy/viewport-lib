@@ -1,8 +1,9 @@
 # Changelog
 
-## [0.13.1] (Current, unreleased changes)
+## [0.13.1]
 
 ### Features
+- Sprite rendering: place camera-facing textured billboards in 3D space via `SpriteItem`. Per-sprite controls include position, color, size, rotation, and UV rect. Size can be screen-space (pixels, constant on screen regardless of distance) or world-space (expands along the camera right/up vectors so sprites scale with distance). Set `depth_write` to false for additive particle effects that composite correctly against opaque geometry, or true for opaque markers. Use `uv_rects` to sample subregions of an atlas texture and cycle frames each tick for sprite-sheet animation. Particle simulation stays in host code; push positions and per-particle colors/sizes each frame.
 - `VolumeSurfaceSliceItem`: samples a 3D volume on an arbitrary surface mesh and colors each fragment by the volume scalar at that world position. Unlike `ImageSliceItem`, the slice surface is not restricted to axis-aligned quads -- any mesh produced by `upload_mesh_data` works: flat planes, disks, saddle surfaces, paraboloids, or imported geometry. Fragments whose world position falls outside the volume bounding box are discarded automatically. Push a `VolumeSurfaceSliceItem` into `SceneFrame::volume_surface_slices` each frame, referencing the mesh by `MeshId` and the volume by `VolumeId`.
 - `prepare_callback` / `paint_callback`: unified entry points for the eframe `CallbackTrait` model. Call `prepare_callback` from `CallbackTrait::prepare` and `paint_callback` from `CallbackTrait::paint` instead of managing separate `prepare`, `prepare_ldr_dyn_res`, and `prepare_hdr_callback` calls manually. The methods dispatch internally based on whether `post_process.enabled` is set, so OIT, EDL, and tone-mapping are active in eframe apps without extra code in the callback.
 - `TransparentVolumeMeshItem` gains `threshold_min` and `threshold_max` fields. Tetrahedra whose scalar value falls outside the range are discarded by the shader without re-uploading geometry. Set both fields to the same raw scalar units used at upload time. Defaults to no clipping (all tets rendered).

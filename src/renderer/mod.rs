@@ -23,7 +23,8 @@ pub use self::types::{
     aabb_wireframe_polyline, PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBarAnchor, ScalarBarItem,
     ScalarBarOrientation, SceneEffects,
     RibbonItem, SceneFrame, SceneRenderItem, ScreenImageItem,
-    ShadowFilter, SliceAxis, StreamtubeItem, SurfaceLICConfig, SurfaceLICItem, SurfaceSubmission,
+    ShadowFilter, SliceAxis, SpriteItem, SpriteSizeMode, StreamtubeItem, SurfaceLICConfig,
+    SurfaceLICItem, SurfaceSubmission,
     ImageSliceItem, TensorGlyphItem, ToneMapping, TubeItem,
     TransparentVolumeMeshItem, VolumeSurfaceSliceItem,
     ViewportEffects, ViewportFrame, VolumeItem,
@@ -198,6 +199,8 @@ pub struct ViewportRenderer {
     implicit_gpu_data: Vec<crate::resources::implicit::ImplicitGpuItem>,
     /// Per-frame GPU marching cubes render data, rebuilt in prepare(), consumed in paint() (Phase 17).
     mc_gpu_data: Vec<crate::resources::gpu_marching_cubes::McFrameData>,
+    /// Per-frame sprite GPU data, rebuilt in prepare(), consumed in paint().
+    sprite_gpu_data: Vec<crate::resources::SpriteGpuData>,
     /// Per-frame screen-image GPU data, rebuilt in prepare(), consumed in paint() (Phase 10B).
     screen_image_gpu_data: Vec<crate::resources::ScreenImageGpuData>,
     /// Per-frame overlay image GPU data, rebuilt in prepare(), consumed in paint() (Phase 7).
@@ -323,6 +326,7 @@ impl ViewportRenderer {
             ribbon_gpu_data: Vec::new(),
             image_slice_gpu_data: Vec::new(),
             volume_surface_slice_gpu_data: Vec::new(),
+            sprite_gpu_data: Vec::new(),
             lic_gpu_data: Vec::new(),
             implicit_gpu_data: Vec::new(),
             mc_gpu_data: Vec::new(),
@@ -774,7 +778,8 @@ impl ViewportRenderer {
             &self.image_slice_gpu_data,
             &self.tensor_glyph_gpu_data,
             &self.ribbon_gpu_data,
-            &self.volume_surface_slice_gpu_data
+            &self.volume_surface_slice_gpu_data,
+            &self.sprite_gpu_data
         );
     }
 
@@ -817,7 +822,8 @@ impl ViewportRenderer {
             &self.image_slice_gpu_data,
             &self.tensor_glyph_gpu_data,
             &self.ribbon_gpu_data,
-            &self.volume_surface_slice_gpu_data
+            &self.volume_surface_slice_gpu_data,
+            &self.sprite_gpu_data
         );
     }
 

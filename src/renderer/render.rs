@@ -35,7 +35,8 @@ impl ViewportRenderer {
             &self.image_slice_gpu_data,
             &self.tensor_glyph_gpu_data,
             &self.ribbon_gpu_data,
-            &self.volume_surface_slice_gpu_data
+            &self.volume_surface_slice_gpu_data,
+            &self.sprite_gpu_data
         );
         // Phase 16 : GPU implicit surface (depth-writes enabled, LessEqual compare).
         if !self.implicit_gpu_data.is_empty() {
@@ -185,7 +186,8 @@ impl ViewportRenderer {
             &self.image_slice_gpu_data,
             &self.tensor_glyph_gpu_data,
             &self.ribbon_gpu_data,
-            &self.volume_surface_slice_gpu_data
+            &self.volume_surface_slice_gpu_data,
+            &self.sprite_gpu_data
         );
         // Phase 16 : GPU implicit surface (depth-writes enabled, LessEqual compare).
         if !self.implicit_gpu_data.is_empty() {
@@ -400,7 +402,8 @@ impl ViewportRenderer {
                 &self.image_slice_gpu_data,
                 &self.tensor_glyph_gpu_data,
                 &self.ribbon_gpu_data,
-                &self.volume_surface_slice_gpu_data
+                &self.volume_surface_slice_gpu_data,
+                &self.sprite_gpu_data
             );
             // Implicit surface.
             if !self.implicit_gpu_data.is_empty() {
@@ -867,7 +870,8 @@ impl ViewportRenderer {
                     &self.image_slice_gpu_data,
                     &self.tensor_glyph_gpu_data,
                     &self.ribbon_gpu_data,
-                    &self.volume_surface_slice_gpu_data
+                    &self.volume_surface_slice_gpu_data,
+                    &self.sprite_gpu_data
                 );
                 // Phase 16 : GPU implicit surface.
                 if !self.implicit_gpu_data.is_empty() {
@@ -1564,7 +1568,8 @@ impl ViewportRenderer {
                 &self.image_slice_gpu_data,
                 &self.tensor_glyph_gpu_data,
                 &self.ribbon_gpu_data,
-                &self.volume_surface_slice_gpu_data
+                &self.volume_surface_slice_gpu_data,
+                &self.sprite_gpu_data
             );
 
             // Phase 16 : GPU implicit surface (HDR path, before skybox).

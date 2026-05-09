@@ -68,6 +68,7 @@ mod showcase_37_probe_widgets;
 mod showcase_38_surface_lic;
 mod showcase_39_tensor_glyphs;
 mod showcase_40_vertex_warp;
+mod showcase_41_sprites;
 mod viewport_callback;
 
 const BG_COLOR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -213,6 +214,7 @@ fn main() -> eframe::Result {
                 tg_state: showcase_39_tensor_glyphs::TensorGlyphState::default(),
 
                 warp_state: showcase_40_vertex_warp::VertexWarpState::default(),
+                sprite_state: showcase_41_sprites::SpriteState::default(),
             }))
         }),
     )
@@ -266,6 +268,7 @@ enum ShowcaseMode {
     SurfaceLIC,
     TensorGlyphs,
     VertexWarp,
+    Sprites,
 }
 
 impl ShowcaseMode {
@@ -311,6 +314,7 @@ impl ShowcaseMode {
             Self::SurfaceLIC => "38: Surface LIC",
             Self::TensorGlyphs => "39: Tensor Glyphs",
             Self::VertexWarp => "40: GPU Vertex Warp",
+            Self::Sprites => "41: Sprites & Particles",
         }
     }
 }
@@ -457,6 +461,9 @@ pub(crate) struct App {
 
     // --- Showcase 40 ---
     pub(crate) warp_state: showcase_40_vertex_warp::VertexWarpState,
+
+    // --- Showcase 41 ---
+    pub(crate) sprite_state: showcase_41_sprites::SpriteState,
 }
 
 // ---------------------------------------------------------------------------
@@ -626,6 +633,7 @@ impl eframe::App for App {
                     ShowcaseMode::SurfaceLIC,
                     ShowcaseMode::TensorGlyphs,
                     ShowcaseMode::VertexWarp,
+                    ShowcaseMode::Sprites,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1226,6 +1234,12 @@ impl eframe::App for App {
                 self.pb_state.time += dt;
                 ctx.request_repaint();
             }
+            // ----- Sprites: simulate particles and advance atlas frame -----
+            if self.mode == ShowcaseMode::Sprites && self.sprite_state.built {
+                let dt = ctx.input(|i| i.stable_dt.min(1.0 / 30.0));
+                showcase_41_sprites::update_sprites(self, dt);
+                ctx.request_repaint();
+            }
         });
     }
 }
@@ -1236,7 +1250,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 40] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 41] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::Performance,
@@ -1277,6 +1291,7 @@ impl App {
             ShowcaseMode::SurfaceLIC,
             ShowcaseMode::TensorGlyphs,
             ShowcaseMode::VertexWarp,
+            ShowcaseMode::Sprites,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1382,6 +1397,7 @@ impl App {
             ShowcaseMode::SurfaceLIC => !self.lic_state.built,
             ShowcaseMode::TensorGlyphs => !self.tg_state.built,
             ShowcaseMode::VertexWarp => !self.warp_state.built,
+            ShowcaseMode::Sprites => !self.sprite_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -1764,6 +1780,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::Sprites => {
+                showcase_41_sprites::build_sprite_scene(self, renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 10.0,
+                    orientation: glam::Quat::from_rotation_z(0.5)
+                        * glam::Quat::from_rotation_x(1.0),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -1826,6 +1852,7 @@ impl App {
             ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::controls_lic(self, ui),
             ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::controls_tensor_glyphs(self, ui),
             ShowcaseMode::VertexWarp => showcase_40_vertex_warp::controls_warp(self, ui),
+            ShowcaseMode::Sprites => showcase_41_sprites::controls_sprites(self, ui),
         }
     }
 
@@ -2574,6 +2601,11 @@ impl App {
                 let items = showcase_40_vertex_warp::warp_scene_items(self);
                 (items, Some(BG_COLOR), showcase_40_vertex_warp::warp_lighting(), 0, 0)
             }
+
+            ShowcaseMode::Sprites => {
+                let items = showcase_41_sprites::sprite_scene_items(self);
+                (items, Some(BG_COLOR), showcase_41_sprites::sprite_lighting(), 0, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -3163,6 +3195,12 @@ impl App {
         // Tensor glyph items (Showcase 39) : submitted every frame when built.
         if self.mode == ShowcaseMode::TensorGlyphs && self.tg_state.built {
             showcase_39_tensor_glyphs::submit_tensor_glyphs(self, &mut fd);
+        }
+
+        // Sprite items and ring polylines (Showcase 41) : submitted every frame when built.
+        if self.mode == ShowcaseMode::Sprites && self.sprite_state.built {
+            fd.scene.sprite_items.extend(showcase_41_sprites::sprite_items(self));
+            fd.scene.polylines.extend(showcase_41_sprites::ring_polylines(self));
         }
 
         // PlaybackRuntime stats are updated inside the build_frame_data PlaybackRuntime arm.

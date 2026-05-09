@@ -1112,6 +1112,21 @@ pub struct PointCloudGpuData {
     pub(crate) _transparency_buf: wgpu::Buffer,
 }
 
+/// Per-frame GPU data for one sprite batch item, created in `prepare()`.
+pub struct SpriteGpuData {
+    /// Position vertex buffer: one `vec3` per sprite, instance-stepped.
+    pub(crate) vertex_buffer: wgpu::Buffer,
+    /// Number of sprites (= draw instance count).
+    pub(crate) sprite_count: u32,
+    /// Bind group (group 1): uniform + texture + sampler + instance storage buffer.
+    pub(crate) bind_group: wgpu::BindGroup,
+    /// Whether this batch was submitted with `depth_write: true`.
+    pub(crate) depth_write: bool,
+    // Keep buffers alive for the lifetime of this struct.
+    pub(crate) _uniform_buf: wgpu::Buffer,
+    pub(crate) _instance_buf: wgpu::Buffer,
+}
+
 /// Per-frame GPU data for one polyline item, created in `prepare()`.
 pub struct PolylineGpuData {
     /// Instance buffer: `[xa, ya, za, xb, yb, zb, scalar_a, scalar_b]` per segment (32 bytes).
@@ -1839,6 +1854,14 @@ pub struct ViewportGpuResources {
     pub(crate) builtin_colormap_ids: Option<[ColormapId; 10]>,
     /// Whether built-in colormaps have been uploaded to the GPU.
     pub(crate) colormaps_initialized: bool,
+
+    // --- Sprite billboard pipelines (lazily created) ---
+    /// Sprite pipeline (depth_write_enabled: false). None until first sprite batch is submitted.
+    pub(crate) sprite_pipeline: Option<wgpu::RenderPipeline>,
+    /// Sprite pipeline (depth_write_enabled: true). None until first sprite batch is submitted.
+    pub(crate) sprite_pipeline_depth_write: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for sprite uniforms + texture + instance buffer (group 1).
+    pub(crate) sprite_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- SciVis Phase B: point cloud and glyph pipelines (lazily created) ---
     /// Point cloud render pipeline. None until first point cloud is submitted.
