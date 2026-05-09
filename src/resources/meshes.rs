@@ -470,6 +470,22 @@ impl ViewportGpuResources {
         self.replace_mesh_data(device, queue, mesh_id, &mesh_data)
     }
 
+    /// Replace a previously uploaded sparse voxel grid in place.
+    ///
+    /// Equivalent to calling [`upload_sparse_volume_grid_data`](Self::upload_sparse_volume_grid_data)
+    /// and then [`replace_mesh_data`](Self::replace_mesh_data), but without allocating a new slot.
+    /// Use this for per-frame or per-interaction updates (e.g. voxel paint) to avoid leaking GPU memory.
+    pub fn replace_sparse_volume_grid_data(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mesh_id: crate::resources::mesh_store::MeshId,
+        data: &crate::resources::sparse_volume::SparseVolumeGridData,
+    ) -> crate::error::ViewportResult<()> {
+        let mesh_data = crate::resources::sparse_volume::extract_sparse_boundary(data);
+        self.replace_mesh_data(device, queue, mesh_id, &mesh_data)
+    }
+
     /// Upload a sparse voxel grid by extracting its boundary surface and uploading
     /// the result via [`upload_mesh_data`](Self::upload_mesh_data).
     ///

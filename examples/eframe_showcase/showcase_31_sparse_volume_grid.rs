@@ -40,6 +40,30 @@ use viewport_lib::{
 };
 
 // ---------------------------------------------------------------------------
+// Paint grid constants
+// ---------------------------------------------------------------------------
+
+/// Side length of the paintable voxel cube (NxNxN cells, all active).
+const PAINT_N: usize = 5;
+
+/// World-space translation applied to the paint grid at render time.
+/// The ray-picking code in `handle_svg_paint_click` must use the same value.
+const PAINT_OFFSET: [f32; 3] = [18.0, 0.0, 0.0];
+
+/// Preset swatch colors shown in the controls panel (linear RGBA).
+const PAINT_SWATCHES: &[([f32; 4], &str)] = &[
+    ([1.00, 1.00, 1.00, 1.0], "White"),
+    ([0.90, 0.20, 0.20, 1.0], "Red"),
+    ([0.90, 0.55, 0.10, 1.0], "Orange"),
+    ([0.90, 0.85, 0.10, 1.0], "Yellow"),
+    ([0.20, 0.80, 0.20, 1.0], "Green"),
+    ([0.10, 0.75, 0.75, 1.0], "Teal"),
+    ([0.20, 0.40, 0.90, 1.0], "Blue"),
+    ([0.65, 0.20, 0.90, 1.0], "Purple"),
+    ([0.08, 0.08, 0.08, 1.0], "Black"),
+];
+
+// ---------------------------------------------------------------------------
 // Sub-mode
 // ---------------------------------------------------------------------------
 
@@ -269,27 +293,76 @@ fn build_terrain() -> SparseVolumeGridData {
 }
 
 // ---------------------------------------------------------------------------
+// Paint grid
+// ---------------------------------------------------------------------------
+
+/// Build a fully-dense PAINT_N^3 voxel cube with all cells white.
+/// Cell colors are stored in `cell_colors["paint"]` and updated on each click.
+fn build_paint_grid() -> SparseVolumeGridData {
+    let n = PAINT_N;
+    let mut active_cells = Vec::with_capacity(n * n * n);
+    let mut colors = Vec::with_capacity(n * n * n);
+    for k in 0..n {
+        for j in 0..n {
+            for i in 0..n {
+                active_cells.push([i as u32, j as u32, k as u32]);
+                colors.push([1.0f32, 1.0, 1.0, 1.0]);
+            }
+        }
+    }
+    let mut data = SparseVolumeGridData::default();
+    // Centre the grid at the world origin (before PAINT_OFFSET is applied).
+    data.origin = [-(n as f32) / 2.0; 3];
+    data.cell_size = 1.0;
+    data.active_cells = active_cells;
+    data.cell_colors.insert("paint".to_string(), colors);
+    data
+}
+
+/// Ray-AABB slab intersection.  Returns the entry distance along `dir`, or
+/// `None` if the ray misses or the box is behind the origin.
+fn ray_aabb(origin: glam::Vec3, dir: glam::Vec3, aabb_min: glam::Vec3, aabb_max: glam::Vec3) -> Option<f32> {
+    let inv = dir.recip();
+    let t1 = (aabb_min - origin) * inv;
+    let t2 = (aabb_max - origin) * inv;
+    let tmin = t1.min(t2).max_element();
+    let tmax = t1.max(t2).min_element();
+    if tmax >= tmin.max(0.0) { Some(tmin.max(0.0)) } else { None }
+}
+
+// ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
 pub(crate) struct SvgState {
-    pub built:      bool,
-    pub mesh_id:    MeshId,
-    pub shell_id:   MeshId,
-    pub terrain_id: MeshId,
-    pub colormap:   BuiltinColormap,
-    pub field:      SvgField,
+    pub built:         bool,
+    pub mesh_id:       MeshId,
+    pub shell_id:      MeshId,
+    pub terrain_id:    MeshId,
+    pub colormap:      BuiltinColormap,
+    pub field:         SvgField,
+    // Paint grid state
+    pub paint_mesh_id: MeshId,
+    pub paint_data:    SparseVolumeGridData,
+    /// Currently selected paint color (linear RGBA).
+    pub paint_color:   [f32; 4],
+    /// Set to true when a cell is painted; cleared after the GPU upload.
+    pub paint_dirty:   bool,
 }
 
 impl Default for SvgState {
     fn default() -> Self {
         Self {
-            built:      false,
-            mesh_id:    MeshId::from_index(0),
-            shell_id:   MeshId::from_index(0),
-            terrain_id: MeshId::from_index(0),
-            colormap:   BuiltinColormap::Viridis,
-            field:      SvgField::CellHeight,
+            built:         false,
+            mesh_id:       MeshId::from_index(0),
+            shell_id:      MeshId::from_index(0),
+            terrain_id:    MeshId::from_index(0),
+            colormap:      BuiltinColormap::Viridis,
+            field:         SvgField::CellHeight,
+            paint_mesh_id: MeshId::from_index(0),
+            paint_data:    SparseVolumeGridData::default(),
+            paint_color:   PAINT_SWATCHES[1].0, // red
+            paint_dirty:   false,
         }
     }
 }
@@ -319,6 +392,12 @@ impl App {
             .resources_mut()
             .upload_sparse_volume_grid_data(&self.device, &terrain)
             .expect("svg terrain upload");
+
+        self.svg_state.paint_data = build_paint_grid();
+        self.svg_state.paint_mesh_id = renderer
+            .resources_mut()
+            .upload_sparse_volume_grid_data(&self.device, &build_paint_grid())
+            .expect("svg paint upload");
 
         self.svg_state.built = true;
     }
@@ -353,8 +432,8 @@ impl App {
             ),
         };
 
-        // Three objects placed side by side along X.
-        [
+        // Three attribute-driven objects side by side along X.
+        let mut items: Vec<SceneRenderItem> = [
             (self.svg_state.mesh_id, translate(-9.0, 0.0, 0.0)),
             (self.svg_state.shell_id, translate(0.0, 0.0, 0.0)),
             (self.svg_state.terrain_id, translate(9.0, 0.0, 0.0)),
@@ -368,7 +447,59 @@ impl App {
             item.colormap_id = colormap_id;
             item
         })
-        .collect()
+        .collect();
+
+        // Paint grid: always uses cell_colors["paint"], independent of the
+        // attribute selector above.
+        let mut paint = SceneRenderItem::default();
+        paint.mesh_id = self.svg_state.paint_mesh_id;
+        paint.model = translate(PAINT_OFFSET[0], PAINT_OFFSET[1], PAINT_OFFSET[2]);
+        paint.active_attribute = Some(AttributeRef {
+            name: "paint".to_string(),
+            kind: AttributeKind::FaceColor,
+        });
+        items.push(paint);
+
+        items
+    }
+
+    /// Cast a ray into the paint grid and paint the nearest hit cell.
+    /// Sets `svg_state.paint_dirty` if a cell was hit; the caller flushes it to GPU.
+    pub(crate) fn handle_svg_paint_click(&mut self, pos: glam::Vec2, w: f32, h: f32) {
+        if !self.svg_state.built {
+            return;
+        }
+        let vp_inv = self.camera.view_proj_matrix().inverse();
+        let (ray_o, ray_d) =
+            viewport_lib::picking::screen_to_ray(pos, glam::Vec2::new(w, h), vp_inv);
+
+        let data = &self.svg_state.paint_data;
+        let offset = glam::Vec3::from(PAINT_OFFSET);
+        let mut best_t = f32::MAX;
+        let mut best_idx = None;
+
+        for (cell_idx, &[ci, cj, ck]) in data.active_cells.iter().enumerate() {
+            let local_min = glam::Vec3::new(
+                data.origin[0] + ci as f32 * data.cell_size,
+                data.origin[1] + cj as f32 * data.cell_size,
+                data.origin[2] + ck as f32 * data.cell_size,
+            );
+            let world_min = local_min + offset;
+            let world_max = world_min + glam::Vec3::splat(data.cell_size);
+
+            if let Some(t) = ray_aabb(ray_o, ray_d, world_min, world_max) {
+                if t < best_t {
+                    best_t = t;
+                    best_idx = Some(cell_idx);
+                }
+            }
+        }
+
+        if let Some(idx) = best_idx {
+            let colors = self.svg_state.paint_data.cell_colors.get_mut("paint").unwrap();
+            colors[idx] = self.svg_state.paint_color;
+            self.svg_state.paint_dirty = true;
+        }
     }
 
     /// Lighting settings for the sparse grid showcase.
@@ -393,6 +524,39 @@ impl App {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn controls_sparse_volume_grid(app: &mut App, ui: &mut egui::Ui) {
+        // --- Paint grid ---
+        ui.label(egui::RichText::new("Voxel paint (right grid)").strong());
+        ui.label("Click a voxel to paint it.");
+        ui.label("Color:");
+        ui.horizontal_wrapped(|ui| {
+            for &(color, label) in PAINT_SWATCHES {
+                let selected = app.svg_state.paint_color == color;
+                let [r, g, b, _] = color;
+                let fill = egui::Color32::from_rgb(
+                    (r * 255.0) as u8,
+                    (g * 255.0) as u8,
+                    (b * 255.0) as u8,
+                );
+                let stroke = if selected {
+                    egui::Stroke::new(2.5, egui::Color32::WHITE)
+                } else {
+                    egui::Stroke::new(1.0, egui::Color32::GRAY)
+                };
+                let btn = egui::Button::new("").min_size(egui::Vec2::splat(22.0)).fill(fill).stroke(stroke);
+                if ui.add(btn).on_hover_text(label).clicked() {
+                    app.svg_state.paint_color = color;
+                }
+            }
+        });
+        if ui.button("Clear").on_hover_text("Reset all voxels to white").clicked() {
+            let colors = app.svg_state.paint_data.cell_colors.get_mut("paint").unwrap();
+            for c in colors.iter_mut() {
+                *c = [1.0, 1.0, 1.0, 1.0];
+            }
+            app.svg_state.paint_dirty = true;
+        }
+
+        ui.separator();
         ui.label("Attribute source (applied to all three shapes):");
         for (field, label) in [
             (SvgField::CellHeight, "Cell height (cell_scalars)"),

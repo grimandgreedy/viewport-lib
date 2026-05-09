@@ -1072,6 +1072,21 @@ impl eframe::App for App {
                 self.handle_click_select(pick_pos, rect.width(), rect.height());
             }
 
+            // ----- Voxel paint: flush painted cell to GPU -----
+            if self.svg_state.paint_dirty && self.mode == ShowcaseMode::SparseVolumeGrid {
+                self.svg_state.paint_dirty = false;
+                let rs = frame.wgpu_render_state().expect("wgpu required");
+                let mut guard = rs.renderer.write();
+                if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
+                    let _ = renderer.resources_mut().replace_sparse_volume_grid_data(
+                        &self.device,
+                        &self.queue,
+                        self.svg_state.paint_mesh_id,
+                        &self.svg_state.paint_data,
+                    );
+                }
+            }
+
             // ----- Build frame data -----
             let frame_data = self.build_frame_data(rect.width(), rect.height(), frame);
 
@@ -3358,6 +3373,10 @@ impl App {
             ShowcaseMode::PickLevels => {
                 let shift = self.pl_state.shift_held;
                 self.handle_pl_click(pos, w, h, shift);
+            }
+
+            ShowcaseMode::SparseVolumeGrid => {
+                self.handle_svg_paint_click(pos, w, h);
             }
 
             _ => {}
