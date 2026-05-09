@@ -3,16 +3,15 @@
 ## [0.13.0] (unreleased, new changes)
 
 ### Features
+- Gaussian splat point clouds: set `PointCloudItem::gaussian` to render points as soft radial splats with alpha falling off from the center. Per-point radius can now be driven by a scalar field via `radius_scalars` and `radius_range`, mapping data values to a pixel-radius interval independent of the scalar colormap.
+- `TubeItem`: swept tube geometry with configurable cross-section resolution (`sides`), optional per-point radius, and per-vertex scalar coloring via a colormap. Use this instead of `StreamtubeItem` when you need scalar-colored tubes or finer/coarser geometry.
+- `ImageSliceItem`: renders a single axis-aligned cross-section of an uploaded volume as a flat textured quad. Faster than full ray-marching for inspecting individual slices. Set `axis`, `offset` (normalized position along the axis), `bbox_min`/`bbox_max`, and an optional colormap LUT. The quad dimensions follow the bounding box, so non-cubic volumes produce the correct rectangular slice.
 - `GlyphItem` now accepts a `default_color` and `use_default_color` flag to render glyphs in a fixed RGBA color instead of the scalar LUT. When enabled, the per-instance scalar acts as a brightness multiplier and lighting is skipped, producing flat unlit glyphs.
 - `LineProbeWidget`, `SphereWidget`, and `BoxWidget` now expose a `handle_color` field. Set it to any RGBA color to override the default viridis-mapped coloring on the drag handles.
 
 ### Fixes
 - Clicking a probe widget handle near its edge could fail to start the drag even when the handle was visually highlighted. The hover state from the previous frame is now preserved on the click frame so edge clicks register reliably.
 - Probe widget hit-test radii now match the rendered glyph sizes. Previously the hover detection zone was larger than the visible sphere, producing a highlighted ring at the edge that appeared clickable but was outside the actual handle geometry.
-
-- Gaussian splat point clouds: set `PointCloudItem::gaussian` to render points as soft radial splats with alpha falling off from the center. Per-point radius can now be driven by a scalar field via `radius_scalars` and `radius_range`, mapping data values to a pixel-radius interval independent of the scalar colormap.
-- `TubeItem`: swept tube geometry with configurable cross-section resolution (`sides`), optional per-point radius, and per-vertex scalar coloring via a colormap. Use this instead of `StreamtubeItem` when you need scalar-colored tubes or finer/coarser geometry.
-- `ImageSliceItem`: renders a single axis-aligned cross-section of an uploaded volume as a flat textured quad. Faster than full ray-marching for inspecting individual slices. Set `axis`, `offset` (normalized position along the axis), `bbox_min`/`bbox_max`, and an optional colormap LUT. The quad dimensions follow the bounding box, so non-cubic volumes produce the correct rectangular slice.
 
 ## [0.12.3]
 
