@@ -168,10 +168,11 @@ impl SphereWidget {
             strip_lengths.push((STEPS + 1) as u32);
         }
 
+        let line_color = [self.color[0], self.color[1], self.color[2], 1.0];
         PolylineItem {
             positions,
             strip_lengths,
-            default_color: self.color,
+            default_color: line_color,
             line_width: 1.5,
             id,
             ..PolylineItem::default()

@@ -18,8 +18,6 @@ use viewport_lib::{
 
 const CLOUD_N: usize = 20000;
 const CLOUD_RANGE: f32 = 3.5;
-/// Radius around the line segment within which points are counted.
-const LINE_THRESHOLD: f32 = 0.4;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PwSubMode {
@@ -37,6 +35,7 @@ pub(crate) struct ProbeWidgetState {
     pub suppress_orbit: bool,
     pub cloud_positions: Vec<[f32; 3]>,
     pub selected: Vec<bool>,
+    pub line_threshold: f32,
 }
 
 impl ProbeWidgetState {
@@ -66,6 +65,7 @@ impl ProbeWidgetState {
             suppress_orbit: false,
             cloud_positions,
             selected,
+            line_threshold: 0.4,
         }
     }
 
@@ -100,24 +100,30 @@ impl ProbeWidgetState {
         self.selected.iter_mut().for_each(|s| *s = false);
     }
 
-    /// Count points within `LINE_THRESHOLD` world units of the probe segment.
+    /// Count points within `self.line_threshold` world units of the probe segment.
     pub fn points_near_line(&self) -> usize {
+        self.near_line_iter().count()
+    }
+
+    pub fn apply_line_selection(&mut self, add: bool) {
+        let indices: Vec<usize> = self.near_line_iter().collect();
+        for i in indices {
+            self.selected[i] = add;
+        }
+    }
+
+    fn near_line_iter(&self) -> impl Iterator<Item = usize> + '_ {
         let start = self.probe.start;
         let end = self.probe.end;
         let dir = end - start;
         let len = dir.length();
-        if len < 1e-6 {
-            return 0;
-        }
-        let dir_n = dir / len;
-        self.cloud_positions
-            .iter()
-            .filter(|p| {
-                let p = glam::Vec3::from(**p);
-                let t = ((p - start).dot(dir_n)).clamp(0.0, len);
-                (p - (start + dir_n * t)).length() <= LINE_THRESHOLD
-            })
-            .count()
+        let dir_n = if len > 1e-6 { dir / len } else { glam::Vec3::X };
+        let threshold = self.line_threshold;
+        self.cloud_positions.iter().enumerate().filter_map(move |(i, p)| {
+            let p = glam::Vec3::from(*p);
+            let t = ((p - start).dot(dir_n)).clamp(0.0, len);
+            if (p - (start + dir_n * t)).length() <= threshold { Some(i) } else { None }
+        })
     }
 }
 
@@ -180,11 +186,32 @@ impl App {
                 ui.label(format!("End:    [{:.2}, {:.2}, {:.2}]", e.x, e.y, e.z));
                 ui.label(format!("Length: {:.3}", (e - s).length()));
                 ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("Radius:");
+                    ui.add(egui::Slider::new(&mut state.line_threshold, 0.05..=3.0).step_by(0.05));
+                });
                 ui.label(format!(
-                    "Points within {:.1} of line: {}",
-                    LINE_THRESHOLD,
+                    "Points within {:.2}: {}",
+                    state.line_threshold,
                     state.points_near_line()
                 ));
+                ui.separator();
+                ui.label(format!(
+                    "Selected: {} / {}",
+                    state.selected_count(),
+                    state.cloud_positions.len()
+                ));
+                ui.horizontal(|ui| {
+                    if ui.button("Select from region").clicked() {
+                        state.apply_line_selection(true);
+                    }
+                    if ui.button("Deselect from region").clicked() {
+                        state.apply_line_selection(false);
+                    }
+                });
+                if ui.button("Clear selection").clicked() {
+                    state.clear_selection();
+                }
             }
             PwSubMode::Sphere => {
                 let c = state.sphere.center;
