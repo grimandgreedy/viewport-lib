@@ -22,9 +22,10 @@ struct ClipPlanes {
 };
 
 struct StreamtubeUniform {
-    color:  vec4<f32>,
-    radius: f32,
-    _pad:   vec3<f32>,
+    color:            vec4<f32>,
+    radius:           f32,
+    use_vertex_color: u32,
+    _pad:             vec2<f32>,
 };
 
 struct ClipVolumeUB {
@@ -85,6 +86,7 @@ struct VertexOut {
     @builtin(position) clip_pos:  vec4<f32>,
     @location(0)       world_pos: vec3<f32>,
     @location(1)       world_nrm: vec3<f32>,
+    @location(2)       vert_col:  vec4<f32>,
 };
 
 @vertex
@@ -94,6 +96,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     out.clip_pos  = camera.view_proj * vec4<f32>(in.position, 1.0);
     out.world_pos = in.position;
     out.world_nrm = normalize(in.normal);
+    out.vert_col  = in.color;
     return out;
 }
 
@@ -114,5 +117,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let n_dot_l   = max(dot(n, light_dir), 0.0);
     let shading   = 0.2 + 0.8 * n_dot_l;
 
-    return vec4<f32>(tube.color.rgb * shading, tube.color.a);
+    // Use per-vertex color when the flag is set (TubeItem), else use the uniform color.
+    let base_color = select(tube.color, in.vert_col, tube.use_vertex_color != 0u);
+    return vec4<f32>(base_color.rgb * shading, base_color.a);
 }

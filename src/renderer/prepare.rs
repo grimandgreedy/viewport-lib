@@ -1054,6 +1054,36 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
+        // Phase 3.3 : General Tube GPU data upload.
+        // ------------------------------------------------------------------
+        self.tube_gpu_data.clear();
+        if !frame.scene.tube_items.is_empty() {
+            resources.ensure_streamtube_pipeline(device);
+            for item in &frame.scene.tube_items {
+                if item.positions.is_empty() || item.strip_lengths.is_empty() {
+                    continue;
+                }
+                let gpu_data = resources.upload_tube(device, queue, item);
+                if gpu_data.index_count > 0 {
+                    self.tube_gpu_data.push(gpu_data);
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Phase 3.2 : Image Slice GPU data upload.
+        // ------------------------------------------------------------------
+        self.image_slice_gpu_data.clear();
+        if !frame.scene.image_slices.is_empty() {
+            resources.ensure_image_slice_pipeline(device);
+            for item in &frame.scene.image_slices {
+                if let Some(gpu_data) = resources.upload_image_slice(device, queue, item) {
+                    self.image_slice_gpu_data.push(gpu_data);
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
         // Phase 4: Surface LIC GPU data upload.
         // ------------------------------------------------------------------
         self.lic_gpu_data.clear();

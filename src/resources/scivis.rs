@@ -217,7 +217,40 @@ impl ViewportGpuResources {
             (buf, 0u32)
         };
 
-        let (radius_buf, has_radius) = if !item.radii.is_empty() {
+        // Radius buffer: radius_scalars (mapped to radius_range) take priority over
+        // explicit per-point radii.
+        let (radius_buf, has_radius) = if !item.radius_scalars.is_empty() {
+            let r_min = item
+                .radius_scalar_range
+                .map(|r| r.0)
+                .unwrap_or_else(|| {
+                    item.radius_scalars.iter().cloned().fold(f32::INFINITY, f32::min)
+                });
+            let r_max = item
+                .radius_scalar_range
+                .map(|r| r.1)
+                .unwrap_or_else(|| {
+                    item.radius_scalars.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+                });
+            let range = (r_max - r_min).max(f32::EPSILON);
+            let (out_min, out_max) = item.radius_range;
+            let mapped: Vec<f32> = item
+                .radius_scalars
+                .iter()
+                .map(|&s| {
+                    let t = ((s - r_min) / range).clamp(0.0, 1.0);
+                    out_min + t * (out_max - out_min)
+                })
+                .collect();
+            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("pc_radius_buf"),
+                size: (std::mem::size_of::<f32>() * mapped.len()).max(4) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&buf, 0, bytemuck::cast_slice(&mapped));
+            (buf, 1u32)
+        } else if !item.radii.is_empty() {
             let buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("pc_radius_buf"),
                 size: (std::mem::size_of::<f32>() * item.radii.len()).max(4) as u64,
@@ -1366,18 +1399,20 @@ impl ViewportGpuResources {
 
         let index_count = indices.len() as u32;
 
-        // Uniform buffer: color + radius.
+        // Uniform buffer: color + radius + use_vertex_color flag.
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct StreamtubeUniform {
             color: [f32; 4],
             radius: f32,
-            _pad: [f32; 7],
+            use_vertex_color: u32,
+            _pad: [f32; 6],
         }
         let uniform_data = StreamtubeUniform {
             color: item.color,
             radius,
-            _pad: [0.0; 7],
+            use_vertex_color: 0,
+            _pad: [0.0; 6],
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("streamtube_uniform_buf"),
@@ -1407,6 +1442,521 @@ impl ViewportGpuResources {
             uniform_bind_group,
             _uniform_buf: uniform_buf,
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 3.3 : General Tube representation
+    // -------------------------------------------------------------------------
+
+    /// Upload one [`TubeItem`] to the GPU and return draw data.
+    ///
+    /// Generates a connected tube mesh CPU-side using a parallel-transport frame.
+    /// Scalar values are baked into per-vertex colors using the CPU-side colormap copy.
+    /// Uses the same streamtube pipeline; sets `use_vertex_color=1` when scalars are present.
+    pub(crate) fn upload_tube(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: &crate::renderer::TubeItem,
+    ) -> StreamtubeGpuData {
+        let sides = (item.sides.max(3)) as usize;
+
+        // Resolve scalar-to-color mapping upfront if scalars are provided.
+        let (use_vertex_color, lut_rgba): (u32, Option<[[u8; 4]; 256]>) =
+            if !item.scalars.is_empty() {
+                let lut = self
+                    .builtin_colormap_ids
+                    .and_then(|ids| {
+                        let preset_id = item
+                            .colormap_id
+                            .unwrap_or(ids[crate::resources::BuiltinColormap::Viridis as usize]);
+                        self.colormaps_cpu.get(preset_id.0).copied()
+                    })
+                    .unwrap_or([[128u8; 4]; 256]);
+                (1, Some(lut))
+            } else {
+                (0, None)
+            };
+
+        let scalar_min = item
+            .scalar_range
+            .map(|r| r.0)
+            .unwrap_or_else(|| item.scalars.iter().cloned().fold(f32::INFINITY, f32::min));
+        let scalar_max = item
+            .scalar_range
+            .map(|r| r.1)
+            .unwrap_or_else(|| {
+                item.scalars.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+            });
+        let scalar_range = (scalar_max - scalar_min).max(f32::EPSILON);
+
+        // Helper: map a scalar value to an RGBA f32 color from the LUT.
+        let scalar_to_color = |idx: usize| -> [f32; 4] {
+            if let Some(ref lut) = lut_rgba {
+                let s = *item.scalars.get(idx).unwrap_or(&0.0);
+                let t = ((s - scalar_min) / scalar_range).clamp(0.0, 1.0);
+                let lut_idx = ((t * 255.0).round() as usize).min(255);
+                let c = lut[lut_idx];
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                    c[3] as f32 / 255.0,
+                ]
+            } else {
+                item.color
+            }
+        };
+
+        let mut verts: Vec<Vertex> = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
+
+        let positions = &item.positions;
+        let mut strip_start = 0usize;
+
+        for &strip_len in &item.strip_lengths {
+            let strip_len = strip_len as usize;
+            let strip_end = (strip_start + strip_len).min(positions.len());
+            let pts: Vec<glam::Vec3> = positions[strip_start..strip_end]
+                .iter()
+                .map(|&p| glam::Vec3::from(p))
+                .collect();
+            let pts_scalar_start = strip_start;
+            strip_start += strip_len;
+
+            if pts.len() < 2 {
+                continue;
+            }
+
+            // Parallel transport frame (same as upload_streamtube).
+            let t0 = (pts[1] - pts[0]).normalize_or_zero();
+            if t0.length_squared() < 1e-10 {
+                continue;
+            }
+            let ref_v = if t0.x.abs() < 0.9 {
+                glam::Vec3::X
+            } else {
+                glam::Vec3::Y
+            };
+            let mut u = t0.cross(ref_v).normalize();
+
+            let ring_base = verts.len() as u32;
+            let n_rings = pts.len();
+
+            for (k, &pt) in pts.iter().enumerate() {
+                let tangent = if k + 1 < pts.len() {
+                    (pts[k + 1] - pt).normalize_or_zero()
+                } else {
+                    (pt - pts[k - 1]).normalize_or_zero()
+                };
+
+                if k > 0 {
+                    let t_prev = (pts[k] - pts[k - 1]).normalize_or_zero();
+                    let axis = t_prev.cross(tangent);
+                    let sin_a = axis.length().min(1.0);
+                    if sin_a > 1e-6 {
+                        let cos_a = t_prev.dot(tangent).clamp(-1.0, 1.0);
+                        let ax = axis / sin_a;
+                        u = u * cos_a + ax.cross(u) * sin_a + ax * ax.dot(u) * (1.0 - cos_a);
+                        u = u.normalize_or_zero();
+                    }
+                }
+
+                let v = tangent.cross(u).normalize_or_zero();
+
+                // Per-point radius: from radius_attribute if provided, else uniform radius.
+                let point_radius = item
+                    .radius_attribute
+                    .as_ref()
+                    .and_then(|ra| ra.get(pts_scalar_start + k).copied())
+                    .unwrap_or(item.radius)
+                    .max(f32::EPSILON);
+
+                let vertex_color = scalar_to_color(pts_scalar_start + k);
+
+                for s in 0..sides {
+                    let theta = 2.0 * std::f32::consts::PI * (s as f32) / (sides as f32);
+                    let nx = theta.cos() * u.x + theta.sin() * v.x;
+                    let ny = theta.cos() * u.y + theta.sin() * v.y;
+                    let nz = theta.cos() * u.z + theta.sin() * v.z;
+                    let normal = glam::Vec3::new(nx, ny, nz);
+                    let world_pos = pt + normal * point_radius;
+                    verts.push(Vertex {
+                        position: world_pos.to_array(),
+                        normal: normal.to_array(),
+                        color: vertex_color,
+                        uv: [0.0, 0.0],
+                        tangent: [1.0, 0.0, 0.0, 1.0],
+                    });
+                }
+
+                if k > 0 {
+                    let r0 = ring_base + ((k - 1) * sides) as u32;
+                    let r1 = ring_base + (k * sides) as u32;
+                    for s in 0..sides {
+                        let s1 = (s + 1) % sides;
+                        indices.push(r0 + s as u32);
+                        indices.push(r0 + s1 as u32);
+                        indices.push(r1 + s as u32);
+
+                        indices.push(r0 + s1 as u32);
+                        indices.push(r1 + s1 as u32);
+                        indices.push(r1 + s as u32);
+                    }
+                }
+            }
+
+            // End cap.
+            {
+                let last_ring = ring_base + ((n_rings - 1) * sides) as u32;
+                let tangent = (pts[n_rings - 1] - pts[n_rings - 2]).normalize_or_zero();
+                let cap_color = scalar_to_color(pts_scalar_start + n_rings - 1);
+                let cap_center_idx = verts.len() as u32;
+                verts.push(Vertex {
+                    position: pts[n_rings - 1].to_array(),
+                    normal: tangent.to_array(),
+                    color: cap_color,
+                    uv: [0.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0, 1.0],
+                });
+                for s in 0..sides {
+                    let s1 = (s + 1) % sides;
+                    indices.push(cap_center_idx);
+                    indices.push(last_ring + s as u32);
+                    indices.push(last_ring + s1 as u32);
+                }
+            }
+
+            // Start cap.
+            {
+                let tangent = (pts[0] - pts[1]).normalize_or_zero();
+                let cap_color = scalar_to_color(pts_scalar_start);
+                let cap_center_idx = verts.len() as u32;
+                verts.push(Vertex {
+                    position: pts[0].to_array(),
+                    normal: tangent.to_array(),
+                    color: cap_color,
+                    uv: [0.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0, 1.0],
+                });
+                for s in 0..sides {
+                    let s1 = (s + 1) % sides;
+                    indices.push(cap_center_idx);
+                    indices.push(ring_base + s1 as u32);
+                    indices.push(ring_base + s as u32);
+                }
+            }
+        }
+
+        // Upload vertex + index buffers.
+        let vert_bytes: &[u8] = bytemuck::cast_slice(&verts);
+        let idx_bytes: &[u8] = bytemuck::cast_slice(&indices);
+
+        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("tube_vbuf"),
+            size: vert_bytes.len().max(std::mem::size_of::<Vertex>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        if !vert_bytes.is_empty() {
+            queue.write_buffer(&vertex_buffer, 0, vert_bytes);
+        }
+
+        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("tube_ibuf"),
+            size: idx_bytes.len().max(12) as u64,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        if !idx_bytes.is_empty() {
+            queue.write_buffer(&index_buffer, 0, idx_bytes);
+        }
+
+        let index_count = indices.len() as u32;
+
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct TubeUniform {
+            color: [f32; 4],
+            radius: f32,
+            use_vertex_color: u32,
+            _pad: [f32; 6],
+        }
+        let uniform_data = TubeUniform {
+            color: item.color,
+            radius: item.radius.max(f32::EPSILON),
+            use_vertex_color,
+            _pad: [0.0; 6],
+        };
+        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("tube_uniform_buf"),
+            size: std::mem::size_of::<TubeUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
+
+        let bgl = self
+            .streamtube_bgl
+            .as_ref()
+            .expect("ensure_streamtube_pipeline not called");
+        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("tube_uniform_bg"),
+            layout: bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buf.as_entire_binding(),
+            }],
+        });
+
+        StreamtubeGpuData {
+            vertex_buffer,
+            index_buffer,
+            index_count,
+            uniform_bind_group,
+            _uniform_buf: uniform_buf,
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 3.2 : 2D Image Slice representation
+    // -------------------------------------------------------------------------
+
+    /// Lazily create the image slice render pipeline.
+    ///
+    /// No-op if already created. Called from `prepare()` when `frame.scene.image_slices` is non-empty.
+    pub(crate) fn ensure_image_slice_pipeline(&mut self, device: &wgpu::Device) {
+        if self.image_slice_pipeline.is_some() {
+            return;
+        }
+
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("image_slice_bgl"),
+            entries: &[
+                // binding 0: ImageSliceUniform
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // binding 1: texture_3d<f32> — R32Float is not filterable on most hardware,
+                // so declare as non-filterable and use a NonFiltering sampler.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D3,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    },
+                    count: None,
+                },
+                // binding 2: vol_sampler (non-filtering nearest — matches R32Float)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
+                // binding 3: lut_tex (colormap texture_2d)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                // binding 4: lut_sampler (linear)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("image_slice_shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/image_slice.wgsl").into()),
+        });
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("image_slice_pipeline_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, &bgl],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("image_slice_pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[], // no vertex buffer: generates quad from vertex_index
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: self.target_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: self.sample_count,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        self.image_slice_bgl = Some(bgl);
+        self.image_slice_pipeline = Some(pipeline);
+    }
+
+    /// Upload one [`ImageSliceItem`] to the GPU and return draw data.
+    ///
+    /// Creates a uniform buffer describing the slice parameters and a bind group
+    /// referencing the existing uploaded volume texture.  No vertex buffer is needed:
+    /// the shader generates a quad from `vertex_index`.
+    pub(crate) fn upload_image_slice(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: &crate::renderer::ImageSliceItem,
+    ) -> Option<crate::resources::ImageSliceGpuData> {
+        // Check volume exists before allocating anything.
+        if item.volume_id.0 >= self.volume_textures.len() {
+            return None;
+        }
+
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct ImageSliceUniform {
+            bbox_min: [f32; 3],
+            axis: u32,
+            bbox_max: [f32; 3],
+            offset: f32,
+            scalar_min: f32,
+            scalar_max: f32,
+            opacity: f32,
+            _pad: f32,
+        }
+
+        let axis_u32 = match item.axis {
+            crate::renderer::SliceAxis::X => 0u32,
+            crate::renderer::SliceAxis::Y => 1u32,
+            crate::renderer::SliceAxis::Z => 2u32,
+        };
+
+        let uniform_data = ImageSliceUniform {
+            bbox_min: item.bbox_min,
+            axis: axis_u32,
+            bbox_max: item.bbox_max,
+            offset: item.offset.clamp(0.0, 1.0),
+            scalar_min: item.scalar_range.0,
+            scalar_max: item.scalar_range.1,
+            opacity: item.opacity,
+            _pad: 0.0,
+        };
+
+        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("image_slice_uniform_buf"),
+            size: std::mem::size_of::<ImageSliceUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
+
+        // Nearest-neighbor sampler for crisp slice sampling.
+        let vol_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("image_slice_vol_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        // Resolve LUT view index before creating any bind group references.
+        let lut_view_idx: Option<usize> = self.builtin_colormap_ids.and_then(|ids| {
+            let preset_id = item
+                .color_lut
+                .unwrap_or(ids[crate::resources::BuiltinColormap::Viridis as usize]);
+            if preset_id.0 < self.colormap_views.len() {
+                Some(preset_id.0)
+            } else {
+                None
+            }
+        });
+
+        let bgl = self
+            .image_slice_bgl
+            .as_ref()
+            .expect("ensure_image_slice_pipeline not called");
+
+        // Borrow vol_view and lut_view after all mutable references are resolved.
+        let vol_view = &self.volume_textures[item.volume_id.0].1;
+        let lut_view = lut_view_idx
+            .map(|i| &self.colormap_views[i])
+            .unwrap_or(&self.fallback_lut_view);
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("image_slice_bg"),
+            layout: bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(vol_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&vol_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(lut_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                },
+            ],
+        });
+
+        Some(crate::resources::ImageSliceGpuData {
+            bind_group,
+            _uniform_buf: uniform_buf,
+        })
     }
 
     // -------------------------------------------------------------------------

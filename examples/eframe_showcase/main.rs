@@ -406,9 +406,13 @@ fn main() -> eframe::Result {
                 pc_cloud_scalars: Vec::new(),
                 pc_field_positions: Vec::new(),
                 pc_field_vectors: Vec::new(),
+                pc_gaussian_radius_min: 2.0,
+                pc_gaussian_radius_max: 12.0,
                 stream_built: false,
                 stream_use_tubes: false,
+                stream_render_mode: StreamRenderMode::Polylines,
                 stream_tube_radius: 0.06,
+                stream_tube_sides: 8,
                 stream_line_width: 4.0,
                 stream_color_by_speed: true,
                 stream_colormap: BuiltinColormap::Viridis,
@@ -439,6 +443,11 @@ fn main() -> eframe::Result {
                     m.roughness = 0.4;
                     m
                 },
+                vol_show_slice: false,
+                vol_slice_axis: 2,
+                vol_slice_offset: 0.5,
+                vol_slice_lut: BuiltinColormap::Viridis,
+                vol_slice_opacity: 1.0,
                 clipvol_scene: Scene::new(),
                 clipvol_built: false,
                 clipvol_sub_mode: showcase_18_clip_volumes::ClipVolSubMode::BoxClip,
@@ -656,6 +665,15 @@ fn main() -> eframe::Result {
 pub(crate) enum PcSubMode {
     PointCloud,
     VectorField,
+    GaussianSplat,
+}
+
+/// Render mode for Showcase 16 (streamlines).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StreamRenderMode {
+    Polylines,
+    Streamtube,
+    GeneralTube,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -940,10 +958,15 @@ pub(crate) struct App {
     pub(crate) pc_field_positions: Vec<[f32; 3]>,
     /// CPU-side vector field direction+magnitude vectors.
     pub(crate) pc_field_vectors: Vec<[f32; 3]>,
+    /// Minimum pixel radius for Gaussian splat mode (mapped from scalar_range min).
+    pc_gaussian_radius_min: f32,
+    /// Maximum pixel radius for Gaussian splat mode (mapped from scalar_range max).
+    pc_gaussian_radius_max: f32,
 
     // --- Showcase 16 ---
     pub(crate) stream_built: bool,
     stream_use_tubes: bool,
+    stream_render_mode: StreamRenderMode,
     stream_tube_radius: f32,
     stream_line_width: f32,
     stream_color_by_speed: bool,
@@ -952,6 +975,8 @@ pub(crate) struct App {
     stream_flat_color: [f32; 4],
     stream_seed_count: usize,
     stream_step_size: f32,
+    /// Cross-section resolution for GeneralTube mode (number of sides).
+    stream_tube_sides: u32,
     /// CPU-side streamline paths (one `Vec<[f32;3]>` per seed).
     pub(crate) stream_paths: Vec<Vec<[f32; 3]>>,
     /// Per-vertex speed values parallel to `stream_paths`.
@@ -972,6 +997,16 @@ pub(crate) struct App {
     vol_shading: bool,
     vol_nan_on: bool,
     vol_iso_material: Material,
+    /// Whether to overlay an image slice on the volume scene.
+    vol_show_slice: bool,
+    /// Axis for the image slice (0=X, 1=Y, 2=Z).
+    vol_slice_axis: u32,
+    /// Normalized [0,1] position of the slice along the axis.
+    vol_slice_offset: f32,
+    /// Colormap for the image slice LUT.
+    vol_slice_lut: BuiltinColormap,
+    /// Opacity of the image slice quad.
+    vol_slice_opacity: f32,
 
     // --- Showcase 18 ---
     pub(crate) clipvol_scene: Scene,
@@ -4232,6 +4267,13 @@ impl App {
             }
         }
 
+        // Image slice (Showcase 17) : submitted every frame when enabled.
+        if self.mode == ShowcaseMode::Volume && self.vol_built && self.vol_show_slice {
+            if let Some(slice_item) = self.make_image_slice_item() {
+                fd.scene.image_slices.push(slice_item);
+            }
+        }
+
         // Clip volume (Showcase 18) : set every frame from current state.
         if self.mode == ShowcaseMode::ClipVolumes && self.clipvol_built {
             if let Some(clip_obj) = self.make_clip_object() {
@@ -4241,10 +4283,16 @@ impl App {
 
         // Streamline / tube items (Showcase 16) : submitted every frame.
         if self.mode == ShowcaseMode::Streamlines && self.stream_built {
-            if self.stream_use_tubes {
-                fd.scene.streamtube_items.push(self.make_stream_tube_item());
-            } else {
-                fd.scene.polylines.push(self.make_stream_polyline_item());
+            match self.stream_render_mode {
+                StreamRenderMode::Polylines => {
+                    fd.scene.polylines.push(self.make_stream_polyline_item());
+                }
+                StreamRenderMode::Streamtube => {
+                    fd.scene.streamtube_items.push(self.make_stream_tube_item());
+                }
+                StreamRenderMode::GeneralTube => {
+                    fd.scene.tube_items.push(self.make_stream_general_tube_item());
+                }
             }
         }
 
@@ -4366,6 +4414,9 @@ impl App {
                 }
                 PcSubMode::VectorField => {
                     fd.scene.glyphs.push(self.make_pc_glyph_item());
+                }
+                PcSubMode::GaussianSplat => {
+                    fd.scene.point_clouds.push(self.make_pc_gaussian_item());
                 }
             }
         }

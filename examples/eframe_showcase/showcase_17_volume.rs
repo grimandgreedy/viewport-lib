@@ -17,7 +17,10 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{BuiltinColormap, ColormapId, VolumeData, VolumeItem, extract_isosurface};
+use viewport_lib::{
+    BuiltinColormap, ColormapId, ImageSliceItem, SliceAxis, VolumeData, VolumeItem,
+    extract_isosurface,
+};
 
 // ---------------------------------------------------------------------------
 // Volume mode enum
@@ -169,6 +172,33 @@ impl App {
             ui.checkbox(&mut self.vol_nan_on, "Show NaN voxels");
         }
 
+        // Image slice controls
+        ui.separator();
+        ui.checkbox(&mut self.vol_show_slice, "Show image slice");
+        if self.vol_show_slice {
+            ui.label("Slice axis:");
+            ui.horizontal(|ui| {
+                ui.radio_value(&mut self.vol_slice_axis, 0u32, "X");
+                ui.radio_value(&mut self.vol_slice_axis, 1u32, "Y");
+                ui.radio_value(&mut self.vol_slice_axis, 2u32, "Z");
+            });
+            ui.label("Offset:");
+            ui.add(egui::Slider::new(&mut self.vol_slice_offset, 0.0..=1.0).step_by(0.01));
+            ui.label("Opacity:");
+            ui.add(egui::Slider::new(&mut self.vol_slice_opacity, 0.0..=1.0).step_by(0.05));
+            ui.label("Color LUT:");
+            for (preset, label) in [
+                (BuiltinColormap::Viridis, "Viridis"),
+                (BuiltinColormap::Turbo, "Turbo"),
+                (BuiltinColormap::Greyscale, "Greyscale"),
+                (BuiltinColormap::Coolwarm, "Coolwarm"),
+            ] {
+                if ui.radio(self.vol_slice_lut == preset, label).clicked() {
+                    self.vol_slice_lut = preset;
+                }
+            }
+        }
+
         // Isosurface material controls
         if self.vol_mode != VolumeMode::VolumeOnly {
             ui.separator();
@@ -210,6 +240,26 @@ impl App {
         // Centre the volume around the world origin.
         item.bbox_min = [-3.2, -3.2, -3.2];
         item.bbox_max = [3.2, 3.2, 3.2];
+        Some(item)
+    }
+
+    /// Build an `ImageSliceItem` from the current slice control state.
+    pub(crate) fn make_image_slice_item(&self) -> Option<ImageSliceItem> {
+        let vol_id = self.vol_volume_id?;
+        let axis = match self.vol_slice_axis {
+            0 => SliceAxis::X,
+            1 => SliceAxis::Y,
+            _ => SliceAxis::Z,
+        };
+        let mut item = ImageSliceItem::default();
+        item.volume_id = vol_id;
+        item.axis = axis;
+        item.offset = self.vol_slice_offset;
+        item.bbox_min = [-3.2, -3.2, -3.2];
+        item.bbox_max = [3.2, 3.2, 3.2];
+        item.scalar_range = (0.0, 1.0);
+        item.color_lut = Some(ColormapId(self.vol_slice_lut as usize));
+        item.opacity = self.vol_slice_opacity;
         Some(item)
     }
 

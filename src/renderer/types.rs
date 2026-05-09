@@ -500,6 +500,15 @@ pub struct PointCloudItem {
     /// The alpha falls off as `exp(-3 * d²)` where `d` is the normalised distance from the
     /// point centre. Default: false.
     pub gaussian: bool,
+    /// Optional per-point scalars that drive the splat radius.  If non-empty, these values
+    /// are mapped from `radius_scalar_range` (or data min/max when `None`) to `radius_range`
+    /// (pixels) and used as per-point radii, overriding `radii` and `point_size`.
+    pub radius_scalars: Vec<f32>,
+    /// Normalization range for `radius_scalars`.  `None` = auto from data min/max.
+    pub radius_scalar_range: Option<(f32, f32)>,
+    /// Output pixel-radius range `[min_px, max_px]` for the radius scalar mapping.
+    /// Default: `(2.0, 12.0)`.
+    pub radius_range: (f32, f32),
 }
 
 impl Default for PointCloudItem {
@@ -518,6 +527,9 @@ impl Default for PointCloudItem {
             radii: Vec::new(),
             transparencies: Vec::new(),
             gaussian: false,
+            radius_scalars: Vec::new(),
+            radius_scalar_range: None,
+            radius_range: (2.0, 12.0),
         }
     }
 }
@@ -788,6 +800,116 @@ impl Default for StreamtubeItem {
             radius: 0.05,
             color: [1.0, 1.0, 1.0, 1.0],
             id: 0,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 : General Tube representation
+// ---------------------------------------------------------------------------
+
+/// A general tube item: polyline strips swept into a tube mesh with per-point radius
+/// and scalar colormap support.
+///
+/// Similar to `StreamtubeItem` but with configurable cross-section resolution,
+/// optional per-point radius from a separate attribute, and per-vertex scalar coloring.
+/// The CPU sweep generates a full connected mesh submitted to the streamtube pipeline.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct TubeItem {
+    /// World-space positions for all strips, concatenated.
+    pub positions: Vec<[f32; 3]>,
+    /// Number of vertices per individual strip.
+    pub strip_lengths: Vec<u32>,
+    /// Uniform tube radius in world-space units. Default: `0.05`.
+    pub radius: f32,
+    /// Optional per-point radii in world-space units. If non-empty (and same length as positions),
+    /// overrides `radius` per-vertex.
+    pub radius_attribute: Option<Vec<f32>>,
+    /// Number of sides in the tube cross-section. Default: 8.
+    pub sides: u32,
+    /// Optional per-point scalar values for LUT coloring. If empty, uses `color`.
+    pub scalars: Vec<f32>,
+    /// Scalar range for LUT mapping. `None` = auto from data min/max.
+    pub scalar_range: Option<(f32, f32)>,
+    /// Colormap for scalar coloring. `None` = default builtin (viridis).
+    pub colormap_id: Option<crate::resources::ColormapId>,
+    /// Flat RGBA color used when `scalars` is empty.  Default: opaque white.
+    pub color: [f32; 4],
+    /// Unique ID (reserved for picking). Default: 0.
+    pub id: u64,
+}
+
+impl Default for TubeItem {
+    fn default() -> Self {
+        Self {
+            positions: Vec::new(),
+            strip_lengths: Vec::new(),
+            radius: 0.05,
+            radius_attribute: None,
+            sides: 8,
+            scalars: Vec::new(),
+            scalar_range: None,
+            colormap_id: None,
+            color: [1.0, 1.0, 1.0, 1.0],
+            id: 0,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 : 2D Image Slice representation
+// ---------------------------------------------------------------------------
+
+/// Axis for an axis-aligned image slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SliceAxis {
+    /// Slice perpendicular to the X axis (YZ plane).
+    X,
+    /// Slice perpendicular to the Y axis (XZ plane).
+    #[default]
+    Y,
+    /// Slice perpendicular to the Z axis (XY plane).
+    Z,
+}
+
+/// A 2D image slice item: renders one axis-aligned cross-section of an uploaded volume
+/// as a flat colored quad.
+///
+/// Faster and simpler than full volume ray-marching. Use it to inspect individual
+/// slices of a structured grid without the depth ambiguity of ray-marching.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct ImageSliceItem {
+    /// Reference to a previously uploaded 3D volume texture.
+    pub volume_id: crate::resources::VolumeId,
+    /// Axis perpendicular to the slice plane. Default: `SliceAxis::Z`.
+    pub axis: SliceAxis,
+    /// Normalized position along the axis in `[0, 1]`. Default: `0.5`.
+    pub offset: f32,
+    /// World-space bounding box minimum corner of the volume.
+    pub bbox_min: [f32; 3],
+    /// World-space bounding box maximum corner of the volume.
+    pub bbox_max: [f32; 3],
+    /// Scalar range for colormap mapping `[min, max]`. Default: `(0.0, 1.0)`.
+    pub scalar_range: (f32, f32),
+    /// Color LUT. `None` = default builtin (viridis).
+    pub color_lut: Option<crate::resources::ColormapId>,
+    /// Overall opacity of the slice quad. Default: `1.0`.
+    pub opacity: f32,
+}
+
+impl Default for ImageSliceItem {
+    fn default() -> Self {
+        Self {
+            volume_id: crate::resources::VolumeId(0),
+            axis: SliceAxis::Z,
+            offset: 0.5,
+            bbox_min: [0.0, 0.0, 0.0],
+            bbox_max: [1.0, 1.0, 1.0],
+            scalar_range: (0.0, 1.0),
+            color_lut: None,
+            opacity: 1.0,
         }
     }
 }
@@ -1453,6 +1575,10 @@ pub struct SceneFrame {
     pub lic_items: Vec<SurfaceLICItem>,
     /// Transparent unstructured volume meshes rendered via projected tetrahedra (Phase 6).
     pub transparent_volume_meshes: Vec<TransparentVolumeMeshItem>,
+    /// General tube items to render this frame (Phase 3).
+    pub tube_items: Vec<TubeItem>,
+    /// 2D image slice items to render this frame (Phase 3).
+    pub image_slices: Vec<ImageSliceItem>,
 }
 
 impl Default for SceneFrame {
@@ -1472,6 +1598,8 @@ impl Default for SceneFrame {
             gpu_mc_jobs: Vec::new(),
             lic_items: Vec::new(),
             transparent_volume_meshes: Vec::new(),
+            tube_items: Vec::new(),
+            image_slices: Vec::new(),
         }
     }
 }
@@ -2794,7 +2922,7 @@ macro_rules! emit_draw_calls {
 ///
 /// Called by both `paint` and `paint_to` after `emit_draw_calls!` to render scivis layers.
 macro_rules! emit_scivis_draw_calls {
-    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $volume_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr) => {{
+    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $volume_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $image_slice_gpu_data:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let camera_bg: &wgpu::BindGroup = $camera_bg;
@@ -2877,6 +3005,36 @@ macro_rules! emit_scivis_draw_calls {
                     render_pass
                         .set_index_buffer(tube.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..tube.index_count, 0, 0..1);
+                }
+            }
+        }
+
+        // General tube pass (Phase 3.3 : uses same streamtube pipeline, per-vertex color).
+        if !$tube_gpu_data.is_empty() {
+            if let Some(ref pipeline) = resources.streamtube_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for tube in $tube_gpu_data.iter() {
+                    if tube.index_count == 0 {
+                        continue;
+                    }
+                    render_pass.set_bind_group(1, &tube.uniform_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, tube.vertex_buffer.slice(..));
+                    render_pass
+                        .set_index_buffer(tube.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.draw_indexed(0..tube.index_count, 0, 0..1);
+                }
+            }
+        }
+
+        // Image slice pass (Phase 3.2 : no vertex buffer, 6 vertices generated by shader).
+        if !$image_slice_gpu_data.is_empty() {
+            if let Some(ref pipeline) = resources.image_slice_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for slice in $image_slice_gpu_data.iter() {
+                    render_pass.set_bind_group(1, &slice.bind_group, &[]);
+                    render_pass.draw(0..6, 0..1);
                 }
             }
         }

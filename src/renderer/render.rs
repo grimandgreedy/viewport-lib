@@ -30,7 +30,9 @@ impl ViewportRenderer {
             &self.polyline_gpu_data,
             &self.volume_gpu_data,
             &self.streamtube_gpu_data,
-            camera_bg
+            camera_bg,
+            &self.tube_gpu_data,
+            &self.image_slice_gpu_data
         );
         // Phase 16 : GPU implicit surface (depth-writes enabled, LessEqual compare).
         if !self.implicit_gpu_data.is_empty() {
@@ -175,7 +177,9 @@ impl ViewportRenderer {
             &self.polyline_gpu_data,
             &self.volume_gpu_data,
             &self.streamtube_gpu_data,
-            camera_bg
+            camera_bg,
+            &self.tube_gpu_data,
+            &self.image_slice_gpu_data
         );
         // Phase 16 : GPU implicit surface (depth-writes enabled, LessEqual compare).
         if !self.implicit_gpu_data.is_empty() {
@@ -385,7 +389,9 @@ impl ViewportRenderer {
                 &self.polyline_gpu_data,
                 &self.volume_gpu_data,
                 &self.streamtube_gpu_data,
-                camera_bg
+                camera_bg,
+                &self.tube_gpu_data,
+                &self.image_slice_gpu_data
             );
             // Implicit surface.
             if !self.implicit_gpu_data.is_empty() {
@@ -709,7 +715,9 @@ impl ViewportRenderer {
                     &self.polyline_gpu_data,
                     &self.volume_gpu_data,
                     &self.streamtube_gpu_data,
-                    camera_bg
+                    camera_bg,
+                    &self.tube_gpu_data,
+                    &self.image_slice_gpu_data
                 );
                 // Phase 16 : GPU implicit surface.
                 if !self.implicit_gpu_data.is_empty() {
@@ -1376,7 +1384,9 @@ impl ViewportRenderer {
                 &self.polyline_gpu_data,
                 &self.volume_gpu_data,
                 &self.streamtube_gpu_data,
-                camera_bg
+                camera_bg,
+                &self.tube_gpu_data,
+                &self.image_slice_gpu_data
             );
 
             // Phase 16 : GPU implicit surface (HDR path, before skybox).

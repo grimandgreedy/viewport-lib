@@ -6,9 +6,9 @@
 //! velocity field. The same path data is submitted either as `PolylineItem` or
 //! `StreamtubeItem` depending on a toggle.
 
-use crate::App;
+use crate::{App, StreamRenderMode};
 use eframe::egui;
-use viewport_lib::{BuiltinColormap, ColormapId, PolylineItem, StreamtubeItem};
+use viewport_lib::{BuiltinColormap, ColormapId, PolylineItem, StreamtubeItem, TubeItem};
 
 impl App {
     /// One-time CPU setup for Showcase 16.
@@ -29,37 +29,62 @@ impl App {
     pub(crate) fn controls_streamlines(&mut self, ui: &mut egui::Ui) {
         ui.label("Render mode:");
         ui.horizontal(|ui| {
-            if ui.radio(!self.stream_use_tubes, "Polylines").clicked() {
+            if ui.radio(self.stream_render_mode == StreamRenderMode::Polylines, "Polylines").clicked() {
+                self.stream_render_mode = StreamRenderMode::Polylines;
                 self.stream_use_tubes = false;
             }
-            if ui.radio(self.stream_use_tubes, "Tubes").clicked() {
+            if ui.radio(self.stream_render_mode == StreamRenderMode::Streamtube, "Streamtube").clicked() {
+                self.stream_render_mode = StreamRenderMode::Streamtube;
                 self.stream_use_tubes = true;
+            }
+            if ui.radio(self.stream_render_mode == StreamRenderMode::GeneralTube, "General Tube").clicked() {
+                self.stream_render_mode = StreamRenderMode::GeneralTube;
+                self.stream_use_tubes = false;
             }
         });
 
         ui.separator();
 
-        if self.stream_use_tubes {
-            ui.label("Tube radius:");
-            ui.add(egui::Slider::new(&mut self.stream_tube_radius, 0.01..=0.3).step_by(0.01));
-        } else {
-            ui.label("Line width (px):");
-            ui.add(egui::Slider::new(&mut self.stream_line_width, 0.5..=8.0).step_by(0.5));
+        match self.stream_render_mode {
+            StreamRenderMode::Polylines => {
+                ui.label("Line width (px):");
+                ui.add(egui::Slider::new(&mut self.stream_line_width, 0.5..=8.0).step_by(0.5));
+            }
+            StreamRenderMode::Streamtube => {
+                ui.label("Tube radius:");
+                ui.add(egui::Slider::new(&mut self.stream_tube_radius, 0.01..=0.3).step_by(0.01));
+            }
+            StreamRenderMode::GeneralTube => {
+                ui.label("Tube radius:");
+                ui.add(egui::Slider::new(&mut self.stream_tube_radius, 0.01..=0.3).step_by(0.01));
+                ui.label("Cross-section sides:");
+                ui.add(egui::Slider::new(&mut self.stream_tube_sides, 3..=24).step_by(1.0));
+            }
         }
 
         ui.separator();
         ui.label("Coloring:");
-        ui.horizontal(|ui| {
-            if ui
-                .radio(!self.stream_color_by_speed, "Flat color")
-                .clicked()
-            {
-                self.stream_color_by_speed = false;
-            }
-            if ui.radio(self.stream_color_by_speed, "Speed").clicked() {
-                self.stream_color_by_speed = true;
-            }
-        });
+
+        // StreamtubeItem only supports flat color; scalar coloring requires Polylines or
+        // GeneralTube (which bakes per-vertex colors CPU-side via TubeItem).
+        let scalar_coloring_supported = self.stream_render_mode != StreamRenderMode::Streamtube;
+
+        if scalar_coloring_supported {
+            ui.horizontal(|ui| {
+                if ui
+                    .radio(!self.stream_color_by_speed, "Flat color")
+                    .clicked()
+                {
+                    self.stream_color_by_speed = false;
+                }
+                if ui.radio(self.stream_color_by_speed, "Speed").clicked() {
+                    self.stream_color_by_speed = true;
+                }
+            });
+        } else {
+            // Force flat color when switching to Streamtube mode.
+            self.stream_color_by_speed = false;
+        }
 
         if self.stream_color_by_speed {
             ui.label("Colormap:");
@@ -80,7 +105,7 @@ impl App {
                 }
             }
         } else {
-            ui.label("Line color:");
+            ui.label("Tube/line color:");
             let mut rgb = [
                 self.stream_flat_color[0],
                 self.stream_flat_color[1],
@@ -124,6 +149,24 @@ impl App {
             item.colormap_id = Some(ColormapId(self.stream_colormap as usize));
         } else {
             item.default_color = self.stream_flat_color;
+        }
+        item
+    }
+
+    /// Build a `TubeItem` from cached stream paths for the GeneralTube mode.
+    pub(crate) fn make_stream_general_tube_item(&self) -> TubeItem {
+        let (positions, strip_lengths, scalars) =
+            flatten_paths(&self.stream_paths, &self.stream_scalars);
+        let mut item = TubeItem::default();
+        item.positions = positions;
+        item.strip_lengths = strip_lengths;
+        item.radius = self.stream_tube_radius;
+        item.sides = self.stream_tube_sides;
+        if self.stream_color_by_speed {
+            item.scalars = scalars;
+            item.colormap_id = Some(ColormapId(self.stream_colormap as usize));
+        } else {
+            item.color = self.stream_flat_color;
         }
         item
     }

@@ -54,6 +54,12 @@ impl App {
             {
                 self.pc_sub_mode = PcSubMode::VectorField;
             }
+            if ui
+                .radio(self.pc_sub_mode == PcSubMode::GaussianSplat, "Gaussian Splat")
+                .clicked()
+            {
+                self.pc_sub_mode = PcSubMode::GaussianSplat;
+            }
         });
 
         ui.separator();
@@ -123,6 +129,17 @@ impl App {
 
                 ui.checkbox(&mut self.pc_glyph_magnitude_scale, "Scale by magnitude");
             }
+            PcSubMode::GaussianSplat => {
+                ui.label("Radius range (px):");
+                ui.horizontal(|ui| {
+                    ui.label("Min:");
+                    ui.add(egui::DragValue::new(&mut self.pc_gaussian_radius_min).speed(0.1).range(0.5..=20.0));
+                    ui.label("Max:");
+                    ui.add(egui::DragValue::new(&mut self.pc_gaussian_radius_max).speed(0.1).range(0.5..=40.0));
+                });
+                ui.label("Splats are colored by the same scalar field (radial distance).");
+                ui.label("Radius scales with scalar: inner shell = small, outer = large.");
+            }
         }
     }
 
@@ -163,6 +180,27 @@ impl App {
         item.scalar_range = scalar_range;
         item.colormap_id = colormap_id;
         item.glyph_type = self.pc_glyph_type;
+        item
+    }
+
+    /// Build a `PointCloudItem` rendering points as Gaussian splats with radius driven by scalars.
+    pub(crate) fn make_pc_gaussian_item(&self) -> PointCloudItem {
+        let colormap_id = Some(ColormapId(self.pc_colormap as usize));
+        let scalar_range = if self.pc_scalar_range_manual {
+            Some(self.pc_scalar_range)
+        } else {
+            None
+        };
+        let mut item = PointCloudItem::default();
+        item.positions = self.pc_cloud_positions.clone();
+        item.scalars = self.pc_cloud_scalars.clone();
+        item.scalar_range = scalar_range;
+        item.colormap_id = colormap_id;
+        // Use radius_scalars to drive the splat radius from the same scalar field.
+        item.radius_scalars = self.pc_cloud_scalars.clone();
+        item.radius_scalar_range = scalar_range;
+        item.radius_range = (self.pc_gaussian_radius_min, self.pc_gaussian_radius_max);
+        item.gaussian = true;
         item
     }
 

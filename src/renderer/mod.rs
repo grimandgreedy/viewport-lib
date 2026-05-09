@@ -23,7 +23,8 @@ pub use self::types::{
     aabb_wireframe_polyline, PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBarAnchor, ScalarBarItem,
     ScalarBarOrientation, SceneEffects,
     SceneFrame, SceneRenderItem, ScreenImageItem,
-    ShadowFilter, StreamtubeItem, SurfaceLICConfig, SurfaceLICItem, SurfaceSubmission, ToneMapping,
+    ShadowFilter, SliceAxis, StreamtubeItem, SurfaceLICConfig, SurfaceLICItem, SurfaceSubmission,
+    ImageSliceItem, ToneMapping, TubeItem,
     TransparentVolumeMeshItem,
     ViewportEffects, ViewportFrame, VolumeItem,
 };
@@ -178,6 +179,10 @@ pub struct ViewportRenderer {
     volume_gpu_data: Vec<crate::resources::VolumeGpuData>,
     /// Per-frame streamtube GPU data, rebuilt in prepare(), consumed in paint().
     streamtube_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
+    /// Per-frame general tube GPU data, rebuilt in prepare(), consumed in paint() (Phase 3).
+    tube_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
+    /// Per-frame image slice GPU data, rebuilt in prepare(), consumed in paint() (Phase 3).
+    image_slice_gpu_data: Vec<crate::resources::ImageSliceGpuData>,
     /// Per-frame Surface LIC GPU data, rebuilt in prepare(), consumed in paint() (Phase 4).
     lic_gpu_data: Vec<crate::resources::LicSurfaceGpuData>,
     /// Per-frame GPU implicit surface data, rebuilt in prepare(), consumed in paint() (Phase 16).
@@ -304,6 +309,8 @@ impl ViewportRenderer {
             polyline_gpu_data: Vec::new(),
             volume_gpu_data: Vec::new(),
             streamtube_gpu_data: Vec::new(),
+            tube_gpu_data: Vec::new(),
+            image_slice_gpu_data: Vec::new(),
             lic_gpu_data: Vec::new(),
             implicit_gpu_data: Vec::new(),
             mc_gpu_data: Vec::new(),
@@ -749,7 +756,9 @@ impl ViewportRenderer {
             &self.polyline_gpu_data,
             &self.volume_gpu_data,
             &self.streamtube_gpu_data,
-            camera_bg
+            camera_bg,
+            &self.tube_gpu_data,
+            &self.image_slice_gpu_data
         );
     }
 
@@ -787,7 +796,9 @@ impl ViewportRenderer {
             &self.polyline_gpu_data,
             &self.volume_gpu_data,
             &self.streamtube_gpu_data,
-            camera_bg
+            camera_bg,
+            &self.tube_gpu_data,
+            &self.image_slice_gpu_data
         );
     }
 

@@ -48,8 +48,8 @@ pub(crate) use self::types::{
     InstanceAabb, InstanceData, LabelGpuData, LicAdvectUniform, LicObjectUniform,
     LicSurfaceGpuData, ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform,
     OverlayTextVertex, OverlayUniform, PickInstance, ProjectedTetUniform, SHADOW_ATLAS_SIZE,
-    ShadowAtlasUniform, SsaoUniform, StreamtubeGpuData, SubHighlightGpuData, ToneMapUniform,
-    ViewportHdrState,
+    ImageSliceGpuData, ShadowAtlasUniform, SsaoUniform, StreamtubeGpuData, SubHighlightGpuData,
+    ToneMapUniform, ViewportHdrState,
 };
 pub use self::implicit::{
     GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,

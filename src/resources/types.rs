@@ -1175,6 +1175,14 @@ pub struct VolumeGpuData {
     pub(crate) _uniform_buf: wgpu::Buffer,
 }
 
+/// Per-frame GPU data for one image slice item, created in `prepare()`.
+pub(crate) struct ImageSliceGpuData {
+    /// Bind group (group 1): uniform + 3D texture + sampler + LUT + LUT sampler.
+    pub(crate) bind_group: wgpu::BindGroup,
+    // Keep buffers/samplers alive.
+    pub(crate) _uniform_buf: wgpu::Buffer,
+}
+
 // ---------------------------------------------------------------------------
 // Projected tetrahedra GPU data types
 // ---------------------------------------------------------------------------
@@ -1793,6 +1801,12 @@ pub struct ViewportGpuResources {
     pub(crate) streamtube_pipeline: Option<wgpu::RenderPipeline>,
     /// Bind group layout for streamtube uniforms (group 1).
     pub(crate) streamtube_bgl: Option<wgpu::BindGroupLayout>,
+
+    // --- Phase 3: image slice rendering (lazily created) ---
+    /// Image slice render pipeline. None until first slice item is submitted.
+    pub(crate) image_slice_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for image slice uniforms (group 1).
+    pub(crate) image_slice_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- SciVis Phase D: volume rendering (lazily created) ---
     /// Uploaded 3D volume textures. Index = VolumeId value.
