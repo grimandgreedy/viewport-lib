@@ -15,7 +15,7 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    AttributeData, BackfacePolicy, GlyphItem, LightingSettings, MeshData, SceneRenderItem,
+    BackfacePolicy, GlyphItem, LightingSettings, MeshData, SceneRenderItem,
     quantities::{edge_one_form_to_glyphs, face_intrinsic_to_glyphs, vertex_intrinsic_to_glyphs},
 };
 
@@ -81,30 +81,6 @@ impl App {
             .expect("sv plane");
 
         self.sv_mesh_index = [sphere_idx, torus_idx, plane_idx];
-
-        // Upload the warp demo mesh: a sphere with a sinusoidal bump pattern stored as
-        // AttributeData::VertexVector. Displacing by flat normals would just uniformly
-        // scale the sphere (normals == positions on a unit sphere), so instead we
-        // modulate the normal by sin(4x)*cos(4z) to produce visible surface bumps.
-        let mut warp_sphere = primitives::sphere(1.0, 32, 16);
-        let bump_displacements: Vec<[f32; 3]> = warp_sphere
-            .positions
-            .iter()
-            .zip(warp_sphere.normals.iter())
-            .map(|(&pos, &nrm)| {
-                let bump = (4.0 * pos[0]).sin() * (4.0 * pos[2]).cos();
-                [nrm[0] * bump, nrm[1] * bump, nrm[2] * bump]
-            })
-            .collect();
-        warp_sphere.attributes.insert(
-            "displacement".to_string(),
-            AttributeData::VertexVector(bump_displacements),
-        );
-        let warp_idx = renderer
-            .resources_mut()
-            .upload_mesh_data(&self.device, &warp_sphere)
-            .expect("sv warp sphere");
-        self.sv_warp_mesh_index = warp_idx;
 
         self.sv_built = true;
 
@@ -209,14 +185,6 @@ impl App {
             }
         }
 
-        ui.separator();
-        ui.label("GPU vertex warp (Phase 8.2):");
-        ui.checkbox(&mut self.sv_warp_enabled, "Warp sphere by normals");
-        if self.sv_warp_enabled {
-            ui.label("Warp scale:");
-            ui.add(egui::Slider::new(&mut self.sv_warp_scale, 0.0..=1.0).step_by(0.01));
-            ui.label("The sphere vertex shader offsets each position along its normal by warp_scale, puffing the geometry outward in real time on the GPU.");
-        }
     }
 
     // -------------------------------------------------------------------------
@@ -275,20 +243,6 @@ impl App {
                 self.sv_scale,
             ),
         }
-    }
-
-    /// Build a `SceneRenderItem` for the warp demo sphere, offset 2.5 units to the right.
-    ///
-    /// Sets `warp_attribute` to the "displacement" vector attribute uploaded at build time
-    /// so the vertex shader displaces each vertex along its pre-baked normal.
-    pub(crate) fn sv_warp_item(&self) -> SceneRenderItem {
-        let mut item = SceneRenderItem::default();
-        item.mesh_id = self.sv_warp_mesh_index;
-        item.model = glam::Mat4::from_translation(glam::Vec3::new(2.5, 0.0, 0.0)).to_cols_array_2d();
-        item.material.backface_policy = BackfacePolicy::Identical;
-        item.warp_attribute = Some("displacement".to_string());
-        item.warp_scale = self.sv_warp_scale;
-        item
     }
 
     /// Standard lighting for Showcase 25.
