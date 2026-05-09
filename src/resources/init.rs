@@ -1987,7 +1987,7 @@ impl ViewportGpuResources {
             bloom_bgl: None,
             ssao_bgl: None,
             ssao_blur_bgl: None,
-            // Post-processing (all None until ensure_hdr_target is called).
+            // Post-processing (all None until ensure_hdr_shared is called).
             hdr_texture: None,
             hdr_view: None,
             hdr_depth_texture: None,

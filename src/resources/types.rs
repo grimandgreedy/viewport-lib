@@ -1696,7 +1696,6 @@ pub struct ViewportGpuResources {
     pub(crate) ssao_blur_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- Post-processing (HDR, bloom, SSAO) ---
-    // These are all Option<> and created lazily by ensure_hdr_target().
     /// HDR intermediate color texture (Rgba16Float, viewport-sized).
     pub(crate) hdr_texture: Option<wgpu::Texture>,
     pub(crate) hdr_view: Option<wgpu::TextureView>,
@@ -1796,7 +1795,7 @@ pub struct ViewportGpuResources {
     /// Shared post-process nearest-clamp sampler (for depth).
     pub(crate) pp_nearest_sampler: Option<wgpu::Sampler>,
 
-    /// HDR-format variants of core scene pipelines (created lazily in ensure_hdr_target).
+    /// HDR-format variants of core scene pipelines.
     pub(crate) hdr_solid_pipeline: Option<wgpu::RenderPipeline>,
     /// HDR two-sided variant (cull_mode: None) for analytical surfaces.
     pub(crate) hdr_solid_two_sided_pipeline: Option<wgpu::RenderPipeline>,
