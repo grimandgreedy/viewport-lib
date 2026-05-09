@@ -24,7 +24,7 @@ pub use self::types::{
     ScalarBarOrientation, SceneEffects,
     SceneFrame, SceneRenderItem, ScreenImageItem,
     ShadowFilter, SliceAxis, StreamtubeItem, SurfaceLICConfig, SurfaceLICItem, SurfaceSubmission,
-    ImageSliceItem, ToneMapping, TubeItem,
+    ImageSliceItem, TensorGlyphItem, ToneMapping, TubeItem,
     TransparentVolumeMeshItem,
     ViewportEffects, ViewportFrame, VolumeItem,
 };
@@ -173,6 +173,8 @@ pub struct ViewportRenderer {
     point_cloud_gpu_data: Vec<crate::resources::PointCloudGpuData>,
     /// Per-frame glyph GPU data, rebuilt in prepare(), consumed in paint().
     glyph_gpu_data: Vec<crate::resources::GlyphGpuData>,
+    /// Per-frame tensor glyph GPU data, rebuilt in prepare(), consumed in paint() (Phase 5).
+    tensor_glyph_gpu_data: Vec<crate::resources::TensorGlyphGpuData>,
     /// Per-frame polyline GPU data, rebuilt in prepare(), consumed in paint().
     polyline_gpu_data: Vec<crate::resources::PolylineGpuData>,
     /// Per-frame volume GPU data, rebuilt in prepare(), consumed in paint().
@@ -306,6 +308,7 @@ impl ViewportRenderer {
             cached_instanced_batches: Vec::new(),
             point_cloud_gpu_data: Vec::new(),
             glyph_gpu_data: Vec::new(),
+            tensor_glyph_gpu_data: Vec::new(),
             polyline_gpu_data: Vec::new(),
             volume_gpu_data: Vec::new(),
             streamtube_gpu_data: Vec::new(),
@@ -758,7 +761,8 @@ impl ViewportRenderer {
             &self.streamtube_gpu_data,
             camera_bg,
             &self.tube_gpu_data,
-            &self.image_slice_gpu_data
+            &self.image_slice_gpu_data,
+            &self.tensor_glyph_gpu_data
         );
     }
 
@@ -798,7 +802,8 @@ impl ViewportRenderer {
             &self.streamtube_gpu_data,
             camera_bg,
             &self.tube_gpu_data,
-            &self.image_slice_gpu_data
+            &self.image_slice_gpu_data,
+            &self.tensor_glyph_gpu_data
         );
     }
 

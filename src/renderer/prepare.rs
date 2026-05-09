@@ -897,6 +897,21 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
+        // SciVis Phase 5 : tensor glyph GPU data upload.
+        // ------------------------------------------------------------------
+        self.tensor_glyph_gpu_data.clear();
+        if !frame.scene.tensor_glyphs.is_empty() {
+            resources.ensure_tensor_glyph_pipeline(device);
+            for item in &frame.scene.tensor_glyphs {
+                if item.positions.is_empty() {
+                    continue;
+                }
+                let gd = resources.upload_tensor_glyph_set(device, queue, item);
+                self.tensor_glyph_gpu_data.push(gd);
+            }
+        }
+
+        // ------------------------------------------------------------------
         // SciVis Phase M8 : polyline GPU data upload.
         // ------------------------------------------------------------------
         self.polyline_gpu_data.clear();

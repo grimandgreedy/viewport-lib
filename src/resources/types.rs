@@ -1144,6 +1144,27 @@ pub struct GlyphGpuData {
     pub(crate) _instance_buf: wgpu::Buffer,
 }
 
+/// Per-frame GPU data for one tensor glyph item, created in `prepare()`.
+///
+/// The sphere base mesh is borrowed from `glyph_sphere_mesh` (owned by `ViewportGpuResources`).
+pub struct TensorGlyphGpuData {
+    /// Vertex buffer for the sphere base mesh (borrowed).
+    pub(crate) mesh_vertex_buffer: &'static wgpu::Buffer,
+    /// Index buffer for the sphere base mesh (borrowed).
+    pub(crate) mesh_index_buffer: &'static wgpu::Buffer,
+    /// Number of mesh indices.
+    pub(crate) mesh_index_count: u32,
+    /// Number of tensor glyph instances.
+    pub(crate) instance_count: u32,
+    /// Bind group (group 1): uniform + LUT texture + sampler.
+    pub(crate) uniform_bind_group: wgpu::BindGroup,
+    /// Bind group (group 2): per-instance storage buffer.
+    pub(crate) instance_bind_group: wgpu::BindGroup,
+    // Keep buffers alive.
+    pub(crate) _uniform_buf: wgpu::Buffer,
+    pub(crate) _instance_buf: wgpu::Buffer,
+}
+
 /// Per-frame GPU data for one streamtube item, created in `prepare()`.
 ///
 /// The connected tube mesh (vertices + indices) is generated CPU-side for the
@@ -1789,6 +1810,14 @@ pub struct ViewportGpuResources {
     pub(crate) glyph_sphere_mesh: Option<GlyphBaseMesh>,
     /// Cached glyph base mesh for Cube shape.
     pub(crate) glyph_cube_mesh: Option<GlyphBaseMesh>,
+
+    // --- SciVis Phase 5: tensor glyph rendering (lazily created) ---
+    /// Tensor glyph render pipeline. None until first tensor glyph set is submitted.
+    pub(crate) tensor_glyph_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for tensor glyph uniforms (group 1).
+    pub(crate) tensor_glyph_bgl: Option<wgpu::BindGroupLayout>,
+    /// Bind group layout for tensor glyph instance storage (group 2).
+    pub(crate) tensor_glyph_instance_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- SciVis Phase M8: polyline rendering (lazily created) ---
     /// Polyline render pipeline. None until first polyline set is submitted.

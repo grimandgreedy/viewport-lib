@@ -165,6 +165,7 @@ pub use renderer::stats::{FrameStats, PerformancePolicy, QualityPreset, RuntimeM
 pub use renderer::{
     CameraFrame, CameraFrustumItem, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane,
+    TensorGlyphItem,
     GroundPlaneMode, ImageAnchor, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
     LightingSettings, LoadingBarAnchor, LoadingBarItem, OverlayFrame, OverlayImageItem, PickId,
     PointCloudItem, PointRenderMode,
