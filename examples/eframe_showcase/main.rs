@@ -144,6 +144,7 @@ mod showcase_36_playback_runtime;
 mod showcase_37_probe_widgets;
 mod showcase_38_surface_lic;
 mod showcase_39_tensor_glyphs;
+mod showcase_40_vertex_warp;
 mod viewport_callback;
 
 const BG_COLOR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -293,6 +294,10 @@ fn main() -> eframe::Result {
                 pp_shadow_pcss: true,
                 pp_point_light_on: true,
                 pp_dir_intensity: 0.6,
+                pp_dof_enabled: false,
+                pp_dof_focal_dist: 5.0,
+                pp_dof_focal_range: 1.0,
+                pp_dof_max_blur: 8.0,
                 nm_scene: Scene::new(),
                 nm_built: false,
                 nm_mapped_nodes: Vec::new(),
@@ -417,6 +422,7 @@ fn main() -> eframe::Result {
                 pc_field_vectors: Vec::new(),
                 pc_gaussian_radius_min: 2.0,
                 pc_gaussian_radius_max: 12.0,
+                pc_ssao_enabled: false,
                 stream_built: false,
                 stream_use_tubes: false,
                 stream_render_mode: StreamRenderMode::Polylines,
@@ -529,9 +535,6 @@ fn main() -> eframe::Result {
                 sv_vertex_vecs: Vec::new(),
                 sv_face_vecs: Vec::new(),
                 sv_edge_vals: Vec::new(),
-                sv_warp_mesh_index: MeshId::from_index(0),
-                sv_warp_enabled: false,
-                sv_warp_scale: 0.3,
 
                 vm_built: false,
                 vm_mode: showcase_26_volume_mesh::VmMode::Hex,
@@ -674,6 +677,10 @@ fn main() -> eframe::Result {
                 tg_built: false,
                 tg_state: showcase_39_tensor_glyphs::TensorGlyphState::default(),
                 tg_mesh_id: None,
+
+                warp_built: false,
+                warp_mesh_ids: [MeshId::from_index(0); 3],
+                warp_scale: 0.5,
             }))
         }),
     )
@@ -752,6 +759,7 @@ enum ShowcaseMode {
     ProbeWidgets,
     SurfaceLIC,
     TensorGlyphs,
+    VertexWarp,
 }
 
 impl ShowcaseMode {
@@ -796,6 +804,7 @@ impl ShowcaseMode {
             Self::ProbeWidgets => "37: Probe Widgets",
             Self::SurfaceLIC => "38: Surface LIC",
             Self::TensorGlyphs => "39: Tensor Glyphs",
+            Self::VertexWarp => "40: GPU Vertex Warp",
         }
     }
 }
@@ -882,6 +891,10 @@ pub(crate) struct App {
     pp_shadow_pcss: bool,
     pp_point_light_on: bool,
     pp_dir_intensity: f32,
+    pp_dof_enabled: bool,
+    pp_dof_focal_dist: f32,
+    pp_dof_focal_range: f32,
+    pp_dof_max_blur: f32,
 
     // --- Showcase 7 ---
     pub(crate) nm_scene: Scene,
@@ -1001,6 +1014,8 @@ pub(crate) struct App {
     pc_gaussian_radius_min: f32,
     /// Maximum pixel radius for Gaussian splat mode (mapped from scalar_range max).
     pc_gaussian_radius_max: f32,
+    /// Enable SSAO for point cloud showcase (requires HDR render path).
+    pc_ssao_enabled: bool,
 
     // --- Showcase 16 ---
     pub(crate) stream_built: bool,
@@ -1127,12 +1142,6 @@ pub(crate) struct App {
     pub(crate) sv_vertex_vecs: Vec<[f32; 2]>,
     /// Per-face intrinsic 2D vectors (torus / face mode).
     pub(crate) sv_face_vecs: Vec<[f32; 2]>,
-    /// Mesh upload index for the warp demo sphere.
-    pub(crate) sv_warp_mesh_index: MeshId,
-    /// Whether to apply vertex warp displacement in the warp sub-demo.
-    sv_warp_enabled: bool,
-    /// Scale factor for the warp displacement (maps to `warp_scale` on `SceneRenderItem`).
-    sv_warp_scale: f32,
     /// Per-directed-edge one-form values (plane / edge mode).
     pub(crate) sv_edge_vals: Vec<f32>,
 
@@ -1321,6 +1330,11 @@ pub(crate) struct App {
     pub(crate) tg_built: bool,
     pub(crate) tg_state: showcase_39_tensor_glyphs::TensorGlyphState,
     pub(crate) tg_mesh_id: Option<MeshId>,
+
+    // --- Showcase 40 ---
+    pub(crate) warp_built: bool,
+    pub(crate) warp_mesh_ids: [MeshId; 3],
+    pub(crate) warp_scale: f32,
 }
 
 // ---------------------------------------------------------------------------
@@ -1489,6 +1503,7 @@ impl eframe::App for App {
                     ShowcaseMode::ProbeWidgets,
                     ShowcaseMode::SurfaceLIC,
                     ShowcaseMode::TensorGlyphs,
+                    ShowcaseMode::VertexWarp,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1961,10 +1976,12 @@ impl eframe::App for App {
             }
 
             // ----- Schedule paint callback -----
-            // Showcases 24 and 29 use the HDR path: 24 for SSAA/post-processing,
-            // 29 because depth compositing requires a render pass with a real depth
-            // buffer (eframe's plain paint pass has no depth attachment).
-            if self.mode == ShowcaseMode::BackfacePolicy
+            // Some showcases use the HDR path: PostProcess for DoF/bloom/SSAO,
+            // BackfacePolicy/ImplicitSurface for SSAA, DepthCompositeImages because
+            // depth compositing requires a real depth buffer, Lights/SurfaceLIC/VolumeMesh
+            // for their respective post-processing needs.
+            if self.mode == ShowcaseMode::PostProcess
+                || self.mode == ShowcaseMode::BackfacePolicy
                 || self.mode == ShowcaseMode::DepthCompositeImages
                 || self.mode == ShowcaseMode::ImplicitSurface
                 || self.mode == ShowcaseMode::Lights
@@ -2097,7 +2114,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 39] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 40] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::Performance,
@@ -2137,6 +2154,7 @@ impl App {
             ShowcaseMode::ProbeWidgets,
             ShowcaseMode::SurfaceLIC,
             ShowcaseMode::TensorGlyphs,
+            ShowcaseMode::VertexWarp,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -2241,6 +2259,7 @@ impl App {
             ShowcaseMode::ProbeWidgets => !self.pw_built,
             ShowcaseMode::SurfaceLIC => !self.lic_built,
             ShowcaseMode::TensorGlyphs => !self.tg_built,
+            ShowcaseMode::VertexWarp => !self.warp_built,
             _ => false,
         };
         if !needs {
@@ -2611,6 +2630,15 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::VertexWarp => {
+                showcase_40_vertex_warp::build_warp_scene(self, renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::new(0.0, 0.0, 0.0),
+                    distance: 10.0,
+                    orientation: glam::Quat::from_rotation_x(0.6),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2672,6 +2700,7 @@ impl App {
             ShowcaseMode::ProbeWidgets => self.controls_probe_widgets(ui),
             ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::controls_lic(self, ui),
             ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::controls_tensor_glyphs(self, ui),
+            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::controls_warp(self, ui),
         }
     }
 
@@ -2963,7 +2992,25 @@ impl App {
         ui.checkbox(&mut self.pp_shadow_pcss, "PCSS (soft shadows)");
 
         ui.separator();
-        ui.weak("Bloom / SSAO / FXAA / tone-mapping require the HDR\npipeline (renderer.render()), not available in the\neframe paint-callback path.");
+        ui.label("Depth of Field:");
+        ui.checkbox(&mut self.pp_dof_enabled, "Enable DoF");
+        if self.pp_dof_enabled {
+            ui.add(
+                egui::Slider::new(&mut self.pp_dof_focal_dist, 0.5..=30.0)
+                    .text("Focal distance"),
+            );
+            ui.add(
+                egui::Slider::new(&mut self.pp_dof_focal_range, 0.1..=10.0)
+                    .text("Focal range"),
+            );
+            ui.add(
+                egui::Slider::new(&mut self.pp_dof_max_blur, 1.0..=20.0)
+                    .text("Max blur (px)"),
+            );
+        }
+
+        ui.separator();
+        ui.weak("Bloom, SSAO, and FXAA can be enabled via PostProcessSettings\nbut are not wired to controls in this showcase.");
     }
 
     fn controls_normal_maps(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
@@ -4023,11 +4070,7 @@ impl App {
 
             ShowcaseMode::SurfaceVectors => {
                 let surface_item = if self.sv_built {
-                    let mut items = vec![self.sv_surface_item()];
-                    if self.sv_warp_enabled {
-                        items.push(self.sv_warp_item());
-                    }
-                    items
+                    vec![self.sv_surface_item()]
                 } else {
                     vec![]
                 };
@@ -4254,6 +4297,11 @@ impl App {
                 };
                 let items = showcase_39_tensor_glyphs::beam_scene_items(self);
                 (items, Some(BG_COLOR), lighting, 0, 0)
+            }
+
+            ShowcaseMode::VertexWarp => {
+                let items = showcase_40_vertex_warp::warp_scene_items(self);
+                (items, Some(BG_COLOR), showcase_40_vertex_warp::warp_lighting(), 0, 0)
             }
         };
 
@@ -4565,6 +4613,13 @@ impl App {
                     fd.scene.point_clouds.push(self.make_pc_gaussian_item());
                 }
             }
+            if self.pc_ssao_enabled {
+                fd.effects.post_process = PostProcessSettings {
+                    enabled: true,
+                    ssao: true,
+                    ..PostProcessSettings::default()
+                };
+            }
         }
 
         // Isoline items (Showcase 14) : submitted every frame with current settings.
@@ -4608,6 +4663,16 @@ impl App {
                 rc.far = (self.camera.distance * 3.0).max(60.0);
                 rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
                 fd.camera.render_camera = rc;
+                if self.pp_dof_enabled {
+                    fd.effects.post_process = PostProcessSettings {
+                        enabled: true,
+                        dof_enabled: true,
+                        dof_focal_distance: self.pp_dof_focal_dist,
+                        dof_focal_range: self.pp_dof_focal_range,
+                        dof_max_blur_radius: self.pp_dof_max_blur,
+                        ..PostProcessSettings::default()
+                    };
+                }
             }
             ShowcaseMode::Shadows => {
                 fd.effects.post_process = PostProcessSettings {

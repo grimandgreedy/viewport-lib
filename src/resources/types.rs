@@ -796,6 +796,20 @@ pub(crate) struct SsaoUniform {
     pub(crate) _pad: [f32; 2],
 }
 
+/// Depth of field uniform (32 bytes).
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct DofUniform {
+    pub(crate) focal_distance:  f32,
+    pub(crate) focal_range:     f32,
+    pub(crate) max_blur_radius: f32,
+    pub(crate) near_plane:      f32,
+    pub(crate) far_plane:       f32,
+    pub(crate) viewport_width:  f32,
+    pub(crate) viewport_height: f32,
+    pub(crate) _pad:            f32,
+}
+
 /// Shadow atlas uniform (416 bytes, bound at group 0 binding 5).
 ///
 /// Contains per-cascade view-projection matrices, split distances, atlas layout,
@@ -1310,6 +1324,12 @@ pub(crate) struct ViewportHdrState {
     pub ssao_blur_texture: wgpu::Texture,
     pub ssao_blur_view: wgpu::TextureView,
 
+    // --- Depth of field ---
+    pub dof_texture: wgpu::Texture,
+    pub dof_view: wgpu::TextureView,
+    pub dof_bind_group: wgpu::BindGroup,
+    pub dof_uniform_buf: wgpu::Buffer,
+
     // --- Contact shadow ---
     pub contact_shadow_texture: wgpu::Texture,
     pub contact_shadow_view: wgpu::TextureView,
@@ -1382,6 +1402,7 @@ pub(crate) struct ViewportHdrState {
     pub bloom_blur_h_pong_bg: wgpu::BindGroup,
     pub ssao_bg: wgpu::BindGroup,
     pub ssao_blur_bg: wgpu::BindGroup,
+    pub dof_bg: wgpu::BindGroup,
     pub contact_shadow_bg: wgpu::BindGroup,
     pub fxaa_bind_group: wgpu::BindGroup,
 
@@ -1728,6 +1749,10 @@ pub struct ViewportGpuResources {
     pub(crate) ssao_bg: Option<wgpu::BindGroup>,
     pub(crate) ssao_blur_bg: Option<wgpu::BindGroup>,
     pub(crate) ssao_uniform_buf: Option<wgpu::Buffer>,
+
+    // --- Depth of field shared resources ---
+    pub(crate) dof_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) dof_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- Contact shadow resources ---
     pub(crate) contact_shadow_texture: Option<wgpu::Texture>,

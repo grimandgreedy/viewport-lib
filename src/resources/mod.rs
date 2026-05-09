@@ -43,7 +43,8 @@ pub use self::types::{
     ScreenImageGpuData, SingleLightUniform, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
 };
 pub(crate) use self::types::{
-    BatchMeta, BloomUniform, ClipPlanesUniform, ContactShadowUniform, FrustumPlane, FrustumUniform,
+    BatchMeta, BloomUniform, ClipPlanesUniform, ContactShadowUniform, DofUniform,
+    FrustumPlane, FrustumUniform,
     GlyphBaseMesh, GlyphGpuData, GridUniform, GroundPlaneUniform, GpuProjectedTetMesh,
     InstanceAabb, InstanceData, LabelGpuData, LicAdvectUniform, LicObjectUniform,
     LicSurfaceGpuData, ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform,

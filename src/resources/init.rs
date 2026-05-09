@@ -2025,6 +2025,8 @@ impl ViewportGpuResources {
             ssao_bg: None,
             ssao_blur_bg: None,
             ssao_uniform_buf: None,
+            dof_pipeline: None,
+            dof_bgl: None,
             contact_shadow_texture: None,
             contact_shadow_view: None,
             contact_shadow_pipeline: None,

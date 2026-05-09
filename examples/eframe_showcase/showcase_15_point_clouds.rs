@@ -95,6 +95,12 @@ impl App {
         }
 
         ui.separator();
+        ui.checkbox(&mut self.pc_ssao_enabled, "SSAO (requires HDR render path)");
+        if self.pc_ssao_enabled {
+            ui.weak("SSAO uses a depth-cavity fallback for point\ncloud fragments instead of hemisphere sampling.");
+        }
+
+        ui.separator();
         match self.pc_sub_mode {
             PcSubMode::PointCloud => {
                 ui.label("Point size (px):");

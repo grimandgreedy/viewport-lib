@@ -962,7 +962,31 @@ impl ViewportRenderer {
             }
         }
 
-        // Rebuild tone-map bind group with correct bloom/AO texture views.
+        // Upload DoF uniform when enabled.
+        if pp.dof_enabled {
+            let (w, h) = {
+                let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+                (hdr.size[0] as f32, hdr.size[1] as f32)
+            };
+            let dof_uniform = crate::resources::DofUniform {
+                focal_distance: pp.dof_focal_distance,
+                focal_range: pp.dof_focal_range,
+                max_blur_radius: pp.dof_max_blur_radius,
+                near_plane: frame.camera.render_camera.near,
+                far_plane: frame.camera.render_camera.far,
+                viewport_width: w,
+                viewport_height: h,
+                _pad: 0.0,
+            };
+            let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+            queue.write_buffer(
+                &hdr.dof_uniform_buf,
+                0,
+                bytemuck::cast_slice(&[dof_uniform]),
+            );
+        }
+
+        // Rebuild tone-map bind group with correct bloom/AO/DoF texture views.
         {
             let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
             self.resources.rebuild_tone_map_bind_group(
@@ -972,6 +996,7 @@ impl ViewportRenderer {
                 pp.ssao,
                 pp.contact_shadows,
                 !frame.scene.lic_items.is_empty(),
+                pp.dof_enabled,
             );
         }
 
@@ -2053,6 +2078,32 @@ impl ViewportRenderer {
                         }
                     }
                 }
+            }
+        }
+
+        // -----------------------------------------------------------------------
+        // Depth of field pass: HDR + depth -> dof_texture (when enabled).
+        // -----------------------------------------------------------------------
+        if pp.dof_enabled && !throttle_effects {
+            if let Some(dof_pipeline) = &self.resources.dof_pipeline {
+                let mut dof_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("dof_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &slot_hdr.dof_view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                dof_pass.set_pipeline(dof_pipeline);
+                dof_pass.set_bind_group(0, &slot_hdr.dof_bg, &[]);
+                dof_pass.draw(0..3, 0..1);
             }
         }
 

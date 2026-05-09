@@ -3365,6 +3365,64 @@ impl ViewportGpuResources {
         self.ssaa_resolve_bgl = Some(ssaa_resolve_bgl);
         self.ssaa_resolve_pipeline = Some(ssaa_resolve_pipeline);
 
+        // DoF pipeline
+        let dof_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("dof_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let dof_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("dof_shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/dof.wgsl").into()),
+        });
+        let dof_pipeline = make_fs_pipeline(
+            "dof_pipeline",
+            dof_shader,
+            "vs_main",
+            "fs_main",
+            &dof_bgl,
+            wgpu::TextureFormat::Rgba16Float,
+            None,
+        );
+        self.dof_bgl = Some(dof_bgl);
+        self.dof_pipeline = Some(dof_pipeline);
+
         self.oit_pipeline = Some(oit_pipeline);
         if let Some(p) = oit_instanced_pipeline {
             self.oit_instanced_pipeline = Some(p);
@@ -3693,6 +3751,16 @@ impl ViewportGpuResources {
         );
         let ssao_blur_view = ssao_blur_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
+        // Depth of field output texture (same format as HDR).
+        let dof_tex = make_tex(
+            "dof_texture",
+            wgpu::TextureFormat::Rgba16Float,
+            w,
+            h,
+            wgpu::TextureUsages::empty(),
+        );
+        let dof_view = dof_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
         // Contact shadow
         let cs_tex = make_tex(
             "contact_shadow_texture",
@@ -3830,6 +3898,12 @@ impl ViewportGpuResources {
         let cs_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("contact_shadow_uniform_buf"),
             size: std::mem::size_of::<ContactShadowUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let dof_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("dof_uniform_buf"),
+            size: std::mem::size_of::<DofUniform>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -4065,6 +4139,57 @@ impl ViewportGpuResources {
                 },
             ],
         });
+        let dof_bgl = self
+            .dof_bgl
+            .as_ref()
+            .expect("ensure_hdr_shared not called");
+        let dof_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("dof_bg"),
+            layout: dof_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&hdr_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(linear_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&hdr_depth_only_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: dof_uniform_buf.as_entire_binding(),
+                },
+            ],
+        });
+        // dof_bind_group: same layout as dof_bg but reads dof_view (for tone map input).
+        // This is rebuilt in rebuild_tone_map_bind_group when dof is active.
+        let dof_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("dof_bind_group_placeholder"),
+            layout: dof_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&hdr_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(linear_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&hdr_depth_only_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: dof_uniform_buf.as_entire_binding(),
+                },
+            ],
+        });
+
         let contact_shadow_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("contact_shadow_bg"),
             layout: cs_bgl,
@@ -4358,6 +4483,10 @@ impl ViewportGpuResources {
             ssao_view,
             ssao_blur_texture: ssao_blur_tex,
             ssao_blur_view,
+            dof_texture: dof_tex,
+            dof_view,
+            dof_bind_group,
+            dof_uniform_buf,
             contact_shadow_texture: cs_tex,
             contact_shadow_view: cs_view,
             fxaa_texture: fxaa_tex,
@@ -4391,6 +4520,7 @@ impl ViewportGpuResources {
             bloom_blur_h_pong_bg,
             ssao_bg,
             ssao_blur_bg,
+            dof_bg,
             contact_shadow_bg,
             fxaa_bind_group,
             tone_map_uniform_buf,
@@ -4421,6 +4551,7 @@ impl ViewportGpuResources {
         use_ssao: bool,
         use_contact_shadows: bool,
         use_lic: bool,
+        use_dof: bool,
     ) {
         let bgl = match &self.tone_map_bgl {
             Some(b) => b,
@@ -4459,13 +4590,18 @@ impl ViewportGpuResources {
             cs_placeholder
         };
 
+        let tone_map_hdr_input: &wgpu::TextureView = if use_dof {
+            &hdr.dof_view
+        } else {
+            &hdr.hdr_view
+        };
         hdr.tone_map_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("tone_map_bg"),
             layout: bgl,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&hdr.hdr_view),
+                    resource: wgpu::BindingResource::TextureView(tone_map_hdr_input),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,

@@ -219,6 +219,18 @@ pub struct PostProcessSettings {
     pub edl_radius: f32,
     /// EDL darkening strength (0.0 = none, higher = stronger). Default: 1.0.
     pub edl_strength: f32,
+    /// Enable depth of field bokeh blur. Requires `enabled = true`.
+    ///
+    /// Pixels whose linearized depth is outside `[dof_focal_distance - dof_focal_range,
+    /// dof_focal_distance + dof_focal_range]` are blurred with a disc kernel whose radius
+    /// scales up to `dof_max_blur_radius` pixels.
+    pub dof_enabled: bool,
+    /// View-space depth of the in-focus plane (same units as the scene). Default: 5.0.
+    pub dof_focal_distance: f32,
+    /// Half-width of the sharp band around the focal plane (view-space units). Default: 1.0.
+    pub dof_focal_range: f32,
+    /// Maximum blur kernel radius in pixels at maximum defocus. Default: 8.0.
+    pub dof_max_blur_radius: f32,
 }
 
 impl Default for PostProcessSettings {
@@ -240,6 +252,10 @@ impl Default for PostProcessSettings {
             edl_enabled: false,
             edl_radius: 1.0,
             edl_strength: 1.0,
+            dof_enabled: false,
+            dof_focal_distance: 5.0,
+            dof_focal_range: 1.0,
+            dof_max_blur_radius: 8.0,
         }
     }
 }
