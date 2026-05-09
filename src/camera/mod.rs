@@ -4,6 +4,10 @@ pub mod animator;
 pub mod camera;
 /// View frustum planes and AABB culling.
 pub mod frustum;
+/// Keyframe camera animation with Catmull-Rom interpolation.
+pub mod track;
+/// Continuous turntable (orbit) camera controller.
+pub mod turntable;
 /// Named standard camera orientations (front, top, isometric, etc.).
 pub mod view_preset;
 

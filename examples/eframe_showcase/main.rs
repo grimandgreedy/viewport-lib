@@ -85,13 +85,15 @@ use eframe::egui;
 use viewport_lib::{
     Action, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap,
     ButtonState, Camera,
-    CameraAnimator, CameraFrame, ClipAxis, ClipObject, ColormapId, Easing, FrameData, FrameStats,
+    CameraAnimator, CameraFrame, CameraTrack, ClipAxis, ClipObject, ColormapId,
+    Easing, FrameData, FrameStats,
     Gizmo, GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode,
     KeyCode, LightKind, LightSource, LightingSettings, ManipResult, ManipulationContext,
     ManipulationController, MatcapId, Material, MeshData, MeshId, NodeId, OrbitCameraController,
     PerformancePolicy, PickAccelerator, PickId, PointCloudItem, PostProcessSettings, ProjectedTetId,
     Projection, RenderCamera, RuntimeMode, SceneFrame,
     SceneRenderItem, ScrollUnits, Selection, ShadowFilter, SubSelectionRef,
+    TurntableController,
     ViewPreset, ViewportContext,
     ViewportEvent, ViewportRenderer, VolumeData, VolumeId,
     geometry::isoline::IsolineItem,
@@ -591,6 +593,12 @@ fn main() -> eframe::Result {
                 aux_img_alpha: 1.0,
                 aux_img_scale: 1.0,
                 aux_active_frustum: None,
+                aux_sub_mode: AuxSubMode::Framing,
+                aux_turntable: TurntableController::new(0.5, 1.1),
+                aux_turntable_running: false,
+                aux_track: CameraTrack::new(),
+                aux_track_t: 0.0,
+                aux_track_playing: false,
 
                 pl_scene: viewport_lib::scene::Scene::new(),
                 pl_selection: Selection::new(),
@@ -678,6 +686,17 @@ pub(crate) enum StreamRenderMode {
     Polylines,
     Streamtube,
     GeneralTube,
+}
+
+/// Sub-mode for Showcase 27 (camera framing).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AuxSubMode {
+    /// Camera framing and HUD (original showcase content).
+    Framing,
+    /// Continuous turntable orbit.
+    Turntable,
+    /// Keyframe track playback.
+    Track,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1166,6 +1185,18 @@ pub(crate) struct App {
     aux_img_alpha: f32,
     aux_img_scale: f32,
     pub(crate) aux_active_frustum: Option<usize>,
+    /// Active sub-mode for showcase 27.
+    pub(crate) aux_sub_mode: AuxSubMode,
+    /// Turntable controller (active when aux_sub_mode == Turntable).
+    pub(crate) aux_turntable: TurntableController,
+    /// Whether the turntable is currently spinning.
+    aux_turntable_running: bool,
+    /// Camera keyframe track for playback demo.
+    pub(crate) aux_track: CameraTrack,
+    /// Current playback time within the track.
+    aux_track_t: f64,
+    /// Whether track playback is running.
+    aux_track_playing: bool,
 
     /// Mesh upload indices for the three face-attribute spheres.
     pub(crate) face_mesh_indices: [MeshId; 3],
@@ -1688,6 +1719,25 @@ impl eframe::App for App {
             if self.mode == ShowcaseMode::CameraTools || self.mode == ShowcaseMode::Auxiliary {
                 let dt = ctx.input(|i| i.stable_dt.min(1.0 / 30.0));
                 self.cam_animator.update(dt, &mut self.camera);
+                if self.mode == ShowcaseMode::Auxiliary {
+                    match self.aux_sub_mode {
+                        AuxSubMode::Turntable if self.aux_turntable_running => {
+                            self.aux_turntable.update(dt, &mut self.camera);
+                        }
+                        AuxSubMode::Track if self.aux_track_playing => {
+                            self.aux_track_t += dt as f64;
+                            if self.aux_track_t > self.aux_track.duration() {
+                                self.aux_track_t = 0.0;
+                            }
+                            let target = viewport_lib::interpolate_camera(&self.aux_track, self.aux_track_t);
+                            self.camera.center = target.center;
+                            self.camera.set_distance(target.distance);
+                            self.camera.set_orientation(target.orientation);
+                        }
+                        _ => {}
+                    }
+                    ctx.request_repaint();
+                }
             }
 
             // ----- ManipulationController update (Showcase 4 only) -----

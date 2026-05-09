@@ -108,6 +108,8 @@ pub use error::{ViewportError, ViewportResult};
 pub use camera::animator::{CameraAnimator, CameraDamping, Easing};
 pub use camera::camera::{Camera, CameraTarget, Projection};
 pub use camera::frustum::{CullStats, Frustum};
+pub use camera::track::{CameraTrack, interpolate_camera};
+pub use camera::turntable::TurntableController;
 pub use camera::view_preset::ViewPreset;
 
 pub use scene::aabb::Aabb;

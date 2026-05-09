@@ -3,6 +3,8 @@
 ## [0.13.0] (unreleased, new changes)
 
 ### Features
+- Keyframe camera animation: build a `CameraTrack` from any number of timed `CameraTarget` keyframes and call `interpolate_camera` each frame to get a smoothly interpolated position, distance, and orientation. Position and distance use Catmull-Rom interpolation; orientation uses spherical interpolation between adjacent keyframes. Add keyframes in any order; the track sorts them automatically.
+- `TurntableController`: continuously orbits the camera around its current center point at a configurable angular velocity and elevation. Call `from_camera` to initialize from the current view, then call `update` with the frame delta each frame. Distance and center are unchanged; only the orientation advances.
 - Tensor glyph rendering: visualize second-order symmetric tensors as instanced ellipsoids. Push a `TensorGlyphItem` into `SceneFrame::tensor_glyphs` each frame with per-point eigenvalues and eigenvectors; each glyph is scaled anisotropically along its principal axes and colored by a scalar attribute or by a diverging colormap via `ColormapId`.
 - Gaussian splat point clouds: set `PointCloudItem::gaussian` to render points as soft radial splats with alpha falling off from the center. Per-point radius can now be driven by a scalar field via `radius_scalars` and `radius_range`, mapping data values to a pixel-radius interval independent of the scalar colormap.
 - `TubeItem`: swept tube geometry with configurable cross-section resolution (`sides`), optional per-point radius, and per-vertex scalar coloring via a colormap. Use this instead of `StreamtubeItem` when you need scalar-colored tubes or finer/coarser geometry.
