@@ -141,6 +141,8 @@ pub use interaction::manipulation::{
     ManipulationState, TransformDelta,
 };
 
+pub use interaction::widgets::{BoxWidget, LineProbeWidget, SphereWidget, WidgetContext, WidgetResult};
+
 pub use interaction::clip_plane::{
     ClipAxis, ClipPlaneContext, ClipPlaneController, ClipPlaneDelta, ClipPlaneHit, ClipPlaneResult,
     ClipPlaneSessionKind, hit_test_normal_handle, hit_test_plane_quad, plane_from_axis_preset,

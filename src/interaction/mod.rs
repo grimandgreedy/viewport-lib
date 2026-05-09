@@ -14,3 +14,5 @@ pub mod selection;
 pub mod snap;
 /// Typed sub-object reference and sub-object selection set.
 pub mod sub_object;
+/// Interactive 3D probe and region widgets (line probe, sphere, box).
+pub mod widgets;

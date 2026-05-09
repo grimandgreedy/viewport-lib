@@ -138,6 +138,7 @@ mod showcase_33_picking_levels;
 mod showcase_34_labels;
 mod showcase_35_overlay;
 mod showcase_36_playback_runtime;
+mod showcase_37_probe_widgets;
 mod viewport_callback;
 
 const BG_COLOR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -621,6 +622,10 @@ fn main() -> eframe::Result {
                 pb_last_stats: FrameStats::default(),
                 pb_stats_history: std::collections::VecDeque::new(),
                 pb_upload_ms: 0.0,
+
+                pw_built: false,
+                pw_scene: Scene::new(),
+                pw_state: showcase_37_probe_widgets::ProbeWidgetState::new(),
             }))
         }),
     )
@@ -675,6 +680,7 @@ enum ShowcaseMode {
     Labels,
     Overlay,
     PlaybackRuntime,
+    ProbeWidgets,
 }
 
 impl ShowcaseMode {
@@ -716,6 +722,7 @@ impl ShowcaseMode {
             Self::Labels => "34: Labels",
             Self::Overlay => "35: Overlay Composition",
             Self::PlaybackRuntime => "36: Playback Runtime Control",
+            Self::ProbeWidgets => "37: Probe Widgets",
         }
     }
 }
@@ -1172,6 +1179,11 @@ pub(crate) struct App {
     pub(crate) pb_last_stats: FrameStats,
     pub(crate) pb_stats_history: std::collections::VecDeque<f32>,
     pub(crate) pb_upload_ms: f32,
+
+    // --- Showcase 37 ---
+    pub(crate) pw_built: bool,
+    pub(crate) pw_scene: Scene,
+    pub(crate) pw_state: showcase_37_probe_widgets::ProbeWidgetState,
 }
 
 // ---------------------------------------------------------------------------
@@ -1337,6 +1349,7 @@ impl eframe::App for App {
                     ShowcaseMode::Labels,
                     ShowcaseMode::Overlay,
                     ShowcaseMode::PlaybackRuntime,
+                    ShowcaseMode::ProbeWidgets,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1709,7 +1722,8 @@ impl eframe::App for App {
                 // ----- Apply / resolve orbit controller (non-Interaction modes) -----
                 let suppress_orbit =
                     (self.mode == ShowcaseMode::ClipVolumes && self.clipvol_gizmo_drag_active)
-                    || (self.mode == ShowcaseMode::PickLevels && self.pl_drag_start.is_some());
+                    || (self.mode == ShowcaseMode::PickLevels && self.pl_drag_start.is_some())
+                    || (self.mode == ShowcaseMode::ProbeWidgets && self.pw_state.suppress_orbit);
                 if suppress_orbit {
                     self.controller.resolve();
                 } else {
@@ -1718,6 +1732,20 @@ impl eframe::App for App {
             }
 
             self.camera.set_aspect_ratio(rect.width(), rect.height());
+
+            // ----- Probe widgets update (Showcase 37) -----
+            if self.mode == ShowcaseMode::ProbeWidgets && self.pw_built {
+                let render_cam = CameraFrame::from_camera(&self.camera, [rect.width(), rect.height()]).render_camera;
+                let widget_ctx = viewport_lib::WidgetContext {
+                    camera: render_cam,
+                    viewport_size: glam::Vec2::new(rect.width(), rect.height()),
+                    cursor_viewport: self.last_cursor_viewport,
+                    drag_started: response.drag_started(),
+                    dragging: response.dragged(),
+                    released: response.drag_stopped(),
+                };
+                self.update_probe_widgets(widget_ctx);
+            }
 
             // ----- Click-to-select (non-Interaction modes) -----
             if response.clicked() && self.mode != ShowcaseMode::Interaction {
@@ -1893,7 +1921,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 36] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 37] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::Performance,
@@ -1930,6 +1958,7 @@ impl App {
             ShowcaseMode::Labels,
             ShowcaseMode::Overlay,
             ShowcaseMode::PlaybackRuntime,
+            ShowcaseMode::ProbeWidgets,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -2031,6 +2060,7 @@ impl App {
             ShowcaseMode::Labels => !self.lbl_built,
             ShowcaseMode::Overlay => !self.ovl_cloud_built,
             ShowcaseMode::PlaybackRuntime => !self.pb_built,
+            ShowcaseMode::ProbeWidgets => !self.pw_built,
             _ => false,
         };
         if !needs {
@@ -2373,6 +2403,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::ProbeWidgets => {
+                self.build_probe_widgets_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 8.0,
+                    orientation: glam::Quat::from_rotation_z(0.4)
+                        * glam::Quat::from_rotation_x(1.0),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2431,6 +2471,7 @@ impl App {
             ShowcaseMode::PlaybackRuntime => {
                 showcase_36_playback_runtime::controls_pb(self, ui, frame)
             }
+            ShowcaseMode::ProbeWidgets => self.controls_probe_widgets(ui),
         }
     }
 
@@ -3953,6 +3994,18 @@ impl App {
                 let sg = self.pb_scene.version();
                 (items, Some(BG_COLOR), lighting, sg, 0)
             }
+
+            ShowcaseMode::ProbeWidgets => {
+                let items = self.pw_scene.collect_render_items(&Selection::new());
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.6,
+                    sky_color: [1.0, 1.0, 1.0],
+                    ground_color: [0.8, 0.8, 0.8],
+                    ..LightingSettings::default()
+                };
+                let sg = self.pw_scene.version();
+                (items, Some(BG_COLOR), lighting, sg, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -4384,6 +4437,35 @@ impl App {
                 self.last_stats = renderer.last_frame_stats();
             }
         }
+        // Probe widget render items (Showcase 37) : submitted every frame.
+        if self.mode == ShowcaseMode::ProbeWidgets && self.pw_built {
+            let render_cam = CameraFrame::from_camera(&self.camera, [w, h]).render_camera;
+            let widget_ctx = viewport_lib::WidgetContext {
+                camera: render_cam,
+                viewport_size: glam::Vec2::new(w, h),
+                cursor_viewport: self.last_cursor_viewport,
+                drag_started: false,
+                dragging: false,
+                released: false,
+            };
+            use showcase_37_probe_widgets::PwSubMode;
+            let state = &self.pw_state;
+            match state.sub_mode {
+                PwSubMode::LineProbe => {
+                    fd.scene.polylines.push(state.probe.polyline_item(0));
+                    fd.scene.glyphs.push(state.probe.handle_glyphs(100, &widget_ctx));
+                }
+                PwSubMode::Sphere => {
+                    fd.effects.clip_objects.push(state.sphere.clip_object());
+                    fd.scene.glyphs.push(state.sphere.handle_glyphs(100, &widget_ctx));
+                }
+                PwSubMode::Box => {
+                    fd.scene.polylines.push(state.bw.wireframe_item(0));
+                    fd.scene.glyphs.push(state.bw.handle_glyphs(100, &widget_ctx));
+                }
+            }
+        }
+
         // PlaybackRuntime stats are updated inside the build_frame_data PlaybackRuntime arm.
 
         fd
