@@ -141,6 +141,7 @@ mod showcase_35_overlay;
 mod showcase_36_playback_runtime;
 mod showcase_37_probe_widgets;
 mod showcase_38_surface_lic;
+mod showcase_39_tensor_glyphs;
 mod viewport_callback;
 
 const BG_COLOR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -651,6 +652,9 @@ fn main() -> eframe::Result {
                 lic_built: false,
                 lic_scene: Scene::new(),
                 lic_state: showcase_38_surface_lic::LicState::default(),
+
+                tg_built: false,
+                tg_state: showcase_39_tensor_glyphs::TensorGlyphState::default(),
             }))
         }),
     )
@@ -716,6 +720,7 @@ enum ShowcaseMode {
     PlaybackRuntime,
     ProbeWidgets,
     SurfaceLIC,
+    TensorGlyphs,
 }
 
 impl ShowcaseMode {
@@ -759,6 +764,7 @@ impl ShowcaseMode {
             Self::PlaybackRuntime => "36: Playback Runtime Control",
             Self::ProbeWidgets => "37: Probe Widgets",
             Self::SurfaceLIC => "38: Surface LIC",
+            Self::TensorGlyphs => "39: Tensor Glyphs",
         }
     }
 }
@@ -1257,6 +1263,10 @@ pub(crate) struct App {
     pub(crate) lic_built: bool,
     pub(crate) lic_scene: Scene,
     pub(crate) lic_state: showcase_38_surface_lic::LicState,
+
+    // --- Showcase 39 ---
+    pub(crate) tg_built: bool,
+    pub(crate) tg_state: showcase_39_tensor_glyphs::TensorGlyphState,
 }
 
 // ---------------------------------------------------------------------------
@@ -1424,6 +1434,7 @@ impl eframe::App for App {
                     ShowcaseMode::PlaybackRuntime,
                     ShowcaseMode::ProbeWidgets,
                     ShowcaseMode::SurfaceLIC,
+                    ShowcaseMode::TensorGlyphs,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1997,7 +2008,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 38] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 39] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::Performance,
@@ -2036,6 +2047,7 @@ impl App {
             ShowcaseMode::PlaybackRuntime,
             ShowcaseMode::ProbeWidgets,
             ShowcaseMode::SurfaceLIC,
+            ShowcaseMode::TensorGlyphs,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -2139,6 +2151,7 @@ impl App {
             ShowcaseMode::PlaybackRuntime => !self.pb_built,
             ShowcaseMode::ProbeWidgets => !self.pw_built,
             ShowcaseMode::SurfaceLIC => !self.lic_built,
+            ShowcaseMode::TensorGlyphs => !self.tg_built,
             _ => false,
         };
         if !needs {
@@ -2500,6 +2513,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::TensorGlyphs => {
+                showcase_39_tensor_glyphs::build_tensor_glyph_scene(self);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 10.0,
+                    orientation: glam::Quat::from_rotation_z(0.4)
+                        * glam::Quat::from_rotation_x(0.9),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2560,6 +2583,7 @@ impl App {
             }
             ShowcaseMode::ProbeWidgets => self.controls_probe_widgets(ui),
             ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::controls_lic(self, ui),
+            ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::controls_tensor_glyphs(self, ui),
         }
     }
 
@@ -4128,6 +4152,16 @@ impl App {
                 let sg = self.lic_scene.version();
                 (items, Some(BG_COLOR), lighting, sg, 0)
             }
+
+            ShowcaseMode::TensorGlyphs => {
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.6,
+                    sky_color: [1.0, 1.0, 1.0],
+                    ground_color: [0.8, 0.8, 0.8],
+                    ..LightingSettings::default()
+                };
+                (vec![], Some(BG_COLOR), lighting, 0, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -4613,7 +4647,7 @@ impl App {
                 }
             }
 
-            // Point cloud: unselected in blue, selected in orange.
+            // Point cloud: unselected in blue, selected in orange -- rendered as Gaussian splats.
             let unsel: Vec<[f32; 3]> = state.cloud_positions.iter()
                 .zip(state.selected.iter())
                 .filter(|(_, s)| !**s)
@@ -4627,15 +4661,17 @@ impl App {
             if !unsel.is_empty() {
                 let mut pc = PointCloudItem::default();
                 pc.positions = unsel;
-                pc.point_size = 5.0;
                 pc.default_color = [0.5, 0.7, 1.0, 1.0];
+                pc.gaussian = true;
+                pc.point_size = 8.0;
                 fd.scene.point_clouds.push(pc);
             }
             if !sel.is_empty() {
                 let mut pc = PointCloudItem::default();
                 pc.positions = sel;
-                pc.point_size = 8.0;
                 pc.default_color = [1.0, 0.55, 0.1, 1.0];
+                pc.gaussian = true;
+                pc.point_size = 14.0;
                 fd.scene.point_clouds.push(pc);
             }
         }
@@ -4648,6 +4684,11 @@ impl App {
             if !fd.scene.lic_items.is_empty() {
                 fd.effects.post_process.enabled = true;
             }
+        }
+
+        // Tensor glyph items (Showcase 39) : submitted every frame when built.
+        if self.mode == ShowcaseMode::TensorGlyphs && self.tg_built {
+            showcase_39_tensor_glyphs::submit_tensor_glyphs(self, &mut fd);
         }
 
         // PlaybackRuntime stats are updated inside the build_frame_data PlaybackRuntime arm.

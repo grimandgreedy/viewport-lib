@@ -36,6 +36,8 @@ pub struct SphereWidget {
     pub radius: f32,
     /// RGBA fill color (alpha controls transparency of the fill).
     pub color: [f32; 4],
+    /// RGBA color for the drag handles. When set (non-zero alpha), overrides the default LUT coloring.
+    pub handle_color: [f32; 4],
 
     hovered_handle: Option<SphereHandle>,
     active_handle: Option<SphereHandle>,
@@ -52,6 +54,7 @@ impl SphereWidget {
             center,
             radius: radius.max(0.01),
             color: [0.3, 0.6, 1.0, 0.25],
+            handle_color: [0.0; 4],
             hovered_handle: None,
             active_handle: None,
             drag_plane_normal: glam::Vec3::Z,
@@ -72,7 +75,13 @@ impl SphereWidget {
         let mut updated = false;
 
         if self.active_handle.is_none() {
-            self.hovered_handle = self.hit_test(ro, rd, ctx);
+            let hit = self.hit_test(ro, rd, ctx);
+            // On the drag_started frame the cursor can be right at the edge and the
+            // hit test may miss by a hair. Keep the previous hover so the drag still
+            // registers if the handle was highlighted on the frame before the click.
+            if hit.is_some() || !ctx.drag_started {
+                self.hovered_handle = hit;
+            }
         }
 
         if ctx.drag_started {
@@ -212,6 +221,8 @@ impl SphereWidget {
             scalar_range: Some((0.0, 1.0)),
             glyph_type: GlyphType::Sphere,
             id: id_base,
+            default_color: self.handle_color,
+            use_default_color: self.handle_color[3] > 0.0,
             ..GlyphItem::default()
         }
     }
@@ -236,8 +247,8 @@ impl SphereWidget {
         );
 
         let rp = self.radius_handle_pos();
-        let rh_r = handle_world_radius(rp, &ctx.camera, ctx.viewport_size.y, 12.0);
-        let ch_r = handle_world_radius(self.center, &ctx.camera, ctx.viewport_size.y, 12.0);
+        let rh_r = handle_world_radius(rp, &ctx.camera, ctx.viewport_size.y, 8.0);
+        let ch_r = handle_world_radius(self.center, &ctx.camera, ctx.viewport_size.y, 10.0);
 
         let rh_ball = parry3d::shape::Ball::new(rh_r);
         let ch_ball = parry3d::shape::Ball::new(ch_r);

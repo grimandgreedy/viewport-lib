@@ -39,6 +39,8 @@ pub struct BoxWidget {
     pub half_extents: glam::Vec3,
     /// RGBA color for the wireframe outline.
     pub color: [f32; 4],
+    /// RGBA color for the drag handles. When set (non-zero alpha), overrides the default LUT coloring.
+    pub handle_color: [f32; 4],
 
     hovered_handle: Option<BoxHandle>,
     active_handle: Option<BoxHandle>,
@@ -54,6 +56,7 @@ impl BoxWidget {
             center,
             half_extents: half_extents.max(glam::Vec3::splat(0.01)),
             color: [0.3, 0.8, 0.4, 1.0],
+            handle_color: [0.0; 4],
             hovered_handle: None,
             active_handle: None,
             drag_plane_normal: glam::Vec3::Z,
@@ -81,7 +84,13 @@ impl BoxWidget {
         let mut updated = false;
 
         if self.active_handle.is_none() {
-            self.hovered_handle = self.hit_test(ro, rd, ctx);
+            let hit = self.hit_test(ro, rd, ctx);
+            // On the drag_started frame the cursor can be right at the edge and the
+            // hit test may miss by a hair. Keep the previous hover so the drag still
+            // registers if the handle was highlighted on the frame before the click.
+            if hit.is_some() || !ctx.drag_started {
+                self.hovered_handle = hit;
+            }
         }
 
         if ctx.drag_started {
@@ -189,6 +198,8 @@ impl BoxWidget {
             scalar_range: Some((0.0, 1.0)),
             glyph_type: GlyphType::Sphere,
             id: id_base,
+            default_color: self.handle_color,
+            use_default_color: self.handle_color[3] > 0.0,
             ..GlyphItem::default()
         }
     }
@@ -243,7 +254,7 @@ impl BoxWidget {
 
         for handle in handles {
             let pos = self.handle_pos(handle);
-            let r = handle_world_radius(pos, &ctx.camera, ctx.viewport_size.y, 12.0);
+            let r = handle_world_radius(pos, &ctx.camera, ctx.viewport_size.y, 9.0);
             let ball = parry3d::shape::Ball::new(r);
             let pose = Pose::from_parts([pos.x, pos.y, pos.z].into(), identity);
             if let Some(t) = ball.cast_ray(&pose, &ray, f32::MAX, true) {

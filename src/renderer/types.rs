@@ -565,6 +565,11 @@ pub struct GlyphItem {
     pub scalar_range: Option<(f32, f32)>,
     /// Colormap for scalar coloring. None = use default builtin (viridis).
     pub colormap_id: Option<ColormapId>,
+    /// Fallback RGBA color used when `use_default_color` is true. Default: transparent (unused).
+    pub default_color: [f32; 4],
+    /// When true, glyphs are colored by `default_color` (with per-instance scalar as brightness)
+    /// instead of the LUT. Default: false.
+    pub use_default_color: bool,
     /// Glyph shape. Default: Arrow.
     pub glyph_type: GlyphType,
     /// World-space model matrix. Default: identity.
@@ -584,7 +589,55 @@ impl Default for GlyphItem {
             scalars: Vec::new(),
             scalar_range: None,
             colormap_id: None,
+            default_color: [0.0; 4],
+            use_default_color: false,
             glyph_type: GlyphType::Arrow,
+            model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            id: 0,
+        }
+    }
+}
+
+/// A set of instanced tensor glyphs for stress/strain visualization.
+///
+/// Each instance is an ellipsoid at `positions[i]`, scaled anisotropically by the
+/// absolute eigenvalues along the eigenvector axes. Color comes from `color_attribute`
+/// if provided, otherwise from the sign of the first (dominant) eigenvalue.
+#[non_exhaustive]
+pub struct TensorGlyphItem {
+    /// World-space positions, one per instance.
+    pub positions: Vec<[f32; 3]>,
+    /// Per-instance eigenvalues `[lambda0, lambda1, lambda2]`.
+    /// The ellipsoid is scaled by `|lambda_i| * scale` along each eigenvector axis.
+    pub eigenvalues: Vec<[f32; 3]>,
+    /// Per-instance eigenvectors as column vectors `[[e0x,e0y,e0z], [e1x,...], [e2x,...]]`.
+    /// Must form an orthonormal basis. Length must match `positions`.
+    pub eigenvectors: Vec<[[f32; 3]; 3]>,
+    /// Global scale factor applied to all instances. Default: 1.0.
+    pub scale: f32,
+    /// Optional per-instance scalar values for LUT coloring.
+    /// When `None`, colors by sign of `eigenvalues[i][0]`: positive -> upper LUT, negative -> lower LUT.
+    pub color_attribute: Option<Vec<f32>>,
+    /// Scalar range for LUT mapping. `None` = auto from data.
+    pub scalar_range: Option<(f32, f32)>,
+    /// Colormap for scalar coloring. `None` = viridis. For sign coloring, a diverging map works best.
+    pub colormap_id: Option<ColormapId>,
+    /// World-space model matrix. Default: identity.
+    pub model: [[f32; 4]; 4],
+    /// Unique ID for picking. 0 = not pickable.
+    pub id: u64,
+}
+
+impl Default for TensorGlyphItem {
+    fn default() -> Self {
+        Self {
+            positions: Vec::new(),
+            eigenvalues: Vec::new(),
+            eigenvectors: Vec::new(),
+            scale: 1.0,
+            color_attribute: None,
+            scalar_range: None,
+            colormap_id: None,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             id: 0,
         }
@@ -1579,6 +1632,8 @@ pub struct SceneFrame {
     pub tube_items: Vec<TubeItem>,
     /// 2D image slice items to render this frame (Phase 3).
     pub image_slices: Vec<ImageSliceItem>,
+    /// Tensor glyph items to render this frame (Phase 5).
+    pub tensor_glyphs: Vec<TensorGlyphItem>,
 }
 
 impl Default for SceneFrame {
@@ -1600,6 +1655,7 @@ impl Default for SceneFrame {
             transparent_volume_meshes: Vec::new(),
             tube_items: Vec::new(),
             image_slices: Vec::new(),
+            tensor_glyphs: Vec::new(),
         }
     }
 }
@@ -2922,7 +2978,7 @@ macro_rules! emit_draw_calls {
 ///
 /// Called by both `paint` and `paint_to` after `emit_draw_calls!` to render scivis layers.
 macro_rules! emit_scivis_draw_calls {
-    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $volume_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $image_slice_gpu_data:expr) => {{
+    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $volume_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $image_slice_gpu_data:expr, $tensor_glyph_gpu_data:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let camera_bg: &wgpu::BindGroup = $camera_bg;
@@ -3035,6 +3091,24 @@ macro_rules! emit_scivis_draw_calls {
                 for slice in $image_slice_gpu_data.iter() {
                     render_pass.set_bind_group(1, &slice.bind_group, &[]);
                     render_pass.draw(0..6, 0..1);
+                }
+            }
+        }
+
+        // Tensor glyph pass (Phase 5 : instanced ellipsoids for stress/strain tensors).
+        if !$tensor_glyph_gpu_data.is_empty() {
+            if let Some(ref pipeline) = resources.tensor_glyph_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for tg in $tensor_glyph_gpu_data.iter() {
+                    render_pass.set_bind_group(1, &tg.uniform_bind_group, &[]);
+                    render_pass.set_bind_group(2, &tg.instance_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, tg.mesh_vertex_buffer.slice(..));
+                    render_pass.set_index_buffer(
+                        tg.mesh_index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    render_pass.draw_indexed(0..tg.mesh_index_count, 0, 0..tg.instance_count);
                 }
             }
         }

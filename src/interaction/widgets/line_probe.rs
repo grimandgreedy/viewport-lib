@@ -39,6 +39,8 @@ pub struct LineProbeWidget {
     pub color: [f32; 4],
     /// Line width in pixels.
     pub line_width: f32,
+    /// RGBA color for the drag handles. When set (non-zero alpha), overrides the default LUT coloring.
+    pub handle_color: [f32; 4],
 
     hovered_endpoint: Option<usize>,
     active_endpoint: Option<usize>,
@@ -55,6 +57,7 @@ impl LineProbeWidget {
             end,
             color: [1.0, 0.6, 0.1, 1.0],
             line_width: 2.0,
+            handle_color: [0.0; 4],
             hovered_endpoint: None,
             active_endpoint: None,
             drag_plane_normal: glam::Vec3::Z,
@@ -81,7 +84,13 @@ impl LineProbeWidget {
 
         // Hover (only when not dragging, to avoid flicker during drag).
         if self.active_endpoint.is_none() {
-            self.hovered_endpoint = self.hit_test(ro, rd, ctx);
+            let hit = self.hit_test(ro, rd, ctx);
+            // On the drag_started frame the cursor can be right at the edge and the
+            // hit test may miss by a hair. Keep the previous hover so the drag still
+            // registers if the handle was highlighted on the frame before the click.
+            if hit.is_some() || !ctx.drag_started {
+                self.hovered_endpoint = hit;
+            }
         }
 
         if ctx.drag_started {
@@ -159,6 +168,8 @@ impl LineProbeWidget {
             scalar_range: Some((0.0, 1.0)),
             glyph_type: GlyphType::Sphere,
             id: id_base,
+            default_color: self.handle_color,
+            use_default_color: self.handle_color[3] > 0.0,
             ..GlyphItem::default()
         }
     }
@@ -181,8 +192,8 @@ impl LineProbeWidget {
         ray_dir: glam::Vec3,
         ctx: &WidgetContext,
     ) -> Option<usize> {
-        let r0 = handle_world_radius(self.start, &ctx.camera, ctx.viewport_size.y, 12.0);
-        let r1 = handle_world_radius(self.end, &ctx.camera, ctx.viewport_size.y, 12.0);
+        let r0 = handle_world_radius(self.start, &ctx.camera, ctx.viewport_size.y, 10.0);
+        let r1 = handle_world_radius(self.end, &ctx.camera, ctx.viewport_size.y, 10.0);
 
         let d0 = ray_point_dist(ray_origin, ray_dir, self.start);
         let d1 = ray_point_dist(ray_origin, ray_dir, self.end);

@@ -39,7 +39,10 @@ struct GlyphUniform {
     mag_clamp_min:      f32,    //  4 bytes
     mag_clamp_max:      f32,    //  4 bytes
     has_mag_clamp:      u32,    //  4 bytes (1 = clamp magnitude to [min, max])
-    _pad:               array<vec4<f32>, 3>, // 48 bytes padding : total 80 bytes
+    // offset 32 : 16-byte aligned, safe for vec4.
+    default_color:      vec4<f32>,  // 16 bytes
+    use_default_color:  u32,        //  4 bytes (1 = color by default_color instead of LUT)
+    _pad0: u32, _pad1: u32, _pad2: u32, // 12 bytes : total 64 bytes
 };
 
 // Per-instance data : 32 bytes.
@@ -111,10 +114,11 @@ struct VertexIn {
 };
 
 struct VertexOut {
-    @builtin(position) clip_pos:  vec4<f32>,
-    @location(0)       color:     vec4<f32>,
-    @location(1)       world_pos: vec3<f32>,
-    @location(2)       world_nrm: vec3<f32>,
+    @builtin(position) clip_pos:   vec4<f32>,
+    @location(0)       color:      vec4<f32>,
+    @location(1)       world_pos:  vec3<f32>,
+    @location(2)       world_nrm:  vec3<f32>,
+    @location(3)       unlit:      f32,
 };
 
 // Build a rotation matrix that rotates local +Y to align with `dir`.
@@ -177,9 +181,15 @@ fn vs_main(in: VertexIn) -> VertexOut {
     out.clip_pos  = camera.view_proj * vec4<f32>(world_pos, 1.0);
     out.world_pos = world_pos;
     out.world_nrm = world_nrm;
+    out.unlit     = select(0.0, 1.0, glyph_uniform.use_default_color != 0u);
 
     // Determine color.
-    if glyph_uniform.has_scalars != 0u {
+    if glyph_uniform.use_default_color != 0u {
+        // Use the fixed default_color. Scalar is 1.0 when hovered/active, 0.0-0.2 otherwise.
+        // Invert so inactive handles are full brightness and hovered/active handles are darker.
+        let brightness = 1.0 - inst.scalar * 0.7;
+        out.color = vec4<f32>(glyph_uniform.default_color.rgb * brightness, glyph_uniform.default_color.a);
+    } else if glyph_uniform.has_scalars != 0u {
         let raw   = inst.scalar;
         let range = glyph_uniform.scalar_max - glyph_uniform.scalar_min;
         let t     = select(0.0, (raw - glyph_uniform.scalar_min) / range, range > 0.0);
@@ -206,6 +216,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         }
     }
     if !clip_volume_test(in.world_pos) { discard; }
+
+    if in.unlit > 0.5 {
+        return in.color;
+    }
 
     // Simple diffuse lighting with a fixed directional light.
     let light_dir = normalize(vec3<f32>(0.3, 1.0, 0.5));

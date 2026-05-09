@@ -40,24 +40,29 @@ pub(crate) struct ProbeWidgetState {
 
 impl ProbeWidgetState {
     pub fn new() -> Self {
+        let handle_color = [0.1, 1.0, 0.2, 1.0];
+
         let mut probe = LineProbeWidget::new(
             glam::Vec3::new(-2.0, 0.0, 0.0),
             glam::Vec3::new(2.0, 0.0, 0.0),
         );
         probe.line_width = 3.0;
         probe.color = [1.0, 0.9, 0.1, 1.0];
+        probe.handle_color = handle_color;
 
         let mut sphere = SphereWidget::new(glam::Vec3::ZERO, 2.0);
         sphere.color = [1.0, 0.9, 0.1, 0.15];
+        sphere.handle_color = handle_color;
 
         let mut bw = BoxWidget::new(glam::Vec3::ZERO, glam::Vec3::splat(2.0));
         bw.color = [1.0, 0.9, 0.1, 1.0];
+        bw.handle_color = handle_color;
 
         let cloud_positions = generate_cloud(CLOUD_N);
         let selected = vec![false; CLOUD_N];
 
         Self {
-            sub_mode: PwSubMode::LineProbe,
+            sub_mode: PwSubMode::Sphere,
             probe,
             sphere,
             bw,
