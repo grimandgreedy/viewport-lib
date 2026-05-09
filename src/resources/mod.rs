@@ -45,7 +45,8 @@ pub use self::types::{
 pub(crate) use self::types::{
     BatchMeta, BloomUniform, ClipPlanesUniform, ContactShadowUniform, FrustumPlane, FrustumUniform,
     GlyphBaseMesh, GlyphGpuData, GridUniform, GroundPlaneUniform, InstanceAabb, InstanceData,
-    LabelGpuData, ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform,
+    LabelGpuData, LicAdvectUniform, LicObjectUniform, LicSurfaceGpuData, ObjectUniform,
+    OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform,
     OverlayTextVertex, OverlayUniform, PickInstance, SHADOW_ATLAS_SIZE, ShadowAtlasUniform,
     SsaoUniform, StreamtubeGpuData, SubHighlightGpuData, ToneMapUniform, ViewportHdrState,
 };

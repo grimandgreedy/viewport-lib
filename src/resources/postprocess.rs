@@ -643,6 +643,35 @@ impl ViewportGpuResources {
             );
             self.cs_placeholder_view =
                 Some(cs_placeholder_tex.create_view(&wgpu::TextureViewDescriptor::default()));
+
+            // LIC placeholder: 1x1 R8Unorm, 0.5 = neutral (maps to lic_factor = 1.0).
+            let lic_placeholder_tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("lic_placeholder"),
+                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &lic_placeholder_tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &[128u8], // 0.5 normalized -> lic_factor = 1.0 (no modulation)
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(1),
+                    rows_per_image: Some(1),
+                },
+                wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            );
+            self.lic_placeholder_view =
+                Some(lic_placeholder_tex.create_view(&wgpu::TextureViewDescriptor::default()));
         }
 
         // ------------------------------------------------------------------
@@ -860,6 +889,17 @@ impl ViewportGpuResources {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // binding 7: LIC intensity texture (R8Unorm). Placeholder when LIC is disabled.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -1204,6 +1244,12 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: wgpu::BindingResource::TextureView(&hdr_depth_only_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(
+                        self.lic_placeholder_view.as_ref().unwrap(),
+                    ),
                 },
             ],
         });
@@ -1979,6 +2025,14 @@ impl ViewportGpuResources {
                         self.hdr_depth_only_view.as_ref().expect("hdr depth view"),
                     ),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(
+                        self.lic_placeholder_view.as_ref()
+                            .or(self.cs_placeholder_view.as_ref())
+                            .expect("ensure_hdr_shared not called"),
+                    ),
+                },
             ],
         });
         self.tone_map_bind_group = Some(bg);
@@ -2112,6 +2166,17 @@ impl ViewportGpuResources {
                 1,
             );
             self.cs_placeholder_view = Some(cv);
+
+            // LIC placeholder: 1x1 R8Unorm, 128 = 0.5 -> lic_factor = 1.0 (no modulation).
+            let (_lt, lv) = make_placeholder(
+                device,
+                queue,
+                "lic_placeholder",
+                wgpu::TextureFormat::R8Unorm,
+                &[128u8],
+                1,
+            );
+            self.lic_placeholder_view = Some(lv);
         }
 
         // --- SSAO noise (one-time) ---
@@ -2300,6 +2365,17 @@ impl ViewportGpuResources {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // binding 7: LIC intensity texture (R8Unorm). Placeholder when LIC is disabled.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -3310,6 +3386,251 @@ impl ViewportGpuResources {
         self.outline_composite_pipeline_hdr = Some(outline_composite_pipeline_hdr);
 
         let _ = hdr_depth_stencil; // used in make_hdr_mesh closure above
+
+        // --- Surface LIC shared resources ---
+        if self.lic_noise_view.is_none() {
+            // 128x128 tileable Rgba8Unorm noise texture (cheap Knuth hash).
+            let noise_data: Vec<u8> = (0u32..128 * 128)
+                .flat_map(|i| {
+                    let h = i.wrapping_mul(2654435761).wrapping_add(i >> 5);
+                    [h as u8, (h >> 8) as u8, (h >> 16) as u8, 255u8]
+                })
+                .collect();
+            let noise_tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("lic_noise"),
+                size: wgpu::Extent3d { width: 128, height: 128, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &noise_tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &noise_data,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(128 * 4),
+                    rows_per_image: Some(128),
+                },
+                wgpu::Extent3d { width: 128, height: 128, depth_or_array_layers: 1 },
+            );
+            let noise_view = noise_tex.create_view(&wgpu::TextureViewDescriptor::default());
+            let noise_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("lic_noise_sampler"),
+                address_mode_u: wgpu::AddressMode::Repeat,
+                address_mode_v: wgpu::AddressMode::Repeat,
+                address_mode_w: wgpu::AddressMode::Repeat,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            });
+            self.lic_noise_texture = Some(noise_tex);
+            self.lic_noise_view = Some(noise_view);
+            self.lic_noise_sampler = Some(noise_sampler);
+        }
+
+        // LIC surface BGL (group 1): object uniform, vector storage buffer, noise tex, sampler.
+        if self.lic_surface_bgl.is_none() {
+            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("lic_surface_bgl"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+            self.lic_surface_bgl = Some(bgl);
+        }
+
+        // LIC advect BGL (fullscreen): params uniform, vector tex, noise tex, sampler x2.
+        if self.lic_advect_bgl.is_none() {
+            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("lic_advect_bgl"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+            self.lic_advect_bgl = Some(bgl);
+        }
+
+        // LIC surface pipeline: renders mesh into Rgba8Unorm lic_vector_texture.
+        // Group 0 = camera_bind_group_layout (already on self), group 1 = lic_surface_bgl.
+        if self.lic_surface_pipeline.is_none() {
+            if let Some(surface_bgl) = self.lic_surface_bgl.as_ref() {
+                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("lic_surface_shader"),
+                    source: wgpu::ShaderSource::Wgsl(
+                        include_str!("../shaders/lic_surface.wgsl").into(),
+                    ),
+                });
+                let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("lic_surface_layout"),
+                    bind_group_layouts: &[&self.camera_bind_group_layout, surface_bgl],
+                    push_constant_ranges: &[],
+                });
+                // Vertex buffer: full Vertex stride but only position (location 0) declared.
+                let lic_vertex_layout = wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[wgpu::VertexAttribute {
+                        offset: 0,
+                        shader_location: 0,
+                        format: wgpu::VertexFormat::Float32x3,
+                    }],
+                };
+                let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("lic_surface_pipeline"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[lic_vertex_layout],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba8Unorm,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                });
+                self.lic_surface_pipeline = Some(pipeline);
+            }
+        }
+
+        // LIC advect pipeline: fullscreen render into R8Unorm lic_output_texture.
+        if self.lic_advect_pipeline.is_none() {
+            if let Some(advect_bgl) = &self.lic_advect_bgl {
+                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("lic_advect_shader"),
+                    source: wgpu::ShaderSource::Wgsl(
+                        include_str!("../shaders/lic_advect.wgsl").into(),
+                    ),
+                });
+                let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("lic_advect_layout"),
+                    bind_group_layouts: &[advect_bgl],
+                    push_constant_ranges: &[],
+                });
+                let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("lic_advect_pipeline"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::R8Unorm,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                });
+                self.lic_advect_pipeline = Some(pipeline);
+            }
+        }
     }
 
     /// Create a fresh [`ViewportHdrState`] for the given viewport dimensions.
@@ -3669,6 +3990,12 @@ impl ViewportGpuResources {
                     binding: 6,
                     resource: wgpu::BindingResource::TextureView(&hdr_depth_only_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(
+                        self.lic_placeholder_view.as_ref().expect("ensure_hdr_shared not called"),
+                    ),
+                },
             ],
         });
         let bloom_threshold_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -3974,6 +4301,57 @@ impl ViewportGpuResources {
             (None, None, None, None, None, None)
         };
 
+        // --- Surface LIC per-viewport textures and bind group ---
+        let lic_vector_tex = make_tex(
+            "lic_vector",
+            wgpu::TextureFormat::Rgba8Unorm,
+            w, h,
+            wgpu::TextureUsages::RENDER_ATTACHMENT,
+        );
+        let lic_vector_view = lic_vector_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let lic_output_tex = make_tex(
+            "lic_output",
+            wgpu::TextureFormat::R8Unorm,
+            w, h,
+            wgpu::TextureUsages::RENDER_ATTACHMENT,
+        );
+        let lic_output_view = lic_output_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let lic_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("lic_advect_uniform"),
+            size: std::mem::size_of::<crate::resources::types::LicAdvectUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let lic_advect_bgl = self.lic_advect_bgl.as_ref().expect("ensure_hdr_shared not called");
+        let lic_noise_view = self.lic_noise_view.as_ref().expect("ensure_hdr_shared not called");
+        let lic_advect_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("lic_advect_bg"),
+            layout: lic_advect_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: lic_uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&lic_vector_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(lic_noise_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(
+                        self.lic_noise_sampler.as_ref().expect("ensure_hdr_shared not called"),
+                    ),
+                },
+            ],
+        });
+
         ViewportHdrState {
             hdr_texture: hdr_tex,
             hdr_view,
@@ -4031,6 +4409,12 @@ impl ViewportGpuResources {
             bloom_v_uniform_buf,
             ssao_uniform_buf,
             contact_shadow_uniform_buf: cs_uniform_buf,
+            lic_vector_texture: lic_vector_tex,
+            lic_vector_view,
+            lic_output_texture: lic_output_tex,
+            lic_output_view,
+            lic_advect_bind_group,
+            lic_uniform_buf,
             size: [w, h],
         }
     }
@@ -4044,6 +4428,7 @@ impl ViewportGpuResources {
         use_bloom: bool,
         use_ssao: bool,
         use_contact_shadows: bool,
+        use_lic: bool,
     ) {
         let bgl = match &self.tone_map_bgl {
             Some(b) => b,
@@ -4113,6 +4498,14 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: wgpu::BindingResource::TextureView(&hdr.hdr_depth_only_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(if use_lic {
+                        &hdr.lic_output_view
+                    } else {
+                        self.lic_placeholder_view.as_ref().unwrap_or(cs_placeholder)
+                    }),
                 },
             ],
         });

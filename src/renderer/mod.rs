@@ -23,8 +23,8 @@ pub use self::types::{
     aabb_wireframe_polyline, PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBarAnchor, ScalarBarItem,
     ScalarBarOrientation, SceneEffects,
     SceneFrame, SceneRenderItem, ScreenImageItem,
-    ShadowFilter, StreamtubeItem, SurfaceSubmission, ToneMapping, ViewportEffects, ViewportFrame,
-    VolumeItem,
+    ShadowFilter, StreamtubeItem, SurfaceLICConfig, SurfaceLICItem, SurfaceSubmission, ToneMapping,
+    ViewportEffects, ViewportFrame, VolumeItem,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -177,6 +177,8 @@ pub struct ViewportRenderer {
     volume_gpu_data: Vec<crate::resources::VolumeGpuData>,
     /// Per-frame streamtube GPU data, rebuilt in prepare(), consumed in paint().
     streamtube_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
+    /// Per-frame Surface LIC GPU data, rebuilt in prepare(), consumed in paint() (Phase 4).
+    lic_gpu_data: Vec<crate::resources::LicSurfaceGpuData>,
     /// Per-frame GPU implicit surface data, rebuilt in prepare(), consumed in paint() (Phase 16).
     implicit_gpu_data: Vec<crate::resources::implicit::ImplicitGpuItem>,
     /// Per-frame GPU marching cubes render data, rebuilt in prepare(), consumed in paint() (Phase 17).
@@ -301,6 +303,7 @@ impl ViewportRenderer {
             polyline_gpu_data: Vec::new(),
             volume_gpu_data: Vec::new(),
             streamtube_gpu_data: Vec::new(),
+            lic_gpu_data: Vec::new(),
             implicit_gpu_data: Vec::new(),
             mc_gpu_data: Vec::new(),
             screen_image_gpu_data: Vec::new(),

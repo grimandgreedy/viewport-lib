@@ -113,6 +113,9 @@ pub enum AttributeData {
     /// One `f32` per triangle corner. `values[3*t + k]` = k-th corner of triangle `t`.
     /// Rendered flat per corner via vertex duplication (like `Face`).
     Corner(Vec<f32>),
+    /// One `[x, y, z]` per vertex. Uploaded as a flat `array<f32>` storage buffer (3 floats
+    /// per vertex) for use in per-vertex vector field rendering (e.g. Surface LIC).
+    VertexVector(Vec<[f32; 3]>),
 }
 
 /// Built-in colormap presets.
@@ -757,7 +760,8 @@ pub(crate) struct ToneMapUniform {
     pub(crate) background_color: [f32; 4],
     pub(crate) near_plane: f32,
     pub(crate) far_plane: f32,
-    pub(crate) _pad_tm: [u32; 2],
+    pub(crate) lic_enabled: u32,
+    pub(crate) lic_strength: f32,
 }
 
 const _: () = assert!(std::mem::size_of::<ToneMapUniform>() == 64);
@@ -1038,6 +1042,9 @@ pub struct GpuMesh {
     pub face_attribute_buffers: std::collections::HashMap<String, wgpu::Buffer>,
     /// Named face color buffers: 3N `[f32; 4]` entries (color replicated for all 3 vertices of each tri).
     pub face_color_buffers: std::collections::HashMap<String, wgpu::Buffer>,
+    /// Per-vertex vector attribute buffers: flat `array<f32>` with 3 values per vertex.
+    /// Uploaded from `AttributeData::VertexVector`; used by the Surface LIC surface pass.
+    pub vector_attribute_buffers: std::collections::HashMap<String, wgpu::Buffer>,
     /// Uniform buffer for normal-line rendering: always has selected=0, wireframe=0.
     /// Updated each frame in prepare() with the object's model matrix only.
     pub normal_uniform_buf: wgpu::Buffer,
@@ -1163,6 +1170,39 @@ pub struct VolumeGpuData {
 }
 
 // ---------------------------------------------------------------------------
+// Surface LIC GPU data types
+// ---------------------------------------------------------------------------
+
+/// Uniform for the LIC advect render pass (step counts, spatial scale, viewport dims).
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct LicAdvectUniform {
+    pub(crate) steps: u32,
+    pub(crate) step_size: f32,
+    pub(crate) noise_scale: f32,
+    pub(crate) vp_width: f32,
+    pub(crate) vp_height: f32,
+    pub(crate) _pad: [f32; 3],
+}
+
+/// Uniform for the LIC surface pass (model matrix per object, 64 bytes).
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct LicObjectUniform {
+    pub(crate) model: [[f32; 4]; 4],
+}
+
+/// Per-frame GPU data for one Surface LIC item, created in `prepare()`.
+pub struct LicSurfaceGpuData {
+    /// Bind group (group 1): LicObjectUniform + vector storage buffer + noise texture + sampler.
+    pub(crate) bind_group: wgpu::BindGroup,
+    /// Owned uniform buffer for the model matrix. Kept alive by this struct.
+    pub(crate) _object_uniform_buf: wgpu::Buffer,
+    /// MeshId used to look up vertex + index buffers in the render pass.
+    pub(crate) mesh_id: crate::resources::mesh_store::MeshId,
+}
+
+// ---------------------------------------------------------------------------
 // ViewportHdrState: per-viewport HDR/post-process render target bundle
 // ---------------------------------------------------------------------------
 
@@ -1202,6 +1242,18 @@ pub(crate) struct ViewportHdrState {
     // --- Contact shadow ---
     pub contact_shadow_texture: wgpu::Texture,
     pub contact_shadow_view: wgpu::TextureView,
+
+    // --- Surface LIC ---
+    /// Encodes screen-space flow vector + noise per surface pixel (Rgba8Unorm, viewport-sized).
+    pub lic_vector_texture: wgpu::Texture,
+    pub lic_vector_view: wgpu::TextureView,
+    /// LIC intensity after advection (R8Unorm, viewport-sized). Read by tone_map.wgsl binding 7.
+    pub lic_output_texture: wgpu::Texture,
+    pub lic_output_view: wgpu::TextureView,
+    /// Bind group for the LIC advect render pass (reads lic_vector_texture + noise).
+    pub lic_advect_bind_group: wgpu::BindGroup,
+    /// Uniform buffer for LicAdvectUniform (steps, step_size, noise_scale, viewport dims).
+    pub lic_uniform_buf: wgpu::Buffer,
 
     // --- FXAA ---
     pub fxaa_texture: wgpu::Texture,
@@ -1609,6 +1661,23 @@ pub struct ViewportGpuResources {
     pub(crate) contact_shadow_bgl: Option<wgpu::BindGroupLayout>,
     pub(crate) contact_shadow_bg: Option<wgpu::BindGroup>,
     pub(crate) contact_shadow_uniform_buf: Option<wgpu::Buffer>,
+
+    // --- Surface LIC shared resources ---
+    /// Render pipeline: renders mesh with vector storage buffer -> lic_vector_texture (Rgba8Unorm).
+    pub(crate) lic_surface_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for group 1 of the LIC surface pass (object uniform + vector buffer + noise).
+    pub(crate) lic_surface_bgl: Option<wgpu::BindGroupLayout>,
+    /// Render pipeline: reads lic_vector_texture, writes LIC intensity to R8Unorm target.
+    pub(crate) lic_advect_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for the LIC advect pass.
+    pub(crate) lic_advect_bgl: Option<wgpu::BindGroupLayout>,
+    /// 128x128 Rgba8Unorm tileable noise texture, created once.
+    pub(crate) lic_noise_texture: Option<wgpu::Texture>,
+    pub(crate) lic_noise_view: Option<wgpu::TextureView>,
+    /// Wrap+linear sampler for the noise texture.
+    pub(crate) lic_noise_sampler: Option<wgpu::Sampler>,
+    /// 1x1 R8Unorm white placeholder bound to tone_map binding 7 when LIC is not active.
+    pub(crate) lic_placeholder_view: Option<wgpu::TextureView>,
 
     /// 1×1 black Rgba16Float placeholder used when bloom is disabled.
     pub(crate) bloom_placeholder_view: Option<wgpu::TextureView>,

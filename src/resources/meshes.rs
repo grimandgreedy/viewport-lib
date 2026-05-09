@@ -102,7 +102,7 @@ impl ViewportGpuResources {
         );
         mesh.cpu_positions = Some(data.positions.clone());
         mesh.cpu_indices = Some(data.indices.clone());
-        let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_color_bufs) =
+        let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_color_bufs, vector_attr_bufs) =
             Self::upload_attributes(
                 device,
                 &data.attributes,
@@ -117,6 +117,7 @@ impl ViewportGpuResources {
         mesh.face_vertex_buffer = face_vbuf;
         mesh.face_attribute_buffers = face_attr_bufs;
         mesh.face_color_buffers = face_color_bufs;
+        mesh.vector_attribute_buffers = vector_attr_bufs;
         self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
             + data.indices.len() * std::mem::size_of::<u32>()) as u64;
         let id = self.mesh_store.insert(mesh);
@@ -364,7 +365,7 @@ impl ViewportGpuResources {
         );
         new_mesh.cpu_positions = Some(data.positions.clone());
         new_mesh.cpu_indices = Some(data.indices.clone());
-        let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_color_bufs) =
+        let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_color_bufs, vector_attr_bufs) =
             Self::upload_attributes(
                 device,
                 &data.attributes,
@@ -379,6 +380,7 @@ impl ViewportGpuResources {
         new_mesh.face_vertex_buffer = face_vbuf;
         new_mesh.face_attribute_buffers = face_attr_bufs;
         new_mesh.face_color_buffers = face_color_bufs;
+        new_mesh.vector_attribute_buffers = vector_attr_bufs;
         self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
             + data.indices.len() * std::mem::size_of::<u32>()) as u64;
         let _ = self.mesh_store.replace(mesh_id, new_mesh);
@@ -507,10 +509,13 @@ impl ViewportGpuResources {
         Option<wgpu::Buffer>,
         std::collections::HashMap<String, wgpu::Buffer>,
         std::collections::HashMap<String, wgpu::Buffer>,
+        std::collections::HashMap<String, wgpu::Buffer>,
     ) {
         let mut bufs = std::collections::HashMap::new();
         let mut ranges = std::collections::HashMap::new();
         let mut face_attr_bufs: std::collections::HashMap<String, wgpu::Buffer> =
+            std::collections::HashMap::new();
+        let mut vector_attr_bufs: std::collections::HashMap<String, wgpu::Buffer> =
             std::collections::HashMap::new();
         let mut face_color_bufs: std::collections::HashMap<String, wgpu::Buffer> =
             std::collections::HashMap::new();
@@ -629,9 +634,23 @@ impl ViewportGpuResources {
                     face_attr_bufs.insert(name.clone(), buf);
                     ranges.insert(name.clone(), (min, max));
                 }
+                AttributeData::VertexVector(v) => {
+                    // Flatten [f32; 3] -> [f32] for the flat array<f32> storage buffer.
+                    // WGSL array<vec3<f32>> has 16-byte stride, so we use array<f32> (12-byte).
+                    if v.is_empty() {
+                        continue;
+                    }
+                    let flat: Vec<f32> = v.iter().flat_map(|&[x, y, z]| [x, y, z]).collect();
+                    let buf = Self::create_storage_buffer_f32(
+                        device,
+                        &format!("vec_attr_{name}"),
+                        &flat,
+                    );
+                    vector_attr_bufs.insert(name.clone(), buf);
+                }
             }
         }
-        (bufs, ranges, face_vbuf, face_attr_bufs, face_color_bufs)
+        (bufs, ranges, face_vbuf, face_attr_bufs, face_color_bufs, vector_attr_bufs)
     }
 
     /// Allocate and fill a STORAGE buffer from a slice of `f32` values.
@@ -1308,6 +1327,7 @@ impl ViewportGpuResources {
             face_vertex_buffer: None,
             face_attribute_buffers: std::collections::HashMap::new(),
             face_color_buffers: std::collections::HashMap::new(),
+            vector_attribute_buffers: std::collections::HashMap::new(),
         }
     }
 }

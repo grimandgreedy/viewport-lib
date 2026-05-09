@@ -139,6 +139,7 @@ mod showcase_34_labels;
 mod showcase_35_overlay;
 mod showcase_36_playback_runtime;
 mod showcase_37_probe_widgets;
+mod showcase_38_surface_lic;
 mod viewport_callback;
 
 const BG_COLOR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -626,6 +627,10 @@ fn main() -> eframe::Result {
                 pw_built: false,
                 pw_scene: Scene::new(),
                 pw_state: showcase_37_probe_widgets::ProbeWidgetState::new(),
+
+                lic_built: false,
+                lic_scene: Scene::new(),
+                lic_state: showcase_38_surface_lic::LicState::default(),
             }))
         }),
     )
@@ -681,6 +686,7 @@ enum ShowcaseMode {
     Overlay,
     PlaybackRuntime,
     ProbeWidgets,
+    SurfaceLIC,
 }
 
 impl ShowcaseMode {
@@ -723,6 +729,7 @@ impl ShowcaseMode {
             Self::Overlay => "35: Overlay Composition",
             Self::PlaybackRuntime => "36: Playback Runtime Control",
             Self::ProbeWidgets => "37: Probe Widgets",
+            Self::SurfaceLIC => "38: Surface LIC",
         }
     }
 }
@@ -1184,6 +1191,11 @@ pub(crate) struct App {
     pub(crate) pw_built: bool,
     pub(crate) pw_scene: Scene,
     pub(crate) pw_state: showcase_37_probe_widgets::ProbeWidgetState,
+
+    // --- Showcase 38 ---
+    pub(crate) lic_built: bool,
+    pub(crate) lic_scene: Scene,
+    pub(crate) lic_state: showcase_38_surface_lic::LicState,
 }
 
 // ---------------------------------------------------------------------------
@@ -1350,6 +1362,7 @@ impl eframe::App for App {
                     ShowcaseMode::Overlay,
                     ShowcaseMode::PlaybackRuntime,
                     ShowcaseMode::ProbeWidgets,
+                    ShowcaseMode::SurfaceLIC,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1794,6 +1807,7 @@ impl eframe::App for App {
                 || self.mode == ShowcaseMode::DepthCompositeImages
                 || self.mode == ShowcaseMode::ImplicitSurface
                 || self.mode == ShowcaseMode::Lights
+                || self.mode == ShowcaseMode::SurfaceLIC
             {
                 ui.painter()
                     .add(eframe::egui_wgpu::Callback::new_paint_callback(
@@ -1921,7 +1935,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 37] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 38] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::Performance,
@@ -1959,6 +1973,7 @@ impl App {
             ShowcaseMode::Overlay,
             ShowcaseMode::PlaybackRuntime,
             ShowcaseMode::ProbeWidgets,
+            ShowcaseMode::SurfaceLIC,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -2061,6 +2076,7 @@ impl App {
             ShowcaseMode::Overlay => !self.ovl_cloud_built,
             ShowcaseMode::PlaybackRuntime => !self.pb_built,
             ShowcaseMode::ProbeWidgets => !self.pw_built,
+            ShowcaseMode::SurfaceLIC => !self.lic_built,
             _ => false,
         };
         if !needs {
@@ -2413,6 +2429,15 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::SurfaceLIC => {
+                showcase_38_surface_lic::build_lic_scene(self, renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 10.0,
+                    orientation: glam::Quat::from_rotation_x(0.3),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2472,6 +2497,7 @@ impl App {
                 showcase_36_playback_runtime::controls_pb(self, ui, frame)
             }
             ShowcaseMode::ProbeWidgets => self.controls_probe_widgets(ui),
+            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::controls_lic(self, ui),
         }
     }
 
@@ -4006,6 +4032,18 @@ impl App {
                 let sg = self.pw_scene.version();
                 (items, Some(BG_COLOR), lighting, sg, 0)
             }
+
+            ShowcaseMode::SurfaceLIC => {
+                let items = self.lic_scene.collect_render_items(&Selection::new());
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.5,
+                    sky_color: [1.0, 1.0, 1.0],
+                    ground_color: [0.7, 0.7, 0.7],
+                    ..LightingSettings::default()
+                };
+                let sg = self.lic_scene.version();
+                (items, Some(BG_COLOR), lighting, sg, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -4457,12 +4495,49 @@ impl App {
                 }
                 PwSubMode::Sphere => {
                     fd.effects.clip_objects.push(state.sphere.clip_object());
+                    fd.scene.polylines.push(state.sphere.wireframe_item(0));
                     fd.scene.glyphs.push(state.sphere.handle_glyphs(100, &widget_ctx));
                 }
                 PwSubMode::Box => {
                     fd.scene.polylines.push(state.bw.wireframe_item(0));
                     fd.scene.glyphs.push(state.bw.handle_glyphs(100, &widget_ctx));
                 }
+            }
+
+            // Point cloud: unselected in blue, selected in orange.
+            let unsel: Vec<[f32; 3]> = state.cloud_positions.iter()
+                .zip(state.selected.iter())
+                .filter(|(_, s)| !**s)
+                .map(|(p, _)| *p)
+                .collect();
+            let sel: Vec<[f32; 3]> = state.cloud_positions.iter()
+                .zip(state.selected.iter())
+                .filter(|(_, s)| **s)
+                .map(|(p, _)| *p)
+                .collect();
+            if !unsel.is_empty() {
+                let mut pc = PointCloudItem::default();
+                pc.positions = unsel;
+                pc.point_size = 5.0;
+                pc.default_color = [0.5, 0.7, 1.0, 1.0];
+                fd.scene.point_clouds.push(pc);
+            }
+            if !sel.is_empty() {
+                let mut pc = PointCloudItem::default();
+                pc.positions = sel;
+                pc.point_size = 8.0;
+                pc.default_color = [1.0, 0.55, 0.1, 1.0];
+                fd.scene.point_clouds.push(pc);
+            }
+        }
+
+        // Surface LIC render items (Showcase 38) : submitted every frame when built.
+        // LIC compositing happens inside the tone-map pass, so the HDR pipeline
+        // must be active (post_process.enabled = true).
+        if self.mode == ShowcaseMode::SurfaceLIC && self.lic_built {
+            showcase_38_surface_lic::submit_lic_items(self, &mut fd);
+            if !fd.scene.lic_items.is_empty() {
+                fd.effects.post_process.enabled = true;
             }
         }
 

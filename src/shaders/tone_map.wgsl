@@ -13,8 +13,8 @@ struct ToneMapUniform {
     background_color:        vec4<f32>,
     near_plane:              f32,
     far_plane:               f32,
-    _pad_tm0:                u32,
-    _pad_tm1:                u32,
+    lic_enabled:             u32,
+    lic_strength:            f32,
 }
 
 @group(0) @binding(0) var hdr_texture:  texture_2d<f32>;
@@ -24,6 +24,7 @@ struct ToneMapUniform {
 @group(0) @binding(4) var ao_texture:    texture_2d<f32>;
 @group(0) @binding(5) var cs_texture:    texture_2d<f32>;
 @group(0) @binding(6) var depth_texture: texture_depth_2d;
+@group(0) @binding(7) var lic_texture:   texture_2d<f32>;
 
 struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
@@ -131,6 +132,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // gives moderate edge darkening and strength=5 gives near-complete darkening.
         let edl_factor = 1.0 - exp(-params.edl_strength * edl_sum / 8.0);
         color = color * (1.0 - edl_factor);
+    }
+
+    // Surface LIC: modulate color by LIC intensity (0.5 = neutral, no change).
+    if params.lic_enabled != 0u {
+        let lic_val = textureSample(lic_texture, hdr_sampler, in.uv).r;
+        let lic_factor = 1.0 + params.lic_strength * (lic_val * 2.0 - 1.0);
+        color = color * max(0.0, lic_factor);
     }
 
     // Pre-tone-mapping exposure.

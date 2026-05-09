@@ -1315,6 +1315,73 @@ impl Default for SurfaceSubmission {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4: Surface LIC
+// ---------------------------------------------------------------------------
+
+/// Configuration for Surface Line Integral Convolution.
+///
+/// Controls the advection quality and visual strength of the LIC effect.
+/// All fields have sensible defaults.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct SurfaceLICConfig {
+    /// Number of advection steps in each direction (forward + backward). Default: 20.
+    pub steps: u32,
+    /// Pixel step size per advection step. Default: 1.0.
+    pub step_size: f32,
+    /// LIC blend strength [0..1]: 0 = no effect, 1 = full modulation. Default: 0.5.
+    pub strength: f32,
+    /// Noise texture tiling scale. Larger values = finer noise pattern. Default: 4.0.
+    pub noise_scale: f32,
+}
+
+impl Default for SurfaceLICConfig {
+    fn default() -> Self {
+        Self {
+            steps: 20,
+            step_size: 1.0,
+            strength: 0.5,
+            noise_scale: 4.0,
+        }
+    }
+}
+
+/// A mesh surface to render with Surface LIC for one frame.
+///
+/// The mesh must have been uploaded via [`ViewportGpuResources::upload_mesh_data`]
+/// with a `VertexVector` attribute matching `vector_attribute`.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct SurfaceLICItem {
+    /// ID of the mesh to render (obtained from `upload_mesh_data`).
+    pub mesh_id: crate::resources::mesh_store::MeshId,
+    /// Name of the `AttributeData::VertexVector` attribute on that mesh.
+    pub vector_attribute: String,
+    /// Model matrix (row-major 4x4).
+    pub model: [[f32; 4]; 4],
+    /// LIC rendering configuration.
+    pub config: SurfaceLICConfig,
+}
+
+impl SurfaceLICItem {
+    /// Create a new `SurfaceLICItem` with the given mesh, vector attribute, model matrix,
+    /// and LIC configuration.
+    pub fn new(
+        mesh_id: crate::resources::mesh_store::MeshId,
+        vector_attribute: impl Into<String>,
+        model: [[f32; 4]; 4],
+        config: SurfaceLICConfig,
+    ) -> Self {
+        Self {
+            mesh_id,
+            vector_attribute: vector_attribute.into(),
+            model,
+            config,
+        }
+    }
+}
+
 /// World-space scene content for one frame.
 ///
 /// Groups all renderable world-space content submitted to the renderer.
@@ -1349,6 +1416,8 @@ pub struct SceneFrame {
     pub gpu_implicit: Vec<crate::resources::GpuImplicitItem>,
     /// GPU marching cubes jobs to dispatch this frame (Phase 17).
     pub gpu_mc_jobs: Vec<crate::resources::GpuMarchingCubesJob>,
+    /// Surface LIC items to render this frame (Phase 4).
+    pub lic_items: Vec<SurfaceLICItem>,
 }
 
 impl Default for SceneFrame {
@@ -1366,6 +1435,7 @@ impl Default for SceneFrame {
             screen_images: Vec::new(),
             gpu_implicit: Vec::new(),
             gpu_mc_jobs: Vec::new(),
+            lic_items: Vec::new(),
         }
     }
 }

@@ -1054,6 +1054,82 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
+        // Phase 4: Surface LIC GPU data upload.
+        // ------------------------------------------------------------------
+        self.lic_gpu_data.clear();
+        if !frame.scene.lic_items.is_empty() {
+            // The LIC surface pipeline is created inside ensure_hdr_shared (already called before
+            // prepare_scene_internal runs), so no separate ensure call is needed here.
+            for item in &frame.scene.lic_items {
+                if item.vector_attribute.is_empty() {
+                    continue;
+                }
+                if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
+                    if let Some(vec_buf) = mesh.vector_attribute_buffers.get(&item.vector_attribute) {
+                        if let (Some(bgl), Some(noise_view), Some(noise_sampler)) = (
+                            &resources.lic_surface_bgl,
+                            &resources.lic_noise_view,
+                            &resources.lic_noise_sampler,
+                        ) {
+                            use crate::resources::LicObjectUniform;
+                            let model = item.model;
+                            let obj_data = LicObjectUniform { model };
+                            let obj_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                                label: Some("lic_object_uniform"),
+                                size: std::mem::size_of::<LicObjectUniform>() as u64,
+                                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                                mapped_at_creation: false,
+                            });
+                            queue.write_buffer(&obj_buf, 0, bytemuck::cast_slice(&[obj_data]));
+                            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                label: Some("lic_surface_item_bg"),
+                                layout: bgl,
+                                entries: &[
+                                    wgpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: obj_buf.as_entire_binding(),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 1,
+                                        resource: vec_buf.as_entire_binding(),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 2,
+                                        resource: wgpu::BindingResource::TextureView(noise_view),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 3,
+                                        resource: wgpu::BindingResource::Sampler(noise_sampler),
+                                    },
+                                ],
+                            });
+                            self.lic_gpu_data.push(crate::resources::LicSurfaceGpuData {
+                                bind_group: bg,
+                                _object_uniform_buf: obj_buf,
+                                mesh_id: item.mesh_id,
+                            });
+                        }
+                    }
+                }
+            }
+            // Write LicAdvectUniform to the per-viewport buffer.
+            if let Some(hdr) = self.viewport_slots[frame.camera.viewport_index].hdr.as_ref() {
+                if let Some(first) = frame.scene.lic_items.first() {
+                    let [vw, vh] = hdr.size;
+                    let u = crate::resources::LicAdvectUniform {
+                        steps: first.config.steps,
+                        step_size: first.config.step_size,
+                        noise_scale: first.config.noise_scale,
+                        vp_width: vw as f32,
+                        vp_height: vh as f32,
+                        _pad: [0.0; 3],
+                    };
+                    queue.write_buffer(&hdr.lic_uniform_buf, 0, bytemuck::cast_slice(&[u]));
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
         // SciVis Phase D : volume GPU data upload.
         // Phase 1 note: clip_planes are per-viewport but passed here for culling.
         // Fix in Phase 2/3: upload clip-plane-agnostic data; apply planes in shader.

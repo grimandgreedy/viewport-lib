@@ -171,8 +171,8 @@ pub use renderer::{
     aabb_wireframe_polyline, PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBarAnchor, ScalarBarItem,
     ScalarBarOrientation, SceneEffects,
     SceneFrame, SceneRenderItem, ScreenImageItem,
-    ShadowFilter, StreamtubeItem, SurfaceSubmission, ToneMapping, ViewportEffects, ViewportFrame,
-    ViewportId, ViewportRenderer, VolumeItem,
+    ShadowFilter, StreamtubeItem, SurfaceLICConfig, SurfaceLICItem, SurfaceSubmission, ToneMapping,
+    ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer, VolumeItem,
 };
 
 pub use quantities::{

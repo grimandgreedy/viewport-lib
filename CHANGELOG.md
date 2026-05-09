@@ -3,6 +3,7 @@
 ## [0.12.3] (current, unreleased)
 
 ### Features
+- Surface Line Integral Convolution (LIC): tangential vector field visualization on mesh surfaces. Submit `SurfaceLICItem` entries via `SceneFrame::lic_items`; tune advection quality with `SurfaceLICConfig` (steps, step size, noise scale, strength). Requires the HDR pipeline (`PostProcessSettings::enabled = true`). Upload per-vertex 3D flow vectors as `AttributeData::VertexVector` on the mesh.
 - Eye-Dome Lighting (EDL): depth-discontinuity shading pass in the tone-map composite step. Enable via `PostProcessSettings::edl_enabled`; tune edge sharpness with `edl_radius` and `edl_strength` (darkening scale).
 - `Material::unlit`: set to `true` to skip all lighting (Blinn-Phong, PBR, matcap) and output the raw base color directly. Works on both the direct and instanced draw paths.
 - `aabb_wireframe_polyline(aabb, color) -> PolylineItem`: convenience function that builds the 12 edges of an AABB as a `PolylineItem` (6 strips: bottom loop, top loop, 4 vertical edges).

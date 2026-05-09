@@ -865,7 +865,8 @@ impl ViewportRenderer {
             background_color: bg_color,
             near_plane: frame.camera.render_camera.near,
             far_plane: frame.camera.render_camera.far,
-            _pad_tm: [0; 2],
+            lic_enabled: if frame.scene.lic_items.is_empty() { 0 } else { 1 },
+            lic_strength: frame.scene.lic_items.first().map(|i| i.config.strength).unwrap_or(0.5),
         };
         {
             let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
@@ -954,6 +955,7 @@ impl ViewportRenderer {
                 pp.bloom,
                 pp.ssao,
                 pp.contact_shadows,
+                !frame.scene.lic_items.is_empty(),
             );
         }
 
@@ -1704,6 +1706,78 @@ impl ViewportRenderer {
                 composite_pass.set_pipeline(pipeline);
                 composite_pass.set_bind_group(0, bg, &[]);
                 composite_pass.draw(0..3, 0..1);
+            }
+        }
+
+        // -----------------------------------------------------------------------
+        // Phase 4: Surface LIC passes.
+        // Pass 1: render each LIC mesh into lic_vector_texture (Rgba8Unorm).
+        // Pass 2: advect fullscreen triangle into lic_output_texture (R8Unorm).
+        // -----------------------------------------------------------------------
+        if !self.lic_gpu_data.is_empty() {
+            if let (Some(surface_pipeline), Some(advect_pipeline)) = (
+                self.resources.lic_surface_pipeline.as_ref(),
+                self.resources.lic_advect_pipeline.as_ref(),
+            ) {
+                let camera_bg = &slot.camera_bind_group;
+                // Pass 1: surface vector pass (clears lic_vector_texture first).
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("lic_surface_pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &slot_hdr.lic_vector_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                store: wgpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    pass.set_pipeline(surface_pipeline);
+                    pass.set_bind_group(0, camera_bg, &[]);
+                    for gpu in &self.lic_gpu_data {
+                        let Some(mesh) = self.resources.mesh_store.get(gpu.mesh_id) else {
+                            continue;
+                        };
+                        pass.set_bind_group(1, &gpu.bind_group, &[]);
+                        pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        pass.set_index_buffer(
+                            mesh.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                    }
+                }
+                // Pass 2: advect pass (fullscreen, writes LIC intensity to lic_output_texture).
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("lic_advect_pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &slot_hdr.lic_output_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color {
+                                    r: 0.5,
+                                    g: 0.0,
+                                    b: 0.0,
+                                    a: 1.0,
+                                }),
+                                store: wgpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    pass.set_pipeline(advect_pipeline);
+                    pass.set_bind_group(0, &slot_hdr.lic_advect_bind_group, &[]);
+                    pass.draw(0..3, 0..1);
+                }
             }
         }
 
