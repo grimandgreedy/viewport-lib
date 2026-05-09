@@ -1235,20 +1235,26 @@ pub(crate) struct ProjectedTetUniform {
     pub(crate) _pad: f32,
 }
 
-/// Uploaded projected-tetrahedra mesh, stored persistently on the GPU.
-///
-/// The tet buffer holds one `GpuTet` per output tetrahedron (64 bytes each).
-/// Created by [`ViewportGpuResources::upload_projected_tet_mesh`].
-pub(crate) struct GpuProjectedTetMesh {
-    /// Storage buffer: `array<GpuTet>` on the GPU.
-    /// Kept alive here; accessed by the bind group, not read directly.
+/// One device-limit-bounded chunk of a projected-tet mesh.
+pub(crate) struct ProjectedTetChunk {
+    /// Storage buffer for this chunk's tetrahedra (kept alive for the bind group).
     #[allow(dead_code)]
     pub tet_buffer: wgpu::Buffer,
-    /// Number of tetrahedra (= number of instanced draws).
+    /// Number of tetrahedra in this chunk (= instanced draw count).
     pub tet_count: u32,
-    /// Group 1 bind group: uniforms + tet storage buffer + colormap texture + sampler.
+    /// Bind group: shared uniform + this chunk's tet buffer + colormap + sampler.
     pub bind_group: wgpu::BindGroup,
-    /// PT uniform buffer (density, scalar_min, scalar_max). Written each frame.
+}
+
+/// Uploaded projected-tetrahedra mesh, stored persistently on the GPU.
+///
+/// Large meshes are split into multiple chunks so each storage buffer
+/// stays within `max_storage_buffer_binding_size`.
+/// Created by [`ViewportGpuResources::upload_projected_tet_mesh`].
+pub(crate) struct GpuProjectedTetMesh {
+    /// One or more device-limit-bounded chunks.
+    pub chunks: Vec<ProjectedTetChunk>,
+    /// Uniform buffer shared across all chunks (density, scalar_min/max). Written each frame.
     pub uniform_buffer: wgpu::Buffer,
     /// Auto-detected scalar range from the uploaded data (min, max).
     pub scalar_range: (f32, f32),

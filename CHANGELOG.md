@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.1] (Current, unreleased changes)
+
+### Fixes
+- Uploading a large transparent volume mesh could crash with an out-of-memory error. The decomposed tet data is now split into device-limit-bounded chunks on upload, so meshes of any size load correctly. No API changes.
+
 ## [0.13.0]
 
 ### Features

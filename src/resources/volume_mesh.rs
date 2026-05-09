@@ -1212,33 +1212,28 @@ const WEDGE_TO_TETS: [[usize; 4]; 3] = [[0, 1, 2, 3], [1, 2, 3, 4], [2, 3, 4, 5]
 /// Vertices: 0-3 = base quad; 4 = apex.
 const PYRAMID_TO_TETS: [[usize; 4]; 2] = [[0, 1, 2, 4], [0, 2, 3, 4]];
 
-/// Decompose all cells in `data` into tetrahedra for GPU-based transparent volume rendering.
+/// Call `f` once per output tetrahedron across all cells in `data`.
 ///
-/// Returns `(positions, scalars)`:
-/// - `positions`: flat list of `[[f32; 3]; 4]`, one entry per output tet (4 world-space vertices)
-/// - `scalars`: one `f32` per output tet, taken from `data.cell_scalars[attribute]` at the
-///   parent cell index (0.0 when the attribute is absent or the cell index is out of range)
+/// `f` receives the four world-space vertices and the scalar value for that tet.
+/// The scalar is taken from `data.cell_scalars[attribute]` at the parent cell index,
+/// or 0.0 when the attribute is absent or the cell index is out of range.
 ///
 /// Cell decomposition:
 /// - Tet -> 1 tet
 /// - Pyramid -> 2 tets
 /// - Wedge -> 3 tets
 /// - Hex -> 6 tets (Freudenthal split)
-pub(crate) fn decompose_to_tetrahedra(
-    data: &VolumeMeshData,
-    attribute: &str,
-) -> (Vec<[[f32; 3]; 4]>, Vec<f32>) {
+pub(crate) fn for_each_tet<F>(data: &VolumeMeshData, attribute: &str, mut f: F)
+where
+    F: FnMut([[f32; 3]; 4], f32),
+{
     let cell_scalars = data.cell_scalars.get(attribute);
-    let mut positions: Vec<[[f32; 3]; 4]> = Vec::new();
-    let mut scalars: Vec<f32> = Vec::new();
-
     for (cell_idx, cell) in data.cells.iter().enumerate() {
         let scalar = cell_scalars
             .and_then(|v| v.get(cell_idx))
             .copied()
             .unwrap_or(0.0);
-        let ct = cell_type(cell);
-        let tets: &[[usize; 4]] = match ct {
+        let tets: &[[usize; 4]] = match cell_type(cell) {
             CellType::Tet => &[[0, 1, 2, 3]],
             CellType::Pyramid => &PYRAMID_TO_TETS,
             CellType::Wedge => &WEDGE_TO_TETS,
@@ -1251,11 +1246,31 @@ pub(crate) fn decompose_to_tetrahedra(
                 data.positions[cell[local[2]] as usize],
                 data.positions[cell[local[3]] as usize],
             ];
-            positions.push(verts);
-            scalars.push(scalar);
+            f(verts, scalar);
         }
     }
+}
 
+/// Decompose all cells in `data` into tetrahedra and collect the results.
+///
+/// Returns `(positions, scalars)`:
+/// - `positions`: flat list of `[[f32; 3]; 4]`, one entry per output tet (4 world-space vertices)
+/// - `scalars`: one `f32` per output tet, taken from `data.cell_scalars[attribute]` at the
+///   parent cell index (0.0 when the attribute is absent or the cell index is out of range)
+///
+/// Used in tests. Production upload paths use `for_each_tet` directly to avoid
+/// materializing the full decomposed data before chunking.
+#[cfg(test)]
+pub(crate) fn decompose_to_tetrahedra(
+    data: &VolumeMeshData,
+    attribute: &str,
+) -> (Vec<[[f32; 3]; 4]>, Vec<f32>) {
+    let mut positions: Vec<[[f32; 3]; 4]> = Vec::new();
+    let mut scalars: Vec<f32> = Vec::new();
+    for_each_tet(data, attribute, |verts, scalar| {
+        positions.push(verts);
+        scalars.push(scalar);
+    });
     (positions, scalars)
 }
 

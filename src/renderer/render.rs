@@ -1753,8 +1753,10 @@ impl ViewportRenderer {
                                 0,
                                 bytemuck::bytes_of(&uniform),
                             );
-                            oit_pass.set_bind_group(1, &gpu.bind_group, &[]);
-                            oit_pass.draw(0..6, 0..gpu.tet_count);
+                            for chunk in &gpu.chunks {
+                                oit_pass.set_bind_group(1, &chunk.bind_group, &[]);
+                                oit_pass.draw(0..6, 0..chunk.tet_count);
+                            }
                         }
                     }
                 }
