@@ -1884,6 +1884,8 @@ impl ViewportRenderer {
                                 density: item.density,
                                 scalar_min,
                                 scalar_max,
+                                threshold_min: item.threshold_min,
+                                threshold_max: item.threshold_max,
                                 _pad: 0.0,
                             };
                             queue.write_buffer(

@@ -32,10 +32,12 @@ struct ClipPlanes {
 };
 
 struct PtUniforms {
-    density:    f32,
-    scalar_min: f32,
-    scalar_max: f32,
-    _pad:       f32,
+    density:       f32,
+    scalar_min:    f32,
+    scalar_max:    f32,
+    threshold_min: f32,
+    threshold_max: f32,
+    _pad:          f32,
 };
 
 // One tetrahedron on the GPU: four vec4 slots (64 bytes, 16-byte aligned).
@@ -236,6 +238,11 @@ fn fs_main(in: VsOut) -> OitOut {
 
     // Map scalar to [0,1] and sample colormap LUT.
     let scalar = in.v0.w;
+
+    // Threshold: discard tets outside [threshold_min, threshold_max].
+    if scalar < uniforms.threshold_min || scalar > uniforms.threshold_max {
+        discard;
+    }
     let t_scalar = clamp(
         (scalar - uniforms.scalar_min) / max(uniforms.scalar_max - uniforms.scalar_min, 1e-10),
         0.0, 1.0,

@@ -1633,6 +1633,8 @@ impl ViewportGpuResources {
             density: 1.0,
             scalar_min: scalar_range.0,
             scalar_max: scalar_range.1,
+            threshold_min: f32::NEG_INFINITY,
+            threshold_max: f32::INFINITY,
             _pad: 0.0,
         };
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {

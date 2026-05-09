@@ -1659,6 +1659,14 @@ pub struct TransparentVolumeMeshItem {
     ///
     /// `None` uses the range computed at upload time.
     pub scalar_range: Option<(f32, f32)>,
+    /// Scalar threshold range. Tetrahedra whose scalar value falls outside
+    /// `[threshold_min, threshold_max]` are discarded by the shader and not rendered.
+    ///
+    /// Operates on raw (un-normalized) scalar values, the same units as the data
+    /// passed to `upload_projected_tet_mesh`. Default: no clipping (all tets rendered).
+    pub threshold_min: f32,
+    /// Upper scalar threshold. See `threshold_min`.
+    pub threshold_max: f32,
     /// Whether this item is drawn this frame.
     pub visible: bool,
 }
@@ -1666,7 +1674,14 @@ pub struct TransparentVolumeMeshItem {
 impl TransparentVolumeMeshItem {
     /// Create a visible item with default density of 1.0 and auto scalar range.
     pub fn new(id: crate::resources::ProjectedTetId) -> Self {
-        Self { id, density: 1.0, scalar_range: None, visible: true }
+        Self {
+            id,
+            density: 1.0,
+            scalar_range: None,
+            threshold_min: f32::NEG_INFINITY,
+            threshold_max: f32::INFINITY,
+            visible: true,
+        }
     }
 }
 

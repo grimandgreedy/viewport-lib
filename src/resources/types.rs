@@ -1232,6 +1232,8 @@ pub(crate) struct ProjectedTetUniform {
     pub(crate) density: f32,
     pub(crate) scalar_min: f32,
     pub(crate) scalar_max: f32,
+    pub(crate) threshold_min: f32,
+    pub(crate) threshold_max: f32,
     pub(crate) _pad: f32,
 }
 
