@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.13.0] (unreleased, new changes)
+## [0.13.0]
 
 ### Features
 - Five new interactive probe widgets in `interaction::widgets`:
