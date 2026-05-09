@@ -3067,6 +3067,10 @@ impl App {
         }
 
         ui.separator();
+        ui.label("Unlit shading");
+        ui.checkbox(&mut self.lights_unlit_sphere, "Unlit sphere (corner)");
+
+        ui.separator();
         ui.label("Eye-Dome Lighting");
         ui.checkbox(&mut self.lights_edl_enabled, "EDL enabled");
         if self.lights_edl_enabled {
@@ -3081,12 +3085,6 @@ impl App {
             );
         }
 
-        ui.separator();
-        ui.label("Unlit shading");
-        if ui.checkbox(&mut self.lights_unlit_sphere, "Unlit sphere (corner)").changed() {
-            // Force scene rebuild so the material flag takes effect.
-            self.lights_built = false;
-        }
     }
 
     fn set_scalar_active_object(&mut self, index: usize) {
@@ -3514,7 +3512,10 @@ impl App {
             }
 
             ShowcaseMode::Lights => {
-                let items = self.lights_scene.collect_render_items(&Selection::new());
+                let mut items = self.lights_scene.collect_render_items(&Selection::new());
+                if !self.lights_unlit_sphere {
+                    items.retain(|item| !item.material.unlit);
+                }
                 let lighting = LightingSettings {
                     lights: self.lights_sources.clone(),
                     hemisphere_intensity: if self.lights_hemi_on {

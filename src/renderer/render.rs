@@ -863,6 +863,9 @@ impl ViewportRenderer {
             edl_radius: pp.edl_radius,
             edl_strength: pp.edl_strength,
             background_color: bg_color,
+            near_plane: frame.camera.render_camera.near,
+            far_plane: frame.camera.render_camera.far,
+            _pad_tm: [0; 2],
         };
         {
             let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();

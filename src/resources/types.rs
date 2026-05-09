@@ -755,7 +755,12 @@ pub(crate) struct ToneMapUniform {
     pub(crate) edl_radius: f32,
     pub(crate) edl_strength: f32,
     pub(crate) background_color: [f32; 4],
+    pub(crate) near_plane: f32,
+    pub(crate) far_plane: f32,
+    pub(crate) _pad_tm: [u32; 2],
 }
+
+const _: () = assert!(std::mem::size_of::<ToneMapUniform>() == 64);
 
 /// Bloom pass uniform (16 bytes).
 #[repr(C)]

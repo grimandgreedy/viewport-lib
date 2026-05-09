@@ -58,30 +58,28 @@ impl App {
         }
 
         // Unlit sphere in the corner : shows the raw base color regardless of scene
-        // lighting when the toggle is on.  A second lit sphere of the same color is
-        // placed beside it so the difference is visible.
-        if self.lights_unlit_sphere {
-            self.lights_scene.add_named(
-                "Unlit Sphere",
-                Some(sphere_id),
-                glam::Mat4::from_translation(glam::Vec3::new(6.0, -6.0, 0.6)),
-                {
-                    let mut m = Material::from_color([0.2, 0.7, 1.0]);
-                    m.unlit = true;
-                    m
-                },
-            );
-            self.lights_scene.add_named(
-                "Lit Sphere (same color)",
-                Some(sphere_id),
-                glam::Mat4::from_translation(glam::Vec3::new(6.0, -2.0, 0.6)),
-                {
-                    let mut m = Material::from_color([0.2, 0.7, 1.0]);
-                    m.roughness = 0.35;
-                    m
-                },
-            );
-        }
+        // lighting. A lit sphere of the same color sits beside it for comparison.
+        // Visibility is controlled at frame time via the toggle, not by rebuilding.
+        self.lights_scene.add_named(
+            "Unlit Sphere",
+            Some(sphere_id),
+            glam::Mat4::from_translation(glam::Vec3::new(6.0, -6.0, 0.6)),
+            {
+                let mut m = Material::from_color([0.2, 0.7, 1.0]);
+                m.unlit = true;
+                m
+            },
+        );
+        self.lights_scene.add_named(
+            "Lit Sphere (same color)",
+            Some(sphere_id),
+            glam::Mat4::from_translation(glam::Vec3::new(6.0, -2.0, 0.6)),
+            {
+                let mut m = Material::from_color([0.2, 0.7, 1.0]);
+                m.roughness = 0.35;
+                m
+            },
+        );
 
         self.lights_built = true;
     }

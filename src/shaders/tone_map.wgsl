@@ -11,6 +11,10 @@ struct ToneMapUniform {
     edl_radius:              f32,
     edl_strength:            f32,
     background_color:        vec4<f32>,
+    near_plane:              f32,
+    far_plane:               f32,
+    _pad_tm0:                u32,
+    _pad_tm1:                u32,
 }
 
 @group(0) @binding(0) var hdr_texture:  texture_2d<f32>;
@@ -94,29 +98,38 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Eye-Dome Lighting: darken pixels at depth discontinuities.
+    // Depth is linearized (z_eye / far) before the log comparison so that the
+    // log differences are large enough to produce a visible effect regardless
+    // of the near/far plane ratio.
     if params.edl_enabled != 0u {
-        let dims_i = vec2<i32>(depth_dims);
-        let log_dc = log(depth + 0.0001);
-        let edl_r = i32(max(1.0, round(params.edl_radius)));
+        let n = params.near_plane;
+        let f = params.far_plane;
+        // Linear depth in [near/far, 1]: z_eye/far = n / (f - d*(f-n))
+        let lin_dc  = n / (f - depth * (f - n));
+        let log_ldc = log(lin_dc);
+        let dims_i  = vec2<i32>(depth_dims);
+        let edl_r   = i32(max(1.0, round(params.edl_radius)));
         var edl_nc: vec2<i32>;
         var edl_sum = 0.0;
         edl_nc = clamp(depth_coord + vec2<i32>( edl_r,      0), vec2<i32>(0), dims_i - vec2<i32>(1));
-        edl_sum += max(0.0, log(textureLoad(depth_texture, edl_nc, 0) + 0.0001) - log_dc);
+        edl_sum += max(0.0, log(n / (f - textureLoad(depth_texture, edl_nc, 0) * (f - n))) - log_ldc);
         edl_nc = clamp(depth_coord + vec2<i32>( edl_r,  edl_r), vec2<i32>(0), dims_i - vec2<i32>(1));
-        edl_sum += max(0.0, log(textureLoad(depth_texture, edl_nc, 0) + 0.0001) - log_dc);
+        edl_sum += max(0.0, log(n / (f - textureLoad(depth_texture, edl_nc, 0) * (f - n))) - log_ldc);
         edl_nc = clamp(depth_coord + vec2<i32>(      0,  edl_r), vec2<i32>(0), dims_i - vec2<i32>(1));
-        edl_sum += max(0.0, log(textureLoad(depth_texture, edl_nc, 0) + 0.0001) - log_dc);
+        edl_sum += max(0.0, log(n / (f - textureLoad(depth_texture, edl_nc, 0) * (f - n))) - log_ldc);
         edl_nc = clamp(depth_coord + vec2<i32>(-edl_r,  edl_r), vec2<i32>(0), dims_i - vec2<i32>(1));
-        edl_sum += max(0.0, log(textureLoad(depth_texture, edl_nc, 0) + 0.0001) - log_dc);
+        edl_sum += max(0.0, log(n / (f - textureLoad(depth_texture, edl_nc, 0) * (f - n))) - log_ldc);
         edl_nc = clamp(depth_coord + vec2<i32>(-edl_r,      0), vec2<i32>(0), dims_i - vec2<i32>(1));
-        edl_sum += max(0.0, log(textureLoad(depth_texture, edl_nc, 0) + 0.0001) - log_dc);
+        edl_sum += max(0.0, log(n / (f - textureLoad(depth_texture, edl_nc, 0) * (f - n))) - log_ldc);
         edl_nc = clamp(depth_coord + vec2<i32>(-edl_r, -edl_r), vec2<i32>(0), dims_i - vec2<i32>(1));
-        edl_sum += max(0.0, log(textureLoad(depth_texture, edl_nc, 0) + 0.0001) - log_dc);
+        edl_sum += max(0.0, log(n / (f - textureLoad(depth_texture, edl_nc, 0) * (f - n))) - log_ldc);
         edl_nc = clamp(depth_coord + vec2<i32>(      0, -edl_r), vec2<i32>(0), dims_i - vec2<i32>(1));
-        edl_sum += max(0.0, log(textureLoad(depth_texture, edl_nc, 0) + 0.0001) - log_dc);
+        edl_sum += max(0.0, log(n / (f - textureLoad(depth_texture, edl_nc, 0) * (f - n))) - log_ldc);
         edl_nc = clamp(depth_coord + vec2<i32>( edl_r, -edl_r), vec2<i32>(0), dims_i - vec2<i32>(1));
-        edl_sum += max(0.0, log(textureLoad(depth_texture, edl_nc, 0) + 0.0001) - log_dc);
-        let edl_factor = clamp(edl_sum * params.edl_strength, 0.0, 1.0);
+        edl_sum += max(0.0, log(n / (f - textureLoad(depth_texture, edl_nc, 0) * (f - n))) - log_ldc);
+        // Normalize by sample count then apply exponential response so strength=1
+        // gives moderate edge darkening and strength=5 gives near-complete darkening.
+        let edl_factor = 1.0 - exp(-params.edl_strength * edl_sum / 8.0);
         color = color * (1.0 - edl_factor);
     }
 
