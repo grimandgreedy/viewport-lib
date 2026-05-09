@@ -322,6 +322,8 @@ pub struct SceneFrame {
     pub tensor_glyphs: Vec<TensorGlyphItem>,
     /// Ribbon items to render this frame (Phase 8.1).
     pub ribbon_items: Vec<RibbonItem>,
+    /// Volume surface slice items to render this frame (Phase 10).
+    pub volume_surface_slices: Vec<VolumeSurfaceSliceItem>,
 }
 
 impl Default for SceneFrame {
@@ -345,6 +347,7 @@ impl Default for SceneFrame {
             image_slices: Vec::new(),
             tensor_glyphs: Vec::new(),
             ribbon_items: Vec::new(),
+            volume_surface_slices: Vec::new(),
         }
     }
 }

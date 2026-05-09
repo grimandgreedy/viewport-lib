@@ -49,7 +49,7 @@ pub(crate) use self::types::{
     InstanceAabb, InstanceData, LabelGpuData, LicAdvectUniform, LicObjectUniform,
     LicSurfaceGpuData, ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform,
     OverlayTextVertex, OverlayUniform, PickInstance, ProjectedTetUniform, SHADOW_ATLAS_SIZE,
-    ImageSliceGpuData, ShadowAtlasUniform, SsaoUniform, StreamtubeGpuData, SubHighlightGpuData,
+    ImageSliceGpuData, VolumeSurfaceSliceGpuData, ShadowAtlasUniform, SsaoUniform, StreamtubeGpuData, SubHighlightGpuData,
     TensorGlyphGpuData, ToneMapUniform, ViewportHdrState,
 };
 pub use self::implicit::{

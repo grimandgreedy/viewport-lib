@@ -25,7 +25,7 @@ pub use self::types::{
     RibbonItem, SceneFrame, SceneRenderItem, ScreenImageItem,
     ShadowFilter, SliceAxis, StreamtubeItem, SurfaceLICConfig, SurfaceLICItem, SurfaceSubmission,
     ImageSliceItem, TensorGlyphItem, ToneMapping, TubeItem,
-    TransparentVolumeMeshItem,
+    TransparentVolumeMeshItem, VolumeSurfaceSliceItem,
     ViewportEffects, ViewportFrame, VolumeItem,
 };
 
@@ -190,6 +190,8 @@ pub struct ViewportRenderer {
     ribbon_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
     /// Per-frame image slice GPU data, rebuilt in prepare(), consumed in paint() (Phase 3).
     image_slice_gpu_data: Vec<crate::resources::ImageSliceGpuData>,
+    /// Per-frame volume surface slice GPU data, rebuilt in prepare(), consumed in paint() (Phase 10).
+    volume_surface_slice_gpu_data: Vec<crate::resources::VolumeSurfaceSliceGpuData>,
     /// Per-frame Surface LIC GPU data, rebuilt in prepare(), consumed in paint() (Phase 4).
     lic_gpu_data: Vec<crate::resources::LicSurfaceGpuData>,
     /// Per-frame GPU implicit surface data, rebuilt in prepare(), consumed in paint() (Phase 16).
@@ -320,6 +322,7 @@ impl ViewportRenderer {
             tube_gpu_data: Vec::new(),
             ribbon_gpu_data: Vec::new(),
             image_slice_gpu_data: Vec::new(),
+            volume_surface_slice_gpu_data: Vec::new(),
             lic_gpu_data: Vec::new(),
             implicit_gpu_data: Vec::new(),
             mc_gpu_data: Vec::new(),
@@ -770,7 +773,8 @@ impl ViewportRenderer {
             &self.tube_gpu_data,
             &self.image_slice_gpu_data,
             &self.tensor_glyph_gpu_data,
-            &self.ribbon_gpu_data
+            &self.ribbon_gpu_data,
+            &self.volume_surface_slice_gpu_data
         );
     }
 
@@ -812,7 +816,8 @@ impl ViewportRenderer {
             &self.tube_gpu_data,
             &self.image_slice_gpu_data,
             &self.tensor_glyph_gpu_data,
-            &self.ribbon_gpu_data
+            &self.ribbon_gpu_data,
+            &self.volume_surface_slice_gpu_data
         );
     }
 

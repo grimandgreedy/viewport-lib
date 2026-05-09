@@ -1124,6 +1124,19 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
+        // Phase 10 : Volume Surface Slice GPU data upload.
+        // ------------------------------------------------------------------
+        self.volume_surface_slice_gpu_data.clear();
+        if !frame.scene.volume_surface_slices.is_empty() {
+            resources.ensure_volume_surface_slice_pipeline(device);
+            for item in &frame.scene.volume_surface_slices {
+                if let Some(gpu_data) = resources.upload_volume_surface_slice(device, queue, item) {
+                    self.volume_surface_slice_gpu_data.push(gpu_data);
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
         // Phase 4: Surface LIC GPU data upload.
         // ------------------------------------------------------------------
         self.lic_gpu_data.clear();

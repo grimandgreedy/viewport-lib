@@ -1554,6 +1554,7 @@ impl App {
             }
             ShowcaseMode::Volume => {
                 self.build_volume_scene(renderer);
+                self.ensure_surface_slice_mesh(renderer);
                 self.camera = Camera {
                     center: glam::Vec3::ZERO,
                     distance: 12.0,
@@ -2716,6 +2717,13 @@ impl App {
         if self.mode == ShowcaseMode::Volume && self.vol_state.built && self.vol_state.show_slice {
             if let Some(slice_item) = self.make_image_slice_item() {
                 fd.scene.image_slices.push(slice_item);
+            }
+        }
+
+        // Volume surface slice (Showcase 17) : submitted every frame when enabled.
+        if self.mode == ShowcaseMode::Volume && self.vol_state.built && self.vol_state.show_surface_slice {
+            if let Some(item) = self.make_volume_surface_slice_item() {
+                fd.scene.volume_surface_slices.push(item);
             }
         }
 

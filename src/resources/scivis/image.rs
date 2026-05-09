@@ -1,4 +1,5 @@
 use super::*;
+use crate::resources::Vertex;
 
 impl ViewportGpuResources {
     // -------------------------------------------------------------------------
@@ -820,5 +821,244 @@ impl ViewportGpuResources {
             _depth_texture: None,
             depth_bind_group: None,
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 10 : Volume Surface Slice representation
+    // -------------------------------------------------------------------------
+
+    /// Lazily create the volume surface slice render pipeline.
+    ///
+    /// No-op if already created. Called from `prepare()` when
+    /// `frame.scene.volume_surface_slices` is non-empty.
+    pub(crate) fn ensure_volume_surface_slice_pipeline(&mut self, device: &wgpu::Device) {
+        if self.volume_surface_slice_pipeline.is_some() {
+            return;
+        }
+
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("volume_surface_slice_bgl"),
+            entries: &[
+                // binding 0: VolumeSurfaceSliceUniform
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // binding 1: texture_3d<f32> (R32Float, non-filterable)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D3,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    },
+                    count: None,
+                },
+                // binding 2: vol_sampler (non-filtering nearest)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
+                // binding 3: lut_tex (colormap texture_2d)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                // binding 4: lut_sampler (linear)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("volume_surface_slice_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../shaders/volume_surface_slice.wgsl").into(),
+            ),
+        });
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("volume_surface_slice_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, &bgl],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("volume_surface_slice_pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                // Only location 0 (position) is read; the full Vertex layout is declared
+                // so the buffer stride matches what upload_mesh_data produces.
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: self.target_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                // Double-sided: the slice can be viewed from either side.
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: self.sample_count,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        self.volume_surface_slice_bgl = Some(bgl);
+        self.volume_surface_slice_pipeline = Some(pipeline);
+    }
+
+    /// Upload one [`VolumeSurfaceSliceItem`] and return per-frame GPU data.
+    ///
+    /// Creates a uniform buffer and a bind group pointing at the existing uploaded
+    /// volume texture and colormap LUT. The mesh vertex/index buffers are referenced
+    /// by `MeshId` and looked up from the mesh store at draw time.
+    pub(crate) fn upload_volume_surface_slice(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: &crate::renderer::VolumeSurfaceSliceItem,
+    ) -> Option<crate::resources::VolumeSurfaceSliceGpuData> {
+        if item.volume_id.0 >= self.volume_textures.len() {
+            return None;
+        }
+        // Verify the mesh exists.
+        if self.mesh_store.get(item.mesh_id).is_none() {
+            return None;
+        }
+
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct VolumeSurfaceSliceUniform {
+            model:      [[f32; 4]; 4],
+            bbox_min:   [f32; 3],
+            scalar_min: f32,
+            bbox_max:   [f32; 3],
+            scalar_max: f32,
+            opacity:    f32,
+            _pad:       [f32; 3],
+        }
+
+        let uniform_data = VolumeSurfaceSliceUniform {
+            model:      item.model,
+            bbox_min:   item.bbox_min,
+            scalar_min: item.scalar_range.0,
+            bbox_max:   item.bbox_max,
+            scalar_max: item.scalar_range.1,
+            opacity:    item.opacity,
+            _pad:       [0.0; 3],
+        };
+
+        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("volume_surface_slice_uniform"),
+            size: std::mem::size_of::<VolumeSurfaceSliceUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
+
+        let vol_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("volume_surface_slice_vol_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let lut_view_idx: Option<usize> = self.builtin_colormap_ids.and_then(|ids| {
+            let preset_id = item
+                .color_lut
+                .unwrap_or(ids[crate::resources::BuiltinColormap::Viridis as usize]);
+            if preset_id.0 < self.colormap_views.len() {
+                Some(preset_id.0)
+            } else {
+                None
+            }
+        });
+
+        let bgl = self
+            .volume_surface_slice_bgl
+            .as_ref()
+            .expect("ensure_volume_surface_slice_pipeline not called");
+
+        let vol_view = &self.volume_textures[item.volume_id.0].1;
+        let lut_view = lut_view_idx
+            .map(|i| &self.colormap_views[i])
+            .unwrap_or(&self.fallback_lut_view);
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("volume_surface_slice_bg"),
+            layout: bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(vol_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&vol_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(lut_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                },
+            ],
+        });
+
+        Some(crate::resources::VolumeSurfaceSliceGpuData {
+            bind_group,
+            _uniform_buf: uniform_buf,
+            mesh_id: item.mesh_id,
+        })
     }
 }

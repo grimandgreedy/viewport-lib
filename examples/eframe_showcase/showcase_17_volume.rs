@@ -18,8 +18,8 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BuiltinColormap, ColormapId, ImageSliceItem, Material, MeshId, SliceAxis, VolumeData,
-    VolumeId, VolumeItem, extract_isosurface,
+    BuiltinColormap, ColormapId, ImageSliceItem, Material, MeshData, MeshId, SliceAxis, VolumeData,
+    VolumeId, VolumeItem, VolumeSurfaceSliceItem, extract_isosurface,
 };
 
 // ---------------------------------------------------------------------------
@@ -62,6 +62,14 @@ pub(crate) struct VolumeState {
     pub slice_lut:      BuiltinColormap,
     /// Opacity of the image slice quad.
     pub slice_opacity:  f32,
+    /// Whether to overlay a volume surface slice.
+    pub show_surface_slice: bool,
+    /// Uploaded saddle mesh used as the slice surface.
+    pub surface_slice_mesh_id: Option<MeshId>,
+    /// Colormap for the surface slice LUT.
+    pub surface_slice_lut:     BuiltinColormap,
+    /// Opacity of the surface slice.
+    pub surface_slice_opacity: f32,
 }
 
 impl Default for VolumeState {
@@ -92,6 +100,10 @@ impl Default for VolumeState {
             slice_offset:  0.5,
             slice_lut:     BuiltinColormap::Viridis,
             slice_opacity: 1.0,
+            show_surface_slice:    false,
+            surface_slice_mesh_id: None,
+            surface_slice_lut:     BuiltinColormap::Turbo,
+            surface_slice_opacity: 1.0,
         }
     }
 }
@@ -197,6 +209,33 @@ impl App {
         item.scalar_range = (0.0, 1.0);
         item.color_lut = Some(ColormapId(s.slice_lut as usize));
         item.opacity = s.slice_opacity;
+        Some(item)
+    }
+
+    /// Upload a saddle-shaped mesh for the surface slice demo if not already done.
+    pub(crate) fn ensure_surface_slice_mesh(&mut self, renderer: &mut viewport_lib::ViewportRenderer) {
+        if self.vol_state.surface_slice_mesh_id.is_some() {
+            return;
+        }
+        let mesh = make_saddle_mesh(32);
+        if let Ok(id) = renderer.resources_mut().upload_mesh_data(&self.device, &mesh) {
+            self.vol_state.surface_slice_mesh_id = Some(id);
+        }
+    }
+
+    /// Build a `VolumeSurfaceSliceItem` from the current surface slice state.
+    pub(crate) fn make_volume_surface_slice_item(&self) -> Option<VolumeSurfaceSliceItem> {
+        let s = &self.vol_state;
+        let vol_id = s.volume_id?;
+        let mesh_id = s.surface_slice_mesh_id?;
+        let mut item = VolumeSurfaceSliceItem::default();
+        item.volume_id = vol_id;
+        item.mesh_id = mesh_id;
+        item.bbox_min = [-3.2, -3.2, -3.2];
+        item.bbox_max = [3.2, 3.2, 3.2];
+        item.scalar_range = (0.0, 1.0);
+        item.color_lut = Some(ColormapId(s.surface_slice_lut as usize));
+        item.opacity = s.surface_slice_opacity;
         Some(item)
     }
 
@@ -329,6 +368,25 @@ pub(crate) fn controls_volume(app: &mut App, ui: &mut egui::Ui, frame: &eframe::
         ui.label("Metallic:");
         ui.add(egui::Slider::new(&mut s.iso_material.metallic, 0.0..=1.0).step_by(0.05));
     }
+
+    // Volume surface slice controls
+    ui.separator();
+    ui.checkbox(&mut s.show_surface_slice, "Show surface slice (saddle)");
+    if s.show_surface_slice {
+        ui.label("Opacity:");
+        ui.add(egui::Slider::new(&mut s.surface_slice_opacity, 0.0..=1.0).step_by(0.05));
+        ui.label("Color LUT:");
+        for (preset, label) in [
+            (BuiltinColormap::Turbo, "Turbo"),
+            (BuiltinColormap::Viridis, "Viridis"),
+            (BuiltinColormap::Coolwarm, "Coolwarm"),
+            (BuiltinColormap::Greyscale, "Greyscale"),
+        ] {
+            if ui.radio(s.surface_slice_lut == preset, label).clicked() {
+                s.surface_slice_lut = preset;
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -376,4 +434,52 @@ fn make_gaussian_field(n: u32) -> VolumeData {
         origin: [0.0, 0.0, 0.0],
         spacing: [1.0 / (n as f32 - 1.0); 3],
     }
+}
+
+// ---------------------------------------------------------------------------
+// Saddle mesh generation
+// ---------------------------------------------------------------------------
+
+/// Generate a saddle surface mesh (z = x^2 - y^2) over [-3.2, 3.2]^2,
+/// scaled to sit within the volume bounding box.
+fn make_saddle_mesh(n: u32) -> MeshData {
+    let range = 3.0f32;
+    let scale = 2.5f32; // z amplitude
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+
+    for iy in 0..n {
+        for ix in 0..n {
+            let fx = ix as f32 / (n - 1) as f32;
+            let fy = iy as f32 / (n - 1) as f32;
+            let x = (fx * 2.0 - 1.0) * range;
+            let y = (fy * 2.0 - 1.0) * range;
+            let z = (x * x - y * y) / (range * range) * scale;
+            positions.push([x, y, z]);
+            // Analytic normal of z = (x^2 - y^2) * k: n = normalize(-dz/dx, -dz/dy, 1)
+            let dzdx = 2.0 * x / (range * range) * scale;
+            let dzdy = -2.0 * y / (range * range) * scale;
+            let len = (dzdx * dzdx + dzdy * dzdy + 1.0f32).sqrt();
+            normals.push([-dzdx / len, -dzdy / len, 1.0 / len]);
+        }
+    }
+
+    for iy in 0..(n - 1) {
+        for ix in 0..(n - 1) {
+            let base = iy * n + ix;
+            indices.push(base);
+            indices.push(base + 1);
+            indices.push(base + n + 1);
+            indices.push(base);
+            indices.push(base + n + 1);
+            indices.push(base + n);
+        }
+    }
+
+    let mut mesh = MeshData::default();
+    mesh.positions = positions;
+    mesh.normals = normals;
+    mesh.indices = indices;
+    mesh
 }

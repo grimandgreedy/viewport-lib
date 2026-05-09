@@ -543,7 +543,7 @@ macro_rules! emit_draw_calls {
 ///
 /// Called by both `paint` and `paint_to` after `emit_draw_calls!` to render scivis layers.
 macro_rules! emit_scivis_draw_calls {
-    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $volume_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $image_slice_gpu_data:expr, $tensor_glyph_gpu_data:expr, $ribbon_gpu_data:expr) => {{
+    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $volume_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $image_slice_gpu_data:expr, $tensor_glyph_gpu_data:expr, $ribbon_gpu_data:expr, $volume_surface_slice_gpu_data:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let camera_bg: &wgpu::BindGroup = $camera_bg;
@@ -674,6 +674,25 @@ macro_rules! emit_scivis_draw_calls {
                         wgpu::IndexFormat::Uint32,
                     );
                     render_pass.draw_indexed(0..tg.mesh_index_count, 0, 0..tg.instance_count);
+                }
+            }
+        }
+
+        // Volume surface slice pass (Phase 10 : arbitrary mesh sampled from volume).
+        if !$volume_surface_slice_gpu_data.is_empty() {
+            if let Some(ref pipeline) = resources.volume_surface_slice_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for slice in $volume_surface_slice_gpu_data.iter() {
+                    if let Some(mesh) = resources.mesh_store.get(slice.mesh_id) {
+                        render_pass.set_bind_group(1, &slice.bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        render_pass.set_index_buffer(
+                            mesh.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                    }
                 }
             }
         }

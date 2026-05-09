@@ -765,6 +765,7 @@ impl App {
                 .resources_mut()
                 .upload_projected_tet_mesh(&self.device, data, attr, colormap_id)
                 .ok()
+                .map(|(id, _, _)| id)
         };
 
         self.vm_state.pt_hex_id       = pt_upload(&pt_data_for_mode(VmMode::Hex));

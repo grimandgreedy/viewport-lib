@@ -179,7 +179,7 @@ pub use renderer::{
     RibbonItem, SceneFrame, SceneRenderItem, ScreenImageItem,
     ImageSliceItem, SliceAxis, ShadowFilter, StreamtubeItem, SurfaceLICConfig, SurfaceLICItem,
     SurfaceSubmission, ToneMapping, TubeItem,
-    TransparentVolumeMeshItem,
+    TransparentVolumeMeshItem, VolumeSurfaceSliceItem,
     ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer, VolumeItem,
 };
 

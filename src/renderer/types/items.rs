@@ -659,6 +659,59 @@ impl Default for ImageSliceItem {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 10 : Volume surface slice representation
+// ---------------------------------------------------------------------------
+
+/// A volume slice sampled on an arbitrary surface mesh.
+///
+/// Unlike [`ImageSliceItem`] which is restricted to axis-aligned flat quads,
+/// this item renders any uploaded mesh and colors each fragment by the volume
+/// scalar at that world-space position. The slice surface can be a flat plane,
+/// a disk, a saddle, a paraboloid -- any shape that can be expressed as a mesh.
+///
+/// Upload the surface mesh once with [`ViewportGpuResources::upload_mesh_data`]
+/// to get a [`MeshId`](crate::resources::mesh_store::MeshId), then submit a
+/// `VolumeSurfaceSliceItem` referencing that mesh each frame.
+///
+/// Fragments whose world position falls outside the volume bounding box are
+/// discarded, so the mesh can extend beyond the volume without clipping artifacts.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct VolumeSurfaceSliceItem {
+    /// Reference to a previously uploaded 3D volume texture.
+    pub volume_id: crate::resources::VolumeId,
+    /// Mesh defining the slice surface shape. Any mesh works: flat quad, disk, saddle, etc.
+    pub mesh_id: crate::resources::mesh_store::MeshId,
+    /// World-space bounding box minimum corner of the volume.
+    pub bbox_min: [f32; 3],
+    /// World-space bounding box maximum corner of the volume.
+    pub bbox_max: [f32; 3],
+    /// Scalar range for colormap mapping `[min, max]`. Default: `(0.0, 1.0)`.
+    pub scalar_range: (f32, f32),
+    /// Color LUT. `None` = default builtin (viridis).
+    pub color_lut: Option<crate::resources::ColormapId>,
+    /// Overall opacity of the slice. Default: `1.0`.
+    pub opacity: f32,
+    /// World-space model matrix for the slice mesh. Default: identity.
+    pub model: [[f32; 4]; 4],
+}
+
+impl Default for VolumeSurfaceSliceItem {
+    fn default() -> Self {
+        Self {
+            volume_id: crate::resources::VolumeId(0),
+            mesh_id: crate::resources::mesh_store::MeshId::from_index(0),
+            bbox_min: [0.0, 0.0, 0.0],
+            bbox_max: [1.0, 1.0, 1.0],
+            scalar_range: (0.0, 1.0),
+            color_lut: None,
+            opacity: 1.0,
+            model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Phase 10A : Camera frustum wireframe
 // ---------------------------------------------------------------------------
 

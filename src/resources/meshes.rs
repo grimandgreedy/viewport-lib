@@ -1427,13 +1427,17 @@ impl ViewportGpuResources {
     /// Returns a [`ProjectedTetId`] that can be placed in a
     /// [`TransparentVolumeMeshItem`](crate::renderer::types::TransparentVolumeMeshItem)
     /// each frame.
+    /// Upload a projected-tet mesh and return both the GPU handle and the actual scalar
+    /// range stored in the GPU buffer. Callers should use the returned scalar range for
+    /// threshold computations so that brimcast and the GPU always agree on the data range
+    /// (including the constant-data `scalar_min + 1.0` adjustment in `decompose_into_chunks`).
     pub fn upload_projected_tet_mesh(
         &mut self,
         device: &wgpu::Device,
         data: &crate::resources::volume_mesh::VolumeMeshData,
         scalar_attribute: &str,
         colormap_id: ColormapId,
-    ) -> crate::error::ViewportResult<ProjectedTetId> {
+    ) -> crate::error::ViewportResult<(ProjectedTetId, f32, f32)> {
         self.ensure_pt_bind_group_layout(device);
 
         let (pending, scalar_range, uniform_buffer) =
@@ -1490,7 +1494,7 @@ impl ViewportGpuResources {
             uniform_buffer,
             scalar_range,
         });
-        Ok(id)
+        Ok((id, scalar_range.0, scalar_range.1))
     }
 
     /// Replace the tet buffer and colormap for an existing projected-tet mesh in-place.
