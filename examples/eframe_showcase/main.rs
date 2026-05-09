@@ -1901,6 +1901,7 @@ impl eframe::App for App {
                     drag_started: response.drag_started(),
                     dragging: response.dragged(),
                     released: response.drag_stopped(),
+                    double_clicked: false,
                 };
                 self.interact_spline.update(&widget_ctx);
             }
@@ -1915,6 +1916,7 @@ impl eframe::App for App {
                     drag_started: response.drag_started(),
                     dragging: response.dragged(),
                     released: response.drag_stopped(),
+                    double_clicked: response.double_clicked(),
                 };
                 self.update_probe_widgets(widget_ctx);
             }
@@ -4435,6 +4437,7 @@ impl App {
                 drag_started: false,
                 dragging: false,
                 released: false,
+                double_clicked: false,
             };
             fd.scene.glyphs.push(self.interact_spline.handle_glyphs(9901, &spline_ctx));
         }
@@ -4737,6 +4740,7 @@ impl App {
                 drag_started: false,
                 dragging: false,
                 released: false,
+                double_clicked: false,
             };
             use showcase_37_probe_widgets::PwSubMode;
             let state = &self.pw_state;
@@ -4752,7 +4756,24 @@ impl App {
                 }
                 PwSubMode::Box => {
                     fd.scene.polylines.push(state.bw.wireframe_item(0));
+                    fd.scene.polylines.push(state.bw.rotation_arcs_item(1));
                     fd.scene.glyphs.push(state.bw.handle_glyphs(100, &widget_ctx));
+                }
+                PwSubMode::Plane => {
+                    fd.scene.polylines.push(state.plane.plane_item(0));
+                    fd.scene.glyphs.push(state.plane.handle_glyphs(100, &widget_ctx));
+                }
+                PwSubMode::Disk => {
+                    fd.scene.polylines.push(state.disk.wireframe_item(0));
+                    fd.scene.glyphs.push(state.disk.handle_glyphs(100, &widget_ctx));
+                }
+                PwSubMode::Cylinder => {
+                    fd.scene.polylines.push(state.cylinder.wireframe_item(0));
+                    fd.scene.glyphs.push(state.cylinder.handle_glyphs(100, &widget_ctx));
+                }
+                PwSubMode::Polyline => {
+                    fd.scene.polylines.push(state.polyline.polyline_item(0));
+                    fd.scene.glyphs.push(state.polyline.handle_glyphs(100, &widget_ctx));
                 }
             }
 
