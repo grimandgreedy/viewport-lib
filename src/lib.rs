@@ -172,6 +172,7 @@ pub use renderer::{
     ScalarBarOrientation, SceneEffects,
     SceneFrame, SceneRenderItem, ScreenImageItem,
     ShadowFilter, StreamtubeItem, SurfaceLICConfig, SurfaceLICItem, SurfaceSubmission, ToneMapping,
+    TransparentVolumeMeshItem,
     ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer, VolumeItem,
 };
 
@@ -193,6 +194,6 @@ pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColormap, BuiltinMatcap, CameraUniform,
     ClipVolumeUniform, ColormapId, ComputeFilterResult, FontError, FontHandle, GpuImplicitItem,
     GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive, LightUniform,
-    LightsUniform, MatcapId, MeshData, SingleLightUniform, ViewportGpuResources, VolumeGpuId,
-    VolumeId, lerp_attributes,
+    LightsUniform, MatcapId, MeshData, ProjectedTetId, SingleLightUniform, ViewportGpuResources,
+    VolumeGpuId, VolumeId, lerp_attributes,
 };

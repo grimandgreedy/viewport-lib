@@ -28,9 +28,35 @@ use crate::App;
 use eframe::egui;
 use viewport_lib::{
     AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap, CELL_SENTINEL, ColormapId,
-    LightingSettings, SceneRenderItem,
+    LightingSettings, ProjectedTetId, SceneRenderItem, TransparentVolumeMeshItem,
     ClipObject, ClipShape, ViewportRenderer, VolumeMeshData,
 };
+
+/// Map a VmField to the VolumeMeshData scalar attribute name used for projected-tet rendering.
+/// DirectColor has no scalar attribute; falls back to "radial".
+pub(crate) fn vm_pt_scalar_attr(field: VmField) -> &'static str {
+    match field {
+        VmField::Latitude => "latitude",
+        VmField::Longitude => "longitude",
+        VmField::Radial | VmField::DirectColor => "radial",
+    }
+}
+
+/// Build the VolumeMeshData for the given mode using positions appropriate for PT rendering.
+///
+/// Hex and Pyramid use `cube_sphere_vertex_positions` so the transparent volume matches
+/// the sphere shape of the opaque mesh. Tet and Wedge use raw box positions because
+/// sphere-projected positions collapse their Freudenthal-decomposed tets to zero volume.
+pub(crate) fn pt_data_for_mode(mode: VmMode) -> VolumeMeshData {
+    match mode {
+        VmMode::Hex => build_hex_mesh(&cube_sphere_vertex_positions()),
+        VmMode::Tet => build_tet_mesh(&box_vertex_positions(GRID_N)),
+        VmMode::TetSmall => build_tet_small(),
+        VmMode::TetBox => build_tet_box(),
+        VmMode::Pyramid => build_pyramid_mesh(&cube_sphere_vertex_positions()),
+        VmMode::Wedge => build_wedge_mesh(&box_vertex_positions(GRID_N)),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Sub-mode
@@ -648,6 +674,33 @@ impl App {
             .upload_volume_mesh_data(&self.device, &wedge_data)
             .expect("vm wedge upload");
 
+        // Colormaps must be ready before the PT bind group is created.
+        renderer
+            .resources_mut()
+            .ensure_colormaps_initialized(&self.device, &self.queue);
+
+        // Upload projected-tet meshes for each cell type.
+        // Hex and Pyramid use cube_sphere positions so the transparent sphere shape
+        // matches the opaque surface. Tet/Wedge use box positions because pure radial
+        // sphere projection puts all vertices on the sphere surface, collapsing tet
+        // volumes to zero.
+        let attr = vm_pt_scalar_attr(self.vm_field);
+        let colormap_id = ColormapId(self.vm_colormap as usize);
+
+        let mut pt_upload = |data: &VolumeMeshData| -> Option<ProjectedTetId> {
+            renderer
+                .resources_mut()
+                .upload_projected_tet_mesh(&self.device, data, attr, colormap_id)
+                .ok()
+        };
+
+        self.vm_pt_hex_id       = pt_upload(&pt_data_for_mode(VmMode::Hex));
+        self.vm_pt_tet_id       = pt_upload(&pt_data_for_mode(VmMode::Tet));
+        self.vm_pt_tet_small_id = pt_upload(&pt_data_for_mode(VmMode::TetSmall));
+        self.vm_pt_tet_box_id   = pt_upload(&pt_data_for_mode(VmMode::TetBox));
+        self.vm_pt_pyramid_id   = pt_upload(&pt_data_for_mode(VmMode::Pyramid));
+        self.vm_pt_wedge_id     = pt_upload(&pt_data_for_mode(VmMode::Wedge));
+
         self.vm_built = true;
     }
 
@@ -712,6 +765,10 @@ impl App {
     /// CPU-clipped mesh instead of the static boundary mesh.
     pub(crate) fn vm_scene_items(&self) -> Vec<SceneRenderItem> {
         if !self.vm_built {
+            return vec![];
+        }
+        // Transparent mode renders via the projected-tet pass; suppress the opaque surface.
+        if self.vm_transparent {
             return vec![];
         }
 
@@ -779,6 +836,65 @@ impl App {
         vec![item]
     }
 
+    /// Rebuild all projected-tet meshes with a new scalar field and colormap.
+    ///
+    /// Called when the user changes `vm_field` or `vm_colormap` while transparent
+    /// mode has been used at least once. Each mode keeps its own PT slot so switching
+    /// cell type doesn't re-upload.
+    pub(crate) fn rebuild_pt_meshes(
+        &mut self,
+        renderer: &mut ViewportRenderer,
+        device: &wgpu::Device,
+        field: VmField,
+        colormap: BuiltinColormap,
+    ) {
+        let attr = vm_pt_scalar_attr(field);
+        let colormap_id = ColormapId(colormap as usize);
+
+        for mode in [
+            VmMode::Hex,
+            VmMode::Tet,
+            VmMode::TetSmall,
+            VmMode::TetBox,
+            VmMode::Pyramid,
+            VmMode::Wedge,
+        ] {
+            let id = match mode {
+                VmMode::Hex      => self.vm_pt_hex_id,
+                VmMode::Tet      => self.vm_pt_tet_id,
+                VmMode::TetSmall => self.vm_pt_tet_small_id,
+                VmMode::TetBox   => self.vm_pt_tet_box_id,
+                VmMode::Pyramid  => self.vm_pt_pyramid_id,
+                VmMode::Wedge    => self.vm_pt_wedge_id,
+            };
+            if let Some(id) = id {
+                let data = pt_data_for_mode(mode);
+                let _ = renderer
+                    .resources_mut()
+                    .replace_projected_tet_mesh(device, id, &data, attr, colormap_id);
+            }
+        }
+    }
+
+    /// Returns a `TransparentVolumeMeshItem` for the projected-tet pass when
+    /// transparent mode is active, or `None` otherwise.
+    pub(crate) fn vm_transparent_item(&self) -> Option<TransparentVolumeMeshItem> {
+        if !self.vm_transparent || !self.vm_built {
+            return None;
+        }
+        let id = match self.vm_mode {
+            VmMode::Hex      => self.vm_pt_hex_id,
+            VmMode::Tet      => self.vm_pt_tet_id,
+            VmMode::TetSmall => self.vm_pt_tet_small_id,
+            VmMode::TetBox   => self.vm_pt_tet_box_id,
+            VmMode::Pyramid  => self.vm_pt_pyramid_id,
+            VmMode::Wedge    => self.vm_pt_wedge_id,
+        }?;
+        let mut item = TransparentVolumeMeshItem::new(id);
+        item.density = self.vm_density;
+        Some(item)
+    }
+
     pub(crate) fn vm_clip_objects(&self) -> Vec<ClipObject> {
         // No GPU clip plane is emitted for geometry — the CPU extraction already
         // handles it, and a co-planar GPU clip causes per-fragment floating-point
@@ -796,13 +912,13 @@ impl App {
             distance: self.vm_clip_offset,
             cap_color: None,
         };
-        // Visual edge only — no fill quad, no GPU geometry clipping.
-        // Geometry is already clipped by the CPU extraction path; applying
-        // the GPU clip plane on top would cause floating-point noise on the
-        // section faces which lie exactly on the plane.
         clip.color = None;
         clip.edge_color = Some([0.75, 0.85, 1.0, 1.0]);
-        clip.clip_geometry = false;
+        // In transparent mode, no opaque CPU-clipped mesh is drawn, so the GPU
+        // clip plane must be active to cull the projected-tet fragments.
+        // In opaque mode, CPU extraction already handles clipping and enabling
+        // the GPU clip on top causes floating-point noise on the section faces.
+        clip.clip_geometry = self.vm_transparent;
         clip.extent = 3.5;
         vec![clip]
     }
@@ -861,6 +977,16 @@ impl App {
                     ui.radio_value(&mut self.vm_colormap, cm, format!("{cm:?}"));
                 }
             });
+        }
+
+        ui.separator();
+        ui.checkbox(&mut self.vm_transparent, "Transparent (projected tetrahedra)");
+        if self.vm_transparent {
+            ui.add(
+                egui::Slider::new(&mut self.vm_density, 0.0..=1.0)
+                    .text("Density")
+                    .step_by(0.01),
+            );
         }
 
         ui.separator();

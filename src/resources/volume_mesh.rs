@@ -1187,6 +1187,79 @@ impl VolumeMeshData {
 }
 
 // ---------------------------------------------------------------------------
+// Tet decomposition for transparent volume rendering
+// ---------------------------------------------------------------------------
+
+/// Hex-to-tet decomposition using the Freudenthal 6-tet split.
+///
+/// All 6 tets share the main diagonal (vertex 0 <-> vertex 6 in VTK hex ordering).
+const HEX_TO_TETS: [[usize; 4]; 6] = [
+    [0, 1, 5, 6],
+    [0, 1, 2, 6],
+    [0, 4, 5, 6],
+    [0, 4, 7, 6],
+    [0, 3, 2, 6],
+    [0, 3, 7, 6],
+];
+
+/// Wedge-to-tet decomposition (3 tets from a triangular prism).
+///
+/// Vertices: 0,1,2 = bottom triangle; 3,4,5 = top triangle (3 above 0, etc.).
+const WEDGE_TO_TETS: [[usize; 4]; 3] = [[0, 1, 2, 3], [1, 2, 3, 4], [2, 3, 4, 5]];
+
+/// Pyramid-to-tet decomposition (2 tets from a square pyramid).
+///
+/// Vertices: 0-3 = base quad; 4 = apex.
+const PYRAMID_TO_TETS: [[usize; 4]; 2] = [[0, 1, 2, 4], [0, 2, 3, 4]];
+
+/// Decompose all cells in `data` into tetrahedra for GPU-based transparent volume rendering.
+///
+/// Returns `(positions, scalars)`:
+/// - `positions`: flat list of `[[f32; 3]; 4]`, one entry per output tet (4 world-space vertices)
+/// - `scalars`: one `f32` per output tet, taken from `data.cell_scalars[attribute]` at the
+///   parent cell index (0.0 when the attribute is absent or the cell index is out of range)
+///
+/// Cell decomposition:
+/// - Tet -> 1 tet
+/// - Pyramid -> 2 tets
+/// - Wedge -> 3 tets
+/// - Hex -> 6 tets (Freudenthal split)
+pub(crate) fn decompose_to_tetrahedra(
+    data: &VolumeMeshData,
+    attribute: &str,
+) -> (Vec<[[f32; 3]; 4]>, Vec<f32>) {
+    let cell_scalars = data.cell_scalars.get(attribute);
+    let mut positions: Vec<[[f32; 3]; 4]> = Vec::new();
+    let mut scalars: Vec<f32> = Vec::new();
+
+    for (cell_idx, cell) in data.cells.iter().enumerate() {
+        let scalar = cell_scalars
+            .and_then(|v| v.get(cell_idx))
+            .copied()
+            .unwrap_or(0.0);
+        let ct = cell_type(cell);
+        let tets: &[[usize; 4]] = match ct {
+            CellType::Tet => &[[0, 1, 2, 3]],
+            CellType::Pyramid => &PYRAMID_TO_TETS,
+            CellType::Wedge => &WEDGE_TO_TETS,
+            CellType::Hex => &HEX_TO_TETS,
+        };
+        for local in tets {
+            let verts = [
+                data.positions[cell[local[0]] as usize],
+                data.positions[cell[local[1]] as usize],
+                data.positions[cell[local[2]] as usize],
+                data.positions[cell[local[3]] as usize],
+            ];
+            positions.push(verts);
+            scalars.push(scalar);
+        }
+    }
+
+    (positions, scalars)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

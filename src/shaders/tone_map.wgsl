@@ -75,7 +75,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let depth_coord = vec2<i32>(vec2<u32>(depth_uv * vec2<f32>(depth_dims)));
     let depth = textureLoad(depth_texture, depth_coord, 0);
     if depth >= 0.999999 {
-        return params.background_color;
+        // Check whether OIT has contributed to this pixel. The HDR buffer is
+        // cleared with alpha=0; OIT composite writes alpha=(1-reveal) > 0 via
+        // premul blend. If alpha is still ~0, this is a pure background pixel.
+        let hdr_a = textureSample(hdr_texture, hdr_sampler, in.uv).a;
+        if hdr_a < 0.001 {
+            return params.background_color;
+        }
+        // OIT contributed here; fall through to tone-map the composite result.
     }
 
     var color = textureSample(hdr_texture, hdr_sampler, in.uv).rgb;

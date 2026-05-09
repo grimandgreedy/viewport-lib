@@ -24,6 +24,7 @@ pub use self::types::{
     ScalarBarOrientation, SceneEffects,
     SceneFrame, SceneRenderItem, ScreenImageItem,
     ShadowFilter, StreamtubeItem, SurfaceLICConfig, SurfaceLICItem, SurfaceSubmission, ToneMapping,
+    TransparentVolumeMeshItem,
     ViewportEffects, ViewportFrame, VolumeItem,
 };
 

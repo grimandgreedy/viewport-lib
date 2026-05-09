@@ -635,17 +635,24 @@ impl ViewportGpuResources {
                     ranges.insert(name.clone(), (min, max));
                 }
                 AttributeData::VertexVector(v) => {
-                    // Flatten [f32; 3] -> [f32] for the flat array<f32> storage buffer.
-                    // WGSL array<vec3<f32>> has 16-byte stride, so we use array<f32> (12-byte).
+                    // Flatten [f32; 3] -> [f32] with 12-byte per-vertex stride.
+                    // Bound as vertex buffer 1 in the LIC surface pass (location 1).
                     if v.is_empty() {
                         continue;
                     }
                     let flat: Vec<f32> = v.iter().flat_map(|&[x, y, z]| [x, y, z]).collect();
-                    let buf = Self::create_storage_buffer_f32(
-                        device,
-                        &format!("vec_attr_{name}"),
-                        &flat,
-                    );
+                    let byte_len = (std::mem::size_of::<f32>() * flat.len()) as u64;
+                    let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some(&format!("vec_attr_{name}")),
+                        size: byte_len,
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: true,
+                    });
+                    {
+                        let mut view = buf.slice(..).get_mapped_range_mut();
+                        view.copy_from_slice(bytemuck::cast_slice(&flat));
+                    }
+                    buf.unmap();
                     vector_attr_bufs.insert(name.clone(), buf);
                 }
             }
@@ -1329,5 +1336,277 @@ impl ViewportGpuResources {
             face_color_buffers: std::collections::HashMap::new(),
             vector_attribute_buffers: std::collections::HashMap::new(),
         }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Projected tetrahedra upload
+    // ---------------------------------------------------------------------------
+
+    /// Ensure the projected-tetrahedra bind group layout exists.
+    ///
+    /// No-op after the first call. Called internally by
+    /// [`upload_projected_tet_mesh`](Self::upload_projected_tet_mesh) and
+    /// [`ensure_pt_pipeline`](Self::ensure_pt_pipeline).
+    pub(crate) fn ensure_pt_bind_group_layout(&mut self, device: &wgpu::Device) {
+        if self.pt_bind_group_layout.is_some() {
+            return;
+        }
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("pt_bgl"),
+            entries: &[
+                // binding 0: PT uniforms (density, scalar_min, scalar_max, _pad)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // binding 1: tet storage buffer (read-only)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // binding 2: colormap texture (256x1 D2, same format as all other LUT textures)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // binding 3: colormap sampler (linear clamp)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        self.pt_bind_group_layout = Some(bgl);
+    }
+
+    /// Decompose all cells in `data` into tetrahedra and upload to the GPU.
+    ///
+    /// `scalar_attribute` names a key in `data.cell_scalars`; cells without the attribute
+    /// get scalar 0.0.  The scalar range is auto-detected from the data.
+    ///
+    /// Returns a [`ProjectedTetId`] that can be placed in a
+    /// [`TransparentVolumeMeshItem`](crate::renderer::types::TransparentVolumeMeshItem)
+    /// each frame.
+    pub fn upload_projected_tet_mesh(
+        &mut self,
+        device: &wgpu::Device,
+        data: &crate::resources::volume_mesh::VolumeMeshData,
+        scalar_attribute: &str,
+        colormap_id: ColormapId,
+    ) -> crate::error::ViewportResult<ProjectedTetId> {
+        self.ensure_pt_bind_group_layout(device);
+
+        let (tet_positions, scalars) =
+            crate::resources::volume_mesh::decompose_to_tetrahedra(data, scalar_attribute);
+
+        let tet_count = tet_positions.len() as u32;
+
+        // Pack into GPU buffer: each tet is 4x vec4<f32> (64 bytes).
+        // v0: (x,y,z, scalar)   v1: (x,y,z, 0)   v2: (x,y,z, 0)   v3: (x,y,z, 0)
+        let mut raw: Vec<f32> = Vec::with_capacity(tet_count as usize * 16);
+        for (verts, scalar) in tet_positions.iter().zip(scalars.iter()) {
+            raw.extend_from_slice(&[verts[0][0], verts[0][1], verts[0][2], *scalar]);
+            raw.extend_from_slice(&[verts[1][0], verts[1][1], verts[1][2], 0.0]);
+            raw.extend_from_slice(&[verts[2][0], verts[2][1], verts[2][2], 0.0]);
+            raw.extend_from_slice(&[verts[3][0], verts[3][1], verts[3][2], 0.0]);
+        }
+
+        // Compute scalar range.
+        let scalar_range = if scalars.is_empty() {
+            (0.0f32, 1.0f32)
+        } else {
+            let min_s = scalars.iter().cloned().fold(f32::INFINITY, f32::min);
+            let max_s = scalars.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            let max_s = if (max_s - min_s).abs() < 1e-12 { min_s + 1.0 } else { max_s };
+            (min_s, max_s)
+        };
+
+        let tet_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("pt_tet_buffer"),
+            size: (raw.len() * std::mem::size_of::<f32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        {
+            let mut view = tet_buffer.slice(..).get_mapped_range_mut();
+            view.copy_from_slice(bytemuck::cast_slice(&raw));
+        }
+        tet_buffer.unmap();
+
+        let initial_uniform = crate::resources::types::ProjectedTetUniform {
+            density: 1.0,
+            scalar_min: scalar_range.0,
+            scalar_max: scalar_range.1,
+            _pad: 0.0,
+        };
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("pt_uniform_buf"),
+            size: std::mem::size_of::<crate::resources::types::ProjectedTetUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        {
+            let mut view = uniform_buffer.slice(..).get_mapped_range_mut();
+            view.copy_from_slice(bytemuck::bytes_of(&initial_uniform));
+        }
+        uniform_buffer.unmap();
+
+        let lut_view = self
+            .colormap_views
+            .get(colormap_id.0)
+            .unwrap_or(&self.fallback_lut_view);
+        let lut_sampler = &self.material_sampler;
+
+        let bgl = self
+            .pt_bind_group_layout
+            .as_ref()
+            .expect("pt_bind_group_layout must exist after ensure_pt_bind_group_layout");
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("pt_bind_group"),
+            layout: bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: tet_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(lut_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(lut_sampler),
+                },
+            ],
+        });
+
+        let id = ProjectedTetId(self.projected_tet_store.len());
+        self.projected_tet_store.push(GpuProjectedTetMesh {
+            tet_buffer,
+            tet_count,
+            bind_group,
+            uniform_buffer,
+            scalar_range,
+        });
+        Ok(id)
+    }
+
+    /// Replace the tet buffer and colormap for an existing projected-tet mesh in-place.
+    ///
+    /// Rebuilds the tet buffer with the new scalar attribute and recreates the bind
+    /// group with the new colormap LUT. The uniform buffer (density, scalar range) is
+    /// updated to reflect the new scalar range; the existing GPU buffer is reused.
+    pub fn replace_projected_tet_mesh(
+        &mut self,
+        device: &wgpu::Device,
+        id: ProjectedTetId,
+        data: &crate::resources::volume_mesh::VolumeMeshData,
+        scalar_attribute: &str,
+        colormap_id: ColormapId,
+    ) -> crate::error::ViewportResult<()> {
+        let (tet_positions, scalars) =
+            crate::resources::volume_mesh::decompose_to_tetrahedra(data, scalar_attribute);
+
+        let tet_count = tet_positions.len() as u32;
+
+        let mut raw: Vec<f32> = Vec::with_capacity(tet_count as usize * 16);
+        for (verts, scalar) in tet_positions.iter().zip(scalars.iter()) {
+            raw.extend_from_slice(&[verts[0][0], verts[0][1], verts[0][2], *scalar]);
+            raw.extend_from_slice(&[verts[1][0], verts[1][1], verts[1][2], 0.0]);
+            raw.extend_from_slice(&[verts[2][0], verts[2][1], verts[2][2], 0.0]);
+            raw.extend_from_slice(&[verts[3][0], verts[3][1], verts[3][2], 0.0]);
+        }
+
+        let scalar_range = if scalars.is_empty() {
+            (0.0f32, 1.0f32)
+        } else {
+            let min_s = scalars.iter().cloned().fold(f32::INFINITY, f32::min);
+            let max_s = scalars.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            let max_s = if (max_s - min_s).abs() < 1e-12 { min_s + 1.0 } else { max_s };
+            (min_s, max_s)
+        };
+
+        let tet_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("pt_tet_buffer"),
+            size: (raw.len() * std::mem::size_of::<f32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        {
+            let mut view = tet_buffer.slice(..).get_mapped_range_mut();
+            view.copy_from_slice(bytemuck::cast_slice(&raw));
+        }
+        tet_buffer.unmap();
+
+        // Ensure the bind group layout exists before borrowing self fields.
+        self.ensure_pt_bind_group_layout(device);
+
+        // Build the new bind group in a scope so all borrows end before the mutable update.
+        let bind_group = {
+            let bgl = self
+                .pt_bind_group_layout
+                .as_ref()
+                .expect("pt_bind_group_layout must exist after ensure_pt_bind_group_layout");
+            let lut_view = self
+                .colormap_views
+                .get(colormap_id.0)
+                .unwrap_or(&self.fallback_lut_view);
+            let lut_sampler = &self.material_sampler;
+            let uniform_buf = &self.projected_tet_store[id.0].uniform_buffer;
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("pt_bind_group"),
+                layout: bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: tet_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(lut_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::Sampler(lut_sampler),
+                    },
+                ],
+            })
+        };
+
+        let slot = &mut self.projected_tet_store[id.0];
+        slot.tet_buffer = tet_buffer;
+        slot.tet_count = tet_count;
+        slot.bind_group = bind_group;
+        slot.scalar_range = scalar_range;
+
+        Ok(())
     }
 }

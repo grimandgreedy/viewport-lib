@@ -36,9 +36,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let accum = textureSample(accum_tex, samp, in.uv);
     let r     = textureSample(reveal_tex, samp, in.uv).r;
 
-    // r is accumulated per-fragment alpha; if close to 0 no transparent pixels wrote here.
-    // Discard to avoid darkening regions with no transparent geometry.
-    if r < 0.001 {
+    // reveal starts at 1.0 (cleared) and decreases via dst*(1-alpha) per fragment.
+    // r near 1.0 means no transparent geometry wrote here; discard to skip the blend.
+    if r > 0.999 {
         discard;
     }
 

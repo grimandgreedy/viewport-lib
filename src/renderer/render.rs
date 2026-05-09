@@ -970,7 +970,7 @@ impl ViewportRenderer {
                 scene_items
                     .iter()
                     .any(|i| i.visible && i.material.opacity < 1.0)
-            };
+            } || frame.scene.transparent_volume_meshes.iter().any(|i| i.visible);
             if needs_oit {
                 let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
                 self.resources
@@ -1013,7 +1013,9 @@ impl ViewportRenderer {
                 r: hdr_clear_rgb[0] as f64,
                 g: hdr_clear_rgb[1] as f64,
                 b: hdr_clear_rgb[2] as f64,
-                a: bg_color[3] as f64,
+                // Clear alpha to 0.0 so OIT composite can signal presence via alpha > 0.
+                // Background pixels remain at alpha=0 and are detected in tone_map.wgsl.
+                a: 0.0,
             };
 
             let hdr_ts_writes = self.ts_query_set.as_ref().map(|qs| {
@@ -1514,7 +1516,7 @@ impl ViewportRenderer {
             scene_items
                 .iter()
                 .any(|i| i.visible && i.material.opacity < 1.0)
-        };
+        } || frame.scene.transparent_volume_meshes.iter().any(|i| i.visible);
 
         if has_transparent {
             // OIT targets already allocated in the pre-pass above.
@@ -1675,6 +1677,42 @@ impl ViewportRenderer {
                         oit_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                     }
                 }
+
+                // -----------------------------------------------------------
+                // Projected tetrahedra transparent volume meshes (Phase 6).
+                // -----------------------------------------------------------
+                if !frame.scene.transparent_volume_meshes.is_empty() {
+                    self.resources.ensure_pt_pipeline(device);
+                    if let Some(pipeline) = self.resources.pt_pipeline.as_ref() {
+                        oit_pass.set_pipeline(pipeline);
+                        oit_pass.set_bind_group(0, camera_bg, &[]);
+                        for item in &frame.scene.transparent_volume_meshes {
+                            if !item.visible {
+                                continue;
+                            }
+                            let Some(gpu) =
+                                self.resources.projected_tet_store.get(item.id.0)
+                            else {
+                                continue;
+                            };
+                            let (scalar_min, scalar_max) =
+                                item.scalar_range.unwrap_or(gpu.scalar_range);
+                            let uniform = crate::resources::ProjectedTetUniform {
+                                density: item.density,
+                                scalar_min,
+                                scalar_max,
+                                _pad: 0.0,
+                            };
+                            queue.write_buffer(
+                                &gpu.uniform_buffer,
+                                0,
+                                bytemuck::bytes_of(&uniform),
+                            );
+                            oit_pass.set_bind_group(1, &gpu.bind_group, &[]);
+                            oit_pass.draw(0..6, 0..gpu.tet_count);
+                        }
+                    }
+                }
             }
         }
 
@@ -1743,8 +1781,12 @@ impl ViewportRenderer {
                         let Some(mesh) = self.resources.mesh_store.get(gpu.mesh_id) else {
                             continue;
                         };
+                        let Some(vec_buf) = mesh.vector_attribute_buffers.get(&gpu.vector_attribute) else {
+                            continue;
+                        };
                         pass.set_bind_group(1, &gpu.bind_group, &[]);
                         pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        pass.set_vertex_buffer(1, vec_buf.slice(..));
                         pass.set_index_buffer(
                             mesh.index_buffer.slice(..),
                             wgpu::IndexFormat::Uint32,

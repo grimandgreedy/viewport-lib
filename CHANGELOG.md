@@ -1,8 +1,9 @@
 # Changelog
 
-## [0.12.3] (current, unreleased)
+## [0.12.3]
 
 ### Features
+- Transparent unstructured volume rendering: render all cells of a `VolumeMeshData` semi-transparently with interior scalar colormapping. Upload once with `upload_projected_tet_mesh` and reference each frame via `TransparentVolumeMeshItem` in `SceneFrame`. The density setting controls how opaque the volume appears per unit of ray path length. Supports hex, tet, pyramid, and wedge cells; works with clip planes and composites correctly against opaque geometry.
 - Surface Line Integral Convolution (LIC): visualizes tangential vector fields on mesh surfaces as directional streamline patterns. Flow vectors are uploaded as per-vertex attributes on the mesh and referenced by name each frame. The advection uses a viewport-sized per-pixel noise texture so contrast is consistent regardless of zoom level or surface scale. Three controls: number of advection steps (streak length), step size in pixels, and modulation strength.
 - Eye-Dome Lighting (EDL): depth-discontinuity shading in the tone-map composite. Pixels near depth edges are darkened in proportion to the local depth change, sharpening silhouettes and improving depth separation in point cloud and volume renders. Tunable radius and strength.
 - Unlit material mode: set `Material::unlit` to skip all lighting and output raw base color directly. Works on both the direct and instanced draw paths.
@@ -18,6 +19,10 @@
 - Implicit surface marching (`march_implicit_surface`): pixel loop is now parallel via rayon with no coordination overhead per pixel.
 - `compute_tangents`: Gram-Schmidt normalization is always parallel; the sdir/tdir accumulation phase uses a per-thread fold/reduce above 1024 triangles.
 - `extract_isosurface`: uses Z-slab decomposition above 64x64x64 cells. Each slab runs in parallel with its own edge cache; outputs are concatenated with adjusted index offsets.
+
+### Fixes
+- Fix EDL depth linearization
+- Dense transparent geometry revealing the background: when enough transparent layers overlapped at a pixel, the OIT composite step incorrectly discarded those pixels, showing the background rather than the accumulated color. The bug was harmless for typical surface transparency (few stacked layers) but visible with volumetric rendering at higher density settings.
 
 ## [0.12.2]
 

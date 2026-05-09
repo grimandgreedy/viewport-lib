@@ -39,16 +39,17 @@ use self::extra_impls::{
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColormap, BuiltinMatcap, CameraUniform,
     ClipVolumeUniform, ColormapId, GpuMesh, GpuTexture, LightUniform, LightsUniform, MatcapId,
-    MeshData, OverlayVertex, PointCloudGpuData, PolylineGpuData, ScreenImageGpuData,
-    SingleLightUniform, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
+    MeshData, OverlayVertex, PointCloudGpuData, PolylineGpuData, ProjectedTetId,
+    ScreenImageGpuData, SingleLightUniform, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
 };
 pub(crate) use self::types::{
     BatchMeta, BloomUniform, ClipPlanesUniform, ContactShadowUniform, FrustumPlane, FrustumUniform,
-    GlyphBaseMesh, GlyphGpuData, GridUniform, GroundPlaneUniform, InstanceAabb, InstanceData,
-    LabelGpuData, LicAdvectUniform, LicObjectUniform, LicSurfaceGpuData, ObjectUniform,
-    OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform,
-    OverlayTextVertex, OverlayUniform, PickInstance, SHADOW_ATLAS_SIZE, ShadowAtlasUniform,
-    SsaoUniform, StreamtubeGpuData, SubHighlightGpuData, ToneMapUniform, ViewportHdrState,
+    GlyphBaseMesh, GlyphGpuData, GridUniform, GroundPlaneUniform, GpuProjectedTetMesh,
+    InstanceAabb, InstanceData, LabelGpuData, LicAdvectUniform, LicObjectUniform,
+    LicSurfaceGpuData, ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform,
+    OverlayTextVertex, OverlayUniform, PickInstance, ProjectedTetUniform, SHADOW_ATLAS_SIZE,
+    ShadowAtlasUniform, SsaoUniform, StreamtubeGpuData, SubHighlightGpuData, ToneMapUniform,
+    ViewportHdrState,
 };
 pub use self::implicit::{
     GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,

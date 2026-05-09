@@ -89,9 +89,10 @@ use viewport_lib::{
     Gizmo, GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode,
     KeyCode, LightKind, LightSource, LightingSettings, ManipResult, ManipulationContext,
     ManipulationController, MatcapId, Material, MeshData, MeshId, NodeId, OrbitCameraController,
-    PerformancePolicy, PickAccelerator, PickId, PointCloudItem, PostProcessSettings, Projection,
-    RenderCamera, RuntimeMode, SceneFrame,
-    SceneRenderItem, ScrollUnits, Selection, ShadowFilter, SubSelectionRef, ViewPreset, ViewportContext,
+    PerformancePolicy, PickAccelerator, PickId, PointCloudItem, PostProcessSettings, ProjectedTetId,
+    Projection, RenderCamera, RuntimeMode, SceneFrame,
+    SceneRenderItem, ScrollUnits, Selection, ShadowFilter, SubSelectionRef,
+    ViewPreset, ViewportContext,
     ViewportEvent, ViewportRenderer, VolumeData, VolumeId,
     geometry::isoline::IsolineItem,
     gizmo::{self, compute_gizmo_scale},
@@ -526,6 +527,16 @@ fn main() -> eframe::Result {
                 vm_clip_offset: 0.0,
                 vm_clip_angle: 0.0,
                 vm_clipped_index: None,
+                vm_pt_hex_id:      None,
+                vm_pt_tet_id:      None,
+                vm_pt_tet_small_id: None,
+                vm_pt_tet_box_id:  None,
+                vm_pt_pyramid_id:  None,
+                vm_pt_wedge_id:    None,
+                vm_transparent: false,
+                vm_density: 0.5,
+                vm_pt_field:    showcase_26_volume_mesh::VmField::Latitude,
+                vm_pt_colormap: BuiltinColormap::Viridis,
 
                 cnq_mode: showcase_28_curve_network_quantities::CnqMode::EdgeScalar,
                 cnq_line_width: 4.0,
@@ -1062,6 +1073,21 @@ pub(crate) struct App {
     vm_clip_angle: f32,
     /// GPU mesh slot for the CPU-clipped volume mesh; allocated lazily on first clip.
     vm_clipped_index: Option<MeshId>,
+    /// Projected-tet handles per cell type (uploaded at startup with raw positions).
+    vm_pt_hex_id:      Option<ProjectedTetId>,
+    vm_pt_tet_id:      Option<ProjectedTetId>,
+    vm_pt_tet_small_id: Option<ProjectedTetId>,
+    vm_pt_tet_box_id:  Option<ProjectedTetId>,
+    vm_pt_pyramid_id:  Option<ProjectedTetId>,
+    vm_pt_wedge_id:    Option<ProjectedTetId>,
+    /// Whether to render in transparent (projected-tet) mode.
+    vm_transparent: bool,
+    /// Beer-Lambert extinction coefficient for transparent mode.
+    vm_density: f32,
+    /// Scalar field last used for the PT upload; triggers a rebuild when it differs from vm_field.
+    vm_pt_field: showcase_26_volume_mesh::VmField,
+    /// Colormap last used for the PT upload; triggers a rebuild when it differs from vm_colormap.
+    vm_pt_colormap: BuiltinColormap,
 
     // --- Showcase 28 ---
     cnq_mode: showcase_28_curve_network_quantities::CnqMode,
@@ -1808,6 +1834,7 @@ impl eframe::App for App {
                 || self.mode == ShowcaseMode::ImplicitSurface
                 || self.mode == ShowcaseMode::Lights
                 || self.mode == ShowcaseMode::SurfaceLIC
+                || self.mode == ShowcaseMode::VolumeMesh
             {
                 ui.painter()
                     .add(eframe::egui_wgpu::Callback::new_paint_callback(
@@ -2432,9 +2459,9 @@ impl App {
             ShowcaseMode::SurfaceLIC => {
                 showcase_38_surface_lic::build_lic_scene(self, renderer);
                 self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 10.0,
-                    orientation: glam::Quat::from_rotation_x(0.3),
+                    center: glam::Vec3::new(0.0, 0.0, 7.5),
+                    distance: 18.0,
+                    orientation: glam::Quat::from_rotation_x(0.45),
                     ..Camera::default()
                 };
             }
@@ -3895,6 +3922,28 @@ impl App {
                         }
                     }
                 }
+                // Rebuild PT meshes when the scalar field or colormap changes.
+                let pt_needs_rebuild = self.vm_built
+                    && (self.vm_field != self.vm_pt_field
+                        || self.vm_colormap != self.vm_pt_colormap);
+                if pt_needs_rebuild {
+                    if let Some(rs) = frame.wgpu_render_state() {
+                        let mut guard = rs.renderer.write();
+                        if let Some(renderer) =
+                            guard.callback_resources.get_mut::<ViewportRenderer>()
+                        {
+                            self.rebuild_pt_meshes(
+                                renderer,
+                                &rs.device,
+                                self.vm_field,
+                                self.vm_colormap,
+                            );
+                            self.vm_pt_field = self.vm_field;
+                            self.vm_pt_colormap = self.vm_colormap;
+                        }
+                    }
+                }
+
                 let items = self.vm_scene_items();
                 (items, Some(BG_COLOR), App::vm_lighting(), 0, 0)
             }
@@ -4163,6 +4212,15 @@ impl App {
         fd.interaction.xray_selected = adv_xray;
         fd.scene.generation = scene_gen;
         fd.interaction.selection_generation = sel_gen;
+
+        // Transparent volume mesh (Showcase 26) : submitted every frame when transparent mode is on.
+        if self.mode == ShowcaseMode::VolumeMesh {
+            if let Some(item) = self.vm_transparent_item() {
+                fd.scene.transparent_volume_meshes.push(item);
+                // OIT runs inside the HDR path; enable post-processing to activate it.
+                fd.effects.post_process.enabled = true;
+            }
+        }
 
         // Volume item (Showcase 17) : submitted every frame when in volume mode.
         if self.mode == ShowcaseMode::Volume
