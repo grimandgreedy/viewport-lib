@@ -1,20 +1,25 @@
 //! Showcase 37: Probe Widgets
 //!
-//! Demonstrates the three interactive 3D widgets from `viewport_lib::interaction::widgets`:
+//! Demonstrates the three interactive 3D widgets from `viewport_lib::interaction::widgets`
+//! applied to a point cloud:
 //!
-//! - **Line Probe**: drag either endpoint to reposition the probe path.
-//! - **Sphere Widget**: drag the center handle to move, drag the radius handle to resize.
-//! - **Box Widget**: drag the center handle to move, drag any of the six face handles to resize.
+//! - **Line Probe**: drag endpoints to reposition; reports distance and point count near the segment.
+//! - **Sphere Widget**: drag center/radius handles; select or deselect points inside the sphere.
+//! - **Box Widget**: drag center/face handles; select or deselect points inside the box.
 //!
-//! Suppress orbit while a widget handle is active (same pattern as ManipulationController).
+//! Selected points are highlighted in orange. Orbit is suppressed while a widget handle is active.
 
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
     BoxWidget, LineProbeWidget, SphereWidget, WidgetContext, WidgetResult,
-    scene::Scene,
-    Material, ViewportRenderer,
+    scene::Scene, ViewportRenderer,
 };
+
+const CLOUD_N: usize = 20000;
+const CLOUD_RANGE: f32 = 3.5;
+/// Radius around the line segment within which points are counted.
+const LINE_THRESHOLD: f32 = 0.4;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PwSubMode {
@@ -30,6 +35,8 @@ pub(crate) struct ProbeWidgetState {
     pub bw: BoxWidget,
     pub last_result: WidgetResult,
     pub suppress_orbit: bool,
+    pub cloud_positions: Vec<[f32; 3]>,
+    pub selected: Vec<bool>,
 }
 
 impl ProbeWidgetState {
@@ -39,43 +46,106 @@ impl ProbeWidgetState {
             glam::Vec3::new(2.0, 0.0, 0.0),
         );
         probe.line_width = 3.0;
+        probe.color = [1.0, 0.9, 0.1, 1.0];
+
+        let mut sphere = SphereWidget::new(glam::Vec3::ZERO, 2.0);
+        sphere.color = [1.0, 0.9, 0.1, 0.15];
+
+        let mut bw = BoxWidget::new(glam::Vec3::ZERO, glam::Vec3::splat(2.0));
+        bw.color = [1.0, 0.9, 0.1, 1.0];
+
+        let cloud_positions = generate_cloud(CLOUD_N);
+        let selected = vec![false; CLOUD_N];
 
         Self {
             sub_mode: PwSubMode::LineProbe,
             probe,
-            sphere: SphereWidget::new(glam::Vec3::ZERO, 1.5),
-            bw: BoxWidget::new(glam::Vec3::ZERO, glam::Vec3::splat(1.5)),
+            sphere,
+            bw,
             last_result: WidgetResult::None,
             suppress_orbit: false,
+            cloud_positions,
+            selected,
         }
+    }
+
+    pub fn selected_count(&self) -> usize {
+        self.selected.iter().filter(|&&s| s).count()
+    }
+
+    pub fn apply_sphere_selection(&mut self, add: bool) {
+        let c = self.sphere.center;
+        let r = self.sphere.radius;
+        for (i, p) in self.cloud_positions.iter().enumerate() {
+            if (glam::Vec3::from(*p) - c).length() <= r {
+                self.selected[i] = add;
+            }
+        }
+    }
+
+    pub fn apply_box_selection(&mut self, add: bool) {
+        let aabb = self.bw.aabb();
+        for (i, p) in self.cloud_positions.iter().enumerate() {
+            let p = glam::Vec3::from(*p);
+            if p.x >= aabb.min.x && p.x <= aabb.max.x
+                && p.y >= aabb.min.y && p.y <= aabb.max.y
+                && p.z >= aabb.min.z && p.z <= aabb.max.z
+            {
+                self.selected[i] = add;
+            }
+        }
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selected.iter_mut().for_each(|s| *s = false);
+    }
+
+    /// Count points within `LINE_THRESHOLD` world units of the probe segment.
+    pub fn points_near_line(&self) -> usize {
+        let start = self.probe.start;
+        let end = self.probe.end;
+        let dir = end - start;
+        let len = dir.length();
+        if len < 1e-6 {
+            return 0;
+        }
+        let dir_n = dir / len;
+        self.cloud_positions
+            .iter()
+            .filter(|p| {
+                let p = glam::Vec3::from(**p);
+                let t = ((p - start).dot(dir_n)).clamp(0.0, len);
+                (p - (start + dir_n * t)).length() <= LINE_THRESHOLD
+            })
+            .count()
     }
 }
 
+/// Deterministic LCG point cloud spread across [-CLOUD_RANGE, CLOUD_RANGE]^3.
+fn generate_cloud(n: usize) -> Vec<[f32; 3]> {
+    let mut s: u32 = 0xdeadbeef;
+    let mut next = move || -> f32 {
+        s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (s >> 8) as f32 / 16_777_216.0
+    };
+    (0..n)
+        .map(|_| {
+            [
+                next() * CLOUD_RANGE * 2.0 - CLOUD_RANGE,
+                next() * CLOUD_RANGE * 2.0 - CLOUD_RANGE,
+                next() * CLOUD_RANGE * 2.0 - CLOUD_RANGE,
+            ]
+        })
+        .collect()
+}
+
 impl App {
-    pub(crate) fn build_probe_widgets_scene(&mut self, renderer: &mut ViewportRenderer) {
-        // Upload a small reference mesh so the scene is not empty.
-        let mesh = self.upload_box(renderer);
-        let mut scene = Scene::new();
-        scene.add_named(
-            "Reference",
-            Some(mesh),
-            glam::Mat4::from_scale_rotation_translation(
-                glam::Vec3::splat(0.3),
-                glam::Quat::IDENTITY,
-                glam::Vec3::new(0.0, 0.0, -2.0),
-            ),
-            {
-                let mut m = Material::from_color([0.5, 0.5, 0.55]);
-                m.roughness = 0.8;
-                m
-            },
-        );
-        self.pw_scene = scene;
+    pub(crate) fn build_probe_widgets_scene(&mut self, _renderer: &mut ViewportRenderer) {
+        self.pw_scene = Scene::new();
         self.pw_state = ProbeWidgetState::new();
         self.pw_built = true;
     }
 
-    /// Update widget state from current input. Called inside the viewport response block.
     pub(crate) fn update_probe_widgets(&mut self, ctx_widget: WidgetContext) {
         let state = &mut self.pw_state;
         let result = match state.sub_mode {
@@ -108,29 +178,62 @@ impl App {
                 let e = state.probe.end;
                 ui.label(format!("Start:  [{:.2}, {:.2}, {:.2}]", s.x, s.y, s.z));
                 ui.label(format!("End:    [{:.2}, {:.2}, {:.2}]", e.x, e.y, e.z));
-                let len = (e - s).length();
-                ui.label(format!("Length: {:.3}", len));
-                if let Some(ep) = state.probe.hovered_endpoint() {
-                    ui.label(format!("Hover: endpoint {}", ep));
-                }
+                ui.label(format!("Length: {:.3}", (e - s).length()));
+                ui.separator();
+                ui.label(format!(
+                    "Points within {:.1} of line: {}",
+                    LINE_THRESHOLD,
+                    state.points_near_line()
+                ));
             }
             PwSubMode::Sphere => {
                 let c = state.sphere.center;
                 ui.label(format!("Center: [{:.2}, {:.2}, {:.2}]", c.x, c.y, c.z));
                 ui.label(format!("Radius: {:.3}", state.sphere.radius));
+                ui.separator();
+                ui.label(format!(
+                    "Selected: {} / {}",
+                    state.selected_count(),
+                    state.cloud_positions.len()
+                ));
+                ui.horizontal(|ui| {
+                    if ui.button("Select from region").clicked() {
+                        state.apply_sphere_selection(true);
+                    }
+                    if ui.button("Deselect from region").clicked() {
+                        state.apply_sphere_selection(false);
+                    }
+                });
+                if ui.button("Clear selection").clicked() {
+                    state.clear_selection();
+                }
             }
             PwSubMode::Box => {
                 let c = state.bw.center;
                 let h = state.bw.half_extents;
                 ui.label(format!("Center:       [{:.2}, {:.2}, {:.2}]", c.x, c.y, c.z));
                 ui.label(format!("Half-extents: [{:.2}, {:.2}, {:.2}]", h.x, h.y, h.z));
-                let size = h * 2.0;
-                ui.label(format!("Size:         [{:.2}, {:.2}, {:.2}]", size.x, size.y, size.z));
+                ui.separator();
+                ui.label(format!(
+                    "Selected: {} / {}",
+                    state.selected_count(),
+                    state.cloud_positions.len()
+                ));
+                ui.horizontal(|ui| {
+                    if ui.button("Select from region").clicked() {
+                        state.apply_box_selection(true);
+                    }
+                    if ui.button("Deselect from region").clicked() {
+                        state.apply_box_selection(false);
+                    }
+                });
+                if ui.button("Clear selection").clicked() {
+                    state.clear_selection();
+                }
             }
         }
 
         ui.separator();
-        ui.label("Drag a sphere handle to move it.");
         if state.suppress_orbit {
             ui.label("(Orbit suppressed: widget active)");
         }

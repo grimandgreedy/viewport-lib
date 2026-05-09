@@ -3,7 +3,7 @@
 ## [0.12.3] (current, unreleased)
 
 ### Features
-- Eye-Dome Lighting (EDL): depth-discontinuity shading pass in the tone-map composite step. Enable via `PostProcessSettings::edl_enabled`; tune edge sharpness with `edl_radius` (pixel ring distance, default 1.0) and `edl_strength` (darkening scale, default 1.0). Implemented entirely in `tone_map.wgsl` with no additional textures or passes.
+- Eye-Dome Lighting (EDL): depth-discontinuity shading pass in the tone-map composite step. Enable via `PostProcessSettings::edl_enabled`; tune edge sharpness with `edl_radius` and `edl_strength` (darkening scale).
 - `Material::unlit`: set to `true` to skip all lighting (Blinn-Phong, PBR, matcap) and output the raw base color directly. Works on both the direct and instanced draw paths.
 - `aabb_wireframe_polyline(aabb, color) -> PolylineItem`: convenience function that builds the 12 edges of an AABB as a `PolylineItem` (6 strips: bottom loop, top loop, 4 vertical edges).
 - Interactive 3D probe and region widgets in `interaction::widgets`:

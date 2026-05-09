@@ -1,7 +1,7 @@
 //! Sphere widget: draggable center handle and radius handle.
 
 use crate::interaction::clip_plane::ray_plane_intersection;
-use crate::renderer::{ClipObject, ClipShape, GlyphItem, GlyphType};
+use crate::renderer::{ClipObject, ClipShape, GlyphItem, GlyphType, PolylineItem};
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
 
@@ -140,6 +140,41 @@ impl SphereWidget {
             hovered: self.hovered_handle.is_some(),
             active: self.active_handle.is_some(),
             ..ClipObject::default()
+        }
+    }
+
+    /// Build a `PolylineItem` of three great circle rings (XY, XZ, YZ planes).
+    ///
+    /// Push into `fd.scene.polylines` for a scene-pass outline consistent with
+    /// how `BoxWidget::wireframe_item` is used. `id` is the pick ID (0 = not pickable).
+    pub fn wireframe_item(&self, id: u64) -> PolylineItem {
+        const STEPS: usize = 64;
+        let mut positions: Vec<[f32; 3]> = Vec::with_capacity(STEPS * 3 + 3);
+        let mut strip_lengths: Vec<u32> = Vec::with_capacity(3);
+        let c = self.center;
+        let r = self.radius;
+
+        for ring in 0..3_usize {
+            for i in 0..=STEPS {
+                let a = i as f32 * std::f32::consts::TAU / STEPS as f32;
+                let (s, co) = a.sin_cos();
+                let p = match ring {
+                    0 => glam::Vec3::new(co * r, s * r, 0.0),
+                    1 => glam::Vec3::new(co * r, 0.0, s * r),
+                    _ => glam::Vec3::new(0.0, co * r, s * r),
+                };
+                positions.push((c + p).to_array());
+            }
+            strip_lengths.push((STEPS + 1) as u32);
+        }
+
+        PolylineItem {
+            positions,
+            strip_lengths,
+            default_color: self.color,
+            line_width: 1.5,
+            id,
+            ..PolylineItem::default()
         }
     }
 
