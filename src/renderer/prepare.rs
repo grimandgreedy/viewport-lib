@@ -1065,12 +1065,9 @@ impl ViewportRenderer {
                     continue;
                 }
                 if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
-                    if let Some(vec_buf) = mesh.vector_attribute_buffers.get(&item.vector_attribute) {
-                        if let (Some(bgl), Some(noise_view), Some(noise_sampler)) = (
-                            &resources.lic_surface_bgl,
-                            &resources.lic_noise_view,
-                            &resources.lic_noise_sampler,
-                        ) {
+                    // Verify the vector attribute buffer exists before committing to this item.
+                    if mesh.vector_attribute_buffers.contains_key(&item.vector_attribute) {
+                        if let Some(bgl) = &resources.lic_surface_bgl {
                             use crate::resources::LicObjectUniform;
                             let model = item.model;
                             let obj_data = LicObjectUniform { model };
@@ -1081,6 +1078,8 @@ impl ViewportRenderer {
                                 mapped_at_creation: false,
                             });
                             queue.write_buffer(&obj_buf, 0, bytemuck::cast_slice(&[obj_data]));
+                            // Bind group (group 1): object uniform only.
+                            // Flow vectors are bound as vertex buffer 1 in the render pass.
                             let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                                 label: Some("lic_surface_item_bg"),
                                 layout: bgl,
@@ -1089,24 +1088,13 @@ impl ViewportRenderer {
                                         binding: 0,
                                         resource: obj_buf.as_entire_binding(),
                                     },
-                                    wgpu::BindGroupEntry {
-                                        binding: 1,
-                                        resource: vec_buf.as_entire_binding(),
-                                    },
-                                    wgpu::BindGroupEntry {
-                                        binding: 2,
-                                        resource: wgpu::BindingResource::TextureView(noise_view),
-                                    },
-                                    wgpu::BindGroupEntry {
-                                        binding: 3,
-                                        resource: wgpu::BindingResource::Sampler(noise_sampler),
-                                    },
                                 ],
                             });
                             self.lic_gpu_data.push(crate::resources::LicSurfaceGpuData {
                                 bind_group: bg,
                                 _object_uniform_buf: obj_buf,
                                 mesh_id: item.mesh_id,
+                                vector_attribute: item.vector_attribute.clone(),
                             });
                         }
                     }
@@ -1119,10 +1107,8 @@ impl ViewportRenderer {
                     let u = crate::resources::LicAdvectUniform {
                         steps: first.config.steps,
                         step_size: first.config.step_size,
-                        noise_scale: first.config.noise_scale,
                         vp_width: vw as f32,
                         vp_height: vh as f32,
-                        _pad: [0.0; 3],
                     };
                     queue.write_buffer(&hdr.lic_uniform_buf, 0, bytemuck::cast_slice(&[u]));
                 }

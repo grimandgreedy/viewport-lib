@@ -3388,55 +3388,22 @@ impl ViewportGpuResources {
         let _ = hdr_depth_stencil; // used in make_hdr_mesh closure above
 
         // --- Surface LIC shared resources ---
-        if self.lic_noise_view.is_none() {
-            // 128x128 tileable Rgba8Unorm noise texture (cheap Knuth hash).
-            let noise_data: Vec<u8> = (0u32..128 * 128)
-                .flat_map(|i| {
-                    let h = i.wrapping_mul(2654435761).wrapping_add(i >> 5);
-                    [h as u8, (h >> 8) as u8, (h >> 16) as u8, 255u8]
-                })
-                .collect();
-            let noise_tex = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("lic_noise"),
-                size: wgpu::Extent3d { width: 128, height: 128, depth_or_array_layers: 1 },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &noise_tex,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &noise_data,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(128 * 4),
-                    rows_per_image: Some(128),
-                },
-                wgpu::Extent3d { width: 128, height: 128, depth_or_array_layers: 1 },
-            );
-            let noise_view = noise_tex.create_view(&wgpu::TextureViewDescriptor::default());
-            let noise_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("lic_noise_sampler"),
-                address_mode_u: wgpu::AddressMode::Repeat,
-                address_mode_v: wgpu::AddressMode::Repeat,
-                address_mode_w: wgpu::AddressMode::Repeat,
+        if self.lic_noise_sampler.is_none() {
+            // Bilinear sampler used for lic_vector_texture in the advect pass.
+            let samp = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("lic_linear_sampler"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
                 ..Default::default()
             });
-            self.lic_noise_texture = Some(noise_tex);
-            self.lic_noise_view = Some(noise_view);
-            self.lic_noise_sampler = Some(noise_sampler);
+            self.lic_noise_sampler = Some(samp);
         }
 
-        // LIC surface BGL (group 1): object uniform, vector storage buffer, noise tex, sampler.
+        // LIC surface BGL (group 1): object uniform only.
+        // Flow vectors are passed as vertex buffer 1 (not a storage binding).
         if self.lic_surface_bgl.is_none() {
             let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("lic_surface_bgl"),
@@ -3449,32 +3416,6 @@ impl ViewportGpuResources {
                             has_dynamic_offset: false,
                             min_binding_size: None,
                         },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
                 ],
@@ -3543,7 +3484,7 @@ impl ViewportGpuResources {
                     bind_group_layouts: &[&self.camera_bind_group_layout, surface_bgl],
                     push_constant_ranges: &[],
                 });
-                // Vertex buffer: full Vertex stride but only position (location 0) declared.
+                // Vertex buffer 0: full Vertex stride, position at location 0.
                 let lic_vertex_layout = wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Vertex,
@@ -3553,13 +3494,23 @@ impl ViewportGpuResources {
                         format: wgpu::VertexFormat::Float32x3,
                     }],
                 };
+                // Vertex buffer 1: tightly-packed [f32;3] flow vectors at location 1.
+                let lic_flow_layout = wgpu::VertexBufferLayout {
+                    array_stride: 12,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[wgpu::VertexAttribute {
+                        offset: 0,
+                        shader_location: 1,
+                        format: wgpu::VertexFormat::Float32x3,
+                    }],
+                };
                 let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some("lic_surface_pipeline"),
                     layout: Some(&layout),
                     vertex: wgpu::VertexState {
                         module: &shader,
                         entry_point: Some("vs_main"),
-                        buffers: &[lic_vertex_layout],
+                        buffers: &[lic_vertex_layout, lic_flow_layout],
                         compilation_options: Default::default(),
                     },
                     fragment: Some(wgpu::FragmentState {
@@ -4318,6 +4269,46 @@ impl ViewportGpuResources {
         );
         let lic_output_view = lic_output_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
+        // Per-pixel white noise: one independent R8Unorm random value per screen pixel.
+        // Sampled with textureLoad (nearest) in lic_advect.wgsl to produce directional LIC
+        // contrast. Viewport-sized so one texel = one screen pixel -- no tiling artifacts.
+        let lic_noise_data: Vec<u8> = (0u32..w * h)
+            .map(|i| {
+                // xorshift32 mix of pixel index -- uniform [0,255] distribution.
+                let mut v = i.wrapping_add(1).wrapping_mul(2246822519);
+                v ^= v >> 13;
+                v ^= v << 17;
+                v ^= v >> 5;
+                v as u8
+            })
+            .collect();
+        let lic_noise_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("lic_noise"),
+            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &lic_noise_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &lic_noise_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(w),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+        let lic_noise_view = lic_noise_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
         let lic_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("lic_advect_uniform"),
             size: std::mem::size_of::<crate::resources::types::LicAdvectUniform>() as u64,
@@ -4326,7 +4317,6 @@ impl ViewportGpuResources {
         });
 
         let lic_advect_bgl = self.lic_advect_bgl.as_ref().expect("ensure_hdr_shared not called");
-        let lic_noise_view = self.lic_noise_view.as_ref().expect("ensure_hdr_shared not called");
         let lic_advect_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("lic_advect_bg"),
             layout: lic_advect_bgl,
@@ -4341,7 +4331,7 @@ impl ViewportGpuResources {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(lic_noise_view),
+                    resource: wgpu::BindingResource::TextureView(&lic_noise_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
@@ -4413,6 +4403,8 @@ impl ViewportGpuResources {
             lic_vector_view,
             lic_output_texture: lic_output_tex,
             lic_output_view,
+            lic_noise_texture: lic_noise_tex,
+            lic_noise_view,
             lic_advect_bind_group,
             lic_uniform_buf,
             size: [w, h],

@@ -2011,8 +2011,6 @@ impl ViewportGpuResources {
             lic_surface_bgl: None,
             lic_advect_pipeline: None,
             lic_advect_bgl: None,
-            lic_noise_texture: None,
-            lic_noise_view: None,
             lic_noise_sampler: None,
             lic_placeholder_view: None,
             bloom_placeholder_view: None,
@@ -2068,6 +2066,10 @@ impl ViewportGpuResources {
             oit_composite_bind_group: None,
             oit_composite_sampler: None,
             oit_size: [0, 0],
+            // Phase 6: Projected tetrahedra (lazily created).
+            pt_pipeline: None,
+            pt_bind_group_layout: None,
+            projected_tet_store: Vec::new(),
             // IBL / environment map resources.
             ibl_irradiance_view: None,
             ibl_prefiltered_view: None,

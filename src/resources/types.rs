@@ -57,6 +57,12 @@ pub enum BuiltinMatcap {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VolumeId(pub(crate) usize);
 
+/// Identifies a projected-tetrahedra mesh uploaded to the GPU for transparent volume rendering.
+///
+/// Obtained from [`ViewportGpuResources::upload_projected_tet_mesh`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ProjectedTetId(pub(crate) usize);
+
 /// Scalar attribute interpolation domain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttributeKind {
@@ -1170,19 +1176,50 @@ pub struct VolumeGpuData {
 }
 
 // ---------------------------------------------------------------------------
+// Projected tetrahedra GPU data types
+// ---------------------------------------------------------------------------
+
+/// Uniform buffer layout for the projected tetrahedra pass.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct ProjectedTetUniform {
+    pub(crate) density: f32,
+    pub(crate) scalar_min: f32,
+    pub(crate) scalar_max: f32,
+    pub(crate) _pad: f32,
+}
+
+/// Uploaded projected-tetrahedra mesh, stored persistently on the GPU.
+///
+/// The tet buffer holds one `GpuTet` per output tetrahedron (64 bytes each).
+/// Created by [`ViewportGpuResources::upload_projected_tet_mesh`].
+pub(crate) struct GpuProjectedTetMesh {
+    /// Storage buffer: `array<GpuTet>` on the GPU.
+    /// Kept alive here; accessed by the bind group, not read directly.
+    #[allow(dead_code)]
+    pub tet_buffer: wgpu::Buffer,
+    /// Number of tetrahedra (= number of instanced draws).
+    pub tet_count: u32,
+    /// Group 1 bind group: uniforms + tet storage buffer + colormap texture + sampler.
+    pub bind_group: wgpu::BindGroup,
+    /// PT uniform buffer (density, scalar_min, scalar_max). Written each frame.
+    pub uniform_buffer: wgpu::Buffer,
+    /// Auto-detected scalar range from the uploaded data (min, max).
+    pub scalar_range: (f32, f32),
+}
+
+// ---------------------------------------------------------------------------
 // Surface LIC GPU data types
 // ---------------------------------------------------------------------------
 
-/// Uniform for the LIC advect render pass (step counts, spatial scale, viewport dims).
+/// Uniform for the LIC advect render pass (step counts and viewport dims).
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct LicAdvectUniform {
     pub(crate) steps: u32,
     pub(crate) step_size: f32,
-    pub(crate) noise_scale: f32,
     pub(crate) vp_width: f32,
     pub(crate) vp_height: f32,
-    pub(crate) _pad: [f32; 3],
 }
 
 /// Uniform for the LIC surface pass (model matrix per object, 64 bytes).
@@ -1194,12 +1231,14 @@ pub(crate) struct LicObjectUniform {
 
 /// Per-frame GPU data for one Surface LIC item, created in `prepare()`.
 pub struct LicSurfaceGpuData {
-    /// Bind group (group 1): LicObjectUniform + vector storage buffer + noise texture + sampler.
+    /// Bind group (group 1): LicObjectUniform only. Flow vectors bound as vertex buffer 1.
     pub(crate) bind_group: wgpu::BindGroup,
     /// Owned uniform buffer for the model matrix. Kept alive by this struct.
     pub(crate) _object_uniform_buf: wgpu::Buffer,
     /// MeshId used to look up vertex + index buffers in the render pass.
     pub(crate) mesh_id: crate::resources::mesh_store::MeshId,
+    /// Name of the flow vector attribute for looking up the vertex buffer in the render pass.
+    pub(crate) vector_attribute: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -1244,15 +1283,19 @@ pub(crate) struct ViewportHdrState {
     pub contact_shadow_view: wgpu::TextureView,
 
     // --- Surface LIC ---
-    /// Encodes screen-space flow vector + noise per surface pixel (Rgba8Unorm, viewport-sized).
+    /// Encodes screen-space flow vector per surface pixel (Rgba8Unorm, viewport-sized).
     pub lic_vector_texture: wgpu::Texture,
     pub lic_vector_view: wgpu::TextureView,
     /// LIC intensity after advection (R8Unorm, viewport-sized). Read by tone_map.wgsl binding 7.
     pub lic_output_texture: wgpu::Texture,
     pub lic_output_view: wgpu::TextureView,
-    /// Bind group for the LIC advect render pass (reads lic_vector_texture + noise).
+    /// Per-pixel white noise (R8Unorm, viewport-sized). One independent random value per pixel.
+    /// Sampled with textureLoad (nearest) in lic_advect.wgsl to produce directional LIC contrast.
+    pub lic_noise_texture: wgpu::Texture,
+    pub lic_noise_view: wgpu::TextureView,
+    /// Bind group for the LIC advect render pass (reads lic_vector_texture + lic_noise_texture).
     pub lic_advect_bind_group: wgpu::BindGroup,
-    /// Uniform buffer for LicAdvectUniform (steps, step_size, noise_scale, viewport dims).
+    /// Uniform buffer for LicAdvectUniform (steps, step_size, viewport dims).
     pub lic_uniform_buf: wgpu::Buffer,
 
     // --- FXAA ---
@@ -1671,10 +1714,7 @@ pub struct ViewportGpuResources {
     pub(crate) lic_advect_pipeline: Option<wgpu::RenderPipeline>,
     /// Bind group layout for the LIC advect pass.
     pub(crate) lic_advect_bgl: Option<wgpu::BindGroupLayout>,
-    /// 128x128 Rgba8Unorm tileable noise texture, created once.
-    pub(crate) lic_noise_texture: Option<wgpu::Texture>,
-    pub(crate) lic_noise_view: Option<wgpu::TextureView>,
-    /// Wrap+linear sampler for the noise texture.
+    /// Bilinear sampler for the LIC advect pass (used to sample lic_vector_texture).
     pub(crate) lic_noise_sampler: Option<wgpu::Sampler>,
     /// 1x1 R8Unorm white placeholder bound to tone_map binding 7 when LIC is not active.
     pub(crate) lic_placeholder_view: Option<wgpu::TextureView>,
@@ -1797,6 +1837,14 @@ pub struct ViewportGpuResources {
     pub(crate) oit_composite_sampler: Option<wgpu::Sampler>,
     /// Last OIT target size [w, h]. Used to detect resize.
     pub(crate) oit_size: [u32; 2],
+
+    // --- Phase 6: Projected tetrahedra transparent volume rendering (lazily created) ---
+    /// Render pipeline for the projected tetrahedra pass. None until first item submitted.
+    pub(crate) pt_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for group 1 of the PT pipeline (uniforms + tet buffer + colormap).
+    pub(crate) pt_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    /// Uploaded projected-tet meshes. Index = ProjectedTetId value.
+    pub(crate) projected_tet_store: Vec<GpuProjectedTetMesh>,
 
     // --- IBL / environment map resources ---
     /// IBL irradiance equirect texture view (binding 7). None until environment uploaded.

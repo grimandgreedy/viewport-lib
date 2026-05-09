@@ -3,26 +3,21 @@
 ## [0.12.3] (current, unreleased)
 
 ### Features
-- Surface Line Integral Convolution (LIC): tangential vector field visualization on mesh surfaces. Submit `SurfaceLICItem` entries via `SceneFrame::lic_items`; tune advection quality with `SurfaceLICConfig` (steps, step size, noise scale, strength). Requires the HDR pipeline (`PostProcessSettings::enabled = true`). Upload per-vertex 3D flow vectors as `AttributeData::VertexVector` on the mesh.
-- Eye-Dome Lighting (EDL): depth-discontinuity shading pass in the tone-map composite step. Enable via `PostProcessSettings::edl_enabled`; tune edge sharpness with `edl_radius` and `edl_strength` (darkening scale).
-- `Material::unlit`: set to `true` to skip all lighting (Blinn-Phong, PBR, matcap) and output the raw base color directly. Works on both the direct and instanced draw paths.
-- `aabb_wireframe_polyline(aabb, color) -> PolylineItem`: convenience function that builds the 12 edges of an AABB as a `PolylineItem` (6 strips: bottom loop, top loop, 4 vertical edges).
+- Surface Line Integral Convolution (LIC): visualizes tangential vector fields on mesh surfaces as directional streamline patterns. Flow vectors are uploaded as per-vertex attributes on the mesh and referenced by name each frame. The advection uses a viewport-sized per-pixel noise texture so contrast is consistent regardless of zoom level or surface scale. Three controls: number of advection steps (streak length), step size in pixels, and modulation strength.
+- Eye-Dome Lighting (EDL): depth-discontinuity shading in the tone-map composite. Pixels near depth edges are darkened in proportion to the local depth change, sharpening silhouettes and improving depth separation in point cloud and volume renders. Tunable radius and strength.
+- Unlit material mode: set `Material::unlit` to skip all lighting and output raw base color directly. Works on both the direct and instanced draw paths.
+- `aabb_wireframe_polyline`: builds the 12 edges of an AABB as a polyline item ready to push into a scene frame.
 - Interactive 3D probe and region widgets in `interaction::widgets`:
-  - `LineProbeWidget`: two draggable endpoints in world space. Each frame call `update(&ctx)` and push `polyline_item()` and `handle_glyphs()` into `SceneFrame`. Read `start`/`end` for the current segment geometry.
-  - `SphereWidget`: draggable center and radius handle. Push `clip_object()` into `EffectsFrame` (rendered as a semi-transparent filled sphere with outline, no geometry clipping) and `handle_glyphs()` into `SceneFrame`. Read `center`/`radius`.
-  - `BoxWidget`: draggable center handle and six face handles (one per face). Push `wireframe_item()` and `handle_glyphs()` into `SceneFrame`. Read `center`/`half_extents`. Face handles resize the box while keeping the opposite face fixed.
-  - `WidgetContext`: per-frame input struct built from `CameraFrame` and egui/winit response signals (`drag_started`, `dragging`, `released`, cursor position).
-  - `WidgetResult`: `None` or `Updated`, returned from each `update()` call.
-  - All widgets suppress orbit when a handle is active via `is_active()`, following the same pattern as `ManipulationController`.
+  - `LineProbeWidget`: two draggable endpoints in world space. Exposes the current segment geometry each frame.
+  - `SphereWidget`: draggable center point and radius handle. Can be pushed as a clip object or used purely as a measurement widget.
+  - `BoxWidget`: draggable center and six independent face handles; each face handle resizes the box while keeping the opposite face fixed.
+  - All widgets suppress orbit while a handle is being dragged, following the same convention as `ManipulationController`.
 
 ### Performance
-- Volume mesh boundary extraction is now significantly faster on large meshes. HashMap face deduplication is replaced with a sort + linear scan, and the entry generation, sort, and winding-correction steps are parallelized with rayon. Both `extract_boundary_faces` and `extract_clipped_volume_faces` use the new path; meshes below 1024 cells fall back to sequential execution automatically.
-- `march_implicit_surface` / `march_implicit_surface_color`: pixel loop is now parallel via rayon. Each pixel owns its own output slot so there is no coordination overhead; all existing tests pass unchanged.
-- `compute_tangents`: phase 2 (Gram-Schmidt normalization) is always parallel; phase 1 (sdir/tdir accumulation) uses a per-thread fold/reduce above 1024 triangles and a sequential loop below.
-- `extract_isosurface`: uses Z-slab decomposition above 64x64x64 cells. Each slab gets its own edge cache and runs in parallel; slab outputs are concatenated with adjusted index offsets. Edges on slab boundaries are independently interpolated by each adjacent slab (geometrically coincident, invisible when rendered).
-
-### Fixes
-- Fix EDL depth linearization
+- Volume mesh boundary extraction is now significantly faster on large meshes. HashMap face deduplication is replaced with a sort + linear scan, and the entry generation, sort, and winding-correction steps are parallelized with rayon. Meshes below 1024 cells fall back to sequential execution automatically.
+- Implicit surface marching (`march_implicit_surface`): pixel loop is now parallel via rayon with no coordination overhead per pixel.
+- `compute_tangents`: Gram-Schmidt normalization is always parallel; the sdir/tdir accumulation phase uses a per-thread fold/reduce above 1024 triangles.
+- `extract_isosurface`: uses Z-slab decomposition above 64x64x64 cells. Each slab runs in parallel with its own edge cache; outputs are concatenated with adjusted index offsets.
 
 ## [0.12.2]
 

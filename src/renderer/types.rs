@@ -1322,27 +1322,32 @@ impl Default for SurfaceSubmission {
 /// Configuration for Surface Line Integral Convolution.
 ///
 /// Controls the advection quality and visual strength of the LIC effect.
-/// All fields have sensible defaults.
+/// All fields have sensible defaults via [`SurfaceLICConfig::default`].
+///
+/// The noise texture is viewport-sized (one independent random value per screen pixel).
+/// Advection kernel length is `steps * step_size` pixels in each direction. Longer kernels
+/// produce clearer, smoother streaks; shorter kernels give more contrast at lower GPU cost.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct SurfaceLICConfig {
-    /// Number of advection steps in each direction (forward + backward). Default: 20.
+    /// Number of advection steps taken in each direction (forward and backward) from each pixel.
+    /// More steps produce longer, clearer streaks at the cost of GPU time. Default: 20.
     pub steps: u32,
-    /// Pixel step size per advection step. Default: 1.0.
+    /// Distance advanced per step, in screen pixels. Together with `steps`, controls total
+    /// streak length: `steps * step_size` pixels each way. Default: 1.5.
     pub step_size: f32,
-    /// LIC blend strength [0..1]: 0 = no effect, 1 = full modulation. Default: 0.5.
+    /// How strongly the LIC intensity modulates the surface color. At 0 there is no effect;
+    /// at 1.0 the surface color is scaled by up to 2x brighter or darkened to black depending
+    /// on the local LIC value. Values above 1.0 increase contrast further. Default: 1.0.
     pub strength: f32,
-    /// Noise texture tiling scale. Larger values = finer noise pattern. Default: 4.0.
-    pub noise_scale: f32,
 }
 
 impl Default for SurfaceLICConfig {
     fn default() -> Self {
         Self {
             steps: 20,
-            step_size: 1.0,
-            strength: 0.5,
-            noise_scale: 4.0,
+            step_size: 1.5,
+            strength: 1.0,
         }
     }
 }
@@ -1382,6 +1387,34 @@ impl SurfaceLICItem {
     }
 }
 
+/// A transparent unstructured volume mesh rendered via projected tetrahedra.
+///
+/// Created by uploading a [`VolumeMeshData`](crate::resources::VolumeMeshData) with
+/// [`ViewportGpuResources::upload_projected_tet_mesh`] and submitting the returned
+/// [`ProjectedTetId`](crate::resources::ProjectedTetId) each frame.
+#[non_exhaustive]
+pub struct TransparentVolumeMeshItem {
+    /// Handle to the uploaded projected-tet mesh.
+    pub id: crate::resources::ProjectedTetId,
+    /// Beer-Lambert extinction coefficient (world-space units).
+    ///
+    /// Higher values make the volume more opaque.  Typical range: 0.1 to 5.0.
+    pub density: f32,
+    /// Override the auto-detected scalar range `[min, max]` used to normalize colormap lookup.
+    ///
+    /// `None` uses the range computed at upload time.
+    pub scalar_range: Option<(f32, f32)>,
+    /// Whether this item is drawn this frame.
+    pub visible: bool,
+}
+
+impl TransparentVolumeMeshItem {
+    /// Create a visible item with default density of 1.0 and auto scalar range.
+    pub fn new(id: crate::resources::ProjectedTetId) -> Self {
+        Self { id, density: 1.0, scalar_range: None, visible: true }
+    }
+}
+
 /// World-space scene content for one frame.
 ///
 /// Groups all renderable world-space content submitted to the renderer.
@@ -1418,6 +1451,8 @@ pub struct SceneFrame {
     pub gpu_mc_jobs: Vec<crate::resources::GpuMarchingCubesJob>,
     /// Surface LIC items to render this frame (Phase 4).
     pub lic_items: Vec<SurfaceLICItem>,
+    /// Transparent unstructured volume meshes rendered via projected tetrahedra (Phase 6).
+    pub transparent_volume_meshes: Vec<TransparentVolumeMeshItem>,
 }
 
 impl Default for SceneFrame {
@@ -1436,6 +1471,7 @@ impl Default for SceneFrame {
             gpu_implicit: Vec::new(),
             gpu_mc_jobs: Vec::new(),
             lic_items: Vec::new(),
+            transparent_volume_meshes: Vec::new(),
         }
     }
 }
