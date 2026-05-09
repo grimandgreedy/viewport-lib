@@ -16,12 +16,22 @@
 //! ```
 
 pub mod box_widget;
+pub mod cylinder;
+pub mod disk;
 pub mod line_probe;
+pub mod plane;
+pub mod polyline_widget;
 pub mod sphere;
+pub mod spline;
 
 pub use box_widget::BoxWidget;
+pub use cylinder::CylinderWidget;
+pub use disk::DiskWidget;
 pub use line_probe::LineProbeWidget;
+pub use plane::PlaneWidget;
+pub use polyline_widget::PolylineWidget;
 pub use sphere::SphereWidget;
+pub use spline::SplineWidget;
 
 use crate::renderer::RenderCamera;
 
@@ -47,6 +57,12 @@ pub struct WidgetContext {
     pub dragging: bool,
     /// True on the frame the left mouse button is released.
     pub released: bool,
+    /// True on the second click within the double-click time window.
+    ///
+    /// Used by `PolylineWidget` to insert or remove control points. Set from the
+    /// framework's double-click event (e.g. `egui::Response::double_clicked()`).
+    /// Leave `false` if the host does not need double-click interactions.
+    pub double_clicked: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -58,7 +74,7 @@ pub struct WidgetContext {
 pub enum WidgetResult {
     /// Nothing changed this frame.
     None,
-    /// The widget state changed (endpoint moved, size changed, etc.).
+    /// The widget state changed (endpoint moved, size changed, point added/removed, etc.).
     Updated,
 }
 
@@ -95,4 +111,25 @@ pub(super) fn ray_point_dist(
 ) -> f32 {
     let t = (point - ray_origin).dot(ray_dir).max(0.0);
     (ray_origin + ray_dir * t - point).length()
+}
+
+/// Returns a unit vector perpendicular to `n`.
+pub(super) fn any_perpendicular(n: glam::Vec3) -> glam::Vec3 {
+    let len = n.length();
+    if len < 1e-6 { return glam::Vec3::X; }
+    let n = n / len;
+    if n.x.abs() < 0.9 {
+        n.cross(glam::Vec3::X).normalize()
+    } else {
+        n.cross(glam::Vec3::Y).normalize()
+    }
+}
+
+/// Returns two unit vectors `(u, v)` that are mutually perpendicular and perpendicular to `n`.
+pub(super) fn any_perpendicular_pair(n: glam::Vec3) -> (glam::Vec3, glam::Vec3) {
+    let u = any_perpendicular(n);
+    let len = n.length();
+    let n_unit = if len > 1e-6 { n / len } else { glam::Vec3::Z };
+    let v = n_unit.cross(u);
+    (u, v)
 }

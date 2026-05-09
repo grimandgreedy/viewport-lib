@@ -24,6 +24,7 @@ impl ViewportGpuResources {
             &self.fallback_scalar_buf,
             &self.fallback_texture.view,
             &self.fallback_face_color_buf,
+            &self.fallback_warp_buf,
             vertices,
             indices,
         );
@@ -96,6 +97,7 @@ impl ViewportGpuResources {
             &self.fallback_scalar_buf,
             &self.fallback_texture.view,
             &self.fallback_face_color_buf,
+            &self.fallback_warp_buf,
             &vertices,
             &data.indices,
             Some(&normal_line_verts),
@@ -359,6 +361,7 @@ impl ViewportGpuResources {
             &self.fallback_scalar_buf,
             &self.fallback_texture.view,
             &self.fallback_face_color_buf,
+            &self.fallback_warp_buf,
             &vertices,
             &data.indices,
             Some(&normal_line_verts),
@@ -645,7 +648,7 @@ impl ViewportGpuResources {
                     let buf = device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some(&format!("vec_attr_{name}")),
                         size: byte_len,
-                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                         mapped_at_creation: true,
                     });
                     {
@@ -1040,6 +1043,7 @@ impl ViewportGpuResources {
         fallback_scalar_buf: &wgpu::Buffer,
         fallback_matcap_view: &wgpu::TextureView,
         fallback_face_color_buf: &wgpu::Buffer,
+        fallback_warp_buf: &wgpu::Buffer,
         vertices: &[Vertex],
         indices: &[u32],
     ) -> GpuMesh {
@@ -1054,6 +1058,7 @@ impl ViewportGpuResources {
             fallback_scalar_buf,
             fallback_matcap_view,
             fallback_face_color_buf,
+            fallback_warp_buf,
             vertices,
             indices,
             None,
@@ -1071,6 +1076,7 @@ impl ViewportGpuResources {
         fallback_scalar_buf: &wgpu::Buffer,
         fallback_matcap_view: &wgpu::TextureView,
         fallback_face_color_buf: &wgpu::Buffer,
+        fallback_warp_buf: &wgpu::Buffer,
         vertices: &[Vertex],
         indices: &[u32],
         normal_line_verts: Option<&[Vertex]>,
@@ -1147,6 +1153,9 @@ impl ViewportGpuResources {
             uv_vis_scale: 8.0,
             backface_policy: 0,
             backface_color: [0.0; 4],
+            has_warp: 0,
+            warp_scale: 1.0,
+            _pad_warp: [0; 2],
         };
         let object_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
@@ -1200,6 +1209,10 @@ impl ViewportGpuResources {
                     binding: 8,
                     resource: fallback_face_color_buf.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: fallback_warp_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -1232,6 +1245,9 @@ impl ViewportGpuResources {
             uv_vis_scale: 8.0,
             backface_policy: 0,
             backface_color: [0.0; 4],
+            has_warp: 0,
+            warp_scale: 1.0,
+            _pad_warp: [0; 2],
         };
         let normal_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),
@@ -1285,6 +1301,10 @@ impl ViewportGpuResources {
                     binding: 8,
                     resource: fallback_face_color_buf.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: fallback_warp_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -1323,7 +1343,7 @@ impl ViewportGpuResources {
             normal_line_count,
             object_uniform_buf,
             object_bind_group,
-            last_tex_key: (u64::MAX, u64::MAX, u64::MAX, u64::MAX, u64::MAX, u64::MAX),
+            last_tex_key: (u64::MAX, u64::MAX, u64::MAX, u64::MAX, u64::MAX, u64::MAX, u64::MAX),
             normal_uniform_buf,
             normal_bind_group,
             aabb,

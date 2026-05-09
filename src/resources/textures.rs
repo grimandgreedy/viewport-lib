@@ -285,15 +285,16 @@ impl ViewportGpuResources {
         lut_id: Option<ColormapId>,
         active_attr: Option<&str>,
         matcap_id: Option<crate::resources::MatcapId>,
+        warp_attr: Option<&str>,
     ) {
-        let attr_hash = active_attr
-            .map(|name| {
-                use std::hash::{Hash, Hasher};
-                let mut h = std::collections::hash_map::DefaultHasher::new();
-                name.hash(&mut h);
-                h.finish()
-            })
-            .unwrap_or(u64::MAX);
+        let hash_str = |name: &str| -> u64 {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            name.hash(&mut h);
+            h.finish()
+        };
+        let attr_hash = active_attr.map(|n| hash_str(n)).unwrap_or(u64::MAX);
+        let warp_hash = warp_attr.map(|n| hash_str(n)).unwrap_or(u64::MAX);
 
         let key = (
             albedo_id.unwrap_or(u64::MAX),
@@ -302,6 +303,7 @@ impl ViewportGpuResources {
             lut_id.map(|id| id.0 as u64).unwrap_or(u64::MAX),
             attr_hash,
             matcap_id.map(|id| id.index as u64).unwrap_or(u64::MAX),
+            warp_hash,
         );
 
         {
@@ -357,13 +359,21 @@ impl ViewportGpuResources {
             None => &self.fallback_face_color_buf,
         };
 
-        // Resolve matcap texture view : fallback to 1×1 white when no matcap active.
+        // Resolve matcap texture view : fallback to 1x1 white when no matcap active.
         let matcap_view: &wgpu::TextureView = match matcap_id {
             Some(id) if id.index < self.matcap_views.len() => &self.matcap_views[id.index],
             _ => self
                 .fallback_matcap_view
                 .as_ref()
                 .unwrap_or(&self.fallback_texture.view),
+        };
+
+        let warp_buf: &wgpu::Buffer = match warp_attr {
+            Some(name) => mesh
+                .vector_attribute_buffers
+                .get(name)
+                .unwrap_or(&self.fallback_warp_buf),
+            None => &self.fallback_warp_buf,
         };
 
         mesh.object_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -405,6 +415,10 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 8,
                     resource: face_color_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: warp_buf.as_entire_binding(),
                 },
             ],
         });

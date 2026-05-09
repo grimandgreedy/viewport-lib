@@ -414,6 +414,7 @@ impl ViewportRenderer {
                     && item.material.matcap_id.is_none()
                     && item.material.param_vis.is_none()
                     && !item.render_as_wireframe
+                    && item.warp_attribute.is_none()
                 {
                     continue;
                 }
@@ -506,6 +507,9 @@ impl ViewportRenderer {
                         }
                         _ => [0.0; 4],
                     },
+                    has_warp: if item.warp_attribute.is_some() { 1 } else { 0 },
+                    warp_scale: item.warp_scale,
+                    _pad_warp: [0; 2],
                 };
 
                 let normal_obj_uniform = ObjectUniform {
@@ -537,6 +541,9 @@ impl ViewportRenderer {
                     uv_vis_scale: 8.0,
                     backface_policy: 0,
                     backface_color: [0.0; 4],
+                    has_warp: 0,
+                    warp_scale: 1.0,
+                    _pad_warp: [0; 2],
                 };
 
                 // Write uniform data : use get() to read buffer references, then drop.
@@ -557,7 +564,7 @@ impl ViewportRenderer {
                     );
                 } // mesh borrow dropped here
 
-                // Rebuild the object bind group if material/attribute/LUT/matcap changed.
+                // Rebuild the object bind group if material/attribute/LUT/matcap/warp changed.
                 resources.update_mesh_texture_bind_group(
                     device,
                     item.mesh_id,
@@ -567,6 +574,7 @@ impl ViewportRenderer {
                     item.colormap_id,
                     item.active_attribute.as_ref().map(|a| a.name.as_str()),
                     item.material.matcap_id,
+                    item.warp_attribute.as_deref(),
                 );
             }
         }
@@ -1081,6 +1089,23 @@ impl ViewportRenderer {
                 let gpu_data = resources.upload_tube(device, queue, item);
                 if gpu_data.index_count > 0 {
                     self.tube_gpu_data.push(gpu_data);
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Phase 8.1 : Ribbon GPU data upload.
+        // ------------------------------------------------------------------
+        self.ribbon_gpu_data.clear();
+        if !frame.scene.ribbon_items.is_empty() {
+            resources.ensure_streamtube_pipeline(device);
+            for item in &frame.scene.ribbon_items {
+                if item.positions.is_empty() || item.strip_lengths.is_empty() {
+                    continue;
+                }
+                let gpu_data = resources.upload_ribbon(device, queue, item);
+                if gpu_data.index_count > 0 {
+                    self.ribbon_gpu_data.push(gpu_data);
                 }
             }
         }

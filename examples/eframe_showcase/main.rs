@@ -275,6 +275,12 @@ fn main() -> eframe::Result {
                 interact_built: false,
                 interact_gizmo_center: None,
                 interact_gizmo_scale: 1.0,
+                interact_spline: viewport_lib::SplineWidget::new(vec![
+                    glam::Vec3::new(-2.0, 0.0, 1.5),
+                    glam::Vec3::new(-0.5, 1.5, 1.5),
+                    glam::Vec3::new(0.5, -1.5, 1.5),
+                    glam::Vec3::new(2.0, 0.0, 1.5),
+                ]),
                 last_cursor_viewport: glam::Vec2::ZERO,
                 adv_scene: Scene::new(),
                 adv_selection: Selection::new(),
@@ -416,6 +422,7 @@ fn main() -> eframe::Result {
                 stream_render_mode: StreamRenderMode::Polylines,
                 stream_tube_radius: 0.06,
                 stream_tube_sides: 8,
+                stream_ribbon_width: 0.15,
                 stream_line_width: 4.0,
                 stream_color_by_speed: true,
                 stream_colormap: BuiltinColormap::Viridis,
@@ -522,6 +529,9 @@ fn main() -> eframe::Result {
                 sv_vertex_vecs: Vec::new(),
                 sv_face_vecs: Vec::new(),
                 sv_edge_vals: Vec::new(),
+                sv_warp_mesh_index: MeshId::from_index(0),
+                sv_warp_enabled: false,
+                sv_warp_scale: 0.3,
 
                 vm_built: false,
                 vm_mode: showcase_26_volume_mesh::VmMode::Hex,
@@ -663,6 +673,7 @@ fn main() -> eframe::Result {
 
                 tg_built: false,
                 tg_state: showcase_39_tensor_glyphs::TensorGlyphState::default(),
+                tg_mesh_id: None,
             }))
         }),
     )
@@ -686,6 +697,7 @@ pub(crate) enum StreamRenderMode {
     Polylines,
     Streamtube,
     GeneralTube,
+    Ribbon,
 }
 
 /// Sub-mode for Showcase 27 (camera framing).
@@ -852,6 +864,8 @@ pub(crate) struct App {
     pub(crate) interact_built: bool,
     interact_gizmo_center: Option<glam::Vec3>,
     interact_gizmo_scale: f32,
+    /// Spline widget shown in the Interaction showcase (Phase 8.3).
+    pub(crate) interact_spline: viewport_lib::SplineWidget,
     last_cursor_viewport: glam::Vec2,
 
     // --- Showcase 5 ---
@@ -1002,6 +1016,8 @@ pub(crate) struct App {
     stream_step_size: f32,
     /// Cross-section resolution for GeneralTube mode (number of sides).
     stream_tube_sides: u32,
+    /// Half-width of the ribbon in Ribbon mode.
+    stream_ribbon_width: f32,
     /// CPU-side streamline paths (one `Vec<[f32;3]>` per seed).
     pub(crate) stream_paths: Vec<Vec<[f32; 3]>>,
     /// Per-vertex speed values parallel to `stream_paths`.
@@ -1111,6 +1127,12 @@ pub(crate) struct App {
     pub(crate) sv_vertex_vecs: Vec<[f32; 2]>,
     /// Per-face intrinsic 2D vectors (torus / face mode).
     pub(crate) sv_face_vecs: Vec<[f32; 2]>,
+    /// Mesh upload index for the warp demo sphere.
+    pub(crate) sv_warp_mesh_index: MeshId,
+    /// Whether to apply vertex warp displacement in the warp sub-demo.
+    sv_warp_enabled: bool,
+    /// Scale factor for the warp displacement (maps to `warp_scale` on `SceneRenderItem`).
+    sv_warp_scale: f32,
     /// Per-directed-edge one-form values (plane / edge mode).
     pub(crate) sv_edge_vals: Vec<f32>,
 
@@ -1298,6 +1320,7 @@ pub(crate) struct App {
     // --- Showcase 39 ---
     pub(crate) tg_built: bool,
     pub(crate) tg_state: showcase_39_tensor_glyphs::TensorGlyphState,
+    pub(crate) tg_mesh_id: Option<MeshId>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1867,6 +1890,20 @@ impl eframe::App for App {
             }
 
             self.camera.set_aspect_ratio(rect.width(), rect.height());
+
+            // ----- Spline widget update (Showcase 4) -----
+            if self.mode == ShowcaseMode::Interaction && self.interact_built {
+                let render_cam = CameraFrame::from_camera(&self.camera, [rect.width(), rect.height()]).render_camera;
+                let widget_ctx = viewport_lib::WidgetContext {
+                    camera: render_cam,
+                    viewport_size: glam::Vec2::new(rect.width(), rect.height()),
+                    cursor_viewport: self.last_cursor_viewport,
+                    drag_started: response.drag_started(),
+                    dragging: response.dragged(),
+                    released: response.drag_stopped(),
+                };
+                self.interact_spline.update(&widget_ctx);
+            }
 
             // ----- Probe widgets update (Showcase 37) -----
             if self.mode == ShowcaseMode::ProbeWidgets && self.pw_built {
@@ -2564,12 +2601,11 @@ impl App {
                 };
             }
             ShowcaseMode::TensorGlyphs => {
-                showcase_39_tensor_glyphs::build_tensor_glyph_scene(self);
+                showcase_39_tensor_glyphs::build_tensor_glyph_scene(self, renderer);
                 self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 10.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(0.9),
+                    center: glam::Vec3::new(0.0, 0.0, 0.0),
+                    distance: 16.0,
+                    orientation: glam::Quat::from_rotation_x(0.15),
                     ..Camera::default()
                 };
             }
@@ -3985,7 +4021,11 @@ impl App {
 
             ShowcaseMode::SurfaceVectors => {
                 let surface_item = if self.sv_built {
-                    vec![self.sv_surface_item()]
+                    let mut items = vec![self.sv_surface_item()];
+                    if self.sv_warp_enabled {
+                        items.push(self.sv_warp_item());
+                    }
+                    items
                 } else {
                     vec![]
                 };
@@ -4210,7 +4250,8 @@ impl App {
                     ground_color: [0.8, 0.8, 0.8],
                     ..LightingSettings::default()
                 };
-                (vec![], Some(BG_COLOR), lighting, 0, 0)
+                let items = showcase_39_tensor_glyphs::beam_scene_items(self);
+                (items, Some(BG_COLOR), lighting, 0, 0)
             }
         };
 
@@ -4377,7 +4418,25 @@ impl App {
                 StreamRenderMode::GeneralTube => {
                     fd.scene.tube_items.push(self.make_stream_general_tube_item());
                 }
+                StreamRenderMode::Ribbon => {
+                    fd.scene.ribbon_items.push(self.make_stream_ribbon_item());
+                }
             }
+        }
+
+        // Spline widget polyline + handles (Showcase 4) : submitted every frame.
+        if self.mode == ShowcaseMode::Interaction && self.interact_built {
+            fd.scene.polylines.push(self.interact_spline.polyline_item(9900));
+            let render_cam = CameraFrame::from_camera(&self.camera, [w, h]).render_camera;
+            let spline_ctx = viewport_lib::WidgetContext {
+                camera: render_cam,
+                viewport_size: glam::Vec2::new(w, h),
+                cursor_viewport: self.last_cursor_viewport,
+                drag_started: false,
+                dragging: false,
+                released: false,
+            };
+            fd.scene.glyphs.push(self.interact_spline.handle_glyphs(9901, &spline_ctx));
         }
 
         // Surface vector glyphs (Showcase 25) : submitted every frame.

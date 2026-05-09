@@ -110,6 +110,10 @@ struct Object {
     uv_vis_scale: f32,          // offset 184 : tile frequency multiplier
     backface_policy: u32,       // offset 188 : 0=Cull 1=Identical 2=DiffColor 3=Tint 4..7=Pattern
     backface_color: vec4<f32>,  // offset 192
+    has_warp: u32,              // offset 208
+    warp_scale: f32,            // offset 212
+    _pad_warp0: u32,            // offset 216
+    _pad_warp1: u32,            // offset 220
 };
 
 struct ClipVolumeUB {
@@ -172,6 +176,7 @@ fn clip_volume_test(p: vec3<f32>) -> bool {
 @group(1) @binding(6) var<storage, read> scalar_buffer: array<f32>;
 @group(1) @binding(7) var matcap_texture: texture_2d<f32>;
 @group(1) @binding(8) var<storage, read> face_color_buffer: array<vec4<f32>>;
+@group(1) @binding(9) var<storage, read> warp_buffer: array<f32>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -199,7 +204,15 @@ struct VertexOut {
 @vertex
 fn vs_main(in: VertexIn) -> VertexOut {
     var out: VertexOut;
-    let world_pos = object.model * vec4<f32>(in.position, 1.0);
+    var local_pos = in.position;
+    if object.has_warp != 0u {
+        let wi = in.vertex_index * 3u;
+        let warp_len = arrayLength(&warp_buffer);
+        if wi + 2u < warp_len {
+            local_pos += vec3<f32>(warp_buffer[wi], warp_buffer[wi + 1u], warp_buffer[wi + 2u]) * object.warp_scale;
+        }
+    }
+    let world_pos = object.model * vec4<f32>(local_pos, 1.0);
     out.clip_pos = camera.view_proj * world_pos;
     out.color = in.color;
     out.world_pos = world_pos.xyz;

@@ -143,7 +143,10 @@ pub use interaction::manipulation::{
     ManipulationState, TransformDelta,
 };
 
-pub use interaction::widgets::{BoxWidget, LineProbeWidget, SphereWidget, WidgetContext, WidgetResult};
+pub use interaction::widgets::{
+    BoxWidget, CylinderWidget, DiskWidget, LineProbeWidget, PlaneWidget, PolylineWidget,
+    SphereWidget, SplineWidget, WidgetContext, WidgetResult,
+};
 
 pub use interaction::clip_plane::{
     ClipAxis, ClipPlaneContext, ClipPlaneController, ClipPlaneDelta, ClipPlaneHit, ClipPlaneResult,
@@ -173,7 +176,7 @@ pub use renderer::{
     PointCloudItem, PointRenderMode,
     aabb_wireframe_polyline, PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBarAnchor, ScalarBarItem,
     ScalarBarOrientation, SceneEffects,
-    SceneFrame, SceneRenderItem, ScreenImageItem,
+    RibbonItem, SceneFrame, SceneRenderItem, ScreenImageItem,
     ImageSliceItem, SliceAxis, ShadowFilter, StreamtubeItem, SurfaceLICConfig, SurfaceLICItem,
     SurfaceSubmission, ToneMapping, TubeItem,
     TransparentVolumeMeshItem,

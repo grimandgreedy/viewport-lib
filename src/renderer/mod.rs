@@ -22,7 +22,7 @@ pub use self::types::{
     PointCloudItem, PointRenderMode,
     aabb_wireframe_polyline, PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBarAnchor, ScalarBarItem,
     ScalarBarOrientation, SceneEffects,
-    SceneFrame, SceneRenderItem, ScreenImageItem,
+    RibbonItem, SceneFrame, SceneRenderItem, ScreenImageItem,
     ShadowFilter, SliceAxis, StreamtubeItem, SurfaceLICConfig, SurfaceLICItem, SurfaceSubmission,
     ImageSliceItem, TensorGlyphItem, ToneMapping, TubeItem,
     TransparentVolumeMeshItem,
@@ -183,6 +183,8 @@ pub struct ViewportRenderer {
     streamtube_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
     /// Per-frame general tube GPU data, rebuilt in prepare(), consumed in paint() (Phase 3).
     tube_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
+    /// Per-frame ribbon GPU data, rebuilt in prepare(), consumed in paint() (Phase 8.1).
+    ribbon_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
     /// Per-frame image slice GPU data, rebuilt in prepare(), consumed in paint() (Phase 3).
     image_slice_gpu_data: Vec<crate::resources::ImageSliceGpuData>,
     /// Per-frame Surface LIC GPU data, rebuilt in prepare(), consumed in paint() (Phase 4).
@@ -313,6 +315,7 @@ impl ViewportRenderer {
             volume_gpu_data: Vec::new(),
             streamtube_gpu_data: Vec::new(),
             tube_gpu_data: Vec::new(),
+            ribbon_gpu_data: Vec::new(),
             image_slice_gpu_data: Vec::new(),
             lic_gpu_data: Vec::new(),
             implicit_gpu_data: Vec::new(),
@@ -762,7 +765,8 @@ impl ViewportRenderer {
             camera_bg,
             &self.tube_gpu_data,
             &self.image_slice_gpu_data,
-            &self.tensor_glyph_gpu_data
+            &self.tensor_glyph_gpu_data,
+            &self.ribbon_gpu_data
         );
     }
 
@@ -803,7 +807,8 @@ impl ViewportRenderer {
             camera_bg,
             &self.tube_gpu_data,
             &self.image_slice_gpu_data,
-            &self.tensor_glyph_gpu_data
+            &self.tensor_glyph_gpu_data,
+            &self.ribbon_gpu_data
         );
     }
 

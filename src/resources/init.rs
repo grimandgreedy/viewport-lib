@@ -257,6 +257,17 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
+                // binding 9: warp vector storage buffer (VERTEX, read-only)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 9,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -1532,6 +1543,18 @@ impl ViewportGpuResources {
         }
         fallback_face_color_buf.unmap();
 
+        let fallback_warp_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("fallback_warp_buf"),
+            size: 12, // one vec3<f32>
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        {
+            let mut view = fallback_warp_buf.slice(..).get_mapped_range_mut();
+            view.copy_from_slice(&[0u8; 12]);
+        }
+        fallback_warp_buf.unmap();
+
         // ------------------------------------------------------------------
         // Hardcoded unit cube mesh (test scene object)
         // Created here : after fallback textures : so the combined bind group
@@ -1549,6 +1572,7 @@ impl ViewportGpuResources {
             &fallback_scalar_buf,
             &fallback_texture.view,
             &fallback_face_color_buf,
+            &fallback_warp_buf,
             &cube_verts,
             &cube_indices,
         );
@@ -2032,6 +2056,7 @@ impl ViewportGpuResources {
             fallback_lut_view,
             fallback_scalar_buf,
             fallback_face_color_buf,
+            fallback_warp_buf,
             builtin_colormap_ids: None,
             colormaps_initialized: false,
             point_cloud_pipeline: None,

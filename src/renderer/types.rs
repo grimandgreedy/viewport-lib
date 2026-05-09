@@ -433,6 +433,15 @@ pub struct SceneRenderItem {
     /// Render this item as a wireframe regardless of the global `wireframe_mode` setting.
     /// Default: false.
     pub render_as_wireframe: bool,
+    /// Named vector attribute (from `AttributeData::VertexVector`) used to displace
+    /// vertex positions in the vertex shader. `None` = no warp. See also `warp_scale`.
+    ///
+    /// The attribute must be uploaded as part of the mesh's `MeshData::attributes` with
+    /// kind `AttributeData::VertexVector`. The vertex shader applies:
+    /// `local_pos += warp_scale * warp_buffer[vertex_index]` before the model transform.
+    pub warp_attribute: Option<String>,
+    /// Scale factor applied to the warp vector. Default: 1.0.
+    pub warp_scale: f32,
 }
 
 impl Default for SceneRenderItem {
@@ -450,6 +459,8 @@ impl Default for SceneRenderItem {
             nan_color: None,
             pick_id: PickId::NONE,
             render_as_wireframe: false,
+            warp_attribute: None,
+            warp_scale: 1.0,
         }
     }
 }
@@ -901,6 +912,59 @@ impl Default for TubeItem {
             radius: 0.05,
             radius_attribute: None,
             sides: 8,
+            scalars: Vec::new(),
+            scalar_range: None,
+            colormap_id: None,
+            color: [1.0, 1.0, 1.0, 1.0],
+            id: 0,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 8.1 : Ribbon representation
+// ---------------------------------------------------------------------------
+
+/// A ribbon strip rendered as a flat quad surface swept along a path.
+///
+/// Each strip in `strip_lengths` is swept from `positions`. The ribbon lies in
+/// the plane defined by the parallel-transport frame or the optional
+/// `twist_attribute` vectors. Width can be uniform or per-point.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct RibbonItem {
+    /// World-space positions for all strips, concatenated.
+    pub positions: Vec<[f32; 3]>,
+    /// Number of vertices per individual strip.
+    pub strip_lengths: Vec<u32>,
+    /// Uniform ribbon half-width in world-space units. Default: `0.1`.
+    pub width: f32,
+    /// Optional per-point widths. When set, overrides `width` at each point.
+    pub width_attribute: Option<Vec<f32>>,
+    /// Optional per-point direction vectors that orient the ribbon face normal.
+    /// When set, the ribbon is aligned with the projection of this vector onto
+    /// the plane perpendicular to the local tangent.
+    pub twist_attribute: Option<Vec<[f32; 3]>>,
+    /// Optional per-point scalar values for LUT coloring. Empty = use `color`.
+    pub scalars: Vec<f32>,
+    /// Scalar range for LUT mapping. `None` = auto from data min/max.
+    pub scalar_range: Option<(f32, f32)>,
+    /// Colormap for scalar coloring. `None` = default builtin (viridis).
+    pub colormap_id: Option<crate::resources::ColormapId>,
+    /// Flat RGBA color used when `scalars` is empty. Default: opaque white.
+    pub color: [f32; 4],
+    /// Unique ID (reserved for picking). Default: 0.
+    pub id: u64,
+}
+
+impl Default for RibbonItem {
+    fn default() -> Self {
+        Self {
+            positions: Vec::new(),
+            strip_lengths: Vec::new(),
+            width: 0.1,
+            width_attribute: None,
+            twist_attribute: None,
             scalars: Vec::new(),
             scalar_range: None,
             colormap_id: None,
@@ -1634,6 +1698,8 @@ pub struct SceneFrame {
     pub image_slices: Vec<ImageSliceItem>,
     /// Tensor glyph items to render this frame (Phase 5).
     pub tensor_glyphs: Vec<TensorGlyphItem>,
+    /// Ribbon items to render this frame (Phase 8.1).
+    pub ribbon_items: Vec<RibbonItem>,
 }
 
 impl Default for SceneFrame {
@@ -1656,6 +1722,7 @@ impl Default for SceneFrame {
             tube_items: Vec::new(),
             image_slices: Vec::new(),
             tensor_glyphs: Vec::new(),
+            ribbon_items: Vec::new(),
         }
     }
 }
@@ -2978,7 +3045,7 @@ macro_rules! emit_draw_calls {
 ///
 /// Called by both `paint` and `paint_to` after `emit_draw_calls!` to render scivis layers.
 macro_rules! emit_scivis_draw_calls {
-    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $volume_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $image_slice_gpu_data:expr, $tensor_glyph_gpu_data:expr) => {{
+    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $volume_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $image_slice_gpu_data:expr, $tensor_glyph_gpu_data:expr, $ribbon_gpu_data:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let camera_bg: &wgpu::BindGroup = $camera_bg;
@@ -3109,6 +3176,24 @@ macro_rules! emit_scivis_draw_calls {
                         wgpu::IndexFormat::Uint32,
                     );
                     render_pass.draw_indexed(0..tg.mesh_index_count, 0, 0..tg.instance_count);
+                }
+            }
+        }
+
+        // Ribbon pass (Phase 8.1 : flat quad strips, reuses streamtube pipeline).
+        if !$ribbon_gpu_data.is_empty() {
+            if let Some(ref pipeline) = resources.streamtube_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for ribbon in $ribbon_gpu_data.iter() {
+                    if ribbon.index_count == 0 {
+                        continue;
+                    }
+                    render_pass.set_bind_group(1, &ribbon.uniform_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, ribbon.vertex_buffer.slice(..));
+                    render_pass
+                        .set_index_buffer(ribbon.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.draw_indexed(0..ribbon.index_count, 0, 0..1);
                 }
             }
         }

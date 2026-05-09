@@ -446,9 +446,12 @@ pub(crate) struct ObjectUniform {
     pub(crate) uv_vis_scale: f32,        //   4 bytes, offset 184
     pub(crate) backface_policy: u32, //   4 bytes, offset 188  (0=Cull 1=Identical 2=DifferentColor)
     pub(crate) backface_color: [f32; 4], //  16 bytes, offset 192
+    pub(crate) has_warp: u32,            //   4 bytes, offset 208
+    pub(crate) warp_scale: f32,          //   4 bytes, offset 212
+    pub(crate) _pad_warp: [u32; 2],      //   8 bytes, offset 216
 }
 
-const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 208);
+const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 224);
 
 /// Per-instance GPU data for instanced rendering. Matches the WGSL `InstanceData` struct.
 ///
@@ -1034,9 +1037,9 @@ pub struct GpuMesh {
     /// Texture views are the fallback 1×1 textures by default; rebuilt when material
     /// texture assignment changes (tracked via `last_tex_key`).
     pub object_bind_group: wgpu::BindGroup,
-    /// Last texture/attribute key `(albedo_id, normal_map_id, ao_map_id, lut_id, attr_name_hash, matcap_id)`
+    /// Last texture/attribute key `(albedo_id, normal_map_id, ao_map_id, lut_id, attr_name_hash, matcap_id, warp_attr_hash)`
     /// used to build `object_bind_group`. `u64::MAX` = fallback / none for that slot.
-    pub(crate) last_tex_key: (u64, u64, u64, u64, u64, u64),
+    pub(crate) last_tex_key: (u64, u64, u64, u64, u64, u64, u64),
     /// Per-named-attribute GPU storage buffers (f32 per vertex, STORAGE usage).
     pub attribute_buffers: std::collections::HashMap<String, wgpu::Buffer>,
     /// Scalar range `(min, max)` per attribute, computed at upload time.
@@ -1787,6 +1790,8 @@ pub struct ViewportGpuResources {
     pub(crate) fallback_scalar_buf: wgpu::Buffer,
     /// Fallback 16-byte zero storage buffer (bound to binding 8 when no face color attribute is active).
     pub(crate) fallback_face_color_buf: wgpu::Buffer,
+    /// Fallback 12-byte zero storage buffer (bound to binding 9 when no warp attribute is active).
+    pub(crate) fallback_warp_buf: wgpu::Buffer,
     /// IDs of built-in preset colormaps, in BuiltinColormap discriminant order.
     /// `None` until `ensure_colormaps_initialized()` has been called.
     pub(crate) builtin_colormap_ids: Option<[ColormapId; 10]>,

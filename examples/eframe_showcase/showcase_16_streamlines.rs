@@ -8,7 +8,7 @@
 
 use crate::{App, StreamRenderMode};
 use eframe::egui;
-use viewport_lib::{BuiltinColormap, ColormapId, PolylineItem, StreamtubeItem, TubeItem};
+use viewport_lib::{BuiltinColormap, ColormapId, PolylineItem, RibbonItem, StreamtubeItem, TubeItem};
 
 impl App {
     /// One-time CPU setup for Showcase 16.
@@ -41,6 +41,10 @@ impl App {
                 self.stream_render_mode = StreamRenderMode::GeneralTube;
                 self.stream_use_tubes = false;
             }
+            if ui.radio(self.stream_render_mode == StreamRenderMode::Ribbon, "Ribbon").clicked() {
+                self.stream_render_mode = StreamRenderMode::Ribbon;
+                self.stream_use_tubes = false;
+            }
         });
 
         ui.separator();
@@ -59,6 +63,10 @@ impl App {
                 ui.add(egui::Slider::new(&mut self.stream_tube_radius, 0.01..=0.3).step_by(0.01));
                 ui.label("Cross-section sides:");
                 ui.add(egui::Slider::new(&mut self.stream_tube_sides, 3..=24).step_by(1.0));
+            }
+            StreamRenderMode::Ribbon => {
+                ui.label("Ribbon half-width:");
+                ui.add(egui::Slider::new(&mut self.stream_ribbon_width, 0.02..=0.5).step_by(0.01));
             }
         }
 
@@ -180,6 +188,23 @@ impl App {
         item.strip_lengths = strip_lengths;
         item.radius = self.stream_tube_radius;
         item.color = self.stream_flat_color;
+        item
+    }
+
+    /// Build a `RibbonItem` from cached stream paths and current control state.
+    pub(crate) fn make_stream_ribbon_item(&self) -> RibbonItem {
+        let (positions, strip_lengths, scalars) =
+            flatten_paths(&self.stream_paths, &self.stream_scalars);
+        let mut item = RibbonItem::default();
+        item.positions = positions;
+        item.strip_lengths = strip_lengths;
+        item.width = self.stream_ribbon_width;
+        if self.stream_color_by_speed {
+            item.scalars = scalars;
+            item.colormap_id = Some(ColormapId(self.stream_colormap as usize));
+        } else {
+            item.color = self.stream_flat_color;
+        }
         item
     }
 }
