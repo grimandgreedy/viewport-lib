@@ -128,6 +128,9 @@ pub(crate) struct ViewportSlot {
     /// Per-viewport dynamic resolution intermediate render target.
     /// `None` when render_scale == 1.0 or not yet initialised.
     pub dyn_res: Option<crate::resources::dyn_res::DynResTarget>,
+    /// Per-viewport intermediate render target for the HDR eframe callback path.
+    /// `None` until the first `prepare_hdr_callback` call for this viewport.
+    pub hdr_callback: Option<crate::resources::dyn_res::HdrCallbackTarget>,
     /// Cached GPU data for sub-object highlight rendering.
     /// `None` when no sub-object selection is active.
     pub sub_highlight: Option<crate::resources::SubHighlightGpuData>,
@@ -636,6 +639,7 @@ impl ViewportRenderer {
                 sub_highlight: None,
                 sub_highlight_generation: u64::MAX,
                 dyn_res: None,
+                hdr_callback: None,
             });
         }
     }

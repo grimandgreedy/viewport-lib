@@ -239,4 +239,68 @@ impl ViewportGpuResources {
             surface_size,
         }
     }
+
+    /// Create a [`HdrCallbackTarget`] at `size` for use with the eframe HDR callback path.
+    ///
+    /// The shared pipeline and sampler must already exist — call
+    /// [`ensure_dyn_res_pipeline`](Self::ensure_dyn_res_pipeline) first.
+    pub(crate) fn create_hdr_callback_target(
+        &self,
+        device: &wgpu::Device,
+        size: [u32; 2],
+    ) -> HdrCallbackTarget {
+        let [w, h] = size;
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("hdr_callback_target"),
+            size: wgpu::Extent3d { width: w.max(1), height: h.max(1), depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.target_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+
+        let blit_bind_group = {
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let bgl = self.dyn_res_upscale_bgl.as_ref().unwrap();
+            let sampler = self.dyn_res_linear_sampler.as_ref().unwrap();
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("hdr_callback_blit_bg"),
+                layout: bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                ],
+            })
+        };
+
+        HdrCallbackTarget { texture, blit_bind_group, size }
+    }
+}
+
+/// Per-viewport intermediate render target for the HDR eframe callback path.
+///
+/// Allocated when [`prepare_hdr_callback`](crate::ViewportRenderer::prepare_hdr_callback)
+/// is first called for a viewport and recreated when the viewport size changes.
+/// The full HDR pipeline (OIT, EDL, tone-map) renders into `texture`; `blit_bind_group`
+/// is then used by
+/// [`paint_hdr_blit`](crate::ViewportRenderer::paint_hdr_blit) to copy the result
+/// into the egui render pass.
+pub(crate) struct HdrCallbackTarget {
+    /// Intermediate LDR color texture (same format as `target_format`).
+    ///
+    /// Stored so we can create a fresh `TextureView` each frame inside
+    /// `prepare_hdr_callback`, avoiding a simultaneous mutable + immutable borrow.
+    pub texture: wgpu::Texture,
+    /// Bind group for the blit pass: `texture` view + linear sampler.
+    pub blit_bind_group: wgpu::BindGroup,
+    /// Dimensions `[w, h]`.
+    pub size: [u32; 2],
 }
