@@ -536,6 +536,144 @@ impl ViewportRenderer {
         }
     }
 
+    /// Run the full HDR pipeline (OIT, EDL, tone-map) for the eframe callback model.
+    ///
+    /// This is the HDR counterpart of
+    /// [`prepare_ldr_dyn_res`](Self::prepare_ldr_dyn_res) for use when
+    /// `frame.effects.post_process.enabled` is `true`.
+    ///
+    /// Internally this method:
+    /// 1. Calls [`prepare`](Self::prepare) to upload uniforms and run the shadow pass.
+    /// 2. Ensures a per-viewport intermediate texture at the viewport's native resolution.
+    /// 3. Calls the full render pipeline (including OIT and EDL) into that texture.
+    ///
+    /// The returned [`wgpu::CommandBuffer`] must be returned from
+    /// `CallbackTrait::prepare` so eframe submits it **before** the egui render pass.
+    ///
+    /// Call [`paint_hdr_blit`](Self::paint_hdr_blit) from `CallbackTrait::paint` to
+    /// composite the intermediate texture into the egui render pass.
+    pub fn prepare_hdr_callback(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &FrameData,
+    ) -> wgpu::CommandBuffer {
+        self.prepare(device, queue, frame);
+
+        let vp_idx = frame.camera.viewport_index;
+        let w = (frame.camera.viewport_size[0] as u32).max(1);
+        let h = (frame.camera.viewport_size[1] as u32).max(1);
+
+        // Ensure the blit pipeline (required by create_hdr_callback_target).
+        self.resources.ensure_dyn_res_pipeline(device);
+        self.resources.ensure_dyn_res_ds_pipeline(device);
+
+        // Create or resize the per-viewport intermediate texture.
+        self.ensure_viewport_slot(device, vp_idx);
+        let needs_create = match self.viewport_slots[vp_idx].hdr_callback.as_ref() {
+            None => true,
+            Some(t) => t.size != [w, h],
+        };
+        if needs_create {
+            let target = self.resources.create_hdr_callback_target(device, [w, h]);
+            self.viewport_slots[vp_idx].hdr_callback = Some(target);
+        }
+
+        // Create a fresh TextureView from the stored Texture.
+        // This owned view does not borrow viewport_slots, allowing the subsequent
+        // mutable call to render_frame_internal without a borrow conflict.
+        let output_view = self.viewport_slots[vp_idx]
+            .hdr_callback
+            .as_ref()
+            .unwrap()
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        self.render_frame_internal(device, queue, &output_view, vp_idx, frame)
+    }
+
+    /// Blit the HDR intermediate texture into the egui render pass.
+    ///
+    /// Call from `CallbackTrait::paint` after
+    /// [`prepare_hdr_callback`](Self::prepare_hdr_callback) has been called for the
+    /// same frame and viewport. Emits a fullscreen triangle into `render_pass`.
+    pub fn paint_hdr_blit(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'static>,
+        frame: &FrameData,
+    ) {
+        let vp_idx = frame.camera.viewport_index;
+        if let Some(hc) = self.viewport_slots.get(vp_idx).and_then(|s| s.hdr_callback.as_ref()) {
+            if let Some(pipeline) = &self.resources.dyn_res_upscale_ds_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, &hc.blit_bind_group, &[]);
+                render_pass.draw(0..3, 0..1);
+            }
+        }
+    }
+
+    /// Unified prepare step for the eframe `CallbackTrait::prepare` method.
+    ///
+    /// Replaces manual `prepare` + `prepare_ldr_dyn_res` or `prepare_hdr_callback`
+    /// calls. Dispatches internally based on `frame.effects.post_process.enabled`:
+    ///
+    /// - HDR path (`post_process.enabled = true`): runs the full HDR pipeline (OIT,
+    ///   EDL, tone-map) and returns the resulting `CommandBuffer` for eframe to
+    ///   submit before the egui render pass.
+    /// - LDR path: calls `prepare`, and if dynamic resolution is active, encodes the
+    ///   scene into a separate `CommandBuffer` (also submitted before the render
+    ///   pass). Returns an empty `Vec` when dyn-res is inactive.
+    ///
+    /// Call [`paint_callback`](Self::paint_callback) from `CallbackTrait::paint`.
+    pub fn prepare_callback(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &FrameData,
+    ) -> Vec<wgpu::CommandBuffer> {
+        if frame.effects.post_process.enabled {
+            let cb = self.prepare_hdr_callback(device, queue, frame);
+            vec![cb]
+        } else {
+            self.prepare(device, queue, frame);
+            if self.current_render_scale < 1.0 - 0.001 {
+                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("ldr_dyn_res_callback_encoder"),
+                });
+                self.prepare_ldr_dyn_res(&mut encoder, device, frame);
+                vec![encoder.finish()]
+            } else {
+                Vec::new()
+            }
+        }
+    }
+
+    /// Unified paint step for the eframe `CallbackTrait::paint` method.
+    ///
+    /// Call after [`prepare_callback`](Self::prepare_callback) for the same frame.
+    /// Dispatches internally to `paint_hdr_blit`, `paint_dyn_res_blit`, or `paint`
+    /// based on which path `prepare_callback` activated.
+    pub fn paint_callback(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'static>,
+        frame: &FrameData,
+    ) {
+        let vp_idx = frame.camera.viewport_index;
+        if frame.effects.post_process.enabled {
+            if self.viewport_slots.get(vp_idx).and_then(|s| s.hdr_callback.as_ref()).is_some() {
+                self.paint_hdr_blit(render_pass, frame);
+                return;
+            }
+        }
+        if self.current_render_scale < 1.0 - 0.001
+            && self.viewport_slots.get(vp_idx).and_then(|s| s.dyn_res.as_ref()).is_some()
+        {
+            self.paint_dyn_res_blit(render_pass, frame);
+        } else {
+            self.paint(render_pass, frame);
+        }
+    }
+
     /// High-level HDR render for a single viewport identified by `id`.
     ///
     /// Unlike [`render`](Self::render), this method does **not** call

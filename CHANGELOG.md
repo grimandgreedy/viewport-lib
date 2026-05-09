@@ -2,8 +2,12 @@
 
 ## [0.13.1] (Current, unreleased changes)
 
+### Features
+- `prepare_callback` / `paint_callback`: unified entry points for the eframe `CallbackTrait` model. Call `prepare_callback` from `CallbackTrait::prepare` and `paint_callback` from `CallbackTrait::paint` instead of managing separate `prepare`, `prepare_ldr_dyn_res`, and `prepare_hdr_callback` calls manually. The methods dispatch internally based on whether `post_process.enabled` is set, so OIT, EDL, and tone-mapping are active in eframe apps without extra code in the callback.
+
 ### Fixes
 - Uploading a large transparent volume mesh could crash with an out-of-memory error. The decomposed tet data is now split into device-limit-bounded chunks on upload, so meshes of any size load correctly. No API changes.
+- Transparent volume meshes and Surface LIC were silently invisible in eframe applications. Both features require the HDR pipeline, which was never activated via the `prepare` + `paint` callback path.
 
 ## [0.13.0]
 
