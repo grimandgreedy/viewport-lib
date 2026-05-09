@@ -1546,8 +1546,53 @@ impl ViewportGpuResources {
             cache: None,
         });
 
+        // Ribbon pipeline: same layout, two-sided shader, cull_mode None.
+        let ribbon_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("ribbon_shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/ribbon.wgsl").into()),
+        });
+        let ribbon_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("ribbon_pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &ribbon_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &ribbon_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: self.target_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: self.sample_count,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        });
+
         self.streamtube_bgl = Some(streamtube_bgl);
         self.streamtube_pipeline = Some(pipeline);
+        self.ribbon_pipeline = Some(ribbon_pipeline);
     }
 
     /// Upload one [`StreamtubeItem`] to the GPU and return draw data.

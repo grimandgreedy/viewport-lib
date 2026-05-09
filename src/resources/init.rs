@@ -2080,6 +2080,7 @@ impl ViewportGpuResources {
             polyline_pipeline: None,
             polyline_bgl: None,
             streamtube_pipeline: None,
+            ribbon_pipeline: None,
             streamtube_bgl: None,
             image_slice_pipeline: None,
             image_slice_bgl: None,

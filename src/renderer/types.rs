@@ -3180,9 +3180,9 @@ macro_rules! emit_scivis_draw_calls {
             }
         }
 
-        // Ribbon pass (Phase 8.1 : flat quad strips, reuses streamtube pipeline).
+        // Ribbon pass (Phase 8.1 : flat quad strips, two-sided pipeline).
         if !$ribbon_gpu_data.is_empty() {
-            if let Some(ref pipeline) = resources.streamtube_pipeline {
+            if let Some(ref pipeline) = resources.ribbon_pipeline {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for ribbon in $ribbon_gpu_data.iter() {

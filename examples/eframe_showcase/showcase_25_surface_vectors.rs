@@ -82,13 +82,23 @@ impl App {
 
         self.sv_mesh_index = [sphere_idx, torus_idx, plane_idx];
 
-        // Upload the warp demo mesh: a sphere with per-vertex normal displacement
-        // stored as AttributeData::VertexVector so warp_attribute can reference it.
+        // Upload the warp demo mesh: a sphere with a sinusoidal bump pattern stored as
+        // AttributeData::VertexVector. Displacing by flat normals would just uniformly
+        // scale the sphere (normals == positions on a unit sphere), so instead we
+        // modulate the normal by sin(4x)*cos(4z) to produce visible surface bumps.
         let mut warp_sphere = primitives::sphere(1.0, 32, 16);
-        let normals_as_vecs: Vec<[f32; 3]> = warp_sphere.normals.clone();
+        let bump_displacements: Vec<[f32; 3]> = warp_sphere
+            .positions
+            .iter()
+            .zip(warp_sphere.normals.iter())
+            .map(|(&pos, &nrm)| {
+                let bump = (4.0 * pos[0]).sin() * (4.0 * pos[2]).cos();
+                [nrm[0] * bump, nrm[1] * bump, nrm[2] * bump]
+            })
+            .collect();
         warp_sphere.attributes.insert(
             "displacement".to_string(),
-            AttributeData::VertexVector(normals_as_vecs),
+            AttributeData::VertexVector(bump_displacements),
         );
         let warp_idx = renderer
             .resources_mut()

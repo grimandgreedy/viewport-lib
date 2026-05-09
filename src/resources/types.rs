@@ -1833,6 +1833,8 @@ pub struct ViewportGpuResources {
     // --- SciVis Phase M: streamtube rendering (lazily created) ---
     /// Streamtube render pipeline. None until first streamtube item is submitted.
     pub(crate) streamtube_pipeline: Option<wgpu::RenderPipeline>,
+    /// Ribbon pipeline: same layout as streamtube but cull_mode None and two-sided normals.
+    pub(crate) ribbon_pipeline: Option<wgpu::RenderPipeline>,
     /// Bind group layout for streamtube uniforms (group 1).
     pub(crate) streamtube_bgl: Option<wgpu::BindGroupLayout>,
 
