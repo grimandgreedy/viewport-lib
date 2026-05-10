@@ -43,7 +43,7 @@ struct PointCloudUniform {
     has_colors:       u32,           //  4 bytes (1 = use color buffer)
     has_radius:       u32,           //  4 bytes (1 = per-point radius from radius_buffer)
     has_transparency: u32,           //  4 bytes (1 = per-point alpha from transparency_buffer)
-    gaussian:         u32,           //  4 bytes (1 = Gaussian splat falloff in fragment shader)
+    gaussian:         u32,           //  4 bytes (1 = point-gaussian falloff in fragment shader)
 };
 
 struct ClipVolumeUB {

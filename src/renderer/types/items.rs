@@ -134,7 +134,7 @@ pub struct PointCloudItem {
     pub radii: Vec<f32>,
     /// Optional per-point opacity values in `[0, 1]`. If non-empty, scales each point's alpha.
     pub transparencies: Vec<f32>,
-    /// When true, each point is rendered as a soft Gaussian splat instead of a flat circle.
+    /// When true, each point is rendered in point-gaussian mode instead of as a flat circle.
     /// The alpha falls off as `exp(-3 * d²)` where `d` is the normalised distance from the
     /// point centre. Default: false.
     pub gaussian: bool,
@@ -1164,4 +1164,3 @@ impl Default for SpriteItem {
         }
     }
 }
-

@@ -2935,7 +2935,7 @@ impl App {
                 PcSubMode::VectorField => {
                     fd.scene.glyphs.push(self.make_pc_glyph_item());
                 }
-                PcSubMode::GaussianSplat => {
+                PcSubMode::PointGaussian => {
                     fd.scene.point_clouds.push(self.make_pc_gaussian_item());
                 }
             }
@@ -3168,7 +3168,7 @@ impl App {
                 }
             }
 
-            // Point cloud: unselected in blue, selected in orange -- rendered as Gaussian splats.
+            // Point cloud: unselected in blue, selected in orange -- rendered in point-gaussian mode.
             let unsel: Vec<[f32; 3]> = state.cloud_positions.iter()
                 .zip(state.selected.iter())
                 .filter(|(_, s)| !**s)
@@ -3383,4 +3383,3 @@ impl App {
         }
     }
 }
-

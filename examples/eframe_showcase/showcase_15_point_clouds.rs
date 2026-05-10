@@ -26,7 +26,7 @@ use viewport_lib::{
 pub(crate) enum PcSubMode {
     PointCloud,
     VectorField,
-    GaussianSplat,
+    PointGaussian,
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +131,7 @@ impl App {
         item
     }
 
-    /// Build a `PointCloudItem` rendering points as Gaussian splats with radius driven by scalars.
+    /// Build a `PointCloudItem` rendering points in point-gaussian mode with radius driven by scalars.
     pub(crate) fn make_pc_gaussian_item(&self) -> PointCloudItem {
         let s = &self.pc_state;
         let colormap_id = Some(ColormapId(s.colormap as usize));
@@ -141,7 +141,7 @@ impl App {
         item.scalars = s.cloud_scalars.clone();
         item.scalar_range = scalar_range;
         item.colormap_id = colormap_id;
-        // Use radius_scalars to drive the splat radius from the same scalar field.
+        // Use radius_scalars to drive the point-gaussian radius from the same scalar field.
         item.radius_scalars = s.cloud_scalars.clone();
         item.radius_scalar_range = scalar_range;
         item.radius_range = (s.gaussian_radius_min, s.gaussian_radius_max);
@@ -188,10 +188,10 @@ pub(crate) fn controls_point_clouds(app: &mut App, ui: &mut egui::Ui) {
             s.sub_mode = PcSubMode::VectorField;
         }
         if ui
-            .radio(s.sub_mode == PcSubMode::GaussianSplat, "Gaussian Splat")
+            .radio(s.sub_mode == PcSubMode::PointGaussian, "Point Gaussian")
             .clicked()
         {
-            s.sub_mode = PcSubMode::GaussianSplat;
+            s.sub_mode = PcSubMode::PointGaussian;
         }
     });
 
@@ -268,7 +268,7 @@ pub(crate) fn controls_point_clouds(app: &mut App, ui: &mut egui::Ui) {
 
             ui.checkbox(&mut s.glyph_magnitude_scale, "Scale by magnitude");
         }
-        PcSubMode::GaussianSplat => {
+        PcSubMode::PointGaussian => {
             ui.label("Radius range (px):");
             ui.horizontal(|ui| {
                 ui.label("Min:");
@@ -284,7 +284,7 @@ pub(crate) fn controls_point_clouds(app: &mut App, ui: &mut egui::Ui) {
                         .range(0.5..=40.0),
                 );
             });
-            ui.label("Splats are colored by the same scalar field (radial distance).");
+            ui.label("Points are colored by the same scalar field (radial distance).");
             ui.label("Radius scales with scalar: inner shell = small, outer = large.");
         }
     }
