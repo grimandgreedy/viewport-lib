@@ -20,6 +20,11 @@ use viewport_lib::{
     ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
 };
 
+// Solid unlit colors for the subsurface objects. Picked to be visually distinct
+// so any bleed-through is immediately identifiable by color.
+const COLOR_MAGENTA: [f32; 3] = [1.0, 0.0, 1.0];
+const COLOR_CYAN:    [f32; 3] = [0.0, 1.0, 1.0];
+
 fn main() -> eframe::Result {
     eframe::run_native(
         "viewport-lib : shadow cascade debug",
@@ -48,9 +53,16 @@ fn main() -> eframe::Result {
             let sphere_mesh = primitives::sphere(0.8, 24, 12);
             let sphere_id = res.upload_mesh_data(device, &sphere_mesh).unwrap();
 
+            // Unlit objects placed below the ground plane. Any visible bleed-through
+            // of their colors indicates the depth issue we are diagnosing.
+            let unlit_sphere_mesh = primitives::sphere(2.0, 24, 12);
+            let unlit_sphere_id = res.upload_mesh_data(device, &unlit_sphere_mesh).unwrap();
+            let unlit_box_mesh = primitives::cuboid(3.0, 3.0, 3.0);
+            let unlit_box_id = res.upload_mesh_data(device, &unlit_box_mesh).unwrap();
+
             rs.renderer.write().callback_resources.insert(renderer);
 
-            Ok(Box::new(App::new(ground_id, box_id, sphere_id)))
+            Ok(Box::new(App::new(ground_id, box_id, sphere_id, unlit_sphere_id, unlit_box_id)))
         }),
     )
 }
@@ -81,15 +93,18 @@ struct App {
     ground_id: MeshId,
     box_id: MeshId,
     sphere_id: MeshId,
+    unlit_sphere_id: MeshId,
+    unlit_box_id: MeshId,
     lighting: LightingSettings,
     show_hemisphere: bool,
     log_next_frame: bool,
     ground_two_sided: bool,
+    show_subsurface: bool,
     gpu_culling: bool,
 }
 
 impl App {
-    fn new(ground_id: MeshId, box_id: MeshId, sphere_id: MeshId) -> Self {
+    fn new(ground_id: MeshId, box_id: MeshId, sphere_id: MeshId, unlit_sphere_id: MeshId, unlit_box_id: MeshId) -> Self {
         let mut lighting = LightingSettings::default();
         lighting.lights = vec![LightSource {
             kind: LightKind::Directional {
@@ -106,7 +121,6 @@ impl App {
         Self {
             camera: Camera {
                 distance: 20.0,
-                znear: 0.01,
                 zfar: 1000.0,
                 ..Camera::default()
             },
@@ -114,10 +128,13 @@ impl App {
             ground_id,
             box_id,
             sphere_id,
+            unlit_sphere_id,
+            unlit_box_id,
             lighting,
             show_hemisphere: true,
             log_next_frame: false,
             ground_two_sided: true,
+            show_subsurface: true,
             gpu_culling: true,
         }
     }
@@ -172,6 +189,36 @@ impl App {
             items.push(item);
         }
 
+        // Unlit objects below the ground plane. Their colors bleed through if
+        // the depth issue is active. Magenta sphere at the centre, cyan box
+        // offset so both are independently visible.
+        if self.show_subsurface {
+            let mut unlit_mat = Material::default();
+            unlit_mat.unlit = true;
+
+            {
+                let mut item = SceneRenderItem::default();
+                item.mesh_id = self.unlit_sphere_id;
+                item.visible = true;
+                let mut m = unlit_mat;
+                m.base_color = COLOR_MAGENTA;
+                item.material = m;
+                item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -2.0)).to_cols_array_2d();
+                items.push(item);
+            }
+
+            {
+                let mut item = SceneRenderItem::default();
+                item.mesh_id = self.unlit_box_id;
+                item.visible = true;
+                let mut m = unlit_mat;
+                m.base_color = COLOR_CYAN;
+                item.material = m;
+                item.model = glam::Mat4::from_translation(glam::Vec3::new(8.0, 5.0, -2.5)).to_cols_array_2d();
+                items.push(item);
+            }
+        }
+
         items
     }
 }
@@ -204,23 +251,26 @@ impl eframe::App for App {
             ui.separator();
             ui.label("Geometry / GPU");
             ui.checkbox(&mut self.ground_two_sided, "Ground two-sided (Identical vs Cull)");
+            ui.checkbox(&mut self.show_subsurface, "Show subsurface objects (magenta/cyan)");
             ui.checkbox(&mut self.gpu_culling, "GPU driven culling");
 
             ui.separator();
             ui.label("Camera");
 
-            let dist = self.camera.distance;
-            let near = self.camera.znear;
-            let eff_far = self.camera.effective_zfar();
-            ui.label(format!("distance:      {:.2}", dist));
-            ui.label(format!("near:          {:.4}", near));
-            ui.label(format!("effective far: {:.2}", eff_far));
-            ui.label(format!("near/far ratio: {:.0}:1", eff_far / near));
+            let dist      = self.camera.distance;
+            let eff_near  = self.camera.effective_znear();
+            let eff_far   = self.camera.effective_zfar();
+            let precision_limit = (2.0_f32 * eff_near * eff_far / (eff_far - eff_near)).sqrt();
+            ui.label(format!("distance:         {:.2}", dist));
+            ui.label(format!("znear (eff):      {:.4}", eff_near));
+            ui.label(format!("effective far:    {:.2}", eff_far));
+            ui.label(format!("near/far ratio:   {:.0}:1", eff_far / eff_near));
+            ui.label(format!("depth limit @2m:  {:.1}m", precision_limit));
 
             ui.separator();
             ui.label("Cascade splits (world depth)");
-            let splits = cascade_splits(near, eff_far, self.lighting.shadow_cascade_count, self.lighting.cascade_split_lambda);
-            let mut prev = near;
+            let splits = cascade_splits(eff_near, eff_far, self.lighting.shadow_cascade_count, self.lighting.cascade_split_lambda);
+            let mut prev = eff_near;
             for (i, &s) in splits.iter().enumerate() {
                 ui.label(format!("  [{}] {:.2} .. {:.2}", i, prev, s));
                 prev = s;
@@ -232,10 +282,10 @@ impl eframe::App for App {
                 // Print the cascade split state to stderr so it shows in the terminal.
                 eprintln!("=== CASCADE STATE ===");
                 eprintln!("  camera distance: {:.2}", dist);
-                eprintln!("  near: {:.4}  far: {:.2}", near, eff_far);
-                let splits = cascade_splits(near, eff_far, self.lighting.shadow_cascade_count, self.lighting.cascade_split_lambda);
+                eprintln!("  near: {:.4}  far: {:.2}", eff_near, eff_far);
+                let splits = cascade_splits(eff_near, eff_far, self.lighting.shadow_cascade_count, self.lighting.cascade_split_lambda);
                 for (i, &s) in splits.iter().enumerate() {
-                    let lo = if i == 0 { near } else { splits[i - 1] };
+                    let lo = if i == 0 { eff_near } else { splits[i - 1] };
                     eprintln!("  cascade[{}]: {:.3} .. {:.3}", i, lo, s);
                 }
                 eprintln!("=== END ===");

@@ -68,7 +68,7 @@ impl RenderCamera {
             eye_position: eye.to_array(),
             forward: forward.to_array(),
             orientation: cam.orientation,
-            near: cam.znear,
+            near: cam.effective_znear(),
             far: cam.effective_zfar(),
             fov: cam.fov_y,
             aspect: cam.aspect,

@@ -2,7 +2,11 @@
 
 ## [0.13.2] (dev, current, unreleased)
 
+### API changes
+- `Camera::znear` is now `Option<f32>`. `None` (the default) lets the library maintain a 10,000:1 near/far ratio automatically, so depth precision stays usable at any zoom level without any configuration. `Some(value)` pins the near plane exactly as before. Callers that read `cam.znear` for their own NDC math should switch to `cam.effective_znear()`.
+
 ### Fixes
+- Objects behind opaque surfaces could bleed through at large camera distances. At zoom levels where the znear/zfar ratio exceeds 10,000:1, f32 depth values lose enough precision that two distinct surfaces map to the same depth sample. The library now caps the effective near plane automatically when `znear` is `None`, keeping the ratio within a range where f32 depth is reliable.
 - Dark or light rectangular patches on large flat surfaces when zooming out: surfaces using `BackfacePolicy::Identical` on thin box geometry could show back-face fragments at distance due to depth buffer precision limits, producing rectangular shading artifacts. Removed the two-sided policy from ground plane boxes in the affected showcase scenes.
 
 ## [0.13.1]

@@ -753,7 +753,7 @@ mod tests {
         let rc = RenderCamera::from_camera(&cam);
         assert_eq!(rc.eye_position, cam.eye_position().to_array());
         assert_eq!(rc.orientation, cam.orientation);
-        assert_eq!(rc.near, cam.znear);
+        assert_eq!(rc.near, cam.effective_znear());
         assert_eq!(rc.far, cam.zfar);
         assert_eq!(rc.fov, cam.fov_y);
         assert_eq!(rc.aspect, cam.aspect);

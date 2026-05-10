@@ -53,8 +53,11 @@ pub struct Camera {
     pub fov_y: f32,
     /// Viewport width / height ratio : updated each frame from viewport rect.
     pub aspect: f32,
-    /// Near clipping plane distance.
-    pub znear: f32,
+    /// Near clipping plane distance. `None` (the default) lets the library
+    /// manage depth precision automatically. Set to `Some(value)` only when
+    /// you need exact control over the near plane, e.g. to avoid clipping
+    /// geometry that is very close to the camera.
+    pub znear: Option<f32>,
     /// Far clipping plane distance.
     pub zfar: f32,
 }
@@ -70,7 +73,7 @@ impl Default for Camera {
             orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
             fov_y: std::f32::consts::FRAC_PI_4,
             aspect: 1.5,
-            znear: 0.01,
+            znear: None,
             zfar: 1000.0,
         }
     }
@@ -137,7 +140,7 @@ impl Camera {
 
     /// Set the near and far clipping plane distances.
     pub fn set_clip_planes(&mut self, znear: f32, zfar: f32) {
-        self.znear = znear;
+        self.znear = Some(znear);
         self.zfar = zfar;
     }
 
@@ -258,14 +261,24 @@ impl Camera {
         self.zfar.max(self.distance * 3.0)
     }
 
+    /// Effective near-plane distance.
+    ///
+    /// Keeps the near/far ratio at most 10,000:1 regardless of how far the
+    /// camera has zoomed out. At close range the value is `znear` unchanged.
+    /// At large distances it grows automatically so that f32 depth precision
+    /// does not collapse and cause objects behind opaque surfaces to bleed
+    /// through. Consumers do not need to adjust znear themselves.
+    pub fn effective_znear(&self) -> f32 {
+        self.znear.unwrap_or_else(|| self.effective_zfar() / 10_000.0)
+    }
+
+    /// Returns the projection matrix for the current camera state.
     pub fn proj_matrix(&self) -> glam::Mat4 {
-        // Ensure the far plane always extends past the orbit center regardless
-        // of how far the user has zoomed out. zfar is a minimum; if the camera
-        // distance exceeds it the stored value is stale.
-        let effective_zfar = self.effective_zfar();
+        let effective_znear = self.effective_znear();
+        let effective_zfar  = self.effective_zfar();
         match self.projection {
             Projection::Perspective => {
-                glam::Mat4::perspective_rh(self.fov_y, self.aspect, self.znear, effective_zfar)
+                glam::Mat4::perspective_rh(self.fov_y, self.aspect, effective_znear, effective_zfar)
             }
             Projection::Orthographic => {
                 let half_h = self.distance * (self.fov_y / 2.0).tan();
@@ -275,7 +288,7 @@ impl Camera {
                     half_w,
                     -half_h,
                     half_h,
-                    self.znear,
+                    effective_znear,
                     effective_zfar,
                 )
             }
@@ -331,7 +344,7 @@ impl Camera {
         self.center = glam::Vec3::new(nx / 2.0, ny / 2.0, nz / 2.0);
         let diagonal = (nx * nx + ny * ny + nz * nz).sqrt();
         self.distance = (diagonal / 2.0) / (self.fov_y / 2.0).tan() * 1.2;
-        self.znear = (diagonal * 0.0001).max(0.01);
+        self.znear = Some((diagonal * 0.0001).max(0.01));
         self.zfar = (diagonal * 10.0).max(1000.0);
     }
 }
@@ -558,7 +571,7 @@ mod tests {
     fn test_set_clip_planes() {
         let mut cam = Camera::default();
         cam.set_clip_planes(0.1, 500.0);
-        assert!((cam.znear - 0.1).abs() < 1e-6);
+        assert!((cam.znear.unwrap() - 0.1).abs() < 1e-6);
         assert!((cam.zfar - 500.0).abs() < 1e-4);
     }
 

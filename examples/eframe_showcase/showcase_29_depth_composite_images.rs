@@ -76,7 +76,7 @@ impl App {
             center: glam::Vec3::ZERO,
             distance: 10.0,
             orientation: glam::Quat::from_rotation_x(0.35),
-            znear: 0.5,
+            znear: Some(0.5),
             zfar: 30.0,
             ..Camera::default()
         };
@@ -93,7 +93,7 @@ impl App {
             let forward = (self.camera.center - eye).normalize();
             // Mid sphere sits at the origin.
             let view_depth = (glam::Vec3::ZERO - eye).dot(forward);
-            let n = self.camera.znear;
+            let n = self.camera.effective_znear();
             let f = self.camera.zfar;
             (f * (view_depth - n) / (view_depth * (f - n))).clamp(0.0, 1.0)
         };

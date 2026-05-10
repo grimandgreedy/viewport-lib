@@ -182,7 +182,7 @@ where
 
     let is_ortho = matches!(camera.projection, Projection::Orthographic);
 
-    let znear = camera.znear;
+    let znear = camera.effective_znear();
     // Effective far matches Camera::proj_matrix so NDC depths are consistent.
     let effective_zfar = camera.effective_zfar();
 
@@ -307,7 +307,7 @@ mod tests {
             orientation: glam::Quat::IDENTITY,
             fov_y: std::f32::consts::FRAC_PI_4,
             aspect: 1.0,
-            znear: 0.1,
+            znear: Some(0.1),
             zfar: 100.0,
             ..Camera::default()
         }

@@ -189,7 +189,7 @@ impl App {
             center: glam::Vec3::new(0.0, 0.5, 0.0),
             distance: 9.0,
             orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(0.9),
-            znear: 0.2,
+            znear: Some(0.2),
             zfar: 40.0,
             ..Camera::default()
         };
