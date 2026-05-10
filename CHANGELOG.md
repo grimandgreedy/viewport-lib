@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.2] (dev, current, unreleased)
+
+### Fixes
+- Dark or light rectangular patches on large flat surfaces when zooming out: surfaces using `BackfacePolicy::Identical` on thin box geometry could show back-face fragments at distance due to depth buffer precision limits, producing rectangular shading artifacts. Removed the two-sided policy from ground plane boxes in the affected showcase scenes.
+
 ## [0.13.1]
 
 ### Features

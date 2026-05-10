@@ -1,160 +1,252 @@
-//! Scalar colormap + BackfacePolicy::Pattern repro test
+//! Shadow cascade diagnostic test
 //!
-//! Tests the bug report: surface with an active scalar attribute and
-//! BackfacePolicy::Pattern renders white instead of colorized.
+//! Scene: large flat ground plane + several shadow-casting boxes.
+//! Side panel shows live cascade splits and camera state.
+//! Use the controls to change cascade count and shadow settings,
+//! then zoom out until the artifact appears to correlate its position
+//! with the cascade boundary readout.
 //!
-//! A sphere is set up with a vertex scalar attribute ("pressure", 0..1
-//! linearly by vertex index) and a Viridis colormap. Its backface policy
-//! is set to Pattern::Checker so is_two_sided() returns true, which routes
-//! it to the solid_two_sided pipeline. It should render colorized; if it
-//! renders white or a solid color the bug is confirmed.
-//!
-//! Navigation: Left drag / Middle drag = orbit, Right drag = pan, Scroll = zoom.
+//! Key bindings:
+//!   Left drag / Middle drag = orbit
+//!   Right drag = pan
+//!   Scroll = zoom
 
 mod viewport_callback;
 
 use eframe::egui;
 use viewport_lib::{
-    AttributeData, AttributeKind, AttributeRef, BackfacePattern, BackfacePolicy, BuiltinColormap,
-    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, MeshData, PatternConfig,
-    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer,
-    OrbitCameraController, primitives,
+    BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, LightKind, LightSource,
+    LightingSettings, Material, MeshId, OrbitCameraController, SceneFrame, SceneRenderItem,
+    ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
 };
-use std::sync::{Arc, Mutex};
 
 fn main() -> eframe::Result {
     eframe::run_native(
-        "viewport-lib : scalar + backface pattern repro",
+        "viewport-lib : shadow cascade debug",
         eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 720.0]),
+            viewport: egui::ViewportBuilder::default().with_inner_size([1600.0, 900.0]),
             depth_buffer: 24,
             stencil_buffer: 8,
             ..Default::default()
         },
         Box::new(|cc| {
-            let rs = cc
-                .wgpu_render_state
-                .as_ref()
-                .expect("wgpu backend required");
+            let rs = cc.wgpu_render_state.as_ref().expect("wgpu backend required");
             let device = &rs.device;
             let queue = &rs.queue;
-            let format = rs.target_format;
 
-            let mut renderer = ViewportRenderer::new(device, format);
+            let mut renderer = ViewportRenderer::new(device, rs.target_format);
             let res = renderer.resources_mut();
 
-            // Initialize colormaps so builtin_colormap_id is available.
-            res.ensure_colormaps_initialized(device, queue);
-            let colormap_id = res.builtin_colormap_id(BuiltinColormap::Viridis);
+            // Ground plane: large flat slab so cascade boundaries are visible.
+            let ground = primitives::cuboid(40.0, 40.0, 0.3);
+            let ground_id = res.upload_mesh_data(device, &ground).unwrap();
 
-            // Build a sphere with a vertex scalar attribute (pressure: 0..1 by vertex index).
-            let sphere_data = primitives::sphere(0.8, 24, 12);
-            let n_verts = sphere_data.positions.len();
-            let scalars: Vec<f32> = (0..n_verts)
-                .map(|i| i as f32 / (n_verts - 1).max(1) as f32)
-                .collect();
+            // Shadow casters: boxes at different distances from centre.
+            let box_mesh = primitives::cuboid(1.0, 1.0, 2.0);
+            let box_id = res.upload_mesh_data(device, &box_mesh).unwrap();
 
-            let mut mesh_data = MeshData::default();
-            mesh_data.positions = sphere_data.positions;
-            mesh_data.normals = sphere_data.normals;
-            mesh_data.indices = sphere_data.indices;
-            mesh_data
-                .attributes
-                .insert("pressure".to_string(), AttributeData::Vertex(scalars));
-
-            let mesh_id = res.upload_mesh_data(device, &mesh_data).unwrap();
+            let sphere_mesh = primitives::sphere(0.8, 24, 12);
+            let sphere_id = res.upload_mesh_data(device, &sphere_mesh).unwrap();
 
             rs.renderer.write().callback_resources.insert(renderer);
 
-            Ok(Box::new(App::new(mesh_id, colormap_id)))
+            Ok(Box::new(App::new(ground_id, box_id, sphere_id)))
         }),
     )
 }
 
+// ---------------------------------------------------------------------------
+// Cascade split formula (mirrors shadows.rs so we can show live splits)
+// ---------------------------------------------------------------------------
+
+fn cascade_splits(near: f32, far: f32, count: u32, lambda: f32) -> Vec<f32> {
+    let n = count.min(4) as usize;
+    (1..=n)
+        .map(|i| {
+            let p = i as f32 / n as f32;
+            let log = near * (far / near).powf(p);
+            let lin = near + (far - near) * p;
+            lambda * log + (1.0 - lambda) * lin
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// App state
+// ---------------------------------------------------------------------------
+
 struct App {
     camera: Camera,
     controller: OrbitCameraController,
-    scene_items: Vec<SceneRenderItem>,
-    cursor_viewport: Option<glam::Vec2>,
-    cursor_prev: Option<glam::Vec2>,
-    colormap_id: viewport_lib::ColormapId,
-    use_pattern: bool,
+    ground_id: MeshId,
+    box_id: MeshId,
+    sphere_id: MeshId,
+    lighting: LightingSettings,
+    show_hemisphere: bool,
+    log_next_frame: bool,
+    ground_two_sided: bool,
+    gpu_culling: bool,
 }
 
 impl App {
-    fn new(mesh_id: viewport_lib::MeshId, colormap_id: viewport_lib::ColormapId) -> Self {
-        let mut item = SceneRenderItem::default();
-        item.mesh_id = mesh_id;
-        item.visible = true;
-        item.active_attribute = Some(AttributeRef {
-            name: "pressure".into(),
-            kind: AttributeKind::Vertex,
-        });
-        item.colormap_id = Some(colormap_id);
-        item.scalar_range = Some((0.0, 1.0));
-        // Pattern backface policy: this makes is_two_sided() return true.
-        item.material.backface_policy = BackfacePolicy::Pattern(PatternConfig {
-            pattern: BackfacePattern::Checker,
-            color: [0.08, 0.35, 0.90],
-            ..Default::default()
-        });
+    fn new(ground_id: MeshId, box_id: MeshId, sphere_id: MeshId) -> Self {
+        let mut lighting = LightingSettings::default();
+        lighting.lights = vec![LightSource {
+            kind: LightKind::Directional {
+                direction: [0.4, 0.3, 1.5],
+            },
+            color: [1.0, 1.0, 1.0],
+            intensity: 1.0,
+        }];
+        lighting.hemisphere_intensity = 0.4;
+        lighting.shadow_cascade_count = 4;
+        lighting.cascade_split_lambda = 0.75;
+        lighting.shadows_enabled = true;
 
         Self {
             camera: Camera {
-                distance: 4.0,
+                distance: 20.0,
+                znear: 0.01,
+                zfar: 1000.0,
                 ..Camera::default()
             },
             controller: OrbitCameraController::viewport_primitives(),
-            scene_items: vec![item],
-            cursor_viewport: None,
-            cursor_prev: None,
-            colormap_id,
-            use_pattern: true,
+            ground_id,
+            box_id,
+            sphere_id,
+            lighting,
+            show_hemisphere: true,
+            log_next_frame: false,
+            ground_two_sided: true,
+            gpu_culling: true,
         }
+    }
+
+    fn build_scene(&self) -> Vec<SceneRenderItem> {
+        let ground_mat = Material::pbr([0.7, 0.7, 0.7], 0.0, 0.8);
+        let box_mat = Material::pbr([0.8, 0.5, 0.3], 0.0, 0.6);
+        let sphere_mat = Material::pbr([0.4, 0.6, 0.9], 0.0, 0.3);
+
+        let ground = {
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = self.ground_id;
+            item.visible = true;
+            item.material = {
+                let mut m = ground_mat;
+                m.backface_policy = if self.ground_two_sided {
+                    BackfacePolicy::Identical
+                } else {
+                    BackfacePolicy::Cull
+                };
+                m
+            };
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.15)).to_cols_array_2d();
+            item
+        };
+
+        // Boxes at distances 2m, 5m, 10m, 20m from centre.
+        let box_positions = [
+            glam::Vec3::new(2.0, 0.0, 1.0),
+            glam::Vec3::new(-5.0, 3.0, 1.0),
+            glam::Vec3::new(10.0, -4.0, 1.0),
+            glam::Vec3::new(-15.0, 8.0, 1.0),
+        ];
+
+        let mut items = vec![ground];
+        for pos in &box_positions {
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = self.box_id;
+            item.visible = true;
+            item.material = box_mat;
+            item.model = glam::Mat4::from_translation(*pos).to_cols_array_2d();
+            items.push(item);
+        }
+
+        // Sphere at the origin, slightly above ground, as a depth-fight probe.
+        {
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = self.sphere_id;
+            item.visible = true;
+            item.material = sphere_mat;
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.8)).to_cols_array_2d();
+            items.push(item);
+        }
+
+        items
     }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Side panel: controls + live readout.
+        egui::SidePanel::left("controls").min_width(260.0).show(ctx, |ui| {
+            ui.heading("Shadow debug");
+            ui.separator();
+
+            ui.label("Cascade count");
+            let mut cc = self.lighting.shadow_cascade_count as i32;
+            if ui.add(egui::Slider::new(&mut cc, 1..=4)).changed() {
+                self.lighting.shadow_cascade_count = cc as u32;
+            }
+
+            ui.label("Split lambda (0=linear, 1=log)");
+            ui.add(egui::Slider::new(&mut self.lighting.cascade_split_lambda, 0.0..=1.0));
+
+            ui.label("Shadow bias");
+            ui.add(egui::Slider::new(&mut self.lighting.shadow_bias, 0.0..=0.01).logarithmic(true));
+
+            ui.checkbox(&mut self.lighting.shadows_enabled, "Shadows enabled");
+
+            if ui.checkbox(&mut self.show_hemisphere, "Hemisphere ambient").changed() {
+                self.lighting.hemisphere_intensity = if self.show_hemisphere { 0.4 } else { 0.0 };
+            }
+
+            ui.separator();
+            ui.label("Geometry / GPU");
+            ui.checkbox(&mut self.ground_two_sided, "Ground two-sided (Identical vs Cull)");
+            ui.checkbox(&mut self.gpu_culling, "GPU driven culling");
+
+            ui.separator();
+            ui.label("Camera");
+
+            let dist = self.camera.distance;
+            let near = self.camera.znear;
+            let eff_far = self.camera.effective_zfar();
+            ui.label(format!("distance:      {:.2}", dist));
+            ui.label(format!("near:          {:.4}", near));
+            ui.label(format!("effective far: {:.2}", eff_far));
+            ui.label(format!("near/far ratio: {:.0}:1", eff_far / near));
+
+            ui.separator();
+            ui.label("Cascade splits (world depth)");
+            let splits = cascade_splits(near, eff_far, self.lighting.shadow_cascade_count, self.lighting.cascade_split_lambda);
+            let mut prev = near;
+            for (i, &s) in splits.iter().enumerate() {
+                ui.label(format!("  [{}] {:.2} .. {:.2}", i, prev, s));
+                prev = s;
+            }
+
+            ui.separator();
+            if ui.button("Log cascade matrices (P)").clicked() || self.log_next_frame {
+                self.log_next_frame = false;
+                // Print the cascade split state to stderr so it shows in the terminal.
+                eprintln!("=== CASCADE STATE ===");
+                eprintln!("  camera distance: {:.2}", dist);
+                eprintln!("  near: {:.4}  far: {:.2}", near, eff_far);
+                let splits = cascade_splits(near, eff_far, self.lighting.shadow_cascade_count, self.lighting.cascade_split_lambda);
+                for (i, &s) in splits.iter().enumerate() {
+                    let lo = if i == 0 { near } else { splits[i - 1] };
+                    eprintln!("  cascade[{}]: {:.3} .. {:.3}", i, lo, s);
+                }
+                eprintln!("=== END ===");
+            }
+
+            ui.small("P = log to terminal");
+        });
+
         egui::CentralPanel::default().show(ctx, |ui| {
             let (rect, response) =
                 ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
-
-            // Toggle instructions.
-            let policy_label = if self.use_pattern {
-                "BackfacePolicy::Pattern (is_two_sided=true) — press T to toggle"
-            } else {
-                "BackfacePolicy::Cull (is_two_sided=false) — press T to toggle"
-            };
-            ui.painter().text(
-                rect.min + egui::vec2(12.0, 12.0),
-                egui::Align2::LEFT_TOP,
-                policy_label,
-                egui::FontId::proportional(16.0),
-                egui::Color32::WHITE,
-            );
-            ui.painter().text(
-                rect.min + egui::vec2(12.0, 36.0),
-                egui::Align2::LEFT_TOP,
-                "Sphere should render Viridis colormap in both modes",
-                egui::FontId::proportional(14.0),
-                egui::Color32::from_rgb(200, 200, 200),
-            );
-
-            // Toggle backface policy on T press.
-            if ui.input(|i| i.key_pressed(egui::Key::T)) {
-                self.use_pattern = !self.use_pattern;
-                let item = &mut self.scene_items[0];
-                item.material.backface_policy = if self.use_pattern {
-                    BackfacePolicy::Pattern(PatternConfig {
-                        pattern: BackfacePattern::Checker,
-                        color: [0.08, 0.35, 0.90],
-                        ..Default::default()
-                    })
-                } else {
-                    BackfacePolicy::Cull
-                };
-            }
 
             self.controller.begin_frame(ViewportContext {
                 hovered: response.hovered(),
@@ -163,6 +255,10 @@ impl eframe::App for App {
             });
 
             ui.input(|i| {
+                if i.key_pressed(egui::Key::P) {
+                    self.log_next_frame = true;
+                }
+
                 self.controller.push_event(ViewportEvent::ModifiersChanged(
                     viewport_lib::Modifiers {
                         alt: i.modifiers.alt,
@@ -175,29 +271,22 @@ impl eframe::App for App {
                     .pointer
                     .interact_pos()
                     .map(|p| glam::Vec2::new(p.x - rect.left(), p.y - rect.top()));
-                self.cursor_prev = self.cursor_viewport;
-                self.cursor_viewport = local_pos;
                 if let Some(pos) = local_pos {
-                    self.controller
-                        .push_event(ViewportEvent::PointerMoved { position: pos });
+                    self.controller.push_event(ViewportEvent::PointerMoved { position: pos });
                 }
 
                 for event in &i.events {
                     match event {
                         egui::Event::PointerButton { button, pressed, .. } => {
-                            let vp_button = match button {
+                            let vp_btn = match button {
                                 egui::PointerButton::Primary => viewport_lib::MouseButton::Left,
                                 egui::PointerButton::Secondary => viewport_lib::MouseButton::Right,
                                 egui::PointerButton::Middle => viewport_lib::MouseButton::Middle,
                                 _ => continue,
                             };
                             self.controller.push_event(ViewportEvent::MouseButton {
-                                button: vp_button,
-                                state: if *pressed {
-                                    ButtonState::Pressed
-                                } else {
-                                    ButtonState::Released
-                                },
+                                button: vp_btn,
+                                state: if *pressed { ButtonState::Pressed } else { ButtonState::Released },
                             });
                         }
                         egui::Event::MouseWheel { unit, delta, .. } => {
@@ -221,19 +310,20 @@ impl eframe::App for App {
             self.controller.apply_to_camera(&mut self.camera);
             self.camera.set_aspect_ratio(w, h);
 
-            let mut frame_data = FrameData::new(
+            let mut lighting = self.lighting.clone();
+            if !self.show_hemisphere {
+                lighting.hemisphere_intensity = 0.0;
+            }
+
+            let frame_data = FrameData::new(
                 CameraFrame::from_camera(&self.camera, [w, h]),
-                SceneFrame::from_surface_items(self.scene_items.clone()),
-            );
-            frame_data.effects.lighting = LightingSettings::default();
+                SceneFrame::from_surface_items(self.build_scene()),
+            )
+            .with_lighting(lighting);
 
             ui.painter().add(eframe::egui_wgpu::Callback::new_paint_callback(
                 rect,
-                viewport_callback::ViewportCallback {
-                    frame: frame_data,
-                    pick_cursor: None,
-                    pick_result: Arc::new(Mutex::new(None)),
-                },
+                viewport_callback::ViewportCallback { frame: frame_data, gpu_culling: self.gpu_culling },
             ));
         });
     }

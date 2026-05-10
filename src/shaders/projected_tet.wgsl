@@ -227,11 +227,16 @@ fn fs_main(in: VsOut) -> OitOut {
         }
     }
 
-    if t_enter >= t_exit {
+    // Face bias: treat rays that miss the tet by up to FACE_BIAS world units as
+    // grazing hits. This fills sub-pixel seam gaps at tet boundaries without
+    // moving the bounding quad (which causes wobble when the AABB shifts
+    // frame-to-frame during camera motion). The resulting alpha for a bare
+    // graze is ~density * FACE_BIAS ~= 5e-4, essentially invisible but stable.
+    const FACE_BIAS: f32 = 1e-3;
+    if t_enter >= t_exit + FACE_BIAS {
         discard;
     }
-
-    let thickness = t_exit - t_enter;
+    let thickness = max(t_exit - t_enter, 0.0);
 
     // Beer-Lambert opacity.
     let alpha = 1.0 - exp(-uniforms.density * thickness);

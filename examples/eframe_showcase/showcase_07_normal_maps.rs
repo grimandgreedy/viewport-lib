@@ -115,7 +115,6 @@ impl App {
                 let mut mat = Material::pbr([0.85, 0.85, 0.85], 0.0, 0.85);
                 mat.normal_map_id = Some(tile_nm_id);
                 mat.ao_map_id = Some(tile_ao_id);
-                mat.backface_policy = BackfacePolicy::Identical;
                 mat
             },
         );
@@ -147,7 +146,6 @@ impl App {
                 let mut mat = Material::pbr([0.85, 0.87, 0.9], 0.1, 0.6);
                 mat.normal_map_id = Some(tile_nm_id);
                 mat.ao_map_id = Some(tile_ao_id);
-                mat.backface_policy = BackfacePolicy::Identical;
                 mat
             },
         );
@@ -163,7 +161,6 @@ impl App {
                 let mut mat = Material::pbr([0.92, 0.9, 0.87], 0.0, 0.7);
                 mat.normal_map_id = Some(brick_nm_id);
                 mat.ao_map_id = Some(brick_ao_id);
-                mat.backface_policy = BackfacePolicy::Identical;
                 mat
             },
         );
