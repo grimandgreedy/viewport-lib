@@ -10,6 +10,7 @@
 /// field privatization (Phase 4). Field access (`camera.center` etc.) still
 /// works and is not deprecated.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CameraTarget {
     /// Orbit target point in world space.
     pub center: glam::Vec3,
@@ -21,6 +22,7 @@ pub struct CameraTarget {
 
 /// Projection mode for the viewport camera.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum Projection {
     /// Perspective projection : objects farther away appear smaller.
@@ -38,6 +40,7 @@ pub enum Projection {
 /// Using a quaternion avoids gimbal lock and allows full 360° orbit in any direction.
 /// All matrices are computed right-handed (wgpu NDC convention).
 #[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Camera {
     /// Projection mode (perspective or orthographic).
     pub projection: Projection,

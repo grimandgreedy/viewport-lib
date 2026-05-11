@@ -7,6 +7,7 @@ use crate::camera::camera::Projection;
 
 /// Standard viewport orientations matching engineering CAD conventions (Z-up).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum ViewPreset {
     /// Front view : looking from +Y toward -Y, with Z up.

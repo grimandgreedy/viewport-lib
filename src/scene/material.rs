@@ -6,6 +6,7 @@
 ///
 /// Requires the mesh to have UV coordinates. Has no effect if the mesh lacks UVs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ParamVisMode {
     /// Alternating black/white squares tiled in UV space.
     Checker = 1,
@@ -22,6 +23,7 @@ pub enum ParamVisMode {
 /// Attach to [`Material::param_vis`] to enable procedural UV pattern rendering.
 /// The `scale` controls tile frequency : higher values produce more, smaller tiles.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ParamVis {
     /// Which procedural pattern to render.
     pub mode: ParamVisMode,
@@ -42,6 +44,7 @@ impl Default for ParamVis {
 ///
 /// Used with [`PatternConfig`] to select which procedural pattern is drawn on back faces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BackfacePattern {
     /// Alternating squares in world XY.
     Checker = 0,
@@ -71,6 +74,7 @@ pub enum BackfacePattern {
 /// };
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PatternConfig {
     /// Which procedural pattern to draw on back faces.
     pub pattern: BackfacePattern,
@@ -99,6 +103,7 @@ impl Default for PatternConfig {
 /// to shade back faces in a distinct color : useful for spotting mesh orientation errors or
 /// highlighting the interior of open surfaces.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BackfacePolicy {
     /// Back faces are culled (invisible). Default.
     Cull,
@@ -139,6 +144,7 @@ impl Default for BackfacePolicy {
 /// fields to be added in future phases without breaking downstream code.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Material {
     /// Base diffuse color [r, g, b] in linear 0..1 range. Default [0.7, 0.7, 0.7].
     pub base_color: [f32; 3],

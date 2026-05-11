@@ -30,6 +30,7 @@ gtk4 = { version = "0.9", optional = true }
 
 [features]
 default = ["serde"]
+serde = ["dep:serde", "glam/serde"]
 gtk4-example = ["gtk4"]
 
 [dev-dependencies]
@@ -60,6 +61,10 @@ path = "examples/winit_minimal/main.rs"
 [[example]]
 name = "eframe-minimal"
 path = "examples/eframe_minimal/main.rs"
+
+[[example]]
+name = "eframe-remote"
+path = "examples/eframe_remote/main.rs"
 
 [[example]]
 name = "eframe-testing"

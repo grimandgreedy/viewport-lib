@@ -20,9 +20,11 @@ use crate::scene::traits::ViewportObject;
 
 /// Opaque layer identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LayerId(pub u32);
 
 /// A named visibility layer. Nodes belong to exactly one layer.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Layer {
     /// Unique layer identifier.
     pub id: LayerId,

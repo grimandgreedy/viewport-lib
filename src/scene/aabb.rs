@@ -2,6 +2,7 @@
 
 /// Axis-aligned bounding box stored as min/max corners.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Aabb {
     /// Minimum corner of the box.
     pub min: glam::Vec3,

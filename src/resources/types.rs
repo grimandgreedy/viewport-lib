@@ -22,6 +22,7 @@ pub struct ColormapId(pub usize);
 /// The `blendable` flag controls whether the alpha channel tints the base
 /// geometry color (`true`) or the matcap fully replaces the object color (`false`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MatcapId {
     /// Index into the GPU matcap texture store.
     pub(crate) index: usize,
