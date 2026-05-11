@@ -595,16 +595,104 @@ pub(crate) struct ClipPlanesUniform {
     pub(crate) viewport_height: f32,  //   4 bytes
 }
 
-/// Clip volume uniform : 128 bytes, bound at group 0 binding 6.
+/// Maximum number of `Box` / `Sphere` clip volumes that can be active simultaneously.
 ///
-/// Exported for testing (size validation) and for downstream crates that may
-/// need to construct the uniform directly (e.g. headless compute tools).
+/// Corresponds to the array size in [`ClipVolumesUniform`] and the WGSL `ClipVolumeUB` struct.
+/// Planes are not counted against this limit; they have a separate cap of 6.
+pub const CLIP_VOLUME_MAX: usize = 4;
+
+/// One entry in the clip-volume uniform array : 96 bytes.
 ///
-/// `volume_type` discriminant selects which clip test is applied in each shader:
-/// - 0 = None (always passes, zero overhead via early return)
-/// - 1 = Plane (half-space: `dot(p, normal) + dist >= 0`)
-/// - 2 = Box (oriented AABB expressed via rotation columns + half-extents)
-/// - 3 = Sphere (`distance(p, center) <= radius`)
+/// `volume_type` selects the active shape:
+/// - 0 = None (slot unused)
+/// - 2 = Box (oriented AABB : center, half-extents, three orientation columns)
+/// - 3 = Sphere (center + radius packed into `center` and `radius`)
+///
+/// Layout mirrors the WGSL `ClipVolumeEntry` struct in each geometry shader.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ClipVolumeEntry {
+    /// Shape discriminant: 0=None, 2=Box, 3=Sphere.
+    pub volume_type: u32,
+    #[doc(hidden)]
+    pub _pad: [u32; 3],
+    /// Box center (world space) or sphere center. Occupies the xyz components.
+    pub center: [f32; 3],
+    /// Sphere radius. Unused for boxes.
+    pub radius: f32,
+    /// Box half-extents. Unused for spheres.
+    pub half_extents: [f32; 3],
+    #[doc(hidden)]
+    pub _pad1: f32,
+    /// Box local X axis (orientation column 0, world space). Unused for spheres.
+    pub col0: [f32; 3],
+    #[doc(hidden)]
+    pub _pad2: f32,
+    /// Box local Y axis (orientation column 1, world space). Unused for spheres.
+    pub col1: [f32; 3],
+    #[doc(hidden)]
+    pub _pad3: f32,
+    /// Box local Z axis (orientation column 2, world space). Unused for spheres.
+    pub col2: [f32; 3],
+    #[doc(hidden)]
+    pub _pad4: f32,
+}
+// 16 + 16 + 16 + 16 + 16 + 16 = 96 bytes
+
+impl ClipVolumeEntry {
+    /// Build a box entry from center, half-extents, and orientation columns.
+    pub fn from_box(center: [f32; 3], half_extents: [f32; 3], orientation: [[f32; 3]; 3]) -> Self {
+        Self {
+            volume_type: 2,
+            _pad: [0; 3],
+            center,
+            radius: 0.0,
+            half_extents,
+            _pad1: 0.0,
+            col0: orientation[0],
+            _pad2: 0.0,
+            col1: orientation[1],
+            _pad3: 0.0,
+            col2: orientation[2],
+            _pad4: 0.0,
+        }
+    }
+
+    /// Build a sphere entry from center and radius.
+    pub fn from_sphere(center: [f32; 3], radius: f32) -> Self {
+        Self {
+            volume_type: 3,
+            _pad: [0; 3],
+            center,
+            radius,
+            ..bytemuck::Zeroable::zeroed()
+        }
+    }
+}
+
+/// Clip volume uniform array : bound at group 0 binding 6.
+///
+/// Holds up to [`CLIP_VOLUME_MAX`] active `Box` or `Sphere` clip volumes.
+/// `count` is the number of valid entries; unused slots have `volume_type = 0`.
+///
+/// The layout mirrors the WGSL `ClipVolumeUB` struct in each geometry shader.
+/// Total size: 16 (header) + 4 * 96 (entries) = 400 bytes.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ClipVolumesUniform {
+    /// Number of active entries in `volumes`.
+    pub count: u32,
+    #[doc(hidden)]
+    pub _pad: [u32; 3],
+    /// Clip volume entries. Only the first `count` slots are valid.
+    pub volumes: [ClipVolumeEntry; CLIP_VOLUME_MAX],
+}
+
+/// Single clip-volume uniform : 128 bytes, bound at group 0 binding 6.
+///
+/// Deprecated in favour of [`ClipVolumesUniform`], which supports up to
+/// [`CLIP_VOLUME_MAX`] simultaneous box/sphere clip volumes.
+#[deprecated(since = "0.9.0", note = "use ClipVolumesUniform and ClipVolumeEntry instead")]
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ClipVolumeUniform {
@@ -644,11 +732,14 @@ pub struct ClipVolumeUniform {
     /// Sphere radius.
     pub sphere_radius: f32,
 }
-// Total: 4 + 12 + 4*4 + 4*4 + 4*4 + 4*4 + 4*4 + 4*4 = 16 + 7*16 = 16 + 112 = 128 bytes
 
+#[allow(deprecated)]
 impl ClipVolumeUniform {
     /// Build a `ClipVolumeUniform` from a [`crate::renderer::ClipShape`] value.
-    /// Returns a zeroed (None / volume_type=0) uniform for `ClipShape::Plane`.
+    ///
+    /// Deprecated: construct a [`ClipVolumeEntry`] via [`ClipVolumeEntry::from_box`]
+    /// or [`ClipVolumeEntry::from_sphere`] instead.
+    #[deprecated(since = "0.9.0", note = "use ClipVolumeEntry::from_box / from_sphere instead")]
     pub fn from_clip_shape(shape: &crate::renderer::ClipShape) -> Self {
         let mut u: Self = bytemuck::Zeroable::zeroed();
         match shape {

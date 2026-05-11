@@ -1676,7 +1676,7 @@ impl ViewportRenderer {
             {
                 let mut planes = [[0.0f32; 4]; 6];
                 let mut count = 0u32;
-                let mut clip_vol_uniform: ClipVolumeUniform = bytemuck::Zeroable::zeroed(); // volume_type=0
+                let mut clip_vols_uniform: ClipVolumesUniform = bytemuck::Zeroable::zeroed();
 
                 for obj in viewport_fx
                     .clip_objects
@@ -1694,20 +1694,19 @@ impl ViewportRenderer {
                             center,
                             half_extents,
                             orientation,
-                        } if clip_vol_uniform.volume_type == 0 => {
-                            clip_vol_uniform.volume_type = 2;
-                            clip_vol_uniform.box_center = center;
-                            clip_vol_uniform.box_half_extents = half_extents;
-                            clip_vol_uniform.box_col0 = orientation[0];
-                            clip_vol_uniform.box_col1 = orientation[1];
-                            clip_vol_uniform.box_col2 = orientation[2];
+                        } if (clip_vols_uniform.count as usize) < CLIP_VOLUME_MAX => {
+                            let idx = clip_vols_uniform.count as usize;
+                            clip_vols_uniform.volumes[idx] =
+                                ClipVolumeEntry::from_box(center, half_extents, orientation);
+                            clip_vols_uniform.count += 1;
                         }
                         ClipShape::Sphere { center, radius }
-                            if clip_vol_uniform.volume_type == 0 =>
+                            if (clip_vols_uniform.count as usize) < CLIP_VOLUME_MAX =>
                         {
-                            clip_vol_uniform.volume_type = 3;
-                            clip_vol_uniform.sphere_center = center;
-                            clip_vol_uniform.sphere_radius = radius;
+                            let idx = clip_vols_uniform.count as usize;
+                            clip_vols_uniform.volumes[idx] =
+                                ClipVolumeEntry::from_sphere(center, radius);
+                            clip_vols_uniform.count += 1;
                         }
                         _ => {}
                     }
@@ -1730,7 +1729,7 @@ impl ViewportRenderer {
                     queue.write_buffer(
                         &slot.clip_volume_buf,
                         0,
-                        bytemuck::cast_slice(&[clip_vol_uniform]),
+                        bytemuck::cast_slice(&[clip_vols_uniform]),
                     );
                 }
                 // Also write to shared buffers for legacy single-viewport callers.
@@ -1742,7 +1741,7 @@ impl ViewportRenderer {
                 queue.write_buffer(
                     &resources.clip_volume_uniform_buf,
                     0,
-                    bytemuck::cast_slice(&[clip_vol_uniform]),
+                    bytemuck::cast_slice(&[clip_vols_uniform]),
                 );
             }
 

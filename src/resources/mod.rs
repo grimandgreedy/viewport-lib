@@ -36,9 +36,12 @@ pub use self::font::{FontError, FontHandle};
 use self::extra_impls::{
     build_glyph_arrow, build_glyph_sphere, build_unit_cube, generate_edge_indices,
 };
+#[allow(deprecated)]
+pub use self::types::ClipVolumeUniform;
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColormap, BuiltinMatcap, CameraUniform,
-    ClipVolumeUniform, ColormapId, GpuMesh, GpuTexture, LightUniform, LightsUniform, MatcapId,
+    ClipVolumeEntry, ClipVolumesUniform, CLIP_VOLUME_MAX, ColormapId, GpuMesh, GpuTexture,
+    LightUniform, LightsUniform, MatcapId,
     MeshData, OverlayVertex, PointCloudGpuData, PolylineGpuData, ProjectedTetId,
     ScreenImageGpuData, SingleLightUniform, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
 };

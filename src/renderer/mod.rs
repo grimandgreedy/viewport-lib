@@ -47,7 +47,8 @@ pub struct ViewportId(pub usize);
 use self::shadows::{compute_cascade_matrix, compute_cascade_splits};
 use self::types::{INSTANCING_THRESHOLD, InstancedBatch};
 use crate::resources::{
-    BatchMeta, CameraUniform, ClipPlanesUniform, ClipVolumeUniform, GridUniform, InstanceAabb,
+    BatchMeta, CameraUniform, ClipPlanesUniform, ClipVolumeEntry, ClipVolumesUniform,
+    CLIP_VOLUME_MAX, GridUniform, InstanceAabb,
     InstanceData, LightsUniform, ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers,
     OutlineUniform, PickInstance, ShadowAtlasUniform, SingleLightUniform, ViewportGpuResources,
 };
@@ -548,7 +549,7 @@ impl ViewportRenderer {
             });
             let clip_volume_buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("vp_clip_volume_buf"),
-                size: std::mem::size_of::<ClipVolumeUniform>() as u64,
+                size: std::mem::size_of::<ClipVolumesUniform>() as u64,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
