@@ -72,6 +72,13 @@ fn clip_volume_test(p: vec3<f32>) -> bool {
         } else if e.volume_type == 3u {
             let ds = p - e.center;
             if dot(ds, ds) > e.radius * e.radius { return false; }
+        } else if e.volume_type == 4u {
+            let axis = e.col0;
+            let d = p - e.center;
+            let along = dot(d, axis);
+            if abs(along) > e.half_extents.x { return false; }
+            let radial = d - axis * along;
+            if dot(radial, radial) > e.radius * e.radius { return false; }
         }
     }
     return true;

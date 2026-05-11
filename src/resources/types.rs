@@ -668,11 +668,28 @@ impl ClipVolumeEntry {
             ..bytemuck::Zeroable::zeroed()
         }
     }
+
+    /// Build a cylinder entry from center, unit axis, radius, and half-length.
+    ///
+    /// The cylinder extends `half_length` units in each direction along `axis`
+    /// from `center`. `axis` must be a unit vector.
+    pub fn from_cylinder(center: [f32; 3], axis: [f32; 3], radius: f32, half_length: f32) -> Self {
+        Self {
+            volume_type: 4,
+            _pad: [0; 3],
+            center,
+            radius,
+            half_extents: [half_length, 0.0, 0.0],
+            _pad1: 0.0,
+            col0: axis,
+            ..bytemuck::Zeroable::zeroed()
+        }
+    }
 }
 
 /// Clip volume uniform array : bound at group 0 binding 6.
 ///
-/// Holds up to [`CLIP_VOLUME_MAX`] active `Box` or `Sphere` clip volumes.
+/// Holds up to [`CLIP_VOLUME_MAX`] active `Box`, `Sphere`, or `Cylinder` clip volumes.
 /// `count` is the number of valid entries; unused slots have `volume_type = 0`.
 ///
 /// The layout mirrors the WGSL `ClipVolumeUB` struct in each geometry shader.
@@ -767,6 +784,7 @@ impl ClipVolumeUniform {
                 u.sphere_center = *center;
                 u.sphere_radius = *radius;
             }
+            _ => {}
         }
         u
     }
