@@ -10,7 +10,22 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{ClipObject, Gizmo, Material, ViewportRenderer, scene::Scene};
+use viewport_lib::{
+    BuiltinColormap, ClipObject, ColormapId, Gizmo, Material, VolumeId, VolumeItem,
+    ViewportRenderer, scene::Scene,
+};
+
+// ---------------------------------------------------------------------------
+// Scene mode
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SceneMode {
+    /// Triangle mesh scene: torus + capsule.
+    Mesh,
+    /// Ray-marched volume: same shapes approximated as a density field.
+    Volume,
+}
 
 // ---------------------------------------------------------------------------
 // Active clip entry
@@ -41,6 +56,8 @@ impl ActiveClip {
 pub(crate) struct ClipVolState {
     pub scene:             Scene,
     pub built:             bool,
+    pub scene_mode:        SceneMode,
+    pub volume_id:         Option<VolumeId>,
     pub clips:             Vec<ActiveClip>,
     pub show_overlay:      bool,
     /// Gizmo retained for main.rs compatibility (not used for clip editing).
@@ -55,6 +72,8 @@ impl Default for ClipVolState {
         Self {
             scene:             Scene::new(),
             built:             false,
+            scene_mode:        SceneMode::Mesh,
+            volume_id:         None,
             clips:             vec![
                 ActiveClip::Plane { normal: [0.0, 0.0, 1.0], distance: 0.0 },
             ],
@@ -116,8 +135,48 @@ impl App {
             },
         );
 
+        // Volume: a density field approximating the same torus + capsule shapes.
+        // The field is 64³ in normalized [-1,1]³ space mapped to ±3.5 world units,
+        // so the volume torus ring sits at the same radius as the mesh torus.
+        let vol_data = build_clipvol_volume();
+        let vol_id = renderer
+            .resources_mut()
+            .upload_volume(&self.device, &self.queue, &vol_data, [64, 64, 64]);
+        self.clipvol_state.volume_id = Some(vol_id);
+
         self.clipvol_state.built = true;
     }
+}
+
+/// Generate a 64³ density field approximating a torus + capsule for the volume mode.
+///
+/// Normalized coordinates are in [-1, 1]³ and map to ±3.5 world units, so
+/// the torus ring at normalized r=0.63 appears at world r≈2.2, matching the mesh.
+fn build_clipvol_volume() -> Vec<f32> {
+    let n = 64usize;
+    let mut data = vec![0.0f32; n * n * n];
+    for iz in 0..n {
+        for iy in 0..n {
+            for ix in 0..n {
+                let x = ix as f32 / (n - 1) as f32 * 2.0 - 1.0;
+                let y = iy as f32 / (n - 1) as f32 * 2.0 - 1.0;
+                let z = iz as f32 / (n - 1) as f32 * 2.0 - 1.0;
+
+                // Torus ring: peaks on a circle at rxy=0.63, z=0.
+                let rxy = (x * x + y * y).sqrt();
+                let torus_d2 = (rxy - 0.63).powi(2) + z.powi(2);
+                let torus = (-torus_d2 / 0.028).exp();
+
+                // Capsule: cylindrical core clamped in z, with spherical caps.
+                let cz = z.clamp(-0.40, 0.40);
+                let cap_d2 = x * x + y * y + (z - cz).powi(2);
+                let capsule = (-cap_d2 / 0.046).exp();
+
+                data[iz * n * n + iy * n + ix] = (torus + capsule).min(1.0);
+            }
+        }
+    }
+    data
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +186,13 @@ impl App {
 pub(crate) fn controls_clipvol(app: &mut App, ui: &mut egui::Ui) {
     let s = &mut app.clipvol_state;
 
+    ui.label("Scene:");
+    ui.horizontal(|ui| {
+        ui.radio_value(&mut s.scene_mode, SceneMode::Mesh, "Mesh");
+        ui.radio_value(&mut s.scene_mode, SceneMode::Volume, "Volume");
+    });
+
+    ui.separator();
     ui.label("Add clip:");
     ui.horizontal(|ui| {
         if ui.button("+ Plane").clicked() {
@@ -276,6 +342,24 @@ fn controls_cylinder(
 // ---------------------------------------------------------------------------
 
 impl App {
+    /// Build a `VolumeItem` for the volume scene mode.
+    pub(crate) fn make_clipvol_volume_item(&self) -> Option<VolumeItem> {
+        let vol_id = self.clipvol_state.volume_id?;
+        let mut item = VolumeItem::default();
+        item.volume_id = vol_id;
+        item.color_lut = Some(ColormapId(BuiltinColormap::Turbo as usize));
+        item.opacity_scale = 1.0;
+        item.scalar_range = (0.0, 1.0);
+        item.threshold_min = 0.05;
+        item.threshold_max = 1.0;
+        item.step_scale = 1.0;
+        item.enable_shading = true;
+        // ±3.5 world units : normalized [-1,1] maps to this bbox.
+        item.bbox_min = [-3.5, -3.5, -3.5];
+        item.bbox_max = [3.5, 3.5, 3.5];
+        Some(item)
+    }
+
     /// Build `ClipObject`s for all active clips.
     pub(crate) fn make_clip_objects(&self) -> Vec<ClipObject> {
         let s = &self.clipvol_state;
