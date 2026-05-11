@@ -36,12 +36,13 @@ impl ViewportRenderer {
             &self.tensor_glyph_gpu_data,
             &self.ribbon_gpu_data,
             &self.volume_surface_slice_gpu_data,
-            &self.sprite_gpu_data
+            &self.sprite_gpu_data,
+            false
         );
         // Gaussian splats (alpha-blended, back-to-front sorted, no depth write).
         if !self.gaussian_splat_draw_data.is_empty() {
-            if let Some(pipeline) = &self.resources.gaussian_splat_pipeline {
-                render_pass.set_pipeline(pipeline);
+            if let Some(ref dual) = self.resources.gaussian_splat_pipeline {
+                render_pass.set_pipeline(dual.for_format(false));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for dd in &self.gaussian_splat_draw_data {
                     if let Some(set) = self.resources.gaussian_splat_store.get(dd.store_index) {
@@ -55,8 +56,8 @@ impl ViewportRenderer {
         }
         // Phase 16 : GPU implicit surface (depth-writes enabled, LessEqual compare).
         if !self.implicit_gpu_data.is_empty() {
-            if let Some(pipeline) = &self.resources.implicit_pipeline {
-                render_pass.set_pipeline(pipeline);
+            if let Some(ref dual) = self.resources.implicit_pipeline {
+                render_pass.set_pipeline(dual.for_format(false));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for gpu in &self.implicit_gpu_data {
                     render_pass.set_bind_group(1, &gpu.bind_group, &[]);
@@ -66,8 +67,8 @@ impl ViewportRenderer {
         }
         // Phase 17 : GPU marching cubes indirect draw.
         if !self.mc_gpu_data.is_empty() {
-            if let Some(pipeline) = &self.resources.mc_surface_pipeline {
-                render_pass.set_pipeline(pipeline);
+            if let Some(ref dual) = self.resources.mc_surface_pipeline {
+                render_pass.set_pipeline(dual.for_format(false));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for mc in &self.mc_gpu_data {
                     let vol = &self.resources.mc_volumes[mc.volume_idx];
@@ -202,12 +203,13 @@ impl ViewportRenderer {
             &self.tensor_glyph_gpu_data,
             &self.ribbon_gpu_data,
             &self.volume_surface_slice_gpu_data,
-            &self.sprite_gpu_data
+            &self.sprite_gpu_data,
+            false
         );
         // Gaussian splats (alpha-blended, back-to-front sorted, no depth write).
         if !self.gaussian_splat_draw_data.is_empty() {
-            if let Some(pipeline) = &self.resources.gaussian_splat_pipeline {
-                render_pass.set_pipeline(pipeline);
+            if let Some(ref dual) = self.resources.gaussian_splat_pipeline {
+                render_pass.set_pipeline(dual.for_format(false));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for dd in &self.gaussian_splat_draw_data {
                     if let Some(set) = self.resources.gaussian_splat_store.get(dd.store_index) {
@@ -221,8 +223,8 @@ impl ViewportRenderer {
         }
         // Phase 16 : GPU implicit surface (depth-writes enabled, LessEqual compare).
         if !self.implicit_gpu_data.is_empty() {
-            if let Some(pipeline) = &self.resources.implicit_pipeline {
-                render_pass.set_pipeline(pipeline);
+            if let Some(ref dual) = self.resources.implicit_pipeline {
+                render_pass.set_pipeline(dual.for_format(false));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for gpu in &self.implicit_gpu_data {
                     render_pass.set_bind_group(1, &gpu.bind_group, &[]);
@@ -232,8 +234,8 @@ impl ViewportRenderer {
         }
         // Phase 17 : GPU marching cubes indirect draw.
         if !self.mc_gpu_data.is_empty() {
-            if let Some(pipeline) = &self.resources.mc_surface_pipeline {
-                render_pass.set_pipeline(pipeline);
+            if let Some(ref dual) = self.resources.mc_surface_pipeline {
+                render_pass.set_pipeline(dual.for_format(false));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for mc in &self.mc_gpu_data {
                     let vol = &self.resources.mc_volumes[mc.volume_idx];
@@ -433,12 +435,13 @@ impl ViewportRenderer {
                 &self.tensor_glyph_gpu_data,
                 &self.ribbon_gpu_data,
                 &self.volume_surface_slice_gpu_data,
-                &self.sprite_gpu_data
+                &self.sprite_gpu_data,
+                false
             );
             // Implicit surface.
             if !self.implicit_gpu_data.is_empty() {
-                if let Some(pipeline) = &self.resources.implicit_pipeline {
-                    render_pass.set_pipeline(pipeline);
+                if let Some(ref dual) = self.resources.implicit_pipeline {
+                    render_pass.set_pipeline(dual.for_format(false));
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     for gpu in &self.implicit_gpu_data {
                         render_pass.set_bind_group(1, &gpu.bind_group, &[]);
@@ -448,8 +451,8 @@ impl ViewportRenderer {
             }
             // GPU marching cubes indirect draw.
             if !self.mc_gpu_data.is_empty() {
-                if let Some(pipeline) = &self.resources.mc_surface_pipeline {
-                    render_pass.set_pipeline(pipeline);
+                if let Some(ref dual) = self.resources.mc_surface_pipeline {
+                    render_pass.set_pipeline(dual.for_format(false));
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     for mc in &self.mc_gpu_data {
                         let vol = &self.resources.mc_volumes[mc.volume_idx];
@@ -901,12 +904,13 @@ impl ViewportRenderer {
                     &self.tensor_glyph_gpu_data,
                     &self.ribbon_gpu_data,
                     &self.volume_surface_slice_gpu_data,
-                    &self.sprite_gpu_data
+                    &self.sprite_gpu_data,
+                    false
                 );
                 // Phase 16 : GPU implicit surface.
                 if !self.implicit_gpu_data.is_empty() {
-                    if let Some(pipeline) = &self.resources.implicit_pipeline {
-                        render_pass.set_pipeline(pipeline);
+                    if let Some(ref dual) = self.resources.implicit_pipeline {
+                        render_pass.set_pipeline(dual.for_format(false));
                         render_pass.set_bind_group(0, camera_bg, &[]);
                         for gpu in &self.implicit_gpu_data {
                             render_pass.set_bind_group(1, &gpu.bind_group, &[]);
@@ -916,8 +920,8 @@ impl ViewportRenderer {
                 }
                 // Phase 17 : GPU marching cubes indirect draw.
                 if !self.mc_gpu_data.is_empty() {
-                    if let Some(pipeline) = &self.resources.mc_surface_pipeline {
-                        render_pass.set_pipeline(pipeline);
+                    if let Some(ref dual) = self.resources.mc_surface_pipeline {
+                        render_pass.set_pipeline(dual.for_format(false));
                         render_pass.set_bind_group(0, camera_bg, &[]);
                         for mc in &self.mc_gpu_data {
                             let vol = &self.resources.mc_volumes[mc.volume_idx];
@@ -1599,13 +1603,14 @@ impl ViewportRenderer {
                 &self.tensor_glyph_gpu_data,
                 &self.ribbon_gpu_data,
                 &self.volume_surface_slice_gpu_data,
-                &self.sprite_gpu_data
+                &self.sprite_gpu_data,
+                true
             );
 
             // Phase 16 : GPU implicit surface (HDR path, before skybox).
             if !self.implicit_gpu_data.is_empty() {
-                if let Some(pipeline) = &self.resources.implicit_pipeline {
-                    render_pass.set_pipeline(pipeline);
+                if let Some(ref dual) = self.resources.implicit_pipeline {
+                    render_pass.set_pipeline(dual.for_format(true));
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     for gpu in &self.implicit_gpu_data {
                         render_pass.set_bind_group(1, &gpu.bind_group, &[]);
@@ -1615,8 +1620,8 @@ impl ViewportRenderer {
             }
             // Phase 17 : GPU marching cubes indirect draw (HDR path).
             if !self.mc_gpu_data.is_empty() {
-                if let Some(pipeline) = &self.resources.mc_surface_pipeline {
-                    render_pass.set_pipeline(pipeline);
+                if let Some(ref dual) = self.resources.mc_surface_pipeline {
+                    render_pass.set_pipeline(dual.for_format(true));
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     for mc in &self.mc_gpu_data {
                         let vol = &self.resources.mc_volumes[mc.volume_idx];
@@ -1624,6 +1629,22 @@ impl ViewportRenderer {
                         for slab in &vol.slabs {
                             render_pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
                             render_pass.draw_indirect(&slab.indirect_buf, 0);
+                        }
+                    }
+                }
+            }
+
+            // Gaussian splats (HDR path).
+            if !self.gaussian_splat_draw_data.is_empty() {
+                if let Some(ref dual) = self.resources.gaussian_splat_pipeline {
+                    render_pass.set_pipeline(dual.for_format(true));
+                    render_pass.set_bind_group(0, camera_bg, &[]);
+                    for dd in &self.gaussian_splat_draw_data {
+                        if let Some(set) = self.resources.gaussian_splat_store.get(dd.store_index) {
+                            if let Some(Some(vp_sort)) = set.viewport_sort.get(dd.viewport_index) {
+                                render_pass.set_bind_group(1, &vp_sort.render_bg, &[]);
+                                render_pass.draw(0..6, 0..dd.count);
+                            }
                         }
                     }
                 }

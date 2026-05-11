@@ -1685,6 +1685,24 @@ pub(crate) struct ViewportHdrState {
 // ViewportGpuResources: top-level GPU resource container
 // ---------------------------------------------------------------------------
 
+/// A render pipeline compiled for both the LDR swapchain format and the HDR
+/// intermediate format (`Rgba16Float`). Used for pipelines that draw into the
+/// primary scene color attachment, which may be either format depending on
+/// whether post-processing is active.
+pub(crate) struct DualPipeline {
+    pub ldr: wgpu::RenderPipeline,
+    pub hdr: wgpu::RenderPipeline,
+}
+
+impl DualPipeline {
+    /// Select the pipeline matching the current render target format.
+    /// Pass `true` when drawing into the HDR scene pass (`Rgba16Float`),
+    /// `false` when drawing into the LDR swapchain pass.
+    pub fn for_format(&self, hdr: bool) -> &wgpu::RenderPipeline {
+        if hdr { &self.hdr } else { &self.ldr }
+    }
+}
+
 /// All GPU resources for the 3D viewport.
 ///
 /// Typically stored in the host framework's resource container and accessed
@@ -2086,7 +2104,7 @@ pub struct ViewportGpuResources {
 
     // --- Gaussian splat pipelines (lazily created) ---
     /// Gaussian splat render pipeline. None until first splat set is submitted.
-    pub(crate) gaussian_splat_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) gaussian_splat_pipeline: Option<DualPipeline>,
     /// Bind group layout for group 1 of the Gaussian splat render pipeline.
     pub(crate) gaussian_splat_bgl: Option<wgpu::BindGroupLayout>,
     /// Compute pipeline for computing view-space depth values per splat.
@@ -2110,17 +2128,17 @@ pub struct ViewportGpuResources {
 
     // --- Sprite billboard pipelines (lazily created) ---
     /// Sprite pipeline (depth_write_enabled: false). None until first sprite batch is submitted.
-    pub(crate) sprite_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) sprite_pipeline: Option<DualPipeline>,
     /// Sprite pipeline (depth_write_enabled: true). None until first sprite batch is submitted.
-    pub(crate) sprite_pipeline_depth_write: Option<wgpu::RenderPipeline>,
+    pub(crate) sprite_pipeline_depth_write: Option<DualPipeline>,
     /// Bind group layout for sprite uniforms + texture + instance buffer (group 1).
     pub(crate) sprite_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- SciVis Phase B: point cloud and glyph pipelines (lazily created) ---
     /// Point cloud render pipeline. None until first point cloud is submitted.
-    pub(crate) point_cloud_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) point_cloud_pipeline: Option<DualPipeline>,
     /// Glyph render pipeline. None until first glyph set is submitted.
-    pub(crate) glyph_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) glyph_pipeline: Option<DualPipeline>,
     /// Bind group layout for point cloud uniforms (group 1).
     pub(crate) point_cloud_bgl: Option<wgpu::BindGroupLayout>,
     /// Bind group layout for glyph uniforms (group 1).
@@ -2136,7 +2154,7 @@ pub struct ViewportGpuResources {
 
     // --- SciVis Phase 5: tensor glyph rendering (lazily created) ---
     /// Tensor glyph render pipeline. None until first tensor glyph set is submitted.
-    pub(crate) tensor_glyph_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) tensor_glyph_pipeline: Option<DualPipeline>,
     /// Bind group layout for tensor glyph uniforms (group 1).
     pub(crate) tensor_glyph_bgl: Option<wgpu::BindGroupLayout>,
     /// Bind group layout for tensor glyph instance storage (group 2).
@@ -2144,30 +2162,30 @@ pub struct ViewportGpuResources {
 
     // --- SciVis Phase M8: polyline rendering (lazily created) ---
     /// Polyline render pipeline. None until first polyline set is submitted.
-    pub(crate) polyline_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) polyline_pipeline: Option<DualPipeline>,
     /// Clip-exempt polyline pipeline: same as polyline_pipeline but uses fs_main_no_clip
     /// so clip overlay wireframes are always fully visible.
-    pub(crate) polyline_no_clip_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) polyline_no_clip_pipeline: Option<DualPipeline>,
     /// Bind group layout for polyline uniforms (group 1).
     pub(crate) polyline_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- SciVis Phase M: streamtube rendering (lazily created) ---
     /// Streamtube render pipeline. None until first streamtube item is submitted.
-    pub(crate) streamtube_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) streamtube_pipeline: Option<DualPipeline>,
     /// Ribbon pipeline: same layout as streamtube but cull_mode None and two-sided normals.
-    pub(crate) ribbon_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) ribbon_pipeline: Option<DualPipeline>,
     /// Bind group layout for streamtube uniforms (group 1).
     pub(crate) streamtube_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- Phase 3: image slice rendering (lazily created) ---
     /// Image slice render pipeline. None until first slice item is submitted.
-    pub(crate) image_slice_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) image_slice_pipeline: Option<DualPipeline>,
     /// Bind group layout for image slice uniforms (group 1).
     pub(crate) image_slice_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- Phase 10: volume surface slice rendering (lazily created) ---
     /// Volume surface slice render pipeline. None until first item is submitted.
-    pub(crate) volume_surface_slice_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) volume_surface_slice_pipeline: Option<DualPipeline>,
     /// Bind group layout for volume surface slice uniforms (group 1).
     pub(crate) volume_surface_slice_bgl: Option<wgpu::BindGroupLayout>,
 
@@ -2175,7 +2193,7 @@ pub struct ViewportGpuResources {
     /// Uploaded 3D volume textures. Index = VolumeId value.
     pub(crate) volume_textures: Vec<(wgpu::Texture, wgpu::TextureView)>,
     /// Volume render pipeline. None until first volume is submitted.
-    pub(crate) volume_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) volume_pipeline: Option<DualPipeline>,
     /// Bind group layout for volume uniforms (group 1).
     pub(crate) volume_bgl: Option<wgpu::BindGroupLayout>,
     /// Cached unit cube vertex+index buffers for bounding box rasterization.
@@ -2270,7 +2288,7 @@ pub struct ViewportGpuResources {
 
     // --- Phase 16: GPU implicit surface (lazily created) ---
     /// Render pipeline for GPU-side implicit surface ray-marching. None until first item submitted.
-    pub(crate) implicit_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) implicit_pipeline: Option<DualPipeline>,
     /// Bind group layout for group 1 of the implicit pipeline (ImplicitUniformRaw).
     pub(crate) implicit_bgl: Option<wgpu::BindGroupLayout>,
 
@@ -2278,7 +2296,7 @@ pub struct ViewportGpuResources {
     pub(crate) mc_classify_pipeline:     Option<wgpu::ComputePipeline>,
     pub(crate) mc_prefix_sum_pipeline:   Option<wgpu::ComputePipeline>,
     pub(crate) mc_generate_pipeline:     Option<wgpu::ComputePipeline>,
-    pub(crate) mc_surface_pipeline:      Option<wgpu::RenderPipeline>,
+    pub(crate) mc_surface_pipeline:      Option<DualPipeline>,
     pub(crate) mc_classify_bgl:          Option<wgpu::BindGroupLayout>,
     pub(crate) mc_prefix_sum_bgl:        Option<wgpu::BindGroupLayout>,
     pub(crate) mc_generate_bgl:          Option<wgpu::BindGroupLayout>,

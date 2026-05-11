@@ -543,15 +543,16 @@ macro_rules! emit_draw_calls {
 ///
 /// Called by both `paint` and `paint_to` after `emit_draw_calls!` to render scivis layers.
 macro_rules! emit_scivis_draw_calls {
-    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $volume_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $image_slice_gpu_data:expr, $tensor_glyph_gpu_data:expr, $ribbon_gpu_data:expr, $volume_surface_slice_gpu_data:expr, $sprite_gpu_data:expr) => {{
+    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $volume_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $image_slice_gpu_data:expr, $tensor_glyph_gpu_data:expr, $ribbon_gpu_data:expr, $volume_surface_slice_gpu_data:expr, $sprite_gpu_data:expr, $is_hdr:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let camera_bg: &wgpu::BindGroup = $camera_bg;
+        let _is_hdr: bool = $is_hdr;
 
         // Point cloud pass.
         if !$pc_gpu_data.is_empty() {
-            if let Some(ref pipeline) = resources.point_cloud_pipeline {
-                render_pass.set_pipeline(pipeline);
+            if let Some(ref dual) = resources.point_cloud_pipeline {
+                render_pass.set_pipeline(dual.for_format(_is_hdr));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for pc in $pc_gpu_data.iter() {
                     render_pass.set_bind_group(1, &pc.bind_group, &[]);
@@ -564,8 +565,8 @@ macro_rules! emit_scivis_draw_calls {
 
         // Glyph pass.
         if !$glyph_gpu_data.is_empty() {
-            if let Some(ref pipeline) = resources.glyph_pipeline {
-                render_pass.set_pipeline(pipeline);
+            if let Some(ref dual) = resources.glyph_pipeline {
+                render_pass.set_pipeline(dual.for_format(_is_hdr));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for glyph in $glyph_gpu_data.iter() {
                     render_pass.set_bind_group(1, &glyph.uniform_bind_group, &[]);
@@ -589,12 +590,12 @@ macro_rules! emit_scivis_draw_calls {
                 if pl.segment_count == 0 {
                     continue;
                 }
-                let pipeline_opt = if pl.skip_clip {
-                    resources.polyline_no_clip_pipeline.as_ref()
+                let pipeline = if pl.skip_clip {
+                    resources.polyline_no_clip_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
                 } else {
-                    resources.polyline_pipeline.as_ref()
+                    resources.polyline_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
                 };
-                if let Some(pipeline) = pipeline_opt {
+                if let Some(pipeline) = pipeline {
                     render_pass.set_pipeline(pipeline);
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     render_pass.set_bind_group(1, &pl.bind_group, &[]);
@@ -606,8 +607,8 @@ macro_rules! emit_scivis_draw_calls {
 
         // Volume pass (after glyphs : volumes are translucent, rendered last).
         if !$volume_gpu_data.is_empty() {
-            if let Some(ref pipeline) = resources.volume_pipeline {
-                render_pass.set_pipeline(pipeline);
+            if let Some(ref dual) = resources.volume_pipeline {
+                render_pass.set_pipeline(dual.for_format(_is_hdr));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for vol in $volume_gpu_data.iter() {
                     render_pass.set_bind_group(1, &vol.bind_group, &[]);
@@ -621,8 +622,8 @@ macro_rules! emit_scivis_draw_calls {
 
         // Streamtube pass (SciVis Phase M : connected tube mesh per strip set).
         if !$streamtube_gpu_data.is_empty() {
-            if let Some(ref pipeline) = resources.streamtube_pipeline {
-                render_pass.set_pipeline(pipeline);
+            if let Some(ref dual) = resources.streamtube_pipeline {
+                render_pass.set_pipeline(dual.for_format(_is_hdr));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for tube in $streamtube_gpu_data.iter() {
                     if tube.index_count == 0 {
@@ -639,8 +640,8 @@ macro_rules! emit_scivis_draw_calls {
 
         // General tube pass (Phase 3.3 : uses same streamtube pipeline, per-vertex color).
         if !$tube_gpu_data.is_empty() {
-            if let Some(ref pipeline) = resources.streamtube_pipeline {
-                render_pass.set_pipeline(pipeline);
+            if let Some(ref dual) = resources.streamtube_pipeline {
+                render_pass.set_pipeline(dual.for_format(_is_hdr));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for tube in $tube_gpu_data.iter() {
                     if tube.index_count == 0 {
@@ -657,8 +658,8 @@ macro_rules! emit_scivis_draw_calls {
 
         // Image slice pass (Phase 3.2 : no vertex buffer, 6 vertices generated by shader).
         if !$image_slice_gpu_data.is_empty() {
-            if let Some(ref pipeline) = resources.image_slice_pipeline {
-                render_pass.set_pipeline(pipeline);
+            if let Some(ref dual) = resources.image_slice_pipeline {
+                render_pass.set_pipeline(dual.for_format(_is_hdr));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for slice in $image_slice_gpu_data.iter() {
                     render_pass.set_bind_group(1, &slice.bind_group, &[]);
@@ -669,8 +670,8 @@ macro_rules! emit_scivis_draw_calls {
 
         // Tensor glyph pass (Phase 5 : instanced ellipsoids for stress/strain tensors).
         if !$tensor_glyph_gpu_data.is_empty() {
-            if let Some(ref pipeline) = resources.tensor_glyph_pipeline {
-                render_pass.set_pipeline(pipeline);
+            if let Some(ref dual) = resources.tensor_glyph_pipeline {
+                render_pass.set_pipeline(dual.for_format(_is_hdr));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for tg in $tensor_glyph_gpu_data.iter() {
                     render_pass.set_bind_group(1, &tg.uniform_bind_group, &[]);
@@ -687,8 +688,8 @@ macro_rules! emit_scivis_draw_calls {
 
         // Volume surface slice pass (Phase 10 : arbitrary mesh sampled from volume).
         if !$volume_surface_slice_gpu_data.is_empty() {
-            if let Some(ref pipeline) = resources.volume_surface_slice_pipeline {
-                render_pass.set_pipeline(pipeline);
+            if let Some(ref dual) = resources.volume_surface_slice_pipeline {
+                render_pass.set_pipeline(dual.for_format(_is_hdr));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for slice in $volume_surface_slice_gpu_data.iter() {
                     if let Some(mesh) = resources.mesh_store.get(slice.mesh_id) {
@@ -706,8 +707,8 @@ macro_rules! emit_scivis_draw_calls {
 
         // Ribbon pass (Phase 8.1 : flat quad strips, two-sided pipeline).
         if !$ribbon_gpu_data.is_empty() {
-            if let Some(ref pipeline) = resources.ribbon_pipeline {
-                render_pass.set_pipeline(pipeline);
+            if let Some(ref dual) = resources.ribbon_pipeline {
+                render_pass.set_pipeline(dual.for_format(_is_hdr));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for ribbon in $ribbon_gpu_data.iter() {
                     if ribbon.index_count == 0 {
@@ -725,22 +726,22 @@ macro_rules! emit_scivis_draw_calls {
         // Sprite billboard pass: depth-write items first, then transparent items.
         if !$sprite_gpu_data.is_empty() {
             // Depth-write batch (opaque-style markers).
-            if let Some(ref pipeline) = resources.sprite_pipeline_depth_write {
+            if let Some(ref dual) = resources.sprite_pipeline_depth_write {
                 let mut set = false;
                 for sprite in $sprite_gpu_data.iter() {
                     if !sprite.depth_write { continue; }
-                    if !set { render_pass.set_pipeline(pipeline); render_pass.set_bind_group(0, camera_bg, &[]); set = true; }
+                    if !set { render_pass.set_pipeline(dual.for_format(_is_hdr)); render_pass.set_bind_group(0, camera_bg, &[]); set = true; }
                     render_pass.set_bind_group(1, &sprite.bind_group, &[]);
                     render_pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
                     render_pass.draw(0..6, 0..sprite.sprite_count);
                 }
             }
             // No-depth-write batch (transparent effects, default).
-            if let Some(ref pipeline) = resources.sprite_pipeline {
+            if let Some(ref dual) = resources.sprite_pipeline {
                 let mut set = false;
                 for sprite in $sprite_gpu_data.iter() {
                     if sprite.depth_write { continue; }
-                    if !set { render_pass.set_pipeline(pipeline); render_pass.set_bind_group(0, camera_bg, &[]); set = true; }
+                    if !set { render_pass.set_pipeline(dual.for_format(_is_hdr)); render_pass.set_bind_group(0, camera_bg, &[]); set = true; }
                     render_pass.set_bind_group(1, &sprite.bind_group, &[]);
                     render_pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
                     render_pass.draw(0..6, 0..sprite.sprite_count);

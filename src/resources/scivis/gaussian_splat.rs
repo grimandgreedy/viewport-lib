@@ -136,7 +136,7 @@ impl ViewportGpuResources {
             push_constant_ranges: &[],
         });
 
-        let gaussian_splat_pipeline =
+        let make_splat_pipeline = |fmt: wgpu::TextureFormat| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("gaussian_splat_pipeline"),
                 layout: Some(&render_layout),
@@ -150,7 +150,7 @@ impl ViewportGpuResources {
                     module: &render_shader,
                     entry_point: Some("fs_main"),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: self.target_format,
+                        format: fmt,
                         blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
@@ -175,7 +175,12 @@ impl ViewportGpuResources {
                 },
                 multiview: None,
                 cache: None,
-            });
+            })
+        };
+        let gaussian_splat_pipeline = DualPipeline {
+            ldr: make_splat_pipeline(self.target_format),
+            hdr: make_splat_pipeline(wgpu::TextureFormat::Rgba16Float),
+        };
 
         // ---------------------------------------------------------------
         // Sort compute pipelines

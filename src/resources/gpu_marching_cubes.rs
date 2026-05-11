@@ -12,7 +12,7 @@ use wgpu::util::DeviceExt as _;
 
 use crate::{
     geometry::marching_cubes::{TRI_TABLE, VolumeData},
-    resources::ViewportGpuResources,
+    resources::{DualPipeline, ViewportGpuResources},
     scene::material::Material,
 };
 
@@ -342,21 +342,21 @@ impl ViewportGpuResources {
             attributes: &vertex_attrs,
         };
 
-        let surface_pipeline =
+        let make_surface = |fmt: wgpu::TextureFormat| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("mc_surface_pipeline"),
                 layout: Some(&surface_layout),
                 vertex: wgpu::VertexState {
                     module: &surface_shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[vertex_layout],
+                    buffers: &[vertex_layout.clone()],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &surface_shader,
                     entry_point: Some("fs_main"),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: self.target_format,
+                        format: fmt,
                         blend: None, // opaque
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
@@ -381,7 +381,8 @@ impl ViewportGpuResources {
                 },
                 multiview: None,
                 cache: None,
-            });
+            })
+        };
 
         // ----------------------------------------------------------------
         // Commit all resources.
@@ -395,7 +396,10 @@ impl ViewportGpuResources {
         self.mc_classify_pipeline = Some(classify_pipeline);
         self.mc_prefix_sum_pipeline = Some(prefix_sum_pipeline);
         self.mc_generate_pipeline = Some(generate_pipeline);
-        self.mc_surface_pipeline  = Some(surface_pipeline);
+        self.mc_surface_pipeline  = Some(DualPipeline {
+            ldr: make_surface(self.target_format),
+            hdr: make_surface(wgpu::TextureFormat::Rgba16Float),
+        });
     }
 
     /// Upload a [`VolumeData`] to GPU, pre-allocating all intermediate and output

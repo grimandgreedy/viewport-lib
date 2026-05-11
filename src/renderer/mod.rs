@@ -804,12 +804,13 @@ impl ViewportRenderer {
             &self.tensor_glyph_gpu_data,
             &self.ribbon_gpu_data,
             &self.volume_surface_slice_gpu_data,
-            &self.sprite_gpu_data
+            &self.sprite_gpu_data,
+            false
         );
         // Gaussian splats (alpha-blended, back-to-front sorted, no depth write).
         if !self.gaussian_splat_draw_data.is_empty() {
-            if let Some(pipeline) = &self.resources.gaussian_splat_pipeline {
-                render_pass.set_pipeline(pipeline);
+            if let Some(ref dual) = self.resources.gaussian_splat_pipeline {
+                render_pass.set_pipeline(dual.for_format(false));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for dd in &self.gaussian_splat_draw_data {
                     if let Some(set) = self.resources.gaussian_splat_store.get(dd.store_index) {
@@ -863,12 +864,13 @@ impl ViewportRenderer {
             &self.tensor_glyph_gpu_data,
             &self.ribbon_gpu_data,
             &self.volume_surface_slice_gpu_data,
-            &self.sprite_gpu_data
+            &self.sprite_gpu_data,
+            false
         );
         // Gaussian splats (alpha-blended, back-to-front sorted, no depth write).
         if !self.gaussian_splat_draw_data.is_empty() {
-            if let Some(pipeline) = &self.resources.gaussian_splat_pipeline {
-                render_pass.set_pipeline(pipeline);
+            if let Some(ref dual) = self.resources.gaussian_splat_pipeline {
+                render_pass.set_pipeline(dual.for_format(false));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for dd in &self.gaussian_splat_draw_data {
                     if let Some(set) = self.resources.gaussian_splat_store.get(dd.store_index) {

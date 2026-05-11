@@ -14,6 +14,8 @@
 ### Fixes
 - Add `display_center` to `ClipShape::Plane` overlay to allow arbitrary placement.
 - Fix clip planes as applied to `VolumeItem` objects. Problem was in the applied transformation matrix.
+- Point clouds, volumes, polylines, glyphs, sprites, streamtubes, ribbons, image slices, tensor glyphs, implicit surfaces, and marching cubes surfaces crashed when used alongside post-processing, transparent volume meshes, or surface LIC. All scene content now renders correctly in both the HDR and LDR paths.
+- Gaussian splats were silently invisible when post-processing was enabled. They now render in HDR frames.
 
 
 ## [0.13.2]
