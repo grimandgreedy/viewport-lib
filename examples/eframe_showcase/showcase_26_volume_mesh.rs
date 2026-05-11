@@ -49,10 +49,11 @@ pub(crate) struct VmState {
     pub field:          VmField,
     pub wireframe:      bool,
     pub clip_on:        bool,
-    pub clip_axis:      VmClipAxis,
     pub clip_offset:    f32,
-    /// Tilt angle in degrees: rotates the clip plane normal away from the selected axis.
-    pub clip_angle:     f32,
+    /// Elevation in degrees: angle above the horizontal XZ plane (-90 = down, 0 = horizontal, 90 = up).
+    pub clip_elevation: f32,
+    /// Azimuth in degrees: rotation in the XZ plane measured from +Z toward +X.
+    pub clip_azimuth:   f32,
     /// GPU mesh slot for the CPU-clipped volume mesh; allocated lazily on first clip.
     pub clipped_index:  Option<MeshId>,
     /// Projected-tet handles per cell type (uploaded at startup with raw positions).
@@ -87,9 +88,9 @@ impl Default for VmState {
             field:           VmField::Latitude,
             wireframe:       false,
             clip_on:         true,
-            clip_axis:       VmClipAxis::Y,
             clip_offset:     0.0,
-            clip_angle:      0.0,
+            clip_elevation:  0.0,
+            clip_azimuth:    0.0,
             clipped_index:   None,
             pt_hex_id:       None,
             pt_tet_id:       None,
@@ -165,13 +166,6 @@ pub(crate) enum VmField {
     DirectColor,
 }
 
-/// Axis for the showcase clip plane.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum VmClipAxis {
-    X,
-    Y,
-    Z,
-}
 
 // ---------------------------------------------------------------------------
 // App state fields (declared in main App struct):
@@ -778,23 +772,22 @@ impl App {
         self.vm_state.built = true;
     }
 
-    /// Compute the clip plane normal from the selected axis and tilt angle.
+    /// Compute the clip plane normal from elevation and azimuth.
     ///
-    /// At `vm_clip_angle = 0` the normal is the pure axis direction.
-    /// The angle tilts the normal within the plane spanned by the selected axis
-    /// and the next axis in the cycle (X->Y->Z->X), producing oblique sections:
+    /// elevation: angle above the horizontal XZ plane in degrees.
+    ///   0 = horizontal cut (normal has no Y component)
+    ///   +90 = normal points straight up (+Y)
     ///
-    /// - Axis X: rotates [1,0,0] toward [0,1,0] (around Z)
-    /// - Axis Y: rotates [0,1,0] toward [0,0,1] (around X)
-    /// - Axis Z: rotates [0,0,1] toward [1,0,0] (around Y)
+    /// azimuth: rotation in the XZ plane in degrees, measured from +Z toward +X.
+    ///   0   -> normal = [0, 0, 1] at elevation 0 (XY-plane cut)
+    ///   90  -> normal = [1, 0, 0] at elevation 0 (YZ-plane cut)
+    ///   180 -> normal = [0, 0, -1]
     fn vm_clip_normal(&self) -> [f32; 3] {
-        let theta = self.vm_state.clip_angle.to_radians();
-        let (s, c) = (theta.sin(), theta.cos());
-        match self.vm_state.clip_axis {
-            VmClipAxis::X => [c, s, 0.0],
-            VmClipAxis::Y => [0.0, c, s],
-            VmClipAxis::Z => [s, 0.0, c],
-        }
+        let el = self.vm_state.clip_elevation.to_radians();
+        let az = self.vm_state.clip_azimuth.to_radians();
+        let (sel, cel) = (el.sin(), el.cos());
+        let (saz, caz) = (az.sin(), az.cos());
+        [saz * cel, sel, caz * cel]
     }
 
     /// Encode the active clip normal and offset as `[nx, ny, nz, d]`.
@@ -985,6 +978,7 @@ impl App {
             normal,
             distance: self.vm_state.clip_offset,
             cap_color: None,
+            display_center: None,
         };
         clip.color = None;
         clip.edge_color = Some([0.75, 0.85, 1.0, 1.0]);
@@ -1071,22 +1065,22 @@ pub(crate) fn controls_volume_mesh(app: &mut App, ui: &mut egui::Ui) {
         ui.separator();
         ui.checkbox(&mut app.vm_state.clip_on, "Clip plane");
         if app.vm_state.clip_on {
-            ui.horizontal(|ui| {
-                ui.radio_value(&mut app.vm_state.clip_axis, VmClipAxis::X, "X");
-                ui.radio_value(&mut app.vm_state.clip_axis, VmClipAxis::Y, "Y");
-                ui.radio_value(&mut app.vm_state.clip_axis, VmClipAxis::Z, "Z");
-            });
             ui.add(
                 egui::Slider::new(&mut app.vm_state.clip_offset, -1.75..=1.75)
                     .text("Offset")
                     .step_by(0.01),
             );
             ui.add(
-                egui::Slider::new(&mut app.vm_state.clip_angle, -89.0..=89.0)
-                    .text("Angle (°)")
+                egui::Slider::new(&mut app.vm_state.clip_elevation, -89.0..=89.0)
+                    .text("Elevation (°)")
                     .step_by(1.0),
             );
-            ui.label("Keeps the positive side of the plane to reveal interior cells.");
+            ui.add(
+                egui::Slider::new(&mut app.vm_state.clip_azimuth, -180.0..=180.0)
+                    .text("Azimuth (°)")
+                    .step_by(1.0),
+            );
+            ui.label("Keeps the positive-normal side of the plane.");
         }
 
         ui.separator();

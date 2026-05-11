@@ -32,7 +32,7 @@ pub(crate) enum SceneMode {
 // ---------------------------------------------------------------------------
 
 pub(crate) enum ActiveClip {
-    Plane { normal: [f32; 3], distance: f32 },
+    Plane { elevation: f32, azimuth: f32, distance: f32 },
     Box { center: [f32; 3], half_extents: [f32; 3], yaw: f32 },
     Sphere { center: [f32; 3], radius: f32 },
     Cylinder { center: [f32; 3], axis_yaw: f32, axis_pitch: f32, radius: f32, half_length: f32 },
@@ -75,7 +75,7 @@ impl Default for ClipVolState {
             scene_mode:        SceneMode::Mesh,
             volume_id:         None,
             clips:             vec![
-                ActiveClip::Plane { normal: [0.0, 0.0, 1.0], distance: 0.0 },
+                ActiveClip::Plane { elevation: 0.0, azimuth: 0.0, distance: 0.0 },
             ],
             show_overlay:      true,
             gizmo:             Gizmo::new(),
@@ -196,7 +196,7 @@ pub(crate) fn controls_clipvol(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Add clip:");
     ui.horizontal(|ui| {
         if ui.button("+ Plane").clicked() {
-            s.clips.push(ActiveClip::Plane { normal: [0.0, 0.0, 1.0], distance: 0.0 });
+            s.clips.push(ActiveClip::Plane { elevation: 0.0, azimuth: 0.0, distance: 0.0 });
         }
         if ui.button("+ Box").clicked() {
             s.clips.push(ActiveClip::Box {
@@ -239,8 +239,8 @@ pub(crate) fn controls_clipvol(app: &mut App, ui: &mut egui::Ui) {
         });
 
         match clip {
-            ActiveClip::Plane { normal, distance } => {
-                controls_plane(ui, normal, distance);
+            ActiveClip::Plane { elevation, azimuth, distance } => {
+                controls_plane(ui, elevation, azimuth, distance);
             }
             ActiveClip::Box { center, half_extents, yaw } => {
                 controls_box(ui, center, half_extents, yaw);
@@ -259,19 +259,40 @@ pub(crate) fn controls_clipvol(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
-fn controls_plane(ui: &mut egui::Ui, normal: &mut [f32; 3], distance: &mut f32) {
+/// Compute a unit normal from elevation/azimuth angles (degrees).
+/// Convention: az=0,el=0 -> +Z; az=90,el=0 -> +X; el=90 -> +Y.
+fn plane_normal(elevation: f32, azimuth: f32) -> [f32; 3] {
+    let el = elevation.to_radians();
+    let az = azimuth.to_radians();
+    let (sel, cel) = (el.sin(), el.cos());
+    let (saz, caz) = (az.sin(), az.cos());
+    [saz * cel, sel, caz * cel]
+}
+
+fn controls_plane(
+    ui: &mut egui::Ui,
+    elevation: &mut f32,
+    azimuth: &mut f32,
+    distance: &mut f32,
+) {
     ui.label("Axis preset:");
     ui.horizontal(|ui| {
-        if ui.button("X").clicked() { *normal = [1.0, 0.0, 0.0]; }
-        if ui.button("Y").clicked() { *normal = [0.0, 1.0, 0.0]; }
-        if ui.button("Z").clicked() { *normal = [0.0, 0.0, 1.0]; }
+        // X: az=90,el=0 -> [sin90*cos0, sin0, cos90*cos0] = [1,0,0]
+        if ui.button("X").clicked() { *azimuth = 90.0; *elevation = 0.0; }
+        // Y: el=90 -> [0,1,0]
+        if ui.button("Y").clicked() { *azimuth = 0.0; *elevation = 90.0; }
+        // Z: az=0,el=0 -> [0,0,1]
+        if ui.button("Z").clicked() { *azimuth = 0.0; *elevation = 0.0; }
     });
+    ui.label("Elevation:");
+    ui.add(egui::Slider::new(elevation, -89.0..=89.0).suffix("°").step_by(1.0));
+    ui.label("Azimuth:");
+    ui.add(egui::Slider::new(azimuth, -180.0..=180.0).suffix("°").step_by(1.0));
     ui.label("Offset:");
     ui.add(egui::Slider::new(distance, -6.0..=6.0).step_by(0.05));
     if ui.button("Flip Normal").clicked() {
-        normal[0] = -normal[0];
-        normal[1] = -normal[1];
-        normal[2] = -normal[2];
+        *elevation = -*elevation;
+        *azimuth = if *azimuth >= 0.0 { *azimuth - 180.0 } else { *azimuth + 180.0 };
         *distance = -*distance;
     }
 }
@@ -367,8 +388,9 @@ impl App {
         let plane_overlay: Option<[f32; 4]> = if s.show_overlay { Some([0.45, 0.82, 1.0, 0.5]) } else { None };
 
         s.clips.iter().map(|clip| match clip {
-            ActiveClip::Plane { normal, distance } => {
-                let mut co = ClipObject::plane(*normal, *distance);
+            ActiveClip::Plane { elevation, azimuth, distance } => {
+                let normal = plane_normal(*elevation, *azimuth);
+                let mut co = ClipObject::plane(normal, *distance);
                 co.color = plane_overlay;
                 co
             }

@@ -3,7 +3,8 @@
 ## [0.13.3] (dev, current, unreleased)
 
 ### Fixes
-- `ClipShape::Plane` overlay quad position was always anchored to the foot-of-perpendicular from the world origin (`normal * (-distance)`), so lateral translations of the plane (movement tangent to the plane) moved the gizmo but left the overlay stationary. Added `display_center: Option<[f32; 3]>` to `ClipShape::Plane`; when set, the renderer uses it to position the overlay quad. Existing code that omits the field or sets `None` keeps the previous fallback behaviour.
+- Add `display_center` to `ClipShape::Plane` overlay to allow arbitrary placement.
+- Fix clip planes as applied to `VolumeItem` objects. Problem was in the applied transformation matrix.
 
 
 ## [0.13.2]

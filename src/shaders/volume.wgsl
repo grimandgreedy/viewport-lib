@@ -310,11 +310,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let inv_model_t = transpose(volume.model);  // For transforming plane normals.
     for (var i = 0u; i < volume.num_clip_planes; i = i + 1u) {
         let plane_world = volume.clip_planes[i];
-        // Transform plane to model space: normal' = (M^-T) * normal, d' adjusted.
+        // Transform plane to model space: normal' = M^T * normal, d' adjusted.
         let n_world = plane_world.xyz;
         let d_world = plane_world.w;
-        // For the unit-cube model transform, we use the inverse-transpose.
-        let n_model_raw = (volume.inv_model * vec4<f32>(n_world, 0.0)).xyz;
+        // Transform normal with M^T (not M^-1) to get model-space normal.
+        let n_model_raw = (inv_model_t * vec4<f32>(n_world, 0.0)).xyz;
         let n_model_len = length(n_model_raw);
         if n_model_len < 1e-8 {
             continue;
