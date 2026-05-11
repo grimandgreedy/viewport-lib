@@ -46,23 +46,29 @@ struct VolumeUniform {
     clip_planes:     array<vec4<f32>, 6>,  // normal.xyz + distance
 };
 
-struct ClipVolumeUB {
+struct ClipVolumeEntry {
     volume_type: u32,
-    _pad0: u32, _pad1: u32, _pad2: u32,
-    plane_normal: vec3<f32>,
-    plane_dist: f32,
-    box_center: vec3<f32>,
-    _padB0: f32,
-    box_half_extents: vec3<f32>,
-    _padB1: f32,
-    box_col0: vec3<f32>,
-    _padB2: f32,
-    box_col1: vec3<f32>,
-    _padB3: f32,
-    box_col2: vec3<f32>,
-    _padB4: f32,
-    sphere_center: vec3<f32>,
-    sphere_radius: f32,
+    _pad_a: u32,
+    _pad_b: u32,
+    _pad_c: u32,
+    center: vec3<f32>,
+    radius: f32,
+    half_extents: vec3<f32>,
+    _pad1: f32,
+    col0: vec3<f32>,
+    _pad2: f32,
+    col1: vec3<f32>,
+    _pad3: f32,
+    col2: vec3<f32>,
+    _pad4: f32,
+}
+
+struct ClipVolumeUB {
+    count: u32,
+    _pad_a: u32,
+    _pad_b: u32,
+    _pad_c: u32,
+    volumes: array<ClipVolumeEntry, 4>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -70,23 +76,22 @@ struct ClipVolumeUB {
 @group(0) @binding(6) var<uniform> clip_volume: ClipVolumeUB;
 
 fn clip_volume_test(p: vec3<f32>) -> bool {
-    if clip_volume.volume_type == 0u { return true; }
-    if clip_volume.volume_type == 1u {
-        return dot(p, clip_volume.plane_normal) + clip_volume.plane_dist >= 0.0;
+    for (var i = 0u; i < clip_volume.count; i = i + 1u) {
+        let e = clip_volume.volumes[i];
+        if e.volume_type == 2u {
+            let d = p - e.center;
+            let local = vec3<f32>(dot(d, e.col0), dot(d, e.col1), dot(d, e.col2));
+            if abs(local.x) > e.half_extents.x
+                || abs(local.y) > e.half_extents.y
+                || abs(local.z) > e.half_extents.z {
+                return false;
+            }
+        } else if e.volume_type == 3u {
+            let ds = p - e.center;
+            if dot(ds, ds) > e.radius * e.radius { return false; }
+        }
     }
-    if clip_volume.volume_type == 2u {
-        let d = p - clip_volume.box_center;
-        let local = vec3<f32>(
-            dot(d, clip_volume.box_col0),
-            dot(d, clip_volume.box_col1),
-            dot(d, clip_volume.box_col2),
-        );
-        return abs(local.x) <= clip_volume.box_half_extents.x
-            && abs(local.y) <= clip_volume.box_half_extents.y
-            && abs(local.z) <= clip_volume.box_half_extents.z;
-    }
-    let ds = p - clip_volume.sphere_center;
-    return dot(ds, ds) <= clip_volume.sphere_radius * clip_volume.sphere_radius;
+    return true;
 }
 
 @group(1) @binding(0) var<uniform> volume: VolumeUniform;
@@ -158,22 +163,23 @@ fn clip_ray_plane(
 fn clip_ray_box(
     ray_origin: vec3<f32>,
     ray_dir: vec3<f32>,
+    e: ClipVolumeEntry,
     t_near_in: f32,
     t_far_in: f32,
 ) -> vec2<f32> {
     // Transform ray to box-local space.
-    let d = ray_origin - clip_volume.box_center;
+    let d = ray_origin - e.center;
     let local_origin = vec3<f32>(
-        dot(d, clip_volume.box_col0),
-        dot(d, clip_volume.box_col1),
-        dot(d, clip_volume.box_col2),
+        dot(d, e.col0),
+        dot(d, e.col1),
+        dot(d, e.col2),
     );
     let local_dir = vec3<f32>(
-        dot(ray_dir, clip_volume.box_col0),
-        dot(ray_dir, clip_volume.box_col1),
-        dot(ray_dir, clip_volume.box_col2),
+        dot(ray_dir, e.col0),
+        dot(ray_dir, e.col1),
+        dot(ray_dir, e.col2),
     );
-    let he = clip_volume.box_half_extents;
+    let he = e.half_extents;
     // AABB slab test against [-he, +he].
     var t_near = t_near_in;
     var t_far  = t_far_in;
@@ -206,12 +212,13 @@ fn clip_ray_box(
 fn clip_ray_sphere(
     ray_origin: vec3<f32>,
     ray_dir: vec3<f32>,
+    e: ClipVolumeEntry,
     t_near_in: f32,
     t_far_in: f32,
 ) -> vec2<f32> {
-    let oc = ray_origin - clip_volume.sphere_center;
+    let oc = ray_origin - e.center;
     let b  = dot(oc, ray_dir);
-    let c  = dot(oc, oc) - clip_volume.sphere_radius * clip_volume.sphere_radius;
+    let c  = dot(oc, oc) - e.radius * e.radius;
     let discriminant = b * b - c;
     if discriminant < 0.0 {
         // No intersection with sphere.
@@ -260,9 +267,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         t_far = clipped.y;
     }
 
-    // Clip against extended clip volume (box or sphere), working in world space.
-    // We reconstruct the world-space ray from the model-space ray via volume.model.
-    if clip_volume.volume_type != 0u {
+    // Clip against active clip volumes (box and sphere), working in world space.
+    // Reconstruct the world-space ray once, then loop over all active entries.
+    if clip_volume.count > 0u {
         let eye_world = camera.eye_pos;
         // Transform model-space ray_dir back to world space.
         let model3 = mat3x3<f32>(volume.model[0].xyz, volume.model[1].xyz, volume.model[2].xyz);
@@ -273,21 +280,22 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         if dir_world_len > 1e-8 {
             let dir_world = dir_world_raw / dir_world_len;
             let scale = dir_world_len;  // t_model = t_world / scale
-            let t_near_w = t_near * scale;
-            let t_far_w  = t_far  * scale;
-            var result: vec2<f32>;
-            if clip_volume.volume_type == 1u {
-                // Single plane additional clip (on top of the planes loop above).
-                let n = clip_volume.plane_normal;
-                let dist = clip_volume.plane_dist;
-                result = clip_ray_plane(eye_world, dir_world, n, dist, t_near_w, t_far_w);
-            } else if clip_volume.volume_type == 2u {
-                result = clip_ray_box(eye_world, dir_world, t_near_w, t_far_w);
-            } else {
-                result = clip_ray_sphere(eye_world, dir_world, t_near_w, t_far_w);
+            var tw_near = t_near * scale;
+            var tw_far  = t_far  * scale;
+            for (var i = 0u; i < clip_volume.count; i = i + 1u) {
+                let e = clip_volume.volumes[i];
+                if e.volume_type == 2u {
+                    let r = clip_ray_box(eye_world, dir_world, e, tw_near, tw_far);
+                    tw_near = r.x;
+                    tw_far  = r.y;
+                } else if e.volume_type == 3u {
+                    let r = clip_ray_sphere(eye_world, dir_world, e, tw_near, tw_far);
+                    tw_near = r.x;
+                    tw_far  = r.y;
+                }
             }
-            t_near = result.x / scale;
-            t_far  = result.y / scale;
+            t_near = tw_near / scale;
+            t_far  = tw_far  / scale;
         }
     }
 
