@@ -40,6 +40,9 @@ eframe = { version = "=0.33.3", default-features = false, features = ["wgpu", "d
 winit = "0.30"
 pollster = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tungstenite = "0.29.0"
+image = "0.25.9"
+serde_json = "1.0.149"
 
 [[example]]
 name = "iced-viewport"
@@ -65,6 +68,10 @@ path = "examples/eframe_minimal/main.rs"
 [[example]]
 name = "eframe-remote"
 path = "examples/eframe_remote/main.rs"
+
+[[example]]
+name = "remote-browser"
+path = "examples/remote_browser/main.rs"
 
 [[example]]
 name = "eframe-testing"

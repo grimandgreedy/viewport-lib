@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>viewport-lib remote viewer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #111; overflow: hidden; }
+    canvas { display: block; cursor: grab; }
+    canvas:active { cursor: grabbing; }
+    #status {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      font: 13px/1 monospace;
+      color: #aaa;
+      background: rgba(0,0,0,0.5);
+      padding: 6px 10px;
+      border-radius: 4px;
+      pointer-events: none;
+    }
+    #status.connected { color: #7c7; }
+    #status.disconnected { color: #c77; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="status" class="disconnected">connecting...</div>
+  <script>
+    const canvas = document.getElementById('c');
+    const ctx    = canvas.getContext('2d');
+    const status = document.getElementById('status');
+
+    function resize() {
+      canvas.width  = window.innerWidth;
+      canvas.height = window.innerHeight;
+      send({ type: 'resize', width: canvas.width, height: canvas.height });
+    }
+
+    window.addEventListener('resize', resize);
+
+    const WS_URL = 'ws://localhost:3001';
+
+    function connect() {
+      status.textContent = 'connecting...';
+      status.className   = 'disconnected';
+
+      const ws = new WebSocket(WS_URL);
+      ws.binaryType = 'blob';
+
+      ws.onopen = () => {
+        status.textContent = 'connected';
+        status.className   = 'connected';
+        resize();
+      };
+
+      ws.onclose = () => {
+        status.textContent = 'disconnected -- retrying in 2s';
+        status.className   = 'disconnected';
+        setTimeout(connect, 2000);
+      };
+
+      ws.onerror = () => {};
+
+      // Each binary message is a complete JPEG frame.
+      ws.onmessage = async (e) => {
+        const bitmap = await createImageBitmap(e.data);
+        ctx.drawImage(bitmap, 0, 0);
+        bitmap.close();
+      };
+
+      function send(msg) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(msg));
+        }
+      }
+
+      // --- input forwarding ---
+
+      canvas.addEventListener('mousemove', (e) => {
+        send({ type: 'pointer_moved', x: e.clientX, y: e.clientY });
+      });
+
+      const BTN = ['left', 'middle', 'right'];
+
+      canvas.addEventListener('mousedown', (e) => {
+        canvas.focus();
+        send({ type: 'mouse_button', button: BTN[e.button] ?? 'left', state: 'pressed' });
+      });
+
+      canvas.addEventListener('mouseup', (e) => {
+        send({ type: 'mouse_button', button: BTN[e.button] ?? 'left', state: 'released' });
+      });
+
+      canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        send({ type: 'wheel', dx: e.deltaX, dy: e.deltaY });
+      }, { passive: false });
+
+      canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    }
+
+    connect();
+  </script>
+</body>
+</html>
