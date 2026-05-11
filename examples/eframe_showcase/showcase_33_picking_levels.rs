@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use eframe::egui;
 use viewport_lib::{
     GaussianSplatData, GaussianSplatId,
-    Material, MeshData, MeshId, NodeId,
+    Material, MeshId, NodeId,
     ShDegree, SubObjectRef, VolumeData, VolumeMeshData, ViewportRenderer,
 };
 
@@ -48,118 +48,13 @@ pub(crate) enum PlPickLevel {
 #[derive(Clone)]
 pub(crate) struct PlHitInfo {
     pub object_name: String,
+    pub object_type: &'static str,
     pub world_pos: glam::Vec3,
     pub normal: glam::Vec3,
     pub sub_object: Option<SubObjectRef>,
     pub scalar_value: Option<f32>,
 }
 
-// ---------------------------------------------------------------------------
-// Geometry helpers
-// ---------------------------------------------------------------------------
-
-/// Generate a hemisphere (dome + flat base disc).
-/// Dome opens upward, flat base at y = 0.
-fn hemisphere(radius: f32, n_lat: usize, n_lon: usize) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
-    let mut positions: Vec<[f32; 3]> = Vec::new();
-    let mut normals: Vec<[f32; 3]> = Vec::new();
-
-    // Top pole
-    positions.push([0.0, radius, 0.0]);
-    normals.push([0.0, 1.0, 0.0]);
-
-    // Body rings: phi from PI/(n_lat*2) to PI/2
-    for lat in 1..=n_lat {
-        let phi = std::f32::consts::FRAC_PI_2 * lat as f32 / n_lat as f32;
-        let sp = phi.sin();
-        let cp = phi.cos();
-        for lon in 0..n_lon {
-            let theta = 2.0 * std::f32::consts::PI * lon as f32 / n_lon as f32;
-            let nx = sp * theta.cos();
-            let ny = cp;
-            let nz = sp * theta.sin();
-            positions.push([nx * radius, ny * radius, nz * radius]);
-            normals.push([nx, ny, nz]);
-        }
-    }
-    // Last ring is the equator (y ≈ 0).
-
-    // Base disc: separate downward-normal vertices so normals are crisp.
-    let disc_center = positions.len() as u32;
-    positions.push([0.0, 0.0, 0.0]);
-    normals.push([0.0, -1.0, 0.0]);
-
-    let disc_rim = positions.len() as u32;
-    for lon in 0..n_lon {
-        let theta = 2.0 * std::f32::consts::PI * lon as f32 / n_lon as f32;
-        positions.push([radius * theta.cos(), 0.0, radius * theta.sin()]);
-        normals.push([0.0, -1.0, 0.0]);
-    }
-
-    let mut indices: Vec<u32> = Vec::new();
-
-    // Dome top cap
-    for lon in 0..n_lon as u32 {
-        indices.extend([0, 1 + (lon + 1) % n_lon as u32, 1 + lon]);
-    }
-    // Dome body quads
-    for lat in 0..(n_lat as u32 - 1) {
-        let rs = 1 + lat * n_lon as u32;
-        for lon in 0..n_lon as u32 {
-            let v0 = rs + lon;
-            let v1 = rs + (lon + 1) % n_lon as u32;
-            let v2 = rs + n_lon as u32 + lon;
-            let v3 = rs + n_lon as u32 + (lon + 1) % n_lon as u32;
-            indices.extend([v0, v2, v1, v1, v2, v3]);
-        }
-    }
-    // Base disc (fan, CW when viewed from below so normal faces -Y)
-    for lon in 0..n_lon as u32 {
-        let v1 = disc_rim + lon;
-        let v2 = disc_rim + (lon + 1) % n_lon as u32;
-        indices.extend([disc_center, v2, v1]);
-    }
-
-    (positions, normals, indices)
-}
-
-/// Build a unit box MeshData (replicates box geometry with per-face normals).
-fn unit_box_mesh_data() -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
-    #[rustfmt::skip]
-    let positions: Vec<[f32; 3]> = vec![
-        // Front  (+Z)
-        [-1.0, -1.0,  1.0], [ 1.0, -1.0,  1.0], [ 1.0,  1.0,  1.0], [-1.0,  1.0,  1.0],
-        // Back   (-Z)
-        [ 1.0, -1.0, -1.0], [-1.0, -1.0, -1.0], [-1.0,  1.0, -1.0], [ 1.0,  1.0, -1.0],
-        // Top    (+Y)
-        [-1.0,  1.0,  1.0], [ 1.0,  1.0,  1.0], [ 1.0,  1.0, -1.0], [-1.0,  1.0, -1.0],
-        // Bottom (-Y)
-        [-1.0, -1.0, -1.0], [ 1.0, -1.0, -1.0], [ 1.0, -1.0,  1.0], [-1.0, -1.0,  1.0],
-        // Right  (+X)
-        [ 1.0, -1.0,  1.0], [ 1.0, -1.0, -1.0], [ 1.0,  1.0, -1.0], [ 1.0,  1.0,  1.0],
-        // Left   (-X)
-        [-1.0, -1.0, -1.0], [-1.0, -1.0,  1.0], [-1.0,  1.0,  1.0], [-1.0,  1.0, -1.0],
-    ];
-    #[rustfmt::skip]
-    let normals: Vec<[f32; 3]> = vec![
-        [ 0.0,  0.0,  1.0], [ 0.0,  0.0,  1.0], [ 0.0,  0.0,  1.0], [ 0.0,  0.0,  1.0],
-        [ 0.0,  0.0, -1.0], [ 0.0,  0.0, -1.0], [ 0.0,  0.0, -1.0], [ 0.0,  0.0, -1.0],
-        [ 0.0,  1.0,  0.0], [ 0.0,  1.0,  0.0], [ 0.0,  1.0,  0.0], [ 0.0,  1.0,  0.0],
-        [ 0.0, -1.0,  0.0], [ 0.0, -1.0,  0.0], [ 0.0, -1.0,  0.0], [ 0.0, -1.0,  0.0],
-        [ 1.0,  0.0,  0.0], [ 1.0,  0.0,  0.0], [ 1.0,  0.0,  0.0], [ 1.0,  0.0,  0.0],
-        [-1.0,  0.0,  0.0], [-1.0,  0.0,  0.0], [-1.0,  0.0,  0.0], [-1.0,  0.0,  0.0],
-    ];
-    #[rustfmt::skip]
-    let indices: Vec<u32> = vec![
-         0,  1,  2,  0,  2,  3,
-         4,  5,  6,  4,  6,  7,
-         8,  9, 10,  8, 10, 11,
-        12, 13, 14, 12, 14, 15,
-        16, 17, 18, 16, 18, 19,
-        20, 21, 22, 20, 22, 23,
-    ];
-    (positions, normals, indices)
-}
 
 // ---------------------------------------------------------------------------
 // Splat and TVM data helpers
@@ -333,30 +228,28 @@ impl App {
         self.pl_state.hit_marker = None;
 
         // --- Cube mesh ---
-        let (cp, cn, ci) = unit_box_mesh_data();
-        let mut cube_mesh = MeshData::default();
-        cube_mesh.positions = cp.clone();
-        cube_mesh.normals = cn;
-        cube_mesh.indices = ci.clone();
+        let cube_mesh = viewport_lib::primitives::cube(2.0);
         let cube_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &cube_mesh)
             .expect("pl cube mesh");
         self.pl_state.cube_mesh_id = cube_id;
-        self.pl_state.mesh_lookup.insert(cube_id.index() as u64, (cp, ci));
+        self.pl_state.mesh_lookup.insert(
+            cube_id.index() as u64,
+            (cube_mesh.positions.clone(), cube_mesh.indices.clone()),
+        );
 
         // --- Hemisphere mesh ---
-        let (hp, hn, hi) = hemisphere(1.5, 8, 20);
-        let mut hemi_mesh = MeshData::default();
-        hemi_mesh.positions = hp.clone();
-        hemi_mesh.normals = hn;
-        hemi_mesh.indices = hi.clone();
+        let hemi_mesh = viewport_lib::primitives::hemisphere(1.5, 20, 8);
         let hemi_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &hemi_mesh)
             .expect("pl hemi mesh");
         self.pl_state.hemi_mesh_id = hemi_id;
-        self.pl_state.mesh_lookup.insert(hemi_id.index() as u64, (hp, hi));
+        self.pl_state.mesh_lookup.insert(
+            hemi_id.index() as u64,
+            (hemi_mesh.positions.clone(), hemi_mesh.indices.clone()),
+        );
 
         // --- Scene objects: Cube A, Hemi A, Hemi B, Cube B ---
         let configs: &[(&str, MeshId, glam::Vec3, [f32; 3])] = &[
@@ -434,7 +327,8 @@ impl App {
         let tvm_mesh_id = renderer
             .resources_mut()
             .upload_volume_mesh_data(&self.device, &tvm_data)
-            .ok();
+            .ok()
+            .map(|(id, _)| id);
         self.pl_state.tvm_mesh_id = tvm_mesh_id;
         self.pl_state.tvm_data = Some(tvm_data);
 
@@ -473,6 +367,7 @@ impl App {
                     self.pl_state.sub_selection.clear();
                     self.pl_state.last_hit = Some(PlHitInfo {
                         object_name: self.pl_node_name(hit.id),
+                        object_type: "Mesh",
                         world_pos: hit.world_pos,
                         normal: hit.normal,
                         sub_object: None,
@@ -502,6 +397,7 @@ impl App {
                     }
                     self.pl_state.last_hit = Some(PlHitInfo {
                         object_name: self.pl_node_name(hit.id),
+                        object_type: "Mesh",
                         world_pos: hit.world_pos,
                         normal: hit.normal,
                         sub_object: hit.sub_object,
@@ -539,6 +435,7 @@ impl App {
                         .unwrap_or(hit.world_pos);
                     self.pl_state.last_hit = Some(PlHitInfo {
                         object_name: self.pl_node_name(hit.id),
+                        object_type: "Mesh",
                         world_pos: marker,
                         normal: hit.normal,
                         sub_object: vertex_sub,
@@ -578,6 +475,7 @@ impl App {
                     }
                     self.pl_state.last_hit = Some(PlHitInfo {
                         object_name: "Volume".to_string(),
+                        object_type: "Volume",
                         world_pos: hit.world_pos,
                         normal: hit.normal,
                         sub_object: hit.sub_object,
@@ -607,6 +505,7 @@ impl App {
                     }
                     self.pl_state.last_hit = Some(PlHitInfo {
                         object_name: "Point Cloud".to_string(),
+                        object_type: "Point Cloud",
                         world_pos: hit.world_pos,
                         normal: glam::Vec3::Y,
                         sub_object: Some(sub),
@@ -637,6 +536,7 @@ impl App {
                     }
                     self.pl_state.last_hit = Some(PlHitInfo {
                         object_name: "Gaussian Splats".to_string(),
+                        object_type: "Gaussian Splat",
                         world_pos: hit.world_pos,
                         normal: glam::Vec3::Y,
                         sub_object: Some(sub),
@@ -667,6 +567,7 @@ impl App {
                     }
                     self.pl_state.last_hit = Some(PlHitInfo {
                         object_name: "Transparent Volume Mesh".to_string(),
+                        object_type: "Volume Mesh",
                         world_pos: hit.world_pos,
                         normal: hit.normal,
                         sub_object: Some(sub),
@@ -943,6 +844,7 @@ pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
         if let Some(hit) = &app.pl_state.last_hit {
             ui.label(egui::RichText::new("Last Hit").strong());
             ui.label(format!("Object: {}", hit.object_name));
+            ui.label(format!("Type: {}", hit.object_type));
             match hit.sub_object {
                 None                        => { ui.label("Level: Object"); }
                 Some(SubObjectRef::Face(i)) => { ui.label(format!("Level: Face #{i}")); }
