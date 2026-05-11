@@ -111,8 +111,8 @@ fn handle_client(
 
     let mut camera = Camera { distance: 10.0, ..Camera::default() };
     let mut controller = OrbitCameraController::viewport_primitives();
-    let mut width = 1280u32;
-    let mut height = 720u32;
+    let mut width = 1920u32;
+    let mut height = 1080u32;
 
     let mut frames: u32 = 0;
     let mut last_log = Instant::now();

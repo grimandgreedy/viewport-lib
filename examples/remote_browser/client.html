@@ -31,13 +31,42 @@
     const ctx    = canvas.getContext('2d');
     const status = document.getElementById('status');
 
+    // wsSend is swapped out on connect/disconnect so all event listeners
+    // can share one reference rather than closing over individual ws instances.
+    let wsSend = (_msg) => {};
+
     function resize() {
       canvas.width  = window.innerWidth;
       canvas.height = window.innerHeight;
-      send({ type: 'resize', width: canvas.width, height: canvas.height });
+      wsSend({ type: 'resize', width: canvas.width, height: canvas.height });
     }
 
     window.addEventListener('resize', resize);
+
+    // --- input forwarding (registered once, use wsSend) ---
+
+    canvas.addEventListener('mousemove', (e) => {
+      wsSend({ type: 'pointer_moved', x: e.clientX, y: e.clientY });
+    });
+
+    const BTN = ['left', 'middle', 'right'];
+
+    canvas.addEventListener('mousedown', (e) => {
+      wsSend({ type: 'mouse_button', button: BTN[e.button] ?? 'left', state: 'pressed' });
+    });
+
+    canvas.addEventListener('mouseup', (e) => {
+      wsSend({ type: 'mouse_button', button: BTN[e.button] ?? 'left', state: 'released' });
+    });
+
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      wsSend({ type: 'wheel', dx: e.deltaX, dy: e.deltaY });
+    }, { passive: false });
+
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    // --- WebSocket connection ---
 
     const WS_URL = 'ws://localhost:3001';
 
@@ -49,12 +78,18 @@
       ws.binaryType = 'blob';
 
       ws.onopen = () => {
+        wsSend = (msg) => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(msg));
+          }
+        };
         status.textContent = 'connected';
         status.className   = 'connected';
-        resize();
+        resize(); // send current dimensions to server
       };
 
       ws.onclose = () => {
+        wsSend = (_msg) => {};
         status.textContent = 'disconnected -- retrying in 2s';
         status.className   = 'disconnected';
         setTimeout(connect, 2000);
@@ -62,42 +97,12 @@
 
       ws.onerror = () => {};
 
-      // Each binary message is a complete JPEG frame.
+      // Each binary message is one complete JPEG frame.
       ws.onmessage = async (e) => {
         const bitmap = await createImageBitmap(e.data);
         ctx.drawImage(bitmap, 0, 0);
         bitmap.close();
       };
-
-      function send(msg) {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify(msg));
-        }
-      }
-
-      // --- input forwarding ---
-
-      canvas.addEventListener('mousemove', (e) => {
-        send({ type: 'pointer_moved', x: e.clientX, y: e.clientY });
-      });
-
-      const BTN = ['left', 'middle', 'right'];
-
-      canvas.addEventListener('mousedown', (e) => {
-        canvas.focus();
-        send({ type: 'mouse_button', button: BTN[e.button] ?? 'left', state: 'pressed' });
-      });
-
-      canvas.addEventListener('mouseup', (e) => {
-        send({ type: 'mouse_button', button: BTN[e.button] ?? 'left', state: 'released' });
-      });
-
-      canvas.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        send({ type: 'wheel', dx: e.deltaX, dy: e.deltaY });
-      }, { passive: false });
-
-      canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     }
 
     connect();
