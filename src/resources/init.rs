@@ -558,11 +558,11 @@ impl ViewportGpuResources {
             mapped_at_creation: false,
         });
 
-        // Clip volume uniform buffer (binding 6 of camera bind group, 128 bytes).
-        // Initialized to volume_type=0 (None : no clip volume).
+        // Clip volume uniform buffer (binding 6 of camera bind group).
+        // Holds up to CLIP_VOLUME_MAX box/sphere entries; initialized to count=0 (no volumes).
         let clip_volume_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("clip_volume_uniform_buf"),
-            size: std::mem::size_of::<ClipVolumeUniform>() as u64,
+            size: std::mem::size_of::<ClipVolumesUniform>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -2094,6 +2094,7 @@ impl ViewportGpuResources {
             volume_default_opacity_lut: None,
             volume_default_opacity_lut_view: None,
             polyline_pipeline: None,
+            polyline_no_clip_pipeline: None,
             polyline_bgl: None,
             streamtube_pipeline: None,
             ribbon_pipeline: None,

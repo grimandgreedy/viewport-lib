@@ -198,9 +198,12 @@ pub use resources::mesh_store::MeshId;
 pub use resources::sparse_volume::SparseVolumeGridData;
 #[allow(deprecated)]
 pub use resources::volume_mesh::{CELL_SENTINEL, TET_SENTINEL, VolumeMeshData, extract_clipped_volume_faces};
+#[allow(deprecated)]
+pub use resources::ClipVolumeUniform;
 pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColormap, BuiltinMatcap, CameraUniform,
-    ClipVolumeUniform, ColormapId, ComputeFilterResult, FontError, FontHandle, GpuImplicitItem,
+    ClipVolumeEntry, ClipVolumesUniform, CLIP_VOLUME_MAX,
+    ColormapId, ComputeFilterResult, FontError, FontHandle, GpuImplicitItem,
     GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive, LightUniform,
     LightsUniform, MatcapId, MeshData, ProjectedTetId, SingleLightUniform, ViewportGpuResources,
     VolumeGpuId, VolumeId, lerp_attributes,

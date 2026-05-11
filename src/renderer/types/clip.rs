@@ -33,13 +33,25 @@ pub enum ClipShape {
         /// Radius of the sphere.
         radius: f32,
     },
+    /// Cylinder : fragments inside the cylinder are kept.
+    Cylinder {
+        /// World-space center (midpoint of the axis segment).
+        center: [f32; 3],
+        /// Unit axis direction.
+        axis: [f32; 3],
+        /// Radius.
+        radius: f32,
+        /// Half-length along the axis (total length = 2 * half_length).
+        half_length: f32,
+    },
 }
 
 /// A clip object : defines a clipping region and optional visual boundary rendering.
 ///
-/// Push into `EffectsFrame::clip_objects` each frame. Up to 6 `Plane` variants are
-/// supported simultaneously; only the first `Box` or `Sphere` variant takes effect
-/// (subsequent ones are silently ignored).
+/// Push into `EffectsFrame::clip_objects` each frame. Up to 6 `Plane` variants and
+/// up to 4 `Box`, `Sphere`, or `Cylinder` variants are supported simultaneously; all
+/// active clip objects apply cumulatively (AND semantics). Entries beyond the limit
+/// are silently ignored.
 ///
 /// Set `color` to `Some(rgba)` to have the renderer draw the clip boundary automatically.
 /// For planes this produces a semi-transparent fill quad + border; for box/sphere, a
@@ -121,6 +133,16 @@ impl ClipObject {
     pub fn sphere(center: [f32; 3], radius: f32) -> Self {
         Self {
             shape: ClipShape::Sphere { center, radius },
+            ..Default::default()
+        }
+    }
+
+    /// Create a cylinder clip object.
+    ///
+    /// `axis` must be a unit vector.
+    pub fn cylinder(center: [f32; 3], axis: [f32; 3], radius: f32, half_length: f32) -> Self {
+        Self {
+            shape: ClipShape::Cylinder { center, axis, radius, half_length },
             ..Default::default()
         }
     }

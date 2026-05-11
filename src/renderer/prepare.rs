@@ -1676,7 +1676,7 @@ impl ViewportRenderer {
             {
                 let mut planes = [[0.0f32; 4]; 6];
                 let mut count = 0u32;
-                let mut clip_vol_uniform: ClipVolumeUniform = bytemuck::Zeroable::zeroed(); // volume_type=0
+                let mut clip_vols_uniform: ClipVolumesUniform = bytemuck::Zeroable::zeroed();
 
                 for obj in viewport_fx
                     .clip_objects
@@ -1694,20 +1694,30 @@ impl ViewportRenderer {
                             center,
                             half_extents,
                             orientation,
-                        } if clip_vol_uniform.volume_type == 0 => {
-                            clip_vol_uniform.volume_type = 2;
-                            clip_vol_uniform.box_center = center;
-                            clip_vol_uniform.box_half_extents = half_extents;
-                            clip_vol_uniform.box_col0 = orientation[0];
-                            clip_vol_uniform.box_col1 = orientation[1];
-                            clip_vol_uniform.box_col2 = orientation[2];
+                        } if (clip_vols_uniform.count as usize) < CLIP_VOLUME_MAX => {
+                            let idx = clip_vols_uniform.count as usize;
+                            clip_vols_uniform.volumes[idx] =
+                                ClipVolumeEntry::from_box(center, half_extents, orientation);
+                            clip_vols_uniform.count += 1;
                         }
                         ClipShape::Sphere { center, radius }
-                            if clip_vol_uniform.volume_type == 0 =>
+                            if (clip_vols_uniform.count as usize) < CLIP_VOLUME_MAX =>
                         {
-                            clip_vol_uniform.volume_type = 3;
-                            clip_vol_uniform.sphere_center = center;
-                            clip_vol_uniform.sphere_radius = radius;
+                            let idx = clip_vols_uniform.count as usize;
+                            clip_vols_uniform.volumes[idx] =
+                                ClipVolumeEntry::from_sphere(center, radius);
+                            clip_vols_uniform.count += 1;
+                        }
+                        ClipShape::Cylinder {
+                            center,
+                            axis,
+                            radius,
+                            half_length,
+                        } if (clip_vols_uniform.count as usize) < CLIP_VOLUME_MAX => {
+                            let idx = clip_vols_uniform.count as usize;
+                            clip_vols_uniform.volumes[idx] =
+                                ClipVolumeEntry::from_cylinder(center, axis, radius, half_length);
+                            clip_vols_uniform.count += 1;
                         }
                         _ => {}
                     }
@@ -1730,7 +1740,7 @@ impl ViewportRenderer {
                     queue.write_buffer(
                         &slot.clip_volume_buf,
                         0,
-                        bytemuck::cast_slice(&[clip_vol_uniform]),
+                        bytemuck::cast_slice(&[clip_vols_uniform]),
                     );
                 }
                 // Also write to shared buffers for legacy single-viewport callers.
@@ -1742,7 +1752,7 @@ impl ViewportRenderer {
                 queue.write_buffer(
                     &resources.clip_volume_uniform_buf,
                     0,
-                    bytemuck::cast_slice(&[clip_vol_uniform]),
+                    bytemuck::cast_slice(&[clip_vols_uniform]),
                 );
             }
 
@@ -2074,11 +2084,12 @@ impl ViewportRenderer {
                         .create_clip_plane_line_overlay(device, &overlay),
                 );
             } else {
-                // Box/Sphere: generate wireframe polyline.
-                // ensure_polyline_pipeline must be called before upload_polyline; it is a
-                // no-op if already initialised, so calling it here is always safe.
+                // Box/Sphere/Cylinder: generate wireframe polyline overlay.
+                // These use the clip-exempt pipeline so the outline is always fully visible,
+                // even when multiple clip volumes are active (the user needs to see where each
+                // clip is positioned to understand the combined result).
                 let base_color = obj.color.unwrap_or([1.0, 1.0, 1.0, 1.0]);
-                self.resources.ensure_polyline_pipeline(device);
+                self.resources.ensure_polyline_no_clip_pipeline(device);
                 match obj.shape {
                     ClipShape::Box {
                         center,
@@ -2088,17 +2099,34 @@ impl ViewportRenderer {
                         let polyline =
                             clip_box_outline(center, half_extents, orientation, base_color);
                         let vp_size = frame.camera.viewport_size;
-                        let gpu = self
+                        let mut gpu = self
                             .resources
                             .upload_polyline(device, queue, &polyline, vp_size);
+                        gpu.skip_clip = true;
                         self.polyline_gpu_data.push(gpu);
                     }
                     ClipShape::Sphere { center, radius } => {
                         let polyline = clip_sphere_outline(center, radius, base_color);
                         let vp_size = frame.camera.viewport_size;
-                        let gpu = self
+                        let mut gpu = self
                             .resources
                             .upload_polyline(device, queue, &polyline, vp_size);
+                        gpu.skip_clip = true;
+                        self.polyline_gpu_data.push(gpu);
+                    }
+                    ClipShape::Cylinder {
+                        center,
+                        axis,
+                        radius,
+                        half_length,
+                    } => {
+                        let polyline =
+                            clip_cylinder_outline(center, axis, radius, half_length, base_color);
+                        let vp_size = frame.camera.viewport_size;
+                        let mut gpu = self
+                            .resources
+                            .upload_polyline(device, queue, &polyline, vp_size);
+                        gpu.skip_clip = true;
                         self.polyline_gpu_data.push(gpu);
                     }
                     _ => {}
@@ -3516,6 +3544,64 @@ fn clip_sphere_outline(center: [f32; 3], radius: f32, color: [f32; 4]) -> Polyli
             positions.push(p.to_array());
         }
         strip_lengths.push((positions.len() - start) as u32);
+    }
+
+    let mut item = PolylineItem::default();
+    item.positions = positions;
+    item.strip_lengths = strip_lengths;
+    item.default_color = color;
+    item.line_width = 2.0;
+    item
+}
+
+/// Wireframe outline for a clip cylinder (two end-cap circles + longitudinal lines).
+fn clip_cylinder_outline(
+    center: [f32; 3],
+    axis: [f32; 3],
+    radius: f32,
+    half_length: f32,
+    color: [f32; 4],
+) -> PolylineItem {
+    let c = glam::Vec3::from(center);
+    let ax = glam::Vec3::from(axis).normalize();
+
+    // Build an orthonormal frame around the axis.
+    let ref_v = if ax.y.abs() < 0.99 {
+        glam::Vec3::Y
+    } else {
+        glam::Vec3::X
+    };
+    let perp_u = ref_v.cross(ax).normalize();
+    let perp_v = ax.cross(perp_u);
+
+    let segs = 32usize;
+    let long_lines = 8usize;
+    let cap_verts = segs + 1;
+    let total_cap = cap_verts * 2 + long_lines * 2;
+    let mut positions = Vec::with_capacity(total_cap);
+    let mut strip_lengths = Vec::with_capacity(2 + long_lines);
+
+    // Two end-cap circles.
+    for sign in [-1.0f32, 1.0] {
+        let cap_center = c + ax * (sign * half_length);
+        let start = positions.len();
+        for i in 0..=segs {
+            let t = i as f32 / segs as f32 * std::f32::consts::TAU;
+            let (s, cs) = t.sin_cos();
+            let p = cap_center + perp_u * (cs * radius) + perp_v * (s * radius);
+            positions.push(p.to_array());
+        }
+        strip_lengths.push((positions.len() - start) as u32);
+    }
+
+    // Longitudinal lines connecting the two caps.
+    for i in 0..long_lines {
+        let t = i as f32 / long_lines as f32 * std::f32::consts::TAU;
+        let (s, cs) = t.sin_cos();
+        let offset = perp_u * (cs * radius) + perp_v * (s * radius);
+        positions.push((c + ax * (-half_length) + offset).to_array());
+        positions.push((c + ax *   half_length  + offset).to_array());
+        strip_lengths.push(2);
     }
 
     let mut item = PolylineItem::default();

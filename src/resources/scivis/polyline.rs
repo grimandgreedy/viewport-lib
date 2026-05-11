@@ -407,6 +407,93 @@ impl ViewportGpuResources {
             segment_count: seg_count,
             bind_group,
             _uniform_buf: uniform_buf,
+            skip_clip: false,
         }
+    }
+
+    /// Lazily create the clip-exempt polyline pipeline.
+    ///
+    /// Identical to the regular polyline pipeline but uses `fs_main_no_clip` so
+    /// fragments are never discarded by clip planes or clip volumes. Used for
+    /// clip object wireframe overlays which must always be fully visible.
+    pub(crate) fn ensure_polyline_no_clip_pipeline(&mut self, device: &wgpu::Device) {
+        if self.polyline_no_clip_pipeline.is_some() {
+            return;
+        }
+        // The regular pipeline (and its BGL) must exist first.
+        self.ensure_polyline_pipeline(device);
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("polyline_no_clip_shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/polyline.wgsl").into()),
+        });
+
+        let pl_bgl = self.polyline_bgl.as_ref().expect("polyline_bgl must exist after ensure_polyline_pipeline");
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("polyline_no_clip_pipeline_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, pl_bgl],
+            push_constant_ranges: &[],
+        });
+
+        // Vertex buffer layout is identical to the regular polyline pipeline (112 bytes/segment).
+        let pl_instance_layout = wgpu::VertexBufferLayout {
+            array_stride: 112,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[
+                wgpu::VertexAttribute { offset: 0,   shader_location: 0,  format: wgpu::VertexFormat::Float32x3 },
+                wgpu::VertexAttribute { offset: 12,  shader_location: 1,  format: wgpu::VertexFormat::Float32x3 },
+                wgpu::VertexAttribute { offset: 24,  shader_location: 2,  format: wgpu::VertexFormat::Float32x3 },
+                wgpu::VertexAttribute { offset: 36,  shader_location: 3,  format: wgpu::VertexFormat::Float32x3 },
+                wgpu::VertexAttribute { offset: 48,  shader_location: 4,  format: wgpu::VertexFormat::Float32    },
+                wgpu::VertexAttribute { offset: 52,  shader_location: 5,  format: wgpu::VertexFormat::Float32    },
+                wgpu::VertexAttribute { offset: 56,  shader_location: 6,  format: wgpu::VertexFormat::Uint32     },
+                wgpu::VertexAttribute { offset: 60,  shader_location: 7,  format: wgpu::VertexFormat::Uint32     },
+                wgpu::VertexAttribute { offset: 64,  shader_location: 8,  format: wgpu::VertexFormat::Float32x4  },
+                wgpu::VertexAttribute { offset: 80,  shader_location: 9,  format: wgpu::VertexFormat::Float32x4  },
+                wgpu::VertexAttribute { offset: 96,  shader_location: 10, format: wgpu::VertexFormat::Float32    },
+                wgpu::VertexAttribute { offset: 100, shader_location: 11, format: wgpu::VertexFormat::Float32    },
+                wgpu::VertexAttribute { offset: 104, shader_location: 12, format: wgpu::VertexFormat::Uint32     },
+            ],
+        };
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("polyline_no_clip_pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[pl_instance_layout],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main_no_clip"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: self.target_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: self.sample_count,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        self.polyline_no_clip_pipeline = Some(pipeline);
     }
 }

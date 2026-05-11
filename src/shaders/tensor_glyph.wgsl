@@ -28,23 +28,29 @@ struct ClipPlanes {
     viewport_height: f32,
 };
 
-struct ClipVolumeUB {
+struct ClipVolumeEntry {
     volume_type: u32,
-    _pad0: u32, _pad1: u32, _pad2: u32,
-    plane_normal: vec3<f32>,
-    plane_dist: f32,
-    box_center: vec3<f32>,
-    _padB0: f32,
-    box_half_extents: vec3<f32>,
-    _padB1: f32,
-    box_col0: vec3<f32>,
-    _padB2: f32,
-    box_col1: vec3<f32>,
-    _padB3: f32,
-    box_col2: vec3<f32>,
-    _padB4: f32,
-    sphere_center: vec3<f32>,
-    sphere_radius: f32,
+    _pad_a: u32,
+    _pad_b: u32,
+    _pad_c: u32,
+    center: vec3<f32>,
+    radius: f32,
+    half_extents: vec3<f32>,
+    _pad1: f32,
+    col0: vec3<f32>,
+    _pad2: f32,
+    col1: vec3<f32>,
+    _pad3: f32,
+    col2: vec3<f32>,
+    _pad4: f32,
+}
+
+struct ClipVolumeUB {
+    count: u32,
+    _pad_a: u32,
+    _pad_b: u32,
+    _pad_c: u32,
+    volumes: array<ClipVolumeEntry, 4>,
 };
 
 // TensorGlyphUniform : 64 bytes.
@@ -81,23 +87,29 @@ struct TensorInstance {
 @group(0) @binding(6) var<uniform>       clip_volume: ClipVolumeUB;
 
 fn clip_volume_test(p: vec3<f32>) -> bool {
-    if clip_volume.volume_type == 0u { return true; }
-    if clip_volume.volume_type == 1u {
-        return dot(p, clip_volume.plane_normal) + clip_volume.plane_dist >= 0.0;
+    for (var i = 0u; i < clip_volume.count; i = i + 1u) {
+        let e = clip_volume.volumes[i];
+        if e.volume_type == 2u {
+            let d = p - e.center;
+            let local = vec3<f32>(dot(d, e.col0), dot(d, e.col1), dot(d, e.col2));
+            if abs(local.x) > e.half_extents.x
+                || abs(local.y) > e.half_extents.y
+                || abs(local.z) > e.half_extents.z {
+                return false;
+            }
+        } else if e.volume_type == 3u {
+            let ds = p - e.center;
+            if dot(ds, ds) > e.radius * e.radius { return false; }
+        } else if e.volume_type == 4u {
+            let axis = e.col0;
+            let d = p - e.center;
+            let along = dot(d, axis);
+            if abs(along) > e.half_extents.x { return false; }
+            let radial = d - axis * along;
+            if dot(radial, radial) > e.radius * e.radius { return false; }
+        }
     }
-    if clip_volume.volume_type == 2u {
-        let d = p - clip_volume.box_center;
-        let local = vec3<f32>(
-            dot(d, clip_volume.box_col0),
-            dot(d, clip_volume.box_col1),
-            dot(d, clip_volume.box_col2),
-        );
-        return abs(local.x) <= clip_volume.box_half_extents.x
-            && abs(local.y) <= clip_volume.box_half_extents.y
-            && abs(local.z) <= clip_volume.box_half_extents.z;
-    }
-    let ds = p - clip_volume.sphere_center;
-    return dot(ds, ds) <= clip_volume.sphere_radius * clip_volume.sphere_radius;
+    return true;
 }
 
 @group(1) @binding(0) var<uniform>       tg_uniform:  TensorGlyphUniform;
