@@ -264,3 +264,11 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if !clip_volume_test(in.world_pos) { discard; }
     return in.color;
 }
+
+// Clip-exempt variant : used for clip object overlays (box/sphere/cylinder wireframes).
+// The overlay itself should always be fully visible so the user can see where each
+// clip volume is positioned, even when multiple clips are active.
+@fragment
+fn fs_main_no_clip(in: VertexOut) -> @location(0) vec4<f32> {
+    return in.color;
+}

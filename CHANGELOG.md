@@ -4,6 +4,8 @@
 
 ### Features
 - Gaussian splat rendering: upload a set of 3D Gaussian primitives once via `upload_gaussian_splats` and reference it each frame with `GaussianSplatItem`. Each splat is an anisotropic ellipsoid defined by a center, per-axis scale, and quaternion rotation.
+- Multiple box and sphere clip volumes now compose: all `Box` and `Sphere` entries in `EffectsFrame::clip_objects` apply simultaneously with AND semantics, the same way `Plane` clips already did. Previously only the first box or sphere took effect. Up to 4 box, sphere, or cylinder entries and 6 planes can be active at once.
+- `ClipShape::Cylinder`: a new clip shape that keeps geometry inside a finite cylinder. Specify a world-space center, a unit axis direction, a radius, and a half-length. The cylinder composes with other clip volumes and works across all render paths including volume ray-marching. Setting `color` on the clip object draws a wireframe outline.
 
 ### API changes
 - `Camera::znear` is now `Option<f32>`. `None` (the default) lets the library maintain a 10,000:1 near/far ratio automatically, so depth precision stays usable at any zoom level without any configuration. `Some(value)` pins the near plane exactly as before. Callers that read `cam.znear` for their own NDC math should switch to `cam.effective_znear()`.

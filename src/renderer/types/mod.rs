@@ -582,14 +582,21 @@ macro_rules! emit_scivis_draw_calls {
 
         // Polyline pass : screen-space thick lines via instanced quad expansion.
         // Each segment instance is drawn as 6 vertices (2 triangles).
-        if !$polyline_gpu_data.is_empty() {
-            if let Some(ref pipeline) = resources.polyline_pipeline {
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for pl in $polyline_gpu_data.iter() {
-                    if pl.segment_count == 0 {
-                        continue;
-                    }
+        // Items with skip_clip=true (clip object wireframe overlays) use the clip-exempt
+        // pipeline so they are always fully visible regardless of active clip volumes.
+        if !$polyline_gpu_data.is_empty() && resources.polyline_pipeline.is_some() {
+            for pl in $polyline_gpu_data.iter() {
+                if pl.segment_count == 0 {
+                    continue;
+                }
+                let pipeline_opt = if pl.skip_clip {
+                    resources.polyline_no_clip_pipeline.as_ref()
+                } else {
+                    resources.polyline_pipeline.as_ref()
+                };
+                if let Some(pipeline) = pipeline_opt {
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_bind_group(0, camera_bg, &[]);
                     render_pass.set_bind_group(1, &pl.bind_group, &[]);
                     render_pass.set_vertex_buffer(0, pl.vertex_buffer.slice(..));
                     render_pass.draw(0..6, 0..pl.segment_count);

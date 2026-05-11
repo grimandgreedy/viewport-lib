@@ -2084,11 +2084,12 @@ impl ViewportRenderer {
                         .create_clip_plane_line_overlay(device, &overlay),
                 );
             } else {
-                // Box/Sphere: generate wireframe polyline.
-                // ensure_polyline_pipeline must be called before upload_polyline; it is a
-                // no-op if already initialised, so calling it here is always safe.
+                // Box/Sphere/Cylinder: generate wireframe polyline overlay.
+                // These use the clip-exempt pipeline so the outline is always fully visible,
+                // even when multiple clip volumes are active (the user needs to see where each
+                // clip is positioned to understand the combined result).
                 let base_color = obj.color.unwrap_or([1.0, 1.0, 1.0, 1.0]);
-                self.resources.ensure_polyline_pipeline(device);
+                self.resources.ensure_polyline_no_clip_pipeline(device);
                 match obj.shape {
                     ClipShape::Box {
                         center,
@@ -2098,17 +2099,19 @@ impl ViewportRenderer {
                         let polyline =
                             clip_box_outline(center, half_extents, orientation, base_color);
                         let vp_size = frame.camera.viewport_size;
-                        let gpu = self
+                        let mut gpu = self
                             .resources
                             .upload_polyline(device, queue, &polyline, vp_size);
+                        gpu.skip_clip = true;
                         self.polyline_gpu_data.push(gpu);
                     }
                     ClipShape::Sphere { center, radius } => {
                         let polyline = clip_sphere_outline(center, radius, base_color);
                         let vp_size = frame.camera.viewport_size;
-                        let gpu = self
+                        let mut gpu = self
                             .resources
                             .upload_polyline(device, queue, &polyline, vp_size);
+                        gpu.skip_clip = true;
                         self.polyline_gpu_data.push(gpu);
                     }
                     ClipShape::Cylinder {
@@ -2120,9 +2123,10 @@ impl ViewportRenderer {
                         let polyline =
                             clip_cylinder_outline(center, axis, radius, half_length, base_color);
                         let vp_size = frame.camera.viewport_size;
-                        let gpu = self
+                        let mut gpu = self
                             .resources
                             .upload_polyline(device, queue, &polyline, vp_size);
+                        gpu.skip_clip = true;
                         self.polyline_gpu_data.push(gpu);
                     }
                     _ => {}

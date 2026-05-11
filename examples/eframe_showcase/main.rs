@@ -2806,9 +2806,7 @@ impl App {
 
         // Clip volume (Showcase 18) : set every frame from current state.
         if self.mode == ShowcaseMode::ClipVolumes && self.clipvol_state.built {
-            if let Some(clip_obj) = self.make_clip_object() {
-                fd.effects.clip_objects.push(clip_obj);
-            }
+            fd.effects.clip_objects.extend(self.make_clip_objects());
         }
 
         // Streamline / tube items (Showcase 16) : submitted every frame.

@@ -2094,6 +2094,7 @@ impl ViewportGpuResources {
             volume_default_opacity_lut: None,
             volume_default_opacity_lut_view: None,
             polyline_pipeline: None,
+            polyline_no_clip_pipeline: None,
             polyline_bgl: None,
             streamtube_pipeline: None,
             ribbon_pipeline: None,

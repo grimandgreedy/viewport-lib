@@ -1352,6 +1352,9 @@ pub struct PolylineGpuData {
     pub(crate) bind_group: wgpu::BindGroup,
     // Keep the uniform buffer alive for the lifetime of this struct.
     pub(crate) _uniform_buf: wgpu::Buffer,
+    /// When true, renders with the clip-exempt pipeline (no clip plane or clip volume test).
+    /// Used for clip object wireframe overlays that must always be fully visible.
+    pub(crate) skip_clip: bool,
 }
 
 /// Per-frame GPU data for one screen-space image overlay, created in `prepare()` (Phase 10B/12).
@@ -2131,6 +2134,9 @@ pub struct ViewportGpuResources {
     // --- SciVis Phase M8: polyline rendering (lazily created) ---
     /// Polyline render pipeline. None until first polyline set is submitted.
     pub(crate) polyline_pipeline: Option<wgpu::RenderPipeline>,
+    /// Clip-exempt polyline pipeline: same as polyline_pipeline but uses fs_main_no_clip
+    /// so clip overlay wireframes are always fully visible.
+    pub(crate) polyline_no_clip_pipeline: Option<wgpu::RenderPipeline>,
     /// Bind group layout for polyline uniforms (group 1).
     pub(crate) polyline_bgl: Option<wgpu::BindGroupLayout>,
 
