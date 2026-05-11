@@ -142,7 +142,7 @@ fn clip_ray_plane(
         return vec2<f32>(t_near, t_far);
     }
     let t = num / denom;
-    if denom < 0.0 {
+    if denom > 0.0 {
         // Entering the visible half-space.
         return vec2<f32>(max(t_near, t), t_far);
     } else {
