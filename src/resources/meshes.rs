@@ -1103,7 +1103,7 @@ impl ViewportGpuResources {
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("vertex_buf"),
             size: (std::mem::size_of::<Vertex>() * vertices.len()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: true,
         });
         vertex_buffer
@@ -1115,7 +1115,7 @@ impl ViewportGpuResources {
         let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("index_buf"),
             size: (std::mem::size_of::<u32>() * indices.len()) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: true,
         });
         index_buffer
