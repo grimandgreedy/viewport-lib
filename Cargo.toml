@@ -54,10 +54,6 @@ name = "eframe-minimal"
 path = "examples/eframe_minimal/main.rs"
 
 [[example]]
-name = "eframe-remote"
-path = "examples/eframe_remote/main.rs"
-
-[[example]]
 name = "eframe-testing"
 path = "examples/eframe_testing/main.rs"
 
