@@ -4,6 +4,7 @@
 /// All conversions are contained here at the picking boundary.
 use crate::geometry::marching_cubes::VolumeData;
 use crate::interaction::sub_object::SubObjectRef;
+use crate::resources::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
 use crate::resources::{AttributeData, AttributeKind, AttributeRef};
 use crate::scene::traits::ViewportObject;
 use parry3d::math::{Pose, Vector};
@@ -943,6 +944,514 @@ pub fn voxel_world_aabb(
         .fold(glam::Vec3::splat(f32::NEG_INFINITY), |acc, c| acc.max(c));
 
     (world_min, world_max)
+}
+
+/// Pick the closest point in a [`crate::renderer::PointCloudItem`] to a screen-space click.
+///
+/// Projects every point through `view_proj` and returns the closest one whose
+/// screen-space distance to `click_pos` is within `radius_px` pixels.  Returns
+/// `None` when no point is within that radius.
+///
+/// # Arguments
+/// * `click_pos`     – screen-space click position in viewport pixels (top-left origin)
+/// * `id`            – object identifier to embed in the returned [`PickHit`]
+/// * `item`          – the point cloud item to search
+/// * `view_proj`     – combined view × projection matrix
+/// * `viewport_size` – viewport width × height in pixels
+/// * `radius_px`     – maximum screen-space distance in pixels to accept as a hit
+pub fn pick_point_cloud_cpu(
+    click_pos: glam::Vec2,
+    id: u64,
+    item: &crate::renderer::PointCloudItem,
+    view_proj: glam::Mat4,
+    viewport_size: glam::Vec2,
+    radius_px: f32,
+) -> Option<PickHit> {
+    if id == 0 || item.positions.is_empty() {
+        return None;
+    }
+
+    let model = glam::Mat4::from_cols_array_2d(&item.model);
+    let mvp = view_proj * model;
+
+    let mut best_dist_sq = radius_px * radius_px;
+    let mut best_idx: Option<u32> = None;
+    let mut best_world = glam::Vec3::ZERO;
+
+    for (pt_idx, pos) in item.positions.iter().enumerate() {
+        let local = glam::Vec3::from(*pos);
+        let clip = mvp * local.extend(1.0);
+        if clip.w <= 0.0 {
+            continue;
+        }
+        let ndc_x = clip.x / clip.w;
+        let ndc_y = clip.y / clip.w;
+        let sx = (ndc_x + 1.0) * 0.5 * viewport_size.x;
+        let sy = (1.0 - ndc_y) * 0.5 * viewport_size.y;
+        let dx = sx - click_pos.x;
+        let dy = sy - click_pos.y;
+        let dist_sq = dx * dx + dy * dy;
+        if dist_sq < best_dist_sq {
+            best_dist_sq = dist_sq;
+            best_idx = Some(pt_idx as u32);
+            best_world = model.transform_point3(local);
+        }
+    }
+
+    let pt_idx = best_idx?;
+    #[allow(deprecated)]
+    Some(PickHit {
+        id,
+        sub_object: Some(SubObjectRef::Point(pt_idx)),
+        world_pos: best_world,
+        normal: glam::Vec3::Y,
+        triangle_index: u32::MAX,
+        point_index: Some(pt_idx),
+        scalar_value: None,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// nearest_vertex_on_hit
+// ---------------------------------------------------------------------------
+
+/// Find the triangle corner nearest to the ray-hit world position.
+///
+/// Takes a hit from [`pick_scene_nodes_cpu`] (which carries a
+/// [`SubObjectRef::Face`] sub-object) and returns the index of the closest
+/// triangle corner as a [`SubObjectRef::Vertex`].
+///
+/// Returns `None` if `hit.sub_object` is not a `Face`, or if the face index is
+/// out of range for the provided buffers.
+///
+/// # Arguments
+/// * `hit`       - result from a mesh ray-cast pick
+/// * `positions` - local-space vertex positions for the hit mesh
+/// * `indices`   - triangle index buffer (every 3 consecutive entries form one triangle)
+/// * `model`     - world transform for the hit object
+pub fn nearest_vertex_on_hit(
+    hit: &PickHit,
+    positions: &[[f32; 3]],
+    indices: &[u32],
+    model: glam::Mat4,
+) -> Option<SubObjectRef> {
+    let face_raw = match hit.sub_object {
+        Some(SubObjectRef::Face(i)) => i as usize,
+        _ => return None,
+    };
+    let n_tri = indices.len() / 3;
+    if n_tri == 0 {
+        return None;
+    }
+    // parry3d may return a backface index offset by n_tri; normalise.
+    let face = if face_raw >= n_tri { face_raw - n_tri } else { face_raw };
+    if face * 3 + 2 >= indices.len() {
+        return None;
+    }
+    let vi = [
+        indices[face * 3] as usize,
+        indices[face * 3 + 1] as usize,
+        indices[face * 3 + 2] as usize,
+    ];
+    let (best_vi, _) = vi
+        .iter()
+        .map(|&i| {
+            let p = model.transform_point3(glam::Vec3::from(positions[i]));
+            (i, p.distance(hit.world_pos))
+        })
+        .fold((vi[0], f32::MAX), |acc, (i, d)| {
+            if d < acc.1 { (i, d) } else { acc }
+        });
+    Some(SubObjectRef::Vertex(best_vi as u32))
+}
+
+// ---------------------------------------------------------------------------
+// pick_gaussian_splat_cpu
+// ---------------------------------------------------------------------------
+
+/// Screen-space nearest-splat pick for a Gaussian splat object.
+///
+/// Projects every splat position through `view_proj` and returns the closest
+/// one whose screen-space distance to `click_pos` is within `radius_px`
+/// pixels. Returns `None` when no splat qualifies.
+///
+/// The returned hit carries [`SubObjectRef::Point`] with the splat index.
+///
+/// # Arguments
+/// * `click_pos`     - screen-space click in viewport pixels (top-left origin)
+/// * `id`            - object identifier embedded in the returned [`PickHit`]
+/// * `positions`     - local-space splat center positions
+/// * `model`         - world transform for the splat object
+/// * `view_proj`     - combined view x projection matrix
+/// * `viewport_size` - viewport width x height in pixels
+/// * `radius_px`     - maximum screen-space distance in pixels to accept as a hit
+pub fn pick_gaussian_splat_cpu(
+    click_pos: glam::Vec2,
+    id: u64,
+    positions: &[[f32; 3]],
+    model: glam::Mat4,
+    view_proj: glam::Mat4,
+    viewport_size: glam::Vec2,
+    radius_px: f32,
+) -> Option<PickHit> {
+    if id == 0 || positions.is_empty() {
+        return None;
+    }
+    let mvp = view_proj * model;
+    let mut best_dist_sq = radius_px * radius_px;
+    let mut best_idx: Option<u32> = None;
+    let mut best_world = glam::Vec3::ZERO;
+
+    for (i, pos) in positions.iter().enumerate() {
+        let local = glam::Vec3::from(*pos);
+        let clip = mvp * local.extend(1.0);
+        if clip.w <= 0.0 {
+            continue;
+        }
+        let sx = (clip.x / clip.w + 1.0) * 0.5 * viewport_size.x;
+        let sy = (1.0 - clip.y / clip.w) * 0.5 * viewport_size.y;
+        let dx = sx - click_pos.x;
+        let dy = sy - click_pos.y;
+        let dist_sq = dx * dx + dy * dy;
+        if dist_sq < best_dist_sq {
+            best_dist_sq = dist_sq;
+            best_idx = Some(i as u32);
+            best_world = model.transform_point3(local);
+        }
+    }
+
+    let idx = best_idx?;
+    #[allow(deprecated)]
+    Some(PickHit {
+        id,
+        sub_object: Some(SubObjectRef::Point(idx)),
+        world_pos: best_world,
+        normal: glam::Vec3::Y,
+        triangle_index: u32::MAX,
+        point_index: Some(idx),
+        scalar_value: None,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// pick_transparent_volume_mesh_cpu
+// ---------------------------------------------------------------------------
+
+/// Double-sided Moller-Trumbore ray-triangle intersection.
+///
+/// Returns the ray parameter `t > 0` on hit, `None` otherwise.
+fn ray_tri_mt_ds(
+    orig: glam::Vec3,
+    dir: glam::Vec3,
+    v0: glam::Vec3,
+    v1: glam::Vec3,
+    v2: glam::Vec3,
+) -> Option<f32> {
+    let e1 = v1 - v0;
+    let e2 = v2 - v0;
+    let h = dir.cross(e2);
+    let a = e1.dot(h);
+    if a.abs() < 1e-8 {
+        return None;
+    }
+    let f = 1.0 / a;
+    let s = orig - v0;
+    let u = f * s.dot(h);
+    if !(0.0..=1.0).contains(&u) {
+        return None;
+    }
+    let q = s.cross(e1);
+    let v = f * dir.dot(q);
+    if v < 0.0 || u + v > 1.0 {
+        return None;
+    }
+    let t = f * e2.dot(q);
+    if t > 1e-6 { Some(t) } else { None }
+}
+
+// Triangular face indices for each cell type used in ray picking.
+// (These cover the outer boundary surface of each cell.)
+
+// Tet: 4 triangular faces.
+const VM_TET_FACES: [[usize; 3]; 4] = [[1, 2, 3], [0, 3, 2], [0, 1, 3], [0, 2, 1]];
+
+// Hex: 6 quad faces, each split into 2 triangles (12 total).
+const VM_HEX_TRIS: [[usize; 3]; 12] = [
+    [0, 1, 2], [0, 2, 3], // bottom [0,1,2,3]
+    [4, 7, 6], [4, 6, 5], // top    [4,7,6,5]
+    [0, 4, 5], [0, 5, 1], // front  [0,4,5,1]
+    [2, 6, 7], [2, 7, 3], // back   [2,6,7,3]
+    [0, 3, 7], [0, 7, 4], // left   [0,3,7,4]
+    [1, 5, 6], [1, 6, 2], // right  [1,5,6,2]
+];
+
+// Pyramid: quad base split into 2 + 4 triangular sides = 6 triangles.
+const VM_PYRAMID_TRIS: [[usize; 3]; 6] = [
+    [0, 1, 2], [0, 2, 3], // base quad [0,1,2,3]
+    [0, 4, 1], [1, 4, 2], [2, 4, 3], [3, 4, 0], // sides
+];
+
+// Wedge: 2 tri ends + 3 quad sides (each split) = 2 + 6 = 8 triangles.
+const VM_WEDGE_TRIS: [[usize; 3]; 8] = [
+    [0, 2, 1], [3, 4, 5], // tri ends
+    [0, 1, 4], [0, 4, 3], // side [0,1,4,3]
+    [1, 2, 5], [1, 5, 4], // side [1,2,5,4]
+    [2, 0, 3], [2, 3, 5], // side [2,0,3,5]
+];
+
+/// Ray-cast pick against a transparent volume mesh.
+///
+/// Tests the ray against each cell in `data` using the cell's outer boundary
+/// triangles. Returns the frontmost hit cell as a [`SubObjectRef::Cell`].
+///
+/// The intersection test runs in local space (inverse-transformed ray), so
+/// `model` may include translation and uniform scale without loss of accuracy.
+///
+/// # Arguments
+/// * `ray_origin` - world-space ray origin
+/// * `ray_dir`    - world-space ray direction (need not be normalized)
+/// * `id`         - object identifier embedded in the returned [`PickHit`]
+/// * `model`      - world transform for the volume mesh
+/// * `data`       - CPU-side volume mesh
+pub fn pick_transparent_volume_mesh_cpu(
+    ray_origin: glam::Vec3,
+    ray_dir: glam::Vec3,
+    id: u64,
+    model: glam::Mat4,
+    data: &VolumeMeshData,
+) -> Option<PickHit> {
+    if id == 0 || data.cells.is_empty() {
+        return None;
+    }
+    let model_inv = model.inverse();
+    let local_origin = model_inv.transform_point3(ray_origin);
+    let local_dir = model_inv.transform_vector3(ray_dir);
+
+    let mut best_t = f32::MAX;
+    let mut best_cell: Option<u32> = None;
+
+    for (cell_idx, cell) in data.cells.iter().enumerate() {
+        let p = |i: usize| glam::Vec3::from(data.positions[cell[i] as usize]);
+        let tris: &[[usize; 3]] = if cell[4] == CELL_SENTINEL {
+            &VM_TET_FACES
+        } else if cell[5] == CELL_SENTINEL {
+            &VM_PYRAMID_TRIS
+        } else if cell[6] == CELL_SENTINEL {
+            &VM_WEDGE_TRIS
+        } else {
+            &VM_HEX_TRIS
+        };
+        for tri in tris {
+            if let Some(t) = ray_tri_mt_ds(local_origin, local_dir, p(tri[0]), p(tri[1]), p(tri[2])) {
+                if t < best_t {
+                    best_t = t;
+                    best_cell = Some(cell_idx as u32);
+                }
+            }
+        }
+    }
+
+    let cell_idx = best_cell?;
+    let local_hit = local_origin + local_dir * best_t;
+    let world_hit = model.transform_point3(local_hit);
+    #[allow(deprecated)]
+    Some(PickHit {
+        id,
+        sub_object: Some(SubObjectRef::Cell(cell_idx)),
+        world_pos: world_hit,
+        normal: -ray_dir.normalize(),
+        triangle_index: u32::MAX,
+        point_index: None,
+        scalar_value: None,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// pick_volume_rect
+// ---------------------------------------------------------------------------
+
+/// Rect-select above-threshold voxels from a volume object.
+///
+/// Projects each voxel center through `view_proj` and collects those that fall
+/// inside the selection rectangle and have a scalar value within
+/// `[item.threshold_min, item.threshold_max]`.
+///
+/// Returns a [`RectPickResult`] with [`SubObjectRef::Voxel`] entries keyed by `id`.
+///
+/// # Arguments
+/// * `rect_min/max`  - selection rectangle corners in viewport pixels (top-left origin)
+/// * `id`            - object identifier used as the key in the result
+/// * `item`          - volume render item (provides model, bbox, thresholds)
+/// * `volume`        - CPU-side volume data (scalar field and grid dimensions)
+/// * `view_proj`     - combined view x projection matrix
+/// * `viewport_size` - viewport width x height in pixels
+pub fn pick_volume_rect(
+    rect_min: glam::Vec2,
+    rect_max: glam::Vec2,
+    id: u64,
+    item: &crate::renderer::VolumeItem,
+    volume: &VolumeData,
+    view_proj: glam::Mat4,
+    viewport_size: glam::Vec2,
+) -> RectPickResult {
+    let mut result = RectPickResult::default();
+    if id == 0 {
+        return result;
+    }
+    let model = glam::Mat4::from_cols_array_2d(&item.model);
+    let bbox_min = glam::Vec3::from(item.bbox_min);
+    let bbox_max = glam::Vec3::from(item.bbox_max);
+    let [nx, ny, nz] = volume.dims;
+    let cell = (bbox_max - bbox_min) / glam::Vec3::new(nx as f32, ny as f32, nz as f32);
+    let mvp = view_proj * model;
+
+    let mut hits: Vec<SubObjectRef> = Vec::new();
+    for iz in 0..nz {
+        for iy in 0..ny {
+            for ix in 0..nx {
+                let flat = ix + iy * nx + iz * nx * ny;
+                let scalar = volume.data[flat as usize];
+                if scalar.is_nan()
+                    || scalar < item.threshold_min
+                    || scalar > item.threshold_max
+                {
+                    continue;
+                }
+                let local_center = bbox_min
+                    + cell * glam::Vec3::new(ix as f32 + 0.5, iy as f32 + 0.5, iz as f32 + 0.5);
+                let clip = mvp * local_center.extend(1.0);
+                if clip.w <= 0.0 {
+                    continue;
+                }
+                let sx = (clip.x / clip.w + 1.0) * 0.5 * viewport_size.x;
+                let sy = (1.0 - clip.y / clip.w) * 0.5 * viewport_size.y;
+                if sx >= rect_min.x && sx <= rect_max.x && sy >= rect_min.y && sy <= rect_max.y {
+                    hits.push(SubObjectRef::Voxel(flat));
+                }
+            }
+        }
+    }
+    if !hits.is_empty() {
+        result.hits.insert(id, hits);
+    }
+    result
+}
+
+// ---------------------------------------------------------------------------
+// pick_transparent_volume_mesh_rect
+// ---------------------------------------------------------------------------
+
+/// Rect-select cells from a transparent volume mesh.
+///
+/// Projects each cell centroid through `view_proj` and collects those inside
+/// the selection rectangle.
+///
+/// Returns a [`RectPickResult`] with [`SubObjectRef::Cell`] entries keyed by `id`.
+///
+/// # Arguments
+/// * `rect_min/max`  - selection rectangle in viewport pixels (top-left origin)
+/// * `id`            - object identifier used as the key in the result
+/// * `model`         - world transform for the volume mesh
+/// * `data`          - CPU-side volume mesh
+/// * `view_proj`     - combined view x projection matrix
+/// * `viewport_size` - viewport width x height in pixels
+pub fn pick_transparent_volume_mesh_rect(
+    rect_min: glam::Vec2,
+    rect_max: glam::Vec2,
+    id: u64,
+    model: glam::Mat4,
+    data: &VolumeMeshData,
+    view_proj: glam::Mat4,
+    viewport_size: glam::Vec2,
+) -> RectPickResult {
+    let mut result = RectPickResult::default();
+    if id == 0 || data.cells.is_empty() {
+        return result;
+    }
+    let mvp = view_proj * model;
+    let mut hits: Vec<SubObjectRef> = Vec::new();
+
+    for (cell_idx, cell) in data.cells.iter().enumerate() {
+        let nv: usize = if cell[4] == CELL_SENTINEL {
+            4
+        } else if cell[5] == CELL_SENTINEL {
+            5
+        } else if cell[6] == CELL_SENTINEL {
+            6
+        } else {
+            8
+        };
+        let centroid: glam::Vec3 = cell[..nv]
+            .iter()
+            .map(|&vi| glam::Vec3::from(data.positions[vi as usize]))
+            .sum::<glam::Vec3>()
+            / nv as f32;
+        let clip = mvp * centroid.extend(1.0);
+        if clip.w <= 0.0 {
+            continue;
+        }
+        let sx = (clip.x / clip.w + 1.0) * 0.5 * viewport_size.x;
+        let sy = (1.0 - clip.y / clip.w) * 0.5 * viewport_size.y;
+        if sx >= rect_min.x && sx <= rect_max.x && sy >= rect_min.y && sy <= rect_max.y {
+            hits.push(SubObjectRef::Cell(cell_idx as u32));
+        }
+    }
+    if !hits.is_empty() {
+        result.hits.insert(id, hits);
+    }
+    result
+}
+
+// ---------------------------------------------------------------------------
+// pick_gaussian_splat_rect
+// ---------------------------------------------------------------------------
+
+/// Rect-select splats from a Gaussian splat object.
+///
+/// Projects each splat position through `view_proj` and collects those inside
+/// the selection rectangle.
+///
+/// Returns a [`RectPickResult`] with [`SubObjectRef::Point`] entries keyed by `id`.
+///
+/// # Arguments
+/// * `rect_min/max`  - selection rectangle in viewport pixels (top-left origin)
+/// * `id`            - object identifier used as the key in the result
+/// * `positions`     - local-space splat center positions
+/// * `model`         - world transform for the splat object
+/// * `view_proj`     - combined view x projection matrix
+/// * `viewport_size` - viewport width x height in pixels
+pub fn pick_gaussian_splat_rect(
+    rect_min: glam::Vec2,
+    rect_max: glam::Vec2,
+    id: u64,
+    positions: &[[f32; 3]],
+    model: glam::Mat4,
+    view_proj: glam::Mat4,
+    viewport_size: glam::Vec2,
+) -> RectPickResult {
+    let mut result = RectPickResult::default();
+    if id == 0 || positions.is_empty() {
+        return result;
+    }
+    let mvp = view_proj * model;
+    let mut hits: Vec<SubObjectRef> = Vec::new();
+
+    for (i, pos) in positions.iter().enumerate() {
+        let local = glam::Vec3::from(*pos);
+        let clip = mvp * local.extend(1.0);
+        if clip.w <= 0.0 {
+            continue;
+        }
+        let sx = (clip.x / clip.w + 1.0) * 0.5 * viewport_size.x;
+        let sy = (1.0 - clip.y / clip.w) * 0.5 * viewport_size.y;
+        if sx >= rect_min.x && sx <= rect_max.x && sy >= rect_min.y && sy <= rect_max.y {
+            hits.push(SubObjectRef::Point(i as u32));
+        }
+    }
+    if !hits.is_empty() {
+        result.hits.insert(id, hits);
+    }
+    result
 }
 
 #[cfg(test)]

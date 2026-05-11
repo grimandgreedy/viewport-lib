@@ -156,12 +156,15 @@ pub use interaction::clip_plane::{
 pub use interaction::picking::{
     GpuPickHit, PickHit, ProbeBinding, RectPickResult, pick_rect,
     pick_scene_accelerated_with_probe_cpu, pick_scene_nodes_with_probe_cpu, pick_scene_with_probe_cpu,
-    pick_volume_cpu, voxel_world_aabb,
+    nearest_vertex_on_hit, pick_gaussian_splat_cpu, pick_gaussian_splat_rect,
+    pick_point_cloud_cpu, pick_volume_cpu, pick_volume_rect,
+    pick_transparent_volume_mesh_cpu, pick_transparent_volume_mesh_rect,
+    voxel_world_aabb,
 };
 pub use interaction::selection::{NodeId, Selection};
 pub use interaction::snap::{ConstraintOverlay, SnapConfig};
 pub use interaction::sub_object;
-pub use interaction::sub_object::{SubObjectRef, SubSelection, SubSelectionRef, VolumeSelectionInfo};
+pub use interaction::sub_object::{CellSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef, VolumeSelectionInfo};
 
 pub use widgets::axes_indicator::AxisView;
 

@@ -7,13 +7,13 @@ use viewport_lib::{
     Action, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap,
     ButtonState, Camera,
     CameraAnimator, CameraFrame, ClipObject, ColormapId,
-    FrameData,
+    FrameData, GaussianSplatItem,
     GizmoAxis, GizmoInfo, GizmoMode, GlyphItem, GroundPlane, GroundPlaneMode,
     LightKind, LightSource, LightingSettings, ManipResult, ManipulationContext,
     MeshData, MeshId, OrbitCameraController,
     PickId, PointCloudItem, PostProcessSettings,
     RenderCamera, RuntimeMode, SceneFrame,
-    SceneRenderItem, ScrollUnits, Selection, ShadowFilter, SubSelectionRef,
+    CellSelectionInfo, SceneRenderItem, ScrollUnits, Selection, ShadowFilter, SubSelectionRef,
     ViewportContext,
     ViewportEvent, ViewportRenderer,
     geometry::isoline::IsolineItem,
@@ -2515,7 +2515,16 @@ impl App {
             }
 
             ShowcaseMode::PickLevels => {
-                let items = self.pl_state.scene.collect_render_items(&self.pl_state.selection);
+                let mut items = self.pl_state.scene.collect_render_items(&self.pl_state.selection);
+                // TVM boundary surface rendered as an opaque mesh alongside the scene.
+                if let Some(tvm_mesh_id) = self.pl_state.tvm_mesh_id {
+                    let mut tvm_item = SceneRenderItem::default();
+                    tvm_item.mesh_id = tvm_mesh_id;
+                    tvm_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+                    tvm_item.visible = true;
+                    tvm_item.material = viewport_lib::Material::from_color([0.8, 0.45, 0.2]);
+                    items.push(tvm_item);
+                }
                 let sg = self.pl_state.scene.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
@@ -2877,6 +2886,14 @@ impl App {
                 pc.id = 1;
                 fd.scene.point_clouds.push(pc);
             }
+            // Gaussian splat grid (pickable via pick_id=10).
+            if let Some(splat_id) = self.pl_state.splat_id {
+                let mut item = GaussianSplatItem::default();
+                item.id = splat_id;
+                item.model = showcase_33_picking_levels::pl_splat_model().to_cols_array_2d();
+                item.pick_id = 10;
+                fd.scene.gaussian_splats.push(item);
+            }
             // Sub-object highlight pass (face fill, edge outline, vertex/point sprites).
             if !self.pl_state.sub_selection.is_empty() {
                 let mut mesh_lookup: HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)> = HashMap::new();
@@ -2893,6 +2910,14 @@ impl App {
                 }
                 let mut point_positions: HashMap<u64, Vec<[f32; 3]>> = HashMap::new();
                 point_positions.insert(1, self.pl_state.pc_positions.clone());
+                // Splat world positions for Point sub-object highlight rendering.
+                if !self.pl_state.splat_positions.is_empty() {
+                    let splat_model = showcase_33_picking_levels::pl_splat_model();
+                    let world_splats: Vec<[f32; 3]> = self.pl_state.splat_positions.iter()
+                        .map(|p| splat_model.transform_point3(glam::Vec3::from(*p)).to_array())
+                        .collect();
+                    point_positions.insert(10, world_splats);
+                }
                 let mut voxel_lookup: HashMap<u64, viewport_lib::VolumeSelectionInfo> = HashMap::new();
                 if self.pl_state.volume_id.is_some() {
                     voxel_lookup.insert(2, viewport_lib::VolumeSelectionInfo {
@@ -2903,12 +2928,19 @@ impl App {
                             .to_cols_array_2d(),
                     });
                 }
+                let mut cell_lookup: HashMap<u64, CellSelectionInfo> = HashMap::new();
+                if let Some(tvm_data) = &self.pl_state.tvm_data {
+                    cell_lookup.insert(11, CellSelectionInfo {
+                        positions: tvm_data.positions.clone(),
+                        cells: tvm_data.cells.clone(),
+                    });
+                }
                 fd.interaction.sub_selection = Some(SubSelectionRef::new(
                     &self.pl_state.sub_selection,
                     mesh_lookup,
                     model_matrices,
                     point_positions,
-                ).with_voxels(voxel_lookup));
+                ).with_voxels(voxel_lookup).with_cells(cell_lookup));
                 fd.interaction.sub_highlight_face_fill_color = [1.0, 0.85, 0.0, 0.25];
                 fd.interaction.sub_highlight_edge_color = [1.0, 0.85, 0.0, 1.0];
                 fd.interaction.sub_highlight_edge_width_px = 2.5;
@@ -2924,7 +2956,7 @@ impl App {
                     fd.scene.point_clouds.push(marker);
                 }
             }
-            // Volume render (always submitted when built).
+            // Volume render.
             if let Some(vol_id) = self.pl_state.volume_id {
                 let mut vol = viewport_lib::VolumeItem::default();
                 vol.volume_id = vol_id;

@@ -2,6 +2,15 @@
 
 ## [0.13.3] (dev, current, unreleased)
 
+### Features
+- New pick helpers extending them to the full range of scene items.
+    - `pick_volume_rect`: box selection for structured scalar volumes. Returns all voxels whose centers project into the screen-space rectangle.
+    - `pick_gaussian_splat_cpu` / `pick_gaussian_splat_rect`: single-click and box selection for Gaussian splat sets.
+    - `pick_transparent_volume_mesh_cpu` / `pick_transparent_volume_mesh_rect`: ray-pick and box selection for unstructured volume meshes. Works independently of the rendering path -- no GPU resource required.
+    - `nearest_vertex_on_hit`: given a `PickHit` from a face-level ray pick, returns the closest vertex of the hit triangle as a `SubObjectRef::Vertex`. Eliminates the need for inline nearest-vertex math in host code.
+- `SubObjectRef::Cell(u32)`: new variant identifying a cell in a `VolumeMeshData` by its index in the cells array. Produced by the transparent volume mesh pick functions.
+- `CellSelectionInfo` and `SubSelectionRef::with_cells`: cell edge highlights are now handled inside the library. Pass a `CellSelectionInfo` (positions and cell connectivity from the `VolumeMeshData`) to `SubSelectionRef::with_cells` and selected cells will draw the same gold edge-outline highlight as selected voxels, faces, and vertices. Supports tet, pyramid, wedge, and hex cells.
+
 ### Fixes
 - Add `display_center` to `ClipShape::Plane` overlay to allow arbitrary placement.
 - Fix clip planes as applied to `VolumeItem` objects. Problem was in the applied transformation matrix.

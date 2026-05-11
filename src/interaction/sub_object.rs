@@ -32,6 +32,8 @@ use crate::interaction::selection::NodeId;
 ///   produced by TriMesh ray casts in practice).
 /// - [`Point`](SubObjectRef::Point) : point in a point-cloud object, by index in the
 ///   positions slice.
+/// - [`Voxel`](SubObjectRef::Voxel) : voxel in a structured scalar volume.
+/// - [`Cell`](SubObjectRef::Cell) : cell in an unstructured volume mesh (`VolumeMeshData`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -52,6 +54,12 @@ pub enum SubObjectRef {
     /// Recover the 3-D indices using the grid dimensions from
     /// [`VolumeData`](crate::geometry::marching_cubes::VolumeData).
     Voxel(u32),
+    /// A cell within an unstructured volume mesh, by its index in
+    /// [`VolumeMeshData::cells`](crate::resources::volume_mesh::VolumeMeshData::cells).
+    ///
+    /// Produced by [`pick_transparent_volume_mesh_cpu`](crate::interaction::picking::pick_transparent_volume_mesh_cpu)
+    /// and [`pick_transparent_volume_mesh_rect`](crate::interaction::picking::pick_transparent_volume_mesh_rect).
+    Cell(u32),
 }
 
 impl SubObjectRef {
@@ -80,10 +88,16 @@ impl SubObjectRef {
         matches!(self, Self::Voxel(_))
     }
 
+    /// Returns `true` if this is a [`Cell`](SubObjectRef::Cell).
+    pub fn is_cell(&self) -> bool {
+        matches!(self, Self::Cell(_))
+    }
+
     /// Returns the raw index regardless of variant.
     pub fn index(&self) -> u32 {
         match *self {
-            Self::Face(i) | Self::Vertex(i) | Self::Edge(i) | Self::Point(i) | Self::Voxel(i) => i,
+            Self::Face(i) | Self::Vertex(i) | Self::Edge(i) | Self::Point(i)
+            | Self::Voxel(i) | Self::Cell(i) => i,
         }
     }
 
@@ -280,6 +294,11 @@ impl SubSelection {
     pub fn voxel_count(&self) -> usize {
         self.selected.iter().filter(|(_, s)| s.is_voxel()).count()
     }
+
+    /// Count of selected cells across all objects.
+    pub fn cell_count(&self) -> usize {
+        self.selected.iter().filter(|(_, s)| s.is_cell()).count()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -299,6 +318,20 @@ pub struct VolumeSelectionInfo {
     pub bbox_max: [f32; 3],
     /// World-space transform (matches [`VolumeItem::model`]).
     pub model: [[f32; 4]; 4],
+}
+
+/// Geometry info needed to highlight a [`SubObjectRef::Cell`] selection.
+///
+/// Contains the vertex positions and cell connectivity from the host's
+/// [`VolumeMeshData`](crate::resources::volume_mesh::VolumeMeshData). Pass one
+/// entry per volume mesh object via [`SubSelectionRef::with_cells`].
+pub struct CellSelectionInfo {
+    /// World-space vertex positions. Indexed by cell connectivity entries.
+    pub positions: Vec<[f32; 3]>,
+    /// Cell connectivity. Each entry is `[u32; 8]` with
+    /// `u32::MAX` padding for cells with fewer than 8 vertices (same encoding
+    /// as [`VolumeMeshData::cells`](crate::resources::volume_mesh::VolumeMeshData::cells)).
+    pub cells: Vec<[u32; 8]>,
 }
 
 /// A renderer-owned snapshot of a [`SubSelection`] taken at frame submission time.
@@ -345,6 +378,12 @@ pub struct SubSelectionRef {
     /// grid dimensions and bounding box so the renderer can decode flat voxel
     /// indices into world-space AABB wireframes.
     pub(crate) voxel_lookup: std::collections::HashMap<u64, VolumeSelectionInfo>,
+    /// Unstructured volume mesh geometry keyed by node id.
+    ///
+    /// Required for [`SubObjectRef::Cell`] highlights. Each entry provides the
+    /// vertex positions and cell connectivity so the renderer can draw edge
+    /// outlines around selected cells.
+    pub(crate) cell_lookup: std::collections::HashMap<u64, CellSelectionInfo>,
     /// Version counter copied from the source [`SubSelection::version()`].
     ///
     /// The renderer uses this to skip GPU buffer rebuilds when the selection
@@ -375,6 +414,7 @@ impl SubSelectionRef {
             model_matrices,
             point_positions,
             voxel_lookup: std::collections::HashMap::new(),
+            cell_lookup: std::collections::HashMap::new(),
             version: sub_selection.version(),
         }
     }
@@ -388,6 +428,18 @@ impl SubSelectionRef {
         lookup: std::collections::HashMap<u64, VolumeSelectionInfo>,
     ) -> Self {
         self.voxel_lookup = lookup;
+        self
+    }
+
+    /// Attach unstructured volume mesh geometry for [`SubObjectRef::Cell`] highlight rendering.
+    ///
+    /// `lookup` maps each volume mesh's node id to its [`CellSelectionInfo`]. Without
+    /// this, selected cells are silently skipped during highlight geometry build.
+    pub fn with_cells(
+        mut self,
+        lookup: std::collections::HashMap<u64, CellSelectionInfo>,
+    ) -> Self {
+        self.cell_lookup = lookup;
         self
     }
 

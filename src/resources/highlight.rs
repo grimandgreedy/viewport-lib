@@ -306,6 +306,32 @@ impl ViewportGpuResources {
                         }
                     }
                 }
+                SubObjectRef::Cell(i) => {
+                    if let Some(info) = sel.cell_lookup.get(node_id) {
+                        if let Some(cell) = info.cells.get(*i as usize) {
+                            const S: u32 = u32::MAX; // CELL_SENTINEL
+                            let nv: usize = if cell[4] == S { 4 }
+                                else if cell[5] == S { 5 }
+                                else if cell[6] == S { 6 }
+                                else { 8 };
+                            let edges: &[(usize, usize)] = match nv {
+                                4 => &[(0,1),(1,2),(0,2),(0,3),(1,3),(2,3)],
+                                5 => &[(0,1),(1,2),(2,3),(3,0),(0,4),(1,4),(2,4),(3,4)],
+                                6 => &[(0,1),(1,2),(0,2),(3,4),(4,5),(3,5),(0,3),(1,4),(2,5)],
+                                _ => &[(0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),(0,4),(1,5),(2,6),(3,7)],
+                            };
+                            for &(a, b) in edges {
+                                if let (Some(&pa), Some(&pb)) = (
+                                    info.positions.get(cell[a] as usize),
+                                    info.positions.get(cell[b] as usize),
+                                ) {
+                                    edge_data.extend_from_slice(&xform(pa));
+                                    edge_data.extend_from_slice(&xform(pb));
+                                }
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
         }

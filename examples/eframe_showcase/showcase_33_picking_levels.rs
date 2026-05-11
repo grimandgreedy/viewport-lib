@@ -1,9 +1,10 @@
 //! Showcase 33: Picking Levels
 //!
-//! Demonstrates the picking hierarchy across four levels:
-//!   Object -> Face -> Vertex -> Point
+//! Demonstrates the picking hierarchy across six levels:
+//!   Object -> Face -> Vertex -> Point -> Voxel -> Splat -> Tvm
 //!
-//! Scene: two cubes and two hemispheres.  A 30-point grid cloud floats above.
+//! Scene: two cubes and two hemispheres; a 30-point grid cloud; a scalar
+//! volume; a 3x3 Gaussian splat grid; and a 2x2x2 transparent hex mesh.
 //!
 //! Controls:
 //!   - Left-click : select at the active level
@@ -14,7 +15,11 @@
 use std::collections::HashMap;
 
 use eframe::egui;
-use viewport_lib::{Material, MeshData, MeshId, NodeId, SubObjectRef, VolumeData, ViewportRenderer};
+use viewport_lib::{
+    GaussianSplatData, GaussianSplatId,
+    Material, MeshData, MeshId, NodeId,
+    ShDegree, SubObjectRef, VolumeData, VolumeMeshData, ViewportRenderer,
+};
 
 use crate::App;
 
@@ -30,6 +35,10 @@ pub(crate) enum PlPickLevel {
     Vertex,
     Point,
     Voxel,
+    /// Gaussian splat pick (returns SubObjectRef::Point).
+    Splat,
+    /// Transparent volume mesh cell pick (returns SubObjectRef::Cell).
+    Tvm,
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +162,103 @@ fn unit_box_mesh_data() -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
 }
 
 // ---------------------------------------------------------------------------
+// Splat and TVM data helpers
+// ---------------------------------------------------------------------------
+
+/// Build `GaussianSplatData` for the picking demo: N small spherical splats,
+/// colored from teal to orange across the set.
+fn make_pl_splat_data(positions: &[[f32; 3]]) -> GaussianSplatData {
+    const SH0_C: f32 = 0.28209479177;
+    let n = positions.len();
+    let sh_coefficients = (0..n)
+        .flat_map(|i| {
+            let t = i as f32 / (n as f32 - 1.0).max(1.0);
+            let r = t;
+            let g = 0.5_f32;
+            let b = 1.0 - t;
+            [(r - 0.5) / SH0_C, (g - 0.5) / SH0_C, (b - 0.5) / SH0_C]
+        })
+        .collect();
+    GaussianSplatData {
+        positions: positions.to_vec(),
+        scales: vec![[0.2, 0.2, 0.2]; n],
+        rotations: vec![[1.0, 0.0, 0.0, 0.0]; n],
+        opacities: vec![0.8; n],
+        sh_coefficients,
+        sh_degree: ShDegree::Zero,
+    }
+}
+
+/// Build a hex mesh of a capsule (pill) shape.
+///
+/// The pill is centered at (0, -3.5, 0) and elongated along world Y.
+/// Uses a 5x5 cross-section grid with an elliptic square-to-disk mapping,
+/// giving 128 hex cells across 8 axial layers.
+fn make_pl_tvm_data() -> VolumeMeshData {
+    const N: usize = 5;   // cross-section grid side: (N-1)^2 cells per slice
+    const NZ: usize = 9;  // axial vertex count: NZ-1 cell layers
+
+    let radius = 0.7_f32;
+    let cyl_half = 1.2_f32;
+    let center = [0.0_f32, -3.5, 0.0];
+    let z_extent = cyl_half + radius;
+
+    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(N * N * NZ);
+
+    for k in 0..NZ {
+        let t = k as f32 / (NZ - 1) as f32;
+        let axial = -z_extent + 2.0 * z_extent * t;
+
+        // Cross-sectional radius: cylinder in the middle, spherical caps at the ends.
+        let r = if axial.abs() <= cyl_half {
+            radius
+        } else {
+            let dz = axial.abs() - cyl_half;
+            (radius * radius - dz * dz).max(0.0).sqrt()
+        };
+
+        for j in 0..N {
+            for i in 0..N {
+                let u = 2.0 * i as f32 / (N - 1) as f32 - 1.0;
+                let v = 2.0 * j as f32 / (N - 1) as f32 - 1.0;
+                // Elliptic disk mapping: corners of [-1,1]^2 map to the unit circle.
+                let dx = r * u * (1.0 - v * v / 2.0).sqrt();
+                let dz = r * v * (1.0 - u * u / 2.0).sqrt();
+                positions.push([center[0] + dx, center[1] + axial, center[2] + dz]);
+            }
+        }
+    }
+
+    let vi = |i: usize, j: usize, k: usize| -> u32 { (i + j * N + k * N * N) as u32 };
+    let n_lat = N - 1;
+    let n_axial = NZ - 1;
+    let total = n_lat * n_lat * n_axial;
+    let mut cells: Vec<[u32; 8]> = Vec::with_capacity(total);
+    let mut scalars: Vec<f32> = Vec::with_capacity(total);
+
+    for k in 0..n_axial {
+        for j in 0..n_lat {
+            for i in 0..n_lat {
+                cells.push([
+                    vi(i,   j,   k  ), vi(i+1, j,   k  ),
+                    vi(i+1, j+1, k  ), vi(i,   j+1, k  ),
+                    vi(i,   j,   k+1), vi(i+1, j,   k+1),
+                    vi(i+1, j+1, k+1), vi(i,   j+1, k+1),
+                ]);
+                let idx = i + j * n_lat + k * n_lat * n_lat;
+                scalars.push(idx as f32 / (total - 1).max(1) as f32);
+            }
+        }
+    }
+
+    let mut data = VolumeMeshData::default();
+    data.positions = positions;
+    data.cells = cells;
+    data.cell_scalars.insert("scalar".to_string(), scalars);
+    data
+}
+
+// ---------------------------------------------------------------------------
 // Build scene
 // ---------------------------------------------------------------------------
 
@@ -178,28 +284,40 @@ pub(crate) struct PlState {
     pub pc_positions: Vec<[f32; 3]>,
     pub volume_id:   Option<viewport_lib::VolumeId>,
     pub volume_data: Option<viewport_lib::VolumeData>,
+    /// Local-space positions of the Gaussian splat grid.
+    pub splat_positions: Vec<[f32; 3]>,
+    /// GPU handle for the uploaded Gaussian splat data.
+    pub splat_id:    Option<GaussianSplatId>,
+    /// Opaque mesh handle for TVM rendering (boundary surface).
+    pub tvm_mesh_id: Option<MeshId>,
+    /// CPU-side transparent volume mesh data (kept for picking).
+    pub tvm_data:    Option<VolumeMeshData>,
 }
 
 impl Default for PlState {
     fn default() -> Self {
         Self {
-            scene:         viewport_lib::scene::Scene::new(),
-            selection:     viewport_lib::Selection::new(),
-            sub_selection: viewport_lib::SubSelection::new(),
-            built:         false,
-            level:         PlPickLevel::default(),
-            cube_mesh_id:  MeshId::from_index(0),
-            hemi_mesh_id:  MeshId::from_index(0),
-            mesh_lookup:   std::collections::HashMap::new(),
-            wireframe:     true,
-            shift_held:    false,
-            drag_start:    None,
-            node_names:    Vec::new(),
-            last_hit:      None,
-            hit_marker:    None,
-            pc_positions:  Vec::new(),
-            volume_id:     None,
-            volume_data:   None,
+            scene:            viewport_lib::scene::Scene::new(),
+            selection:        viewport_lib::Selection::new(),
+            sub_selection:    viewport_lib::SubSelection::new(),
+            built:            false,
+            level:            PlPickLevel::default(),
+            cube_mesh_id:     MeshId::from_index(0),
+            hemi_mesh_id:     MeshId::from_index(0),
+            mesh_lookup:      std::collections::HashMap::new(),
+            wireframe:        true,
+            shift_held:       false,
+            drag_start:       None,
+            node_names:       Vec::new(),
+            last_hit:         None,
+            hit_marker:       None,
+            pc_positions:     Vec::new(),
+            volume_id:        None,
+            volume_data:      None,
+            splat_positions:  Vec::new(),
+            splat_id:         None,
+            tvm_mesh_id:      None,
+            tvm_data:         None,
         }
     }
 }
@@ -299,6 +417,27 @@ impl App {
             spacing: [0.25, 0.25, 0.25],
         });
 
+        // --- Gaussian splats: 3x3 grid in local space, rendered at y=5 ---
+        let mut splat_positions: Vec<[f32; 3]> = Vec::with_capacity(9);
+        for row in -1..=1_i32 {
+            for col in -1..=1_i32 {
+                splat_positions.push([col as f32 * 0.8, 0.0, row as f32 * 0.8]);
+            }
+        }
+        let splat_data = make_pl_splat_data(&splat_positions);
+        let splat_id = renderer.upload_gaussian_splats(&self.device, &self.queue, &splat_data);
+        self.pl_state.splat_positions = splat_positions;
+        self.pl_state.splat_id = Some(splat_id);
+
+        // --- Volume mesh: capsule hex mesh, rendered as opaque boundary surface ---
+        let tvm_data = make_pl_tvm_data();
+        let tvm_mesh_id = renderer
+            .resources_mut()
+            .upload_volume_mesh_data(&self.device, &tvm_data)
+            .ok();
+        self.pl_state.tvm_mesh_id = tvm_mesh_id;
+        self.pl_state.tvm_data = Some(tvm_data);
+
         self.pl_state.built = true;
     }
 }
@@ -382,7 +521,11 @@ impl App {
                     ray_origin, ray_dir, &self.pl_state.scene, &mesh_lookup,
                 );
                 if let Some(hit) = hit {
-                    let vertex_sub = self.pl_nearest_vertex(&hit);
+                    let vertex_sub = self.pl_node_mesh_key(hit.id).and_then(|key| {
+                        let (positions, indices) = self.pl_state.mesh_lookup.get(&key)?;
+                        let model = self.pl_node_model_matrix(hit.id);
+                        viewport_lib::nearest_vertex_on_hit(&hit, positions, indices, model)
+                    });
                     if let Some(sub) = vertex_sub {
                         if shift {
                             self.pl_state.sub_selection.toggle(hit.id, sub);
@@ -450,56 +593,86 @@ impl App {
             }
 
             PlPickLevel::Point => {
-                let half = 12.0_f32;
-                let rect_min = pos - glam::Vec2::splat(half);
-                let rect_max = pos + glam::Vec2::splat(half);
-
                 let mut pc_item = viewport_lib::PointCloudItem::default();
                 pc_item.positions = self.pl_state.pc_positions.clone();
                 pc_item.id = 1;
-
-                let result = viewport_lib::picking::pick_rect(
-                    rect_min, rect_max,
-                    &[],
-                    &HashMap::new(),
-                    std::slice::from_ref(&pc_item),
-                    view_proj,
-                    vp_size,
-                );
-
-                let nearest = result.hits.get(&1).and_then(|subs| {
-                    subs.iter()
-                        .filter_map(|s| if let SubObjectRef::Point(i) = s { Some(*i) } else { None })
-                        .min_by_key(|&i| {
-                            let p = glam::Vec3::from(self.pl_state.pc_positions[i as usize]);
-                            let clip = view_proj * p.extend(1.0);
-                            let ndc = if clip.w > 0.0 {
-                                glam::Vec2::new(clip.x / clip.w, -clip.y / clip.w)
-                            } else {
-                                glam::Vec2::ZERO
-                            };
-                            let screen = (ndc * 0.5 + glam::Vec2::splat(0.5)) * vp_size;
-                            ((screen - pos).length() * 1000.0) as u32
-                        })
-                });
-
-                if let Some(pt_idx) = nearest {
-                    let sub = SubObjectRef::Point(pt_idx);
+                let hit = viewport_lib::pick_point_cloud_cpu(pos, 1, &pc_item, view_proj, vp_size, 20.0);
+                if let Some(hit) = hit {
+                    let sub = hit.sub_object.unwrap();
                     if shift {
                         self.pl_state.sub_selection.toggle(1, sub);
                     } else {
                         self.pl_state.selection.clear();
                         self.pl_state.sub_selection.select_one(1, sub);
                     }
-                    let world_pos = glam::Vec3::from(self.pl_state.pc_positions[pt_idx as usize]);
                     self.pl_state.last_hit = Some(PlHitInfo {
                         object_name: "Point Cloud".to_string(),
-                        world_pos,
+                        world_pos: hit.world_pos,
                         normal: glam::Vec3::Y,
                         sub_object: Some(sub),
                         scalar_value: None,
                     });
-                    self.pl_state.hit_marker = Some(world_pos);
+                    self.pl_state.hit_marker = Some(hit.world_pos);
+                } else if !shift {
+                    self.pl_state.selection.clear();
+                    self.pl_state.sub_selection.clear();
+                    self.pl_state.last_hit = None;
+                    self.pl_state.hit_marker = None;
+                }
+            }
+
+            PlPickLevel::Splat => {
+                let splat_model = pl_splat_model();
+                let hit = viewport_lib::pick_gaussian_splat_cpu(
+                    pos, 10, &self.pl_state.splat_positions,
+                    splat_model, view_proj, vp_size, 24.0,
+                );
+                if let Some(hit) = hit {
+                    let sub = hit.sub_object.unwrap();
+                    if shift {
+                        self.pl_state.sub_selection.toggle(10, sub);
+                    } else {
+                        self.pl_state.selection.clear();
+                        self.pl_state.sub_selection.select_one(10, sub);
+                    }
+                    self.pl_state.last_hit = Some(PlHitInfo {
+                        object_name: "Gaussian Splats".to_string(),
+                        world_pos: hit.world_pos,
+                        normal: glam::Vec3::Y,
+                        sub_object: Some(sub),
+                        scalar_value: None,
+                    });
+                    self.pl_state.hit_marker = Some(hit.world_pos);
+                } else if !shift {
+                    self.pl_state.selection.clear();
+                    self.pl_state.sub_selection.clear();
+                    self.pl_state.last_hit = None;
+                    self.pl_state.hit_marker = None;
+                }
+            }
+
+            PlPickLevel::Tvm => {
+                let hit = self.pl_state.tvm_data.as_ref().and_then(|data| {
+                    viewport_lib::pick_transparent_volume_mesh_cpu(
+                        ray_origin, ray_dir, 11, glam::Mat4::IDENTITY, data,
+                    )
+                });
+                if let Some(hit) = hit {
+                    let sub = hit.sub_object.unwrap();
+                    if shift {
+                        self.pl_state.sub_selection.toggle(11, sub);
+                    } else {
+                        self.pl_state.selection.clear();
+                        self.pl_state.sub_selection.select_one(11, sub);
+                    }
+                    self.pl_state.last_hit = Some(PlHitInfo {
+                        object_name: "Transparent Volume Mesh".to_string(),
+                        world_pos: hit.world_pos,
+                        normal: hit.normal,
+                        sub_object: Some(sub),
+                        scalar_value: None,
+                    });
+                    self.pl_state.hit_marker = Some(hit.world_pos);
                 } else if !shift {
                     self.pl_state.selection.clear();
                     self.pl_state.sub_selection.clear();
@@ -610,58 +783,49 @@ impl App {
             }
 
             PlPickLevel::Voxel => {
-                // Project each above-threshold voxel center to screen space and
-                // collect those whose projection falls inside the selection rect.
                 if let (Some(vol_id), Some(vol_data)) =
                     (self.pl_state.volume_id, self.pl_state.volume_data.as_ref())
                 {
-                    let _ = vol_id; // id carried by VolumeItem, not needed here
-                    let model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0));
-                    let bbox_min = glam::Vec3::ZERO;
-                    let bbox_max = glam::Vec3::splat(4.0);
-                    let [nx, ny, nz] = vol_data.dims;
-                    let cell = (bbox_max - bbox_min)
-                        / glam::Vec3::new(nx as f32, ny as f32, nz as f32);
-                    let threshold_min = 0.15_f32;
-                    let threshold_max = 1.0_f32;
+                    let mut item = viewport_lib::VolumeItem::default();
+                    item.volume_id = vol_id;
+                    item.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0))
+                        .to_cols_array_2d();
+                    item.bbox_min = [0.0, 0.0, 0.0];
+                    item.bbox_max = [4.0, 4.0, 4.0];
+                    item.threshold_min = 0.15;
+                    item.threshold_max = 1.0;
+                    let result = viewport_lib::pick_volume_rect(
+                        r_min, r_max, 2, &item, vol_data, view_proj, vp_size,
+                    );
+                    for (_, subs) in &result.hits {
+                        for &sub in subs {
+                            self.pl_state.sub_selection.add(2, sub);
+                        }
+                    }
+                }
+            }
 
-                    for iz in 0..nz {
-                        for iy in 0..ny {
-                            for ix in 0..nx {
-                                let flat = ix + iy * nx + iz * nx * ny;
-                                let scalar = vol_data.data[flat as usize];
-                                if scalar.is_nan()
-                                    || scalar < threshold_min
-                                    || scalar > threshold_max
-                                {
-                                    continue;
-                                }
-                                let local_center = bbox_min
-                                    + cell * glam::Vec3::new(
-                                        ix as f32 + 0.5,
-                                        iy as f32 + 0.5,
-                                        iz as f32 + 0.5,
-                                    );
-                                let world = model.transform_point3(local_center);
-                                let clip = view_proj * world.extend(1.0);
-                                if clip.w <= 0.0 {
-                                    continue;
-                                }
-                                let ndc = glam::Vec2::new(
-                                    clip.x / clip.w,
-                                    -clip.y / clip.w,
-                                );
-                                let screen =
-                                    (ndc * 0.5 + glam::Vec2::splat(0.5)) * vp_size;
-                                if screen.x >= r_min.x
-                                    && screen.x <= r_max.x
-                                    && screen.y >= r_min.y
-                                    && screen.y <= r_max.y
-                                {
-                                    self.pl_state.sub_selection
-                                        .add(2, SubObjectRef::Voxel(flat));
-                                }
-                            }
+            PlPickLevel::Splat => {
+                let splat_model = pl_splat_model();
+                let result = viewport_lib::pick_gaussian_splat_rect(
+                    r_min, r_max, 10, &self.pl_state.splat_positions,
+                    splat_model, view_proj, vp_size,
+                );
+                for (_, subs) in &result.hits {
+                    for &sub in subs {
+                        self.pl_state.sub_selection.add(10, sub);
+                    }
+                }
+            }
+
+            PlPickLevel::Tvm => {
+                if let Some(data) = self.pl_state.tvm_data.as_ref() {
+                    let result = viewport_lib::pick_transparent_volume_mesh_rect(
+                        r_min, r_max, 11, glam::Mat4::IDENTITY, data, view_proj, vp_size,
+                    );
+                    for (_, subs) in &result.hits {
+                        for &sub in subs {
+                            self.pl_state.sub_selection.add(11, sub);
                         }
                     }
                 }
@@ -676,6 +840,13 @@ impl App {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// World transform used for the Gaussian splat grid in showcase 33.
+///
+/// Both the renderer submission and the pick functions must use the same model.
+pub(crate) fn pl_splat_model() -> glam::Mat4 {
+    glam::Mat4::from_translation(glam::vec3(-4.0, 5.0, 0.0))
+}
 
 impl App {
     /// Mesh lookup map for `pick_scene_nodes_cpu` (key = u64 mesh id).
@@ -720,40 +891,6 @@ impl App {
         None
     }
 
-    /// Compute nearest vertex sub-object for a face-level ray hit.
-    pub(crate) fn pl_nearest_vertex(&self, hit: &viewport_lib::picking::PickHit) -> Option<SubObjectRef> {
-        let face_raw = match hit.sub_object {
-            Some(SubObjectRef::Face(i)) => i as usize,
-            _ => return None,
-        };
-        let key = self.pl_node_mesh_key(hit.id)?;
-        let (positions, indices) = self.pl_state.mesh_lookup.get(&key)?;
-        let n_tri = indices.len() / 3;
-        if n_tri == 0 {
-            return None;
-        }
-        let face = if face_raw >= n_tri { face_raw - n_tri } else { face_raw };
-        if face * 3 + 2 >= indices.len() {
-            return None;
-        }
-        let vi = [
-            indices[face * 3] as usize,
-            indices[face * 3 + 1] as usize,
-            indices[face * 3 + 2] as usize,
-        ];
-        let model = self.pl_node_model_matrix(hit.id);
-        let (best_vi, _) = vi
-            .iter()
-            .map(|&i| {
-                let p = model.transform_point3(glam::Vec3::from(positions[i]));
-                (i, p.distance(hit.world_pos))
-            })
-            .fold((vi[0], f32::MAX), |best, (i, d)| {
-                if d < best.1 { (i, d) } else { best }
-            });
-        Some(SubObjectRef::Vertex(best_vi as u32))
-    }
-
     /// World-space position for a Vertex sub-object.
     pub(crate) fn pl_vertex_world_pos(&self, node_id: NodeId, sub: SubObjectRef) -> Option<glam::Vec3> {
         if let SubObjectRef::Vertex(vi) = sub {
@@ -781,6 +918,8 @@ pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
             ui.radio_value(&mut app.pl_state.level, PlPickLevel::Vertex, "Vertex");
             ui.radio_value(&mut app.pl_state.level, PlPickLevel::Point,  "Point");
             ui.radio_value(&mut app.pl_state.level, PlPickLevel::Voxel,  "Voxel");
+            ui.radio_value(&mut app.pl_state.level, PlPickLevel::Splat,  "Splat");
+            ui.radio_value(&mut app.pl_state.level, PlPickLevel::Tvm,    "TVM");
         });
 
         ui.separator();
@@ -811,6 +950,7 @@ pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
                 Some(SubObjectRef::Edge(i)) => { ui.label(format!("Level: Edge #{i}")); }
                 Some(SubObjectRef::Point(i))=> { ui.label(format!("Level: Point #{i}")); }
                 Some(SubObjectRef::Voxel(i))=> { ui.label(format!("Level: Voxel #{i}")); }
+                Some(SubObjectRef::Cell(i)) => { ui.label(format!("Level: Cell #{i}")); }
                 Some(_)                     => { ui.label("Level: (unknown)"); }
             }
             let p = hit.world_pos;
