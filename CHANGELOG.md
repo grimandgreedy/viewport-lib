@@ -1,6 +1,12 @@
 # Changelog
 
-## [0.13.2] (dev, current, unreleased)
+## [0.13.3] (dev, current, unreleased)
+
+### Fixes
+- `ClipShape::Plane` overlay quad position was always anchored to the foot-of-perpendicular from the world origin (`normal * (-distance)`), so lateral translations of the plane (movement tangent to the plane) moved the gizmo but left the overlay stationary. Added `display_center: Option<[f32; 3]>` to `ClipShape::Plane`; when set, the renderer uses it to position the overlay quad. Existing code that omits the field or sets `None` keeps the previous fallback behaviour.
+
+
+## [0.13.2]
 
 ### Major Features
 - Gaussian splat rendering: upload a set of 3D Gaussian primitives once via `upload_gaussian_splats` and reference it each frame with `GaussianSplatItem`. Each splat is an anisotropic ellipsoid defined by a center, per-axis scale, and quaternion rotation.

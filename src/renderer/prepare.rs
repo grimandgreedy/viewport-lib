@@ -2008,13 +2008,20 @@ impl ViewportRenderer {
                 continue;
             }
             if let ClipShape::Plane {
-                normal, distance, ..
+                normal,
+                distance,
+                display_center,
+                ..
             } = obj.shape
             {
                 let n = glam::Vec3::from(normal);
-                // Shader plane equation: dot(p, n) + distance = 0, so the plane
-                // sits at -n * distance from the origin.
-                let center = n * (-distance);
+                // Use the caller-supplied display_center when available so that
+                // lateral translations (tangent to the plane) are reflected in
+                // the overlay quad position.  Fall back to the foot-of-normal
+                // from the world origin when none is set.
+                let center = display_center
+                    .map(glam::Vec3::from)
+                    .unwrap_or_else(|| n * (-distance));
                 let active = obj.active;
                 let hovered = obj.hovered || active;
 
@@ -2142,6 +2149,7 @@ impl ViewportRenderer {
                     normal,
                     distance,
                     cap_color,
+                    ..
                 } = obj.shape
                 {
                     let plane_n = glam::Vec3::from(normal);

@@ -119,6 +119,7 @@ pub fn plane_from_axis_preset(axis: ClipAxis, distance: f32) -> ClipObject {
             normal,
             distance,
             cap_color: None,
+            display_center: None,
         },
         ..ClipObject::default()
     }
@@ -647,6 +648,7 @@ mod tests {
                 normal: [0.0, 1.0, 0.0],
                 distance: 0.0,
                 cap_color: None,
+                display_center: None,
             },
             enabled: true,
             ..ClipObject::default()
@@ -839,6 +841,7 @@ mod tests {
                 normal: [1.0, 0.0, 0.0],
                 distance: 5.0,
                 cap_color: None,
+                display_center: None,
             },
             enabled: true,
             ..ClipObject::default()

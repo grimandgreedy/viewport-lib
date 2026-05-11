@@ -16,6 +16,13 @@ pub enum ClipShape {
         distance: f32,
         /// Cap fill color override. `None` = use the clipped mesh's base_color.
         cap_color: Option<[f32; 4]>,
+        /// World-space point on the plane used to position the overlay quad.
+        ///
+        /// When `None`, the renderer falls back to `normal * (-distance)`, which is
+        /// the closest point on the plane to the world origin.  Set this to the
+        /// user-facing origin (e.g. a drag handle position) so the overlay stays
+        /// centred under the gizmo when the plane is translated laterally.
+        display_center: Option<[f32; 3]>,
     },
     /// Oriented box : fragments inside the box are kept.
     Box {
@@ -94,6 +101,7 @@ impl Default for ClipObject {
                 normal: [0.0, 0.0, 1.0],
                 distance: 0.0,
                 cap_color: None,
+                display_center: None,
             },
             color: None,
             edge_color: None,
@@ -114,6 +122,7 @@ impl ClipObject {
                 normal,
                 distance,
                 cap_color: None,
+                display_center: None,
             },
             ..Default::default()
         }
