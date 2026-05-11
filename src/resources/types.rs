@@ -712,7 +712,7 @@ pub struct ClipVolumesUniform {
 /// [`CLIP_VOLUME_MAX`] simultaneous box/sphere clip volumes.
 #[deprecated(since = "0.9.0", note = "use ClipVolumesUniform and ClipVolumeEntry instead")]
 #[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Copy, Clone)]
 pub struct ClipVolumeUniform {
     /// Discriminant: 0=None, 1=Plane, 2=Box, 3=Sphere.
     pub volume_type: u32,
@@ -790,6 +790,12 @@ impl ClipVolumeUniform {
         u
     }
 }
+
+// SAFETY: ClipVolumeUniform is repr(C) and contains only u32/f32 fields — all Pod-compatible.
+#[allow(deprecated)]
+unsafe impl bytemuck::Zeroable for ClipVolumeUniform {}
+#[allow(deprecated)]
+unsafe impl bytemuck::Pod for ClipVolumeUniform {}
 
 /// Per-object outline uniform for the two-pass stencil outline effect.
 ///
@@ -1281,8 +1287,10 @@ pub(crate) struct GaussianSplatGpuSet {
     /// Per-viewport sort buffers; index = viewport_index. Grown lazily.
     pub viewport_sort: Vec<Option<GaussianSplatViewportSort>>,
     /// CPU positions kept for potential picking (object-space).
+    #[allow(dead_code)]
     pub cpu_positions: Vec<[f32; 3]>,
     /// CPU scales kept for potential picking.
+    #[allow(dead_code)]
     pub cpu_scales: Vec<[f32; 3]>,
 }
 
@@ -1293,6 +1301,7 @@ pub(crate) struct GaussianSplatDrawData {
     /// Viewport index that prepared this data.
     pub viewport_index: usize,
     /// Model matrix for this item.
+    #[allow(dead_code)]
     pub model: [[f32; 4]; 4],
     /// Number of splats.
     pub count: u32,
@@ -1680,6 +1689,7 @@ pub(crate) struct ViewportHdrState {
 ///
 /// Typically stored in the host framework's resource container and accessed
 /// by `ViewportRenderer` during prepare() and paint().
+#[allow(dead_code)]
 pub struct ViewportGpuResources {
     /// Swapchain texture format; all pipelines are compiled for this format.
     pub target_format: wgpu::TextureFormat,
