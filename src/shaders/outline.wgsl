@@ -33,23 +33,29 @@ struct OutlineUniform {
     _pad2: f32,
 };
 
-struct ClipVolumeUB {
+struct ClipVolumeEntry {
     volume_type: u32,
-    _pad0: u32, _pad1: u32, _pad2: u32,
-    plane_normal: vec3<f32>,
-    plane_dist: f32,
-    box_center: vec3<f32>,
-    _padB0: f32,
-    box_half_extents: vec3<f32>,
-    _padB1: f32,
-    box_col0: vec3<f32>,
-    _padB2: f32,
-    box_col1: vec3<f32>,
-    _padB3: f32,
-    box_col2: vec3<f32>,
-    _padB4: f32,
-    sphere_center: vec3<f32>,
-    sphere_radius: f32,
+    _pad_a: u32,
+    _pad_b: u32,
+    _pad_c: u32,
+    center: vec3<f32>,
+    radius: f32,
+    half_extents: vec3<f32>,
+    _pad1: f32,
+    col0: vec3<f32>,
+    _pad2: f32,
+    col1: vec3<f32>,
+    _pad3: f32,
+    col2: vec3<f32>,
+    _pad4: f32,
+}
+
+struct ClipVolumeUB {
+    count: u32,
+    _pad_a: u32,
+    _pad_b: u32,
+    _pad_c: u32,
+    volumes: array<ClipVolumeEntry, 4>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
