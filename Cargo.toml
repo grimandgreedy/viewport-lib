@@ -24,18 +24,13 @@ fontdue = "0.9"
 thiserror = "2.0"
 tracing = "0.1"
 serde = { version = "1.0", features = ["derive"], optional = true }
-# gtk4 is optional because it requires system libraries (libgtk-4-dev / brew install gtk4).
-# Build the gtk4 example with: cargo run --release --example gtk4-viewport --features gtk4-example
-gtk4 = { version = "0.9", optional = true }
 
 [features]
 default = ["serde"]
 serde = ["dep:serde", "glam/serde"]
-gtk4-example = ["gtk4"]
 
 [dev-dependencies]
 iced = { version = "0.14", features = ["wgpu"] }
-slint = { version = "~1.15", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg-wgpu"] }
 eframe = { version = "=0.33.3", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"] }
 winit = "0.30"
 pollster = "0.4"
@@ -44,10 +39,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [[example]]
 name = "iced-viewport"
 path = "examples/iced_viewport/main.rs"
-
-[[example]]
-name = "slint-viewport"
-path = "examples/slint_viewport/main.rs"
 
 [[example]]
 name = "winit-viewport"
@@ -89,8 +80,3 @@ path = "examples/eframe_showcase/main.rs"
 [[example]]
 name = "winit-multi-viewport"
 path = "examples/winit_multi_viewport/main.rs"
-
-[[example]]
-name = "gtk4-viewport"
-path = "examples/gtk4_viewport/main.rs"
-required-features = ["gtk4-example"]
