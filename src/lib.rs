@@ -177,6 +177,7 @@ pub use renderer::{
     aabb_wireframe_polyline, PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBarAnchor, ScalarBarItem,
     ScalarBarOrientation, SceneEffects,
     RibbonItem, SceneFrame, SceneRenderItem, ScreenImageItem,
+    GaussianSplatData, GaussianSplatId, GaussianSplatItem, ShDegree,
     ImageSliceItem, SliceAxis, ShadowFilter, SpriteItem, SpriteSizeMode, StreamtubeItem,
     SurfaceLICConfig, SurfaceLICItem, SurfaceSubmission, ToneMapping, TubeItem,
     TransparentVolumeMeshItem, VolumeSurfaceSliceItem,

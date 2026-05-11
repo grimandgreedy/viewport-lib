@@ -45,6 +45,7 @@ pub use self::types::{
 pub(crate) use self::types::{
     BatchMeta, BloomUniform, ClipPlanesUniform, ContactShadowUniform, DofUniform,
     FrustumPlane, FrustumUniform,
+    GaussianSplatDrawData,
     GlyphBaseMesh, GlyphGpuData, GridUniform, GroundPlaneUniform, GpuProjectedTetMesh,
     InstanceAabb, InstanceData, LabelGpuData, LicAdvectUniform, LicObjectUniform,
     LicSurfaceGpuData, ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform,

@@ -38,6 +38,21 @@ impl ViewportRenderer {
             &self.volume_surface_slice_gpu_data,
             &self.sprite_gpu_data
         );
+        // Gaussian splats (alpha-blended, back-to-front sorted, no depth write).
+        if !self.gaussian_splat_draw_data.is_empty() {
+            if let Some(pipeline) = &self.resources.gaussian_splat_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for dd in &self.gaussian_splat_draw_data {
+                    if let Some(set) = self.resources.gaussian_splat_store.get(dd.store_index) {
+                        if let Some(Some(vp_sort)) = set.viewport_sort.get(dd.viewport_index) {
+                            render_pass.set_bind_group(1, &vp_sort.render_bg, &[]);
+                            render_pass.draw(0..6, 0..dd.count);
+                        }
+                    }
+                }
+            }
+        }
         // Phase 16 : GPU implicit surface (depth-writes enabled, LessEqual compare).
         if !self.implicit_gpu_data.is_empty() {
             if let Some(pipeline) = &self.resources.implicit_pipeline {
@@ -189,6 +204,21 @@ impl ViewportRenderer {
             &self.volume_surface_slice_gpu_data,
             &self.sprite_gpu_data
         );
+        // Gaussian splats (alpha-blended, back-to-front sorted, no depth write).
+        if !self.gaussian_splat_draw_data.is_empty() {
+            if let Some(pipeline) = &self.resources.gaussian_splat_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for dd in &self.gaussian_splat_draw_data {
+                    if let Some(set) = self.resources.gaussian_splat_store.get(dd.store_index) {
+                        if let Some(Some(vp_sort)) = set.viewport_sort.get(dd.viewport_index) {
+                            render_pass.set_bind_group(1, &vp_sort.render_bg, &[]);
+                            render_pass.draw(0..6, 0..dd.count);
+                        }
+                    }
+                }
+            }
+        }
         // Phase 16 : GPU implicit surface (depth-writes enabled, LessEqual compare).
         if !self.implicit_gpu_data.is_empty() {
             if let Some(pipeline) = &self.resources.implicit_pipeline {

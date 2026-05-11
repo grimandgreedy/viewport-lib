@@ -326,6 +326,8 @@ pub struct SceneFrame {
     pub volume_surface_slices: Vec<VolumeSurfaceSliceItem>,
     /// Billboard sprite items to render this frame.
     pub sprite_items: Vec<SpriteItem>,
+    /// Gaussian splat items to render this frame.
+    pub gaussian_splats: Vec<GaussianSplatItem>,
 }
 
 impl Default for SceneFrame {
@@ -351,6 +353,7 @@ impl Default for SceneFrame {
             ribbon_items: Vec::new(),
             volume_surface_slices: Vec::new(),
             sprite_items: Vec::new(),
+            gaussian_splats: Vec::new(),
         }
     }
 }

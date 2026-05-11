@@ -1127,6 +1127,112 @@ pub struct SpriteGpuData {
     pub(crate) _instance_buf: wgpu::Buffer,
 }
 
+// ---------------------------------------------------------------------------
+// Gaussian splat GPU data types
+// ---------------------------------------------------------------------------
+
+/// Per-viewport sort buffers for one Gaussian splat set.
+pub(crate) struct GaussianSplatViewportSort {
+    /// u32 view-space depth keys (flipped for back-to-front), written by depth compute each frame.
+    pub depth_buf: wgpu::Buffer,
+    /// Ping/pong key buffers for radix sort.
+    pub keys_ping: wgpu::Buffer,
+    pub keys_pong: wgpu::Buffer,
+    /// Ping/pong value (index) buffers for radix sort.
+    pub vals_ping: wgpu::Buffer,
+    pub vals_pong: wgpu::Buffer,
+    /// 256-entry atomic histogram / prefix-sum scratch.
+    pub histogram_buf: wgpu::Buffer,
+    /// Render bind group (group 1). Contains sorted_indices, positions, scales, rotations,
+    /// opacities, sh_coefficients, and the per-viewport SplatUniform.
+    pub render_bg: wgpu::BindGroup,
+    /// Eye position at last sort; skip re-sort when unchanged.
+    pub last_eye: [f32; 3],
+    /// Per-viewport uniform buffer holding SplatUniform (model, viewport dims, sh_degree, count).
+    pub uniform_buf: wgpu::Buffer,
+}
+
+/// Persistent GPU state for one uploaded Gaussian splat set.
+pub(crate) struct GaussianSplatGpuSet {
+    /// Positions as vec4<f32> (w=1), one per splat.
+    pub position_buf: wgpu::Buffer,
+    /// Scales as vec4<f32> (w=0), one per splat.
+    pub scale_buf: wgpu::Buffer,
+    /// Rotations as vec4<f32> [x,y,z,w], one per splat.
+    pub rotation_buf: wgpu::Buffer,
+    /// Opacities as f32, one per splat.
+    pub opacity_buf: wgpu::Buffer,
+    /// SH coefficients as f32, count = splat_count * sh_degree.coeff_count().
+    pub sh_buf: wgpu::Buffer,
+    /// SH degree for this set.
+    pub sh_degree: crate::renderer::ShDegree,
+    /// Number of splats.
+    pub count: u32,
+    /// Per-viewport sort buffers; index = viewport_index. Grown lazily.
+    pub viewport_sort: Vec<Option<GaussianSplatViewportSort>>,
+    /// CPU positions kept for potential picking (object-space).
+    pub cpu_positions: Vec<[f32; 3]>,
+    /// CPU scales kept for potential picking.
+    pub cpu_scales: Vec<[f32; 3]>,
+}
+
+/// Per-frame draw data produced in prepare_viewport_internal.
+pub(crate) struct GaussianSplatDrawData {
+    /// Index into gaussian_splat_store.
+    pub store_index: usize,
+    /// Viewport index that prepared this data.
+    pub viewport_index: usize,
+    /// Model matrix for this item.
+    pub model: [[f32; 4]; 4],
+    /// Number of splats.
+    pub count: u32,
+}
+
+/// Slotted store for Gaussian splat sets.
+pub(crate) struct GaussianSplatStore {
+    pub slots: Vec<Option<GaussianSplatGpuSet>>,
+    free_list: Vec<usize>,
+}
+
+impl GaussianSplatStore {
+    pub fn new() -> Self {
+        Self {
+            slots: Vec::new(),
+            free_list: Vec::new(),
+        }
+    }
+
+    pub fn insert(&mut self, set: GaussianSplatGpuSet) -> usize {
+        if let Some(idx) = self.free_list.pop() {
+            self.slots[idx] = Some(set);
+            idx
+        } else {
+            let idx = self.slots.len();
+            self.slots.push(Some(set));
+            idx
+        }
+    }
+
+    pub fn get(&self, idx: usize) -> Option<&GaussianSplatGpuSet> {
+        self.slots.get(idx)?.as_ref()
+    }
+
+    pub fn get_mut(&mut self, idx: usize) -> Option<&mut GaussianSplatGpuSet> {
+        self.slots.get_mut(idx)?.as_mut()
+    }
+
+    pub fn remove(&mut self, idx: usize) -> bool {
+        if let Some(slot) = self.slots.get_mut(idx) {
+            if slot.is_some() {
+                *slot = None;
+                self.free_list.push(idx);
+                return true;
+            }
+        }
+        false
+    }
+}
+
 /// Per-frame GPU data for one polyline item, created in `prepare()`.
 pub struct PolylineGpuData {
     /// Instance buffer: `[xa, ya, za, xb, yb, zb, scalar_a, scalar_b]` per segment (32 bytes).
@@ -1854,6 +1960,30 @@ pub struct ViewportGpuResources {
     pub(crate) builtin_colormap_ids: Option<[ColormapId; 10]>,
     /// Whether built-in colormaps have been uploaded to the GPU.
     pub(crate) colormaps_initialized: bool,
+
+    // --- Gaussian splat pipelines (lazily created) ---
+    /// Gaussian splat render pipeline. None until first splat set is submitted.
+    pub(crate) gaussian_splat_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for group 1 of the Gaussian splat render pipeline.
+    pub(crate) gaussian_splat_bgl: Option<wgpu::BindGroupLayout>,
+    /// Compute pipeline for computing view-space depth values per splat.
+    pub(crate) gaussian_splat_depth_pipeline: Option<wgpu::ComputePipeline>,
+    /// Compute pipeline for clearing the sort histogram.
+    pub(crate) gaussian_splat_sort_clear_pipeline: Option<wgpu::ComputePipeline>,
+    /// Compute pipeline for the radix sort histogram pass.
+    pub(crate) gaussian_splat_sort_histogram_pipeline: Option<wgpu::ComputePipeline>,
+    /// Compute pipeline for the radix sort prefix sum pass.
+    pub(crate) gaussian_splat_sort_prefix_pipeline: Option<wgpu::ComputePipeline>,
+    /// Compute pipeline for the radix sort scatter pass.
+    pub(crate) gaussian_splat_sort_scatter_pipeline: Option<wgpu::ComputePipeline>,
+    /// Compute pipeline for initializing sort index values.
+    pub(crate) gaussian_splat_sort_init_pipeline: Option<wgpu::ComputePipeline>,
+    /// Bind group layout for the depth compute pass.
+    pub(crate) gaussian_splat_depth_bgl: Option<wgpu::BindGroupLayout>,
+    /// Bind group layout for the sort compute passes.
+    pub(crate) gaussian_splat_sort_bgl: Option<wgpu::BindGroupLayout>,
+    /// Slotted store of all uploaded Gaussian splat sets.
+    pub(crate) gaussian_splat_store: GaussianSplatStore,
 
     // --- Sprite billboard pipelines (lazily created) ---
     /// Sprite pipeline (depth_write_enabled: false). None until first sprite batch is submitted.

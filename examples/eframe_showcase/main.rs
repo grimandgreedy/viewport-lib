@@ -69,6 +69,7 @@ mod showcase_38_surface_lic;
 mod showcase_39_tensor_glyphs;
 mod showcase_40_vertex_warp;
 mod showcase_41_sprites;
+mod showcase_42_gaussian_splats;
 mod viewport_callback;
 
 const BG_COLOR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -215,6 +216,7 @@ fn main() -> eframe::Result {
 
                 warp_state: showcase_40_vertex_warp::VertexWarpState::default(),
                 sprite_state: showcase_41_sprites::SpriteState::default(),
+                splat_state: showcase_42_gaussian_splats::GaussianSplatsState::default(),
             }))
         }),
     )
@@ -269,6 +271,7 @@ enum ShowcaseMode {
     TensorGlyphs,
     VertexWarp,
     Sprites,
+    GaussianSplats,
 }
 
 impl ShowcaseMode {
@@ -315,6 +318,7 @@ impl ShowcaseMode {
             Self::TensorGlyphs => "39: Tensor Glyphs",
             Self::VertexWarp => "40: GPU Vertex Warp",
             Self::Sprites => "41: Sprites & Particles",
+            Self::GaussianSplats => "42: Gaussian Splats",
         }
     }
 }
@@ -464,6 +468,9 @@ pub(crate) struct App {
 
     // --- Showcase 41 ---
     pub(crate) sprite_state: showcase_41_sprites::SpriteState,
+
+    // --- Showcase 42 ---
+    pub(crate) splat_state: showcase_42_gaussian_splats::GaussianSplatsState,
 }
 
 // ---------------------------------------------------------------------------
@@ -634,6 +641,7 @@ impl eframe::App for App {
                     ShowcaseMode::TensorGlyphs,
                     ShowcaseMode::VertexWarp,
                     ShowcaseMode::Sprites,
+                    ShowcaseMode::GaussianSplats,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1255,6 +1263,12 @@ impl eframe::App for App {
                 showcase_41_sprites::update_sprites(self, dt);
                 ctx.request_repaint();
             }
+            // ----- Gaussian splats: advance slow rotation -----
+            if self.mode == ShowcaseMode::GaussianSplats && self.splat_state.built {
+                let dt = ctx.input(|i| i.stable_dt.min(1.0 / 30.0));
+                showcase_42_gaussian_splats::update_gaussian_splats(self, dt);
+                ctx.request_repaint();
+            }
         });
     }
 }
@@ -1265,7 +1279,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 41] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 42] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::Performance,
@@ -1307,6 +1321,7 @@ impl App {
             ShowcaseMode::TensorGlyphs,
             ShowcaseMode::VertexWarp,
             ShowcaseMode::Sprites,
+            ShowcaseMode::GaussianSplats,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1413,6 +1428,7 @@ impl App {
             ShowcaseMode::TensorGlyphs => !self.tg_state.built,
             ShowcaseMode::VertexWarp => !self.warp_state.built,
             ShowcaseMode::Sprites => !self.sprite_state.built,
+            ShowcaseMode::GaussianSplats => !self.splat_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -1805,6 +1821,15 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::GaussianSplats => {
+                showcase_42_gaussian_splats::build_gaussian_splat_scene(self, renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 12.0,
+                    orientation: glam::Quat::from_rotation_x(0.5),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -1868,6 +1893,7 @@ impl App {
             ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::controls_tensor_glyphs(self, ui),
             ShowcaseMode::VertexWarp => showcase_40_vertex_warp::controls_warp(self, ui),
             ShowcaseMode::Sprites => showcase_41_sprites::controls_sprites(self, ui),
+            ShowcaseMode::GaussianSplats => showcase_42_gaussian_splats::controls_gaussian_splats(self, ui),
         }
     }
 
@@ -2621,6 +2647,10 @@ impl App {
                 let items = showcase_41_sprites::sprite_scene_items(self);
                 (items, Some(BG_COLOR), showcase_41_sprites::sprite_lighting(), 0, 0)
             }
+
+            ShowcaseMode::GaussianSplats => {
+                (vec![], Some(BG_COLOR), LightingSettings::default(), 0, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -3168,7 +3198,7 @@ impl App {
                 }
             }
 
-            // Point cloud: unselected in blue, selected in orange -- rendered in point-gaussian mode.
+            // Point cloud: unselected in blue, selected in orange -- rendered as Gaussian splats.
             let unsel: Vec<[f32; 3]> = state.cloud_positions.iter()
                 .zip(state.selected.iter())
                 .filter(|(_, s)| !**s)
@@ -3216,6 +3246,11 @@ impl App {
         if self.mode == ShowcaseMode::Sprites && self.sprite_state.built {
             fd.scene.sprite_items.extend(showcase_41_sprites::sprite_items(self));
             fd.scene.polylines.extend(showcase_41_sprites::ring_polylines(self));
+        }
+
+        // Gaussian splat items (Showcase 42) : submitted every frame when built.
+        if self.mode == ShowcaseMode::GaussianSplats && self.splat_state.built {
+            fd.scene.gaussian_splats.extend(showcase_42_gaussian_splats::gaussian_splat_items(self));
         }
 
         // PlaybackRuntime stats are updated inside the build_frame_data PlaybackRuntime arm.
@@ -3383,3 +3418,4 @@ impl App {
         }
     }
 }
+

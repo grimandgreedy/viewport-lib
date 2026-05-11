@@ -3140,6 +3140,55 @@ impl ViewportRenderer {
                 }
             }
         }
+
+        // ------------------------------------------------------------------
+        // Gaussian splat: per-viewport GPU sort.
+        // ------------------------------------------------------------------
+        self.gaussian_splat_draw_data.clear();
+        if !frame.scene.gaussian_splats.is_empty() {
+            self.resources.ensure_gaussian_splat_pipelines(device);
+            let vp_idx = frame.camera.viewport_index;
+            let eye = frame.camera.render_camera.eye_position;
+            let vp_w = frame.camera.viewport_size[0].max(1.0);
+            let vp_h = frame.camera.viewport_size[1].max(1.0);
+            for item in &frame.scene.gaussian_splats {
+                let store_index = item.id.0;
+                if self.resources.gaussian_splat_store.get(store_index).is_none() {
+                    continue;
+                }
+                let sh_degree = self
+                    .resources
+                    .gaussian_splat_store
+                    .get(store_index)
+                    .unwrap()
+                    .sh_degree;
+                let count = self
+                    .resources
+                    .gaussian_splat_store
+                    .get(store_index)
+                    .unwrap()
+                    .count;
+                self.resources.run_gaussian_splat_sort(
+                    device,
+                    queue,
+                    store_index,
+                    vp_idx,
+                    eye,
+                    item.model,
+                    vp_w,
+                    vp_h,
+                    sh_degree,
+                );
+                self.gaussian_splat_draw_data.push(
+                    crate::resources::GaussianSplatDrawData {
+                        store_index,
+                        viewport_index: vp_idx,
+                        model: item.model,
+                        count,
+                    },
+                );
+            }
+        }
     }
 
     /// Upload per-frame data to GPU buffers and render the shadow pass.

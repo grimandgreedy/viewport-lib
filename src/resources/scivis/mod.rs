@@ -1,5 +1,6 @@
 use super::*;
 
+mod gaussian_splat;
 mod glyph;
 mod image;
 mod path_tracing;

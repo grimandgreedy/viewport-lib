@@ -25,6 +25,7 @@ pub use self::types::{
     RibbonItem, SceneFrame, SceneRenderItem, ScreenImageItem,
     ShadowFilter, SliceAxis, SpriteItem, SpriteSizeMode, StreamtubeItem, SurfaceLICConfig,
     SurfaceLICItem, SurfaceSubmission,
+    GaussianSplatData, GaussianSplatId, GaussianSplatItem, ShDegree,
     ImageSliceItem, TensorGlyphItem, ToneMapping, TubeItem,
     TransparentVolumeMeshItem, VolumeSurfaceSliceItem,
     ViewportEffects, ViewportFrame, VolumeItem,
@@ -201,6 +202,8 @@ pub struct ViewportRenderer {
     mc_gpu_data: Vec<crate::resources::gpu_marching_cubes::McFrameData>,
     /// Per-frame sprite GPU data, rebuilt in prepare(), consumed in paint().
     sprite_gpu_data: Vec<crate::resources::SpriteGpuData>,
+    /// Per-frame Gaussian splat draw data, rebuilt in prepare_viewport_internal(), consumed in paint().
+    gaussian_splat_draw_data: Vec<crate::resources::GaussianSplatDrawData>,
     /// Per-frame screen-image GPU data, rebuilt in prepare(), consumed in paint() (Phase 10B).
     screen_image_gpu_data: Vec<crate::resources::ScreenImageGpuData>,
     /// Per-frame overlay image GPU data, rebuilt in prepare(), consumed in paint() (Phase 7).
@@ -327,6 +330,7 @@ impl ViewportRenderer {
             image_slice_gpu_data: Vec::new(),
             volume_surface_slice_gpu_data: Vec::new(),
             sprite_gpu_data: Vec::new(),
+            gaussian_splat_draw_data: Vec::new(),
             lic_gpu_data: Vec::new(),
             implicit_gpu_data: Vec::new(),
             mc_gpu_data: Vec::new(),
@@ -452,6 +456,26 @@ impl ViewportRenderer {
     /// Mutable access to the underlying GPU resources (e.g. for mesh uploads).
     pub fn resources_mut(&mut self) -> &mut ViewportGpuResources {
         &mut self.resources
+    }
+
+    /// Upload a Gaussian splat set to the GPU.
+    ///
+    /// Call once per splat set at startup or when it changes. The returned
+    /// [`GaussianSplatId`] is valid until [`remove_gaussian_splats`](Self::remove_gaussian_splats) is called.
+    pub fn upload_gaussian_splats(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        data: &GaussianSplatData,
+    ) -> GaussianSplatId {
+        self.resources.upload_gaussian_splats(device, queue, data)
+    }
+
+    /// Remove an uploaded Gaussian splat set by handle.
+    ///
+    /// After this call the `id` is invalid and must not be submitted in `SceneFrame`.
+    pub fn remove_gaussian_splats(&mut self, id: GaussianSplatId) {
+        self.resources.remove_gaussian_splats(id);
     }
 
     /// Upload an equirectangular HDR environment map and precompute IBL textures.
@@ -767,7 +791,7 @@ impl ViewportRenderer {
         );
         emit_scivis_draw_calls!(
             &self.resources,
-            render_pass,
+            &mut *render_pass,
             &self.point_cloud_gpu_data,
             &self.glyph_gpu_data,
             &self.polyline_gpu_data,
@@ -781,6 +805,21 @@ impl ViewportRenderer {
             &self.volume_surface_slice_gpu_data,
             &self.sprite_gpu_data
         );
+        // Gaussian splats (alpha-blended, back-to-front sorted, no depth write).
+        if !self.gaussian_splat_draw_data.is_empty() {
+            if let Some(pipeline) = &self.resources.gaussian_splat_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for dd in &self.gaussian_splat_draw_data {
+                    if let Some(set) = self.resources.gaussian_splat_store.get(dd.store_index) {
+                        if let Some(Some(vp_sort)) = set.viewport_sort.get(dd.viewport_index) {
+                            render_pass.set_bind_group(1, &vp_sort.render_bg, &[]);
+                            render_pass.draw(0..6, 0..dd.count);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Issue draw calls for `id` into a render pass with any lifetime.
@@ -811,7 +850,7 @@ impl ViewportRenderer {
         );
         emit_scivis_draw_calls!(
             &self.resources,
-            render_pass,
+            &mut *render_pass,
             &self.point_cloud_gpu_data,
             &self.glyph_gpu_data,
             &self.polyline_gpu_data,
@@ -825,6 +864,21 @@ impl ViewportRenderer {
             &self.volume_surface_slice_gpu_data,
             &self.sprite_gpu_data
         );
+        // Gaussian splats (alpha-blended, back-to-front sorted, no depth write).
+        if !self.gaussian_splat_draw_data.is_empty() {
+            if let Some(pipeline) = &self.resources.gaussian_splat_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for dd in &self.gaussian_splat_draw_data {
+                    if let Some(set) = self.resources.gaussian_splat_store.get(dd.store_index) {
+                        if let Some(Some(vp_sort)) = set.viewport_sort.get(dd.viewport_index) {
+                            render_pass.set_bind_group(1, &vp_sort.render_bg, &[]);
+                            render_pass.draw(0..6, 0..dd.count);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Return a reference to the camera bind group for the given viewport slot.
