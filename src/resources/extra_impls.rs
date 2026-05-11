@@ -1327,22 +1327,34 @@ impl ViewportGpuResources {
             return;
         }
 
-        // --- group 0: minimal camera-only bind group layout ---
-        // The pick shader only uses binding 0 (CameraUniform); the full
-        // camera_bind_group_layout has 6 bindings and would require binding a
-        // compatible full bind group. A separate minimal layout is cleaner.
+        // --- group 0: pick camera bind group layout ---
+        // Includes binding 0 (CameraUniform) and binding 6 (ClipVolumesUniform).
+        // The full camera_bind_group_layout has many more bindings; a separate
+        // minimal layout is cleaner and avoids binding unused resources.
         let pick_camera_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("pick_camera_bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
         });
 
         // --- group 1: PickInstance storage buffer ---

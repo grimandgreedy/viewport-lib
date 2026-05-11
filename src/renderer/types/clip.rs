@@ -37,9 +37,10 @@ pub enum ClipShape {
 
 /// A clip object : defines a clipping region and optional visual boundary rendering.
 ///
-/// Push into `EffectsFrame::clip_objects` each frame. Up to 6 `Plane` variants are
-/// supported simultaneously; only the first `Box` or `Sphere` variant takes effect
-/// (subsequent ones are silently ignored).
+/// Push into `EffectsFrame::clip_objects` each frame. Up to 6 `Plane` variants and
+/// up to 4 `Box` or `Sphere` variants are supported simultaneously; all active clip
+/// objects apply cumulatively (AND semantics). Entries beyond the limit are silently
+/// ignored.
 ///
 /// Set `color` to `Some(rgba)` to have the renderer draw the clip boundary automatically.
 /// For planes this produces a semi-transparent fill quad + border; for box/sphere, a

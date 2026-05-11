@@ -129,10 +129,16 @@ impl ViewportRenderer {
                 .pick_camera_bgl
                 .as_ref()
                 .expect("ensure_pick_pipeline must be called first"),
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: pick_camera_buf.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: pick_camera_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: self.resources.clip_volume_uniform_buf.as_entire_binding(),
+                },
+            ],
         });
 
         // --- offscreen pick textures (R32Uint + R32Float) + depth ---
