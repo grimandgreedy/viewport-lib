@@ -17,13 +17,15 @@ struct Camera {
     _pad:      f32,
 };
 
-// 80 bytes, matches SplatOutlineMaskUniform in Rust.
+// 96 bytes, matches SplatOutlineMaskUniform in Rust.
+// Padded to match OutlineUniform size (shared bind group layout).
 struct SplatOutlineMaskUniform {
     model:        mat4x4<f32>, // 64 bytes
     viewport_w:   f32,         //  4 bytes
     viewport_h:   f32,         //  4 bytes
     pixel_radius: f32,         //  4 bytes - half-side of the billboard quad in pixels
-    _pad:         f32,         //  4 bytes
+    _pad0:        f32,         //  4 bytes
+    _pad1:        vec4<f32>,   // 16 bytes  (total: 96)
 };
 
 @group(0) @binding(0) var<uniform> camera:  Camera;

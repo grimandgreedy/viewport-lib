@@ -8,12 +8,13 @@ use viewport_lib::{
     ButtonState, Camera,
     CameraAnimator, CameraFrame, ClipObject, ColormapId,
     FrameData, GaussianSplatItem,
-    GizmoAxis, GizmoInfo, GizmoMode, GlyphItem, GroundPlane, GroundPlaneMode,
+    GizmoAxis, GizmoInfo, GizmoMode, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode,
     LightKind, LightSource, LightingSettings, ManipResult, ManipulationContext,
     MeshData, MeshId, OrbitCameraController,
-    PickId, PointCloudItem, PostProcessSettings,
+    PickId, PointCloudItem, PolylineItem, PostProcessSettings,
     RenderCamera, RuntimeMode, SceneFrame,
-    CellSelectionInfo, SceneRenderItem, ScrollUnits, Selection, ShadowFilter, SubSelectionRef,
+    CellSelectionInfo, SceneRenderItem, ScrollUnits, Selection, ShadowFilter, SpriteItem,
+    SubSelectionRef, TensorGlyphItem,
     ViewportContext,
     ViewportEvent, ViewportRenderer,
     geometry::isoline::IsolineItem,
@@ -2560,8 +2561,35 @@ impl App {
                     tvm_item.material = viewport_lib::Material::from_color([0.8, 0.45, 0.2]);
                     items.push(tvm_item);
                 }
+                // Hex cylinder boundary surface (pick_id=12, opaque LDR fallback).
+                if let Some(mesh_id) = self.pl_state.tvm_tet_mesh_id {
+                    let mut item = SceneRenderItem::default();
+                    item.mesh_id = mesh_id;
+                    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+                    item.visible = true;
+                    item.pick_id = PickId(12);
+                    item.selected = self.pl_state.tvm_selected;
+                    item.material = viewport_lib::Material::from_color([0.55, 0.75, 0.85]);
+                    items.push(item);
+                }
                 let sg = self.pl_state.scene.version();
                 let lighting = LightingSettings {
+                    lights: vec![
+                        viewport_lib::LightSource {
+                            kind: viewport_lib::LightKind::Directional {
+                                direction: [0.4, 0.3, 1.5],
+                            },
+                            intensity: 0.7,
+                            ..Default::default()
+                        },
+                        viewport_lib::LightSource {
+                            kind: viewport_lib::LightKind::Directional {
+                                direction: [-0.3, -0.2, -1.0],
+                            },
+                            intensity: 0.35,
+                            ..Default::default()
+                        },
+                    ],
                     hemisphere_intensity: 0.5,
                     sky_color: [1.0, 1.0, 1.0],
                     ground_color: [0.8, 0.8, 0.8],
@@ -2816,7 +2844,11 @@ impl App {
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.splat_selected)
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.pc_selected)
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.tvm_selected)
-            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.vol_selected);
+            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.vol_selected)
+            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.polyline_selected)
+            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.arrow_glyph_selected)
+            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.tensor_glyph_selected)
+            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.sprite_selected);
         if scene_graph_outline {
             fd.interaction.outline_width_px = scene_graph_outline_width;
         }
@@ -2970,6 +3002,12 @@ impl App {
                         cells: tvm_data.cells.clone(),
                     });
                 }
+                if let Some(tet_data) = &self.pl_state.tvm_tet_data {
+                    cell_lookup.insert(12, CellSelectionInfo {
+                        positions: tet_data.positions.clone(),
+                        cells: tet_data.cells.clone(),
+                    });
+                }
                 fd.interaction.sub_selection = Some(SubSelectionRef::new(
                     &self.pl_state.sub_selection,
                     mesh_lookup,
@@ -3009,6 +3047,61 @@ impl App {
                 vol.volume_data = self.pl_state.volume_data.as_ref()
                     .map(|d| std::sync::Arc::new(d.clone()));
                 fd.scene.volumes.push(vol);
+            }
+            // Hex cylinder (pick_id=12) is rendered as an opaque boundary
+            // surface above (tvm_tet_mesh_id). The projected-tet data is kept
+            // for cell-level picking but not submitted as a TransparentVolumeMeshItem
+            // because OIT requires the HDR path which is not active here.
+            // Polyline: 3 strips (pick_id=30).
+            if !self.pl_state.polyline_positions.is_empty() {
+                let mut pl = PolylineItem::default();
+                pl.positions    = self.pl_state.polyline_positions.clone();
+                pl.strip_lengths = self.pl_state.polyline_strip_lengths.clone();
+                pl.default_color = [0.2, 0.85, 0.35, 1.0];
+                pl.line_width    = 3.0;
+                pl.id            = 30;
+                pl.selected      = self.pl_state.polyline_selected;
+                fd.scene.polylines.push(pl);
+            }
+            // Arrow glyphs (pick_id=31).
+            if !self.pl_state.arrow_glyph_positions.is_empty() {
+                let n = self.pl_state.arrow_glyph_positions.len();
+                let mut g = GlyphItem::default();
+                g.positions      = self.pl_state.arrow_glyph_positions.clone();
+                g.vectors        = vec![[0.0, 0.0, 1.0]; n];
+                g.scale          = 0.8;
+                g.scale_by_magnitude = false;
+                g.use_default_color  = true;
+                g.default_color  = [0.95, 0.55, 0.10, 1.0];
+                g.glyph_type     = GlyphType::Arrow;
+                g.id             = 31;
+                g.selected       = self.pl_state.arrow_glyph_selected;
+                fd.scene.glyphs.push(g);
+            }
+            // Tensor glyphs (pick_id=32).
+            if !self.pl_state.tensor_glyph_positions.is_empty() {
+                let mut tg = TensorGlyphItem::default();
+                tg.positions     = self.pl_state.tensor_glyph_positions.clone();
+                tg.eigenvalues   = self.pl_state.tensor_glyph_eigenvalues.clone();
+                tg.eigenvectors  = self.pl_state.tensor_glyph_eigenvectors.clone();
+                tg.scale         = 0.5;
+                tg.colormap_id   = Some(ColormapId(BuiltinColormap::Coolwarm as usize));
+                tg.id            = 32;
+                tg.selected      = self.pl_state.tensor_glyph_selected;
+                fd.scene.tensor_glyphs.push(tg);
+            }
+            // Sprites (pick_id=33).
+            if !self.pl_state.sprite_positions.is_empty() {
+                let mut s = SpriteItem::default();
+                s.positions     = self.pl_state.sprite_positions.clone();
+                s.sizes         = self.pl_state.sprite_sizes.clone();
+                s.colors        = self.pl_state.sprite_colors.clone();
+                s.default_color = [1.0, 0.90, 0.20, 1.0];
+                s.default_size  = 28.0;
+                s.depth_write   = true;
+                s.id            = 33;
+                s.selected      = self.pl_state.sprite_selected;
+                fd.scene.sprite_items.push(s);
             }
         }
 

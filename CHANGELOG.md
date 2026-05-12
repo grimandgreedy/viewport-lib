@@ -29,6 +29,8 @@
     - Streamtubes, tubes, and ribbons now support click and box-selection picking for segments and strips.
 
 ### Fixes
+- Glyph and tensor glyph outlines were invisible because the screen-space disc radius was a fixed heuristic (`scale * 8`) that didn't account for camera distance. The radius is now projected from world space using the view-projection matrix, matching the approach used for Gaussian splat outlines.
+- Selecting a glyph or tensor glyph alongside a mesh caused a crash (`Buffer is bound with size 80 where the shader expects 96`). The splat outline mask uniform shared a bind group layout with the mesh outline uniform but was 16 bytes smaller. Padded to 96 bytes to match.
 - Gaussian splat unified picking used a fixed 8px hit radius, requiring a click near the exact center of each splat. The radius is now derived from the uploaded splat scales so a click anywhere inside the visible disc registers.
 - Selecting a splat sub-element in point-like mode also triggered the whole-cloud object outline. Sub-element and object-level highlights are now independent.
 - Wireframe mode drew all instances of a shared mesh with the same object uniform, so objects sharing a `MeshId` appeared at the same position. Each item now gets its own bind group in the wireframe pass.

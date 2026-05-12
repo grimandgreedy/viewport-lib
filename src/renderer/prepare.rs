@@ -2068,7 +2068,7 @@ impl ViewportRenderer {
                     viewport_w: vp_w,
                     viewport_h: vp_h,
                     pixel_radius,
-                    _pad: 0.0,
+                    _pad: [0.0; 5],
                 };
                 let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("splat_outline_uniform_buf"),
@@ -2113,7 +2113,7 @@ impl ViewportRenderer {
                     viewport_w: vp_w,
                     viewport_h: vp_h,
                     pixel_radius,
-                    _pad: 0.0,
+                    _pad: [0.0; 5],
                 };
                 let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("pc_outline_uniform_buf"),
@@ -2143,9 +2143,28 @@ impl ViewportRenderer {
                     continue;
                 }
 
-                // Use the glyph scale to derive a screen-space disc radius.
-                // This is approximate but gives a visible outline around the glyph cloud.
-                let pixel_radius = (item.scale * 8.0).max(4.0);
+                // Project the glyph world-space scale to a screen-space disc radius
+                // at the centroid of the glyph cloud.
+                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                let centroid = {
+                    let sum: glam::Vec3 = item.positions.iter()
+                        .map(|p| glam::Vec3::from(*p))
+                        .sum();
+                    sum / item.positions.len() as f32
+                };
+                let center_w = model.transform_point3(centroid);
+                let world_radius = item.scale;
+                let p0_clip = view_proj * glam::Vec4::new(center_w.x, center_w.y, center_w.z, 1.0);
+                let p1_world = center_w + glam::Vec3::X * world_radius;
+                let p1_clip = view_proj * glam::Vec4::new(p1_world.x, p1_world.y, p1_world.z, 1.0);
+                let pixel_radius = if p0_clip.w.abs() > 1e-6 && p1_clip.w.abs() > 1e-6 {
+                    let p0_ndc = glam::Vec2::new(p0_clip.x, p0_clip.y) / p0_clip.w;
+                    let p1_ndc = glam::Vec2::new(p1_clip.x, p1_clip.y) / p1_clip.w;
+                    (p1_ndc - p0_ndc).length() * 0.5 * vp_w.max(vp_h)
+                } else {
+                    world_radius * 100.0
+                };
+                let pixel_radius = pixel_radius.max(4.0);
 
                 let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("glyph_outline_pos_buf"),
@@ -2158,7 +2177,7 @@ impl ViewportRenderer {
                     viewport_w: vp_w,
                     viewport_h: vp_h,
                     pixel_radius,
-                    _pad: 0.0,
+                    _pad: [0.0; 5],
                 };
                 let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("glyph_outline_uniform_buf"),
@@ -2201,7 +2220,7 @@ impl ViewportRenderer {
                     viewport_w: vp_w,
                     viewport_h: vp_h,
                     pixel_radius,
-                    _pad: 0.0,
+                    _pad: [0.0; 5],
                 };
                 let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("polyline_outline_uniform_buf"),
@@ -2253,7 +2272,7 @@ impl ViewportRenderer {
                     viewport_w: vp_w,
                     viewport_h: vp_h,
                     pixel_radius,
-                    _pad: 0.0,
+                    _pad: [0.0; 5],
                 };
                 let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("sprite_outline_uniform_buf"),
@@ -2317,7 +2336,7 @@ impl ViewportRenderer {
                     viewport_w: vp_w,
                     viewport_h: vp_h,
                     pixel_radius,
-                    _pad: 0.0,
+                    _pad: [0.0; 5],
                 };
                 let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("curve_outline_uniform_buf"),
@@ -2347,7 +2366,28 @@ impl ViewportRenderer {
                     continue;
                 }
 
-                let pixel_radius = (item.scale * 8.0).max(4.0);
+                // Project the tensor glyph world-space scale to a screen-space
+                // disc radius at the centroid of the positions.
+                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                let centroid = {
+                    let sum: glam::Vec3 = item.positions.iter()
+                        .map(|p| glam::Vec3::from(*p))
+                        .sum();
+                    sum / item.positions.len() as f32
+                };
+                let center_w = model.transform_point3(centroid);
+                let world_radius = item.scale;
+                let p0_clip = view_proj * glam::Vec4::new(center_w.x, center_w.y, center_w.z, 1.0);
+                let p1_world = center_w + glam::Vec3::X * world_radius;
+                let p1_clip = view_proj * glam::Vec4::new(p1_world.x, p1_world.y, p1_world.z, 1.0);
+                let pixel_radius = if p0_clip.w.abs() > 1e-6 && p1_clip.w.abs() > 1e-6 {
+                    let p0_ndc = glam::Vec2::new(p0_clip.x, p0_clip.y) / p0_clip.w;
+                    let p1_ndc = glam::Vec2::new(p1_clip.x, p1_clip.y) / p1_clip.w;
+                    (p1_ndc - p0_ndc).length() * 0.5 * vp_w.max(vp_h)
+                } else {
+                    world_radius * 100.0
+                };
+                let pixel_radius = pixel_radius.max(4.0);
 
                 let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("tensor_glyph_outline_pos_buf"),
@@ -2360,7 +2400,7 @@ impl ViewportRenderer {
                     viewport_w: vp_w,
                     viewport_h: vp_h,
                     pixel_radius,
-                    _pad: 0.0,
+                    _pad: [0.0; 5],
                 };
                 let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("tensor_glyph_outline_uniform_buf"),

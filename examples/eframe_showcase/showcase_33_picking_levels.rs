@@ -1,10 +1,12 @@
 //! Showcase 33: Picking Levels
 //!
 //! Demonstrates the unified picking API (renderer.pick / renderer.pick_rect)
-//! and per-type picking across six levels.
+//! and per-type picking across multiple levels.
 //!
-//! Scene: two cubes and two hemispheres; a 30-point grid cloud; a scalar
-//! volume; a 3x3 Gaussian splat grid; and a 2x2x2 transparent hex mesh.
+//! Scene: two cubes and two hemispheres; an 80-point grid cloud; a scalar
+//! volume; a 3x3 Gaussian splat grid; a hex capsule mesh; a hex cylinder
+//! transparent volume mesh; spiral streamline polylines; arrow and tensor
+//! glyph sets; and sprites.
 //!
 //! Controls:
 //!   - Left-click : select at the active level
@@ -17,7 +19,7 @@ use std::collections::HashMap;
 use eframe::egui;
 use viewport_lib::{
     GaussianSplatData, GaussianSplatId,
-    Material, MeshId, NodeId, PickMask, PickRectResult,
+    Material, MeshId, NodeId, PickMask, PickRectResult, ProjectedTetId,
     ShDegree, SubObjectRef, VolumeData, VolumeMeshData, ViewportRenderer,
 };
 
@@ -52,24 +54,27 @@ pub(crate) enum PlUnifiedMask {
     Object,
     Face,
     PointLike,
+    EdgeLike,
     FaceAndPointLike,
 }
 
 impl PlUnifiedMask {
     pub(crate) fn to_pick_mask(self) -> PickMask {
         match self {
-            Self::Object         => PickMask::OBJECT,
-            Self::Face           => PickMask::FACE,
-            Self::PointLike      => PickMask::POINT_LIKE,
+            Self::Object           => PickMask::OBJECT,
+            Self::Face             => PickMask::FACE,
+            Self::PointLike        => PickMask::POINT_LIKE,
+            Self::EdgeLike         => PickMask::EDGE_LIKE,
             Self::FaceAndPointLike => PickMask::FACE | PickMask::POINT_LIKE,
         }
     }
 
     pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::Object         => "Object",
-            Self::Face           => "Face",
-            Self::PointLike      => "Point-like",
+            Self::Object           => "Object",
+            Self::Face             => "Face",
+            Self::PointLike        => "Point-like",
+            Self::EdgeLike         => "Edge-like",
             Self::FaceAndPointLike => "Face + Point-like",
         }
     }
@@ -187,6 +192,75 @@ fn make_pl_tvm_data() -> VolumeMeshData {
     data
 }
 
+/// Build a hex cylinder: 3 rings of 6 hex cells each (18 cells total),
+/// centered at (-7, 0, 0) and elongated along Y.
+///
+/// Used in the transparent-volume-mesh picking demonstration in showcase 33.
+fn make_pl_tvm_tet_data() -> VolumeMeshData {
+    const CX: f32 = -7.0;
+    const CZ: f32 = 0.0;
+    const N_SECTORS: usize = 6;
+    const N_LAYERS: usize = 3;
+    const R_OUTER: f32 = 0.9;
+    const HALF_H: f32 = 1.2;
+
+    // Vertex rings: for each axial layer we have an inner ring (collapsed to
+    // center) and an outer ring.  With N_SECTORS=6 and N_LAYERS=3 we get
+    // (N_LAYERS+1) slices, each with 1 center + N_SECTORS outer = 7 verts.
+    let n_slices = N_LAYERS + 1;
+    let verts_per_slice = 1 + N_SECTORS;
+    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(n_slices * verts_per_slice);
+
+    for sl in 0..n_slices {
+        let y = -HALF_H + 2.0 * HALF_H * sl as f32 / N_LAYERS as f32;
+        // Center vertex.
+        positions.push([CX, y, CZ]);
+        // Outer ring.
+        for s in 0..N_SECTORS {
+            let angle = std::f32::consts::TAU * s as f32 / N_SECTORS as f32;
+            positions.push([
+                CX + R_OUTER * angle.cos(),
+                y,
+                CZ + R_OUTER * angle.sin(),
+            ]);
+        }
+    }
+
+    let vi = |slice: usize, local: usize| -> u32 {
+        (slice * verts_per_slice + local) as u32
+    };
+
+    let total = N_SECTORS * N_LAYERS;
+    let mut cells: Vec<[u32; 8]> = Vec::with_capacity(total);
+    let mut scalars: Vec<f32> = Vec::with_capacity(total);
+
+    for layer in 0..N_LAYERS {
+        let bot = layer;
+        let top = layer + 1;
+        for s in 0..N_SECTORS {
+            let s_next = (s + 1) % N_SECTORS;
+            // Each "wedge" from center to outer edge forms a hex cell:
+            // bottom face: center_bot, outer_s_bot, outer_s+1_bot, center_bot (degenerate quad)
+            // top face:    center_top, outer_s_top, outer_s+1_top, center_top
+            // We use a proper hex with the center vertex duplicated to fill the
+            // 8-vertex slot (wedge-like hex).
+            cells.push([
+                vi(bot, 0),         vi(bot, 1 + s),     vi(bot, 1 + s_next), vi(bot, 0),
+                vi(top, 0),         vi(top, 1 + s),     vi(top, 1 + s_next), vi(top, 0),
+            ]);
+            let t = (layer as f32 + 0.5) / N_LAYERS as f32;
+            let u = (s as f32 + 0.5) / N_SECTORS as f32;
+            scalars.push(t * 0.6 + u * 0.4);
+        }
+    }
+
+    let mut data = VolumeMeshData::default();
+    data.positions = positions;
+    data.cells = cells;
+    data.cell_scalars.insert("scalar".to_string(), scalars);
+    data
+}
+
 // ---------------------------------------------------------------------------
 // Build scene
 // ---------------------------------------------------------------------------
@@ -233,6 +307,35 @@ pub(crate) struct PlState {
     pub tvm_mesh_id: Option<MeshId>,
     /// CPU-side transparent volume mesh data (kept for picking).
     pub tvm_data:    Option<VolumeMeshData>,
+    /// Projected-tet handle for the transparent tet mesh (pick_id=12).
+    pub tvm_tet_id:   Option<ProjectedTetId>,
+    /// Opaque boundary mesh for the hex cylinder so it renders on the LDR path.
+    pub tvm_tet_mesh_id: Option<MeshId>,
+    /// CPU-side tet mesh data for unified CELL picking and sub-selection highlighting.
+    pub tvm_tet_data: Option<std::sync::Arc<VolumeMeshData>>,
+    /// Positions for the multi-strip polyline (pick_id=30).
+    pub polyline_positions:    Vec<[f32; 3]>,
+    /// Strip lengths for the multi-strip polyline.
+    pub polyline_strip_lengths: Vec<u32>,
+    /// Positions for the arrow glyph set (pick_id=31).
+    pub arrow_glyph_positions: Vec<[f32; 3]>,
+    /// Positions for the tensor glyph set (pick_id=32).
+    pub tensor_glyph_positions: Vec<[f32; 3]>,
+    /// Per-instance eigenvalues for tensor glyphs.
+    pub tensor_glyph_eigenvalues: Vec<[f32; 3]>,
+    /// Per-instance eigenvector bases for tensor glyphs.
+    pub tensor_glyph_eigenvectors: Vec<[[f32; 3]; 3]>,
+    /// Positions for the sprite set (pick_id=33).
+    pub sprite_positions:       Vec<[f32; 3]>,
+    /// Per-instance sizes for the sprite arc.
+    pub sprite_sizes:           Vec<f32>,
+    /// Per-instance colors for the sprite arc.
+    pub sprite_colors:          Vec<[f32; 4]>,
+    /// Object-level selection flags for new item types.
+    pub polyline_selected:      bool,
+    pub arrow_glyph_selected:   bool,
+    pub tensor_glyph_selected:  bool,
+    pub sprite_selected:        bool,
 }
 
 impl Default for PlState {
@@ -263,8 +366,24 @@ impl Default for PlState {
             tvm_selected:     false,
             splat_selected:   false,
             vol_selected:     false,
-            tvm_mesh_id:      None,
-            tvm_data:         None,
+            tvm_mesh_id:           None,
+            tvm_data:              None,
+            tvm_tet_id:            None,
+            tvm_tet_mesh_id:       None,
+            tvm_tet_data:          None,
+            polyline_positions:    Vec::new(),
+            polyline_strip_lengths: Vec::new(),
+            arrow_glyph_positions: Vec::new(),
+            tensor_glyph_positions: Vec::new(),
+            tensor_glyph_eigenvalues: Vec::new(),
+            tensor_glyph_eigenvectors: Vec::new(),
+            sprite_positions:       Vec::new(),
+            sprite_sizes:           Vec::new(),
+            sprite_colors:          Vec::new(),
+            polyline_selected:      false,
+            arrow_glyph_selected:   false,
+            tensor_glyph_selected:  false,
+            sprite_selected:        false,
         }
     }
 }
@@ -282,6 +401,10 @@ impl App {
         self.pl_state.tvm_selected = false;
         self.pl_state.splat_selected = false;
         self.pl_state.vol_selected = false;
+        self.pl_state.polyline_selected = false;
+        self.pl_state.arrow_glyph_selected = false;
+        self.pl_state.tensor_glyph_selected = false;
+        self.pl_state.sprite_selected = false;
 
         // --- Cube mesh ---
         let cube_mesh = viewport_lib::primitives::cube(2.0);
@@ -322,13 +445,13 @@ impl App {
             self.pl_state.node_names.push((node_id, name.to_string()));
         }
 
-        // --- Point cloud: 6x5 grid above the scene ---
+        // --- Point cloud: 10x8 grid above the scene ---
         let mut pc: Vec<[f32; 3]> = Vec::new();
-        for row in 0..5_i32 {
-            for col in 0..6_i32 {
+        for row in 0..8_i32 {
+            for col in 0..10_i32 {
                 pc.push([
-                    (col - 2) as f32 * 1.6,
-                    (row - 2) as f32 * 0.7,
+                    (col as f32 - 4.5) * 0.9,
+                    (row as f32 - 3.5) * 0.55,
                     3.5,
                 ]);
             }
@@ -391,6 +514,115 @@ impl App {
             .map(|(id, _)| id);
         self.pl_state.tvm_mesh_id = tvm_mesh_id;
         self.pl_state.tvm_data = Some(tvm_data);
+
+        // --- Hex cylinder at x=-7 (pick_id=12) ---
+        // Upload as both a projected-tet mesh (for cell picking) and an opaque
+        // boundary surface (for LDR rendering without the HDR/OIT path).
+        renderer
+            .resources_mut()
+            .ensure_colormaps_initialized(&self.device, &self.queue);
+        let tet_data = make_pl_tvm_tet_data();
+        let tvm_tet_id = renderer
+            .resources_mut()
+            .upload_projected_tet_mesh(&self.device, &tet_data, "scalar", viewport_lib::ColormapId(0))
+            .ok()
+            .map(|(id, _, _)| id);
+        let tvm_tet_mesh_id = renderer
+            .resources_mut()
+            .upload_volume_mesh_data(&self.device, &tet_data)
+            .ok()
+            .map(|(id, _)| id);
+        self.pl_state.tvm_tet_id       = tvm_tet_id;
+        self.pl_state.tvm_tet_mesh_id  = tvm_tet_mesh_id;
+        self.pl_state.tvm_tet_data = Some(std::sync::Arc::new(tet_data));
+
+        // --- Polyline: 3 spiral streamlines in front of sprites (pick_id=30) ---
+        let mut pl_pos: Vec<[f32; 3]> = Vec::new();
+        let mut pl_lens: Vec<u32> = Vec::new();
+        let n_per_strip = 40_u32;
+        for strip in 0..3_i32 {
+            let y_off = (strip - 1) as f32 * 1.8;
+            let radius = 1.2 + strip as f32 * 0.3;
+            for i in 0..n_per_strip {
+                let t = i as f32 / (n_per_strip - 1) as f32;
+                let angle = t * std::f32::consts::TAU * 1.5;
+                pl_pos.push([
+                    radius * angle.cos(),
+                    y_off + t * 3.0 - 1.5,
+                    7.5 + radius * angle.sin(),
+                ]);
+            }
+            pl_lens.push(n_per_strip);
+        }
+        self.pl_state.polyline_positions    = pl_pos;
+        self.pl_state.polyline_strip_lengths = pl_lens;
+
+        // --- Arrow glyphs: 5 arrows at y=-4 pointing up (pick_id=31) ---
+        self.pl_state.arrow_glyph_positions = (0..5_i32)
+            .map(|i| [(i - 2) as f32 * 2.0, -4.0, 0.0])
+            .collect();
+
+        // --- Tensor glyphs: 4 ellipsoids at x=8 (pick_id=32) ---
+        self.pl_state.tensor_glyph_positions = vec![
+            [8.0, -1.5, -1.5],
+            [8.0,  1.5, -1.5],
+            [8.0, -1.5,  1.5],
+            [8.0,  1.5,  1.5],
+        ];
+        // Varied eigenvalues: sphere-ish, cigar, disk, mixed.
+        self.pl_state.tensor_glyph_eigenvalues = vec![
+            [0.8, 0.7, 0.6],
+            [1.2, 0.3, 0.3],
+            [0.3, 0.3, 1.2],
+            [1.0, 0.6, 0.2],
+        ];
+        // Rotated eigenvector bases to show directional variation.
+        let id_basis = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let rot45 = {
+            let c = std::f32::consts::FRAC_1_SQRT_2;
+            [[c, c, 0.0], [-c, c, 0.0], [0.0, 0.0, 1.0]]
+        };
+        let rot30 = {
+            let c = 0.866_f32;
+            let s = 0.5_f32;
+            [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]]
+        };
+        let rot60 = {
+            let c = 0.5_f32;
+            let s = 0.866_f32;
+            [[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]]
+        };
+        self.pl_state.tensor_glyph_eigenvectors = vec![id_basis, rot45, rot30, rot60];
+
+        // --- Sprites: 6 in a row at z=6 (pick_id=33) ---
+        // Sprites arranged in an arc with graduated sizes and colors so the
+        // group reads as a connected sequence rather than isolated dots.
+        {
+            let n = 8;
+            let arc_center = [0.0_f32, 0.0, 6.0];
+            let arc_radius = 4.0_f32;
+            let arc_start = std::f32::consts::FRAC_PI_4;
+            let arc_sweep = std::f32::consts::PI * 0.5;
+            let mut positions = Vec::with_capacity(n);
+            let mut sizes = Vec::with_capacity(n);
+            let mut colors = Vec::with_capacity(n);
+            for i in 0..n {
+                let t = i as f32 / (n - 1) as f32;
+                let angle = arc_start + arc_sweep * t;
+                positions.push([
+                    arc_center[0] + arc_radius * angle.cos(),
+                    arc_center[1],
+                    arc_center[2] + arc_radius * angle.sin(),
+                ]);
+                // Small to large along the arc.
+                sizes.push(14.0 + 22.0 * t);
+                // Yellow -> orange gradient.
+                colors.push([1.0, 0.95 - 0.5 * t, 0.15 + 0.1 * t, 1.0]);
+            }
+            self.pl_state.sprite_positions = positions;
+            self.pl_state.sprite_sizes = sizes;
+            self.pl_state.sprite_colors = colors;
+        }
 
         self.pl_state.built = true;
     }
@@ -853,6 +1085,10 @@ impl App {
                 self.pl_state.tvm_selected = false;
                 self.pl_state.splat_selected = false;
                 self.pl_state.vol_selected = false;
+                self.pl_state.polyline_selected = false;
+                self.pl_state.arrow_glyph_selected = false;
+                self.pl_state.tensor_glyph_selected = false;
+                self.pl_state.sprite_selected = false;
                 self.pl_state.sub_selection.clear();
                 self.pl_state.last_hit = None;
                 self.pl_state.hit_marker = None;
@@ -881,6 +1117,10 @@ impl App {
                     if !shift {
                         self.pl_state.selection.clear();
                         self.pl_state.vol_selected = false;
+                        self.pl_state.polyline_selected = false;
+                        self.pl_state.arrow_glyph_selected = false;
+                        self.pl_state.tensor_glyph_selected = false;
+                        self.pl_state.sprite_selected = false;
                     }
                     if hit.id == 100 {
                         if shift {
@@ -906,6 +1146,14 @@ impl App {
                             self.pl_state.pc_selected = false;
                             self.pl_state.splat_selected = false;
                         }
+                    } else if hit.id == 12 {
+                        if shift {
+                            self.pl_state.tvm_selected = !self.pl_state.tvm_selected;
+                        } else {
+                            self.pl_state.tvm_selected = true;
+                            self.pl_state.pc_selected = false;
+                            self.pl_state.splat_selected = false;
+                        }
                     } else if hit.id == 20 {
                         if shift {
                             self.pl_state.vol_selected = !self.pl_state.vol_selected;
@@ -914,6 +1162,30 @@ impl App {
                             self.pl_state.pc_selected = false;
                             self.pl_state.tvm_selected = false;
                             self.pl_state.splat_selected = false;
+                        }
+                    } else if hit.id == 30 {
+                        if shift {
+                            self.pl_state.polyline_selected = !self.pl_state.polyline_selected;
+                        } else {
+                            self.pl_state.polyline_selected = true;
+                        }
+                    } else if hit.id == 31 {
+                        if shift {
+                            self.pl_state.arrow_glyph_selected = !self.pl_state.arrow_glyph_selected;
+                        } else {
+                            self.pl_state.arrow_glyph_selected = true;
+                        }
+                    } else if hit.id == 32 {
+                        if shift {
+                            self.pl_state.tensor_glyph_selected = !self.pl_state.tensor_glyph_selected;
+                        } else {
+                            self.pl_state.tensor_glyph_selected = true;
+                        }
+                    } else if hit.id == 33 {
+                        if shift {
+                            self.pl_state.sprite_selected = !self.pl_state.sprite_selected;
+                        } else {
+                            self.pl_state.sprite_selected = true;
                         }
                     } else if !shift {
                         self.pl_state.pc_selected = false;
@@ -936,6 +1208,10 @@ impl App {
                     self.pl_state.tvm_selected = false;
                     self.pl_state.splat_selected = false;
                     self.pl_state.vol_selected = false;
+                    self.pl_state.polyline_selected = false;
+                    self.pl_state.arrow_glyph_selected = false;
+                    self.pl_state.tensor_glyph_selected = false;
+                    self.pl_state.sprite_selected = false;
                 }
             }
         }
@@ -944,11 +1220,14 @@ impl App {
             None => {
                 if is_mesh_node { "Mesh" } else { Self::pl_item_label(hit.id).unwrap_or("Object") }
             }
-            Some(SubObjectRef::Face(_))   => "Mesh",
-            Some(SubObjectRef::Vertex(_)) => "Mesh",
-            Some(SubObjectRef::Point(_))  => "Point Cloud",
-            Some(SubObjectRef::Splat(_))  => "Gaussian Splat",
-            Some(_)                       => "Object",
+            Some(SubObjectRef::Face(_))     => "Mesh",
+            Some(SubObjectRef::Vertex(_))   => "Mesh",
+            Some(SubObjectRef::Point(_))    => "Point Cloud",
+            Some(SubObjectRef::Splat(_))    => "Gaussian Splat",
+            Some(SubObjectRef::Instance(_)) => "Glyph",
+            Some(SubObjectRef::Segment(_))  => "Polyline",
+            Some(SubObjectRef::Strip(_))    => "Polyline",
+            Some(_)                         => "Object",
         };
 
         self.pl_state.last_hit = Some(PlHitInfo {
@@ -1045,6 +1324,11 @@ impl App {
             20  => Some("Volume"),
             10  => Some("Gaussian Splats"),
             11  => Some("Volume Mesh"),
+            12  => Some("TVM Tets"),
+            30  => Some("Polyline"),
+            31  => Some("Arrow Glyphs"),
+            32  => Some("Tensor Glyphs"),
+            33  => Some("Sprites"),
             _   => None,
         }
     }
@@ -1109,6 +1393,7 @@ pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
                 PlUnifiedMask::Object,
                 PlUnifiedMask::Face,
                 PlUnifiedMask::PointLike,
+                PlUnifiedMask::EdgeLike,
                 PlUnifiedMask::FaceAndPointLike,
             ] {
                 ui.radio_value(&mut app.pl_state.unified_mask, mask, mask.label());
@@ -1176,32 +1461,43 @@ pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
         }
     } else {
         let obj_count = app.pl_state.selection.len();
-        let mut faces = 0u32;
-        let mut verts = 0u32;
-        let mut points = 0u32;
-        let mut splats = 0u32;
-        let mut voxels = 0u32;
-        let mut cells  = 0u32;
+        let mut faces     = 0u32;
+        let mut verts     = 0u32;
+        let mut points    = 0u32;
+        let mut splats    = 0u32;
+        let mut voxels    = 0u32;
+        let mut cells     = 0u32;
+        let mut instances = 0u32;
+        let mut segments  = 0u32;
+        let mut strips    = 0u32;
         for (_, sub) in app.pl_state.sub_selection.iter() {
             match sub {
-                SubObjectRef::Face(_)   => faces  += 1,
-                SubObjectRef::Vertex(_) => verts  += 1,
-                SubObjectRef::Point(_)  => points += 1,
-                SubObjectRef::Splat(_)  => splats += 1,
-                SubObjectRef::Voxel(_)  => voxels += 1,
-                SubObjectRef::Cell(_)   => cells  += 1,
+                SubObjectRef::Face(_)     => faces     += 1,
+                SubObjectRef::Vertex(_)   => verts     += 1,
+                SubObjectRef::Point(_)    => points    += 1,
+                SubObjectRef::Splat(_)    => splats    += 1,
+                SubObjectRef::Voxel(_)    => voxels    += 1,
+                SubObjectRef::Cell(_)     => cells     += 1,
+                SubObjectRef::Instance(_) => instances += 1,
+                SubObjectRef::Segment(_)  => segments  += 1,
+                SubObjectRef::Strip(_)    => strips    += 1,
                 _ => {}
             }
         }
-        if obj_count > 0 || faces + verts + points + splats + voxels + cells > 0 {
+        let sub_total = faces + verts + points + splats + voxels + cells
+            + instances + segments + strips;
+        if obj_count > 0 || sub_total > 0 {
             ui.label(egui::RichText::new("Selection").strong());
-            if obj_count > 0 { ui.label(format!("Objects: {obj_count}")); }
-            if faces  > 0    { ui.label(format!("Faces: {faces}")); }
-            if verts  > 0    { ui.label(format!("Vertices: {verts}")); }
-            if points > 0    { ui.label(format!("Points: {points}")); }
-            if splats > 0    { ui.label(format!("Splats: {splats}")); }
-            if voxels > 0    { ui.label(format!("Voxels: {voxels}")); }
-            if cells  > 0    { ui.label(format!("Cells: {cells}")); }
+            if obj_count  > 0 { ui.label(format!("Objects: {obj_count}")); }
+            if faces      > 0 { ui.label(format!("Faces: {faces}")); }
+            if verts      > 0 { ui.label(format!("Vertices: {verts}")); }
+            if points     > 0 { ui.label(format!("Points: {points}")); }
+            if splats     > 0 { ui.label(format!("Splats: {splats}")); }
+            if voxels     > 0 { ui.label(format!("Voxels: {voxels}")); }
+            if cells      > 0 { ui.label(format!("Cells: {cells}")); }
+            if instances  > 0 { ui.label(format!("Instances: {instances}")); }
+            if segments   > 0 { ui.label(format!("Segments: {segments}")); }
+            if strips     > 0 { ui.label(format!("Strips: {strips}")); }
         } else {
             ui.label("Click or drag to select.");
         }

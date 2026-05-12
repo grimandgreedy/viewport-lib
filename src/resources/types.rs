@@ -822,7 +822,12 @@ pub(crate) struct OutlineObjectBuffers {
 }
 
 
-/// Per-item uniform for the Gaussian splat outline mask pass (80 bytes).
+/// Per-item uniform for the Gaussian splat outline mask pass (96 bytes).
+///
+/// Padded to 96 bytes so it matches `OutlineUniform` in size. Both structs
+/// share the same bind group layout (`outline_bgl`) and wgpu validates the
+/// bound buffer size against the layout-wide minimum derived from all
+/// pipelines that use it.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct SplatOutlineMaskUniform {
@@ -830,7 +835,7 @@ pub(crate) struct SplatOutlineMaskUniform {
     pub(crate) viewport_w:   f32,           //  4 bytes
     pub(crate) viewport_h:   f32,           //  4 bytes
     pub(crate) pixel_radius: f32,           //  4 bytes
-    pub(crate) _pad:         f32,           //  4 bytes
+    pub(crate) _pad:         [f32; 5],      // 20 bytes  (total: 96)
 }
 
 /// Per-frame GPU buffers for one selected Gaussian splat set's outline mask draw.
