@@ -19,7 +19,7 @@
     - A helper returns the closest mesh vertex to a face-level click, for workflows that need to snap selection to vertices.
     - Selected volume mesh cells now highlight with the same edge-outline style as selected mesh faces and voxels, across tet, pyramid, wedge, and hex cell types.
     - Glyphs, tensor glyphs, and sprites now support click and box-selection picking.
-    - Polylines now support click picking for individual nodes and segments.
+    - Polylines now support click and box-selection picking for nodes, segments, and strips.
 
 ### Fixes
 - Gaussian splat unified picking used a fixed 8px hit radius, requiring a click near the exact center of each splat. The radius is now derived from the uploaded splat scales so a click anywhere inside the visible disc registers.

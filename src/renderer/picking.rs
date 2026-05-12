@@ -1,6 +1,35 @@
 use super::*;
 
 // ---------------------------------------------------------------------------
+// Strip index helpers (shared by polyline, tube, ribbon picking)
+// ---------------------------------------------------------------------------
+
+/// Map a global node index to its strip index by walking `strip_lengths`.
+fn strip_for_node(node_idx: u32, strip_lengths: &[u32]) -> u32 {
+    let mut offset = 0u32;
+    for (i, &len) in strip_lengths.iter().enumerate() {
+        offset += len;
+        if node_idx < offset {
+            return i as u32;
+        }
+    }
+    strip_lengths.len().saturating_sub(1) as u32
+}
+
+/// Map a global segment index to its strip index by walking `strip_lengths`.
+fn strip_for_segment(seg_idx: u32, strip_lengths: &[u32]) -> u32 {
+    let mut offset = 0u32;
+    for (i, &len) in strip_lengths.iter().enumerate() {
+        let segs = len.saturating_sub(1);
+        offset += segs;
+        if seg_idx < offset {
+            return i as u32;
+        }
+    }
+    strip_lengths.len().saturating_sub(1) as u32
+}
+
+// ---------------------------------------------------------------------------
 // PickRectResult
 // ---------------------------------------------------------------------------
 
@@ -445,9 +474,10 @@ impl ViewportRenderer {
             }
         }
 
-        // 7. Polyline node picks (POLY_NODE or OBJECT fallback).
+        // 7. Polyline node picks (POLY_NODE, STRIP, or OBJECT fallback).
         let wants_poly_node = mask.intersects(PickMask::POLY_NODE);
-        if wants_poly_node || wants_object {
+        let wants_strip = mask.intersects(PickMask::STRIP);
+        if wants_poly_node || wants_strip || wants_object {
             for item in &self.pick_polyline_items {
                 if item.id == 0 || item.positions.is_empty() {
                     continue;
@@ -463,18 +493,25 @@ impl ViewportRenderer {
                     radius_px,
                 ) {
                     let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
-                    if !wants_poly_node {
+                    if wants_poly_node {
+                        // sub_object is already SubObjectRef::Point(node_index)
+                    } else if wants_strip {
+                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
+                            hit.sub_object = Some(SubObjectRef::Strip(
+                                strip_for_node(idx, &item.strip_lengths),
+                            ));
+                        }
+                    } else {
                         hit.sub_object = None;
                     }
-                    // sub_object is already SubObjectRef::Point(node_index)
                     consider(toi, hit);
                 }
             }
         }
 
-        // 8. Polyline segment picks (SEGMENT or OBJECT fallback).
+        // 8. Polyline segment picks (SEGMENT, STRIP, or OBJECT fallback).
         let wants_segment = mask.intersects(PickMask::SEGMENT);
-        if wants_segment || wants_object {
+        if wants_segment || wants_strip || wants_object {
             for item in &self.pick_polyline_items {
                 if item.id == 0 || item.positions.is_empty() {
                     continue;
@@ -516,6 +553,12 @@ impl ViewportRenderer {
                     if wants_segment {
                         if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
                             hit.sub_object = Some(SubObjectRef::Segment(idx));
+                        }
+                    } else if wants_strip {
+                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
+                            hit.sub_object = Some(SubObjectRef::Strip(
+                                strip_for_segment(idx, &item.strip_lengths),
+                            ));
                         }
                     } else {
                         hit.sub_object = None;
@@ -904,6 +947,85 @@ impl ViewportRenderer {
                             }
                             item_hit = true;
                         }
+                    }
+                }
+                if wants_object && item_hit {
+                    result.objects.push(id);
+                }
+            }
+        }
+
+        // 7. Polyline node / segment / strip / object rect picks.
+        let wants_poly_node = mask.intersects(PickMask::POLY_NODE);
+        let wants_segment   = mask.intersects(PickMask::SEGMENT);
+        let wants_strip     = mask.intersects(PickMask::STRIP);
+        if wants_poly_node || wants_segment || wants_strip || wants_object {
+            for item in &self.pick_polyline_items {
+                if item.id == 0 || item.positions.is_empty() {
+                    continue;
+                }
+                let id = item.id;
+                let mut item_hit = false;
+                let mut strips_hit = std::collections::HashSet::<u32>::new();
+
+                // Node pass (POLY_NODE or STRIP or OBJECT).
+                if wants_poly_node || wants_strip || wants_object {
+                    for (node_idx, pos) in item.positions.iter().enumerate() {
+                        if let Some((sx, sy)) = project(view_proj, glam::Vec3::from(*pos)) {
+                            if in_rect(sx, sy) {
+                                item_hit = true;
+                                if wants_poly_node {
+                                    result.elements.push((id, SubObjectRef::Point(node_idx as u32)));
+                                } else if wants_strip {
+                                    let s = strip_for_node(node_idx as u32, &item.strip_lengths);
+                                    strips_hit.insert(s);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Segment pass (SEGMENT or STRIP or OBJECT) -- uses midpoints.
+                if wants_segment || (wants_strip && !wants_poly_node) || wants_object {
+                    let mut midpoints: Vec<([f32; 3], u32)> = Vec::new();
+                    if item.strip_lengths.is_empty() {
+                        for j in 0..item.positions.len().saturating_sub(1) {
+                            let a = glam::Vec3::from(item.positions[j]);
+                            let b = glam::Vec3::from(item.positions[j + 1]);
+                            midpoints.push((((a + b) * 0.5).to_array(), j as u32));
+                        }
+                    } else {
+                        let mut node_off = 0usize;
+                        let mut seg_off = 0u32;
+                        for &slen in &item.strip_lengths {
+                            let slen = slen as usize;
+                            for j in 0..slen.saturating_sub(1) {
+                                let a = glam::Vec3::from(item.positions[node_off + j]);
+                                let b = glam::Vec3::from(item.positions[node_off + j + 1]);
+                                midpoints.push((((a + b) * 0.5).to_array(), seg_off + j as u32));
+                            }
+                            seg_off += slen.saturating_sub(1) as u32;
+                            node_off += slen;
+                        }
+                    }
+                    for (mid, seg_idx) in &midpoints {
+                        if let Some((sx, sy)) = project(view_proj, glam::Vec3::from(*mid)) {
+                            if in_rect(sx, sy) {
+                                item_hit = true;
+                                if wants_segment {
+                                    result.elements.push((id, SubObjectRef::Segment(*seg_idx)));
+                                } else if wants_strip {
+                                    let s = strip_for_segment(*seg_idx, &item.strip_lengths);
+                                    strips_hit.insert(s);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if wants_strip {
+                    for s in strips_hit {
+                        result.elements.push((id, SubObjectRef::Strip(s)));
                     }
                 }
                 if wants_object && item_hit {
