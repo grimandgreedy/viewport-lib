@@ -2954,7 +2954,7 @@ impl App {
                 point_positions.insert(100, self.pl_state.pc_positions.clone()); // unified mode
                 let mut voxel_lookup: HashMap<u64, viewport_lib::VolumeSelectionInfo> = HashMap::new();
                 if self.pl_state.volume_id.is_some() {
-                    voxel_lookup.insert(2, viewport_lib::VolumeSelectionInfo {
+                    voxel_lookup.insert(20, viewport_lib::VolumeSelectionInfo {
                         dims: [16, 16, 16],
                         bbox_min: [0.0, 0.0, 0.0],
                         bbox_max: [4.0, 4.0, 4.0],
@@ -3003,6 +3003,10 @@ impl App {
                 vol.threshold_max = 1.0;
                 vol.opacity_scale = 0.6;
                 vol.enable_shading = true;
+                vol.selected = self.pl_state.vol_selected;
+                vol.pick_id = 20;
+                vol.volume_data = self.pl_state.volume_data.as_ref()
+                    .map(|d| std::sync::Arc::new(d.clone()));
                 fd.scene.volumes.push(vol);
             }
         }

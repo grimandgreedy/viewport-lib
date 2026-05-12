@@ -227,6 +227,8 @@ pub(crate) struct PlState {
     pub tvm_selected: bool,
     /// Whether the Gaussian splat object is selected at the object level.
     pub splat_selected: bool,
+    /// Whether the volume is selected at the object level.
+    pub vol_selected: bool,
     /// Opaque mesh handle for TVM rendering (boundary surface).
     pub tvm_mesh_id: Option<MeshId>,
     /// CPU-side transparent volume mesh data (kept for picking).
@@ -260,6 +262,7 @@ impl Default for PlState {
             pc_selected:      false,
             tvm_selected:     false,
             splat_selected:   false,
+            vol_selected:     false,
             tvm_mesh_id:      None,
             tvm_data:         None,
         }
@@ -278,6 +281,7 @@ impl App {
         self.pl_state.pc_selected = false;
         self.pl_state.tvm_selected = false;
         self.pl_state.splat_selected = false;
+        self.pl_state.vol_selected = false;
 
         // --- Cube mesh ---
         let cube_mesh = viewport_lib::primitives::cube(2.0);
@@ -411,14 +415,29 @@ impl App {
 
         match self.pl_state.level {
             PlPickLevel::Object => {
-                let hit = viewport_lib::picking::pick_scene_nodes_cpu(
+                let mesh_hit = viewport_lib::picking::pick_scene_nodes_cpu(
                     ray_origin, ray_dir, &self.pl_state.scene, &mesh_lookup,
                 );
-                if let Some(hit) = hit {
+                // Fallback: also try a ray-AABB test against the volume box.
+                let vol_model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0));
+                let vol_hit = self.pl_state.volume_id.is_some() && {
+                    let inv = vol_model.inverse();
+                    let lo = inv.transform_point3(ray_origin);
+                    let ld = inv.transform_vector3(ray_dir);
+                    // Ray-slab AABB test against [0,4]^3.
+                    let inv_d = glam::Vec3::ONE / ld;
+                    let t1 = (glam::Vec3::ZERO - lo) * inv_d;
+                    let t2 = (glam::Vec3::splat(4.0) - lo) * inv_d;
+                    let tmin = t1.min(t2).max_element();
+                    let tmax = t1.max(t2).min_element();
+                    tmax >= tmin.max(0.0)
+                };
+                if let Some(hit) = mesh_hit {
                     if shift {
                         self.pl_state.selection.toggle(hit.id);
                     } else {
                         self.pl_state.selection.select_one(hit.id);
+                        self.pl_state.vol_selected = false;
                     }
                     self.pl_state.sub_selection.clear();
                     self.pl_state.last_hit = Some(PlHitInfo {
@@ -430,9 +449,27 @@ impl App {
                         scalar_value: None,
                     });
                     self.pl_state.hit_marker = Some(hit.world_pos);
+                } else if vol_hit {
+                    if shift {
+                        self.pl_state.vol_selected = !self.pl_state.vol_selected;
+                    } else {
+                        self.pl_state.selection.clear();
+                        self.pl_state.vol_selected = true;
+                    }
+                    self.pl_state.sub_selection.clear();
+                    self.pl_state.last_hit = Some(PlHitInfo {
+                        object_name: "Volume".to_string(),
+                        object_type: "Volume",
+                        world_pos: ray_origin + ray_dir * 5.0,
+                        normal: glam::Vec3::ZERO,
+                        sub_object: None,
+                        scalar_value: None,
+                    });
+                    self.pl_state.hit_marker = None;
                 } else if !shift {
                     self.pl_state.selection.clear();
                     self.pl_state.sub_selection.clear();
+                    self.pl_state.vol_selected = false;
                     self.pl_state.last_hit = None;
                     self.pl_state.hit_marker = None;
                 }
@@ -518,16 +555,16 @@ impl App {
                     item.scalar_range = (0.0, 1.0);
                     item.threshold_min = 0.15;
                     item.threshold_max = 1.0;
-                    viewport_lib::pick_volume_cpu(ray_origin, ray_dir, 2, &item, vol_data)
+                    viewport_lib::pick_volume_cpu(ray_origin, ray_dir, 20, &item, vol_data)
                 });
 
                 if let Some(hit) = hit {
                     let sub = hit.sub_object.unwrap();
                     if shift {
-                        self.pl_state.sub_selection.toggle(2, sub);
+                        self.pl_state.sub_selection.toggle(20, sub);
                     } else {
                         self.pl_state.selection.clear();
-                        self.pl_state.sub_selection.select_one(2, sub);
+                        self.pl_state.sub_selection.select_one(20, sub);
                     }
                     self.pl_state.last_hit = Some(PlHitInfo {
                         object_name: "Volume".to_string(),
@@ -752,11 +789,11 @@ impl App {
                     item.threshold_min = 0.15;
                     item.threshold_max = 1.0;
                     let result = viewport_lib::pick_volume_rect(
-                        r_min, r_max, 2, &item, vol_data, view_proj, vp_size,
+                        r_min, r_max, 20, &item, vol_data, view_proj, vp_size,
                     );
                     for (_, subs) in &result.hits {
                         for &sub in subs {
-                            self.pl_state.sub_selection.add(2, sub);
+                            self.pl_state.sub_selection.add(20, sub);
                         }
                     }
                 }
@@ -815,6 +852,7 @@ impl App {
                 self.pl_state.pc_selected = false;
                 self.pl_state.tvm_selected = false;
                 self.pl_state.splat_selected = false;
+                self.pl_state.vol_selected = false;
                 self.pl_state.sub_selection.clear();
                 self.pl_state.last_hit = None;
                 self.pl_state.hit_marker = None;
@@ -837,10 +875,12 @@ impl App {
                         self.pl_state.pc_selected = false;
                         self.pl_state.tvm_selected = false;
                         self.pl_state.splat_selected = false;
+                        self.pl_state.vol_selected = false;
                     }
                 } else {
                     if !shift {
                         self.pl_state.selection.clear();
+                        self.pl_state.vol_selected = false;
                     }
                     if hit.id == 100 {
                         if shift {
@@ -866,6 +906,15 @@ impl App {
                             self.pl_state.pc_selected = false;
                             self.pl_state.splat_selected = false;
                         }
+                    } else if hit.id == 20 {
+                        if shift {
+                            self.pl_state.vol_selected = !self.pl_state.vol_selected;
+                        } else {
+                            self.pl_state.vol_selected = true;
+                            self.pl_state.pc_selected = false;
+                            self.pl_state.tvm_selected = false;
+                            self.pl_state.splat_selected = false;
+                        }
                     } else if !shift {
                         self.pl_state.pc_selected = false;
                         self.pl_state.tvm_selected = false;
@@ -886,6 +935,7 @@ impl App {
                     self.pl_state.pc_selected = false;
                     self.pl_state.tvm_selected = false;
                     self.pl_state.splat_selected = false;
+                    self.pl_state.vol_selected = false;
                 }
             }
         }
@@ -992,7 +1042,7 @@ impl App {
     fn pl_item_label(id: NodeId) -> Option<&'static str> {
         match id {
             100 => Some("Point Cloud"),
-            2   => Some("Volume"),
+            20  => Some("Volume"),
             10  => Some("Gaussian Splats"),
             11  => Some("Volume Mesh"),
             _   => None,

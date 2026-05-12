@@ -30,7 +30,6 @@
 - Gaussian splats were silently invisible when post-processing was enabled. They now render in HDR frames.
 - Add `STORAGE` usage flag to mesh vertex and index buffers so they can be bound as read-only storage in the GPU compute filter pass.
 
-
 ## [0.13.2]
 
 ### Major Features

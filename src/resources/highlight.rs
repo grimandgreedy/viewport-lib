@@ -190,13 +190,21 @@ impl ViewportGpuResources {
         self.sub_highlight_bgl = Some(bgl);
     }
 
-    /// Build or rebuild `SubHighlightGpuData` from a `SubSelectionRef` snapshot.
+    /// Build or rebuild `SubHighlightGpuData` from an optional `SubSelectionRef` snapshot.
+    ///
+    /// `sel` may be `None` when only `extra_edge_data` edges need to be rendered
+    /// (e.g. volume AABB outlines with no active sub-element selection).
+    ///
+    /// `extra_edge_data` is a flat list of f32 pairs (start xyz, end xyz per segment)
+    /// appended to the edge geometry after all sub-selection edges are emitted.
+    /// Pass an empty slice when there are no extra edges.
     pub(crate) fn build_sub_highlight(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        sel: &SubSelectionRef,
+        sel: Option<&SubSelectionRef>,
         splat_positions: &std::collections::HashMap<u64, Vec<[f32; 3]>>,
+        extra_edge_data: &[f32],
         fill_color: [f32; 4],
         edge_color: [f32; 4],
         edge_width: f32,
@@ -209,6 +217,7 @@ impl ViewportGpuResources {
         let mut edge_data: Vec<f32> = Vec::new();
         let mut sprite_pos: Vec<[f32; 3]> = Vec::new();
 
+        if let Some(sel) = sel {
         for (node_id, sub_ref) in &sel.items {
             let model = sel
                 .model_matrices
@@ -343,6 +352,10 @@ impl ViewportGpuResources {
                 _ => {}
             }
         }
+        } // end if let Some(sel)
+
+        // Append any extra edge segments (e.g. volume AABB outlines from object-level selection).
+        edge_data.extend_from_slice(extra_edge_data);
 
         // Helper: create a VERTEX | COPY_DST buffer from a byte slice, or a 1-byte
         // placeholder when the slice is empty (wgpu requires non-zero size).
