@@ -59,7 +59,8 @@ impl ViewportRenderer {
     ) -> Option<crate::interaction::picking::PickHit> {
         use crate::interaction::pick_mask::PickMask;
         use crate::interaction::picking::{
-            screen_to_ray, pick_point_cloud_cpu, pick_gaussian_splat_cpu, pick_volume_cpu, PickHit,
+            screen_to_ray, pick_point_cloud_cpu, pick_gaussian_splat_cpu, pick_volume_cpu,
+            pick_transparent_volume_mesh_cpu, PickHit,
         };
         use crate::interaction::sub_object::SubObjectRef;
         use parry3d::math::{Pose, Vector};
@@ -210,6 +211,32 @@ impl ViewportRenderer {
         // 2. Volume mesh cell picks (CELL) -- stub: face_to_cell mapping is not
         // retained in pick_scene_items. Cell-level picks will be wired in when
         // volume mesh CPU data retention lands.
+
+        // 2b. Transparent volume mesh cell picks (CELL or OBJECT fallback).
+        let wants_cell = mask.intersects(PickMask::CELL);
+        if wants_cell || wants_object {
+            for item in &self.pick_tvm_items {
+                if item.pick_id == 0 {
+                    continue;
+                }
+                let Some(data) = item.volume_mesh_data.as_deref() else {
+                    continue;
+                };
+                if let Some(mut hit) = pick_transparent_volume_mesh_cpu(
+                    ray_origin,
+                    ray_dir,
+                    item.pick_id,
+                    glam::Mat4::IDENTITY,
+                    data,
+                ) {
+                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
+                    if !wants_cell {
+                        hit.sub_object = None;
+                    }
+                    consider(toi, hit);
+                }
+            }
+        }
 
         // 3. Point cloud picks (CLOUD_POINT or OBJECT fallback).
         if wants_cloud || wants_object {
@@ -457,6 +484,52 @@ impl ViewportRenderer {
         }
 
         // 2. Volume mesh cell picks (CELL) -- stub: face_to_cell not in cache.
+
+        // 2b. Transparent volume mesh cell picks (CELL or OBJECT).
+        let wants_cell = mask.intersects(PickMask::CELL);
+        if wants_cell || wants_object {
+            for item in &self.pick_tvm_items {
+                if item.pick_id == 0 {
+                    continue;
+                }
+                let Some(data) = item.volume_mesh_data.as_deref() else {
+                    continue;
+                };
+                use crate::resources::volume_mesh::CELL_SENTINEL;
+                let id = item.pick_id;
+                let mvp = view_proj; // TVM items are always in world space (no model transform)
+                let mut item_hit = false;
+
+                for (cell_idx, cell) in data.cells.iter().enumerate() {
+                    let nv: usize = if cell[4] == CELL_SENTINEL {
+                        4
+                    } else if cell[5] == CELL_SENTINEL {
+                        5
+                    } else if cell[6] == CELL_SENTINEL {
+                        6
+                    } else {
+                        8
+                    };
+                    let centroid: glam::Vec3 = cell[..nv]
+                        .iter()
+                        .map(|&vi| glam::Vec3::from(data.positions[vi as usize]))
+                        .sum::<glam::Vec3>()
+                        / nv as f32;
+                    if let Some((sx, sy)) = project(mvp, centroid) {
+                        if in_rect(sx, sy) {
+                            if wants_cell {
+                                result.elements.push((id, SubObjectRef::Cell(cell_idx as u32)));
+                            }
+                            item_hit = true;
+                        }
+                    }
+                }
+
+                if wants_object && item_hit {
+                    result.objects.push(id);
+                }
+            }
+        }
 
         // 3. Point cloud picks (CLOUD_POINT or OBJECT).
         if wants_cloud || wants_object {

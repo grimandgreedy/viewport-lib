@@ -324,6 +324,10 @@ pub struct GlyphItem {
     pub model: [[f32; 4]; 4],
     /// Unique ID for picking. 0 = not pickable.
     pub id: u64,
+    /// Whether this glyph set is selected at object level. When true and
+    /// `InteractionFrame::outline_selected` is set, the renderer draws a smooth
+    /// outline ring around the glyph positions. Default: false.
+    pub selected: bool,
 }
 
 impl Default for GlyphItem {
@@ -342,6 +346,7 @@ impl Default for GlyphItem {
             glyph_type: GlyphType::Arrow,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             id: 0,
+            selected: false,
         }
     }
 }

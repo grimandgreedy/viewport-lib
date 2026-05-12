@@ -2136,6 +2136,51 @@ impl ViewportRenderer {
                     bind_group,
                 });
             }
+
+            // Glyph outline buffers: point sprite discs at glyph positions.
+            for item in &frame.scene.glyphs {
+                if !item.selected || item.positions.is_empty() {
+                    continue;
+                }
+
+                // Use the glyph scale to derive a screen-space disc radius.
+                // This is approximate but gives a visible outline around the glyph cloud.
+                let pixel_radius = (item.scale * 8.0).max(4.0);
+
+                let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("glyph_outline_pos_buf"),
+                    contents: bytemuck::cast_slice(item.positions.as_slice()),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+
+                let uniform = SplatOutlineMaskUniform {
+                    model: item.model,
+                    viewport_w: vp_w,
+                    viewport_h: vp_h,
+                    pixel_radius,
+                    _pad: 0.0,
+                };
+                let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("glyph_outline_uniform_buf"),
+                    contents: bytemuck::cast_slice(&[uniform]),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("glyph_outline_bg"),
+                    layout: &self.resources.outline_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buf.as_entire_binding(),
+                    }],
+                });
+
+                splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
+                    position_buf,
+                    instance_count: item.positions.len() as u32,
+                    _uniform_buf: uniform_buf,
+                    bind_group,
+                });
+            }
         }
 
         // X-ray buffers for selected objects.
@@ -3690,6 +3735,7 @@ impl ViewportRenderer {
             self.pick_point_cloud_items = frame.scene.point_clouds.clone();
             self.pick_splat_items = frame.scene.gaussian_splats.clone();
             self.pick_volume_items = frame.scene.volumes.clone();
+            self.pick_tvm_items = frame.scene.transparent_volume_meshes.clone();
         }
 
         let (scene_fx, viewport_fx) = frame.effects.split();

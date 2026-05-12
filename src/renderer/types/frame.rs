@@ -238,10 +238,27 @@ impl SurfaceLICItem {
 /// Created by uploading a [`VolumeMeshData`](crate::resources::VolumeMeshData) with
 /// [`ViewportGpuResources::upload_projected_tet_mesh`] and submitting the returned
 /// [`ProjectedTetId`](crate::resources::ProjectedTetId) each frame.
+///
+/// # Picking
+///
+/// Set `pick_id` to a non-zero value and provide `volume_mesh_data` to enable cell-level
+/// picking via `renderer.pick()` and `renderer.pick_rect()`. `volume_mesh_data` must be
+/// the same data passed to `upload_projected_tet_mesh` for this item.
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct TransparentVolumeMeshItem {
     /// Handle to the uploaded projected-tet mesh.
     pub id: crate::resources::ProjectedTetId,
+    /// Pick ID returned when a cell in this mesh is hit.
+    ///
+    /// `0` means this mesh is not pickable. Set to a non-zero value alongside
+    /// `volume_mesh_data` to enable cell picking.
+    pub pick_id: u64,
+    /// CPU mesh data for cell picking.
+    ///
+    /// Must match the data passed to `upload_projected_tet_mesh` for `id`.
+    /// `None` disables cell-level picking regardless of `pick_id`.
+    pub volume_mesh_data: Option<std::sync::Arc<crate::resources::volume_mesh::VolumeMeshData>>,
     /// Beer-Lambert extinction coefficient (world-space units).
     ///
     /// Higher values make the volume more opaque.  Typical range: 0.1 to 5.0.
@@ -267,6 +284,8 @@ impl TransparentVolumeMeshItem {
     pub fn new(id: crate::resources::ProjectedTetId) -> Self {
         Self {
             id,
+            pick_id: 0,
+            volume_mesh_data: None,
             density: 1.0,
             scalar_range: None,
             threshold_min: f32::NEG_INFINITY,

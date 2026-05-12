@@ -272,6 +272,8 @@ pub struct ViewportRenderer {
     pick_splat_items: Vec<GaussianSplatItem>,
     /// Volume items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_volume_items: Vec<VolumeItem>,
+    /// Transparent volume mesh items from the last `prepare()` call, retained for `pick()` dispatch.
+    pick_tvm_items: Vec<TransparentVolumeMeshItem>,
 
     // --- Phase 4 : GPU timestamp queries ---
     /// Timestamp query set with 2 entries (scene-pass begin + end).
@@ -380,6 +382,7 @@ impl ViewportRenderer {
             pick_point_cloud_items: Vec::new(),
             pick_splat_items: Vec::new(),
             pick_volume_items: Vec::new(),
+            pick_tvm_items: Vec::new(),
             ts_query_set: None,
             ts_resolve_buf: None,
             ts_staging_buf: None,
