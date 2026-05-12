@@ -2568,7 +2568,7 @@ impl App {
                     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
                     item.visible = true;
                     item.pick_id = PickId(12);
-                    item.selected = self.pl_state.tvm_selected;
+                    item.selected = self.pl_state.tvm_tet_selected;
                     item.material = viewport_lib::Material::from_color([0.55, 0.75, 0.85]);
                     items.push(item);
                 }
@@ -2844,6 +2844,7 @@ impl App {
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.splat_selected)
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.pc_selected)
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.tvm_selected)
+            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.tvm_tet_selected)
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.vol_selected)
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.polyline_selected)
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.arrow_glyph_selected)

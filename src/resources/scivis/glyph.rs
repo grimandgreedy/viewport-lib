@@ -693,4 +693,152 @@ impl ViewportGpuResources {
             _instance_buf: instance_buf,
         }
     }
+
+    /// Lazily create the glyph outline mask pipeline.
+    ///
+    /// Renders the instanced glyph mesh into the R8 outline mask texture so
+    /// outlines follow the actual arrow/sphere shape.  Reuses the bind group
+    /// layouts from the main glyph pipeline (must be called after
+    /// `ensure_glyph_pipeline`).
+    pub(crate) fn ensure_glyph_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
+        if self.glyph_outline_mask_pipeline.is_some() {
+            return;
+        }
+        let glyph_bgl = self.glyph_bgl.as_ref()
+            .expect("ensure_glyph_pipeline must be called first");
+        let glyph_instance_bgl = self.glyph_instance_bgl.as_ref()
+            .expect("ensure_glyph_pipeline must be called first");
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("glyph_outline_mask_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../shaders/glyph_outline_mask.wgsl").into(),
+            ),
+        });
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("glyph_outline_mask_pipeline_layout"),
+            bind_group_layouts: &[
+                &self.camera_bind_group_layout,
+                glyph_bgl,
+                glyph_instance_bgl,
+            ],
+            push_constant_ranges: &[],
+        });
+
+        self.glyph_outline_mask_pipeline = Some(
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("glyph_outline_mask_pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R8Unorm,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            }),
+        );
+    }
+
+    /// Lazily create the tensor glyph outline mask pipeline.
+    ///
+    /// Same idea as `ensure_glyph_outline_mask_pipeline` but for tensor
+    /// glyph ellipsoids.  Must be called after `ensure_tensor_glyph_pipeline`.
+    pub(crate) fn ensure_tensor_glyph_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
+        if self.tensor_glyph_outline_mask_pipeline.is_some() {
+            return;
+        }
+        let tg_bgl = self.tensor_glyph_bgl.as_ref()
+            .expect("ensure_tensor_glyph_pipeline must be called first");
+        let tg_instance_bgl = self.tensor_glyph_instance_bgl.as_ref()
+            .expect("ensure_tensor_glyph_pipeline must be called first");
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("tensor_glyph_outline_mask_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../shaders/tensor_glyph_outline_mask.wgsl").into(),
+            ),
+        });
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("tensor_glyph_outline_mask_pipeline_layout"),
+            bind_group_layouts: &[
+                &self.camera_bind_group_layout,
+                tg_bgl,
+                tg_instance_bgl,
+            ],
+            push_constant_ranges: &[],
+        });
+
+        self.tensor_glyph_outline_mask_pipeline = Some(
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("tensor_glyph_outline_mask_pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R8Unorm,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            }),
+        );
+    }
 }

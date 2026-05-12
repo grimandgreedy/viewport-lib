@@ -10,7 +10,7 @@
     - Raw `SceneRenderItem` objects submitted outside the scene graph (e.g. the TVM boundary mesh) now support the outline highlight. Set `SceneRenderItem::selected = true` on the item; no renderer changes are needed since the outline pass already processes the full surface submission.
     - Volumes now show an object-level outline when selected. Set `VolumeItem::selected = true`; the renderer ray-marches the volume into the outline mask so the outline hugs the actual visible silhouette rather than the bounding box.
     - Volume meshes now forward their selection state automatically. Set `VolumeMeshItem::selected = true` and the outline pass picks it up without manually flagging the underlying `SceneRenderItem`.
-    - Glyphs now show an object-level outline when selected. Set `GlyphItem::selected = true`; the renderer draws point-sprite discs at glyph positions using the same pipeline as the splat and point cloud outlines.
+    - Glyphs now show an object-level outline when selected. Set `GlyphItem::selected = true`; the outline renders the actual instanced mesh geometry (arrows, spheres) into the mask so it follows the glyph shape.
     - Polylines now show an object-level outline when selected. Set `PolylineItem::selected = true`.
     - Sprites now show an object-level outline when selected. Set `SpriteItem::selected = true`.
     - Streamtubes, tubes, and ribbons now show an object-level outline when selected. Set `selected = true` on any of the three item types.
@@ -29,7 +29,7 @@
     - Streamtubes, tubes, and ribbons now support click and box-selection picking for segments and strips.
 
 ### Fixes
-- Glyph and tensor glyph outlines were invisible because the screen-space disc radius was a fixed heuristic (`scale * 8`) that didn't account for camera distance. The radius is now projected from world space using the view-projection matrix, matching the approach used for Gaussian splat outlines.
+- Glyph and tensor glyph outlines rendered as circles that didn't match the actual mesh shape and shrank incorrectly when viewed across the X axis. Replaced the screen-space disc approach with instanced mesh rendering into the outline mask, so outlines now follow the actual arrow and ellipsoid geometry.
 - Selecting a glyph or tensor glyph alongside a mesh caused a crash (`Buffer is bound with size 80 where the shader expects 96`). The splat outline mask uniform shared a bind group layout with the mesh outline uniform but was 16 bytes smaller. Padded to 96 bytes to match.
 - Gaussian splat unified picking used a fixed 8px hit radius, requiring a click near the exact center of each splat. The radius is now derived from the uploaded splat scales so a click anywhere inside the visible disc registers.
 - Selecting a splat sub-element in point-like mode also triggered the whole-cloud object outline. Sub-element and object-level highlights are now independent.

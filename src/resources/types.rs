@@ -1904,6 +1904,10 @@ pub struct ViewportGpuResources {
     pub(crate) splat_outline_mask_pipeline: wgpu::RenderPipeline,
     /// Mask-write pipeline for volume AABB cubes (position-only vertex layout, no face culling).
     pub(crate) volume_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+    /// Instanced mask pipeline for arrow/sphere glyph outlines (reuses glyph bind groups).
+    pub(crate) glyph_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+    /// Instanced mask pipeline for tensor glyph outlines (reuses tensor glyph bind groups).
+    pub(crate) tensor_glyph_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
     // --- Outline offscreen resources (lazily created) ---
     /// Offscreen RGBA texture the outline stencil pass renders into.
     pub(crate) outline_color_texture: Option<wgpu::Texture>,

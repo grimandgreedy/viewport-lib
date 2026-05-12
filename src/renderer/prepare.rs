@@ -2016,6 +2016,8 @@ impl ViewportRenderer {
 
         // Splat outline buffers: point sprite discs for selected Gaussian splat sets.
         let mut splat_outline_buffers: Vec<crate::resources::SplatOutlineBuffers> = Vec::new();
+        let mut glyph_outline_indices: Vec<usize> = Vec::new();
+        let mut tensor_glyph_outline_indices: Vec<usize> = Vec::new();
         if frame.interaction.outline_selected {
             let resources = &self.resources;
             let view_proj = frame.camera.render_camera.view_proj();
@@ -2137,68 +2139,20 @@ impl ViewportRenderer {
                 });
             }
 
-            // Glyph outline buffers: point sprite discs at glyph positions.
-            for item in &frame.scene.glyphs {
-                if !item.selected || item.positions.is_empty() {
-                    continue;
+            // Glyph outline indices: record which glyph GPU data entries are selected
+            // so the mask pass can render the actual instanced mesh.
+            {
+                let mut gpu_idx = 0usize;
+                for item in &frame.scene.glyphs {
+                    if item.positions.is_empty() || item.vectors.is_empty() {
+                        continue;
+                    }
+                    if item.selected {
+                        self.resources.ensure_glyph_outline_mask_pipeline(device);
+                        glyph_outline_indices.push(gpu_idx);
+                    }
+                    gpu_idx += 1;
                 }
-
-                // Project the glyph world-space scale to a screen-space disc radius
-                // at the centroid of the glyph cloud.
-                let model = glam::Mat4::from_cols_array_2d(&item.model);
-                let centroid = {
-                    let sum: glam::Vec3 = item.positions.iter()
-                        .map(|p| glam::Vec3::from(*p))
-                        .sum();
-                    sum / item.positions.len() as f32
-                };
-                let center_w = model.transform_point3(centroid);
-                let world_radius = item.scale;
-                let p0_clip = view_proj * glam::Vec4::new(center_w.x, center_w.y, center_w.z, 1.0);
-                let p1_world = center_w + glam::Vec3::X * world_radius;
-                let p1_clip = view_proj * glam::Vec4::new(p1_world.x, p1_world.y, p1_world.z, 1.0);
-                let pixel_radius = if p0_clip.w.abs() > 1e-6 && p1_clip.w.abs() > 1e-6 {
-                    let p0_ndc = glam::Vec2::new(p0_clip.x, p0_clip.y) / p0_clip.w;
-                    let p1_ndc = glam::Vec2::new(p1_clip.x, p1_clip.y) / p1_clip.w;
-                    (p1_ndc - p0_ndc).length() * 0.5 * vp_w.max(vp_h)
-                } else {
-                    world_radius * 100.0
-                };
-                let pixel_radius = pixel_radius.max(4.0);
-
-                let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("glyph_outline_pos_buf"),
-                    contents: bytemuck::cast_slice(item.positions.as_slice()),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-
-                let uniform = SplatOutlineMaskUniform {
-                    model: item.model,
-                    viewport_w: vp_w,
-                    viewport_h: vp_h,
-                    pixel_radius,
-                    _pad: [0.0; 5],
-                };
-                let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("glyph_outline_uniform_buf"),
-                    contents: bytemuck::cast_slice(&[uniform]),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("glyph_outline_bg"),
-                    layout: &self.resources.outline_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: uniform_buf.as_entire_binding(),
-                    }],
-                });
-
-                splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
-                    position_buf,
-                    instance_count: item.positions.len() as u32,
-                    _uniform_buf: uniform_buf,
-                    bind_group,
-                });
             }
 
             // Polyline outline buffers: point sprite discs at node positions.
@@ -2360,68 +2314,19 @@ impl ViewportRenderer {
                 });
             }
 
-            // Tensor glyph outline buffers: point sprite discs at tensor center positions.
-            for item in &frame.scene.tensor_glyphs {
-                if !item.selected || item.positions.is_empty() {
-                    continue;
+            // Tensor glyph outline indices: same approach as arrow glyphs.
+            {
+                let mut gpu_idx = 0usize;
+                for item in &frame.scene.tensor_glyphs {
+                    if item.positions.is_empty() {
+                        continue;
+                    }
+                    if item.selected {
+                        self.resources.ensure_tensor_glyph_outline_mask_pipeline(device);
+                        tensor_glyph_outline_indices.push(gpu_idx);
+                    }
+                    gpu_idx += 1;
                 }
-
-                // Project the tensor glyph world-space scale to a screen-space
-                // disc radius at the centroid of the positions.
-                let model = glam::Mat4::from_cols_array_2d(&item.model);
-                let centroid = {
-                    let sum: glam::Vec3 = item.positions.iter()
-                        .map(|p| glam::Vec3::from(*p))
-                        .sum();
-                    sum / item.positions.len() as f32
-                };
-                let center_w = model.transform_point3(centroid);
-                let world_radius = item.scale;
-                let p0_clip = view_proj * glam::Vec4::new(center_w.x, center_w.y, center_w.z, 1.0);
-                let p1_world = center_w + glam::Vec3::X * world_radius;
-                let p1_clip = view_proj * glam::Vec4::new(p1_world.x, p1_world.y, p1_world.z, 1.0);
-                let pixel_radius = if p0_clip.w.abs() > 1e-6 && p1_clip.w.abs() > 1e-6 {
-                    let p0_ndc = glam::Vec2::new(p0_clip.x, p0_clip.y) / p0_clip.w;
-                    let p1_ndc = glam::Vec2::new(p1_clip.x, p1_clip.y) / p1_clip.w;
-                    (p1_ndc - p0_ndc).length() * 0.5 * vp_w.max(vp_h)
-                } else {
-                    world_radius * 100.0
-                };
-                let pixel_radius = pixel_radius.max(4.0);
-
-                let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("tensor_glyph_outline_pos_buf"),
-                    contents: bytemuck::cast_slice(item.positions.as_slice()),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-
-                let uniform = SplatOutlineMaskUniform {
-                    model: item.model,
-                    viewport_w: vp_w,
-                    viewport_h: vp_h,
-                    pixel_radius,
-                    _pad: [0.0; 5],
-                };
-                let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("tensor_glyph_outline_uniform_buf"),
-                    contents: bytemuck::cast_slice(&[uniform]),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("tensor_glyph_outline_bg"),
-                    layout: &self.resources.outline_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: uniform_buf.as_entire_binding(),
-                    }],
-                });
-
-                splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
-                    position_buf,
-                    instance_count: item.positions.len() as u32,
-                    _uniform_buf: uniform_buf,
-                    bind_group,
-                });
             }
         }
 
@@ -2696,6 +2601,8 @@ impl ViewportRenderer {
             slot.outline_object_buffers = outline_object_buffers;
             slot.splat_outline_buffers = splat_outline_buffers;
             slot.volume_outline_indices = volume_outline_indices;
+            slot.glyph_outline_indices = glyph_outline_indices;
+            slot.tensor_glyph_outline_indices = tensor_glyph_outline_indices;
             slot.xray_object_buffers = xray_object_buffers;
             slot.constraint_line_buffers = constraint_line_buffers;
             slot.clip_plane_fill_buffers = clip_plane_fill_buffers;
@@ -2762,7 +2669,9 @@ impl ViewportRenderer {
         if frame.interaction.outline_selected
             && (!self.viewport_slots[vp_idx].outline_object_buffers.is_empty()
                 || !self.viewport_slots[vp_idx].splat_outline_buffers.is_empty()
-                || !self.viewport_slots[vp_idx].volume_outline_indices.is_empty())
+                || !self.viewport_slots[vp_idx].volume_outline_indices.is_empty()
+                || !self.viewport_slots[vp_idx].glyph_outline_indices.is_empty()
+                || !self.viewport_slots[vp_idx].tensor_glyph_outline_indices.is_empty())
         {
             let w = frame.camera.viewport_size[0] as u32;
             let h = frame.camera.viewport_size[1] as u32;
@@ -2803,6 +2712,14 @@ impl ViewportRenderer {
                 &slot_ref.splat_outline_buffers as *const Vec<crate::resources::SplatOutlineBuffers>;
             let vol_outline_idx_ptr =
                 &slot_ref.volume_outline_indices as *const Vec<usize>;
+            let glyph_outline_idx_ptr =
+                &slot_ref.glyph_outline_indices as *const Vec<usize>;
+            let tensor_glyph_outline_idx_ptr =
+                &slot_ref.tensor_glyph_outline_indices as *const Vec<usize>;
+            let glyph_gpu_ptr =
+                &self.glyph_gpu_data as *const Vec<crate::resources::GlyphGpuData>;
+            let tensor_glyph_gpu_ptr =
+                &self.tensor_glyph_gpu_data as *const Vec<crate::resources::TensorGlyphGpuData>;
             let camera_bg_ptr = &slot_ref.camera_bind_group as *const wgpu::BindGroup;
             let slot_hdr = slot_ref.hdr.as_ref().unwrap();
             let mask_view_ptr = &slot_hdr.outline_mask_view as *const wgpu::TextureView;
@@ -2811,11 +2728,18 @@ impl ViewportRenderer {
             let edge_bg_ptr = &slot_hdr.outline_edge_bind_group as *const wgpu::BindGroup;
             // SAFETY: slot fields remain valid for the duration of this function;
             // no other code modifies these fields here.
-            let (outlines, splat_outlines, vol_outline_indices, camera_bg, mask_view, color_view, depth_view, edge_bg) = unsafe {
+            let (outlines, splat_outlines, vol_outline_indices,
+                 glyph_outline_indices, tensor_glyph_outline_indices,
+                 glyph_gpu_data, tensor_glyph_gpu_data,
+                 camera_bg, mask_view, color_view, depth_view, edge_bg) = unsafe {
                 (
                     &*outlines_ptr,
                     &*splat_outlines_ptr,
                     &*vol_outline_idx_ptr,
+                    &*glyph_outline_idx_ptr,
+                    &*tensor_glyph_outline_idx_ptr,
+                    &*glyph_gpu_ptr,
+                    &*tensor_glyph_gpu_ptr,
                     &*camera_bg_ptr,
                     &*mask_view_ptr,
                     &*color_view_ptr,
@@ -2883,6 +2807,41 @@ impl ViewportRenderer {
                     pass.set_bind_group(1, &splat.bind_group, &[]);
                     pass.set_vertex_buffer(0, splat.position_buf.slice(..));
                     pass.draw(0..6, 0..splat.instance_count);
+                }
+
+                // Draw glyph instances into the mask using the actual instanced
+                // mesh geometry so the outline follows arrow/sphere shapes.
+                if !glyph_outline_indices.is_empty() {
+                    if let Some(pipeline) = self.resources.glyph_outline_mask_pipeline.as_ref() {
+                        pass.set_pipeline(pipeline);
+                        for &idx in glyph_outline_indices {
+                            if let Some(glyph) = glyph_gpu_data.get(idx) {
+                                pass.set_bind_group(0, camera_bg, &[]);
+                                pass.set_bind_group(1, &glyph.uniform_bind_group, &[]);
+                                pass.set_bind_group(2, &glyph.instance_bind_group, &[]);
+                                pass.set_vertex_buffer(0, glyph.mesh_vertex_buffer.slice(..));
+                                pass.set_index_buffer(glyph.mesh_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                                pass.draw_indexed(0..glyph.mesh_index_count, 0, 0..glyph.instance_count);
+                            }
+                        }
+                    }
+                }
+
+                // Draw tensor glyph instances into the mask (instanced ellipsoids).
+                if !tensor_glyph_outline_indices.is_empty() {
+                    if let Some(pipeline) = self.resources.tensor_glyph_outline_mask_pipeline.as_ref() {
+                        pass.set_pipeline(pipeline);
+                        for &idx in tensor_glyph_outline_indices {
+                            if let Some(tg) = tensor_glyph_gpu_data.get(idx) {
+                                pass.set_bind_group(0, camera_bg, &[]);
+                                pass.set_bind_group(1, &tg.uniform_bind_group, &[]);
+                                pass.set_bind_group(2, &tg.instance_bind_group, &[]);
+                                pass.set_vertex_buffer(0, tg.mesh_vertex_buffer.slice(..));
+                                pass.set_index_buffer(tg.mesh_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                                pass.draw_indexed(0..tg.mesh_index_count, 0, 0..tg.instance_count);
+                            }
+                        }
+                    }
                 }
 
                 // Draw volumes into the mask using a simplified ray march so the

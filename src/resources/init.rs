@@ -2006,6 +2006,8 @@ impl ViewportGpuResources {
             xray_pipeline,
             splat_outline_mask_pipeline,
             volume_outline_mask_pipeline: None,
+            glyph_outline_mask_pipeline: None,
+            tensor_glyph_outline_mask_pipeline: None,
             outline_color_texture: None,
             outline_color_view: None,
             outline_depth_texture: None,
