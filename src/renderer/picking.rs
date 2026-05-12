@@ -252,7 +252,28 @@ impl ViewportRenderer {
                     continue;
                 }
                 let model = glam::Mat4::from_cols_array_2d(&item.model);
-                let radius_px = 8.0_f32;
+                // Derive pick radius from the mean per-splat scale so that a
+                // click anywhere inside the visible disc registers as a hit.
+                let mean_max_scale: f32 = if gpu_set.cpu_scales.is_empty() {
+                    0.05
+                } else {
+                    gpu_set.cpu_scales.iter()
+                        .map(|s| s[0].max(s[1]).max(s[2]))
+                        .sum::<f32>()
+                        / gpu_set.cpu_scales.len() as f32
+                };
+                let world_radius = mean_max_scale * 3.0;
+                let center_w = model.transform_point3(glam::Vec3::ZERO);
+                let p0_clip = view_proj * center_w.extend(1.0);
+                let p1_clip = view_proj * (center_w + glam::Vec3::X * world_radius).extend(1.0);
+                let radius_px = if p0_clip.w.abs() > 1e-6 && p1_clip.w.abs() > 1e-6 {
+                    let p0_ndc = glam::Vec2::new(p0_clip.x, p0_clip.y) / p0_clip.w;
+                    let p1_ndc = glam::Vec2::new(p1_clip.x, p1_clip.y) / p1_clip.w;
+                    ((p1_ndc - p0_ndc).length() * 0.5 * viewport_size.x.max(viewport_size.y))
+                        .max(4.0)
+                } else {
+                    world_radius * 100.0
+                };
                 if let Some(mut hit) = pick_gaussian_splat_cpu(
                     click_pos,
                     item.pick_id,

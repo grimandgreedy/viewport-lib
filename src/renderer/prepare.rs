@@ -2574,10 +2574,39 @@ impl ViewportRenderer {
                 };
                 if needs_rebuild {
                     self.resources.ensure_sub_highlight_pipelines(device);
+                    // Build world-space splat positions keyed by pick_id so
+                    // build_sub_highlight can resolve SubObjectRef::Splat entries
+                    // without requiring the consumer to supply positions manually.
+                    let mut splat_positions: std::collections::HashMap<u64, Vec<[f32; 3]>> =
+                        std::collections::HashMap::new();
+                    for item in &frame.scene.gaussian_splats {
+                        if item.pick_id == 0 {
+                            continue;
+                        }
+                        let Some(gpu_set) = self.resources.gaussian_splat_store.get(item.id.0)
+                        else {
+                            continue;
+                        };
+                        if gpu_set.cpu_positions.is_empty() {
+                            continue;
+                        }
+                        let model = glam::Mat4::from_cols_array_2d(&item.model);
+                        let world: Vec<[f32; 3]> = gpu_set
+                            .cpu_positions
+                            .iter()
+                            .map(|p| {
+                                model
+                                    .transform_point3(glam::Vec3::from(*p))
+                                    .to_array()
+                            })
+                            .collect();
+                        splat_positions.insert(item.pick_id, world);
+                    }
                     let data = self.resources.build_sub_highlight(
                         device,
                         queue,
                         sel_ref,
+                        &splat_positions,
                         frame.interaction.sub_highlight_face_fill_color,
                         frame.interaction.sub_highlight_edge_color,
                         frame.interaction.sub_highlight_edge_width_px,

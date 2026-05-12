@@ -2948,14 +2948,6 @@ impl App {
                 let mut point_positions: HashMap<u64, Vec<[f32; 3]>> = HashMap::new();
                 point_positions.insert(1, self.pl_state.pc_positions.clone());   // per-type mode
                 point_positions.insert(100, self.pl_state.pc_positions.clone()); // unified mode
-                // Splat world positions for Point sub-object highlight rendering.
-                if !self.pl_state.splat_positions.is_empty() {
-                    let splat_model = showcase_33_picking_levels::pl_splat_model();
-                    let world_splats: Vec<[f32; 3]> = self.pl_state.splat_positions.iter()
-                        .map(|p| splat_model.transform_point3(glam::Vec3::from(*p)).to_array())
-                        .collect();
-                    point_positions.insert(10, world_splats);
-                }
                 let mut voxel_lookup: HashMap<u64, viewport_lib::VolumeSelectionInfo> = HashMap::new();
                 if self.pl_state.volume_id.is_some() {
                     voxel_lookup.insert(2, viewport_lib::VolumeSelectionInfo {

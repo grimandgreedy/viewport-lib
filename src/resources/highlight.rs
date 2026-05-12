@@ -196,6 +196,7 @@ impl ViewportGpuResources {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         sel: &SubSelectionRef,
+        splat_positions: &std::collections::HashMap<u64, Vec<[f32; 3]>>,
         fill_color: [f32; 4],
         edge_color: [f32; 4],
         edge_width: f32,
@@ -259,6 +260,13 @@ impl ViewportGpuResources {
                 }
                 SubObjectRef::Point(i) => {
                     if let Some(pts) = sel.point_positions.get(node_id) {
+                        if let Some(p) = pts.get(*i as usize) {
+                            sprite_pos.push(*p);
+                        }
+                    }
+                }
+                SubObjectRef::Splat(i) => {
+                    if let Some(pts) = splat_positions.get(node_id) {
                         if let Some(p) = pts.get(*i as usize) {
                             sprite_pos.push(*p);
                         }

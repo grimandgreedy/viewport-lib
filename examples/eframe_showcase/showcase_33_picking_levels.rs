@@ -811,16 +811,9 @@ impl App {
             return;
         };
 
-        // SubSelectionRef renders highlights for Point variants using point_positions.
-        // Remap Splat->Point so splat sub-elements are highlighted correctly.
-        let sub_for_sel = match hit.sub_object {
-            Some(SubObjectRef::Splat(idx)) => Some(SubObjectRef::Point(idx)),
-            other => other,
-        };
-
         let is_mesh_node = Self::pl_item_label(hit.id).is_none();
 
-        match sub_for_sel {
+        match hit.sub_object {
             None => {
                 // Mesh nodes go through Selection; non-mesh objects (point cloud,
                 // splats, volume mesh) are tracked separately to avoid collisions
@@ -855,19 +848,9 @@ impl App {
                     self.pl_state.selection.clear();
                     self.pl_state.sub_selection.select_one(hit.id, sub);
                 }
-                // Track object-level splat selection alongside the sub-element.
-                // GPU picking returns Splat(idx) for the splat grid; selecting any
-                // element of the set also marks the whole cloud as selected for the
-                // object outline pass.
-                match hit.sub_object {
-                    Some(SubObjectRef::Splat(_)) => {
-                        self.pl_state.splat_selected = true;
-                    }
-                    _ => {
-                        if !shift {
-                            self.pl_state.splat_selected = false;
-                        }
-                    }
+                // Sub-element selection does not activate the object outline.
+                if !shift {
+                    self.pl_state.splat_selected = false;
                 }
             }
         }
@@ -924,12 +907,7 @@ impl App {
             }
         }
         for (id, sub) in &result.elements {
-            // Remap Splat->Point so SubSelectionRef can highlight using point_positions.
-            let sub_for_sel = match *sub {
-                SubObjectRef::Splat(idx) => SubObjectRef::Point(idx),
-                other => other,
-            };
-            self.pl_state.sub_selection.add(*id, sub_for_sel);
+            self.pl_state.sub_selection.add(*id, *sub);
         }
 
         self.pl_state.last_hit = None;
