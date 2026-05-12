@@ -20,7 +20,8 @@ impl ViewportRenderer {
             camera_bg,
             grid_bg,
             &self.compute_filter_results,
-            vp_slot
+            vp_slot,
+            &self.wireframe_bind_groups
         );
         emit_scivis_draw_calls!(
             &self.resources,
@@ -187,7 +188,8 @@ impl ViewportRenderer {
             camera_bg,
             grid_bg,
             &self.compute_filter_results,
-            vp_slot
+            vp_slot,
+            &self.wireframe_bind_groups
         );
         emit_scivis_draw_calls!(
             &self.resources,
@@ -419,7 +421,8 @@ impl ViewportRenderer {
                 camera_bg,
                 grid_bg,
                 &self.compute_filter_results,
-                Some(slot)
+                Some(slot),
+                &self.wireframe_bind_groups
             );
             emit_scivis_draw_calls!(
                 &self.resources,
@@ -888,7 +891,8 @@ impl ViewportRenderer {
                     camera_bg,
                     grid_bg,
                     &self.compute_filter_results,
-                    Some(slot)
+                    Some(slot),
+                    &self.wireframe_bind_groups
                 );
                 emit_scivis_draw_calls!(
                     &self.resources,
@@ -1403,6 +1407,7 @@ impl ViewportRenderer {
                     if frame.viewport.wireframe_mode {
                         if let Some(ref hdr_wf) = resources.hdr_wireframe_pipeline {
                             render_pass.set_pipeline(hdr_wf);
+                            let mut wf_idx = 0usize;
                             for item in scene_items {
                                 if !item.visible {
                                     continue;
@@ -1413,13 +1418,16 @@ impl ViewportRenderer {
                                 else {
                                     continue;
                                 };
-                                render_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
+                                let bg = self.wireframe_bind_groups.get(wf_idx)
+                                    .unwrap_or(&mesh.object_bind_group);
+                                render_pass.set_bind_group(1, bg, &[]);
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 render_pass.set_index_buffer(
                                     mesh.edge_index_buffer.slice(..),
                                     wgpu::IndexFormat::Uint32,
                                 );
                                 render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
+                                wf_idx += 1;
                             }
                         }
                     } else if let (Some(hdr_solid), Some(hdr_solid_two_sided)) = (

@@ -394,6 +394,11 @@ impl ViewportRenderer {
         let has_matcap_items = scene_items.iter().any(|i| i.material.matcap_id.is_some());
         let has_param_vis_items = scene_items.iter().any(|i| i.material.param_vis.is_some());
         let has_wireframe_items = scene_items.iter().any(|i| i.render_as_wireframe);
+        // Collect per-item uniforms when wireframe mode is on so we can give each
+        // visible item its own bind group (the mesh's shared object_uniform_buf gets
+        // overwritten when multiple items reference the same MeshId).
+        let mut wireframe_uniforms: Vec<ObjectUniform> = Vec::new();
+        let collect_wf_uniforms = frame.viewport.wireframe_mode;
         if !self.use_instancing
             || frame.viewport.wireframe_mode
             || has_scalar_items
@@ -546,6 +551,11 @@ impl ViewportRenderer {
                     _pad_warp: [0; 2],
                 };
 
+                // Collect per-item uniform for wireframe per-item bind groups.
+                if collect_wf_uniforms && item.visible {
+                    wireframe_uniforms.push(obj_uniform);
+                }
+
                 // Write uniform data : use get() to read buffer references, then drop.
                 {
                     let mesh = resources
@@ -575,6 +585,50 @@ impl ViewportRenderer {
                     item.active_attribute.as_ref().map(|a| a.name.as_str()),
                     item.material.matcap_id,
                     item.warp_attribute.as_deref(),
+                );
+            }
+        }
+
+        // Build per-item wireframe bind groups so each visible item gets its own
+        // object uniform, avoiding the shared-MeshId overwrite problem.
+        if !wireframe_uniforms.is_empty() {
+            let n = wireframe_uniforms.len();
+            let uniform_size = std::mem::size_of::<ObjectUniform>() as u64;
+
+            // Grow the buffer/bind-group pools if needed. We never shrink them.
+            while self.wireframe_uniform_bufs.len() < n {
+                let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("wireframe_item_uniform"),
+                    size: uniform_size,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("wireframe_item_bg"),
+                    layout: &resources.object_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&resources.fallback_texture.view) },
+                        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&resources.material_sampler) },
+                        wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&resources.fallback_normal_map_view) },
+                        wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&resources.fallback_ao_map_view) },
+                        wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&resources.fallback_lut_view) },
+                        wgpu::BindGroupEntry { binding: 6, resource: resources.fallback_scalar_buf.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(resources.fallback_matcap_view.as_ref().unwrap_or(&resources.fallback_texture.view)) },
+                        wgpu::BindGroupEntry { binding: 8, resource: resources.fallback_face_color_buf.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 9, resource: resources.fallback_warp_buf.as_entire_binding() },
+                    ],
+                });
+                self.wireframe_uniform_bufs.push(buf);
+                self.wireframe_bind_groups.push(bg);
+            }
+
+            // Write each item's uniform into its dedicated buffer.
+            for (i, uniform) in wireframe_uniforms.iter().enumerate() {
+                queue.write_buffer(
+                    &self.wireframe_uniform_bufs[i],
+                    0,
+                    bytemuck::cast_slice(std::slice::from_ref(uniform)),
                 );
             }
         }

@@ -146,7 +146,7 @@ impl FrameData {
 /// ~90 lines of rendering code while satisfying Rust's lifetime invariance
 /// on `&mut RenderPass<'a>`.
 macro_rules! emit_draw_calls {
-    ($resources:expr, $render_pass:expr, $frame:expr, $use_instancing:expr, $batches:expr, $camera_bg:expr, $grid_bg:expr, $compute_filter_results:expr, $slot:expr) => {{
+    ($resources:expr, $render_pass:expr, $frame:expr, $use_instancing:expr, $batches:expr, $camera_bg:expr, $grid_bg:expr, $compute_filter_results:expr, $slot:expr, $wireframe_bgs:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let frame = $frame;
@@ -157,6 +157,7 @@ macro_rules! emit_draw_calls {
         let batches: &[InstancedBatch] = $batches;
         let camera_bg: &wgpu::BindGroup = $camera_bg;
         let grid_bg: &wgpu::BindGroup = $grid_bg;
+        let wireframe_bind_groups: &[wgpu::BindGroup] = $wireframe_bgs;
 
         // Read scene items from the surface submission.
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
@@ -264,18 +265,21 @@ macro_rules! emit_draw_calls {
                         }
                     }
 
-                    // Wireframe mode fallback: draw per-object.
-                    // mesh.object_bind_group (group 1) already contains the object uniform
-                    // and fallback textures : no separate group 2 needed.
+                    // Wireframe mode fallback: draw per-object using per-item bind
+                    // groups so that items sharing a MeshId each get their own uniform.
                     if frame.viewport.wireframe_mode {
+                        let mut wf_idx = 0usize;
                         for item in scene_items {
                             if !item.visible { continue; }
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else { continue };
                             render_pass.set_pipeline(&resources.wireframe_pipeline);
-                            render_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
+                            let bg = wireframe_bind_groups.get(wf_idx)
+                                .unwrap_or(&mesh.object_bind_group);
+                            render_pass.set_bind_group(1, bg, &[]);
                             render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             render_pass.set_index_buffer(mesh.edge_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                             render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
+                            wf_idx += 1;
                         }
                     } else {
                         for item in &excluded_items {
