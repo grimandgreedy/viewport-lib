@@ -2181,6 +2181,208 @@ impl ViewportRenderer {
                     bind_group,
                 });
             }
+
+            // Polyline outline buffers: point sprite discs at node positions.
+            for item in &frame.scene.polylines {
+                if !item.selected || item.positions.is_empty() {
+                    continue;
+                }
+
+                let pixel_radius = item.line_width.max(2.0);
+
+                let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("polyline_outline_pos_buf"),
+                    contents: bytemuck::cast_slice(item.positions.as_slice()),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+
+                let uniform = SplatOutlineMaskUniform {
+                    model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+                    viewport_w: vp_w,
+                    viewport_h: vp_h,
+                    pixel_radius,
+                    _pad: 0.0,
+                };
+                let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("polyline_outline_uniform_buf"),
+                    contents: bytemuck::cast_slice(&[uniform]),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("polyline_outline_bg"),
+                    layout: &self.resources.outline_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buf.as_entire_binding(),
+                    }],
+                });
+
+                splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
+                    position_buf,
+                    instance_count: item.positions.len() as u32,
+                    _uniform_buf: uniform_buf,
+                    bind_group,
+                });
+            }
+
+            // Sprite outline buffers: point sprite discs at sprite positions.
+            for item in &frame.scene.sprite_items {
+                if !item.selected || item.positions.is_empty() {
+                    continue;
+                }
+
+                let pixel_radius = match item.size_mode {
+                    crate::renderer::types::SpriteSizeMode::ScreenSpace => {
+                        (item.default_size * 0.5).max(2.0)
+                    }
+                    crate::renderer::types::SpriteSizeMode::WorldSpace => {
+                        // World-space sprites vary with distance; use a fixed
+                        // disc radius that gives a reasonable outline.
+                        8.0
+                    }
+                };
+
+                let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("sprite_outline_pos_buf"),
+                    contents: bytemuck::cast_slice(item.positions.as_slice()),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+
+                let uniform = SplatOutlineMaskUniform {
+                    model: item.model,
+                    viewport_w: vp_w,
+                    viewport_h: vp_h,
+                    pixel_radius,
+                    _pad: 0.0,
+                };
+                let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("sprite_outline_uniform_buf"),
+                    contents: bytemuck::cast_slice(&[uniform]),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("sprite_outline_bg"),
+                    layout: &self.resources.outline_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buf.as_entire_binding(),
+                    }],
+                });
+
+                splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
+                    position_buf,
+                    instance_count: item.positions.len() as u32,
+                    _uniform_buf: uniform_buf,
+                    bind_group,
+                });
+            }
+
+            // Streamtube / Tube / Ribbon outline buffers: point sprite discs at
+            // control point positions.
+            let curve_sets: Vec<(&[[f32; 3]], f32)> = frame
+                .scene
+                .streamtube_items
+                .iter()
+                .filter(|s| s.selected && !s.positions.is_empty())
+                .map(|s| (s.positions.as_slice(), s.radius * 16.0))
+                .chain(
+                    frame
+                        .scene
+                        .tube_items
+                        .iter()
+                        .filter(|s| s.selected && !s.positions.is_empty())
+                        .map(|s| (s.positions.as_slice(), s.radius * 16.0)),
+                )
+                .chain(
+                    frame
+                        .scene
+                        .ribbon_items
+                        .iter()
+                        .filter(|s| s.selected && !s.positions.is_empty())
+                        .map(|s| (s.positions.as_slice(), s.width * 8.0)),
+                )
+                .collect();
+
+            for (positions, pixel_radius) in curve_sets {
+                let pixel_radius = pixel_radius.max(4.0);
+
+                let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("curve_outline_pos_buf"),
+                    contents: bytemuck::cast_slice(positions),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+
+                let uniform = SplatOutlineMaskUniform {
+                    model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+                    viewport_w: vp_w,
+                    viewport_h: vp_h,
+                    pixel_radius,
+                    _pad: 0.0,
+                };
+                let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("curve_outline_uniform_buf"),
+                    contents: bytemuck::cast_slice(&[uniform]),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("curve_outline_bg"),
+                    layout: &self.resources.outline_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buf.as_entire_binding(),
+                    }],
+                });
+
+                splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
+                    position_buf,
+                    instance_count: positions.len() as u32,
+                    _uniform_buf: uniform_buf,
+                    bind_group,
+                });
+            }
+
+            // Tensor glyph outline buffers: point sprite discs at tensor center positions.
+            for item in &frame.scene.tensor_glyphs {
+                if !item.selected || item.positions.is_empty() {
+                    continue;
+                }
+
+                let pixel_radius = (item.scale * 8.0).max(4.0);
+
+                let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("tensor_glyph_outline_pos_buf"),
+                    contents: bytemuck::cast_slice(item.positions.as_slice()),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+
+                let uniform = SplatOutlineMaskUniform {
+                    model: item.model,
+                    viewport_w: vp_w,
+                    viewport_h: vp_h,
+                    pixel_radius,
+                    _pad: 0.0,
+                };
+                let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("tensor_glyph_outline_uniform_buf"),
+                    contents: bytemuck::cast_slice(&[uniform]),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("tensor_glyph_outline_bg"),
+                    layout: &self.resources.outline_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buf.as_entire_binding(),
+                    }],
+                });
+
+                splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
+                    position_buf,
+                    instance_count: item.positions.len() as u32,
+                    _uniform_buf: uniform_buf,
+                    bind_group,
+                });
+            }
         }
 
         // Volume outline: record indices of selected volumes so the mask pass can

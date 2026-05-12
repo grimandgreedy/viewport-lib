@@ -381,6 +381,8 @@ pub struct TensorGlyphItem {
     pub model: [[f32; 4]; 4],
     /// Unique ID for picking. 0 = not pickable.
     pub id: u64,
+    /// Whether this tensor glyph set is selected at object level. Default: false.
+    pub selected: bool,
 }
 
 impl Default for TensorGlyphItem {
@@ -395,6 +397,7 @@ impl Default for TensorGlyphItem {
             colormap_id: None,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             id: 0,
+            selected: false,
         }
     }
 }
@@ -549,6 +552,10 @@ pub struct PolylineItem {
     pub edge_vectors: Vec<[f32; 3]>,
     /// Scale applied to generated arrow glyphs from `node_vectors`/`edge_vectors`.
     pub vector_scale: f32,
+    /// Whether this polyline set is selected at object level. When true and
+    /// `InteractionFrame::outline_selected` is set, the renderer draws a smooth
+    /// outline ring around the node positions. Default: false.
+    pub selected: bool,
 }
 
 impl Default for PolylineItem {
@@ -569,6 +576,7 @@ impl Default for PolylineItem {
             node_vectors: Vec::new(),
             edge_vectors: Vec::new(),
             vector_scale: 1.0,
+            selected: false,
         }
     }
 }
@@ -623,6 +631,8 @@ pub struct StreamtubeItem {
     pub color: [f32; 4],
     /// Unique ID (reserved for future picking support).  Default: `0`.
     pub id: u64,
+    /// Whether this streamtube set is selected at object level. Default: false.
+    pub selected: bool,
 }
 
 impl Default for StreamtubeItem {
@@ -633,6 +643,7 @@ impl Default for StreamtubeItem {
             radius: 0.05,
             color: [1.0, 1.0, 1.0, 1.0],
             id: 0,
+            selected: false,
         }
     }
 }
@@ -671,6 +682,8 @@ pub struct TubeItem {
     pub color: [f32; 4],
     /// Unique ID (reserved for picking). Default: 0.
     pub id: u64,
+    /// Whether this tube set is selected at object level. Default: false.
+    pub selected: bool,
 }
 
 impl Default for TubeItem {
@@ -686,6 +699,7 @@ impl Default for TubeItem {
             colormap_id: None,
             color: [1.0, 1.0, 1.0, 1.0],
             id: 0,
+            selected: false,
         }
     }
 }
@@ -724,6 +738,8 @@ pub struct RibbonItem {
     pub color: [f32; 4],
     /// Unique ID (reserved for picking). Default: 0.
     pub id: u64,
+    /// Whether this ribbon set is selected at object level. Default: false.
+    pub selected: bool,
 }
 
 impl Default for RibbonItem {
@@ -739,6 +755,7 @@ impl Default for RibbonItem {
             colormap_id: None,
             color: [1.0, 1.0, 1.0, 1.0],
             id: 0,
+            selected: false,
         }
     }
 }
@@ -1286,6 +1303,10 @@ pub struct SpriteItem {
     pub depth_write: bool,
     /// Picking ID. `0` = not pickable.
     pub id: u64,
+    /// Whether this sprite set is selected at object level. When true and
+    /// `InteractionFrame::outline_selected` is set, the renderer draws a smooth
+    /// outline ring around the sprite positions. Default: false.
+    pub selected: bool,
 }
 
 impl Default for SpriteItem {
@@ -1303,6 +1324,7 @@ impl Default for SpriteItem {
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             depth_write: false,
             id: 0,
+            selected: false,
         }
     }
 }

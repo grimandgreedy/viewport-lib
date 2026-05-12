@@ -11,6 +11,10 @@
     - Volumes now show an object-level outline when selected. Set `VolumeItem::selected = true`; the renderer ray-marches the volume into the outline mask so the outline hugs the actual visible silhouette rather than the bounding box.
     - Volume meshes now forward their selection state automatically. Set `VolumeMeshItem::selected = true` and the outline pass picks it up without manually flagging the underlying `SceneRenderItem`.
     - Glyphs now show an object-level outline when selected. Set `GlyphItem::selected = true`; the renderer draws point-sprite discs at glyph positions using the same pipeline as the splat and point cloud outlines.
+    - Polylines now show an object-level outline when selected. Set `PolylineItem::selected = true`.
+    - Sprites now show an object-level outline when selected. Set `SpriteItem::selected = true`.
+    - Streamtubes, tubes, and ribbons now show an object-level outline when selected. Set `selected = true` on any of the three item types.
+    - Tensor glyphs now show an object-level outline when selected. Set `TensorGlyphItem::selected = true`.
 - `VolumeMeshItem`: a render item for opaque volume meshes that retains cell-level identity after upload. Wraps the `MeshId` and a face-to-cell mapping produced by `upload_volume_mesh_data`.
 - Unified picking: a single call now dispatches across all item types in the scene, controlled by a mask specifying what level of detail you want back -- whole objects, mesh faces, or individual point-like elements (vertices, cloud points, cells, voxels, splats) across all participating types at once. The renderer handles dispatch internally from the last rendered frame; no per-type dispatch is needed in host code.
     - The mask uses dimensional groups (object, point-like, edge-like, face-like) for the common cases, with individual element-type bits available when finer control is needed -- for example including mesh vertices but not volume cells.
