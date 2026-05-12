@@ -29,6 +29,33 @@ fn strip_for_segment(seg_idx: u32, strip_lengths: &[u32]) -> u32 {
     strip_lengths.len().saturating_sub(1) as u32
 }
 
+/// Build a flat list of segment midpoints ordered by global segment index.
+///
+/// Shared by polyline, streamtube, tube, and ribbon click picking.
+/// The index into the returned slice is the global segment index for that item.
+fn build_segment_midpoints(positions: &[[f32; 3]], strip_lengths: &[u32]) -> Vec<[f32; 3]> {
+    let mut midpoints = Vec::new();
+    if strip_lengths.is_empty() {
+        for j in 0..positions.len().saturating_sub(1) {
+            let a = glam::Vec3::from(positions[j]);
+            let b = glam::Vec3::from(positions[j + 1]);
+            midpoints.push(((a + b) * 0.5).to_array());
+        }
+    } else {
+        let mut node_off = 0usize;
+        for &slen in strip_lengths {
+            let slen = slen as usize;
+            for j in 0..slen.saturating_sub(1) {
+                let a = glam::Vec3::from(positions[node_off + j]);
+                let b = glam::Vec3::from(positions[node_off + j + 1]);
+                midpoints.push(((a + b) * 0.5).to_array());
+            }
+            node_off += slen;
+        }
+    }
+    midpoints
+}
+
 // ---------------------------------------------------------------------------
 // PickRectResult
 // ---------------------------------------------------------------------------
@@ -516,26 +543,7 @@ impl ViewportRenderer {
                 if item.id == 0 || item.positions.is_empty() {
                     continue;
                 }
-                // Build midpoints of all segments, ordered globally across strips.
-                let mut midpoints: Vec<[f32; 3]> = Vec::new();
-                if item.strip_lengths.is_empty() {
-                    for j in 0..item.positions.len().saturating_sub(1) {
-                        let a = glam::Vec3::from(item.positions[j]);
-                        let b = glam::Vec3::from(item.positions[j + 1]);
-                        midpoints.push(((a + b) * 0.5).to_array());
-                    }
-                } else {
-                    let mut node_off = 0usize;
-                    for &slen in &item.strip_lengths {
-                        let slen = slen as usize;
-                        for j in 0..slen.saturating_sub(1) {
-                            let a = glam::Vec3::from(item.positions[node_off + j]);
-                            let b = glam::Vec3::from(item.positions[node_off + j + 1]);
-                            midpoints.push(((a + b) * 0.5).to_array());
-                        }
-                        node_off += slen;
-                    }
-                }
+                let midpoints = build_segment_midpoints(&item.positions, &item.strip_lengths);
                 if midpoints.is_empty() {
                     continue;
                 }
@@ -559,6 +567,94 @@ impl ViewportRenderer {
                             hit.sub_object = Some(SubObjectRef::Strip(
                                 strip_for_segment(idx, &item.strip_lengths),
                             ));
+                        }
+                    } else {
+                        hit.sub_object = None;
+                    }
+                    consider(toi, hit);
+                }
+            }
+        }
+
+        // 9. Streamtube / tube / ribbon segment picks (SEGMENT, STRIP, or OBJECT fallback).
+        if wants_segment || wants_strip || wants_object {
+            // Convert a world-space radius at a reference point to a screen-pixel threshold.
+            let world_r_to_px = |ref_world: glam::Vec3, world_r: f32| -> f32 {
+                let p0 = view_proj * ref_world.extend(1.0);
+                let p1 = view_proj * (ref_world + glam::Vec3::X * world_r).extend(1.0);
+                if p0.w.abs() > 1e-6 && p1.w.abs() > 1e-6 {
+                    let n0 = glam::Vec2::new(p0.x, p0.y) / p0.w;
+                    let n1 = glam::Vec2::new(p1.x, p1.y) / p1.w;
+                    ((n1 - n0).length() * 0.5 * viewport_size.x.max(viewport_size.y)).max(4.0)
+                } else {
+                    (world_r * 100.0_f32).max(4.0)
+                }
+            };
+
+            for item in &self.pick_streamtube_items {
+                if item.id == 0 || item.positions.is_empty() { continue; }
+                let midpoints = build_segment_midpoints(&item.positions, &item.strip_lengths);
+                if midpoints.is_empty() { continue; }
+                let radius_px = world_r_to_px(glam::Vec3::from(midpoints[0]), item.radius.max(0.01));
+                if let Some(mut hit) = pick_gaussian_splat_cpu(
+                    click_pos, item.id, &midpoints, glam::Mat4::IDENTITY, view_proj, viewport_size, radius_px,
+                ) {
+                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
+                    if wants_segment {
+                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
+                            hit.sub_object = Some(SubObjectRef::Segment(idx));
+                        }
+                    } else if wants_strip {
+                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
+                            hit.sub_object = Some(SubObjectRef::Strip(strip_for_segment(idx, &item.strip_lengths)));
+                        }
+                    } else {
+                        hit.sub_object = None;
+                    }
+                    consider(toi, hit);
+                }
+            }
+
+            for item in &self.pick_tube_items {
+                if item.id == 0 || item.positions.is_empty() { continue; }
+                let midpoints = build_segment_midpoints(&item.positions, &item.strip_lengths);
+                if midpoints.is_empty() { continue; }
+                let radius_px = world_r_to_px(glam::Vec3::from(midpoints[0]), item.radius.max(0.01));
+                if let Some(mut hit) = pick_gaussian_splat_cpu(
+                    click_pos, item.id, &midpoints, glam::Mat4::IDENTITY, view_proj, viewport_size, radius_px,
+                ) {
+                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
+                    if wants_segment {
+                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
+                            hit.sub_object = Some(SubObjectRef::Segment(idx));
+                        }
+                    } else if wants_strip {
+                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
+                            hit.sub_object = Some(SubObjectRef::Strip(strip_for_segment(idx, &item.strip_lengths)));
+                        }
+                    } else {
+                        hit.sub_object = None;
+                    }
+                    consider(toi, hit);
+                }
+            }
+
+            for item in &self.pick_ribbon_items {
+                if item.id == 0 || item.positions.is_empty() { continue; }
+                let midpoints = build_segment_midpoints(&item.positions, &item.strip_lengths);
+                if midpoints.is_empty() { continue; }
+                let radius_px = world_r_to_px(glam::Vec3::from(midpoints[0]), item.width.max(0.01));
+                if let Some(mut hit) = pick_gaussian_splat_cpu(
+                    click_pos, item.id, &midpoints, glam::Mat4::IDENTITY, view_proj, viewport_size, radius_px,
+                ) {
+                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
+                    if wants_segment {
+                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
+                            hit.sub_object = Some(SubObjectRef::Segment(idx));
+                        }
+                    } else if wants_strip {
+                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
+                            hit.sub_object = Some(SubObjectRef::Strip(strip_for_segment(idx, &item.strip_lengths)));
                         }
                     } else {
                         hit.sub_object = None;
@@ -1023,6 +1119,65 @@ impl ViewportRenderer {
                     }
                 }
 
+                if wants_strip {
+                    for s in strips_hit {
+                        result.elements.push((id, SubObjectRef::Strip(s)));
+                    }
+                }
+                if wants_object && item_hit {
+                    result.objects.push(id);
+                }
+            }
+        }
+
+        // 8. Streamtube / tube / ribbon segment / strip / object rect picks.
+        if wants_segment || wants_strip || wants_object {
+            let curve_iter = self.pick_streamtube_items.iter()
+                .map(|it| (it.id, it.positions.as_slice(), it.strip_lengths.as_slice()))
+                .chain(self.pick_tube_items.iter()
+                    .map(|it| (it.id, it.positions.as_slice(), it.strip_lengths.as_slice())))
+                .chain(self.pick_ribbon_items.iter()
+                    .map(|it| (it.id, it.positions.as_slice(), it.strip_lengths.as_slice())));
+
+            for (id, positions, strip_lengths) in curve_iter {
+                if id == 0 || positions.is_empty() { continue; }
+                let mut item_hit = false;
+                let mut strips_hit = std::collections::HashSet::<u32>::new();
+                // Build indexed midpoints (midpoint world pos, global segment index).
+                let mut midpoints: Vec<([f32; 3], u32)> = Vec::new();
+                if strip_lengths.is_empty() {
+                    for j in 0..positions.len().saturating_sub(1) {
+                        let a = glam::Vec3::from(positions[j]);
+                        let b = glam::Vec3::from(positions[j + 1]);
+                        midpoints.push((((a + b) * 0.5).to_array(), j as u32));
+                    }
+                } else {
+                    let mut node_off = 0usize;
+                    let mut seg_off = 0u32;
+                    for &slen in strip_lengths {
+                        let slen = slen as usize;
+                        for j in 0..slen.saturating_sub(1) {
+                            let a = glam::Vec3::from(positions[node_off + j]);
+                            let b = glam::Vec3::from(positions[node_off + j + 1]);
+                            midpoints.push((((a + b) * 0.5).to_array(), seg_off + j as u32));
+                        }
+                        seg_off += slen.saturating_sub(1) as u32;
+                        node_off += slen;
+                    }
+                }
+                for (mid, seg_idx) in &midpoints {
+                    if let Some((sx, sy)) = project(view_proj, glam::Vec3::from(*mid)) {
+                        if in_rect(sx, sy) {
+                            item_hit = true;
+                            if wants_segment {
+                                result.elements.push((id, SubObjectRef::Segment(*seg_idx)));
+                            } else if wants_strip {
+                                let s = strip_for_segment(*seg_idx, strip_lengths);
+                                strips_hit.insert(s);
+                            }
+                        }
+                    }
+                }
                 if wants_strip {
                     for s in strips_hit {
                         result.elements.push((id, SubObjectRef::Strip(s)));
