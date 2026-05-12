@@ -543,6 +543,7 @@ macro_rules! emit_outline_composite {
                 || !slot.volume_outline_indices.is_empty()
                 || !slot.glyph_outline_indices.is_empty()
                 || !slot.tensor_glyph_outline_indices.is_empty()
+                || !slot.sprite_outline_indices.is_empty()
             {
                 let composite_bg = slot.hdr.as_ref().map(|h| &h.outline_composite_bind_group);
                 let pipeline = resources.outline_composite_pipeline_msaa.as_ref()

@@ -8,8 +8,8 @@
 // Group 1: SplatOutlineMaskUniform (model matrix, viewport dims, pixel radius).
 //
 // Each splat position is one instance.  The vertex shader expands it to a
-// screen-space quad of size pixel_radius*2 x pixel_radius*2.  The fragment
-// shader discards corners to produce a disc.
+// screen-space quad.  Per-instance size comes from vertex attribute location 1.
+// The fragment shader discards corners to produce a disc.
 
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -23,7 +23,7 @@ struct SplatOutlineMaskUniform {
     model:        mat4x4<f32>, // 64 bytes
     viewport_w:   f32,         //  4 bytes
     viewport_h:   f32,         //  4 bytes
-    pixel_radius: f32,         //  4 bytes - half-side of the billboard quad in pixels
+    pixel_radius: f32,         //  4 bytes - unused, kept for layout compat
     _pad0:        f32,         //  4 bytes
     _pad1:        vec4<f32>,   // 16 bytes  (total: 96)
 };
@@ -51,6 +51,7 @@ struct VsOut {
 @vertex
 fn vs_main(
     @location(0)           position:     vec3<f32>,
+    @location(1)           inst_radius:  f32,
     @builtin(vertex_index) vertex_index: u32,
 ) -> VsOut {
     var out: VsOut;
@@ -61,7 +62,7 @@ fn vs_main(
     // Expand to a screen-space quad.  ndc_offset is scaled by w so the
     // perspective divide in the rasteriser produces the correct pixel offset.
     let corner      = quad_corner(vertex_index);
-    let ndc_offset  = corner * u.pixel_radius / vec2<f32>(u.viewport_w, u.viewport_h);
+    let ndc_offset  = corner * inst_radius / vec2<f32>(u.viewport_w, u.viewport_h);
     out.clip_pos = vec4<f32>(
         center.x + ndc_offset.x * center.w,
         center.y + ndc_offset.y * center.w,

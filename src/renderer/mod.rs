@@ -88,6 +88,8 @@ pub(crate) struct ViewportSlot {
     pub glyph_outline_indices: Vec<usize>,
     /// Indices into `tensor_glyph_gpu_data` for selected tensor glyph sets, rebuilt in prepare().
     pub tensor_glyph_outline_indices: Vec<usize>,
+    /// Indices into `sprite_gpu_data` for selected sprite sets, rebuilt in prepare().
+    pub sprite_outline_indices: Vec<usize>,
     /// Per-frame x-ray buffers for selected objects, rebuilt in prepare().
     pub xray_object_buffers: Vec<(crate::resources::mesh_store::MeshId, wgpu::Buffer, wgpu::BindGroup)>,
     /// Per-frame constraint guide line buffers, rebuilt in prepare().
@@ -718,6 +720,7 @@ impl ViewportRenderer {
                 volume_outline_indices: Vec::new(),
                 glyph_outline_indices: Vec::new(),
                 tensor_glyph_outline_indices: Vec::new(),
+                sprite_outline_indices: Vec::new(),
                 xray_object_buffers: Vec::new(),
                 constraint_line_buffers: Vec::new(),
                 cap_buffers: Vec::new(),

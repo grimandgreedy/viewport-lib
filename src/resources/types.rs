@@ -842,6 +842,8 @@ pub(crate) struct SplatOutlineMaskUniform {
 pub(crate) struct SplatOutlineBuffers {
     /// Object-space positions as `[f32; 3]` per splat, instance-stepped.
     pub(crate) position_buf: wgpu::Buffer,
+    /// Per-instance pixel radius as `f32`, instance-stepped.
+    pub(crate) size_buf: wgpu::Buffer,
     /// Number of splats (= instance count).
     pub(crate) instance_count: u32,
     /// Uniform buffer kept alive for the duration of the frame.
@@ -2170,6 +2172,8 @@ pub struct ViewportGpuResources {
     pub(crate) sprite_pipeline_depth_write: Option<DualPipeline>,
     /// Bind group layout for sprite uniforms + texture + instance buffer (group 1).
     pub(crate) sprite_bgl: Option<wgpu::BindGroupLayout>,
+    /// Sprite outline mask pipeline (R8Unorm, no texture sampling). None until first selected sprite.
+    pub(crate) sprite_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
 
     // --- SciVis Phase B: point cloud and glyph pipelines (lazily created) ---
     /// Point cloud render pipeline. None until first point cloud is submitted.

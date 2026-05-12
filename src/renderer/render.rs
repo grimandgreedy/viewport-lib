@@ -2096,6 +2096,7 @@ impl ViewportRenderer {
             || !slot.volume_outline_indices.is_empty()
             || !slot.glyph_outline_indices.is_empty()
             || !slot.tensor_glyph_outline_indices.is_empty()
+            || !slot.sprite_outline_indices.is_empty()
         {
             // Prefer the HDR-format pipeline; fall back to LDR single-sample.
             let hdr_pipeline = self

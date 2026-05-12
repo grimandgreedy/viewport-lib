@@ -2018,6 +2018,7 @@ impl ViewportRenderer {
         let mut splat_outline_buffers: Vec<crate::resources::SplatOutlineBuffers> = Vec::new();
         let mut glyph_outline_indices: Vec<usize> = Vec::new();
         let mut tensor_glyph_outline_indices: Vec<usize> = Vec::new();
+        let mut sprite_outline_indices: Vec<usize> = Vec::new();
         if frame.interaction.outline_selected {
             let resources = &self.resources;
             let view_proj = frame.camera.render_camera.view_proj();
@@ -2045,10 +2046,13 @@ impl ViewportRenderer {
                 let world_radius = mean_max_scale * 3.0;
 
                 // Project the world radius to a pixel half-size at the cloud center.
+                // Use the camera right vector so the offset is always perpendicular
+                // to the view direction, avoiding the collapse when looking along X.
                 let model = glam::Mat4::from_cols_array_2d(&item.model);
                 let center_w = model.transform_point3(glam::Vec3::ZERO);
+                let cam_right = frame.camera.render_camera.view.row(0).truncate().normalize();
                 let p0_clip = view_proj * glam::Vec4::new(center_w.x, center_w.y, center_w.z, 1.0);
-                let p1_world = center_w + glam::Vec3::X * world_radius;
+                let p1_world = center_w + cam_right * world_radius;
                 let p1_clip = view_proj * glam::Vec4::new(p1_world.x, p1_world.y, p1_world.z, 1.0);
                 let pixel_radius = if p0_clip.w.abs() > 1e-6 && p1_clip.w.abs() > 1e-6 {
                     let p0_ndc = glam::Vec2::new(p0_clip.x, p0_clip.y) / p0_clip.w;
@@ -2086,9 +2090,18 @@ impl ViewportRenderer {
                     }],
                 });
 
+                let n = gpu_set.cpu_positions.len();
+                let size_data: Vec<f32> = vec![pixel_radius; n];
+                let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("splat_outline_size_buf"),
+                    contents: bytemuck::cast_slice(&size_data),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+
                 splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
                     position_buf,
-                    instance_count: gpu_set.cpu_positions.len() as u32,
+                    size_buf,
+                    instance_count: n as u32,
                     _uniform_buf: uniform_buf,
                     bind_group,
                 });
@@ -2131,9 +2144,18 @@ impl ViewportRenderer {
                     }],
                 });
 
+                let n = item.positions.len();
+                let size_data: Vec<f32> = vec![pixel_radius; n];
+                let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("pc_outline_size_buf"),
+                    contents: bytemuck::cast_slice(&size_data),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+
                 splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
                     position_buf,
-                    instance_count: item.positions.len() as u32,
+                    size_buf,
+                    instance_count: n as u32,
                     _uniform_buf: uniform_buf,
                     bind_group,
                 });
@@ -2190,64 +2212,31 @@ impl ViewportRenderer {
                     }],
                 });
 
+                let n = item.positions.len();
+                let size_data: Vec<f32> = vec![pixel_radius; n];
+                let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("polyline_outline_size_buf"),
+                    contents: bytemuck::cast_slice(&size_data),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+
                 splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
                     position_buf,
-                    instance_count: item.positions.len() as u32,
+                    size_buf,
+                    instance_count: n as u32,
                     _uniform_buf: uniform_buf,
                     bind_group,
                 });
             }
 
-            // Sprite outline buffers: point sprite discs at sprite positions.
-            for item in &frame.scene.sprite_items {
+            // Sprite outline indices: record which sprite GPU data entries are selected
+            // so the mask pass can render the actual billboard quads.
+            for (i, item) in frame.scene.sprite_items.iter().enumerate() {
                 if !item.selected || item.positions.is_empty() {
                     continue;
                 }
-
-                let pixel_radius = match item.size_mode {
-                    crate::renderer::types::SpriteSizeMode::ScreenSpace => {
-                        (item.default_size * 0.5).max(2.0)
-                    }
-                    crate::renderer::types::SpriteSizeMode::WorldSpace => {
-                        // World-space sprites vary with distance; use a fixed
-                        // disc radius that gives a reasonable outline.
-                        8.0
-                    }
-                };
-
-                let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("sprite_outline_pos_buf"),
-                    contents: bytemuck::cast_slice(item.positions.as_slice()),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-
-                let uniform = SplatOutlineMaskUniform {
-                    model: item.model,
-                    viewport_w: vp_w,
-                    viewport_h: vp_h,
-                    pixel_radius,
-                    _pad: [0.0; 5],
-                };
-                let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("sprite_outline_uniform_buf"),
-                    contents: bytemuck::cast_slice(&[uniform]),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("sprite_outline_bg"),
-                    layout: &self.resources.outline_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: uniform_buf.as_entire_binding(),
-                    }],
-                });
-
-                splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
-                    position_buf,
-                    instance_count: item.positions.len() as u32,
-                    _uniform_buf: uniform_buf,
-                    bind_group,
-                });
+                self.resources.ensure_sprite_outline_mask_pipeline(device);
+                sprite_outline_indices.push(i);
             }
 
             // Streamtube / Tube / Ribbon outline buffers: point sprite discs at
@@ -2306,9 +2295,18 @@ impl ViewportRenderer {
                     }],
                 });
 
+                let n = positions.len();
+                let size_data: Vec<f32> = vec![pixel_radius; n];
+                let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("curve_outline_size_buf"),
+                    contents: bytemuck::cast_slice(&size_data),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+
                 splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
                     position_buf,
-                    instance_count: positions.len() as u32,
+                    size_buf,
+                    instance_count: n as u32,
                     _uniform_buf: uniform_buf,
                     bind_group,
                 });
@@ -2603,6 +2601,7 @@ impl ViewportRenderer {
             slot.volume_outline_indices = volume_outline_indices;
             slot.glyph_outline_indices = glyph_outline_indices;
             slot.tensor_glyph_outline_indices = tensor_glyph_outline_indices;
+            slot.sprite_outline_indices = sprite_outline_indices;
             slot.xray_object_buffers = xray_object_buffers;
             slot.constraint_line_buffers = constraint_line_buffers;
             slot.clip_plane_fill_buffers = clip_plane_fill_buffers;
@@ -2671,7 +2670,8 @@ impl ViewportRenderer {
                 || !self.viewport_slots[vp_idx].splat_outline_buffers.is_empty()
                 || !self.viewport_slots[vp_idx].volume_outline_indices.is_empty()
                 || !self.viewport_slots[vp_idx].glyph_outline_indices.is_empty()
-                || !self.viewport_slots[vp_idx].tensor_glyph_outline_indices.is_empty())
+                || !self.viewport_slots[vp_idx].tensor_glyph_outline_indices.is_empty()
+                || !self.viewport_slots[vp_idx].sprite_outline_indices.is_empty())
         {
             let w = frame.camera.viewport_size[0] as u32;
             let h = frame.camera.viewport_size[1] as u32;
@@ -2716,10 +2716,14 @@ impl ViewportRenderer {
                 &slot_ref.glyph_outline_indices as *const Vec<usize>;
             let tensor_glyph_outline_idx_ptr =
                 &slot_ref.tensor_glyph_outline_indices as *const Vec<usize>;
+            let sprite_outline_idx_ptr =
+                &slot_ref.sprite_outline_indices as *const Vec<usize>;
             let glyph_gpu_ptr =
                 &self.glyph_gpu_data as *const Vec<crate::resources::GlyphGpuData>;
             let tensor_glyph_gpu_ptr =
                 &self.tensor_glyph_gpu_data as *const Vec<crate::resources::TensorGlyphGpuData>;
+            let sprite_gpu_ptr =
+                &self.sprite_gpu_data as *const Vec<crate::resources::SpriteGpuData>;
             let camera_bg_ptr = &slot_ref.camera_bind_group as *const wgpu::BindGroup;
             let slot_hdr = slot_ref.hdr.as_ref().unwrap();
             let mask_view_ptr = &slot_hdr.outline_mask_view as *const wgpu::TextureView;
@@ -2730,7 +2734,8 @@ impl ViewportRenderer {
             // no other code modifies these fields here.
             let (outlines, splat_outlines, vol_outline_indices,
                  glyph_outline_indices, tensor_glyph_outline_indices,
-                 glyph_gpu_data, tensor_glyph_gpu_data,
+                 sprite_outline_indices,
+                 glyph_gpu_data, tensor_glyph_gpu_data, sprite_gpu_data,
                  camera_bg, mask_view, color_view, depth_view, edge_bg) = unsafe {
                 (
                     &*outlines_ptr,
@@ -2738,8 +2743,10 @@ impl ViewportRenderer {
                     &*vol_outline_idx_ptr,
                     &*glyph_outline_idx_ptr,
                     &*tensor_glyph_outline_idx_ptr,
+                    &*sprite_outline_idx_ptr,
                     &*glyph_gpu_ptr,
                     &*tensor_glyph_gpu_ptr,
+                    &*sprite_gpu_ptr,
                     &*camera_bg_ptr,
                     &*mask_view_ptr,
                     &*color_view_ptr,
@@ -2806,6 +2813,7 @@ impl ViewportRenderer {
                 for splat in splat_outlines {
                     pass.set_bind_group(1, &splat.bind_group, &[]);
                     pass.set_vertex_buffer(0, splat.position_buf.slice(..));
+                    pass.set_vertex_buffer(1, splat.size_buf.slice(..));
                     pass.draw(0..6, 0..splat.instance_count);
                 }
 
@@ -2839,6 +2847,22 @@ impl ViewportRenderer {
                                 pass.set_vertex_buffer(0, tg.mesh_vertex_buffer.slice(..));
                                 pass.set_index_buffer(tg.mesh_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                                 pass.draw_indexed(0..tg.mesh_index_count, 0, 0..tg.instance_count);
+                            }
+                        }
+                    }
+                }
+
+                // Draw sprite billboards into the mask so the outline matches
+                // each sprite's actual quad shape and per-instance size.
+                if !sprite_outline_indices.is_empty() {
+                    if let Some(pipeline) = self.resources.sprite_outline_mask_pipeline.as_ref() {
+                        pass.set_pipeline(pipeline);
+                        for &idx in sprite_outline_indices {
+                            if let Some(sprite) = sprite_gpu_data.get(idx) {
+                                pass.set_bind_group(0, camera_bg, &[]);
+                                pass.set_bind_group(1, &sprite.bind_group, &[]);
+                                pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
+                                pass.draw(0..6, 0..sprite.sprite_count);
                             }
                         }
                     }

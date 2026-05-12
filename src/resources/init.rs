@@ -1707,15 +1707,25 @@ impl ViewportGpuResources {
                 include_str!("../shaders/splat_outline_mask.wgsl").into(),
             ),
         });
-        let splat_outline_vert_attrs = [wgpu::VertexAttribute {
+        let splat_outline_pos_attrs = [wgpu::VertexAttribute {
             offset: 0,
             shader_location: 0,
             format: wgpu::VertexFormat::Float32x3,
         }];
-        let splat_outline_vert_layout = wgpu::VertexBufferLayout {
+        let splat_outline_pos_layout = wgpu::VertexBufferLayout {
             array_stride: 12, // vec3<f32>
             step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &splat_outline_vert_attrs,
+            attributes: &splat_outline_pos_attrs,
+        };
+        let splat_outline_size_attrs = [wgpu::VertexAttribute {
+            offset: 0,
+            shader_location: 1,
+            format: wgpu::VertexFormat::Float32,
+        }];
+        let splat_outline_size_layout = wgpu::VertexBufferLayout {
+            array_stride: 4, // f32
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &splat_outline_size_attrs,
         };
         let splat_outline_mask_pipeline =
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1724,7 +1734,7 @@ impl ViewportGpuResources {
                 vertex: wgpu::VertexState {
                     module: &splat_outline_mask_shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[splat_outline_vert_layout],
+                    buffers: &[splat_outline_pos_layout, splat_outline_size_layout],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -2140,6 +2150,7 @@ impl ViewportGpuResources {
             sprite_pipeline: None,
             sprite_pipeline_depth_write: None,
             sprite_bgl: None,
+            sprite_outline_mask_pipeline: None,
             point_cloud_pipeline: None,
             glyph_pipeline: None,
             point_cloud_bgl: None,

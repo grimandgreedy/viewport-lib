@@ -282,4 +282,84 @@ impl ViewportGpuResources {
             _instance_buf: instance_buf,
         }
     }
+
+    /// Lazily create the sprite outline mask pipeline (R8Unorm, mask-only).
+    ///
+    /// Same bind group layout and vertex transform as the normal sprite pipeline but
+    /// outputs a flat mask value.  Must be called after `ensure_sprite_pipelines`.
+    pub(crate) fn ensure_sprite_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
+        if self.sprite_outline_mask_pipeline.is_some() {
+            return;
+        }
+        let bgl = self
+            .sprite_bgl
+            .as_ref()
+            .expect("ensure_sprite_pipelines must be called first");
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("sprite_outline_mask_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../shaders/sprite_outline_mask.wgsl").into(),
+            ),
+        });
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("sprite_outline_mask_pipeline_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, bgl],
+            push_constant_ranges: &[],
+        });
+
+        let vert_attrs = [wgpu::VertexAttribute {
+            offset: 0,
+            shader_location: 0,
+            format: wgpu::VertexFormat::Float32x3,
+        }];
+        let vertex_buffers = [wgpu::VertexBufferLayout {
+            array_stride: 12,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &vert_attrs,
+        }];
+
+        self.sprite_outline_mask_pipeline = Some(
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("sprite_outline_mask_pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &vertex_buffers,
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R8Unorm,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            }),
+        );
+    }
 }

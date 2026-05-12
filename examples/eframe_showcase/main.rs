@@ -2849,7 +2849,8 @@ impl App {
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.polyline_selected)
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.arrow_glyph_selected)
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.tensor_glyph_selected)
-            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.sprite_selected);
+            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.sprite_selected)
+            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.xo_sprite_selected);
         if scene_graph_outline {
             fd.interaction.outline_width_px = scene_graph_outline_width;
         }
@@ -2954,7 +2955,7 @@ impl App {
             if !self.pl_state.pc_positions.is_empty() {
                 let mut pc = PointCloudItem::default();
                 pc.positions = self.pl_state.pc_positions.clone();
-                pc.point_size = 6.0;
+                pc.point_size = 18.0;
                 pc.default_color = [0.5, 0.8, 1.0, 1.0];
                 pc.id = 100;
                 pc.selected = self.pl_state.pc_selected;
@@ -3102,6 +3103,18 @@ impl App {
                 s.depth_write   = true;
                 s.id            = 33;
                 s.selected      = self.pl_state.sprite_selected;
+                fd.scene.sprite_items.push(s);
+            }
+            if !self.pl_state.xo_sprite_positions.is_empty() {
+                let mut s = SpriteItem::default();
+                s.positions     = self.pl_state.xo_sprite_positions.clone();
+                s.sizes         = self.pl_state.xo_sprite_sizes.clone();
+                s.colors        = self.pl_state.xo_sprite_colors.clone();
+                s.default_color = [0.5, 0.5, 1.0, 1.0];
+                s.default_size  = 30.0;
+                s.depth_write   = true;
+                s.id            = 34;
+                s.selected      = self.pl_state.xo_sprite_selected;
                 fd.scene.sprite_items.push(s);
             }
         }

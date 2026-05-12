@@ -333,11 +333,18 @@ pub(crate) struct PlState {
     pub sprite_sizes:           Vec<f32>,
     /// Per-instance colors for the sprite arc.
     pub sprite_colors:          Vec<[f32; 4]>,
+    /// Positions for the noughts-and-crosses sprite set (pick_id=34).
+    pub xo_sprite_positions:    Vec<[f32; 3]>,
+    /// Per-instance sizes for the noughts-and-crosses set.
+    pub xo_sprite_sizes:        Vec<f32>,
+    /// Per-instance colors for the noughts-and-crosses set.
+    pub xo_sprite_colors:       Vec<[f32; 4]>,
     /// Object-level selection flags for new item types.
     pub polyline_selected:      bool,
     pub arrow_glyph_selected:   bool,
     pub tensor_glyph_selected:  bool,
     pub sprite_selected:        bool,
+    pub xo_sprite_selected:     bool,
 }
 
 impl Default for PlState {
@@ -383,10 +390,14 @@ impl Default for PlState {
             sprite_positions:       Vec::new(),
             sprite_sizes:           Vec::new(),
             sprite_colors:          Vec::new(),
+            xo_sprite_positions:    Vec::new(),
+            xo_sprite_sizes:        Vec::new(),
+            xo_sprite_colors:       Vec::new(),
             polyline_selected:      false,
             arrow_glyph_selected:   false,
             tensor_glyph_selected:  false,
             sprite_selected:        false,
+            xo_sprite_selected:     false,
         }
     }
 }
@@ -406,6 +417,7 @@ impl PlState {
         self.arrow_glyph_selected = false;
         self.tensor_glyph_selected = false;
         self.sprite_selected = false;
+        self.xo_sprite_selected = false;
         self.last_hit = None;
         self.hit_marker = None;
     }
@@ -423,6 +435,7 @@ impl PlState {
             31  => { self.arrow_glyph_selected = selected; true }
             32  => { self.tensor_glyph_selected = selected; true }
             33  => { self.sprite_selected = selected; true }
+            34  => { self.xo_sprite_selected = selected; true }
             _   => false,
         }
     }
@@ -439,6 +452,7 @@ impl PlState {
             31  => { self.arrow_glyph_selected = !self.arrow_glyph_selected; true }
             32  => { self.tensor_glyph_selected = !self.tensor_glyph_selected; true }
             33  => { self.sprite_selected = !self.sprite_selected; true }
+            34  => { self.xo_sprite_selected = !self.xo_sprite_selected; true }
             _   => false,
         }
     }
@@ -682,6 +696,31 @@ impl App {
             self.pl_state.sprite_positions = positions;
             self.pl_state.sprite_sizes = sizes;
             self.pl_state.sprite_colors = colors;
+        }
+
+        // --- Noughts and crosses sprites: alternating + and O at z=-6 (pick_id=34) ---
+        // A second sprite group with different shapes to verify outline matching.
+        {
+            let n = 6;
+            let x_start = -5.0_f32;
+            let x_step = 2.0_f32;
+            let mut positions = Vec::with_capacity(n);
+            let mut sizes = Vec::with_capacity(n);
+            let mut colors = Vec::with_capacity(n);
+            for i in 0..n {
+                positions.push([x_start + x_step * i as f32, 0.0, -6.0]);
+                // Alternate between small and large.
+                sizes.push(if i % 2 == 0 { 20.0 } else { 40.0 });
+                // Alternate cyan and magenta.
+                if i % 2 == 0 {
+                    colors.push([0.2, 0.9, 0.9, 1.0]);
+                } else {
+                    colors.push([0.9, 0.2, 0.9, 1.0]);
+                }
+            }
+            self.pl_state.xo_sprite_positions = positions;
+            self.pl_state.xo_sprite_sizes = sizes;
+            self.pl_state.xo_sprite_colors = colors;
         }
 
         self.pl_state.built = true;
