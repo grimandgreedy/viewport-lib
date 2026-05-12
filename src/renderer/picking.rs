@@ -1,6 +1,493 @@
 use super::*;
 
+// ---------------------------------------------------------------------------
+// PickRectResult
+// ---------------------------------------------------------------------------
+
+/// Result of a [`ViewportRenderer::pick_rect`] call.
+#[derive(Clone, Debug, Default)]
+pub struct PickRectResult {
+    /// IDs of whole items that have geometry inside the pick rect.
+    ///
+    /// Populated when [`crate::interaction::pick_mask::PickMask::OBJECT`] is set.
+    pub objects: Vec<u64>,
+    /// Sub-elements inside the pick rect as `(item_id, sub_object)` pairs.
+    ///
+    /// Populated when any sub-element bit is set in the mask. All entries
+    /// belong to the same geometric dimension when the mask is
+    /// dimension-homogeneous (the common case).
+    pub elements: Vec<(u64, crate::interaction::sub_object::SubObjectRef)>,
+}
+
+impl PickRectResult {
+    /// Returns `true` when no objects or elements were found.
+    pub fn is_empty(&self) -> bool {
+        self.objects.is_empty() && self.elements.is_empty()
+    }
+}
+
 impl ViewportRenderer {
+    // -----------------------------------------------------------------------
+    // Unified CPU pick : renderer.pick()
+    // -----------------------------------------------------------------------
+
+    /// Pick the nearest item or sub-element under `click_pos`.
+    ///
+    /// Dispatches across all item types retained from the last `prepare()` call.
+    /// The `mask` controls which item types and sub-element levels participate.
+    ///
+    /// Returns `None` if nothing matching the mask is under the cursor.
+    ///
+    /// # Arguments
+    /// * `click_pos`     - cursor position in viewport pixels (top-left origin)
+    /// * `viewport_size` - viewport width x height in pixels
+    /// * `view_proj`     - combined view x projection matrix from the last frame
+    /// * `mask`          - which item types and sub-element levels to include
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// if let Some(hit) = renderer.pick(cursor, vp_size, view_proj, PickMask::FACE) {
+    ///     println!("hit face {:?} on object {}", hit.sub_object, hit.id);
+    /// }
+    /// ```
+    pub fn pick(
+        &self,
+        click_pos: glam::Vec2,
+        viewport_size: glam::Vec2,
+        view_proj: glam::Mat4,
+        mask: crate::interaction::pick_mask::PickMask,
+    ) -> Option<crate::interaction::picking::PickHit> {
+        use crate::interaction::pick_mask::PickMask;
+        use crate::interaction::picking::{
+            screen_to_ray, pick_point_cloud_cpu, pick_gaussian_splat_cpu, PickHit,
+        };
+        use crate::interaction::sub_object::SubObjectRef;
+        use parry3d::math::{Pose, Vector};
+        use parry3d::query::{Ray, RayCast};
+
+        if viewport_size.x <= 0.0 || viewport_size.y <= 0.0 {
+            return None;
+        }
+
+        let view_proj_inv = view_proj.inverse();
+        let (ray_origin, ray_dir) = screen_to_ray(click_pos, viewport_size, view_proj_inv);
+
+        let wants_face   = mask.intersects(PickMask::FACE);
+        let wants_vertex = mask.intersects(PickMask::VERTEX);
+        let wants_cloud  = mask.intersects(PickMask::CLOUD_POINT);
+        let wants_splat  = mask.intersects(PickMask::SPLAT);
+        let wants_object = mask.intersects(PickMask::OBJECT);
+        let wants_mesh_sub = wants_face || wants_vertex || mask.intersects(PickMask::EDGE);
+
+        // (toi, hit) -- nearest hit so far across all types.
+        let mut best: Option<(f32, PickHit)> = None;
+
+        let mut consider = |toi: f32, hit: PickHit| {
+            if best.as_ref().map_or(true, |(bt, _)| toi < *bt) {
+                best = Some((toi, hit));
+            }
+        };
+
+        // 1. Surface mesh picks (FACE, VERTEX, EDGE, or OBJECT fallback).
+        if wants_mesh_sub || wants_object {
+            let ray = Ray::new(
+                Vector::new(ray_origin.x, ray_origin.y, ray_origin.z),
+                Vector::new(ray_dir.x, ray_dir.y, ray_dir.z),
+            );
+            for item in &self.pick_scene_items {
+                if !item.visible || item.pick_id == PickId::NONE {
+                    continue;
+                }
+                let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
+                    continue;
+                };
+                let (Some(positions), Some(indices)) = (&mesh.cpu_positions, &mesh.cpu_indices)
+                else {
+                    continue;
+                };
+
+                let model = glam::Mat4::from_cols_array_2d(&item.model);
+
+                // Bake the full model matrix into vertex positions so that
+                // non-uniform scale is handled correctly.
+                let verts: Vec<Vector> = positions
+                    .iter()
+                    .map(|p| {
+                        let wp = model.transform_point3(glam::Vec3::from(*p));
+                        Vector::new(wp.x, wp.y, wp.z)
+                    })
+                    .collect();
+
+                let tri_indices: Vec<[u32; 3]> = indices
+                    .chunks(3)
+                    .filter(|c| c.len() == 3)
+                    .map(|c| [c[0], c[1], c[2]])
+                    .collect();
+
+                if tri_indices.is_empty() {
+                    continue;
+                }
+
+                match parry3d::shape::TriMesh::new(verts, tri_indices) {
+                    Ok(trimesh) => {
+                        // Vertices are already in world space: use identity pose.
+                        let identity = Pose::identity();
+                        let Some(intersection) =
+                            trimesh.cast_ray_and_get_normal(&identity, &ray, f32::MAX, true)
+                        else {
+                            continue;
+                        };
+                        let toi = intersection.time_of_impact;
+                        let world_pos = ray_origin + ray_dir * toi;
+                        let normal = intersection.normal;
+
+                        let feature_sub = SubObjectRef::from_feature_id(intersection.feature);
+
+                        let sub_object = if wants_face {
+                            feature_sub
+                        } else if wants_vertex {
+                            // Convert face hit to nearest triangle corner.
+                            match feature_sub {
+                                Some(SubObjectRef::Face(face_raw)) => {
+                                    let n_tri = indices.len() / 3;
+                                    let face = if (face_raw as usize) >= n_tri {
+                                        face_raw as usize - n_tri
+                                    } else {
+                                        face_raw as usize
+                                    };
+                                    if face * 3 + 2 < indices.len() {
+                                        let vis = [
+                                            indices[face * 3] as usize,
+                                            indices[face * 3 + 1] as usize,
+                                            indices[face * 3 + 2] as usize,
+                                        ];
+                                        let (best_vi, _) = vis
+                                            .iter()
+                                            .map(|&i| {
+                                                let p = model.transform_point3(
+                                                    glam::Vec3::from(positions[i]),
+                                                );
+                                                (i, p.distance(world_pos))
+                                            })
+                                            .fold((vis[0], f32::MAX), |acc, (i, d)| {
+                                                if d < acc.1 { (i, d) } else { acc }
+                                            });
+                                        Some(SubObjectRef::Vertex(best_vi as u32))
+                                    } else {
+                                        None
+                                    }
+                                }
+                                other => other,
+                            }
+                        } else {
+                            // Object-only: no sub-element.
+                            None
+                        };
+
+                        #[allow(deprecated)]
+                        let hit = PickHit {
+                            id: item.pick_id.0,
+                            sub_object,
+                            world_pos,
+                            normal,
+                            triangle_index: u32::MAX,
+                            point_index: None,
+                            scalar_value: None,
+                        };
+                        consider(toi, hit);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            pick_id = item.pick_id.0,
+                            error = %e,
+                            "TriMesh build failed in renderer.pick()"
+                        );
+                    }
+                }
+            }
+        }
+
+        // 2. Volume mesh cell picks (CELL) -- stub: face_to_cell mapping is not
+        // retained in pick_scene_items. Cell-level picks will be wired in when
+        // volume mesh CPU data retention lands.
+
+        // 3. Point cloud picks (CLOUD_POINT or OBJECT fallback).
+        if wants_cloud || wants_object {
+            for item in &self.pick_point_cloud_items {
+                if item.id == 0 || item.positions.is_empty() {
+                    continue;
+                }
+                let radius_px = item.point_size.max(4.0);
+                if let Some(mut hit) = pick_point_cloud_cpu(
+                    click_pos,
+                    item.id,
+                    item,
+                    view_proj,
+                    viewport_size,
+                    radius_px,
+                ) {
+                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
+                    if !wants_cloud {
+                        hit.sub_object = None;
+                    }
+                    consider(toi, hit);
+                }
+            }
+        }
+
+        // 4. Volume voxel picks (VOXEL) -- stub: VolumeItem does not retain CPU
+        // scalar data in the pick cache. Voxel-level picks will be wired in
+        // when volume CPU data retention lands.
+
+        // 5. Gaussian splat picks (SPLAT or OBJECT fallback).
+        if wants_splat || wants_object {
+            for item in &self.pick_splat_items {
+                if item.pick_id == 0 {
+                    continue;
+                }
+                let Some(gpu_set) = self.resources.gaussian_splat_store.get(item.id.0) else {
+                    continue;
+                };
+                if gpu_set.cpu_positions.is_empty() {
+                    continue;
+                }
+                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                let radius_px = 8.0_f32;
+                if let Some(mut hit) = pick_gaussian_splat_cpu(
+                    click_pos,
+                    item.pick_id,
+                    &gpu_set.cpu_positions,
+                    model,
+                    view_proj,
+                    viewport_size,
+                    radius_px,
+                ) {
+                    // pick_gaussian_splat_cpu returns SubObjectRef::Point; remap to Splat.
+                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
+                    if wants_splat {
+                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
+                            hit.sub_object = Some(SubObjectRef::Splat(idx));
+                        }
+                    } else {
+                        hit.sub_object = None;
+                    }
+                    consider(toi, hit);
+                }
+            }
+        }
+
+        best.map(|(_, hit)| hit)
+    }
+
+    // -----------------------------------------------------------------------
+    // Unified CPU rect pick : renderer.pick_rect()
+    // -----------------------------------------------------------------------
+
+    /// Pick all items or sub-elements inside a screen-space rectangle.
+    ///
+    /// Dispatches across all item types retained from the last `prepare()` call.
+    /// The `mask` controls which item types and sub-element levels participate.
+    ///
+    /// # Arguments
+    /// * `rect_min`      - top-left corner of the selection rect in viewport pixels
+    /// * `rect_max`      - bottom-right corner of the selection rect in viewport pixels
+    /// * `viewport_size` - viewport width x height in pixels
+    /// * `view_proj`     - combined view x projection matrix from the last frame
+    /// * `mask`          - which item types and sub-element levels to include
+    pub fn pick_rect(
+        &self,
+        rect_min: glam::Vec2,
+        rect_max: glam::Vec2,
+        viewport_size: glam::Vec2,
+        view_proj: glam::Mat4,
+        mask: crate::interaction::pick_mask::PickMask,
+    ) -> PickRectResult {
+        use crate::interaction::pick_mask::PickMask;
+        use crate::interaction::sub_object::SubObjectRef;
+
+        let mut result = PickRectResult::default();
+
+        if viewport_size.x <= 0.0 || viewport_size.y <= 0.0 {
+            return result;
+        }
+
+        let wants_face   = mask.intersects(PickMask::FACE);
+        let wants_vertex = mask.intersects(PickMask::VERTEX);
+        let wants_cloud  = mask.intersects(PickMask::CLOUD_POINT);
+        let wants_splat  = mask.intersects(PickMask::SPLAT);
+        let wants_object = mask.intersects(PickMask::OBJECT);
+
+        // Project a local-space point through mvp and return screen coords,
+        // or None if the point is behind the camera.
+        let project = |mvp: glam::Mat4, local: glam::Vec3| -> Option<(f32, f32)> {
+            let clip = mvp * local.extend(1.0);
+            if clip.w <= 0.0 {
+                return None;
+            }
+            let sx = (clip.x / clip.w + 1.0) * 0.5 * viewport_size.x;
+            let sy = (1.0 - clip.y / clip.w) * 0.5 * viewport_size.y;
+            Some((sx, sy))
+        };
+
+        let in_rect = |sx: f32, sy: f32| -> bool {
+            sx >= rect_min.x && sx <= rect_max.x && sy >= rect_min.y && sy <= rect_max.y
+        };
+
+        // 1. Surface mesh picks (FACE, VERTEX, or OBJECT).
+        if wants_face || wants_vertex || wants_object {
+            for item in &self.pick_scene_items {
+                if !item.visible || item.pick_id == PickId::NONE {
+                    continue;
+                }
+                let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
+                    continue;
+                };
+                let (Some(positions), Some(indices)) =
+                    (&mesh.cpu_positions, &mesh.cpu_indices)
+                else {
+                    continue;
+                };
+
+                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                let mvp = view_proj * model;
+                let id = item.pick_id.0;
+                let mut item_hit = false;
+
+                if wants_face {
+                    for (tri_idx, chunk) in indices.chunks(3).enumerate() {
+                        if chunk.len() < 3 {
+                            continue;
+                        }
+                        let [i0, i1, i2] =
+                            [chunk[0] as usize, chunk[1] as usize, chunk[2] as usize];
+                        if i0 >= positions.len()
+                            || i1 >= positions.len()
+                            || i2 >= positions.len()
+                        {
+                            continue;
+                        }
+                        let centroid = (glam::Vec3::from(positions[i0])
+                            + glam::Vec3::from(positions[i1])
+                            + glam::Vec3::from(positions[i2]))
+                            / 3.0;
+                        if let Some((sx, sy)) = project(mvp, centroid) {
+                            if in_rect(sx, sy) {
+                                result.elements.push((id, SubObjectRef::Face(tri_idx as u32)));
+                                item_hit = true;
+                            }
+                        }
+                    }
+                } else if wants_vertex {
+                    for (vi, pos) in positions.iter().enumerate() {
+                        if let Some((sx, sy)) = project(mvp, glam::Vec3::from(*pos)) {
+                            if in_rect(sx, sy) {
+                                result.elements.push((id, SubObjectRef::Vertex(vi as u32)));
+                                item_hit = true;
+                            }
+                        }
+                    }
+                } else {
+                    // OBJECT only: mark as hit if any triangle centroid is in rect.
+                    'tri_scan: for chunk in indices.chunks(3) {
+                        if chunk.len() < 3 {
+                            continue;
+                        }
+                        let [i0, i1, i2] =
+                            [chunk[0] as usize, chunk[1] as usize, chunk[2] as usize];
+                        if i0 >= positions.len()
+                            || i1 >= positions.len()
+                            || i2 >= positions.len()
+                        {
+                            continue;
+                        }
+                        let centroid = (glam::Vec3::from(positions[i0])
+                            + glam::Vec3::from(positions[i1])
+                            + glam::Vec3::from(positions[i2]))
+                            / 3.0;
+                        if let Some((sx, sy)) = project(mvp, centroid) {
+                            if in_rect(sx, sy) {
+                                item_hit = true;
+                                break 'tri_scan;
+                            }
+                        }
+                    }
+                }
+
+                if wants_object && item_hit {
+                    result.objects.push(id);
+                }
+            }
+        }
+
+        // 2. Volume mesh cell picks (CELL) -- stub: face_to_cell not in cache.
+
+        // 3. Point cloud picks (CLOUD_POINT or OBJECT).
+        if wants_cloud || wants_object {
+            for item in &self.pick_point_cloud_items {
+                if item.id == 0 || item.positions.is_empty() {
+                    continue;
+                }
+                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                let mvp = view_proj * model;
+                let id = item.id;
+                let mut item_hit = false;
+
+                for (pt_idx, pos) in item.positions.iter().enumerate() {
+                    if let Some((sx, sy)) = project(mvp, glam::Vec3::from(*pos)) {
+                        if in_rect(sx, sy) {
+                            if wants_cloud {
+                                result.elements.push((id, SubObjectRef::Point(pt_idx as u32)));
+                            }
+                            item_hit = true;
+                        }
+                    }
+                }
+
+                if wants_object && item_hit {
+                    result.objects.push(id);
+                }
+            }
+        }
+
+        // 4. Volume voxel picks (VOXEL) -- stub: VolumeItem CPU data not in cache.
+
+        // 5. Gaussian splat picks (SPLAT or OBJECT).
+        if wants_splat || wants_object {
+            for item in &self.pick_splat_items {
+                if item.pick_id == 0 {
+                    continue;
+                }
+                let Some(gpu_set) = self.resources.gaussian_splat_store.get(item.id.0) else {
+                    continue;
+                };
+                if gpu_set.cpu_positions.is_empty() {
+                    continue;
+                }
+                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                let mvp = view_proj * model;
+                let id = item.pick_id;
+                let mut item_hit = false;
+
+                for (i, pos) in gpu_set.cpu_positions.iter().enumerate() {
+                    if let Some((sx, sy)) = project(mvp, glam::Vec3::from(*pos)) {
+                        if in_rect(sx, sy) {
+                            if wants_splat {
+                                result.elements.push((id, SubObjectRef::Splat(i as u32)));
+                            }
+                            item_hit = true;
+                        }
+                    }
+                }
+
+                if wants_object && item_hit {
+                    result.objects.push(id);
+                }
+            }
+        }
+
+        result
+    }
+
     // -----------------------------------------------------------------------
     // Phase K : GPU object-ID picking
     // -----------------------------------------------------------------------

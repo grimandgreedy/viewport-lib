@@ -3,15 +3,18 @@
 ## [0.13.3] (dev, current, unreleased)
 
 ### Features
-- New pick helpers extending them to the full range of scene items.
-    - `pick_volume_rect`: box selection for structured scalar volumes. Returns all voxels whose centers project into the screen-space rectangle.
-    - `pick_gaussian_splat_cpu` / `pick_gaussian_splat_rect`: single-click and box selection for Gaussian splat sets.
-    - `pick_transparent_volume_mesh_cpu` / `pick_transparent_volume_mesh_rect`: ray-pick and box selection for unstructured volume meshes. Works independently of the rendering path -- no GPU resource required.
-    - `nearest_vertex_on_hit`: given a `PickHit` from a face-level ray pick, returns the closest vertex of the hit triangle as a `SubObjectRef::Vertex`. Eliminates the need for inline nearest-vertex math in host code.
-- `SubObjectRef::Cell(u32)`: new variant identifying a cell in a `VolumeMeshData` by its index in the cells array. Produced by the transparent volume mesh pick functions.
-- `CellSelectionInfo` and `SubSelectionRef::with_cells`: cell edge highlights are now handled inside the library. Pass a `CellSelectionInfo` (positions and cell connectivity from the `VolumeMeshData`) to `SubSelectionRef::with_cells` and selected cells will draw the same gold edge-outline highlight as selected voxels, faces, and vertices. Supports tet, pyramid, wedge, and hex cells.
+- `VolumeMeshItem`: a render item for opaque volume meshes that retains cell-level identity after upload. Wraps the `MeshId` and a face-to-cell mapping produced by `upload_volume_mesh_data`.
+- Unified picking: a single call now dispatches across all item types in the scene, controlled by a mask specifying what level of detail you want back -- whole objects, mesh faces, or individual point-like elements (vertices, cloud points, cells, voxels, splats) across all participating types at once. The renderer handles dispatch internally from the last rendered frame; no per-type dispatch is needed in host code.
+    - The mask uses dimensional groups (object, point-like, edge-like, face-like) for the common cases, with individual element-type bits available when finer control is needed -- for example including mesh vertices but not volume cells.
+    - Mesh face and vertex picking requires opting in to CPU data retention at upload time. This can be turned off later to free memory when picking is no longer needed.
+    - Pick results can now identify individual elements in Gaussian splat sets, instanced items (glyphs, sprites, tensor glyphs), individual curve segments, and strips within multi-strip items.
+- Per-type picking extensions, adding support to item types that previously returned nothing when clicked:
+    - Scalar volumes, Gaussian splat sets, and unstructured volume meshes now support both single-click and box-selection picking.
+    - A helper returns the closest mesh vertex to a face-level click, for workflows that need to snap selection to vertices.
+    - Selected volume mesh cells now highlight with the same edge-outline style as selected mesh faces and voxels, across tet, pyramid, wedge, and hex cell types.
 
 ### Fixes
+- Wireframe mode drew all instances of a shared mesh with the same object uniform, so objects sharing a `MeshId` appeared at the same position. Each item now gets its own bind group in the wireframe pass.
 - Add `display_center` to `ClipShape::Plane` overlay to allow arbitrary placement.
 - Fix clip planes as applied to `VolumeItem` objects. Problem was in the applied transformation matrix.
 - Point clouds, volumes, polylines, glyphs, sprites, streamtubes, ribbons, image slices, tensor glyphs, implicit surfaces, and marching cubes surfaces crashed when used alongside post-processing, transparent volume meshes, or surface LIC. All scene content now renders correctly in both the HDR and LDR paths.

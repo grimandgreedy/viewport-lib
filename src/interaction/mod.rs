@@ -6,6 +6,8 @@ pub mod gizmo;
 pub mod input;
 /// Object manipulation controller (move, rotate, scale with constraints and numeric input).
 pub mod manipulation;
+/// Pick mask for controlling item types and sub-element levels in pick calls.
+pub mod pick_mask;
 /// Ray-cast object picking.
 pub mod picking;
 /// Multi-select system for viewport objects.

@@ -163,6 +163,7 @@ pub use interaction::picking::{
 };
 pub use interaction::selection::{NodeId, Selection};
 pub use interaction::snap::{ConstraintOverlay, SnapConfig};
+pub use interaction::pick_mask::PickMask;
 pub use interaction::sub_object;
 pub use interaction::sub_object::{CellSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef, VolumeSelectionInfo};
 
@@ -184,6 +185,7 @@ pub use renderer::{
     ImageSliceItem, SliceAxis, ShadowFilter, SpriteItem, SpriteSizeMode, StreamtubeItem,
     SurfaceLICConfig, SurfaceLICItem, SurfaceSubmission, ToneMapping, TubeItem,
     TransparentVolumeMeshItem, VolumeSurfaceSliceItem,
+    PickRectResult,
     ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer, VolumeItem,
 };
 

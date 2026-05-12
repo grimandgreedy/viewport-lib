@@ -1,7 +1,7 @@
 //! Showcase 33: Picking Levels
 //!
-//! Demonstrates the picking hierarchy across six levels:
-//!   Object -> Face -> Vertex -> Point -> Voxel -> Splat -> Tvm
+//! Demonstrates the unified picking API (renderer.pick / renderer.pick_rect)
+//! and per-type picking across six levels.
 //!
 //! Scene: two cubes and two hemispheres; a 30-point grid cloud; a scalar
 //! volume; a 3x3 Gaussian splat grid; and a 2x2x2 transparent hex mesh.
@@ -17,14 +17,14 @@ use std::collections::HashMap;
 use eframe::egui;
 use viewport_lib::{
     GaussianSplatData, GaussianSplatId,
-    Material, MeshId, NodeId,
+    Material, MeshId, NodeId, PickMask, PickRectResult,
     ShDegree, SubObjectRef, VolumeData, VolumeMeshData, ViewportRenderer,
 };
 
 use crate::App;
 
 // ---------------------------------------------------------------------------
-// Pick level
+// Pick level (per-type section)
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -39,6 +39,40 @@ pub(crate) enum PlPickLevel {
     Splat,
     /// Transparent volume mesh cell pick (returns SubObjectRef::Cell).
     Tvm,
+}
+
+// ---------------------------------------------------------------------------
+// Unified mask options (top section)
+// ---------------------------------------------------------------------------
+
+/// Which PickMask to use in the unified section.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum PlUnifiedMask {
+    #[default]
+    Object,
+    Face,
+    PointLike,
+    FaceAndPointLike,
+}
+
+impl PlUnifiedMask {
+    pub(crate) fn to_pick_mask(self) -> PickMask {
+        match self {
+            Self::Object         => PickMask::OBJECT,
+            Self::Face           => PickMask::FACE,
+            Self::PointLike      => PickMask::POINT_LIKE,
+            Self::FaceAndPointLike => PickMask::FACE | PickMask::POINT_LIKE,
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Object         => "Object",
+            Self::Face           => "Face",
+            Self::PointLike      => "Point-like",
+            Self::FaceAndPointLike => "Face + Point-like",
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -166,6 +200,10 @@ pub(crate) struct PlState {
     pub selection:   viewport_lib::Selection,
     pub sub_selection: viewport_lib::SubSelection,
     pub built:       bool,
+    /// Which section is active: true = unified API, false = per-type reference.
+    pub unified_mode: bool,
+    /// Active mask for the unified section.
+    pub unified_mask: PlUnifiedMask,
     pub level:       PlPickLevel,
     pub cube_mesh_id: MeshId,
     pub hemi_mesh_id: MeshId,
@@ -196,6 +234,8 @@ impl Default for PlState {
             selection:        viewport_lib::Selection::new(),
             sub_selection:    viewport_lib::SubSelection::new(),
             built:            false,
+            unified_mode:     true,
+            unified_mask:     PlUnifiedMask::default(),
             level:            PlPickLevel::default(),
             cube_mesh_id:     MeshId::from_index(0),
             hemi_mesh_id:     MeshId::from_index(0),
@@ -743,6 +783,133 @@ impl App {
 }
 
 // ---------------------------------------------------------------------------
+// Unified click / box-select handlers
+// ---------------------------------------------------------------------------
+
+impl App {
+    /// Handle a left-click using renderer.pick() with the active PickMask.
+    pub(crate) fn handle_pl_unified_click(
+        &mut self,
+        pos: glam::Vec2,
+        vp_size: glam::Vec2,
+        view_proj: glam::Mat4,
+        shift: bool,
+        renderer: &ViewportRenderer,
+    ) {
+        let mask = self.pl_state.unified_mask.to_pick_mask();
+        let Some(hit) = renderer.pick(pos, vp_size, view_proj, mask) else {
+            if !shift {
+                self.pl_state.selection.clear();
+                self.pl_state.sub_selection.clear();
+                self.pl_state.last_hit = None;
+                self.pl_state.hit_marker = None;
+            }
+            return;
+        };
+
+        // SubSelectionRef renders highlights for Point variants using point_positions.
+        // Remap Splat->Point so splat sub-elements are highlighted correctly.
+        let sub_for_sel = match hit.sub_object {
+            Some(SubObjectRef::Splat(idx)) => Some(SubObjectRef::Point(idx)),
+            other => other,
+        };
+
+        let is_mesh_node = Self::pl_item_label(hit.id).is_none();
+
+        match sub_for_sel {
+            None => {
+                // Only add to selection when the hit is a scene-graph mesh node.
+                // Non-mesh objects (point cloud, splats, volume mesh) are identified
+                // by pl_item_label; they have no outline rendering and must not be
+                // added to selection to avoid incorrectly highlighting a mesh node
+                // that happens to share the same id.
+                if is_mesh_node {
+                    if shift {
+                        self.pl_state.selection.toggle(hit.id);
+                    } else {
+                        self.pl_state.selection.select_one(hit.id);
+                    }
+                } else if !shift {
+                    self.pl_state.selection.clear();
+                }
+                self.pl_state.sub_selection.clear();
+            }
+            Some(sub) => {
+                if shift {
+                    self.pl_state.sub_selection.toggle(hit.id, sub);
+                } else {
+                    self.pl_state.selection.clear();
+                    self.pl_state.sub_selection.select_one(hit.id, sub);
+                }
+            }
+        }
+
+        let object_type = match hit.sub_object {
+            None => {
+                if is_mesh_node { "Mesh" } else { Self::pl_item_label(hit.id).unwrap_or("Object") }
+            }
+            Some(SubObjectRef::Face(_))   => "Mesh",
+            Some(SubObjectRef::Vertex(_)) => "Mesh",
+            Some(SubObjectRef::Point(_))  => "Point Cloud",
+            Some(SubObjectRef::Splat(_))  => "Gaussian Splat",
+            Some(_)                       => "Object",
+        };
+
+        self.pl_state.last_hit = Some(PlHitInfo {
+            object_name: self.pl_node_name(hit.id),
+            object_type,
+            world_pos: hit.world_pos,
+            normal: hit.normal,
+            sub_object: hit.sub_object,
+            scalar_value: hit.scalar_value,
+        });
+        self.pl_state.hit_marker = Some(hit.world_pos);
+    }
+
+    /// Handle a rubber-band box selection using renderer.pick_rect() with the
+    /// active PickMask.
+    pub(crate) fn handle_pl_unified_box_select(
+        &mut self,
+        rect_min: glam::Vec2,
+        rect_max: glam::Vec2,
+        vp_size: glam::Vec2,
+        view_proj: glam::Mat4,
+        shift: bool,
+        renderer: &ViewportRenderer,
+    ) {
+        let r_min = glam::Vec2::new(rect_min.x.min(rect_max.x), rect_min.y.min(rect_max.y));
+        let r_max = glam::Vec2::new(rect_min.x.max(rect_max.x), rect_min.y.max(rect_max.y));
+
+        if !shift {
+            self.pl_state.selection.clear();
+            self.pl_state.sub_selection.clear();
+        }
+
+        let mask = self.pl_state.unified_mask.to_pick_mask();
+        let result: PickRectResult = renderer.pick_rect(r_min, r_max, vp_size, view_proj, mask);
+
+        for id in &result.objects {
+            // Only add mesh nodes to selection; non-mesh objects have no outline
+            // rendering and must not collide with NodeIds in the selection set.
+            if Self::pl_item_label(*id).is_none() {
+                self.pl_state.selection.add(*id);
+            }
+        }
+        for (id, sub) in &result.elements {
+            // Remap Splat->Point so SubSelectionRef can highlight using point_positions.
+            let sub_for_sel = match *sub {
+                SubObjectRef::Splat(idx) => SubObjectRef::Point(idx),
+                other => other,
+            };
+            self.pl_state.sub_selection.add(*id, sub_for_sel);
+        }
+
+        self.pl_state.last_hit = None;
+        self.pl_state.hit_marker = None;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -769,11 +936,26 @@ impl App {
 
     /// Display name for a node ID.
     pub(crate) fn pl_node_name(&self, id: NodeId) -> String {
+        if let Some(label) = Self::pl_item_label(id) {
+            return label.to_string();
+        }
         self.pl_state.node_names
             .iter()
             .find(|(nid, _)| *nid == id)
             .map(|(_, n)| n.clone())
             .unwrap_or_else(|| format!("id={id}"))
+    }
+
+
+    /// Human-readable label for the non-mesh pick IDs used in showcase 33.
+    fn pl_item_label(id: NodeId) -> Option<&'static str> {
+        match id {
+            100 => Some("Point Cloud"),
+            2   => Some("Volume"),
+            10  => Some("Gaussian Splats"),
+            11  => Some("Volume Mesh"),
+            _   => None,
+        }
     }
 
     /// World-space model matrix for a node ID.
@@ -816,8 +998,38 @@ impl App {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
+    // -----------------------------------------------------------------------
+    // Section toggle
+    // -----------------------------------------------------------------------
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut app.pl_state.unified_mode, true,  "Unified API");
+        ui.selectable_value(&mut app.pl_state.unified_mode, false, "Per-type reference");
+    });
+    ui.separator();
+
+    if app.pl_state.unified_mode {
+        // -------------------------------------------------------------------
+        // Unified API section
+        // -------------------------------------------------------------------
+        ui.label(egui::RichText::new("renderer.pick() / pick_rect()").strong());
+        ui.label("Mask:");
+        ui.horizontal_wrapped(|ui| {
+            for mask in [
+                PlUnifiedMask::Object,
+                PlUnifiedMask::Face,
+                PlUnifiedMask::PointLike,
+                PlUnifiedMask::FaceAndPointLike,
+            ] {
+                ui.radio_value(&mut app.pl_state.unified_mask, mask, mask.label());
+            }
+        });
+    } else {
+        // -------------------------------------------------------------------
+        // Per-type reference section
+        // -------------------------------------------------------------------
+        ui.label(egui::RichText::new("Per-type picking").strong());
         ui.label("Pick Level:");
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.radio_value(&mut app.pl_state.level, PlPickLevel::Object, "Object");
             ui.radio_value(&mut app.pl_state.level, PlPickLevel::Face,   "Face");
             ui.radio_value(&mut app.pl_state.level, PlPickLevel::Vertex, "Vertex");
@@ -826,73 +1038,81 @@ pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
             ui.radio_value(&mut app.pl_state.level, PlPickLevel::Splat,  "Splat");
             ui.radio_value(&mut app.pl_state.level, PlPickLevel::Tvm,    "TVM");
         });
+    }
 
-        ui.separator();
-        ui.checkbox(&mut app.pl_state.wireframe, "Wireframe overlay");
+    ui.separator();
+    ui.checkbox(&mut app.pl_state.wireframe, "Wireframe overlay");
 
-        if ui.button("Clear selection").clicked() {
-            app.pl_state.selection.clear();
-            app.pl_state.sub_selection.clear();
-            app.pl_state.last_hit = None;
-            app.pl_state.hit_marker = None;
+    if ui.button("Clear selection").clicked() {
+        app.pl_state.selection.clear();
+        app.pl_state.sub_selection.clear();
+        app.pl_state.last_hit = None;
+        app.pl_state.hit_marker = None;
+    }
+
+    ui.separator();
+    ui.label(egui::RichText::new("Controls").strong());
+    ui.label("Click: select at level");
+    ui.label("Shift+click: add / toggle");
+    ui.label("Drag: box select");
+
+    ui.separator();
+
+    if let Some(hit) = &app.pl_state.last_hit {
+        ui.label(egui::RichText::new("Last Hit").strong());
+        ui.label(format!("Object: {}", hit.object_name));
+        ui.label(format!("Type: {}", hit.object_type));
+        match hit.sub_object {
+            None                             => { ui.label("Level: Object"); }
+            Some(SubObjectRef::Face(i))      => { ui.label(format!("Level: Face #{i}")); }
+            Some(SubObjectRef::Vertex(i))    => { ui.label(format!("Level: Vertex #{i}")); }
+            Some(SubObjectRef::Edge(i))      => { ui.label(format!("Level: Edge #{i}")); }
+            Some(SubObjectRef::Point(i))     => { ui.label(format!("Level: Point #{i}")); }
+            Some(SubObjectRef::Voxel(i))     => { ui.label(format!("Level: Voxel #{i}")); }
+            Some(SubObjectRef::Cell(i))      => { ui.label(format!("Level: Cell #{i}")); }
+            Some(SubObjectRef::Splat(i))     => { ui.label(format!("Level: Splat #{i}")); }
+            Some(SubObjectRef::Instance(i))  => { ui.label(format!("Level: Instance #{i}")); }
+            Some(SubObjectRef::Segment(i))   => { ui.label(format!("Level: Segment #{i}")); }
+            Some(SubObjectRef::Strip(i))     => { ui.label(format!("Level: Strip #{i}")); }
+            Some(_)                          => { ui.label("Level: (unknown)"); }
         }
-
-        ui.separator();
-        ui.label(egui::RichText::new("Controls").strong());
-        ui.label("Click: select at level");
-        ui.label("Shift+click: add / toggle");
-        ui.label("Drag: box select");
-
-        ui.separator();
-
-        if let Some(hit) = &app.pl_state.last_hit {
-            ui.label(egui::RichText::new("Last Hit").strong());
-            ui.label(format!("Object: {}", hit.object_name));
-            ui.label(format!("Type: {}", hit.object_type));
-            match hit.sub_object {
-                None                        => { ui.label("Level: Object"); }
-                Some(SubObjectRef::Face(i)) => { ui.label(format!("Level: Face #{i}")); }
-                Some(SubObjectRef::Vertex(i))=>{ ui.label(format!("Level: Vertex #{i}")); }
-                Some(SubObjectRef::Edge(i)) => { ui.label(format!("Level: Edge #{i}")); }
-                Some(SubObjectRef::Point(i))=> { ui.label(format!("Level: Point #{i}")); }
-                Some(SubObjectRef::Voxel(i))=> { ui.label(format!("Level: Voxel #{i}")); }
-                Some(SubObjectRef::Cell(i)) => { ui.label(format!("Level: Cell #{i}")); }
-                Some(_)                     => { ui.label("Level: (unknown)"); }
+        let p = hit.world_pos;
+        ui.label(format!("Pos: ({:.2}, {:.2}, {:.2})", p.x, p.y, p.z));
+        let n = hit.normal;
+        ui.label(format!("Normal: ({:.2}, {:.2}, {:.2})", n.x, n.y, n.z));
+        if let Some(sv) = hit.scalar_value {
+            ui.label(format!("Scalar: {sv:.3}"));
+        }
+    } else {
+        let obj_count = app.pl_state.selection.len();
+        let mut faces = 0u32;
+        let mut verts = 0u32;
+        let mut points = 0u32;
+        let mut splats = 0u32;
+        let mut voxels = 0u32;
+        let mut cells  = 0u32;
+        for (_, sub) in app.pl_state.sub_selection.iter() {
+            match sub {
+                SubObjectRef::Face(_)   => faces  += 1,
+                SubObjectRef::Vertex(_) => verts  += 1,
+                SubObjectRef::Point(_)  => points += 1,
+                SubObjectRef::Splat(_)  => splats += 1,
+                SubObjectRef::Voxel(_)  => voxels += 1,
+                SubObjectRef::Cell(_)   => cells  += 1,
+                _ => {}
             }
-            let p = hit.world_pos;
-            ui.label(format!("Pos: ({:.2}, {:.2}, {:.2})", p.x, p.y, p.z));
-            let n = hit.normal;
-            ui.label(format!("Normal: ({:.2}, {:.2}, {:.2})", n.x, n.y, n.z));
-            if let Some(sv) = hit.scalar_value {
-                ui.label(format!("Scalar: {sv:.3}"));
-            }
+        }
+        if obj_count > 0 || faces + verts + points + splats + voxels + cells > 0 {
+            ui.label(egui::RichText::new("Selection").strong());
+            if obj_count > 0 { ui.label(format!("Objects: {obj_count}")); }
+            if faces  > 0    { ui.label(format!("Faces: {faces}")); }
+            if verts  > 0    { ui.label(format!("Vertices: {verts}")); }
+            if points > 0    { ui.label(format!("Points: {points}")); }
+            if splats > 0    { ui.label(format!("Splats: {splats}")); }
+            if voxels > 0    { ui.label(format!("Voxels: {voxels}")); }
+            if cells  > 0    { ui.label(format!("Cells: {cells}")); }
         } else {
-            let obj_count = app.pl_state.selection.len();
-            let mut faces = 0u32;
-            let mut verts = 0u32;
-            let mut points = 0u32;
-            let mut voxels = 0u32;
-            let mut cells = 0u32;
-            for (_, sub) in app.pl_state.sub_selection.iter() {
-                match sub {
-                    SubObjectRef::Face(_)   => faces += 1,
-                    SubObjectRef::Vertex(_) => verts += 1,
-                    SubObjectRef::Point(_)  => points += 1,
-                    SubObjectRef::Voxel(_)  => voxels += 1,
-                    SubObjectRef::Cell(_)   => cells += 1,
-                    _ => {}
-                }
-            }
-            if obj_count > 0 || faces + verts + points + voxels + cells > 0 {
-                ui.label(egui::RichText::new("Selection").strong());
-                if obj_count > 0 { ui.label(format!("Objects: {obj_count}")); }
-                if faces > 0     { ui.label(format!("Faces: {faces}")); }
-                if verts > 0     { ui.label(format!("Vertices: {verts}")); }
-                if points > 0    { ui.label(format!("Points: {points}")); }
-                if voxels > 0    { ui.label(format!("Voxels: {voxels}")); }
-                if cells > 0     { ui.label(format!("Cells: {cells}")); }
-            } else {
-                ui.label("Click or drag to select.");
-            }
+            ui.label("Click or drag to select.");
         }
     }
+}

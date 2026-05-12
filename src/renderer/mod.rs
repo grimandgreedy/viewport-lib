@@ -8,6 +8,7 @@
 mod types;
 mod indirect;
 mod picking;
+pub use picking::PickRectResult;
 mod prepare;
 mod render;
 pub mod shader_hashes;
@@ -257,6 +258,12 @@ pub struct ViewportRenderer {
     last_prepare_instant: Option<std::time::Instant>,
     /// Frame counter incremented each `prepare()` call. Used for picking throttle in Playback mode.
     frame_counter: u64,
+    /// Surface items from the last `prepare()` call, retained for `pick()` dispatch.
+    pick_scene_items: Vec<SceneRenderItem>,
+    /// Point cloud items from the last `prepare()` call, retained for `pick()` dispatch.
+    pick_point_cloud_items: Vec<PointCloudItem>,
+    /// Gaussian splat items from the last `prepare()` call, retained for `pick()` dispatch.
+    pick_splat_items: Vec<GaussianSplatItem>,
 
     // --- Phase 4 : GPU timestamp queries ---
     /// Timestamp query set with 2 entries (scene-pass begin + end).
@@ -361,6 +368,9 @@ impl ViewportRenderer {
             current_render_scale: 1.0,
             last_prepare_instant: None,
             frame_counter: 0,
+            pick_scene_items: Vec::new(),
+            pick_point_cloud_items: Vec::new(),
+            pick_splat_items: Vec::new(),
             ts_query_set: None,
             ts_resolve_buf: None,
             ts_staging_buf: None,

@@ -860,11 +860,25 @@ impl eframe::App for App {
                         let drag_end = self.interact_state.last_cursor_viewport;
                         if (drag_end - drag_start).length() > 4.0 {
                             let shift = self.pl_state.shift_held;
-                            self.handle_pl_box_select(
-                                drag_start, drag_end,
-                                rect.width(), rect.height(),
-                                shift,
-                            );
+                            if self.pl_state.unified_mode {
+                                let vp_size = glam::Vec2::new(rect.width(), rect.height());
+                                let view_proj = self.camera.view_proj_matrix();
+                                let rs = frame.wgpu_render_state().expect("wgpu required");
+                                let guard = rs.renderer.read();
+                                if let Some(renderer) = guard.callback_resources.get::<ViewportRenderer>() {
+                                    self.handle_pl_unified_box_select(
+                                        drag_start, drag_end,
+                                        vp_size, view_proj,
+                                        shift, renderer,
+                                    );
+                                }
+                            } else {
+                                self.handle_pl_box_select(
+                                    drag_start, drag_end,
+                                    rect.width(), rect.height(),
+                                    shift,
+                                );
+                            }
                         }
                     }
                 }
@@ -1077,7 +1091,19 @@ impl eframe::App for App {
             // ----- Click-to-select (non-Interaction modes) -----
             if response.clicked() && self.mode != ShowcaseMode::Interaction {
                 let pick_pos = self.interact_state.last_cursor_viewport;
-                self.handle_click_select(pick_pos, rect.width(), rect.height());
+                // Unified pick for PickLevels showcase uses renderer.pick().
+                if self.mode == ShowcaseMode::PickLevels && self.pl_state.unified_mode {
+                    let vp_size = glam::Vec2::new(rect.width(), rect.height());
+                    let view_proj = self.camera.view_proj_matrix();
+                    let shift = self.pl_state.shift_held;
+                    let rs = frame.wgpu_render_state().expect("wgpu required");
+                    let guard = rs.renderer.read();
+                    if let Some(renderer) = guard.callback_resources.get::<ViewportRenderer>() {
+                        self.handle_pl_unified_click(pick_pos, vp_size, view_proj, shift, renderer);
+                    }
+                } else {
+                    self.handle_click_select(pick_pos, rect.width(), rect.height());
+                }
             }
 
             // ----- Voxel paint: flush painted cell to GPU -----
@@ -2529,6 +2555,7 @@ impl App {
                     tvm_item.mesh_id = tvm_mesh_id;
                     tvm_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
                     tvm_item.visible = true;
+                    tvm_item.pick_id = PickId(11);
                     tvm_item.material = viewport_lib::Material::from_color([0.8, 0.45, 0.2]);
                     items.push(tvm_item);
                 }
@@ -2884,13 +2911,14 @@ impl App {
 
         // Picking Levels (Showcase 33) : point cloud, sub-selection highlights, and hit marker.
         if self.mode == ShowcaseMode::PickLevels && self.pl_state.built {
-            // Background point cloud (blue, pickable via id=1).
+            // Background point cloud (blue). Id=100 avoids collision with scene
+            // NodeIds (which start at 1 and cover the 4 mesh objects here).
             if !self.pl_state.pc_positions.is_empty() {
                 let mut pc = PointCloudItem::default();
                 pc.positions = self.pl_state.pc_positions.clone();
                 pc.point_size = 6.0;
                 pc.default_color = [0.5, 0.8, 1.0, 1.0];
-                pc.id = 1;
+                pc.id = 100;
                 fd.scene.point_clouds.push(pc);
             }
             // Gaussian splat grid (pickable via pick_id=10).
@@ -2916,7 +2944,8 @@ impl App {
                     }
                 }
                 let mut point_positions: HashMap<u64, Vec<[f32; 3]>> = HashMap::new();
-                point_positions.insert(1, self.pl_state.pc_positions.clone());
+                point_positions.insert(1, self.pl_state.pc_positions.clone());   // per-type mode
+                point_positions.insert(100, self.pl_state.pc_positions.clone()); // unified mode
                 // Splat world positions for Point sub-object highlight rendering.
                 if !self.pl_state.splat_positions.is_empty() {
                     let splat_model = showcase_33_picking_levels::pl_splat_model();
@@ -3455,7 +3484,12 @@ impl App {
 
             ShowcaseMode::PickLevels => {
                 let shift = self.pl_state.shift_held;
-                self.handle_pl_click(pos, w, h, shift);
+                if self.pl_state.unified_mode {
+                    // Unified path: renderer.pick() requires renderer access.
+                    // Handled separately in the viewport event section.
+                } else {
+                    self.handle_pl_click(pos, w, h, shift);
+                }
             }
 
             ShowcaseMode::SparseVolumeGrid => {

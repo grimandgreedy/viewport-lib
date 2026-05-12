@@ -132,6 +132,49 @@ impl ViewportGpuResources {
         Ok(id)
     }
 
+    /// Upload a `MeshData` and retain CPU positions and indices for picking.
+    ///
+    /// Equivalent to [`upload_mesh_data`](Self::upload_mesh_data). The CPU
+    /// position and index data is kept so that `renderer.pick()` can test
+    /// FACE, EDGE, and VERTEX hits against this mesh. Use this variant to
+    /// make the intent explicit at the call site.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`upload_mesh_data`](Self::upload_mesh_data).
+    pub fn upload_mesh_data_pickable(
+        &mut self,
+        device: &wgpu::Device,
+        data: &MeshData,
+    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
+        self.upload_mesh_data(device, data)
+    }
+
+    /// Free or retain the CPU position and index data for an already-uploaded mesh.
+    ///
+    /// `set_pickable(id, false)` drops the retained CPU data, freeing memory.
+    /// The mesh continues to render normally; it will be silently skipped for
+    /// FACE, EDGE, and VERTEX picks after this call.
+    ///
+    /// `set_pickable(id, true)` is a no-op: CPU data is either already present
+    /// (the mesh was uploaded via [`upload_mesh_data`] or
+    /// [`upload_mesh_data_pickable`]) or it was freed and cannot be recovered
+    /// without re-uploading.
+    ///
+    /// Has no effect if `mesh_id` is not found.
+    pub fn set_pickable(
+        &mut self,
+        mesh_id: crate::resources::mesh_store::MeshId,
+        pickable: bool,
+    ) {
+        if let Some(mesh) = self.mesh_store.get_mut(mesh_id) {
+            if !pickable {
+                mesh.cpu_positions = None;
+                mesh.cpu_indices = None;
+            }
+        }
+    }
+
     /// Write new positions and normals into an existing mesh without reallocating GPU buffers.
     ///
     /// The vertex count must match the original upload exactly. Use this for deforming meshes

@@ -3460,6 +3460,16 @@ impl ViewportRenderer {
         self.degradation_effects_throttled =
             !in_capture && self.degradation_tier >= 3 && eff_allow_effects;
 
+        // Cache scene items for renderer.pick() dispatch.
+        {
+            let surfaces = match &frame.scene.surfaces {
+                SurfaceSubmission::Flat(items) => items.as_ref(),
+            };
+            self.pick_scene_items = surfaces.to_vec();
+            self.pick_point_cloud_items = frame.scene.point_clouds.clone();
+            self.pick_splat_items = frame.scene.gaussian_splats.clone();
+        }
+
         let (scene_fx, viewport_fx) = frame.effects.split();
         self.prepare_scene_internal(device, queue, frame, &scene_fx);
         self.prepare_viewport_internal(device, queue, frame, &viewport_fx);

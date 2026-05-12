@@ -34,6 +34,12 @@ use crate::interaction::selection::NodeId;
 ///   positions slice.
 /// - [`Voxel`](SubObjectRef::Voxel) : voxel in a structured scalar volume.
 /// - [`Cell`](SubObjectRef::Cell) : cell in an unstructured volume mesh (`VolumeMeshData`).
+/// - [`Splat`](SubObjectRef::Splat) : gaussian splat, by index in the splat buffer.
+/// - [`Instance`](SubObjectRef::Instance) : glyph, tensor glyph, or sprite instance,
+///   by instance index.
+/// - [`Segment`](SubObjectRef::Segment) : polyline, tube, or ribbon segment, by index.
+/// - [`Strip`](SubObjectRef::Strip) : connected curve strip within a multi-strip item,
+///   by strip index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -60,6 +66,14 @@ pub enum SubObjectRef {
     /// Produced by [`pick_transparent_volume_mesh_cpu`](crate::interaction::picking::pick_transparent_volume_mesh_cpu)
     /// and [`pick_transparent_volume_mesh_rect`](crate::interaction::picking::pick_transparent_volume_mesh_rect).
     Cell(u32),
+    /// A gaussian splat identified by its index in the splat buffer.
+    Splat(u32),
+    /// A glyph, tensor glyph, or sprite instance identified by its instance index.
+    Instance(u32),
+    /// A polyline, tube, or ribbon segment identified by its segment index.
+    Segment(u32),
+    /// A connected curve strip within a multi-strip item, identified by its strip index.
+    Strip(u32),
 }
 
 impl SubObjectRef {
@@ -97,7 +111,8 @@ impl SubObjectRef {
     pub fn index(&self) -> u32 {
         match *self {
             Self::Face(i) | Self::Vertex(i) | Self::Edge(i) | Self::Point(i)
-            | Self::Voxel(i) | Self::Cell(i) => i,
+            | Self::Voxel(i) | Self::Cell(i) | Self::Splat(i) | Self::Instance(i)
+            | Self::Segment(i) | Self::Strip(i) => i,
         }
     }
 
