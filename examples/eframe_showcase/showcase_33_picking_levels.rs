@@ -297,8 +297,10 @@ pub(crate) struct PlState {
     pub splat_id:    Option<GaussianSplatId>,
     /// Whether the point cloud is selected at the object level.
     pub pc_selected: bool,
-    /// Whether the TVM boundary mesh is selected at the object level.
+    /// Whether the TVM capsule (pick_id=11) is selected at the object level.
     pub tvm_selected: bool,
+    /// Whether the hex cylinder (pick_id=12) is selected at the object level.
+    pub tvm_tet_selected: bool,
     /// Whether the Gaussian splat object is selected at the object level.
     pub splat_selected: bool,
     /// Whether the volume is selected at the object level.
@@ -364,6 +366,7 @@ impl Default for PlState {
             splat_id:         None,
             pc_selected:      false,
             tvm_selected:     false,
+            tvm_tet_selected: false,
             splat_selected:   false,
             vol_selected:     false,
             tvm_mesh_id:           None,
@@ -388,23 +391,80 @@ impl Default for PlState {
     }
 }
 
+impl PlState {
+    /// Clear all selection state: scene-graph selection, sub-selection, and
+    /// every per-item boolean flag.
+    pub(crate) fn clear_selection(&mut self) {
+        self.selection.clear();
+        self.sub_selection.clear();
+        self.pc_selected = false;
+        self.tvm_selected = false;
+        self.tvm_tet_selected = false;
+        self.splat_selected = false;
+        self.vol_selected = false;
+        self.polyline_selected = false;
+        self.arrow_glyph_selected = false;
+        self.tensor_glyph_selected = false;
+        self.sprite_selected = false;
+        self.last_hit = None;
+        self.hit_marker = None;
+    }
+
+    /// Set the boolean flag for a non-mesh item.  Returns false if the ID
+    /// is not a flag item (i.e. it is a mesh node).
+    fn set_flag(&mut self, id: NodeId, selected: bool) -> bool {
+        match id {
+            100 => { self.pc_selected = selected; true }
+            10  => { self.splat_selected = selected; true }
+            11  => { self.tvm_selected = selected; true }
+            12  => { self.tvm_tet_selected = selected; true }
+            20  => { self.vol_selected = selected; true }
+            30  => { self.polyline_selected = selected; true }
+            31  => { self.arrow_glyph_selected = selected; true }
+            32  => { self.tensor_glyph_selected = selected; true }
+            33  => { self.sprite_selected = selected; true }
+            _   => false,
+        }
+    }
+
+    /// Toggle the boolean flag for a non-mesh item.
+    fn toggle_flag(&mut self, id: NodeId) -> bool {
+        match id {
+            100 => { self.pc_selected = !self.pc_selected; true }
+            10  => { self.splat_selected = !self.splat_selected; true }
+            11  => { self.tvm_selected = !self.tvm_selected; true }
+            12  => { self.tvm_tet_selected = !self.tvm_tet_selected; true }
+            20  => { self.vol_selected = !self.vol_selected; true }
+            30  => { self.polyline_selected = !self.polyline_selected; true }
+            31  => { self.arrow_glyph_selected = !self.arrow_glyph_selected; true }
+            32  => { self.tensor_glyph_selected = !self.tensor_glyph_selected; true }
+            33  => { self.sprite_selected = !self.sprite_selected; true }
+            _   => false,
+        }
+    }
+
+    /// Select a single object (clear everything else first).
+    pub(crate) fn select_object(&mut self, id: NodeId) {
+        self.clear_selection();
+        if !self.set_flag(id, true) {
+            self.selection.add(id);
+        }
+    }
+
+    /// Toggle an object's selection without clearing others.
+    pub(crate) fn toggle_object(&mut self, id: NodeId) {
+        if !self.toggle_flag(id) {
+            self.selection.toggle(id);
+        }
+    }
+}
+
 impl App {
     pub(crate) fn build_pl_scene(&mut self, renderer: &mut ViewportRenderer) {
         self.pl_state.scene = viewport_lib::scene::Scene::new();
-        self.pl_state.selection = viewport_lib::Selection::new();
-        self.pl_state.sub_selection = viewport_lib::SubSelection::new();
         self.pl_state.node_names.clear();
         self.pl_state.mesh_lookup.clear();
-        self.pl_state.last_hit = None;
-        self.pl_state.hit_marker = None;
-        self.pl_state.pc_selected = false;
-        self.pl_state.tvm_selected = false;
-        self.pl_state.splat_selected = false;
-        self.pl_state.vol_selected = false;
-        self.pl_state.polyline_selected = false;
-        self.pl_state.arrow_glyph_selected = false;
-        self.pl_state.tensor_glyph_selected = false;
-        self.pl_state.sprite_selected = false;
+        self.pl_state.clear_selection();
 
         // --- Cube mesh ---
         let cube_mesh = viewport_lib::primitives::cube(2.0);
@@ -645,18 +705,44 @@ impl App {
 
         let mesh_lookup = self.pl_pick_mesh_lookup();
 
+        // Helper: record a hit and update hit_marker / last_hit.
+        macro_rules! record_hit {
+            ($name:expr, $type:expr, $pos:expr, $normal:expr, $sub:expr, $scalar:expr) => {{
+                self.pl_state.last_hit = Some(PlHitInfo {
+                    object_name: $name,
+                    object_type: $type,
+                    world_pos: $pos,
+                    normal: $normal,
+                    sub_object: $sub,
+                    scalar_value: $scalar,
+                });
+                self.pl_state.hit_marker = Some($pos);
+            }};
+        }
+
+        // Helper: apply sub-object selection with shift logic.
+        macro_rules! select_sub {
+            ($id:expr, $sub:expr) => {
+                if shift {
+                    self.pl_state.sub_selection.toggle($id, $sub);
+                } else {
+                    self.pl_state.clear_selection();
+                    self.pl_state.sub_selection.add($id, $sub);
+                }
+            };
+        }
+
         match self.pl_state.level {
             PlPickLevel::Object => {
                 let mesh_hit = viewport_lib::picking::pick_scene_nodes_cpu(
                     ray_origin, ray_dir, &self.pl_state.scene, &mesh_lookup,
                 );
                 // Fallback: also try a ray-AABB test against the volume box.
-                let vol_model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0));
                 let vol_hit = self.pl_state.volume_id.is_some() && {
+                    let vol_model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0));
                     let inv = vol_model.inverse();
                     let lo = inv.transform_point3(ray_origin);
                     let ld = inv.transform_vector3(ray_dir);
-                    // Ray-slab AABB test against [0,4]^3.
                     let inv_d = glam::Vec3::ONE / ld;
                     let t1 = (glam::Vec3::ZERO - lo) * inv_d;
                     let t2 = (glam::Vec3::splat(4.0) - lo) * inv_d;
@@ -668,27 +754,18 @@ impl App {
                     if shift {
                         self.pl_state.selection.toggle(hit.id);
                     } else {
-                        self.pl_state.selection.select_one(hit.id);
-                        self.pl_state.vol_selected = false;
+                        self.pl_state.select_object(hit.id);
                     }
-                    self.pl_state.sub_selection.clear();
-                    self.pl_state.last_hit = Some(PlHitInfo {
-                        object_name: self.pl_node_name(hit.id),
-                        object_type: "Mesh",
-                        world_pos: hit.world_pos,
-                        normal: hit.normal,
-                        sub_object: None,
-                        scalar_value: None,
-                    });
-                    self.pl_state.hit_marker = Some(hit.world_pos);
+                    record_hit!(
+                        self.pl_node_name(hit.id), "Mesh",
+                        hit.world_pos, hit.normal, None, None
+                    );
                 } else if vol_hit {
                     if shift {
                         self.pl_state.vol_selected = !self.pl_state.vol_selected;
                     } else {
-                        self.pl_state.selection.clear();
-                        self.pl_state.vol_selected = true;
+                        self.pl_state.select_object(20);
                     }
-                    self.pl_state.sub_selection.clear();
                     self.pl_state.last_hit = Some(PlHitInfo {
                         object_name: "Volume".to_string(),
                         object_type: "Volume",
@@ -699,11 +776,7 @@ impl App {
                     });
                     self.pl_state.hit_marker = None;
                 } else if !shift {
-                    self.pl_state.selection.clear();
-                    self.pl_state.sub_selection.clear();
-                    self.pl_state.vol_selected = false;
-                    self.pl_state.last_hit = None;
-                    self.pl_state.hit_marker = None;
+                    self.pl_state.clear_selection();
                 }
             }
 
@@ -713,27 +786,14 @@ impl App {
                 );
                 if let Some(hit) = hit {
                     if let Some(sub) = hit.sub_object {
-                        if shift {
-                            self.pl_state.sub_selection.toggle(hit.id, sub);
-                        } else {
-                            self.pl_state.selection.clear();
-                            self.pl_state.sub_selection.select_one(hit.id, sub);
-                        }
+                        select_sub!(hit.id, sub);
                     }
-                    self.pl_state.last_hit = Some(PlHitInfo {
-                        object_name: self.pl_node_name(hit.id),
-                        object_type: "Mesh",
-                        world_pos: hit.world_pos,
-                        normal: hit.normal,
-                        sub_object: hit.sub_object,
-                        scalar_value: None,
-                    });
-                    self.pl_state.hit_marker = Some(hit.world_pos);
+                    record_hit!(
+                        self.pl_node_name(hit.id), "Mesh",
+                        hit.world_pos, hit.normal, hit.sub_object, None
+                    );
                 } else if !shift {
-                    self.pl_state.selection.clear();
-                    self.pl_state.sub_selection.clear();
-                    self.pl_state.last_hit = None;
-                    self.pl_state.hit_marker = None;
+                    self.pl_state.clear_selection();
                 }
             }
 
@@ -748,35 +808,21 @@ impl App {
                         viewport_lib::nearest_vertex_on_hit(&hit, positions, indices, model)
                     });
                     if let Some(sub) = vertex_sub {
-                        if shift {
-                            self.pl_state.sub_selection.toggle(hit.id, sub);
-                        } else {
-                            self.pl_state.selection.clear();
-                            self.pl_state.sub_selection.select_one(hit.id, sub);
-                        }
+                        select_sub!(hit.id, sub);
                     }
                     let marker = vertex_sub
                         .and_then(|s| self.pl_vertex_world_pos(hit.id, s))
                         .unwrap_or(hit.world_pos);
-                    self.pl_state.last_hit = Some(PlHitInfo {
-                        object_name: self.pl_node_name(hit.id),
-                        object_type: "Mesh",
-                        world_pos: marker,
-                        normal: hit.normal,
-                        sub_object: vertex_sub,
-                        scalar_value: None,
-                    });
-                    self.pl_state.hit_marker = Some(marker);
+                    record_hit!(
+                        self.pl_node_name(hit.id), "Mesh",
+                        marker, hit.normal, vertex_sub, None
+                    );
                 } else if !shift {
-                    self.pl_state.selection.clear();
-                    self.pl_state.sub_selection.clear();
-                    self.pl_state.last_hit = None;
-                    self.pl_state.hit_marker = None;
+                    self.pl_state.clear_selection();
                 }
             }
 
             PlPickLevel::Voxel => {
-                // Build the VolumeItem matching what the renderer submits.
                 let hit = self.pl_state.volume_id.zip(self.pl_state.volume_data.as_ref()).and_then(|(vol_id, vol_data)| {
                     let mut item = viewport_lib::VolumeItem::default();
                     item.volume_id = vol_id;
@@ -792,26 +838,13 @@ impl App {
 
                 if let Some(hit) = hit {
                     let sub = hit.sub_object.unwrap();
-                    if shift {
-                        self.pl_state.sub_selection.toggle(20, sub);
-                    } else {
-                        self.pl_state.selection.clear();
-                        self.pl_state.sub_selection.select_one(20, sub);
-                    }
-                    self.pl_state.last_hit = Some(PlHitInfo {
-                        object_name: "Volume".to_string(),
-                        object_type: "Volume",
-                        world_pos: hit.world_pos,
-                        normal: hit.normal,
-                        sub_object: hit.sub_object,
-                        scalar_value: hit.scalar_value,
-                    });
-                    self.pl_state.hit_marker = Some(hit.world_pos);
+                    select_sub!(20, sub);
+                    record_hit!(
+                        "Volume".to_string(), "Volume",
+                        hit.world_pos, hit.normal, hit.sub_object, hit.scalar_value
+                    );
                 } else if !shift {
-                    self.pl_state.selection.clear();
-                    self.pl_state.sub_selection.clear();
-                    self.pl_state.last_hit = None;
-                    self.pl_state.hit_marker = None;
+                    self.pl_state.clear_selection();
                 }
             }
 
@@ -822,26 +855,13 @@ impl App {
                 let hit = viewport_lib::pick_point_cloud_cpu(pos, 1, &pc_item, view_proj, vp_size, 20.0);
                 if let Some(hit) = hit {
                     let sub = hit.sub_object.unwrap();
-                    if shift {
-                        self.pl_state.sub_selection.toggle(1, sub);
-                    } else {
-                        self.pl_state.selection.clear();
-                        self.pl_state.sub_selection.select_one(1, sub);
-                    }
-                    self.pl_state.last_hit = Some(PlHitInfo {
-                        object_name: "Point Cloud".to_string(),
-                        object_type: "Point Cloud",
-                        world_pos: hit.world_pos,
-                        normal: glam::Vec3::Y,
-                        sub_object: Some(sub),
-                        scalar_value: None,
-                    });
-                    self.pl_state.hit_marker = Some(hit.world_pos);
+                    select_sub!(1, sub);
+                    record_hit!(
+                        "Point Cloud".to_string(), "Point Cloud",
+                        hit.world_pos, glam::Vec3::Y, Some(sub), None
+                    );
                 } else if !shift {
-                    self.pl_state.selection.clear();
-                    self.pl_state.sub_selection.clear();
-                    self.pl_state.last_hit = None;
-                    self.pl_state.hit_marker = None;
+                    self.pl_state.clear_selection();
                 }
             }
 
@@ -853,26 +873,13 @@ impl App {
                 );
                 if let Some(hit) = hit {
                     let sub = hit.sub_object.unwrap();
-                    if shift {
-                        self.pl_state.sub_selection.toggle(10, sub);
-                    } else {
-                        self.pl_state.selection.clear();
-                        self.pl_state.sub_selection.select_one(10, sub);
-                    }
-                    self.pl_state.last_hit = Some(PlHitInfo {
-                        object_name: "Gaussian Splats".to_string(),
-                        object_type: "Gaussian Splat",
-                        world_pos: hit.world_pos,
-                        normal: glam::Vec3::Y,
-                        sub_object: Some(sub),
-                        scalar_value: None,
-                    });
-                    self.pl_state.hit_marker = Some(hit.world_pos);
+                    select_sub!(10, sub);
+                    record_hit!(
+                        "Gaussian Splats".to_string(), "Gaussian Splat",
+                        hit.world_pos, glam::Vec3::Y, Some(sub), None
+                    );
                 } else if !shift {
-                    self.pl_state.selection.clear();
-                    self.pl_state.sub_selection.clear();
-                    self.pl_state.last_hit = None;
-                    self.pl_state.hit_marker = None;
+                    self.pl_state.clear_selection();
                 }
             }
 
@@ -884,26 +891,13 @@ impl App {
                 });
                 if let Some(hit) = hit {
                     let sub = hit.sub_object.unwrap();
-                    if shift {
-                        self.pl_state.sub_selection.toggle(11, sub);
-                    } else {
-                        self.pl_state.selection.clear();
-                        self.pl_state.sub_selection.select_one(11, sub);
-                    }
-                    self.pl_state.last_hit = Some(PlHitInfo {
-                        object_name: "Transparent Volume Mesh".to_string(),
-                        object_type: "Volume Mesh",
-                        world_pos: hit.world_pos,
-                        normal: hit.normal,
-                        sub_object: Some(sub),
-                        scalar_value: None,
-                    });
-                    self.pl_state.hit_marker = Some(hit.world_pos);
+                    select_sub!(11, sub);
+                    record_hit!(
+                        "Transparent Volume Mesh".to_string(), "Volume Mesh",
+                        hit.world_pos, hit.normal, Some(sub), None
+                    );
                 } else if !shift {
-                    self.pl_state.selection.clear();
-                    self.pl_state.sub_selection.clear();
-                    self.pl_state.last_hit = None;
-                    self.pl_state.hit_marker = None;
+                    self.pl_state.clear_selection();
                 }
             }
         }
@@ -926,8 +920,7 @@ impl App {
         let r_max = glam::Vec2::new(rect_min.x.max(rect_max.x), rect_min.y.max(rect_max.y));
 
         if !shift {
-            self.pl_state.selection.clear();
-            self.pl_state.sub_selection.clear();
+            self.pl_state.clear_selection();
         }
 
         match self.pl_state.level {
@@ -1080,142 +1073,30 @@ impl App {
         let mask = self.pl_state.unified_mask.to_pick_mask();
         let Some(hit) = renderer.pick(pos, vp_size, view_proj, mask) else {
             if !shift {
-                self.pl_state.selection.clear();
-                self.pl_state.pc_selected = false;
-                self.pl_state.tvm_selected = false;
-                self.pl_state.splat_selected = false;
-                self.pl_state.vol_selected = false;
-                self.pl_state.polyline_selected = false;
-                self.pl_state.arrow_glyph_selected = false;
-                self.pl_state.tensor_glyph_selected = false;
-                self.pl_state.sprite_selected = false;
-                self.pl_state.sub_selection.clear();
-                self.pl_state.last_hit = None;
-                self.pl_state.hit_marker = None;
+                self.pl_state.clear_selection();
             }
             return;
         };
 
-        let is_mesh_node = Self::pl_item_label(hit.id).is_none();
-
         match hit.sub_object {
             None => {
-                // Mesh nodes go through Selection; non-mesh objects (point cloud,
-                // splats, volume mesh) are tracked separately to avoid collisions
-                // with scene-graph node IDs.
-                if is_mesh_node {
-                    if shift {
-                        self.pl_state.selection.toggle(hit.id);
-                    } else {
-                        self.pl_state.selection.select_one(hit.id);
-                        self.pl_state.pc_selected = false;
-                        self.pl_state.tvm_selected = false;
-                        self.pl_state.splat_selected = false;
-                        self.pl_state.vol_selected = false;
-                    }
+                if shift {
+                    self.pl_state.toggle_object(hit.id);
                 } else {
-                    if !shift {
-                        self.pl_state.selection.clear();
-                        self.pl_state.vol_selected = false;
-                        self.pl_state.polyline_selected = false;
-                        self.pl_state.arrow_glyph_selected = false;
-                        self.pl_state.tensor_glyph_selected = false;
-                        self.pl_state.sprite_selected = false;
-                    }
-                    if hit.id == 100 {
-                        if shift {
-                            self.pl_state.pc_selected = !self.pl_state.pc_selected;
-                        } else {
-                            self.pl_state.pc_selected = true;
-                            self.pl_state.tvm_selected = false;
-                            self.pl_state.splat_selected = false;
-                        }
-                    } else if hit.id == 10 {
-                        if shift {
-                            self.pl_state.splat_selected = !self.pl_state.splat_selected;
-                        } else {
-                            self.pl_state.splat_selected = true;
-                            self.pl_state.pc_selected = false;
-                            self.pl_state.tvm_selected = false;
-                        }
-                    } else if hit.id == 11 {
-                        if shift {
-                            self.pl_state.tvm_selected = !self.pl_state.tvm_selected;
-                        } else {
-                            self.pl_state.tvm_selected = true;
-                            self.pl_state.pc_selected = false;
-                            self.pl_state.splat_selected = false;
-                        }
-                    } else if hit.id == 12 {
-                        if shift {
-                            self.pl_state.tvm_selected = !self.pl_state.tvm_selected;
-                        } else {
-                            self.pl_state.tvm_selected = true;
-                            self.pl_state.pc_selected = false;
-                            self.pl_state.splat_selected = false;
-                        }
-                    } else if hit.id == 20 {
-                        if shift {
-                            self.pl_state.vol_selected = !self.pl_state.vol_selected;
-                        } else {
-                            self.pl_state.vol_selected = true;
-                            self.pl_state.pc_selected = false;
-                            self.pl_state.tvm_selected = false;
-                            self.pl_state.splat_selected = false;
-                        }
-                    } else if hit.id == 30 {
-                        if shift {
-                            self.pl_state.polyline_selected = !self.pl_state.polyline_selected;
-                        } else {
-                            self.pl_state.polyline_selected = true;
-                        }
-                    } else if hit.id == 31 {
-                        if shift {
-                            self.pl_state.arrow_glyph_selected = !self.pl_state.arrow_glyph_selected;
-                        } else {
-                            self.pl_state.arrow_glyph_selected = true;
-                        }
-                    } else if hit.id == 32 {
-                        if shift {
-                            self.pl_state.tensor_glyph_selected = !self.pl_state.tensor_glyph_selected;
-                        } else {
-                            self.pl_state.tensor_glyph_selected = true;
-                        }
-                    } else if hit.id == 33 {
-                        if shift {
-                            self.pl_state.sprite_selected = !self.pl_state.sprite_selected;
-                        } else {
-                            self.pl_state.sprite_selected = true;
-                        }
-                    } else if !shift {
-                        self.pl_state.pc_selected = false;
-                        self.pl_state.tvm_selected = false;
-                        self.pl_state.splat_selected = false;
-                    }
+                    self.pl_state.select_object(hit.id);
                 }
-                self.pl_state.sub_selection.clear();
             }
             Some(sub) => {
                 if shift {
                     self.pl_state.sub_selection.toggle(hit.id, sub);
                 } else {
-                    self.pl_state.selection.clear();
-                    self.pl_state.sub_selection.select_one(hit.id, sub);
-                }
-                // Sub-element selection does not activate the object outline.
-                if !shift {
-                    self.pl_state.pc_selected = false;
-                    self.pl_state.tvm_selected = false;
-                    self.pl_state.splat_selected = false;
-                    self.pl_state.vol_selected = false;
-                    self.pl_state.polyline_selected = false;
-                    self.pl_state.arrow_glyph_selected = false;
-                    self.pl_state.tensor_glyph_selected = false;
-                    self.pl_state.sprite_selected = false;
+                    self.pl_state.clear_selection();
+                    self.pl_state.sub_selection.add(hit.id, sub);
                 }
             }
         }
 
+        let is_mesh_node = Self::pl_item_label(hit.id).is_none();
         let object_type = match hit.sub_object {
             None => {
                 if is_mesh_node { "Mesh" } else { Self::pl_item_label(hit.id).unwrap_or("Object") }
@@ -1256,17 +1137,14 @@ impl App {
         let r_max = glam::Vec2::new(rect_min.x.max(rect_max.x), rect_min.y.max(rect_max.y));
 
         if !shift {
-            self.pl_state.selection.clear();
-            self.pl_state.sub_selection.clear();
+            self.pl_state.clear_selection();
         }
 
         let mask = self.pl_state.unified_mask.to_pick_mask();
         let result: PickRectResult = renderer.pick_rect(r_min, r_max, vp_size, view_proj, mask);
 
         for id in &result.objects {
-            // Only add mesh nodes to selection; non-mesh objects have no outline
-            // rendering and must not collide with NodeIds in the selection set.
-            if Self::pl_item_label(*id).is_none() {
+            if !self.pl_state.set_flag(*id, true) {
                 self.pl_state.selection.add(*id);
             }
         }
@@ -1420,10 +1298,7 @@ pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
     ui.checkbox(&mut app.pl_state.wireframe, "Wireframe overlay");
 
     if ui.button("Clear selection").clicked() {
-        app.pl_state.selection.clear();
-        app.pl_state.sub_selection.clear();
-        app.pl_state.last_hit = None;
-        app.pl_state.hit_marker = None;
+        app.pl_state.clear_selection();
     }
 
     ui.separator();
