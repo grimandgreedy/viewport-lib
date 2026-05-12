@@ -94,6 +94,111 @@ impl Default for SceneRenderItem {
 
 
 // ---------------------------------------------------------------------------
+// Opaque volume mesh item
+// ---------------------------------------------------------------------------
+
+/// Render item for an opaque volume mesh uploaded via
+/// [`upload_volume_mesh_data`](crate::resources::ViewportGpuResources::upload_volume_mesh_data).
+///
+/// Wraps the `MeshId` produced by boundary extraction together with the
+/// face-to-cell mapping so consumers can recover cell-level identity from
+/// face-level pick hits. Call [`to_render_item`](Self::to_render_item) each
+/// frame to produce the [`SceneRenderItem`] submitted to the renderer.
+///
+/// ```rust,ignore
+/// let (mesh_id, face_to_cell) = resources.upload_volume_mesh_data(&device, &data)?;
+/// let item = VolumeMeshItem::new(mesh_id, face_to_cell);
+///
+/// // Each frame:
+/// scene_frame.surfaces = SurfaceSubmission::Flat(vec![item.to_render_item()].into());
+/// ```
+#[derive(Clone)]
+pub struct VolumeMeshItem {
+    /// GPU mesh slot for the extracted boundary surface.
+    pub mesh_id: crate::resources::mesh_store::MeshId,
+    /// Maps each boundary triangle to its originating cell index.
+    ///
+    /// `face_to_cell[face_index]` is the cell index in the original
+    /// [`VolumeMeshData::cells`](crate::VolumeMeshData::cells) array.
+    /// Use this to convert a [`SubObjectRef::Face`](crate::interaction::sub_object::SubObjectRef::Face)
+    /// pick hit into a cell index.
+    pub face_to_cell: Vec<u32>,
+    /// World-space model matrix. Default: identity.
+    pub model: [[f32; 4]; 4],
+    /// Whether this object is selected. Default: false.
+    pub selected: bool,
+    /// Whether this object is visible. Default: true.
+    pub visible: bool,
+    /// Per-object material.
+    pub material: crate::scene::material::Material,
+    /// Named scalar or color attribute to colour by.
+    pub active_attribute: Option<crate::resources::AttributeRef>,
+    /// Explicit scalar range `(min, max)`. `None` = auto-range from upload.
+    pub scalar_range: Option<(f32, f32)>,
+    /// Colormap for scalar colouring.
+    pub colormap_id: Option<ColormapId>,
+    /// GPU pick identifier. [`PickId::NONE`] = not pickable.
+    pub pick_id: PickId,
+    /// Render as wireframe regardless of global setting. Default: false.
+    pub render_as_wireframe: bool,
+}
+
+impl VolumeMeshItem {
+    /// Create a new item from the mesh ID and face-to-cell map returned by
+    /// [`upload_volume_mesh_data`](crate::resources::ViewportGpuResources::upload_volume_mesh_data).
+    pub fn new(mesh_id: crate::resources::mesh_store::MeshId, face_to_cell: Vec<u32>) -> Self {
+        Self {
+            mesh_id,
+            face_to_cell,
+            model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            selected: false,
+            visible: true,
+            material: crate::scene::material::Material::default(),
+            active_attribute: None,
+            scalar_range: None,
+            colormap_id: None,
+            pick_id: PickId::NONE,
+            render_as_wireframe: false,
+        }
+    }
+
+    /// Build the [`SceneRenderItem`] that the renderer consumes.
+    ///
+    /// The volume mesh renders through the standard surface pipeline; this
+    /// method copies the per-frame fields into a `SceneRenderItem`.
+    pub fn to_render_item(&self) -> SceneRenderItem {
+        SceneRenderItem {
+            mesh_id: self.mesh_id,
+            model: self.model,
+            selected: self.selected,
+            visible: self.visible,
+            material: self.material.clone(),
+            active_attribute: self.active_attribute.clone(),
+            scalar_range: self.scalar_range,
+            colormap_id: self.colormap_id,
+            pick_id: self.pick_id,
+            render_as_wireframe: self.render_as_wireframe,
+            ..SceneRenderItem::default()
+        }
+    }
+
+    /// Look up the cell index for a boundary face hit.
+    ///
+    /// Returns `None` if `face_index` is out of range.
+    pub fn cell_for_face(&self, face_index: u32) -> Option<u32> {
+        self.face_to_cell.get(face_index as usize).copied()
+    }
+
+    /// Replace the mesh ID and face-to-cell map, for example after a clipped
+    /// re-upload via
+    /// [`replace_clipped_volume_mesh_data`](crate::resources::ViewportGpuResources::replace_clipped_volume_mesh_data).
+    pub fn update_mesh(&mut self, mesh_id: crate::resources::mesh_store::MeshId, face_to_cell: Vec<u32>) {
+        self.mesh_id = mesh_id;
+        self.face_to_cell = face_to_cell;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SciVis Phase B : point cloud and glyph renderers
 // ---------------------------------------------------------------------------
 

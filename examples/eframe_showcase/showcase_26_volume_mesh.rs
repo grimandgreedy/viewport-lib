@@ -28,8 +28,8 @@ use crate::App;
 use eframe::egui;
 use viewport_lib::{
     AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap, CELL_SENTINEL, ColormapId,
-    LightingSettings, MeshId, ProjectedTetId, SceneRenderItem, TransparentVolumeMeshItem,
-    ClipObject, ClipShape, ViewportRenderer, VolumeMeshData,
+    LightingSettings, ProjectedTetId, SceneRenderItem, TransparentVolumeMeshItem,
+    ClipObject, ClipShape, ViewportRenderer, VolumeMeshData, VolumeMeshItem,
 };
 
 // ---------------------------------------------------------------------------
@@ -39,12 +39,12 @@ use viewport_lib::{
 pub(crate) struct VmState {
     pub built:          bool,
     pub mode:           VmMode,
-    pub tet_index:      MeshId,
-    pub hex_index:      MeshId,
-    pub tet_small_index: MeshId,
-    pub tet_box_index:  MeshId,
-    pub pyramid_index:  MeshId,
-    pub wedge_index:    MeshId,
+    pub tet_item:       Option<VolumeMeshItem>,
+    pub hex_item:       Option<VolumeMeshItem>,
+    pub tet_small_item: Option<VolumeMeshItem>,
+    pub tet_box_item:   Option<VolumeMeshItem>,
+    pub pyramid_item:   Option<VolumeMeshItem>,
+    pub wedge_item:     Option<VolumeMeshItem>,
     pub colormap:       BuiltinColormap,
     pub field:          VmField,
     pub wireframe:      bool,
@@ -54,8 +54,8 @@ pub(crate) struct VmState {
     pub clip_elevation: f32,
     /// Azimuth in degrees: rotation in the XZ plane measured from +Z toward +X.
     pub clip_azimuth:   f32,
-    /// GPU mesh slot for the CPU-clipped volume mesh; allocated lazily on first clip.
-    pub clipped_index:  Option<MeshId>,
+    /// CPU-clipped volume mesh item; allocated lazily on first clip.
+    pub clipped_item:   Option<VolumeMeshItem>,
     /// Projected-tet handles per cell type (uploaded at startup with raw positions).
     pub pt_hex_id:      Option<ProjectedTetId>,
     pub pt_tet_id:      Option<ProjectedTetId>,
@@ -78,12 +78,12 @@ impl Default for VmState {
         Self {
             built:           false,
             mode:            VmMode::Hex,
-            tet_index:       MeshId::from_index(0),
-            hex_index:       MeshId::from_index(0),
-            tet_small_index: MeshId::from_index(0),
-            tet_box_index:   MeshId::from_index(0),
-            pyramid_index:   MeshId::from_index(0),
-            wedge_index:     MeshId::from_index(0),
+            tet_item:        None,
+            hex_item:        None,
+            tet_small_item:  None,
+            tet_box_item:    None,
+            pyramid_item:    None,
+            wedge_item:      None,
             colormap:        BuiltinColormap::Viridis,
             field:           VmField::Latitude,
             wireframe:       false,
@@ -91,7 +91,7 @@ impl Default for VmState {
             clip_offset:     0.0,
             clip_elevation:  0.0,
             clip_azimuth:    0.0,
-            clipped_index:   None,
+            clipped_item:    None,
             pt_hex_id:       None,
             pt_tet_id:       None,
             pt_tet_small_id: None,
@@ -705,41 +705,33 @@ impl App {
         let hex_positions = cube_sphere_vertex_positions();
         let positions = sphere_vertex_positions();
 
+        let mut upload = |data: &VolumeMeshData| -> VolumeMeshItem {
+            let (mesh_id, face_to_cell) = renderer
+                .resources_mut()
+                .upload_volume_mesh_data(&self.device, data)
+                .expect("vm upload");
+            let mut item = VolumeMeshItem::new(mesh_id, face_to_cell);
+            item.material.backface_policy = BackfacePolicy::Identical;
+            item
+        };
+
         let hex_data = build_hex_mesh(&hex_positions);
-        self.vm_state.hex_index = renderer
-            .resources_mut()
-            .upload_volume_mesh_data(&self.device, &hex_data)
-            .expect("vm hex upload");
+        self.vm_state.hex_item = Some(upload(&hex_data));
 
         let tet_data = build_tet_mesh(&positions);
-        self.vm_state.tet_index = renderer
-            .resources_mut()
-            .upload_volume_mesh_data(&self.device, &tet_data)
-            .expect("vm tet upload");
+        self.vm_state.tet_item = Some(upload(&tet_data));
 
         let tet_small_data = build_tet_small();
-        self.vm_state.tet_small_index = renderer
-            .resources_mut()
-            .upload_volume_mesh_data(&self.device, &tet_small_data)
-            .expect("vm tet small upload");
+        self.vm_state.tet_small_item = Some(upload(&tet_small_data));
 
         let tet_box_data = build_tet_box();
-        self.vm_state.tet_box_index = renderer
-            .resources_mut()
-            .upload_volume_mesh_data(&self.device, &tet_box_data)
-            .expect("vm tet box upload");
+        self.vm_state.tet_box_item = Some(upload(&tet_box_data));
 
         let pyramid_data = build_pyramid_mesh(&hex_positions);
-        self.vm_state.pyramid_index = renderer
-            .resources_mut()
-            .upload_volume_mesh_data(&self.device, &pyramid_data)
-            .expect("vm pyramid upload");
+        self.vm_state.pyramid_item = Some(upload(&pyramid_data));
 
         let wedge_data = build_wedge_mesh(&positions);
-        self.vm_state.wedge_index = renderer
-            .resources_mut()
-            .upload_volume_mesh_data(&self.device, &wedge_data)
-            .expect("vm wedge upload");
+        self.vm_state.wedge_item = Some(upload(&wedge_data));
 
         // Colormaps must be ready before the PT bind group is created.
         renderer
@@ -828,41 +820,21 @@ impl App {
 
     /// Build a [`SceneRenderItem`] for the active volume mesh.
     ///
-    /// When clip is on and the clipped GPU slot is ready, routes to the
-    /// CPU-clipped mesh instead of the static boundary mesh.
+    /// When clip is on and the clipped item is ready, uses that instead of the
+    /// static boundary mesh.
     pub(crate) fn vm_scene_items(&self) -> Vec<SceneRenderItem> {
-        if !self.vm_state.built {
-            return vec![];
-        }
-        // Transparent mode renders via the projected-tet pass; suppress the opaque surface.
-        if self.vm_state.transparent {
+        if !self.vm_state.built || self.vm_state.transparent {
             return vec![];
         }
 
-        // Use the CPU-clipped slot when clipping is active and it has been
-        // uploaded.  Fall back to the static boundary mesh otherwise.
-        let mesh_id = if self.vm_state.clip_on {
-            match self.vm_state.clipped_index {
-                Some(id) => id,
-                None => match self.vm_state.mode {
-                    VmMode::Hex => self.vm_state.hex_index,
-                    VmMode::Tet => self.vm_state.tet_index,
-                    VmMode::TetSmall => self.vm_state.tet_small_index,
-                    VmMode::TetBox => self.vm_state.tet_box_index,
-                    VmMode::Pyramid => self.vm_state.pyramid_index,
-                    VmMode::Wedge => self.vm_state.wedge_index,
-                },
-            }
+        // Pick the active item: clipped if available and clipping is on,
+        // otherwise the static boundary item for the current mode.
+        let active = if self.vm_state.clip_on {
+            self.vm_state.clipped_item.as_ref().or_else(|| self.vm_active_item())
         } else {
-            match self.vm_state.mode {
-                VmMode::Hex => self.vm_state.hex_index,
-                VmMode::Tet => self.vm_state.tet_index,
-                VmMode::TetSmall => self.vm_state.tet_small_index,
-                VmMode::TetBox => self.vm_state.tet_box_index,
-                VmMode::Pyramid => self.vm_state.pyramid_index,
-                VmMode::Wedge => self.vm_state.wedge_index,
-            }
+            self.vm_active_item()
         };
+        let Some(item) = active else { return vec![] };
 
         let (active_attribute, colormap_id) = match self.vm_state.field {
             VmField::Latitude => (
@@ -895,12 +867,22 @@ impl App {
             ),
         };
 
-        let mut item = SceneRenderItem::default();
-        item.mesh_id = mesh_id;
-        item.active_attribute = active_attribute;
-        item.colormap_id = colormap_id;
-        item.material.backface_policy = BackfacePolicy::Identical;
-        vec![item]
+        let mut render_item = item.to_render_item();
+        render_item.active_attribute = active_attribute;
+        render_item.colormap_id = colormap_id;
+        vec![render_item]
+    }
+
+    /// Return a reference to the static [`VolumeMeshItem`] for the current mode.
+    fn vm_active_item(&self) -> Option<&VolumeMeshItem> {
+        match self.vm_state.mode {
+            VmMode::Hex      => self.vm_state.hex_item.as_ref(),
+            VmMode::Tet      => self.vm_state.tet_item.as_ref(),
+            VmMode::TetSmall => self.vm_state.tet_small_item.as_ref(),
+            VmMode::TetBox   => self.vm_state.tet_box_item.as_ref(),
+            VmMode::Pyramid  => self.vm_state.pyramid_item.as_ref(),
+            VmMode::Wedge    => self.vm_state.wedge_item.as_ref(),
+        }
     }
 
     /// Rebuild all projected-tet meshes with a new scalar field and colormap.

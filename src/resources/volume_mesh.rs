@@ -408,7 +408,10 @@ fn correct_winding(tri: &mut [u32; 3], interior_ref: &[f32; 3], positions: &[[f3
 /// This is the core of Phase 9: after this step the boundary mesh is uploaded
 /// via the existing [`upload_mesh_data`](super::ViewportGpuResources::upload_mesh_data)
 /// path and rendered exactly like any other surface mesh.
-pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> MeshData {
+///
+/// Returns `(mesh_data, face_to_cell)` where `face_to_cell[i]` is the cell
+/// index that boundary triangle `i` belongs to.
+pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u32>) {
     let n_verts = data.positions.len();
 
     // Generate face entries (parallel above threshold, sequential below).
@@ -530,14 +533,16 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> MeshData {
         attributes.insert(name.clone(), AttributeData::FaceColor(face_colors));
     }
 
-    MeshData {
+    let face_to_cell: Vec<u32> = boundary.iter().map(|(ci, _, _)| *ci as u32).collect();
+
+    (MeshData {
         positions: data.positions.clone(),
         normals,
         indices,
         uvs: None,
         tangents: None,
         attributes,
-    }
+    }, face_to_cell)
 }
 
 // ---------------------------------------------------------------------------
@@ -931,10 +936,15 @@ fn generate_section_tris(
 /// clip planes.
 ///
 /// See the design note in the section comment above for the full contract.
+/// Extract boundary and section faces from a volume mesh clipped by one or
+/// more planes.
+///
+/// Returns `(mesh_data, face_to_cell)` where `face_to_cell[i]` is the cell
+/// index that output triangle `i` belongs to.
 pub fn extract_clipped_volume_faces(
     data: &VolumeMeshData,
     clip_planes: &[[f32; 4]],
-) -> MeshData {
+) -> (MeshData, Vec<u32>) {
     if clip_planes.is_empty() {
         return extract_boundary_faces(data);
     }
@@ -1131,14 +1141,16 @@ pub fn extract_clipped_volume_faces(
         attributes.insert(name.clone(), AttributeData::FaceColor(face_colors));
     }
 
-    MeshData {
+    let face_to_cell: Vec<u32> = indexed_tris.iter().map(|(ci, _)| *ci as u32).collect();
+
+    (MeshData {
         positions,
         normals,
         indices,
         uvs: None,
         tangents: None,
         attributes,
-    }
+    }, face_to_cell)
 }
 
 // ---------------------------------------------------------------------------
@@ -1571,7 +1583,7 @@ mod tests {
     #[test]
     fn single_tet_has_four_boundary_faces() {
         let data = single_tet();
-        let mesh = extract_boundary_faces(&data);
+        let (mesh, _) = extract_boundary_faces(&data);
         assert_eq!(
             mesh.indices.len(),
             4 * 3,
@@ -1582,7 +1594,7 @@ mod tests {
     #[test]
     fn two_tets_sharing_face_eliminates_shared_face() {
         let data = two_tets_sharing_face();
-        let mesh = extract_boundary_faces(&data);
+        let (mesh, _) = extract_boundary_faces(&data);
         // 4 + 4 - 2 = 6 boundary triangles (shared face contributes 2 tris
         // that cancel, leaving 6)
         assert_eq!(
@@ -1595,8 +1607,8 @@ mod tests {
     #[test]
     fn single_hex_has_twelve_boundary_triangles() {
         let data = single_hex();
-        let mesh = extract_boundary_faces(&data);
-        // 6 quad faces × 2 triangles each = 12
+        let (mesh, _) = extract_boundary_faces(&data);
+        // 6 quad faces x 2 triangles each = 12
         assert_eq!(
             mesh.indices.len(),
             12 * 3,
@@ -1608,7 +1620,7 @@ mod tests {
     fn structured_tet_grid_has_expected_boundary_triangle_count() {
         let grid_n = 3;
         let data = structured_tet_grid(grid_n);
-        let mesh = extract_boundary_faces(&data);
+        let (mesh, _) = extract_boundary_faces(&data);
         let expected_boundary_tris = 6 * grid_n * grid_n * 2;
         assert_eq!(
             mesh.indices.len(),
@@ -1621,7 +1633,7 @@ mod tests {
     fn structured_hex_grid_has_expected_boundary_triangle_count() {
         let grid_n = 3;
         let data = structured_hex_grid(grid_n);
-        let mesh = extract_boundary_faces(&data);
+        let (mesh, _) = extract_boundary_faces(&data);
         let expected_boundary_tris = 6 * grid_n * grid_n * 2;
         assert_eq!(
             mesh.indices.len(),
@@ -1633,7 +1645,7 @@ mod tests {
     #[test]
     fn structured_tet_grid_boundary_is_edge_manifold() {
         let data = structured_tet_grid(3);
-        let mesh = extract_boundary_faces(&data);
+        let (mesh, _) = extract_boundary_faces(&data);
 
         let mut edge_counts: std::collections::HashMap<(u32, u32), usize> =
             std::collections::HashMap::new();
@@ -1658,7 +1670,7 @@ mod tests {
     #[test]
     fn structured_hex_grid_boundary_is_edge_manifold() {
         let data = structured_hex_grid(3);
-        let mesh = extract_boundary_faces(&data);
+        let (mesh, _) = extract_boundary_faces(&data);
 
         let mut edge_counts: std::collections::HashMap<(u32, u32), usize> =
             std::collections::HashMap::new();
@@ -1683,7 +1695,7 @@ mod tests {
     #[test]
     fn projected_sphere_tet_grid_boundary_faces_point_outward() {
         let data = projected_sphere_tet_grid(3, 2.0);
-        let mesh = extract_boundary_faces(&data);
+        let (mesh, _) = extract_boundary_faces(&data);
 
         for tri in mesh.indices.chunks_exact(3) {
             let pa = mesh.positions[tri[0] as usize];
@@ -1710,7 +1722,7 @@ mod tests {
     #[test]
     fn cube_sphere_hex_grid_boundary_faces_point_outward() {
         let data = cube_sphere_hex_grid(3, 2.0);
-        let mesh = extract_boundary_faces(&data);
+        let (mesh, _) = extract_boundary_faces(&data);
 
         for tri in mesh.indices.chunks_exact(3) {
             let pa = mesh.positions[tri[0] as usize];
@@ -1737,7 +1749,7 @@ mod tests {
     #[test]
     fn normals_have_correct_length() {
         let data = single_tet();
-        let mesh = extract_boundary_faces(&data);
+        let (mesh, _) = extract_boundary_faces(&data);
         assert_eq!(mesh.normals.len(), mesh.positions.len());
         for n in &mesh.normals {
             let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
@@ -1752,7 +1764,7 @@ mod tests {
     fn cell_scalar_remaps_to_face_attribute() {
         let mut data = single_tet();
         data.cell_scalars.insert("pressure".to_string(), vec![42.0]);
-        let mesh = extract_boundary_faces(&data);
+        let (mesh, _) = extract_boundary_faces(&data);
         match mesh.attributes.get("pressure") {
             Some(AttributeData::Face(vals)) => {
                 assert_eq!(vals.len(), 4, "one value per boundary triangle");
@@ -1771,7 +1783,7 @@ mod tests {
             "label".to_string(),
             vec![[1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]],
         );
-        let mesh = extract_boundary_faces(&data);
+        let (mesh, _) = extract_boundary_faces(&data);
         match mesh.attributes.get("label") {
             Some(AttributeData::FaceColor(colors)) => {
                 assert_eq!(colors.len(), 6, "6 boundary faces");
@@ -1783,7 +1795,7 @@ mod tests {
     #[test]
     fn positions_preserved_unchanged() {
         let data = single_hex();
-        let mesh = extract_boundary_faces(&data);
+        let (mesh, _) = extract_boundary_faces(&data);
         assert_eq!(mesh.positions, data.positions);
     }
 
@@ -1800,8 +1812,8 @@ mod tests {
     
     fn empty_planes_matches_boundary_extractor_tet() {
         let data = structured_tet_grid(3);
-        let boundary = extract_boundary_faces(&data);
-        let clipped = extract_clipped_volume_faces(&data, &[]);
+        let (boundary, _) = extract_boundary_faces(&data);
+        let (clipped, _) = extract_clipped_volume_faces(&data, &[]);
         assert_eq!(
             boundary.indices.len(),
             clipped.indices.len(),
@@ -1812,11 +1824,11 @@ mod tests {
     /// Empty clip-plane slice must produce the same triangles as the boundary
     /// extractor for hex meshes.
     #[test]
-    
+
     fn empty_planes_matches_boundary_extractor_hex() {
         let data = structured_hex_grid(3);
-        let boundary = extract_boundary_faces(&data);
-        let clipped = extract_clipped_volume_faces(&data, &[]);
+        let (boundary, _) = extract_boundary_faces(&data);
+        let (clipped, _) = extract_clipped_volume_faces(&data, &[]);
         assert_eq!(
             boundary.indices.len(),
             clipped.indices.len(),
@@ -1834,7 +1846,7 @@ mod tests {
         // Y = 1.5 cuts through the middle of a 3-unit-tall grid.
         // Plane: ny=1, d=-1.5  ->  dot(p,[0,1,0]) - 1.5 >= 0  ->  keep y >= 1.5.
         let plane = [0.0_f32, 1.0, 0.0, -1.5];
-        let mesh = extract_clipped_volume_faces(&data, &[plane]);
+        let (mesh, _) = extract_clipped_volume_faces(&data, &[plane]);
         // Some triangles must come from section faces.
         assert!(
             !mesh.indices.is_empty(),
@@ -1849,7 +1861,7 @@ mod tests {
         let grid_n = 3;
         let data = structured_hex_grid(grid_n);
         let plane = [0.0_f32, 1.0, 0.0, -1.5];
-        let mesh = extract_clipped_volume_faces(&data, &[plane]);
+        let (mesh, _) = extract_clipped_volume_faces(&data, &[plane]);
         assert!(
             !mesh.indices.is_empty(),
             "clipped hex grid must produce at least one triangle"
@@ -1864,7 +1876,7 @@ mod tests {
         let data = structured_tet_grid(3);
         let plane_normal = [0.0_f32, 1.0, 0.0];
         let plane = [plane_normal[0], plane_normal[1], plane_normal[2], -1.5];
-        let mesh = extract_clipped_volume_faces(&data, &[plane]);
+        let (mesh, _) = extract_clipped_volume_faces(&data, &[plane]);
 
         for n in &mesh.normals {
             let dot = n[0] * plane_normal[0] + n[1] * plane_normal[1] + n[2] * plane_normal[2];
@@ -1883,7 +1895,7 @@ mod tests {
         // Single tet at y=0..1 ; plane keeps y >= 2.0 -> tet is fully discarded.
         let data = single_tet();
         let plane = [0.0_f32, 1.0, 0.0, -2.0]; // keep y >= 2.0
-        let mesh = extract_clipped_volume_faces(&data, &[plane]);
+        let (mesh, _) = extract_clipped_volume_faces(&data, &[plane]);
         assert!(
             mesh.indices.is_empty(),
             "tet fully below clip plane must produce no triangles"
@@ -1898,8 +1910,8 @@ mod tests {
         // Single tet at y=0..1 ; plane keeps y >= -1.0 -> tet is fully kept.
         let data = single_tet();
         let plane = [0.0_f32, 1.0, 0.0, 1.0]; // keep y >= -1.0
-        let clipped = extract_clipped_volume_faces(&data, &[plane]);
-        let boundary = extract_boundary_faces(&data);
+        let (clipped, _) = extract_clipped_volume_faces(&data, &[plane]);
+        let (boundary, _) = extract_boundary_faces(&data);
         assert_eq!(
             clipped.indices.len(),
             boundary.indices.len(),
@@ -1916,7 +1928,7 @@ mod tests {
         data.cell_scalars
             .insert("pressure".to_string(), vec![1.0; n_cells]);
         let plane = [0.0_f32, 1.0, 0.0, -1.5];
-        let mesh = extract_clipped_volume_faces(&data, &[plane]);
+        let (mesh, _) = extract_clipped_volume_faces(&data, &[plane]);
         match mesh.attributes.get("pressure") {
             Some(AttributeData::Face(vals)) => {
                 let n_tris = mesh.indices.len() / 3;
@@ -1939,7 +1951,7 @@ mod tests {
         data.cell_colors
             .insert("label".to_string(), vec![color; n_cells]);
         let plane = [0.0_f32, 1.0, 0.0, -1.5];
-        let mesh = extract_clipped_volume_faces(&data, &[plane]);
+        let (mesh, _) = extract_clipped_volume_faces(&data, &[plane]);
         match mesh.attributes.get("label") {
             Some(AttributeData::FaceColor(colors)) => {
                 let n_tris = mesh.indices.len() / 3;
@@ -1960,7 +1972,7 @@ mod tests {
         data.cell_scalars
             .insert("temp".to_string(), vec![7.0; n_cells]);
         let plane = [0.0_f32, 1.0, 0.0, -1.5];
-        let mesh = extract_clipped_volume_faces(&data, &[plane]);
+        let (mesh, _) = extract_clipped_volume_faces(&data, &[plane]);
         match mesh.attributes.get("temp") {
             Some(AttributeData::Face(vals)) => {
                 let n_tris = mesh.indices.len() / 3;

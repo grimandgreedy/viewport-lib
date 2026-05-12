@@ -22,7 +22,7 @@ pub use self::types::{
     PointCloudItem, PointRenderMode,
     aabb_wireframe_polyline, PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBarAnchor, ScalarBarItem,
     ScalarBarOrientation, SceneEffects,
-    RibbonItem, SceneFrame, SceneRenderItem, ScreenImageItem,
+    RibbonItem, SceneFrame, SceneRenderItem, ScreenImageItem, VolumeMeshItem,
     ShadowFilter, SliceAxis, SpriteItem, SpriteSizeMode, StreamtubeItem, SurfaceLICConfig,
     SurfaceLICItem, SurfaceSubmission,
     GaussianSplatData, GaussianSplatId, GaussianSplatItem, ShDegree,
@@ -230,6 +230,16 @@ pub struct ViewportRenderer {
     /// Consumed during `paint()` to override the mesh's default index buffer.
     /// Cleared and rebuilt each frame.
     compute_filter_results: Vec<crate::resources::ComputeFilterResult>,
+    /// Per-item uniform buffers for wireframe mode. In wireframe mode multiple scene
+    /// items can share the same MeshId, but each needs its own object uniform (model
+    /// matrix, color, etc.). The mesh's single `object_uniform_buf` gets overwritten
+    /// by the last item prepared, so we maintain a separate pool here. Indexed in the
+    /// same order as the visible scene items. Grown lazily, never shrunk.
+    wireframe_uniform_bufs: Vec<wgpu::Buffer>,
+    /// Bind groups corresponding to `wireframe_uniform_bufs`. Each bind group pairs
+    /// the per-item uniform buffer with the mesh's fallback textures so it is
+    /// compatible with the object bind group layout.
+    wireframe_bind_groups: Vec<wgpu::BindGroup>,
     /// Cascade-0 light-space view-projection matrix from the last shadow prepare.
     /// Cached here so `prepare_viewport_internal` can copy it into the ground plane uniform.
     last_cascade0_shadow_mat: glam::Mat4,
@@ -343,6 +353,8 @@ impl ViewportRenderer {
             loading_bar_gpu_data: None,
             viewport_slots: Vec::new(),
             compute_filter_results: Vec::new(),
+            wireframe_uniform_bufs: Vec::new(),
+            wireframe_bind_groups: Vec::new(),
             last_cascade0_shadow_mat: glam::Mat4::IDENTITY,
             runtime_mode: crate::renderer::stats::RuntimeMode::Interactive,
             performance_policy: crate::renderer::stats::PerformancePolicy::default(),
@@ -788,7 +800,8 @@ impl ViewportRenderer {
             camera_bg,
             grid_bg,
             &self.compute_filter_results,
-            vp_slot
+            vp_slot,
+            &self.wireframe_bind_groups
         );
         emit_scivis_draw_calls!(
             &self.resources,
@@ -848,7 +861,8 @@ impl ViewportRenderer {
             camera_bg,
             grid_bg,
             &self.compute_filter_results,
-            vp_slot
+            vp_slot,
+            &self.wireframe_bind_groups
         );
         emit_scivis_draw_calls!(
             &self.resources,

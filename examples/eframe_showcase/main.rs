@@ -2432,9 +2432,9 @@ impl App {
                         {
                             let data = self.vm_active_data();
                             let clip_planes = [self.vm_clip_plane()];
-                            match self.vm_state.clipped_index {
+                            match self.vm_state.clipped_item.as_ref() {
                                 None => {
-                                    if let Ok(id) = renderer
+                                    if let Ok((id, f2c)) = renderer
                                         .resources_mut()
                                         .upload_clipped_volume_mesh_data(
                                             &rs.device,
@@ -2442,19 +2442,26 @@ impl App {
                                             &clip_planes,
                                         )
                                     {
-                                        self.vm_state.clipped_index = Some(id);
+                                        let mut item = viewport_lib::VolumeMeshItem::new(id, f2c);
+                                        item.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
+                                        self.vm_state.clipped_item = Some(item);
                                     }
                                 }
-                                Some(id) => {
-                                    let _ = renderer
+                                Some(existing) => {
+                                    if let Ok(f2c) = renderer
                                         .resources_mut()
                                         .replace_clipped_volume_mesh_data(
                                             &rs.device,
                                             &rs.queue,
-                                            id,
+                                            existing.mesh_id,
                                             &data,
                                             &clip_planes,
-                                        );
+                                        )
+                                    {
+                                        if let Some(item) = self.vm_state.clipped_item.as_mut() {
+                                            item.face_to_cell = f2c;
+                                        }
+                                    }
                                 }
                             }
                         }

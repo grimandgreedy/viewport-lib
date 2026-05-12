@@ -244,7 +244,8 @@ pub(crate) fn build_tensor_glyph_scene(app: &mut App, renderer: &mut ViewportRen
     app.tg_state.mesh_id = renderer
         .resources_mut()
         .upload_volume_mesh_data(&app.device, &data)
-        .ok();
+        .ok()
+        .map(|(id, _)| id);
 
     app.tg_state.built = true;
 }

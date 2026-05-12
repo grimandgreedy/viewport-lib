@@ -95,7 +95,7 @@ fn make_pl_tvm_data() -> VolumeMeshData {
 
     let radius = 0.7_f32;
     let cyl_half = 1.2_f32;
-    let center = [0.0_f32, -3.5, 0.0];
+    let center = [4.0, 0.0, -4.0];
     let z_extent = cyl_half + radius;
 
     let mut positions: Vec<[f32; 3]> = Vec::with_capacity(N * N * NZ);
@@ -200,7 +200,7 @@ impl Default for PlState {
             cube_mesh_id:     MeshId::from_index(0),
             hemi_mesh_id:     MeshId::from_index(0),
             mesh_lookup:      std::collections::HashMap::new(),
-            wireframe:        true,
+            wireframe:        false,
             shift_held:       false,
             drag_start:       None,
             node_names:       Vec::new(),
@@ -272,8 +272,8 @@ impl App {
             for col in 0..6_i32 {
                 pc.push([
                     (col - 2) as f32 * 1.6,
-                    3.5 + (row - 2) as f32 * 0.7,
-                    0.0,
+                    (row - 2) as f32 * 0.7,
+                    3.5,
                 ]);
             }
         }
@@ -314,7 +314,11 @@ impl App {
         let mut splat_positions: Vec<[f32; 3]> = Vec::with_capacity(9);
         for row in -1..=1_i32 {
             for col in -1..=1_i32 {
-                splat_positions.push([col as f32 * 0.8, 0.0, row as f32 * 0.8]);
+                splat_positions.push([
+                    col as f32 * 0.8,
+                    0.0,
+                    -3.5 + row as f32 * 0.8
+                ]);
             }
         }
         let splat_data = make_pl_splat_data(&splat_positions);
@@ -746,7 +750,7 @@ impl App {
 ///
 /// Both the renderer submission and the pick functions must use the same model.
 pub(crate) fn pl_splat_model() -> glam::Mat4 {
-    glam::Mat4::from_translation(glam::vec3(-4.0, 5.0, 0.0))
+    glam::Mat4::from_translation(glam::vec3(-4.0, 0.0, -0.75))
 }
 
 impl App {
@@ -863,10 +867,30 @@ pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
                 ui.label(format!("Scalar: {sv:.3}"));
             }
         } else {
-            let sel_count = app.pl_state.selection.len()
-                + app.pl_state.sub_selection.iter().count();
-            if sel_count > 0 {
-                ui.label(format!("{sel_count} item(s) selected"));
+            let obj_count = app.pl_state.selection.len();
+            let mut faces = 0u32;
+            let mut verts = 0u32;
+            let mut points = 0u32;
+            let mut voxels = 0u32;
+            let mut cells = 0u32;
+            for (_, sub) in app.pl_state.sub_selection.iter() {
+                match sub {
+                    SubObjectRef::Face(_)   => faces += 1,
+                    SubObjectRef::Vertex(_) => verts += 1,
+                    SubObjectRef::Point(_)  => points += 1,
+                    SubObjectRef::Voxel(_)  => voxels += 1,
+                    SubObjectRef::Cell(_)   => cells += 1,
+                    _ => {}
+                }
+            }
+            if obj_count > 0 || faces + verts + points + voxels + cells > 0 {
+                ui.label(egui::RichText::new("Selection").strong());
+                if obj_count > 0 { ui.label(format!("Objects: {obj_count}")); }
+                if faces > 0     { ui.label(format!("Faces: {faces}")); }
+                if verts > 0     { ui.label(format!("Vertices: {verts}")); }
+                if points > 0    { ui.label(format!("Points: {points}")); }
+                if voxels > 0    { ui.label(format!("Voxels: {voxels}")); }
+                if cells > 0     { ui.label(format!("Cells: {cells}")); }
             } else {
                 ui.label("Click or drag to select.");
             }

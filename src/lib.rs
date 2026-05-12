@@ -179,7 +179,7 @@ pub use renderer::{
     PointCloudItem, PointRenderMode,
     aabb_wireframe_polyline, PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBarAnchor, ScalarBarItem,
     ScalarBarOrientation, SceneEffects,
-    RibbonItem, SceneFrame, SceneRenderItem, ScreenImageItem,
+    RibbonItem, SceneFrame, SceneRenderItem, ScreenImageItem, VolumeMeshItem,
     GaussianSplatData, GaussianSplatId, GaussianSplatItem, ShDegree,
     ImageSliceItem, SliceAxis, ShadowFilter, SpriteItem, SpriteSizeMode, StreamtubeItem,
     SurfaceLICConfig, SurfaceLICItem, SurfaceSubmission, ToneMapping, TubeItem,

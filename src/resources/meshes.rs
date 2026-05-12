@@ -427,9 +427,10 @@ impl ViewportGpuResources {
         &mut self,
         device: &wgpu::Device,
         data: &crate::resources::volume_mesh::VolumeMeshData,
-    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
-        let mesh_data = crate::resources::volume_mesh::extract_boundary_faces(data);
-        self.upload_mesh_data(device, &mesh_data)
+    ) -> crate::error::ViewportResult<(crate::resources::mesh_store::MeshId, Vec<u32>)> {
+        let (mesh_data, face_to_cell) = crate::resources::volume_mesh::extract_boundary_faces(data);
+        let mesh_id = self.upload_mesh_data(device, &mesh_data)?;
+        Ok((mesh_id, face_to_cell))
     }
 
     /// Upload a clipped volume mesh by extracting boundary and section faces for the
@@ -446,10 +447,11 @@ impl ViewportGpuResources {
         device: &wgpu::Device,
         data: &crate::resources::volume_mesh::VolumeMeshData,
         clip_planes: &[[f32; 4]],
-    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
-        let mesh_data =
+    ) -> crate::error::ViewportResult<(crate::resources::mesh_store::MeshId, Vec<u32>)> {
+        let (mesh_data, face_to_cell) =
             crate::resources::volume_mesh::extract_clipped_volume_faces(data, clip_planes);
-        self.upload_mesh_data(device, &mesh_data)
+        let mesh_id = self.upload_mesh_data(device, &mesh_data)?;
+        Ok((mesh_id, face_to_cell))
     }
 
     /// Replace an existing mesh slot with a freshly-extracted clipped volume mesh.
@@ -464,10 +466,11 @@ impl ViewportGpuResources {
         mesh_id: crate::resources::mesh_store::MeshId,
         data: &crate::resources::volume_mesh::VolumeMeshData,
         clip_planes: &[[f32; 4]],
-    ) -> crate::error::ViewportResult<()> {
-        let mesh_data =
+    ) -> crate::error::ViewportResult<Vec<u32>> {
+        let (mesh_data, face_to_cell) =
             crate::resources::volume_mesh::extract_clipped_volume_faces(data, clip_planes);
-        self.replace_mesh_data(device, queue, mesh_id, &mesh_data)
+        self.replace_mesh_data(device, queue, mesh_id, &mesh_data)?;
+        Ok(face_to_cell)
     }
 
     /// Replace a previously uploaded sparse voxel grid in place.

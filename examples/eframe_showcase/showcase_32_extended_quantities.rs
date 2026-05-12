@@ -205,8 +205,9 @@ impl App {
             .upload_mesh_data(&self.device, &cm).expect("corner mesh");
 
         let vm_data = make_hex_sphere_volume_mesh();
-        self.eq_state.vm_mesh_id = renderer.resources_mut()
+        let (vm_mesh_id, _) = renderer.resources_mut()
             .upload_volume_mesh_data(&self.device, &vm_data).expect("vm mesh");
+        self.eq_state.vm_mesh_id = vm_mesh_id;
         self.eq_state.vm_data = vm_data;
 
         let (p, s, r, t) = make_pc_data(5_000);
