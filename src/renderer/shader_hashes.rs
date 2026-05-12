@@ -33,7 +33,7 @@ pub struct ShaderEntry {
     pub source: &'static str,
 }
 
-/// All 22 shaders embedded via `include_str!`.
+/// All 24 shaders embedded via `include_str!`.
 ///
 /// Order matches the filesystem order in `src/shaders/`.
 pub const SHADERS: &[ShaderEntry] = &[
@@ -129,6 +129,10 @@ pub const SHADERS: &[ShaderEntry] = &[
         name: "tone_map.wgsl",
         source: include_str!("../shaders/tone_map.wgsl"),
     },
+    ShaderEntry {
+        name: "volume_outline_mask.wgsl",
+        source: include_str!("../shaders/volume_outline_mask.wgsl"),
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -218,8 +222,8 @@ mod tests {
         let hashes = current_shader_hashes();
         assert_eq!(
             hashes.len(),
-            22,
-            "expected 22 shaders, got {}",
+            24,
+            "expected 24 shaders, got {}",
             hashes.len()
         );
     }
@@ -239,7 +243,7 @@ mod tests {
         let hashes = current_shader_hashes();
         let expected: Vec<(&str, u64)> = hashes.iter().map(|(n, h)| (*n, *h)).collect();
         let result = validate_shader_hashes(&expected);
-        assert_eq!(result.valid, 22);
+        assert_eq!(result.valid, 24);
         assert!(result.mismatched.is_empty());
     }
 

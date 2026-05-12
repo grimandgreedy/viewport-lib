@@ -2085,7 +2085,7 @@ impl ViewportRenderer {
         // pass with no depth attachment, so the composite pipeline is compatible.
         // -----------------------------------------------------------------------
         if !slot.outline_object_buffers.is_empty() || !slot.splat_outline_buffers.is_empty()
-            || !slot.volume_outline_buffers.is_empty()
+            || !slot.volume_outline_indices.is_empty()
         {
             // Prefer the HDR-format pipeline; fall back to LDR single-sample.
             let hdr_pipeline = self

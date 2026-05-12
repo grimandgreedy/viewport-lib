@@ -82,8 +82,8 @@ pub(crate) struct ViewportSlot {
     pub outline_object_buffers: Vec<OutlineObjectBuffers>,
     /// Per-frame outline buffers for selected Gaussian splat sets, rebuilt in prepare().
     pub splat_outline_buffers: Vec<crate::resources::SplatOutlineBuffers>,
-    /// Per-frame outline buffers for selected volumes (AABB cube mask), rebuilt in prepare().
-    pub volume_outline_buffers: Vec<crate::resources::VolumeOutlineBuffers>,
+    /// Indices into `volume_gpu_data` for selected volumes, rebuilt in prepare().
+    pub volume_outline_indices: Vec<usize>,
     /// Per-frame x-ray buffers for selected objects, rebuilt in prepare().
     pub xray_object_buffers: Vec<(crate::resources::mesh_store::MeshId, wgpu::Buffer, wgpu::BindGroup)>,
     /// Per-frame constraint guide line buffers, rebuilt in prepare().
@@ -281,6 +281,12 @@ pub struct ViewportRenderer {
     pick_tensor_glyph_items: Vec<TensorGlyphItem>,
     /// Sprite items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_sprite_items: Vec<SpriteItem>,
+    /// Streamtube items from the last `prepare()` call, retained for `pick()` dispatch.
+    pick_streamtube_items: Vec<StreamtubeItem>,
+    /// Tube items from the last `prepare()` call, retained for `pick()` dispatch.
+    pick_tube_items: Vec<TubeItem>,
+    /// Ribbon items from the last `prepare()` call, retained for `pick()` dispatch.
+    pick_ribbon_items: Vec<RibbonItem>,
 
     // --- Phase 4 : GPU timestamp queries ---
     /// Timestamp query set with 2 entries (scene-pass begin + end).
@@ -394,6 +400,9 @@ impl ViewportRenderer {
             pick_glyph_items: Vec::new(),
             pick_tensor_glyph_items: Vec::new(),
             pick_sprite_items: Vec::new(),
+            pick_streamtube_items: Vec::new(),
+            pick_tube_items: Vec::new(),
+            pick_ribbon_items: Vec::new(),
             ts_query_set: None,
             ts_resolve_buf: None,
             ts_staging_buf: None,
@@ -702,7 +711,7 @@ impl ViewportRenderer {
                 hdr: None,
                 outline_object_buffers: Vec::new(),
                 splat_outline_buffers: Vec::new(),
-                volume_outline_buffers: Vec::new(),
+                volume_outline_indices: Vec::new(),
                 xray_object_buffers: Vec::new(),
                 constraint_line_buffers: Vec::new(),
                 cap_buffers: Vec::new(),

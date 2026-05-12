@@ -213,6 +213,85 @@ impl ViewportGpuResources {
         self.volume_bgl = Some(bgl);
     }
 
+    /// Ensure the volume outline mask pipeline exists. This pipeline ray-marches the
+    /// volume in the R8 mask texture so the outline hugs the actual volume silhouette
+    /// rather than the AABB. Requires `ensure_volume_pipeline` to have been called
+    /// first (needs `volume_bgl`).
+    pub(crate) fn ensure_volume_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
+        if self.volume_outline_mask_pipeline.is_some() {
+            return;
+        }
+        let bgl = self
+            .volume_bgl
+            .as_ref()
+            .expect("ensure_volume_pipeline must be called before ensure_volume_outline_mask_pipeline");
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("volume_outline_mask_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/volume_outline_mask.wgsl").into(),
+            ),
+        });
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("volume_outline_mask_pipeline_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, bgl],
+            push_constant_ranges: &[],
+        });
+
+        let vert_attrs = [wgpu::VertexAttribute {
+            offset: 0,
+            shader_location: 0,
+            format: wgpu::VertexFormat::Float32x3,
+        }];
+        let vert_layout = wgpu::VertexBufferLayout {
+            array_stride: 12,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &vert_attrs,
+        };
+
+        self.volume_outline_mask_pipeline =
+            Some(device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("volume_outline_mask_pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[vert_layout],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R8Unorm,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            }));
+    }
+
     /// Ensure the unit cube vertex + index buffers for volume bounding box proxy exist.
     pub(crate) fn ensure_volume_cube(&mut self, device: &wgpu::Device) {
         if self.volume_cube_vb.is_some() {

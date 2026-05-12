@@ -2183,46 +2183,18 @@ impl ViewportRenderer {
             }
         }
 
-        // Volume outline mask buffers: render the AABB proxy cube into the R8 mask.
-        let mut volume_outline_buffers: Vec<crate::resources::VolumeOutlineBuffers> = Vec::new();
+        // Volume outline: record indices of selected volumes so the mask pass can
+        // reuse their VolumeGpuData bind groups (which already contain model, 3D
+        // texture, samplers, and LUTs needed by the ray-march mask shader).
+        let mut volume_outline_indices: Vec<usize> = Vec::new();
         if frame.interaction.outline_selected {
             self.resources.ensure_volume_cube(device);
-            for item in &frame.scene.volumes {
-                if !item.selected {
-                    continue;
+            self.resources.ensure_volume_pipeline(device);
+            self.resources.ensure_volume_outline_mask_pipeline(device);
+            for (i, item) in frame.scene.volumes.iter().enumerate() {
+                if item.selected {
+                    volume_outline_indices.push(i);
                 }
-                // Compose model: volume.model * translate(bbox_min) * scale(bbox_max - bbox_min)
-                // This maps [0,1]^3 to the volume's world-space AABB.
-                let vol_model = glam::Mat4::from_cols_array_2d(&item.model);
-                let lo = glam::Vec3::from(item.bbox_min);
-                let hi = glam::Vec3::from(item.bbox_max);
-                let aabb_model = vol_model
-                    * glam::Mat4::from_translation(lo)
-                    * glam::Mat4::from_scale(hi - lo);
-
-                let uniform = OutlineUniform {
-                    model: aabb_model.to_cols_array_2d(),
-                    color: [0.0; 4],
-                    pixel_offset: 0.0,
-                    _pad: [0.0; 3],
-                };
-                let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("vol_outline_mask_uniform_buf"),
-                    contents: bytemuck::cast_slice(&[uniform]),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
-                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("vol_outline_mask_bg"),
-                    layout: &self.resources.outline_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: buf.as_entire_binding(),
-                    }],
-                });
-                volume_outline_buffers.push(crate::resources::VolumeOutlineBuffers {
-                    _uniform_buf: buf,
-                    bind_group: bg,
-                });
             }
         }
 
@@ -2481,7 +2453,7 @@ impl ViewportRenderer {
             let slot = &mut self.viewport_slots[vp_idx];
             slot.outline_object_buffers = outline_object_buffers;
             slot.splat_outline_buffers = splat_outline_buffers;
-            slot.volume_outline_buffers = volume_outline_buffers;
+            slot.volume_outline_indices = volume_outline_indices;
             slot.xray_object_buffers = xray_object_buffers;
             slot.constraint_line_buffers = constraint_line_buffers;
             slot.clip_plane_fill_buffers = clip_plane_fill_buffers;
@@ -2548,7 +2520,7 @@ impl ViewportRenderer {
         if frame.interaction.outline_selected
             && (!self.viewport_slots[vp_idx].outline_object_buffers.is_empty()
                 || !self.viewport_slots[vp_idx].splat_outline_buffers.is_empty()
-                || !self.viewport_slots[vp_idx].volume_outline_buffers.is_empty())
+                || !self.viewport_slots[vp_idx].volume_outline_indices.is_empty())
         {
             let w = frame.camera.viewport_size[0] as u32;
             let h = frame.camera.viewport_size[1] as u32;
@@ -2587,8 +2559,8 @@ impl ViewportRenderer {
                 &slot_ref.outline_object_buffers as *const Vec<OutlineObjectBuffers>;
             let splat_outlines_ptr =
                 &slot_ref.splat_outline_buffers as *const Vec<crate::resources::SplatOutlineBuffers>;
-            let vol_outlines_ptr =
-                &slot_ref.volume_outline_buffers as *const Vec<crate::resources::VolumeOutlineBuffers>;
+            let vol_outline_idx_ptr =
+                &slot_ref.volume_outline_indices as *const Vec<usize>;
             let camera_bg_ptr = &slot_ref.camera_bind_group as *const wgpu::BindGroup;
             let slot_hdr = slot_ref.hdr.as_ref().unwrap();
             let mask_view_ptr = &slot_hdr.outline_mask_view as *const wgpu::TextureView;
@@ -2597,11 +2569,11 @@ impl ViewportRenderer {
             let edge_bg_ptr = &slot_hdr.outline_edge_bind_group as *const wgpu::BindGroup;
             // SAFETY: slot fields remain valid for the duration of this function;
             // no other code modifies these fields here.
-            let (outlines, splat_outlines, vol_outlines, camera_bg, mask_view, color_view, depth_view, edge_bg) = unsafe {
+            let (outlines, splat_outlines, vol_outline_indices, camera_bg, mask_view, color_view, depth_view, edge_bg) = unsafe {
                 (
                     &*outlines_ptr,
                     &*splat_outlines_ptr,
-                    &*vol_outlines_ptr,
+                    &*vol_outline_idx_ptr,
                     &*camera_bg_ptr,
                     &*mask_view_ptr,
                     &*color_view_ptr,
@@ -2671,19 +2643,18 @@ impl ViewportRenderer {
                     pass.draw(0..6, 0..splat.instance_count);
                 }
 
-                // Draw volume AABB cubes into the mask.  Uses the shared unit cube
-                // VB/IB with a composed model that maps [0,1]^3 to the volume's AABB.
-                if !vol_outlines.is_empty() {
-                    if let (Some(vb), Some(ib)) = (
-                        self.resources.volume_cube_vb.as_ref(),
-                        self.resources.volume_cube_ib.as_ref(),
-                    ) {
-                        pass.set_pipeline(&self.resources.volume_outline_mask_pipeline);
-                        pass.set_vertex_buffer(0, vb.slice(..));
-                        pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                        for vol in vol_outlines {
-                            pass.set_bind_group(1, &vol.bind_group, &[]);
-                            pass.draw_indexed(0..36, 0, 0..1);
+                // Draw volumes into the mask using a simplified ray march so the
+                // outline hugs the actual volume silhouette, not the AABB.
+                if !vol_outline_indices.is_empty() {
+                    if let Some(pipeline) = self.resources.volume_outline_mask_pipeline.as_ref() {
+                        pass.set_pipeline(pipeline);
+                        for &idx in vol_outline_indices {
+                            if let Some(vol) = self.volume_gpu_data.get(idx) {
+                                pass.set_bind_group(1, &vol.bind_group, &[]);
+                                pass.set_vertex_buffer(0, vol.vertex_buffer.slice(..));
+                                pass.set_index_buffer(vol.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                                pass.draw_indexed(0..36, 0, 0..1);
+                            }
                         }
                     }
                 }
@@ -3768,6 +3739,9 @@ impl ViewportRenderer {
             self.pick_glyph_items = frame.scene.glyphs.clone();
             self.pick_tensor_glyph_items = frame.scene.tensor_glyphs.clone();
             self.pick_sprite_items = frame.scene.sprite_items.clone();
+            self.pick_streamtube_items = frame.scene.streamtube_items.clone();
+            self.pick_tube_items = frame.scene.tube_items.clone();
+            self.pick_ribbon_items = frame.scene.ribbon_items.clone();
         }
 
         let (scene_fx, viewport_fx) = frame.effects.split();
