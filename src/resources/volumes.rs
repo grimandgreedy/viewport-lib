@@ -214,7 +214,7 @@ impl ViewportGpuResources {
     }
 
     /// Ensure the unit cube vertex + index buffers for volume bounding box proxy exist.
-    fn ensure_volume_cube(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_volume_cube(&mut self, device: &wgpu::Device) {
         if self.volume_cube_vb.is_some() {
             return;
         }

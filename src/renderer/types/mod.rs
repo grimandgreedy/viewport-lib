@@ -520,7 +520,9 @@ macro_rules! emit_draw_calls {
 
         // Outline composite: blit the offscreen outline texture (rendered in prepare()).
         if let Some(slot) = _vp_slot {
-            if !slot.outline_object_buffers.is_empty() || !slot.splat_outline_buffers.is_empty() {
+            if !slot.outline_object_buffers.is_empty() || !slot.splat_outline_buffers.is_empty()
+                || !slot.volume_outline_buffers.is_empty()
+            {
                 let composite_bg = slot.hdr.as_ref().map(|h| &h.outline_composite_bind_group);
                 let pipeline = resources.outline_composite_pipeline_msaa.as_ref()
                     .or(resources.outline_composite_pipeline_single.as_ref());

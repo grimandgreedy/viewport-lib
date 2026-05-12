@@ -1758,6 +1758,60 @@ impl ViewportGpuResources {
                 cache: None,
             });
 
+        // Volume AABB outline mask pipeline: renders the unit cube proxy as solid
+        // white into the R8 mask. Uses position-only vertex layout (stride 12),
+        // per-vertex stepping, no face culling (volume cubes are seen from inside too).
+        let vol_outline_vert_attrs = [wgpu::VertexAttribute {
+            offset: 0,
+            shader_location: 0,
+            format: wgpu::VertexFormat::Float32x3,
+        }];
+        let vol_outline_vert_layout = wgpu::VertexBufferLayout {
+            array_stride: 12,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &vol_outline_vert_attrs,
+        };
+        let volume_outline_mask_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("volume_outline_mask_pipeline"),
+                layout: Some(&outline_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &outline_mask_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[vol_outline_vert_layout],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &outline_mask_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R8Unorm,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            });
+
         // Edge-detection pipeline: fullscreen pass that reads the R8 mask and
         // outputs an anti-aliased outline ring to the outline color texture.
         let outline_edge_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -2004,6 +2058,7 @@ impl ViewportGpuResources {
             outline_edge_bgl,
             xray_pipeline,
             splat_outline_mask_pipeline,
+            volume_outline_mask_pipeline,
             outline_color_texture: None,
             outline_color_view: None,
             outline_depth_texture: None,

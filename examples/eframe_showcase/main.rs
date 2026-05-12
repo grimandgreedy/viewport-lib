@@ -2815,7 +2815,8 @@ impl App {
             || (self.mode == ShowcaseMode::PickLevels && !self.pl_state.selection.is_empty())
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.splat_selected)
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.pc_selected)
-            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.tvm_selected);
+            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.tvm_selected)
+            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.vol_selected);
         if scene_graph_outline {
             fd.interaction.outline_width_px = scene_graph_outline_width;
         }

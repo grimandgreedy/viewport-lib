@@ -821,6 +821,16 @@ pub(crate) struct OutlineObjectBuffers {
     pub mask_bind_group: wgpu::BindGroup,
 }
 
+/// Per-frame GPU data for one selected volume's outline mask draw.
+///
+/// The volume cube VB/IB are shared resources on `ViewportGpuResources`;
+/// each selected volume only needs its own uniform/bind group with the
+/// composed model matrix that maps `[0,1]^3` to the volume's world-space AABB.
+pub(crate) struct VolumeOutlineBuffers {
+    pub(crate) _uniform_buf: wgpu::Buffer,
+    pub(crate) bind_group: wgpu::BindGroup,
+}
+
 /// Per-item uniform for the Gaussian splat outline mask pass (80 bytes).
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -1896,6 +1906,8 @@ pub struct ViewportGpuResources {
     pub(crate) xray_pipeline: wgpu::RenderPipeline,
     /// Billboard disc pipeline for the Gaussian splat outline mask pass.
     pub(crate) splat_outline_mask_pipeline: wgpu::RenderPipeline,
+    /// Mask-write pipeline for volume AABB cubes (position-only vertex layout, no face culling).
+    pub(crate) volume_outline_mask_pipeline: wgpu::RenderPipeline,
     // --- Outline offscreen resources (lazily created) ---
     /// Offscreen RGBA texture the outline stencil pass renders into.
     pub(crate) outline_color_texture: Option<wgpu::Texture>,
