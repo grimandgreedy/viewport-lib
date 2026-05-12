@@ -81,6 +81,8 @@ impl ViewportRenderer {
                 }
             }
         }
+        // Outline composite after all scene content so translucent layers don't overdraw.
+        emit_outline_composite!(&self.resources, &mut *render_pass, vp_slot);
         // Sub-object highlight (LDR path) : face fill, edge lines, vertex/point sprites.
         if let Some(sub_hl) = self.viewport_slots.get(vp_idx).and_then(|s| s.sub_highlight.as_ref()) {
             if let (Some(fill_pl), Some(edge_pl), Some(sprite_pl)) = (
@@ -249,6 +251,8 @@ impl ViewportRenderer {
                 }
             }
         }
+        // Outline composite after all scene content so translucent layers don't overdraw.
+        emit_outline_composite!(&self.resources, &mut *render_pass, vp_slot);
         // Sub-object highlight (LDR path) : face fill, edge lines, vertex/point sprites.
         if let Some(sub_hl) = self.viewport_slots.get(vp_idx).and_then(|s| s.sub_highlight.as_ref()) {
             if let (Some(fill_pl), Some(edge_pl), Some(sprite_pl)) = (
@@ -467,6 +471,8 @@ impl ViewportRenderer {
                     }
                 }
             }
+            // Outline composite after all scene content.
+            emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
             // Sub-object highlight (LDR path).
             if let Some(sub_hl) = slot.sub_highlight.as_ref() {
                 if let (Some(fill_pl), Some(edge_pl), Some(sprite_pl)) = (
@@ -937,6 +943,8 @@ impl ViewportRenderer {
                         }
                     }
                 }
+                // Outline composite after all scene content.
+                emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
                 // Phase 10B / Phase 12 : screen-space image overlays.
                 // Regular items drawn with depth_compare: Always (always on top).
                 // Depth-composite items drawn with depth_compare: LessEqual (occluded by

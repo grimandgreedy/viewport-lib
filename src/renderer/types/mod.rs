@@ -518,8 +518,27 @@ macro_rules! emit_draw_calls {
             }
         }
 
-        // Outline composite: blit the offscreen outline texture (rendered in prepare()).
+        // Axes indicator pass (screen-space, last so it draws on top).
         if let Some(slot) = _vp_slot {
+            if frame.viewport.show_axes_indicator && slot.axes_vertex_count > 0 {
+                render_pass.set_pipeline(&resources.axes_pipeline);
+                render_pass.set_vertex_buffer(0, slot.axes_vertex_buffer.slice(..));
+                render_pass.draw(0..slot.axes_vertex_count, 0..1);
+            }
+        }
+    }};
+}
+
+/// Blit the offscreen outline texture onto the main render target.
+///
+/// Must run after all scene content (meshes, scivis items, splats, implicit
+/// surfaces, marching cubes) so that translucent layers like volumes don't
+/// overdraw the outline.
+macro_rules! emit_outline_composite {
+    ($resources:expr, $render_pass:expr, $vp_slot:expr) => {{
+        let resources = $resources;
+        let render_pass = $render_pass;
+        if let Some(slot) = $vp_slot {
             if !slot.outline_object_buffers.is_empty() || !slot.splat_outline_buffers.is_empty()
                 || !slot.volume_outline_indices.is_empty()
                 || !slot.glyph_outline_indices.is_empty()
@@ -533,15 +552,6 @@ macro_rules! emit_draw_calls {
                     render_pass.set_bind_group(0, bg, &[]);
                     render_pass.draw(0..3, 0..1);
                 }
-            }
-        }
-
-        // Axes indicator pass (screen-space, last so it draws on top).
-        if let Some(slot) = _vp_slot {
-            if frame.viewport.show_axes_indicator && slot.axes_vertex_count > 0 {
-                render_pass.set_pipeline(&resources.axes_pipeline);
-                render_pass.set_vertex_buffer(0, slot.axes_vertex_buffer.slice(..));
-                render_pass.draw(0..slot.axes_vertex_count, 0..1);
             }
         }
     }};

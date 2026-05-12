@@ -31,6 +31,7 @@
 ### Fixes
 - Glyph and tensor glyph outlines rendered as circles that didn't match the actual mesh shape and shrank incorrectly when viewed across the X axis. Replaced the screen-space disc approach with instanced mesh rendering into the outline mask, so outlines now follow the actual arrow and ellipsoid geometry.
 - Selecting only glyphs or tensor glyphs (without any mesh selection) did not show the outline. The outline composite pass only checked for mesh, splat, and volume outlines when deciding whether to blit; glyph and tensor glyph indices are now included in that check.
+- Selection outlines disappeared behind volumes and other translucent scene content. The outline composite ran before scivis draw calls in the LDR path; moved it to after all scene content so outlines are always visible.
 - Selecting a glyph or tensor glyph alongside a mesh caused a crash (`Buffer is bound with size 80 where the shader expects 96`). The splat outline mask uniform shared a bind group layout with the mesh outline uniform but was 16 bytes smaller. Padded to 96 bytes to match.
 - Gaussian splat unified picking used a fixed 8px hit radius, requiring a click near the exact center of each splat. The radius is now derived from the uploaded splat scales so a click anywhere inside the visible disc registers.
 - Selecting a splat sub-element in point-like mode also triggered the whole-cloud object outline. Sub-element and object-level highlights are now independent.
