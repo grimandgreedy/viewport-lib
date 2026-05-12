@@ -221,6 +221,8 @@ pub(crate) struct PlState {
     pub splat_positions: Vec<[f32; 3]>,
     /// GPU handle for the uploaded Gaussian splat data.
     pub splat_id:    Option<GaussianSplatId>,
+    /// Whether the Gaussian splat object is selected at the object level.
+    pub splat_selected: bool,
     /// Opaque mesh handle for TVM rendering (boundary surface).
     pub tvm_mesh_id: Option<MeshId>,
     /// CPU-side transparent volume mesh data (kept for picking).
@@ -251,6 +253,7 @@ impl Default for PlState {
             volume_data:      None,
             splat_positions:  Vec::new(),
             splat_id:         None,
+            splat_selected:   false,
             tvm_mesh_id:      None,
             tvm_data:         None,
         }
@@ -800,6 +803,7 @@ impl App {
         let Some(hit) = renderer.pick(pos, vp_size, view_proj, mask) else {
             if !shift {
                 self.pl_state.selection.clear();
+                self.pl_state.splat_selected = false;
                 self.pl_state.sub_selection.clear();
                 self.pl_state.last_hit = None;
                 self.pl_state.hit_marker = None;
@@ -818,19 +822,29 @@ impl App {
 
         match sub_for_sel {
             None => {
-                // Only add to selection when the hit is a scene-graph mesh node.
-                // Non-mesh objects (point cloud, splats, volume mesh) are identified
-                // by pl_item_label; they have no outline rendering and must not be
-                // added to selection to avoid incorrectly highlighting a mesh node
-                // that happens to share the same id.
+                // Mesh nodes go through Selection; non-mesh objects (point cloud,
+                // splats, volume mesh) are tracked separately to avoid collisions
+                // with scene-graph node IDs.
                 if is_mesh_node {
                     if shift {
                         self.pl_state.selection.toggle(hit.id);
                     } else {
                         self.pl_state.selection.select_one(hit.id);
+                        self.pl_state.splat_selected = false;
                     }
-                } else if !shift {
-                    self.pl_state.selection.clear();
+                } else {
+                    if !shift {
+                        self.pl_state.selection.clear();
+                    }
+                    if hit.id == 10 {
+                        if shift {
+                            self.pl_state.splat_selected = !self.pl_state.splat_selected;
+                        } else {
+                            self.pl_state.splat_selected = true;
+                        }
+                    } else if !shift {
+                        self.pl_state.splat_selected = false;
+                    }
                 }
                 self.pl_state.sub_selection.clear();
             }
@@ -840,6 +854,20 @@ impl App {
                 } else {
                     self.pl_state.selection.clear();
                     self.pl_state.sub_selection.select_one(hit.id, sub);
+                }
+                // Track object-level splat selection alongside the sub-element.
+                // GPU picking returns Splat(idx) for the splat grid; selecting any
+                // element of the set also marks the whole cloud as selected for the
+                // object outline pass.
+                match hit.sub_object {
+                    Some(SubObjectRef::Splat(_)) => {
+                        self.pl_state.splat_selected = true;
+                    }
+                    _ => {
+                        if !shift {
+                            self.pl_state.splat_selected = false;
+                        }
+                    }
                 }
             }
         }

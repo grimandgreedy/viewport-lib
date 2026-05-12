@@ -2014,6 +2014,85 @@ impl ViewportRenderer {
             }
         }
 
+        // Splat outline buffers: point sprite discs for selected Gaussian splat sets.
+        let mut splat_outline_buffers: Vec<crate::resources::SplatOutlineBuffers> = Vec::new();
+        if frame.interaction.outline_selected {
+            let resources = &self.resources;
+            let view_proj = frame.camera.render_camera.view_proj();
+            let [vp_w, vp_h] = frame.camera.viewport_size;
+            for item in &frame.scene.gaussian_splats {
+                if !item.selected {
+                    continue;
+                }
+                let Some(gpu_set) = resources.gaussian_splat_store.get(item.id.0) else {
+                    continue;
+                };
+                if gpu_set.cpu_positions.is_empty() {
+                    continue;
+                }
+
+                // World-space radius covering the visible Gaussian tail (~3 sigma).
+                let mean_max_scale: f32 = if gpu_set.cpu_scales.is_empty() {
+                    0.05
+                } else {
+                    gpu_set.cpu_scales.iter()
+                        .map(|s| s[0].max(s[1]).max(s[2]))
+                        .sum::<f32>()
+                        / gpu_set.cpu_scales.len() as f32
+                };
+                let world_radius = mean_max_scale * 3.0;
+
+                // Project the world radius to a pixel half-size at the cloud center.
+                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                let center_w = model.transform_point3(glam::Vec3::ZERO);
+                let p0_clip = view_proj * glam::Vec4::new(center_w.x, center_w.y, center_w.z, 1.0);
+                let p1_world = center_w + glam::Vec3::X * world_radius;
+                let p1_clip = view_proj * glam::Vec4::new(p1_world.x, p1_world.y, p1_world.z, 1.0);
+                let pixel_radius = if p0_clip.w.abs() > 1e-6 && p1_clip.w.abs() > 1e-6 {
+                    let p0_ndc = glam::Vec2::new(p0_clip.x, p0_clip.y) / p0_clip.w;
+                    let p1_ndc = glam::Vec2::new(p1_clip.x, p1_clip.y) / p1_clip.w;
+                    (p1_ndc - p0_ndc).length() * 0.5 * vp_w.max(vp_h)
+                } else {
+                    world_radius * 100.0
+                };
+                let pixel_radius = pixel_radius.max(1.0);
+
+                let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("splat_outline_pos_buf"),
+                    contents: bytemuck::cast_slice(gpu_set.cpu_positions.as_slice()),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+
+                let uniform = SplatOutlineMaskUniform {
+                    model: item.model,
+                    viewport_w: vp_w,
+                    viewport_h: vp_h,
+                    pixel_radius,
+                    _pad: 0.0,
+                };
+                let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("splat_outline_uniform_buf"),
+                    contents: bytemuck::cast_slice(&[uniform]),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("splat_outline_bg"),
+                    layout: &resources.outline_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buf.as_entire_binding(),
+                    }],
+                });
+
+                splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
+                    position_buf,
+                    instance_count: gpu_set.cpu_positions.len() as u32,
+                    _uniform_buf: uniform_buf,
+                    bind_group,
+                });
+            }
+        }
+
         // X-ray buffers for selected objects.
         let mut xray_object_buffers: Vec<(crate::resources::mesh_store::MeshId, wgpu::Buffer, wgpu::BindGroup)> = Vec::new();
         if frame.interaction.xray_selected {
@@ -2268,6 +2347,7 @@ impl ViewportRenderer {
         {
             let slot = &mut self.viewport_slots[vp_idx];
             slot.outline_object_buffers = outline_object_buffers;
+            slot.splat_outline_buffers = splat_outline_buffers;
             slot.xray_object_buffers = xray_object_buffers;
             slot.constraint_line_buffers = constraint_line_buffers;
             slot.clip_plane_fill_buffers = clip_plane_fill_buffers;
@@ -2332,9 +2412,8 @@ impl ViewportRenderer {
         // by the composite pass in paint()/render().
         // ------------------------------------------------------------------
         if frame.interaction.outline_selected
-            && !self.viewport_slots[vp_idx]
-                .outline_object_buffers
-                .is_empty()
+            && (!self.viewport_slots[vp_idx].outline_object_buffers.is_empty()
+                || !self.viewport_slots[vp_idx].splat_outline_buffers.is_empty())
         {
             let w = frame.camera.viewport_size[0] as u32;
             let h = frame.camera.viewport_size[1] as u32;
@@ -2371,6 +2450,8 @@ impl ViewportRenderer {
             let slot_ref = &self.viewport_slots[vp_idx];
             let outlines_ptr =
                 &slot_ref.outline_object_buffers as *const Vec<OutlineObjectBuffers>;
+            let splat_outlines_ptr =
+                &slot_ref.splat_outline_buffers as *const Vec<crate::resources::SplatOutlineBuffers>;
             let camera_bg_ptr = &slot_ref.camera_bind_group as *const wgpu::BindGroup;
             let slot_hdr = slot_ref.hdr.as_ref().unwrap();
             let mask_view_ptr = &slot_hdr.outline_mask_view as *const wgpu::TextureView;
@@ -2379,9 +2460,10 @@ impl ViewportRenderer {
             let edge_bg_ptr = &slot_hdr.outline_edge_bind_group as *const wgpu::BindGroup;
             // SAFETY: slot fields remain valid for the duration of this function;
             // no other code modifies these fields here.
-            let (outlines, camera_bg, mask_view, color_view, depth_view, edge_bg) = unsafe {
+            let (outlines, splat_outlines, camera_bg, mask_view, color_view, depth_view, edge_bg) = unsafe {
                 (
                     &*outlines_ptr,
+                    &*splat_outlines_ptr,
                     &*camera_bg_ptr,
                     &*mask_view_ptr,
                     &*color_view_ptr,
@@ -2438,6 +2520,17 @@ impl ViewportRenderer {
                     pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                     pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                }
+
+                // Draw Gaussian splat outline discs.  Each splat position expands to
+                // a screen-space disc in the vertex shader (6 vertices per instance).
+                // Depth is tested (splats behind selected meshes are culled) but not
+                // written, so all visible splats in a cloud contribute to the mask.
+                pass.set_pipeline(&self.resources.splat_outline_mask_pipeline);
+                for splat in splat_outlines {
+                    pass.set_bind_group(1, &splat.bind_group, &[]);
+                    pass.set_vertex_buffer(0, splat.position_buf.slice(..));
+                    pass.draw(0..6, 0..splat.instance_count);
                 }
             }
 

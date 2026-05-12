@@ -1343,6 +1343,10 @@ pub struct GaussianSplatItem {
     pub model: [[f32; 4]; 4],
     /// Pick ID. 0 = not pickable.
     pub pick_id: u64,
+    /// Whether this splat set is selected. When true and `InteractionFrame::outline_selected`
+    /// is set, the renderer draws a smooth outline ring around the cloud's screen-space
+    /// silhouette. Default: false.
+    pub selected: bool,
 }
 
 impl Default for GaussianSplatItem {
@@ -1351,6 +1355,7 @@ impl Default for GaussianSplatItem {
             id: GaussianSplatId(usize::MAX),
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             pick_id: 0,
+            selected: false,
         }
     }
 }

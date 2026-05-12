@@ -2811,7 +2811,8 @@ impl App {
             || scene_graph_outline
             || interact_outline
             || (self.mode == ShowcaseMode::ScalarFields && !self.scalar_state.selection.is_empty())
-            || (self.mode == ShowcaseMode::PickLevels && !self.pl_state.selection.is_empty());
+            || (self.mode == ShowcaseMode::PickLevels && !self.pl_state.selection.is_empty())
+            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.splat_selected);
         if scene_graph_outline {
             fd.interaction.outline_width_px = scene_graph_outline_width;
         }
@@ -2927,6 +2928,7 @@ impl App {
                 item.id = splat_id;
                 item.model = showcase_33_picking_levels::pl_splat_model().to_cols_array_2d();
                 item.pick_id = 10;
+                item.selected = self.pl_state.splat_selected;
                 fd.scene.gaussian_splats.push(item);
             }
             // Sub-object highlight pass (face fill, edge outline, vertex/point sprites).

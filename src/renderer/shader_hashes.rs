@@ -98,6 +98,10 @@ pub const SHADERS: &[ShaderEntry] = &[
         source: include_str!("../shaders/outline_mask.wgsl"),
     },
     ShaderEntry {
+        name: "splat_outline_mask.wgsl",
+        source: include_str!("../shaders/splat_outline_mask.wgsl"),
+    },
+    ShaderEntry {
         name: "outline_edge.wgsl",
         source: include_str!("../shaders/outline_edge.wgsl"),
     },

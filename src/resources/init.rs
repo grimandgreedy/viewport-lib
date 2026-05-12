@@ -1698,6 +1698,66 @@ impl ViewportGpuResources {
                 cache: None,
             });
 
+        // Billboard disc pipeline for the Gaussian splat outline mask pass.
+        // Reuses the same pipeline layout as the mesh mask pipelines (camera_bgl + outline_bgl).
+        // Positions are instance-stepped vec3; each instance expands to a 6-vertex quad.
+        let splat_outline_mask_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("splat_outline_mask_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/splat_outline_mask.wgsl").into(),
+            ),
+        });
+        let splat_outline_vert_attrs = [wgpu::VertexAttribute {
+            offset: 0,
+            shader_location: 0,
+            format: wgpu::VertexFormat::Float32x3,
+        }];
+        let splat_outline_vert_layout = wgpu::VertexBufferLayout {
+            array_stride: 12, // vec3<f32>
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &splat_outline_vert_attrs,
+        };
+        let splat_outline_mask_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("splat_outline_mask_pipeline"),
+                layout: Some(&outline_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &splat_outline_mask_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[splat_outline_vert_layout],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &splat_outline_mask_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R8Unorm,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            });
+
         // Edge-detection pipeline: fullscreen pass that reads the R8 mask and
         // outputs an anti-aliased outline ring to the outline color texture.
         let outline_edge_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1943,6 +2003,7 @@ impl ViewportGpuResources {
             outline_edge_pipeline,
             outline_edge_bgl,
             xray_pipeline,
+            splat_outline_mask_pipeline,
             outline_color_texture: None,
             outline_color_view: None,
             outline_depth_texture: None,

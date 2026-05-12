@@ -51,7 +51,8 @@ use crate::resources::{
     BatchMeta, CameraUniform, ClipPlanesUniform, ClipVolumeEntry, ClipVolumesUniform,
     CLIP_VOLUME_MAX, GridUniform, InstanceAabb,
     InstanceData, LightsUniform, ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers,
-    OutlineUniform, PickInstance, ShadowAtlasUniform, SingleLightUniform, ViewportGpuResources,
+    OutlineUniform, PickInstance, ShadowAtlasUniform, SingleLightUniform,
+    SplatOutlineMaskUniform, ViewportGpuResources,
 };
 
 /// Per-viewport GPU state: uniform buffers and bind groups that differ per viewport.
@@ -79,6 +80,8 @@ pub(crate) struct ViewportSlot {
     // --- Per-viewport interaction state (Phase 4) ---
     /// Per-frame outline buffers for selected objects, rebuilt in prepare().
     pub outline_object_buffers: Vec<OutlineObjectBuffers>,
+    /// Per-frame outline buffers for selected Gaussian splat sets, rebuilt in prepare().
+    pub splat_outline_buffers: Vec<crate::resources::SplatOutlineBuffers>,
     /// Per-frame x-ray buffers for selected objects, rebuilt in prepare().
     pub xray_object_buffers: Vec<(crate::resources::mesh_store::MeshId, wgpu::Buffer, wgpu::BindGroup)>,
     /// Per-frame constraint guide line buffers, rebuilt in prepare().
@@ -678,6 +681,7 @@ impl ViewportRenderer {
                 grid_bind_group,
                 hdr: None,
                 outline_object_buffers: Vec::new(),
+                splat_outline_buffers: Vec::new(),
                 xray_object_buffers: Vec::new(),
                 constraint_line_buffers: Vec::new(),
                 cap_buffers: Vec::new(),

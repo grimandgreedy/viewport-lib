@@ -3,6 +3,8 @@
 ## [0.13.3] (dev, current, unreleased)
 
 ### Features
+- Selection highlight extensions:
+    - Gaussian splat sets now show an object-level outline when selected. The outline traces the screen-space silhouette of the whole cloud and updates naturally as the camera moves. Color, opacity, and width follow the same per-frame outline controls that already apply to mesh outlines.
 - `VolumeMeshItem`: a render item for opaque volume meshes that retains cell-level identity after upload. Wraps the `MeshId` and a face-to-cell mapping produced by `upload_volume_mesh_data`.
 - Unified picking: a single call now dispatches across all item types in the scene, controlled by a mask specifying what level of detail you want back -- whole objects, mesh faces, or individual point-like elements (vertices, cloud points, cells, voxels, splats) across all participating types at once. The renderer handles dispatch internally from the last rendered frame; no per-type dispatch is needed in host code.
     - The mask uses dimensional groups (object, point-like, edge-like, face-like) for the common cases, with individual element-type bits available when finer control is needed -- for example including mesh vertices but not volume cells.

@@ -2084,7 +2084,7 @@ impl ViewportRenderer {
         // Runs after the HDR scene pass (which has depth+stencil) in a separate
         // pass with no depth attachment, so the composite pipeline is compatible.
         // -----------------------------------------------------------------------
-        if !slot.outline_object_buffers.is_empty() {
+        if !slot.outline_object_buffers.is_empty() || !slot.splat_outline_buffers.is_empty() {
             // Prefer the HDR-format pipeline; fall back to LDR single-sample.
             let hdr_pipeline = self
                 .resources

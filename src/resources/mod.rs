@@ -53,7 +53,8 @@ pub(crate) use self::types::{
     InstanceAabb, InstanceData, LabelGpuData, LicAdvectUniform, LicObjectUniform,
     LicSurfaceGpuData, ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform,
     OverlayTextVertex, OverlayUniform, PickInstance, ProjectedTetUniform, SHADOW_ATLAS_SIZE,
-    ImageSliceGpuData, VolumeSurfaceSliceGpuData, ShadowAtlasUniform, SpriteGpuData, SsaoUniform,
+    ImageSliceGpuData, VolumeSurfaceSliceGpuData, ShadowAtlasUniform, SplatOutlineBuffers,
+    SplatOutlineMaskUniform, SpriteGpuData, SsaoUniform,
     StreamtubeGpuData, SubHighlightGpuData,
     TensorGlyphGpuData, ToneMapUniform, ViewportHdrState,
 };

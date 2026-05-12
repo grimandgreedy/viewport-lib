@@ -821,6 +821,29 @@ pub(crate) struct OutlineObjectBuffers {
     pub mask_bind_group: wgpu::BindGroup,
 }
 
+/// Per-item uniform for the Gaussian splat outline mask pass (80 bytes).
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct SplatOutlineMaskUniform {
+    pub(crate) model:        [[f32; 4]; 4], // 64 bytes
+    pub(crate) viewport_w:   f32,           //  4 bytes
+    pub(crate) viewport_h:   f32,           //  4 bytes
+    pub(crate) pixel_radius: f32,           //  4 bytes
+    pub(crate) _pad:         f32,           //  4 bytes
+}
+
+/// Per-frame GPU buffers for one selected Gaussian splat set's outline mask draw.
+pub(crate) struct SplatOutlineBuffers {
+    /// Object-space positions as `[f32; 3]` per splat, instance-stepped.
+    pub(crate) position_buf: wgpu::Buffer,
+    /// Number of splats (= instance count).
+    pub(crate) instance_count: u32,
+    /// Uniform buffer kept alive for the duration of the frame.
+    pub(crate) _uniform_buf: wgpu::Buffer,
+    /// Bind group for group 1 (SplatOutlineMaskUniform).
+    pub(crate) bind_group: wgpu::BindGroup,
+}
+
 /// Uniform for the fullscreen outline edge-detection pass (32 bytes).
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -1871,6 +1894,8 @@ pub struct ViewportGpuResources {
     pub(crate) outline_edge_bgl: wgpu::BindGroupLayout,
     /// X-ray pipeline: draws selected objects through occluders (depth_compare Always).
     pub(crate) xray_pipeline: wgpu::RenderPipeline,
+    /// Billboard disc pipeline for the Gaussian splat outline mask pass.
+    pub(crate) splat_outline_mask_pipeline: wgpu::RenderPipeline,
     // --- Outline offscreen resources (lazily created) ---
     /// Offscreen RGBA texture the outline stencil pass renders into.
     pub(crate) outline_color_texture: Option<wgpu::Texture>,
