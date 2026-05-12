@@ -397,10 +397,29 @@ impl Default for TensorGlyphItem {
 /// The caller uploads a 3D scalar field via [`ViewportGpuResources::upload_volume`](crate::resources::ViewportGpuResources::upload_volume) and
 /// receives a [`VolumeId`](crate::resources::VolumeId). Each frame, submit a `VolumeItem` referencing that id plus
 /// transfer function and display parameters.
+///
+/// # Picking
+///
+/// Set `pick_id` to a non-zero value and provide `volume_data` to enable voxel-level
+/// picking via `renderer.pick()` and `renderer.pick_rect()`. `pick_id` is the ID
+/// returned in the `PickHit` when a voxel is hit. A `pick_id` of zero means the volume
+/// is not pickable. `volume_data` must match the data that was passed to
+/// `upload_volume` for this `volume_id`.
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct VolumeItem {
     /// Reference to a previously uploaded 3D texture.
     pub volume_id: crate::resources::VolumeId,
+    /// Pick ID returned when a voxel in this volume is hit.
+    ///
+    /// `0` means this volume is not pickable. Set to a non-zero value alongside
+    /// `volume_data` to enable voxel picking.
+    pub pick_id: u64,
+    /// CPU scalar data for voxel picking.
+    ///
+    /// Must match the data passed to `upload_volume` for `volume_id`.
+    /// `None` disables voxel-level picking regardless of `pick_id`.
+    pub volume_data: Option<std::sync::Arc<crate::geometry::marching_cubes::VolumeData>>,
     /// Color transfer function LUT. `None` = use default builtin (viridis).
     pub color_lut: Option<ColormapId>,
     /// Opacity transfer function LUT. `None` = linear ramp (0 at min, 1 at max).
@@ -429,12 +448,17 @@ pub struct VolumeItem {
     /// (same as current behaviour: discard). `Some([r, g, b, a])` = render NaN voxels with
     /// this fixed RGBA color instead of sampling the transfer function.
     pub nan_color: Option<[f32; 4]>,
+    /// When true, the renderer draws a wireframe outline around the volume AABB.
+    /// Default: false.
+    pub selected: bool,
 }
 
 impl Default for VolumeItem {
     fn default() -> Self {
         Self {
             volume_id: crate::resources::VolumeId(0),
+            pick_id: 0,
+            volume_data: None,
             color_lut: None,
             opacity_lut: None,
             scalar_range: (0.0, 1.0),
@@ -447,6 +471,7 @@ impl Default for VolumeItem {
             threshold_min: 0.0,
             threshold_max: 1.0,
             nan_color: None,
+            selected: false,
         }
     }
 }

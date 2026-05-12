@@ -2607,15 +2607,59 @@ impl ViewportRenderer {
         // ------------------------------------------------------------------
         // Sub-object highlight prepare: build GPU geometry from sub-selection
         // snapshot when the version has changed since the last frame.
+        // Also emits AABB wireframe edges for any volume items with selected=true.
         // ------------------------------------------------------------------
         {
             let w = frame.camera.viewport_size[0];
             let h = frame.camera.viewport_size[1];
-            if let Some(sel_ref) = &frame.interaction.sub_selection {
+
+            // Build AABB edge data for selected volumes.  12 edges per volume, each
+            // stored as two vec3 endpoints (6 f32 values).
+            let mut vol_aabb_edges: Vec<f32> = Vec::new();
+            for item in &frame.scene.volumes {
+                if !item.selected {
+                    continue;
+                }
+                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                let lo = glam::Vec3::from(item.bbox_min);
+                let hi = glam::Vec3::from(item.bbox_max);
+                let xv = |lp: glam::Vec3| -> [f32; 3] { model.transform_point3(lp).to_array() };
+                let c = [
+                    xv(glam::Vec3::new(lo.x, lo.y, lo.z)),
+                    xv(glam::Vec3::new(hi.x, lo.y, lo.z)),
+                    xv(glam::Vec3::new(hi.x, hi.y, lo.z)),
+                    xv(glam::Vec3::new(lo.x, hi.y, lo.z)),
+                    xv(glam::Vec3::new(lo.x, lo.y, hi.z)),
+                    xv(glam::Vec3::new(hi.x, lo.y, hi.z)),
+                    xv(glam::Vec3::new(hi.x, hi.y, hi.z)),
+                    xv(glam::Vec3::new(lo.x, hi.y, hi.z)),
+                ];
+                for (a, b) in [
+                    (0usize, 1usize), (1, 2), (2, 3), (3, 0), // bottom face
+                    (4, 5), (5, 6), (6, 7), (7, 4),           // top face
+                    (0, 4), (1, 5), (2, 6), (3, 7),           // verticals
+                ] {
+                    vol_aabb_edges.extend_from_slice(&c[a]);
+                    vol_aabb_edges.extend_from_slice(&c[b]);
+                }
+            }
+            let vol_edge_count = (vol_aabb_edges.len() / 6) as u32;
+
+            let has_sub_sel = frame.interaction.sub_selection.is_some();
+            let has_vol_edges = vol_edge_count > 0;
+
+            if has_sub_sel || has_vol_edges {
                 let needs_rebuild = {
                     let slot = &self.viewport_slots[vp_idx];
-                    slot.sub_highlight_generation != sel_ref.version
+                    let sel_version_changed = frame
+                        .interaction
+                        .sub_selection
+                        .as_ref()
+                        .map(|s| slot.sub_highlight_generation != s.version)
+                        .unwrap_or(slot.sub_highlight_generation != u64::MAX);
+                    sel_version_changed
                         || slot.sub_highlight.is_none()
+                        || slot.sub_highlight_vol_edge_count != vol_edge_count
                 };
                 if needs_rebuild {
                     self.resources.ensure_sub_highlight_pipelines(device);
@@ -2647,11 +2691,13 @@ impl ViewportRenderer {
                             .collect();
                         splat_positions.insert(item.pick_id, world);
                     }
+                    let sel_ref = frame.interaction.sub_selection.as_ref();
                     let data = self.resources.build_sub_highlight(
                         device,
                         queue,
                         sel_ref,
                         &splat_positions,
+                        &vol_aabb_edges,
                         frame.interaction.sub_highlight_face_fill_color,
                         frame.interaction.sub_highlight_edge_color,
                         frame.interaction.sub_highlight_edge_width_px,
@@ -2659,14 +2705,22 @@ impl ViewportRenderer {
                         w,
                         h,
                     );
+                    let new_gen = frame
+                        .interaction
+                        .sub_selection
+                        .as_ref()
+                        .map(|s| s.version)
+                        .unwrap_or(u64::MAX);
                     let slot = &mut self.viewport_slots[vp_idx];
                     slot.sub_highlight = Some(data);
-                    slot.sub_highlight_generation = sel_ref.version;
+                    slot.sub_highlight_generation = new_gen;
+                    slot.sub_highlight_vol_edge_count = vol_edge_count;
                 }
             } else {
                 let slot = &mut self.viewport_slots[vp_idx];
                 slot.sub_highlight = None;
                 slot.sub_highlight_generation = u64::MAX;
+                slot.sub_highlight_vol_edge_count = 0;
             }
         }
 
@@ -3635,6 +3689,7 @@ impl ViewportRenderer {
             self.pick_scene_items = surfaces.to_vec();
             self.pick_point_cloud_items = frame.scene.point_clouds.clone();
             self.pick_splat_items = frame.scene.gaussian_splats.clone();
+            self.pick_volume_items = frame.scene.volumes.clone();
         }
 
         let (scene_fx, viewport_fx) = frame.effects.split();

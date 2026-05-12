@@ -139,11 +139,14 @@ pub(crate) struct ViewportSlot {
     /// `None` until the first `prepare_hdr_callback` call for this viewport.
     pub hdr_callback: Option<crate::resources::dyn_res::HdrCallbackTarget>,
     /// Cached GPU data for sub-object highlight rendering.
-    /// `None` when no sub-object selection is active.
+    /// `None` when no sub-object selection is active and no volumes are selected.
     pub sub_highlight: Option<crate::resources::SubHighlightGpuData>,
     /// Version of the last sub-selection snapshot that was uploaded.
     /// `u64::MAX` forces a rebuild on the first frame.
     pub sub_highlight_generation: u64,
+    /// Number of volume AABB edge segments included in the last sub-highlight build.
+    /// Used to detect when the set of selected volumes changes.
+    pub sub_highlight_vol_edge_count: u32,
 }
 
 /// Renderer wrapping all GPU resources and providing `prepare()` and `paint()` methods.
@@ -267,6 +270,8 @@ pub struct ViewportRenderer {
     pick_point_cloud_items: Vec<PointCloudItem>,
     /// Gaussian splat items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_splat_items: Vec<GaussianSplatItem>,
+    /// Volume items from the last `prepare()` call, retained for `pick()` dispatch.
+    pick_volume_items: Vec<VolumeItem>,
 
     // --- Phase 4 : GPU timestamp queries ---
     /// Timestamp query set with 2 entries (scene-pass begin + end).
@@ -374,6 +379,7 @@ impl ViewportRenderer {
             pick_scene_items: Vec::new(),
             pick_point_cloud_items: Vec::new(),
             pick_splat_items: Vec::new(),
+            pick_volume_items: Vec::new(),
             ts_query_set: None,
             ts_resolve_buf: None,
             ts_staging_buf: None,
@@ -696,6 +702,7 @@ impl ViewportRenderer {
                 gizmo_index_count,
                 sub_highlight: None,
                 sub_highlight_generation: u64::MAX,
+                sub_highlight_vol_edge_count: 0,
                 dyn_res: None,
                 hdr_callback: None,
             });
