@@ -82,6 +82,8 @@ pub(crate) struct ViewportSlot {
     pub outline_object_buffers: Vec<OutlineObjectBuffers>,
     /// Per-frame outline buffers for selected Gaussian splat sets, rebuilt in prepare().
     pub splat_outline_buffers: Vec<crate::resources::SplatOutlineBuffers>,
+    /// Per-frame outline buffers for selected volumes (AABB cube mask), rebuilt in prepare().
+    pub volume_outline_buffers: Vec<crate::resources::VolumeOutlineBuffers>,
     /// Per-frame x-ray buffers for selected objects, rebuilt in prepare().
     pub xray_object_buffers: Vec<(crate::resources::mesh_store::MeshId, wgpu::Buffer, wgpu::BindGroup)>,
     /// Per-frame constraint guide line buffers, rebuilt in prepare().
@@ -144,9 +146,6 @@ pub(crate) struct ViewportSlot {
     /// Version of the last sub-selection snapshot that was uploaded.
     /// `u64::MAX` forces a rebuild on the first frame.
     pub sub_highlight_generation: u64,
-    /// Number of volume AABB edge segments included in the last sub-highlight build.
-    /// Used to detect when the set of selected volumes changes.
-    pub sub_highlight_vol_edge_count: u32,
 }
 
 /// Renderer wrapping all GPU resources and providing `prepare()` and `paint()` methods.
@@ -274,6 +273,12 @@ pub struct ViewportRenderer {
     pick_volume_items: Vec<VolumeItem>,
     /// Transparent volume mesh items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_tvm_items: Vec<TransparentVolumeMeshItem>,
+    /// Glyph items from the last `prepare()` call, retained for `pick()` dispatch.
+    pick_glyph_items: Vec<GlyphItem>,
+    /// Tensor glyph items from the last `prepare()` call, retained for `pick()` dispatch.
+    pick_tensor_glyph_items: Vec<TensorGlyphItem>,
+    /// Sprite items from the last `prepare()` call, retained for `pick()` dispatch.
+    pick_sprite_items: Vec<SpriteItem>,
 
     // --- Phase 4 : GPU timestamp queries ---
     /// Timestamp query set with 2 entries (scene-pass begin + end).
@@ -383,6 +388,9 @@ impl ViewportRenderer {
             pick_splat_items: Vec::new(),
             pick_volume_items: Vec::new(),
             pick_tvm_items: Vec::new(),
+            pick_glyph_items: Vec::new(),
+            pick_tensor_glyph_items: Vec::new(),
+            pick_sprite_items: Vec::new(),
             ts_query_set: None,
             ts_resolve_buf: None,
             ts_staging_buf: None,
@@ -691,6 +699,7 @@ impl ViewportRenderer {
                 hdr: None,
                 outline_object_buffers: Vec::new(),
                 splat_outline_buffers: Vec::new(),
+                volume_outline_buffers: Vec::new(),
                 xray_object_buffers: Vec::new(),
                 constraint_line_buffers: Vec::new(),
                 cap_buffers: Vec::new(),
@@ -705,7 +714,6 @@ impl ViewportRenderer {
                 gizmo_index_count,
                 sub_highlight: None,
                 sub_highlight_generation: u64::MAX,
-                sub_highlight_vol_edge_count: 0,
                 dyn_res: None,
                 hdr_callback: None,
             });

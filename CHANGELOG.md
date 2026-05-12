@@ -9,7 +9,6 @@
     - Point clouds now show an object-level outline when selected. Set `PointCloudItem::selected = true` to enable it. The outline wraps the screen-space silhouette of the cloud using the same pipeline as the Gaussian splat outline.
     - Raw `SceneRenderItem` objects submitted outside the scene graph (e.g. the TVM boundary mesh) now support the outline highlight. Set `SceneRenderItem::selected = true` on the item; no renderer changes are needed since the outline pass already processes the full surface submission.
     - Volumes now show an object-level wireframe outline when selected. Set `VolumeItem::selected = true`; the renderer draws the bounding box edges using the same edge pipeline that highlights selected voxels and cells.
-    - Add `TransparentVolumeMeshItem` to the unified picking
 - `VolumeMeshItem`: a render item for opaque volume meshes that retains cell-level identity after upload. Wraps the `MeshId` and a face-to-cell mapping produced by `upload_volume_mesh_data`.
 - Unified picking: a single call now dispatches across all item types in the scene, controlled by a mask specifying what level of detail you want back -- whole objects, mesh faces, or individual point-like elements (vertices, cloud points, cells, voxels, splats) across all participating types at once. The renderer handles dispatch internally from the last rendered frame; no per-type dispatch is needed in host code.
     - The mask uses dimensional groups (object, point-like, edge-like, face-like) for the common cases, with individual element-type bits available when finer control is needed -- for example including mesh vertices but not volume cells.
@@ -19,7 +18,7 @@
     - Scalar volumes, Gaussian splat sets, and unstructured volume meshes now support both single-click and box-selection picking.
     - A helper returns the closest mesh vertex to a face-level click, for workflows that need to snap selection to vertices.
     - Selected volume mesh cells now highlight with the same edge-outline style as selected mesh faces and voxels, across tet, pyramid, wedge, and hex cell types.
-- Ray-marched volumes now participate in unified picking. Set a non-zero pick ID and supply the CPU scalar data on the `VolumeItem` each frame to enable voxel-level picking via `renderer.pick()` and `renderer.pick_rect()`. Voxels outside the configured threshold range are excluded from picks, consistent with what the renderer draws.
+    - Glyphs, tensor glyphs, and sprites now support click and box-selection picking.
 
 ### Fixes
 - Gaussian splat unified picking used a fixed 8px hit radius, requiring a click near the exact center of each splat. The radius is now derived from the uploaded splat scales so a click anywhere inside the visible disc registers.

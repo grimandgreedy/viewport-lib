@@ -340,6 +340,111 @@ impl ViewportRenderer {
             }
         }
 
+        // 6. Instance picks (INSTANCE or OBJECT fallback) for glyphs, tensor glyphs, sprites.
+        let wants_instance = mask.intersects(PickMask::INSTANCE);
+        if wants_instance || wants_object {
+            // Convert a world-space radius at the model centroid to a pixel threshold.
+            let instance_radius_px = |model: glam::Mat4, world_r: f32| -> f32 {
+                let center = model.transform_point3(glam::Vec3::ZERO);
+                let p0 = view_proj * center.extend(1.0);
+                let p1 = view_proj * (center + glam::Vec3::X * world_r).extend(1.0);
+                if p0.w.abs() > 1e-6 && p1.w.abs() > 1e-6 {
+                    let n0 = glam::Vec2::new(p0.x, p0.y) / p0.w;
+                    let n1 = glam::Vec2::new(p1.x, p1.y) / p1.w;
+                    ((n1 - n0).length() * 0.5 * viewport_size.x.max(viewport_size.y)).max(4.0)
+                } else {
+                    (world_r * 100.0_f32).max(4.0)
+                }
+            };
+
+            // Glyphs
+            for item in &self.pick_glyph_items {
+                if item.id == 0 || item.positions.is_empty() {
+                    continue;
+                }
+                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                let world_r = if item.scale_by_magnitude && !item.vectors.is_empty() {
+                    let mean_mag = item.vectors.iter()
+                        .map(|v| glam::Vec3::from(*v).length())
+                        .sum::<f32>() / item.vectors.len() as f32;
+                    (mean_mag * item.scale).max(0.01)
+                } else {
+                    item.scale.max(0.01)
+                };
+                let radius_px = instance_radius_px(model, world_r);
+                if let Some(mut hit) = pick_gaussian_splat_cpu(
+                    click_pos, item.id, &item.positions, model, view_proj, viewport_size, radius_px,
+                ) {
+                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
+                    if wants_instance {
+                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
+                            hit.sub_object = Some(SubObjectRef::Instance(idx));
+                        }
+                    } else {
+                        hit.sub_object = None;
+                    }
+                    consider(toi, hit);
+                }
+            }
+
+            // Tensor glyphs
+            for item in &self.pick_tensor_glyph_items {
+                if item.id == 0 || item.positions.is_empty() {
+                    continue;
+                }
+                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                let world_r = if !item.eigenvalues.is_empty() {
+                    let mean_max = item.eigenvalues.iter()
+                        .map(|ev| ev[0].abs().max(ev[1].abs()).max(ev[2].abs()))
+                        .sum::<f32>() / item.eigenvalues.len() as f32;
+                    (mean_max * item.scale).max(0.01)
+                } else {
+                    item.scale.max(0.01)
+                };
+                let radius_px = instance_radius_px(model, world_r);
+                if let Some(mut hit) = pick_gaussian_splat_cpu(
+                    click_pos, item.id, &item.positions, model, view_proj, viewport_size, radius_px,
+                ) {
+                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
+                    if wants_instance {
+                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
+                            hit.sub_object = Some(SubObjectRef::Instance(idx));
+                        }
+                    } else {
+                        hit.sub_object = None;
+                    }
+                    consider(toi, hit);
+                }
+            }
+
+            // Sprites
+            for item in &self.pick_sprite_items {
+                if item.id == 0 || item.positions.is_empty() {
+                    continue;
+                }
+                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                let radius_px = match item.size_mode {
+                    SpriteSizeMode::ScreenSpace => (item.default_size * 0.5).max(4.0),
+                    SpriteSizeMode::WorldSpace => {
+                        instance_radius_px(model, (item.default_size * 0.5).max(0.01))
+                    }
+                };
+                if let Some(mut hit) = pick_gaussian_splat_cpu(
+                    click_pos, item.id, &item.positions, model, view_proj, viewport_size, radius_px,
+                ) {
+                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
+                    if wants_instance {
+                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
+                            hit.sub_object = Some(SubObjectRef::Instance(idx));
+                        }
+                    } else {
+                        hit.sub_object = None;
+                    }
+                    consider(toi, hit);
+                }
+            }
+        }
+
         best.map(|(_, hit)| hit)
     }
 
@@ -645,6 +750,82 @@ impl ViewportRenderer {
                     }
                 }
 
+                if wants_object && item_hit {
+                    result.objects.push(id);
+                }
+            }
+        }
+
+        // 6. Instance picks (INSTANCE or OBJECT) for glyphs, tensor glyphs, sprites.
+        let wants_instance = mask.intersects(PickMask::INSTANCE);
+        if wants_instance || wants_object {
+            // Glyphs
+            for item in &self.pick_glyph_items {
+                if item.id == 0 || item.positions.is_empty() {
+                    continue;
+                }
+                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                let mvp = view_proj * model;
+                let id = item.id;
+                let mut item_hit = false;
+                for (i, pos) in item.positions.iter().enumerate() {
+                    if let Some((sx, sy)) = project(mvp, glam::Vec3::from(*pos)) {
+                        if in_rect(sx, sy) {
+                            if wants_instance {
+                                result.elements.push((id, SubObjectRef::Instance(i as u32)));
+                            }
+                            item_hit = true;
+                        }
+                    }
+                }
+                if wants_object && item_hit {
+                    result.objects.push(id);
+                }
+            }
+
+            // Tensor glyphs
+            for item in &self.pick_tensor_glyph_items {
+                if item.id == 0 || item.positions.is_empty() {
+                    continue;
+                }
+                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                let mvp = view_proj * model;
+                let id = item.id;
+                let mut item_hit = false;
+                for (i, pos) in item.positions.iter().enumerate() {
+                    if let Some((sx, sy)) = project(mvp, glam::Vec3::from(*pos)) {
+                        if in_rect(sx, sy) {
+                            if wants_instance {
+                                result.elements.push((id, SubObjectRef::Instance(i as u32)));
+                            }
+                            item_hit = true;
+                        }
+                    }
+                }
+                if wants_object && item_hit {
+                    result.objects.push(id);
+                }
+            }
+
+            // Sprites
+            for item in &self.pick_sprite_items {
+                if item.id == 0 || item.positions.is_empty() {
+                    continue;
+                }
+                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                let mvp = view_proj * model;
+                let id = item.id;
+                let mut item_hit = false;
+                for (i, pos) in item.positions.iter().enumerate() {
+                    if let Some((sx, sy)) = project(mvp, glam::Vec3::from(*pos)) {
+                        if in_rect(sx, sy) {
+                            if wants_instance {
+                                result.elements.push((id, SubObjectRef::Instance(i as u32)));
+                            }
+                            item_hit = true;
+                        }
+                    }
+                }
                 if wants_object && item_hit {
                     result.objects.push(id);
                 }

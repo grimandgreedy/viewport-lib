@@ -295,6 +295,7 @@ pub enum GlyphType {
 }
 
 /// A set of instanced glyphs to render (e.g. velocity arrows).
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct GlyphItem {
     /// World-space base positions (one per glyph instance).
@@ -356,6 +357,7 @@ impl Default for GlyphItem {
 /// Each instance is an ellipsoid at `positions[i]`, scaled anisotropically by the
 /// absolute eigenvalues along the eigenvector axes. Color comes from `color_attribute`
 /// if provided, otherwise from the sign of the first (dominant) eigenvalue.
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct TensorGlyphItem {
     /// World-space positions, one per instance.
