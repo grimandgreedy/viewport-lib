@@ -2556,6 +2556,7 @@ impl App {
                     tvm_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
                     tvm_item.visible = true;
                     tvm_item.pick_id = PickId(11);
+                    tvm_item.selected = self.pl_state.tvm_selected;
                     tvm_item.material = viewport_lib::Material::from_color([0.8, 0.45, 0.2]);
                     items.push(tvm_item);
                 }
@@ -2812,7 +2813,9 @@ impl App {
             || interact_outline
             || (self.mode == ShowcaseMode::ScalarFields && !self.scalar_state.selection.is_empty())
             || (self.mode == ShowcaseMode::PickLevels && !self.pl_state.selection.is_empty())
-            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.splat_selected);
+            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.splat_selected)
+            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.pc_selected)
+            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.tvm_selected);
         if scene_graph_outline {
             fd.interaction.outline_width_px = scene_graph_outline_width;
         }
@@ -2920,6 +2923,7 @@ impl App {
                 pc.point_size = 6.0;
                 pc.default_color = [0.5, 0.8, 1.0, 1.0];
                 pc.id = 100;
+                pc.selected = self.pl_state.pc_selected;
                 fd.scene.point_clouds.push(pc);
             }
             // Gaussian splat grid (pickable via pick_id=10).

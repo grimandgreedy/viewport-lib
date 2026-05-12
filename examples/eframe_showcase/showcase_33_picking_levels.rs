@@ -221,6 +221,10 @@ pub(crate) struct PlState {
     pub splat_positions: Vec<[f32; 3]>,
     /// GPU handle for the uploaded Gaussian splat data.
     pub splat_id:    Option<GaussianSplatId>,
+    /// Whether the point cloud is selected at the object level.
+    pub pc_selected: bool,
+    /// Whether the TVM boundary mesh is selected at the object level.
+    pub tvm_selected: bool,
     /// Whether the Gaussian splat object is selected at the object level.
     pub splat_selected: bool,
     /// Opaque mesh handle for TVM rendering (boundary surface).
@@ -253,6 +257,8 @@ impl Default for PlState {
             volume_data:      None,
             splat_positions:  Vec::new(),
             splat_id:         None,
+            pc_selected:      false,
+            tvm_selected:     false,
             splat_selected:   false,
             tvm_mesh_id:      None,
             tvm_data:         None,
@@ -269,6 +275,9 @@ impl App {
         self.pl_state.mesh_lookup.clear();
         self.pl_state.last_hit = None;
         self.pl_state.hit_marker = None;
+        self.pl_state.pc_selected = false;
+        self.pl_state.tvm_selected = false;
+        self.pl_state.splat_selected = false;
 
         // --- Cube mesh ---
         let cube_mesh = viewport_lib::primitives::cube(2.0);
@@ -803,6 +812,8 @@ impl App {
         let Some(hit) = renderer.pick(pos, vp_size, view_proj, mask) else {
             if !shift {
                 self.pl_state.selection.clear();
+                self.pl_state.pc_selected = false;
+                self.pl_state.tvm_selected = false;
                 self.pl_state.splat_selected = false;
                 self.pl_state.sub_selection.clear();
                 self.pl_state.last_hit = None;
@@ -823,19 +834,41 @@ impl App {
                         self.pl_state.selection.toggle(hit.id);
                     } else {
                         self.pl_state.selection.select_one(hit.id);
+                        self.pl_state.pc_selected = false;
+                        self.pl_state.tvm_selected = false;
                         self.pl_state.splat_selected = false;
                     }
                 } else {
                     if !shift {
                         self.pl_state.selection.clear();
                     }
-                    if hit.id == 10 {
+                    if hit.id == 100 {
+                        if shift {
+                            self.pl_state.pc_selected = !self.pl_state.pc_selected;
+                        } else {
+                            self.pl_state.pc_selected = true;
+                            self.pl_state.tvm_selected = false;
+                            self.pl_state.splat_selected = false;
+                        }
+                    } else if hit.id == 10 {
                         if shift {
                             self.pl_state.splat_selected = !self.pl_state.splat_selected;
                         } else {
                             self.pl_state.splat_selected = true;
+                            self.pl_state.pc_selected = false;
+                            self.pl_state.tvm_selected = false;
+                        }
+                    } else if hit.id == 11 {
+                        if shift {
+                            self.pl_state.tvm_selected = !self.pl_state.tvm_selected;
+                        } else {
+                            self.pl_state.tvm_selected = true;
+                            self.pl_state.pc_selected = false;
+                            self.pl_state.splat_selected = false;
                         }
                     } else if !shift {
+                        self.pl_state.pc_selected = false;
+                        self.pl_state.tvm_selected = false;
                         self.pl_state.splat_selected = false;
                     }
                 }
@@ -850,6 +883,8 @@ impl App {
                 }
                 // Sub-element selection does not activate the object outline.
                 if !shift {
+                    self.pl_state.pc_selected = false;
+                    self.pl_state.tvm_selected = false;
                     self.pl_state.splat_selected = false;
                 }
             }

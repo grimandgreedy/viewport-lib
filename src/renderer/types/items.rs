@@ -252,6 +252,10 @@ pub struct PointCloudItem {
     /// Output pixel-radius range `[min_px, max_px]` for the radius scalar mapping.
     /// Default: `(2.0, 12.0)`.
     pub radius_range: (f32, f32),
+    /// Whether this point cloud is selected at object level. When true and
+    /// `InteractionFrame::outline_selected` is set, the renderer draws a smooth
+    /// outline ring around the cloud's screen-space silhouette. Default: false.
+    pub selected: bool,
 }
 
 impl Default for PointCloudItem {
@@ -273,6 +277,7 @@ impl Default for PointCloudItem {
             radius_scalars: Vec::new(),
             radius_scalar_range: None,
             radius_range: (2.0, 12.0),
+            selected: false,
         }
     }
 }
