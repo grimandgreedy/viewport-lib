@@ -445,6 +445,86 @@ impl ViewportRenderer {
             }
         }
 
+        // 7. Polyline node picks (POLY_NODE or OBJECT fallback).
+        let wants_poly_node = mask.intersects(PickMask::POLY_NODE);
+        if wants_poly_node || wants_object {
+            for item in &self.pick_polyline_items {
+                if item.id == 0 || item.positions.is_empty() {
+                    continue;
+                }
+                let radius_px = (item.line_width + 4.0).max(8.0);
+                if let Some(mut hit) = pick_gaussian_splat_cpu(
+                    click_pos,
+                    item.id,
+                    &item.positions,
+                    glam::Mat4::IDENTITY,
+                    view_proj,
+                    viewport_size,
+                    radius_px,
+                ) {
+                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
+                    if !wants_poly_node {
+                        hit.sub_object = None;
+                    }
+                    // sub_object is already SubObjectRef::Point(node_index)
+                    consider(toi, hit);
+                }
+            }
+        }
+
+        // 8. Polyline segment picks (SEGMENT or OBJECT fallback).
+        let wants_segment = mask.intersects(PickMask::SEGMENT);
+        if wants_segment || wants_object {
+            for item in &self.pick_polyline_items {
+                if item.id == 0 || item.positions.is_empty() {
+                    continue;
+                }
+                // Build midpoints of all segments, ordered globally across strips.
+                let mut midpoints: Vec<[f32; 3]> = Vec::new();
+                if item.strip_lengths.is_empty() {
+                    for j in 0..item.positions.len().saturating_sub(1) {
+                        let a = glam::Vec3::from(item.positions[j]);
+                        let b = glam::Vec3::from(item.positions[j + 1]);
+                        midpoints.push(((a + b) * 0.5).to_array());
+                    }
+                } else {
+                    let mut node_off = 0usize;
+                    for &slen in &item.strip_lengths {
+                        let slen = slen as usize;
+                        for j in 0..slen.saturating_sub(1) {
+                            let a = glam::Vec3::from(item.positions[node_off + j]);
+                            let b = glam::Vec3::from(item.positions[node_off + j + 1]);
+                            midpoints.push(((a + b) * 0.5).to_array());
+                        }
+                        node_off += slen;
+                    }
+                }
+                if midpoints.is_empty() {
+                    continue;
+                }
+                let radius_px = (item.line_width + 4.0).max(8.0);
+                if let Some(mut hit) = pick_gaussian_splat_cpu(
+                    click_pos,
+                    item.id,
+                    &midpoints,
+                    glam::Mat4::IDENTITY,
+                    view_proj,
+                    viewport_size,
+                    radius_px,
+                ) {
+                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
+                    if wants_segment {
+                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
+                            hit.sub_object = Some(SubObjectRef::Segment(idx));
+                        }
+                    } else {
+                        hit.sub_object = None;
+                    }
+                    consider(toi, hit);
+                }
+            }
+        }
+
         best.map(|(_, hit)| hit)
     }
 

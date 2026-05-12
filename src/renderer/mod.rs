@@ -273,6 +273,8 @@ pub struct ViewportRenderer {
     pick_volume_items: Vec<VolumeItem>,
     /// Transparent volume mesh items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_tvm_items: Vec<TransparentVolumeMeshItem>,
+    /// Polyline items from the last `prepare()` call, retained for `pick()` dispatch.
+    pick_polyline_items: Vec<PolylineItem>,
     /// Glyph items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_glyph_items: Vec<GlyphItem>,
     /// Tensor glyph items from the last `prepare()` call, retained for `pick()` dispatch.
@@ -388,6 +390,7 @@ impl ViewportRenderer {
             pick_splat_items: Vec::new(),
             pick_volume_items: Vec::new(),
             pick_tvm_items: Vec::new(),
+            pick_polyline_items: Vec::new(),
             pick_glyph_items: Vec::new(),
             pick_tensor_glyph_items: Vec::new(),
             pick_sprite_items: Vec::new(),
