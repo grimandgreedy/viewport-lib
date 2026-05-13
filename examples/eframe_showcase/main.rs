@@ -1409,6 +1409,9 @@ impl App {
         }
         self.mode = mode;
         self.mode_gen = self.mode_gen.wrapping_add(1);
+        if let Some(cam) = shared::opening_camera(mode) {
+            self.camera = cam;
+        }
         // Camera resets are applied on first build in ensure_scene_built.
         // Switching back to an already-built showcase doesn't reset.
     }
@@ -1759,13 +1762,6 @@ impl App {
             }
             ShowcaseMode::PickLevels => {
                 self.build_pl_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 14.0,
-                    orientation: glam::Quat::from_rotation_z(0.6)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
             }
             ShowcaseMode::Labels => {
                 self.build_labels_scene(renderer);

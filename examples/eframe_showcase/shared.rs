@@ -1,9 +1,9 @@
 //! Shared helpers used across multiple showcase modules.
 
 use eframe::egui;
-use viewport_lib::{KeyCode, MeshId, ViewportRenderer};
+use viewport_lib::{Camera, KeyCode, MeshId, ViewportRenderer};
 
-use crate::App;
+use crate::{App, ShowcaseMode};
 
 // ---------------------------------------------------------------------------
 // Mesh upload
@@ -16,6 +16,24 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &self.box_mesh_data)
             .expect("box mesh upload")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-mode opening camera
+// ---------------------------------------------------------------------------
+
+/// Returns a camera to apply when switching to `mode`, if the mode needs a specific starting view.
+/// Returns `None` for modes that should keep the current camera.
+pub(crate) fn opening_camera(mode: ShowcaseMode) -> Option<Camera> {
+    match mode {
+        ShowcaseMode::PickLevels => Some(Camera {
+            center: glam::Vec3::ZERO,
+            distance: 14.0,
+            orientation: glam::Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
+            ..Camera::default()
+        }),
+        _ => None,
     }
 }
 

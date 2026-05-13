@@ -381,17 +381,24 @@ impl ViewportRenderer {
                             None
                         };
 
-                        #[allow(deprecated)]
-                        let hit = PickHit {
-                            id: item.pick_id.0,
-                            sub_object,
-                            world_pos,
-                            normal,
-                            triangle_index: u32::MAX,
-                            point_index: None,
-                            scalar_value: None,
-                        };
-                        consider(toi, hit);
+                        // Only emit the hit if we produced a meaningful sub-element
+                        // or the caller explicitly asked for object-level hits.
+                        // Without this guard, an EDGE-only mask runs the ray-trimesh
+                        // intersection (because wants_mesh_sub is true) but falls through
+                        // to sub_object=None, producing a spurious object-level hit.
+                        if sub_object.is_some() || wants_object {
+                            #[allow(deprecated)]
+                            let hit = PickHit {
+                                id: item.pick_id.0,
+                                sub_object,
+                                world_pos,
+                                normal,
+                                triangle_index: u32::MAX,
+                                point_index: None,
+                                scalar_value: None,
+                            };
+                            consider(toi, hit);
+                        }
                     }
                     Err(e) => {
                         tracing::warn!(
