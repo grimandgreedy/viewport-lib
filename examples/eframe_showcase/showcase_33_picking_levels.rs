@@ -288,6 +288,7 @@ pub(crate) struct PlState {
     pub node_names:  Vec<(NodeId, String)>,
     pub last_hit:    Option<PlHitInfo>,
     pub hit_marker:  Option<glam::Vec3>,
+    pub show_hit_marker: bool,
     pub pc_positions: Vec<[f32; 3]>,
     pub volume_id:   Option<viewport_lib::VolumeId>,
     pub volume_data: Option<viewport_lib::VolumeData>,
@@ -366,6 +367,7 @@ impl Default for PlState {
             node_names:       Vec::new(),
             last_hit:         None,
             hit_marker:       None,
+            show_hit_marker:  true,
             pc_positions:     Vec::new(),
             volume_id:        None,
             volume_data:      None,
@@ -1335,6 +1337,7 @@ pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
 
     ui.separator();
     ui.checkbox(&mut app.pl_state.wireframe, "Wireframe overlay");
+    ui.checkbox(&mut app.pl_state.show_hit_marker, "Show hit marker");
 
     if ui.button("Clear selection").clicked() {
         app.pl_state.clear_selection();
