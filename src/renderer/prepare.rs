@@ -4159,6 +4159,7 @@ impl ViewportRenderer {
             self.pick_splat_items = frame.scene.gaussian_splats.clone();
             self.pick_volume_items = frame.scene.volumes.clone();
             self.pick_tvm_items = frame.scene.transparent_volume_meshes.clone();
+            self.pick_volume_mesh_items = frame.scene.volume_mesh_items.clone();
             self.pick_polyline_items = frame.scene.polylines.clone();
             self.pick_glyph_items = frame.scene.glyphs.clone();
             self.pick_tensor_glyph_items = frame.scene.tensor_glyphs.clone();

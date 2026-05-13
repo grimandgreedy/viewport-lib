@@ -14,7 +14,7 @@ use viewport_lib::{
     PickId, PointCloudItem, PolylineItem, PostProcessSettings,
     RenderCamera, RuntimeMode, SceneFrame,
     CellSelectionInfo, SceneRenderItem, ScrollUnits, Selection, ShadowFilter, SpriteItem,
-    SubSelectionRef, TensorGlyphItem,
+    SubSelectionRef, TensorGlyphItem, TransparentVolumeMeshItem, VolumeMeshItem,
     ViewportContext,
     ViewportEvent, ViewportRenderer,
     geometry::isoline::IsolineItem,
@@ -2977,6 +2977,30 @@ impl App {
                 item.pick_id = 10;
                 item.selected = self.pl_state.splat_selected;
                 fd.scene.gaussian_splats.push(item);
+            }
+            // Hex cylinder submitted as invisible TVM item so renderer.pick() with
+            // PointLike mask can return Cell sub_objects for it.
+            if let (Some(tet_id), Some(tet_data)) = (
+                self.pl_state.tvm_tet_id,
+                self.pl_state.tvm_tet_data.as_ref(),
+            ) {
+                let mut tvm_pick = TransparentVolumeMeshItem::new(tet_id);
+                tvm_pick.pick_id = 12;
+                tvm_pick.volume_mesh_data = Some(tet_data.clone());
+                tvm_pick.visible = false;
+                fd.scene.transparent_volume_meshes.push(tvm_pick);
+            }
+            // TVM capsule (pick_id=11) submitted as VolumeMeshItem so renderer.pick()
+            // with PointLike mask can return Cell sub_objects for it via face_to_cell.
+            if let Some(mesh_id) = self.pl_state.tvm_mesh_id {
+                if !self.pl_state.tvm_face_to_cell.is_empty() {
+                    let mut item = VolumeMeshItem::new(
+                        mesh_id,
+                        self.pl_state.tvm_face_to_cell.clone(),
+                    );
+                    item.pick_id = PickId(11);
+                    fd.scene.volume_mesh_items.push(item);
+                }
             }
             // Sub-object highlight pass (face fill, edge outline, vertex/point sprites).
             if !self.pl_state.sub_selection.is_empty() {

@@ -308,7 +308,9 @@ pub(crate) struct PlState {
     pub vol_selected: bool,
     /// Opaque mesh handle for TVM rendering (boundary surface).
     pub tvm_mesh_id: Option<MeshId>,
-    /// CPU-side transparent volume mesh data (kept for picking).
+    /// face_to_cell mapping from upload_volume_mesh_data for the capsule (pick_id=11).
+    pub tvm_face_to_cell: Vec<u32>,
+    /// CPU-side volume mesh data (kept for per-type cell picking and highlighting).
     pub tvm_data:    Option<VolumeMeshData>,
     /// Projected-tet handle for the transparent tet mesh (pick_id=12).
     pub tvm_tet_id:   Option<ProjectedTetId>,
@@ -379,6 +381,7 @@ impl Default for PlState {
             splat_selected:   false,
             vol_selected:     false,
             tvm_mesh_id:           None,
+            tvm_face_to_cell:      Vec::new(),
             tvm_data:              None,
             tvm_tet_id:            None,
             tvm_tet_mesh_id:       None,
@@ -583,12 +586,13 @@ impl App {
 
         // --- Volume mesh: capsule hex mesh, rendered as opaque boundary surface ---
         let tvm_data = make_pl_tvm_data();
-        let tvm_mesh_id = renderer
+        if let Ok((mesh_id, face_to_cell)) = renderer
             .resources_mut()
             .upload_volume_mesh_data(&self.device, &tvm_data)
-            .ok()
-            .map(|(id, _)| id);
-        self.pl_state.tvm_mesh_id = tvm_mesh_id;
+        {
+            self.pl_state.tvm_mesh_id = Some(mesh_id);
+            self.pl_state.tvm_face_to_cell = face_to_cell;
+        }
         self.pl_state.tvm_data = Some(tvm_data);
 
         // --- Hex cylinder at x=-7 (pick_id=12) ---

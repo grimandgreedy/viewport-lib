@@ -333,6 +333,16 @@ pub struct SceneFrame {
     pub lic_items: Vec<SurfaceLICItem>,
     /// Transparent unstructured volume meshes rendered via projected tetrahedra (Phase 6).
     pub transparent_volume_meshes: Vec<TransparentVolumeMeshItem>,
+    /// Opaque volume mesh items submitted for cell-level picking.
+    ///
+    /// Each entry enables `SubObjectRef::Cell` hits from `renderer.pick()` and
+    /// `renderer.pick_rect()` for the mesh identified by `pick_id`. The item's
+    /// `face_to_cell` map (from `upload_volume_mesh_data`) converts surface
+    /// triangle hits to originating cell indices.
+    ///
+    /// Rendering still goes through `surfaces`; submit the `SceneRenderItem`
+    /// from `VolumeMeshItem::to_render_item()` there as normal.
+    pub volume_mesh_items: Vec<VolumeMeshItem>,
     /// General tube items to render this frame (Phase 3).
     pub tube_items: Vec<TubeItem>,
     /// 2D image slice items to render this frame (Phase 3).
@@ -366,6 +376,7 @@ impl Default for SceneFrame {
             gpu_mc_jobs: Vec::new(),
             lic_items: Vec::new(),
             transparent_volume_meshes: Vec::new(),
+            volume_mesh_items: Vec::new(),
             tube_items: Vec::new(),
             image_slices: Vec::new(),
             tensor_glyphs: Vec::new(),

@@ -131,6 +131,7 @@ impl ViewportRenderer {
 
         let wants_face   = mask.intersects(PickMask::FACE);
         let wants_vertex = mask.intersects(PickMask::VERTEX);
+        let wants_cell   = mask.intersects(PickMask::CELL);
         let wants_cloud  = mask.intersects(PickMask::CLOUD_POINT);
         let wants_splat  = mask.intersects(PickMask::SPLAT);
         let wants_object = mask.intersects(PickMask::OBJECT);
@@ -145,8 +146,17 @@ impl ViewportRenderer {
             }
         };
 
-        // 1. Surface mesh picks (FACE, VERTEX, EDGE, or OBJECT fallback).
-        if wants_mesh_sub || wants_object {
+        // Build lookup for opaque volume mesh face_to_cell maps (used in section 1
+        // to convert surface Face hits to Cell hits).
+        let vm_cell_map: std::collections::HashMap<u64, &[u32]> = self
+            .pick_volume_mesh_items
+            .iter()
+            .filter(|item| item.pick_id != PickId::NONE && !item.face_to_cell.is_empty())
+            .map(|item| (item.pick_id.0, item.face_to_cell.as_slice()))
+            .collect();
+
+        // 1. Surface mesh picks (FACE, VERTEX, EDGE, CELL, or OBJECT fallback).
+        if wants_mesh_sub || wants_cell || wants_object {
             let ray = Ray::new(
                 Vector::new(ray_origin.x, ray_origin.y, ray_origin.z),
                 Vector::new(ray_dir.x, ray_dir.y, ray_dir.z),
@@ -202,6 +212,25 @@ impl ViewportRenderer {
 
                         let sub_object = if wants_face {
                             feature_sub
+                        } else if wants_cell {
+                            // Convert surface Face hit to originating cell index.
+                            if let Some(f2c) = vm_cell_map.get(&item.pick_id.0) {
+                                match feature_sub {
+                                    Some(SubObjectRef::Face(face_raw)) => {
+                                        let n_tri = indices.len() / 3;
+                                        let face = if (face_raw as usize) >= n_tri {
+                                            face_raw as usize - n_tri
+                                        } else {
+                                            face_raw as usize
+                                        };
+                                        f2c.get(face).map(|&ci| SubObjectRef::Cell(ci))
+                                    }
+                                    other => other,
+                                }
+                            } else {
+                                // No cell map for this item; fall through to object-only.
+                                None
+                            }
                         } else if wants_vertex {
                             // Convert face hit to nearest triangle corner.
                             match feature_sub {
@@ -264,12 +293,10 @@ impl ViewportRenderer {
             }
         }
 
-        // 2. Volume mesh cell picks (CELL) -- stub: face_to_cell mapping is not
-        // retained in pick_scene_items. Cell-level picks will be wired in when
-        // volume mesh CPU data retention lands.
+        // 2. Opaque volume mesh cell picks are handled in section 1 above via
+        // vm_cell_map (face_to_cell conversion on surface Face hits).
 
         // 2b. Transparent volume mesh cell picks (CELL or OBJECT fallback).
-        let wants_cell = mask.intersects(PickMask::CELL);
         if wants_cell || wants_object {
             for item in &self.pick_tvm_items {
                 if item.pick_id == 0 {
@@ -701,9 +728,18 @@ impl ViewportRenderer {
 
         let wants_face   = mask.intersects(PickMask::FACE);
         let wants_vertex = mask.intersects(PickMask::VERTEX);
+        let wants_cell   = mask.intersects(PickMask::CELL);
         let wants_cloud  = mask.intersects(PickMask::CLOUD_POINT);
         let wants_splat  = mask.intersects(PickMask::SPLAT);
         let wants_object = mask.intersects(PickMask::OBJECT);
+
+        // Build lookup for opaque volume mesh face_to_cell maps.
+        let vm_cell_map: std::collections::HashMap<u64, &[u32]> = self
+            .pick_volume_mesh_items
+            .iter()
+            .filter(|item| item.pick_id != PickId::NONE && !item.face_to_cell.is_empty())
+            .map(|item| (item.pick_id.0, item.face_to_cell.as_slice()))
+            .collect();
 
         // Project a local-space point through mvp and return screen coords,
         // or None if the point is behind the camera.
@@ -721,8 +757,8 @@ impl ViewportRenderer {
             sx >= rect_min.x && sx <= rect_max.x && sy >= rect_min.y && sy <= rect_max.y
         };
 
-        // 1. Surface mesh picks (FACE, VERTEX, or OBJECT).
-        if wants_face || wants_vertex || wants_object {
+        // 1. Surface mesh picks (FACE, VERTEX, CELL, or OBJECT).
+        if wants_face || wants_vertex || wants_cell || wants_object {
             for item in &self.pick_scene_items {
                 if !item.visible || item.pick_id == PickId::NONE {
                     continue;
@@ -762,6 +798,38 @@ impl ViewportRenderer {
                             if in_rect(sx, sy) {
                                 result.elements.push((id, SubObjectRef::Face(tri_idx as u32)));
                                 item_hit = true;
+                            }
+                        }
+                    }
+                } else if wants_cell {
+                    // Convert boundary triangle hits to originating cell indices.
+                    if let Some(f2c) = vm_cell_map.get(&id) {
+                        let mut seen = std::collections::HashSet::new();
+                        for (tri_idx, chunk) in indices.chunks(3).enumerate() {
+                            if chunk.len() < 3 {
+                                continue;
+                            }
+                            let [i0, i1, i2] =
+                                [chunk[0] as usize, chunk[1] as usize, chunk[2] as usize];
+                            if i0 >= positions.len()
+                                || i1 >= positions.len()
+                                || i2 >= positions.len()
+                            {
+                                continue;
+                            }
+                            let centroid = (glam::Vec3::from(positions[i0])
+                                + glam::Vec3::from(positions[i1])
+                                + glam::Vec3::from(positions[i2]))
+                                / 3.0;
+                            if let Some((sx, sy)) = project(mvp, centroid) {
+                                if in_rect(sx, sy) {
+                                    if let Some(&ci) = f2c.get(tri_idx) {
+                                        if seen.insert(ci) {
+                                            result.elements.push((id, SubObjectRef::Cell(ci)));
+                                        }
+                                    }
+                                    item_hit = true;
+                                }
                             }
                         }
                     }
@@ -807,10 +875,10 @@ impl ViewportRenderer {
             }
         }
 
-        // 2. Volume mesh cell picks (CELL) -- stub: face_to_cell not in cache.
+        // 2. Opaque volume mesh cell picks are handled in section 1 above via
+        // vm_cell_map (face_to_cell conversion on boundary triangle hits).
 
         // 2b. Transparent volume mesh cell picks (CELL or OBJECT).
-        let wants_cell = mask.intersects(PickMask::CELL);
         if wants_cell || wants_object {
             for item in &self.pick_tvm_items {
                 if item.pick_id == 0 {
