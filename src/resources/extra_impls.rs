@@ -256,7 +256,7 @@ pub(super) fn build_glyph_arrow() -> (Vec<Vertex>, Vec<u32>) {
     for i in 0..segments {
         let a = cone_cap_base + i as u32;
         let b = cone_cap_base + ((i + 1) % segments) as u32;
-        idx.extend_from_slice(&[cone_cap_center, a, b]);
+        idx.extend_from_slice(&[cone_cap_center, b, a]);
     }
 
     (verts, idx)
