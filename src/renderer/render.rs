@@ -794,8 +794,9 @@ impl ViewportRenderer {
             65.0 / 255.0,
             1.0,
         ]);
-        let w = frame.camera.viewport_size[0] as u32;
-        let h = frame.camera.viewport_size[1] as u32;
+        let ppp = frame.camera.pixels_per_point;
+        let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
+        let h = (frame.camera.viewport_size[1] * ppp).round() as u32;
 
         // Ensure per-viewport HDR targets. Provides a depth buffer for both LDR and HDR paths.
         let ssaa_factor = frame.effects.post_process.ssaa_factor.max(1);

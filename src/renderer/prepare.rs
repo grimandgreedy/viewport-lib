@@ -2873,8 +2873,9 @@ impl ViewportRenderer {
                 || !self.viewport_slots[vp_idx].tensor_glyph_outline_indices.is_empty()
                 || !self.viewport_slots[vp_idx].sprite_outline_indices.is_empty())
         {
-            let w = frame.camera.viewport_size[0] as u32;
-            let h = frame.camera.viewport_size[1] as u32;
+            let ppp = frame.camera.pixels_per_point;
+            let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
+            let h = (frame.camera.viewport_size[1] * ppp).round() as u32;
 
             // Ensure per-viewport HDR state exists (provides outline textures).
             self.ensure_viewport_hdr(

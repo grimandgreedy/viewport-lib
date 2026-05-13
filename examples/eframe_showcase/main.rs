@@ -1123,7 +1123,7 @@ impl eframe::App for App {
             }
 
             // ----- Build frame data -----
-            let frame_data = self.build_frame_data(rect.width(), rect.height(), frame);
+            let frame_data = self.build_frame_data(rect.width(), rect.height(), ui.ctx().pixels_per_point(), frame);
 
             // ----- Update gizmo_center cache for next frame's hit-testing -----
             if self.mode == ShowcaseMode::Interaction {
@@ -1173,7 +1173,6 @@ impl eframe::App for App {
                         rect,
                         hdr_viewport_callback::HdrViewportCallback {
                             frame: frame_data,
-                            viewport_size: [rect.width() as u32, rect.height() as u32],
                         },
                     ));
             } else {
@@ -1931,7 +1930,7 @@ impl App {
 // ---------------------------------------------------------------------------
 
 impl App {
-    fn build_frame_data(&mut self, w: f32, h: f32, frame: &eframe::Frame) -> FrameData {
+    fn build_frame_data(&mut self, w: f32, h: f32, pixels_per_point: f32, frame: &eframe::Frame) -> FrameData {
         let mut adv_clip_objects: Vec<ClipObject> = vec![];
         let mut adv_outline = false;
         let mut adv_xray = false;
@@ -2778,7 +2777,7 @@ impl App {
             };
 
         let mut fd = FrameData::new(
-            CameraFrame::from_camera(&self.camera, [w, h]),
+            CameraFrame::from_camera(&self.camera, [w, h]).with_pixels_per_point(pixels_per_point),
             if let Some(arc) = perf_arc {
                 SceneFrame::from_shared_items(arc, scene_gen)
             } else {

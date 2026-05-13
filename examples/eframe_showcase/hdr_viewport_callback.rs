@@ -220,7 +220,6 @@ pub fn init_hdr_blit_resources(
 
 pub struct HdrViewportCallback {
     pub frame: FrameData,
-    pub viewport_size: [u32; 2],
 }
 
 impl egui_wgpu::CallbackTrait for HdrViewportCallback {
@@ -232,7 +231,9 @@ impl egui_wgpu::CallbackTrait for HdrViewportCallback {
         _egui_encoder: &mut wgpu::CommandEncoder,
         callback_resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        let [w, h] = self.viewport_size;
+        let ppp = self.frame.camera.pixels_per_point;
+        let w = (self.frame.camera.viewport_size[0] * ppp).round() as u32;
+        let h = (self.frame.camera.viewport_size[1] * ppp).round() as u32;
 
         // Step 1 : resize intermediate texture if needed.
         // Borrow scoped so it's fully released before we borrow the renderer.

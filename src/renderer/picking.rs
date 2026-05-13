@@ -16,6 +16,117 @@ fn strip_for_node(node_idx: u32, strip_lengths: &[u32]) -> u32 {
     strip_lengths.len().saturating_sub(1) as u32
 }
 
+/// Find the closest polyline segment to `click_pos` within `threshold_px` pixels.
+///
+/// Returns `(global_seg_idx, world_hit_pos)` on hit, `None` otherwise. Positions
+/// are treated as world-space (polylines are always submitted without a model
+/// transform). The hit position is the closest point on the segment in 3D,
+/// interpolated at the same screen-space parameter `t` as the closest screen point.
+fn pick_closest_polyline_segment(
+    click_pos: glam::Vec2,
+    viewport_size: glam::Vec2,
+    view_proj: glam::Mat4,
+    positions: &[[f32; 3]],
+    strip_lengths: &[u32],
+    threshold_px: f32,
+) -> Option<(u32, glam::Vec3)> {
+    let project = |p: [f32; 3]| -> Option<glam::Vec2> {
+        let clip = view_proj * glam::Vec4::new(p[0], p[1], p[2], 1.0);
+        if clip.w <= 0.0 {
+            return None;
+        }
+        Some(glam::Vec2::new(
+            (clip.x / clip.w + 1.0) * 0.5 * viewport_size.x,
+            (1.0 - clip.y / clip.w) * 0.5 * viewport_size.y,
+        ))
+    };
+
+    let mut best_dist = threshold_px;
+    let mut best: Option<(u32, glam::Vec3)> = None;
+
+    macro_rules! try_seg {
+        ($ai:expr, $bi:expr, $seg:expr) => {{
+            if let (Some(sa), Some(sb)) = (project(positions[$ai]), project(positions[$bi])) {
+                let ab = sb - sa;
+                let len_sq = ab.length_squared();
+                let t = if len_sq < 1e-6 {
+                    0.0f32
+                } else {
+                    ((click_pos - sa).dot(ab) / len_sq).clamp(0.0, 1.0)
+                };
+                let dist = (click_pos - (sa + ab * t)).length();
+                if dist < best_dist {
+                    best_dist = dist;
+                    let wa = glam::Vec3::from(positions[$ai]);
+                    let wb = glam::Vec3::from(positions[$bi]);
+                    best = Some(($seg as u32, wa.lerp(wb, t)));
+                }
+            }
+        }};
+    }
+
+    if strip_lengths.is_empty() {
+        for j in 0..positions.len().saturating_sub(1) {
+            try_seg!(j, j + 1, j);
+        }
+    } else {
+        let mut node_off = 0usize;
+        let mut seg_off = 0u32;
+        for &slen in strip_lengths {
+            let slen = slen as usize;
+            for j in 0..slen.saturating_sub(1) {
+                try_seg!(node_off + j, node_off + j + 1, seg_off + j as u32);
+            }
+            seg_off += slen.saturating_sub(1) as u32;
+            node_off += slen;
+        }
+    }
+
+    best
+}
+
+/// Returns `true` if the 2D segment [a, b] touches or crosses the axis-aligned rect.
+fn segment_in_rect(
+    a: glam::Vec2,
+    b: glam::Vec2,
+    rect_min: glam::Vec2,
+    rect_max: glam::Vec2,
+) -> bool {
+    // Quick AABB reject.
+    if a.x.min(b.x) > rect_max.x
+        || a.x.max(b.x) < rect_min.x
+        || a.y.min(b.y) > rect_max.y
+        || a.y.max(b.y) < rect_min.y
+    {
+        return false;
+    }
+    // Either endpoint inside?
+    let in_r = |p: glam::Vec2| {
+        p.x >= rect_min.x && p.x <= rect_max.x && p.y >= rect_min.y && p.y <= rect_max.y
+    };
+    if in_r(a) || in_r(b) {
+        return true;
+    }
+    // Segment crosses one of the 4 edges (parametric intersection test).
+    let crosses = |p0: glam::Vec2, p1: glam::Vec2, q0: glam::Vec2, q1: glam::Vec2| -> bool {
+        let d = p1 - p0;
+        let e = q1 - q0;
+        let denom = d.x * e.y - d.y * e.x;
+        if denom.abs() < 1e-10 {
+            return false;
+        }
+        let diff = q0 - p0;
+        let t = (diff.x * e.y - diff.y * e.x) / denom;
+        let u = (diff.x * d.y - diff.y * d.x) / denom;
+        t >= 0.0 && t <= 1.0 && u >= 0.0 && u <= 1.0
+    };
+    let tl = rect_min;
+    let tr = glam::Vec2::new(rect_max.x, rect_min.y);
+    let bl = glam::Vec2::new(rect_min.x, rect_max.y);
+    let br = rect_max;
+    crosses(a, b, tl, tr) || crosses(a, b, tr, br) || crosses(a, b, br, bl) || crosses(a, b, bl, tl)
+}
+
 /// Map a global segment index to its strip index by walking `strip_lengths`.
 fn strip_for_segment(seg_idx: u32, strip_lengths: &[u32]) -> u32 {
     let mut offset = 0u32;
@@ -564,42 +675,45 @@ impl ViewportRenderer {
         }
 
         // 8. Polyline segment picks (SEGMENT, STRIP, or OBJECT fallback).
+        // Uses screen-space distance from the click to the full segment line so
+        // clicking anywhere along a segment registers, not just near the midpoint.
         let wants_segment = mask.intersects(PickMask::SEGMENT);
         if wants_segment || wants_strip || wants_object {
             for item in &self.pick_polyline_items {
                 if item.id == 0 || item.positions.is_empty() {
                     continue;
                 }
-                let midpoints = build_segment_midpoints(&item.positions, &item.strip_lengths);
-                if midpoints.is_empty() {
-                    continue;
-                }
-                let radius_px = (item.line_width + 4.0).max(8.0);
-                if let Some(mut hit) = pick_gaussian_splat_cpu(
+                // Half the visual line width plus a few pixels of slack.
+                let threshold_px = (item.line_width / 2.0 + 4.0).max(4.0);
+                let Some((seg_idx, world_pos)) = pick_closest_polyline_segment(
                     click_pos,
-                    item.id,
-                    &midpoints,
-                    glam::Mat4::IDENTITY,
-                    view_proj,
                     viewport_size,
-                    radius_px,
-                ) {
-                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
-                    if wants_segment {
-                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
-                            hit.sub_object = Some(SubObjectRef::Segment(idx));
-                        }
-                    } else if wants_strip {
-                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
-                            hit.sub_object = Some(SubObjectRef::Strip(
-                                strip_for_segment(idx, &item.strip_lengths),
-                            ));
-                        }
-                    } else {
-                        hit.sub_object = None;
-                    }
-                    consider(toi, hit);
-                }
+                    view_proj,
+                    &item.positions,
+                    &item.strip_lengths,
+                    threshold_px,
+                ) else {
+                    continue;
+                };
+                let toi = (world_pos - ray_origin).dot(ray_dir).max(0.0);
+                let sub_object = if wants_segment {
+                    Some(SubObjectRef::Segment(seg_idx))
+                } else if wants_strip {
+                    Some(SubObjectRef::Strip(strip_for_segment(seg_idx, &item.strip_lengths)))
+                } else {
+                    None
+                };
+                #[allow(deprecated)]
+                let hit = PickHit {
+                    id: item.id,
+                    sub_object,
+                    world_pos,
+                    normal: glam::Vec3::Y,
+                    triangle_index: u32::MAX,
+                    point_index: None,
+                    scalar_value: None,
+                };
+                consider(toi, hit);
             }
         }
 
@@ -1149,40 +1263,44 @@ impl ViewportRenderer {
                     }
                 }
 
-                // Segment pass (SEGMENT or STRIP or OBJECT) -- uses midpoints.
+                // Segment pass (SEGMENT or STRIP or OBJECT) -- full segment/rect intersection.
                 if wants_segment || (wants_strip && !wants_poly_node) || wants_object {
-                    let mut midpoints: Vec<([f32; 3], u32)> = Vec::new();
+                    let mut node_off = 0usize;
+                    let mut seg_off = 0u32;
+                    macro_rules! try_seg_rect {
+                        ($ai:expr, $bi:expr, $seg:expr) => {{
+                            if let (Some((sax, say)), Some((sbx, sby))) = (
+                                project(view_proj, glam::Vec3::from(item.positions[$ai])),
+                                project(view_proj, glam::Vec3::from(item.positions[$bi])),
+                            ) {
+                                if segment_in_rect(
+                                    glam::Vec2::new(sax, say),
+                                    glam::Vec2::new(sbx, sby),
+                                    rect_min, rect_max,
+                                ) {
+                                    item_hit = true;
+                                    if wants_segment {
+                                        result.elements.push((id, SubObjectRef::Segment($seg)));
+                                    } else if wants_strip {
+                                        let s = strip_for_segment($seg, &item.strip_lengths);
+                                        strips_hit.insert(s);
+                                    }
+                                }
+                            }
+                        }};
+                    }
                     if item.strip_lengths.is_empty() {
                         for j in 0..item.positions.len().saturating_sub(1) {
-                            let a = glam::Vec3::from(item.positions[j]);
-                            let b = glam::Vec3::from(item.positions[j + 1]);
-                            midpoints.push((((a + b) * 0.5).to_array(), j as u32));
+                            try_seg_rect!(j, j + 1, j as u32);
                         }
                     } else {
-                        let mut node_off = 0usize;
-                        let mut seg_off = 0u32;
                         for &slen in &item.strip_lengths {
                             let slen = slen as usize;
                             for j in 0..slen.saturating_sub(1) {
-                                let a = glam::Vec3::from(item.positions[node_off + j]);
-                                let b = glam::Vec3::from(item.positions[node_off + j + 1]);
-                                midpoints.push((((a + b) * 0.5).to_array(), seg_off + j as u32));
+                                try_seg_rect!(node_off + j, node_off + j + 1, seg_off + j as u32);
                             }
                             seg_off += slen.saturating_sub(1) as u32;
                             node_off += slen;
-                        }
-                    }
-                    for (mid, seg_idx) in &midpoints {
-                        if let Some((sx, sy)) = project(view_proj, glam::Vec3::from(*mid)) {
-                            if in_rect(sx, sy) {
-                                item_hit = true;
-                                if wants_segment {
-                                    result.elements.push((id, SubObjectRef::Segment(*seg_idx)));
-                                } else if wants_strip {
-                                    let s = strip_for_segment(*seg_idx, &item.strip_lengths);
-                                    strips_hit.insert(s);
-                                }
-                            }
                         }
                     }
                 }
@@ -1303,10 +1421,11 @@ impl ViewportRenderer {
             SurfaceSubmission::Flat(items) => items.as_ref(),
         };
 
-        let vp_w = frame.camera.viewport_size[0] as u32;
-        let vp_h = frame.camera.viewport_size[1] as u32;
+        let ppp = frame.camera.pixels_per_point;
+        let vp_w = (frame.camera.viewport_size[0] * ppp).round() as u32;
+        let vp_h = (frame.camera.viewport_size[1] * ppp).round() as u32;
 
-        // --- bounds check ---
+        // --- bounds check (logical coordinates match the logical cursor) ---
         if cursor.x < 0.0
             || cursor.y < 0.0
             || cursor.x >= frame.camera.viewport_size[0]
@@ -1543,8 +1662,9 @@ impl ViewportRenderer {
             mapped_at_creation: false,
         });
 
-        let px = cursor.x as u32;
-        let py = cursor.y as u32;
+        // Convert logical cursor to physical pixel coordinates for the pick texture readback.
+        let px = (cursor.x * ppp).round() as u32;
+        let py = (cursor.y * ppp).round() as u32;
 
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {

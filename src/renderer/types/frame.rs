@@ -101,8 +101,14 @@ impl Default for RenderCamera {
 pub struct CameraFrame {
     /// Canonical renderer-facing camera state.
     pub render_camera: RenderCamera,
-    /// Viewport size in physical pixels (width, height). Default: [800.0, 600.0].
+    /// Viewport size in logical pixels (egui points) (width, height). Default: [800.0, 600.0].
     pub viewport_size: [f32; 2],
+    /// Physical pixels per logical pixel. Set from the window or egui context
+    /// (e.g. `ui.ctx().pixels_per_point()`). Default: 1.0.
+    ///
+    /// The renderer uses this only for GPU texture allocation. All screen-space
+    /// math (projection, picking, widget layout) uses `viewport_size` directly.
+    pub pixels_per_point: f32,
     /// Multi-viewport slot index. Default: 0 (single-viewport mode).
     pub viewport_index: usize,
 }
@@ -112,6 +118,7 @@ impl Default for CameraFrame {
         Self {
             render_camera: RenderCamera::default(),
             viewport_size: [800.0, 600.0],
+            pixels_per_point: 1.0,
             viewport_index: 0,
         }
     }
@@ -123,6 +130,7 @@ impl CameraFrame {
         Self {
             render_camera,
             viewport_size,
+            pixels_per_point: 1.0,
             viewport_index: 0,
         }
     }
@@ -130,6 +138,16 @@ impl CameraFrame {
     /// Build a camera frame from an app-side camera and viewport size.
     pub fn from_camera(cam: &crate::camera::Camera, viewport_size: [f32; 2]) -> Self {
         Self::new(RenderCamera::from_camera(cam), viewport_size)
+    }
+
+    /// Set the physical pixels per logical pixel for this camera frame.
+    ///
+    /// Pass `ui.ctx().pixels_per_point()` from egui, or the equivalent scale
+    /// factor from your window system. Only affects GPU texture allocation;
+    /// all screen-space math continues to use `viewport_size`.
+    pub fn with_pixels_per_point(mut self, pixels_per_point: f32) -> Self {
+        self.pixels_per_point = pixels_per_point.max(0.001);
+        self
     }
 
     /// Set the multi-viewport slot index for this camera frame.
