@@ -2016,9 +2016,12 @@ impl ViewportRenderer {
 
         // Splat outline buffers: point sprite discs for selected Gaussian splat sets.
         let mut splat_outline_buffers: Vec<crate::resources::SplatOutlineBuffers> = Vec::new();
-        let mut glyph_outline_indices: Vec<usize> = Vec::new();
-        let mut tensor_glyph_outline_indices: Vec<usize> = Vec::new();
-        let mut sprite_outline_indices: Vec<usize> = Vec::new();
+        // Each entry is (gpu_data_index, instance_ranges).
+        // None = draw all instances (object-level selection).
+        // Some(vec) = draw only these specific instance indices (sub-object Instance selection).
+        let mut glyph_outline_indices: Vec<(usize, Option<Vec<u32>>)> = Vec::new();
+        let mut tensor_glyph_outline_indices: Vec<(usize, Option<Vec<u32>>)> = Vec::new();
+        let mut sprite_outline_indices: Vec<(usize, Option<Vec<u32>>)> = Vec::new();
         if frame.interaction.outline_selected {
             let resources = &self.resources;
             let view_proj = frame.camera.render_camera.view_proj();
@@ -2164,6 +2167,7 @@ impl ViewportRenderer {
             // Glyph outline indices: record which glyph GPU data entries are selected
             // so the mask pass can render the actual instanced mesh.
             {
+                let sub_sel = frame.interaction.sub_selection.as_ref();
                 let mut gpu_idx = 0usize;
                 for item in &frame.scene.glyphs {
                     if item.positions.is_empty() || item.vectors.is_empty() {
@@ -2171,7 +2175,25 @@ impl ViewportRenderer {
                     }
                     if item.selected {
                         self.resources.ensure_glyph_outline_mask_pipeline(device);
-                        glyph_outline_indices.push(gpu_idx);
+                        glyph_outline_indices.push((gpu_idx, None));
+                    } else if item.id != 0 {
+                        // Check for per-instance sub-selection.
+                        let instances: Vec<u32> = sub_sel
+                            .iter()
+                            .flat_map(|s| s.items.iter())
+                            .filter_map(|(node_id, sub)| {
+                                if *node_id == item.id {
+                                    if let crate::interaction::sub_object::SubObjectRef::Instance(i) = sub {
+                                        return Some(*i);
+                                    }
+                                }
+                                None
+                            })
+                            .collect();
+                        if !instances.is_empty() {
+                            self.resources.ensure_glyph_outline_mask_pipeline(device);
+                            glyph_outline_indices.push((gpu_idx, Some(instances)));
+                        }
                     }
                     gpu_idx += 1;
                 }
@@ -2231,12 +2253,34 @@ impl ViewportRenderer {
 
             // Sprite outline indices: record which sprite GPU data entries are selected
             // so the mask pass can render the actual billboard quads.
-            for (i, item) in frame.scene.sprite_items.iter().enumerate() {
-                if !item.selected || item.positions.is_empty() {
-                    continue;
+            {
+                let sub_sel = frame.interaction.sub_selection.as_ref();
+                for (i, item) in frame.scene.sprite_items.iter().enumerate() {
+                    if item.positions.is_empty() {
+                        continue;
+                    }
+                    if item.selected {
+                        self.resources.ensure_sprite_outline_mask_pipeline(device);
+                        sprite_outline_indices.push((i, None));
+                    } else if item.id != 0 {
+                        let instances: Vec<u32> = sub_sel
+                            .iter()
+                            .flat_map(|s| s.items.iter())
+                            .filter_map(|(node_id, sub)| {
+                                if *node_id == item.id {
+                                    if let crate::interaction::sub_object::SubObjectRef::Instance(idx) = sub {
+                                        return Some(*idx);
+                                    }
+                                }
+                                None
+                            })
+                            .collect();
+                        if !instances.is_empty() {
+                            self.resources.ensure_sprite_outline_mask_pipeline(device);
+                            sprite_outline_indices.push((i, Some(instances)));
+                        }
+                    }
                 }
-                self.resources.ensure_sprite_outline_mask_pipeline(device);
-                sprite_outline_indices.push(i);
             }
 
             // Streamtube / Tube / Ribbon outline buffers: point sprite discs at
@@ -2314,6 +2358,7 @@ impl ViewportRenderer {
 
             // Tensor glyph outline indices: same approach as arrow glyphs.
             {
+                let sub_sel = frame.interaction.sub_selection.as_ref();
                 let mut gpu_idx = 0usize;
                 for item in &frame.scene.tensor_glyphs {
                     if item.positions.is_empty() {
@@ -2321,7 +2366,24 @@ impl ViewportRenderer {
                     }
                     if item.selected {
                         self.resources.ensure_tensor_glyph_outline_mask_pipeline(device);
-                        tensor_glyph_outline_indices.push(gpu_idx);
+                        tensor_glyph_outline_indices.push((gpu_idx, None));
+                    } else if item.id != 0 {
+                        let instances: Vec<u32> = sub_sel
+                            .iter()
+                            .flat_map(|s| s.items.iter())
+                            .filter_map(|(node_id, sub)| {
+                                if *node_id == item.id {
+                                    if let crate::interaction::sub_object::SubObjectRef::Instance(i) = sub {
+                                        return Some(*i);
+                                    }
+                                }
+                                None
+                            })
+                            .collect();
+                        if !instances.is_empty() {
+                            self.resources.ensure_tensor_glyph_outline_mask_pipeline(device);
+                            tensor_glyph_outline_indices.push((gpu_idx, Some(instances)));
+                        }
                     }
                     gpu_idx += 1;
                 }
@@ -2713,11 +2775,11 @@ impl ViewportRenderer {
             let vol_outline_idx_ptr =
                 &slot_ref.volume_outline_indices as *const Vec<usize>;
             let glyph_outline_idx_ptr =
-                &slot_ref.glyph_outline_indices as *const Vec<usize>;
+                &slot_ref.glyph_outline_indices as *const Vec<(usize, Option<Vec<u32>>)>;
             let tensor_glyph_outline_idx_ptr =
-                &slot_ref.tensor_glyph_outline_indices as *const Vec<usize>;
+                &slot_ref.tensor_glyph_outline_indices as *const Vec<(usize, Option<Vec<u32>>)>;
             let sprite_outline_idx_ptr =
-                &slot_ref.sprite_outline_indices as *const Vec<usize>;
+                &slot_ref.sprite_outline_indices as *const Vec<(usize, Option<Vec<u32>>)>;
             let glyph_gpu_ptr =
                 &self.glyph_gpu_data as *const Vec<crate::resources::GlyphGpuData>;
             let tensor_glyph_gpu_ptr =
@@ -2822,14 +2884,23 @@ impl ViewportRenderer {
                 if !glyph_outline_indices.is_empty() {
                     if let Some(pipeline) = self.resources.glyph_outline_mask_pipeline.as_ref() {
                         pass.set_pipeline(pipeline);
-                        for &idx in glyph_outline_indices {
-                            if let Some(glyph) = glyph_gpu_data.get(idx) {
+                        for (idx, instance_filter) in glyph_outline_indices {
+                            if let Some(glyph) = glyph_gpu_data.get(*idx) {
                                 pass.set_bind_group(0, camera_bg, &[]);
                                 pass.set_bind_group(1, &glyph.uniform_bind_group, &[]);
                                 pass.set_bind_group(2, &glyph.instance_bind_group, &[]);
                                 pass.set_vertex_buffer(0, glyph.mesh_vertex_buffer.slice(..));
                                 pass.set_index_buffer(glyph.mesh_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                                pass.draw_indexed(0..glyph.mesh_index_count, 0, 0..glyph.instance_count);
+                                match instance_filter {
+                                    None => {
+                                        pass.draw_indexed(0..glyph.mesh_index_count, 0, 0..glyph.instance_count);
+                                    }
+                                    Some(indices) => {
+                                        for &i in indices {
+                                            pass.draw_indexed(0..glyph.mesh_index_count, 0, i..i + 1);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -2839,14 +2910,23 @@ impl ViewportRenderer {
                 if !tensor_glyph_outline_indices.is_empty() {
                     if let Some(pipeline) = self.resources.tensor_glyph_outline_mask_pipeline.as_ref() {
                         pass.set_pipeline(pipeline);
-                        for &idx in tensor_glyph_outline_indices {
-                            if let Some(tg) = tensor_glyph_gpu_data.get(idx) {
+                        for (idx, instance_filter) in tensor_glyph_outline_indices {
+                            if let Some(tg) = tensor_glyph_gpu_data.get(*idx) {
                                 pass.set_bind_group(0, camera_bg, &[]);
                                 pass.set_bind_group(1, &tg.uniform_bind_group, &[]);
                                 pass.set_bind_group(2, &tg.instance_bind_group, &[]);
                                 pass.set_vertex_buffer(0, tg.mesh_vertex_buffer.slice(..));
                                 pass.set_index_buffer(tg.mesh_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                                pass.draw_indexed(0..tg.mesh_index_count, 0, 0..tg.instance_count);
+                                match instance_filter {
+                                    None => {
+                                        pass.draw_indexed(0..tg.mesh_index_count, 0, 0..tg.instance_count);
+                                    }
+                                    Some(indices) => {
+                                        for &i in indices {
+                                            pass.draw_indexed(0..tg.mesh_index_count, 0, i..i + 1);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -2857,12 +2937,21 @@ impl ViewportRenderer {
                 if !sprite_outline_indices.is_empty() {
                     if let Some(pipeline) = self.resources.sprite_outline_mask_pipeline.as_ref() {
                         pass.set_pipeline(pipeline);
-                        for &idx in sprite_outline_indices {
-                            if let Some(sprite) = sprite_gpu_data.get(idx) {
+                        for (idx, instance_filter) in sprite_outline_indices {
+                            if let Some(sprite) = sprite_gpu_data.get(*idx) {
                                 pass.set_bind_group(0, camera_bg, &[]);
                                 pass.set_bind_group(1, &sprite.bind_group, &[]);
                                 pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
-                                pass.draw(0..6, 0..sprite.sprite_count);
+                                match instance_filter {
+                                    None => {
+                                        pass.draw(0..6, 0..sprite.sprite_count);
+                                    }
+                                    Some(indices) => {
+                                        for &i in indices {
+                                            pass.draw(0..6, i..i + 1);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

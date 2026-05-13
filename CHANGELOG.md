@@ -29,6 +29,7 @@
     - Streamtubes, tubes, and ribbons now support click and box-selection picking for segments and strips.
 
 ### Fixes
+- Selecting a single glyph, tensor glyph, or sprite instance showed no highlight. Only whole-group object selection triggered the outline pass; a single selected element was invisible. Individual selected instances now show an outline matching the actual glyph or sprite shape.
 - Glyph and tensor glyph outlines rendered as circles that didn't match the actual mesh shape and shrank incorrectly when viewed across the X axis. Replaced the screen-space disc approach with instanced mesh rendering into the outline mask, so outlines now follow the actual arrow and ellipsoid geometry.
 - Selecting only glyphs or tensor glyphs (without any mesh selection) did not show the outline. The outline composite pass only checked for mesh, splat, and volume outlines when deciding whether to blit; glyph and tensor glyph indices are now included in that check.
 - Selection outlines disappeared behind volumes and other translucent scene content. The outline composite ran before scivis draw calls in the LDR path; moved it to after all scene content so outlines are always visible.

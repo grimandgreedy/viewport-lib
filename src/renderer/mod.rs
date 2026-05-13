@@ -85,11 +85,13 @@ pub(crate) struct ViewportSlot {
     /// Indices into `volume_gpu_data` for selected volumes, rebuilt in prepare().
     pub volume_outline_indices: Vec<usize>,
     /// Indices into `glyph_gpu_data` for selected glyph sets, rebuilt in prepare().
-    pub glyph_outline_indices: Vec<usize>,
+    /// Each entry is (gpu_data_index, instance_filter): None draws all instances,
+    /// Some(indices) draws only those specific instance indices.
+    pub glyph_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
     /// Indices into `tensor_glyph_gpu_data` for selected tensor glyph sets, rebuilt in prepare().
-    pub tensor_glyph_outline_indices: Vec<usize>,
+    pub tensor_glyph_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
     /// Indices into `sprite_gpu_data` for selected sprite sets, rebuilt in prepare().
-    pub sprite_outline_indices: Vec<usize>,
+    pub sprite_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
     /// Per-frame x-ray buffers for selected objects, rebuilt in prepare().
     pub xray_object_buffers: Vec<(crate::resources::mesh_store::MeshId, wgpu::Buffer, wgpu::BindGroup)>,
     /// Per-frame constraint guide line buffers, rebuilt in prepare().

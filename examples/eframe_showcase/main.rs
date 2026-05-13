@@ -2850,7 +2850,11 @@ impl App {
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.arrow_glyph_selected)
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.tensor_glyph_selected)
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.sprite_selected)
-            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.xo_sprite_selected);
+            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.xo_sprite_selected)
+            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.sub_selection.iter().any(|(id, sub)| {
+                matches!(sub, viewport_lib::SubObjectRef::Instance(_))
+                    && matches!(*id, 31 | 32 | 33 | 34)
+            }));
         if scene_graph_outline {
             fd.interaction.outline_width_px = scene_graph_outline_width;
         }
@@ -3021,8 +3025,8 @@ impl App {
                 fd.interaction.sub_highlight_edge_width_px = 2.5;
                 fd.interaction.sub_highlight_vertex_size_px = 14.0;
             }
-            // Orange crosshair marker: only in Object level (sub-levels use highlight dots).
-            if self.pl_state.level == showcase_33_picking_levels::PlPickLevel::Object {
+            // Orange crosshair marker at the click point.
+            if self.pl_state.show_hit_marker {
                 if let Some(marker_pos) = self.pl_state.hit_marker {
                     let mut marker = PointCloudItem::default();
                     marker.positions = vec![marker_pos.to_array()];
