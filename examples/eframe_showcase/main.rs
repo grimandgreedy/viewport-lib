@@ -2852,8 +2852,12 @@ impl App {
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.sprite_selected)
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.xo_sprite_selected)
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.sub_selection.iter().any(|(id, sub)| {
-                matches!(sub, viewport_lib::SubObjectRef::Instance(_))
-                    && matches!(*id, 31 | 32 | 33 | 34)
+                match sub {
+                    viewport_lib::SubObjectRef::Instance(_) => matches!(*id, 31 | 32 | 33 | 34),
+                    viewport_lib::SubObjectRef::Point(_)    => matches!(*id, 1 | 100),
+                    viewport_lib::SubObjectRef::Splat(_)    => *id == 10,
+                    _ => false,
+                }
             }));
         if scene_graph_outline {
             fd.interaction.outline_width_px = scene_graph_outline_width;

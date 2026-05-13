@@ -2027,141 +2027,279 @@ impl ViewportRenderer {
             let view_proj = frame.camera.render_camera.view_proj();
             let [vp_w, vp_h] = frame.camera.viewport_size;
             for item in &frame.scene.gaussian_splats {
-                if !item.selected {
-                    continue;
-                }
                 let Some(gpu_set) = resources.gaussian_splat_store.get(item.id.0) else {
                     continue;
                 };
-                if gpu_set.cpu_positions.is_empty() {
-                    continue;
+                if item.selected && !gpu_set.cpu_positions.is_empty() {
+                    // Object-level: outline all splats.
+                    // World-space radius covering the visible Gaussian tail (~3 sigma).
+                    let mean_max_scale: f32 = if gpu_set.cpu_scales.is_empty() {
+                        0.05
+                    } else {
+                        gpu_set.cpu_scales.iter()
+                            .map(|s| s[0].max(s[1]).max(s[2]))
+                            .sum::<f32>()
+                            / gpu_set.cpu_scales.len() as f32
+                    };
+                    let world_radius = mean_max_scale * 3.0;
+
+                    // Project the world radius to a pixel half-size at the cloud center.
+                    // Use the camera right vector so the offset is always perpendicular
+                    // to the view direction, avoiding the collapse when looking along X.
+                    let model = glam::Mat4::from_cols_array_2d(&item.model);
+                    let center_w = model.transform_point3(glam::Vec3::ZERO);
+                    let cam_right = frame.camera.render_camera.view.row(0).truncate().normalize();
+                    let p0_clip = view_proj * glam::Vec4::new(center_w.x, center_w.y, center_w.z, 1.0);
+                    let p1_world = center_w + cam_right * world_radius;
+                    let p1_clip = view_proj * glam::Vec4::new(p1_world.x, p1_world.y, p1_world.z, 1.0);
+                    let pixel_radius = if p0_clip.w.abs() > 1e-6 && p1_clip.w.abs() > 1e-6 {
+                        let p0_ndc = glam::Vec2::new(p0_clip.x, p0_clip.y) / p0_clip.w;
+                        let p1_ndc = glam::Vec2::new(p1_clip.x, p1_clip.y) / p1_clip.w;
+                        (p1_ndc - p0_ndc).length() * 0.5 * vp_w.max(vp_h)
+                    } else {
+                        world_radius * 100.0
+                    };
+                    let pixel_radius = pixel_radius.max(1.0);
+
+                    let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("splat_outline_pos_buf"),
+                        contents: bytemuck::cast_slice(gpu_set.cpu_positions.as_slice()),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+
+                    let uniform = SplatOutlineMaskUniform {
+                        model: item.model,
+                        viewport_w: vp_w,
+                        viewport_h: vp_h,
+                        pixel_radius,
+                        _pad: [0.0; 5],
+                    };
+                    let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("splat_outline_uniform_buf"),
+                        contents: bytemuck::cast_slice(&[uniform]),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    });
+                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("splat_outline_bg"),
+                        layout: &resources.outline_bind_group_layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: uniform_buf.as_entire_binding(),
+                        }],
+                    });
+
+                    let n = gpu_set.cpu_positions.len();
+                    let size_data: Vec<f32> = vec![pixel_radius; n];
+                    let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("splat_outline_size_buf"),
+                        contents: bytemuck::cast_slice(&size_data),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+
+                    splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
+                        position_buf,
+                        size_buf,
+                        instance_count: n as u32,
+                        _uniform_buf: uniform_buf,
+                        bind_group,
+                    });
+                } else if !item.selected && item.pick_id != 0 {
+                    // Per-splat sub-selection: outline only the selected splats.
+                    let sub_sel = frame.interaction.sub_selection.as_ref();
+                    let selected_indices: Vec<u32> = sub_sel
+                        .iter()
+                        .flat_map(|s| s.items.iter())
+                        .filter_map(|(node_id, sub)| {
+                            if *node_id == item.pick_id {
+                                if let crate::interaction::sub_object::SubObjectRef::Splat(i) = sub {
+                                    return Some(*i);
+                                }
+                            }
+                            None
+                        })
+                        .collect();
+                    if selected_indices.is_empty() {
+                        continue;
+                    }
+
+                    let model = glam::Mat4::from_cols_array_2d(&item.model);
+                    let cam_right = frame.camera.render_camera.view.row(0).truncate().normalize();
+
+                    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(selected_indices.len());
+                    let mut sizes: Vec<f32> = Vec::with_capacity(selected_indices.len());
+                    for &idx in &selected_indices {
+                        let i = idx as usize;
+                        if let Some(&pos) = gpu_set.cpu_positions.get(i) {
+                            positions.push(pos);
+                            let world_radius = if let Some(s) = gpu_set.cpu_scales.get(i) {
+                                s[0].max(s[1]).max(s[2]) * 3.0
+                            } else {
+                                0.15
+                            };
+                            let center_w = model.transform_point3(glam::Vec3::from(pos));
+                            let p0_clip = view_proj * glam::Vec4::new(center_w.x, center_w.y, center_w.z, 1.0);
+                            let p1_world = center_w + cam_right * world_radius;
+                            let p1_clip = view_proj * glam::Vec4::new(p1_world.x, p1_world.y, p1_world.z, 1.0);
+                            let px = if p0_clip.w.abs() > 1e-6 && p1_clip.w.abs() > 1e-6 {
+                                let p0_ndc = glam::Vec2::new(p0_clip.x, p0_clip.y) / p0_clip.w;
+                                let p1_ndc = glam::Vec2::new(p1_clip.x, p1_clip.y) / p1_clip.w;
+                                ((p1_ndc - p0_ndc).length() * 0.5 * vp_w.max(vp_h)).max(1.0)
+                            } else {
+                                world_radius * 100.0
+                            };
+                            sizes.push(px);
+                        }
+                    }
+                    if positions.is_empty() {
+                        continue;
+                    }
+
+                    let pixel_radius = sizes.iter().cloned().fold(f32::NEG_INFINITY, f32::max).max(1.0);
+                    let uniform = SplatOutlineMaskUniform {
+                        model: item.model,
+                        viewport_w: vp_w,
+                        viewport_h: vp_h,
+                        pixel_radius,
+                        _pad: [0.0; 5],
+                    };
+                    let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("splat_sel_outline_uniform_buf"),
+                        contents: bytemuck::cast_slice(&[uniform]),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    });
+                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("splat_sel_outline_bg"),
+                        layout: &resources.outline_bind_group_layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: uniform_buf.as_entire_binding(),
+                        }],
+                    });
+                    let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("splat_sel_outline_pos_buf"),
+                        contents: bytemuck::cast_slice(&positions),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+                    let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("splat_sel_outline_size_buf"),
+                        contents: bytemuck::cast_slice(&sizes),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+                    splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
+                        position_buf,
+                        size_buf,
+                        instance_count: positions.len() as u32,
+                        _uniform_buf: uniform_buf,
+                        bind_group,
+                    });
                 }
-
-                // World-space radius covering the visible Gaussian tail (~3 sigma).
-                let mean_max_scale: f32 = if gpu_set.cpu_scales.is_empty() {
-                    0.05
-                } else {
-                    gpu_set.cpu_scales.iter()
-                        .map(|s| s[0].max(s[1]).max(s[2]))
-                        .sum::<f32>()
-                        / gpu_set.cpu_scales.len() as f32
-                };
-                let world_radius = mean_max_scale * 3.0;
-
-                // Project the world radius to a pixel half-size at the cloud center.
-                // Use the camera right vector so the offset is always perpendicular
-                // to the view direction, avoiding the collapse when looking along X.
-                let model = glam::Mat4::from_cols_array_2d(&item.model);
-                let center_w = model.transform_point3(glam::Vec3::ZERO);
-                let cam_right = frame.camera.render_camera.view.row(0).truncate().normalize();
-                let p0_clip = view_proj * glam::Vec4::new(center_w.x, center_w.y, center_w.z, 1.0);
-                let p1_world = center_w + cam_right * world_radius;
-                let p1_clip = view_proj * glam::Vec4::new(p1_world.x, p1_world.y, p1_world.z, 1.0);
-                let pixel_radius = if p0_clip.w.abs() > 1e-6 && p1_clip.w.abs() > 1e-6 {
-                    let p0_ndc = glam::Vec2::new(p0_clip.x, p0_clip.y) / p0_clip.w;
-                    let p1_ndc = glam::Vec2::new(p1_clip.x, p1_clip.y) / p1_clip.w;
-                    (p1_ndc - p0_ndc).length() * 0.5 * vp_w.max(vp_h)
-                } else {
-                    world_radius * 100.0
-                };
-                let pixel_radius = pixel_radius.max(1.0);
-
-                let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("splat_outline_pos_buf"),
-                    contents: bytemuck::cast_slice(gpu_set.cpu_positions.as_slice()),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-
-                let uniform = SplatOutlineMaskUniform {
-                    model: item.model,
-                    viewport_w: vp_w,
-                    viewport_h: vp_h,
-                    pixel_radius,
-                    _pad: [0.0; 5],
-                };
-                let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("splat_outline_uniform_buf"),
-                    contents: bytemuck::cast_slice(&[uniform]),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("splat_outline_bg"),
-                    layout: &resources.outline_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: uniform_buf.as_entire_binding(),
-                    }],
-                });
-
-                let n = gpu_set.cpu_positions.len();
-                let size_data: Vec<f32> = vec![pixel_radius; n];
-                let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("splat_outline_size_buf"),
-                    contents: bytemuck::cast_slice(&size_data),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-
-                splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
-                    position_buf,
-                    size_buf,
-                    instance_count: n as u32,
-                    _uniform_buf: uniform_buf,
-                    bind_group,
-                });
             }
 
             // Point cloud outline buffers: reuse the same point sprite mask pipeline.
             for item in &frame.scene.point_clouds {
-                if !item.selected || item.positions.is_empty() {
+                if item.positions.is_empty() {
                     continue;
                 }
-
-                // Use point_size as the disc half-size so the outline matches the
-                // visual boundary of the rendered cloud.
                 let pixel_radius = (item.point_size * 0.5).max(1.0);
-
-                let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("pc_outline_pos_buf"),
-                    contents: bytemuck::cast_slice(item.positions.as_slice()),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-
-                let uniform = SplatOutlineMaskUniform {
-                    model: item.model,
-                    viewport_w: vp_w,
-                    viewport_h: vp_h,
-                    pixel_radius,
-                    _pad: [0.0; 5],
-                };
-                let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("pc_outline_uniform_buf"),
-                    contents: bytemuck::cast_slice(&[uniform]),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("pc_outline_bg"),
-                    layout: &self.resources.outline_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: uniform_buf.as_entire_binding(),
-                    }],
-                });
-
-                let n = item.positions.len();
-                let size_data: Vec<f32> = vec![pixel_radius; n];
-                let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("pc_outline_size_buf"),
-                    contents: bytemuck::cast_slice(&size_data),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-
-                splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
-                    position_buf,
-                    size_buf,
-                    instance_count: n as u32,
-                    _uniform_buf: uniform_buf,
-                    bind_group,
-                });
+                if item.selected {
+                    // Object-level: outline all points.
+                    let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("pc_outline_pos_buf"),
+                        contents: bytemuck::cast_slice(item.positions.as_slice()),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+                    let uniform = SplatOutlineMaskUniform {
+                        model: item.model,
+                        viewport_w: vp_w,
+                        viewport_h: vp_h,
+                        pixel_radius,
+                        _pad: [0.0; 5],
+                    };
+                    let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("pc_outline_uniform_buf"),
+                        contents: bytemuck::cast_slice(&[uniform]),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    });
+                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("pc_outline_bg"),
+                        layout: &self.resources.outline_bind_group_layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: uniform_buf.as_entire_binding(),
+                        }],
+                    });
+                    let n = item.positions.len();
+                    let size_data: Vec<f32> = vec![pixel_radius; n];
+                    let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("pc_outline_size_buf"),
+                        contents: bytemuck::cast_slice(&size_data),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+                    splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
+                        position_buf,
+                        size_buf,
+                        instance_count: n as u32,
+                        _uniform_buf: uniform_buf,
+                        bind_group,
+                    });
+                } else if item.id != 0 {
+                    // Per-point sub-selection: outline only the selected points.
+                    let sub_sel = frame.interaction.sub_selection.as_ref();
+                    let selected_positions: Vec<[f32; 3]> = sub_sel
+                        .iter()
+                        .flat_map(|s| s.items.iter())
+                        .filter_map(|(node_id, sub)| {
+                            if *node_id == item.id {
+                                if let crate::interaction::sub_object::SubObjectRef::Point(i) = sub {
+                                    return item.positions.get(*i as usize).copied();
+                                }
+                            }
+                            None
+                        })
+                        .collect();
+                    if selected_positions.is_empty() {
+                        continue;
+                    }
+                    let n = selected_positions.len();
+                    let uniform = SplatOutlineMaskUniform {
+                        model: item.model,
+                        viewport_w: vp_w,
+                        viewport_h: vp_h,
+                        pixel_radius,
+                        _pad: [0.0; 5],
+                    };
+                    let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("pc_sel_outline_uniform_buf"),
+                        contents: bytemuck::cast_slice(&[uniform]),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    });
+                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("pc_sel_outline_bg"),
+                        layout: &self.resources.outline_bind_group_layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: uniform_buf.as_entire_binding(),
+                        }],
+                    });
+                    let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("pc_sel_outline_pos_buf"),
+                        contents: bytemuck::cast_slice(&selected_positions),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+                    let size_data = vec![pixel_radius; n];
+                    let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("pc_sel_outline_size_buf"),
+                        contents: bytemuck::cast_slice(&size_data),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+                    splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
+                        position_buf,
+                        size_buf,
+                        instance_count: n as u32,
+                        _uniform_buf: uniform_buf,
+                        bind_group,
+                    });
+                }
             }
 
             // Glyph outline indices: record which glyph GPU data entries are selected
