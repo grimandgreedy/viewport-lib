@@ -1,6 +1,33 @@
 use super::types::{SubHighlightGpuData, SubHighlightUniform, ViewportGpuResources};
 use crate::interaction::sub_object::{SubObjectRef, SubSelectionRef};
 
+/// Recover the two world-space endpoint positions for a global polyline segment index.
+///
+/// Returns `None` if the index is out of range or positions are missing.
+fn segment_endpoints(
+    seg_idx: u32,
+    positions: &[[f32; 3]],
+    strip_lengths: &[u32],
+) -> Option<([f32; 3], [f32; 3])> {
+    let mut seg_off = 0u32;
+    let mut node_off = 0usize;
+    if strip_lengths.is_empty() {
+        let node = seg_idx as usize;
+        return Some((*positions.get(node)?, *positions.get(node + 1)?));
+    }
+    for &slen in strip_lengths {
+        let segs = slen.saturating_sub(1);
+        if seg_idx < seg_off + segs {
+            let local = (seg_idx - seg_off) as usize;
+            let a = node_off + local;
+            return Some((*positions.get(a)?, *positions.get(a + 1)?));
+        }
+        seg_off += segs;
+        node_off += slen as usize;
+    }
+    None
+}
+
 impl ViewportGpuResources {
     /// Lazily create sub-object highlight pipelines for both the HDR path
     /// (`Rgba16Float` color target) and the LDR path (swapchain `target_format`).
@@ -192,6 +219,10 @@ impl ViewportGpuResources {
 
     /// Build or rebuild `SubHighlightGpuData` from an optional `SubSelectionRef` snapshot.
     ///
+    // ---------------------------------------------------------------------------
+    // highlight build helpers
+    // ---------------------------------------------------------------------------
+
     /// `sel` may be `None` when only `extra_edge_data` edges need to be rendered
     /// (e.g. volume AABB outlines with no active sub-element selection).
     ///
@@ -331,6 +362,56 @@ impl ViewportGpuResources {
                                     edge_data.extend_from_slice(&xform(pa));
                                     edge_data.extend_from_slice(&xform(pb));
                                 }
+                            }
+                        }
+                    }
+                }
+                SubObjectRef::Point(i) => {
+                    // Polyline node sprite. Falls back to point_positions for
+                    // point-cloud picks that share the same SubObjectRef variant.
+                    if let Some(info) = sel.polyline_lookup.get(node_id) {
+                        if let Some(&pos) = info.positions.get(*i as usize) {
+                            sprite_pos.push(xform(pos));
+                        }
+                    } else if let Some(positions) = sel.point_positions.get(node_id) {
+                        if let Some(&pos) = positions.get(*i as usize) {
+                            sprite_pos.push(xform(pos));
+                        }
+                    }
+                }
+                SubObjectRef::Segment(idx) => {
+                    // Polyline segment edge. Recover the two endpoint positions
+                    // for the global segment index by walking strip_lengths.
+                    if let Some(info) = sel.polyline_lookup.get(node_id) {
+                        if let Some((pa, pb)) =
+                            segment_endpoints(*idx, &info.positions, &info.strip_lengths)
+                        {
+                            edge_data.extend_from_slice(&xform(pa));
+                            edge_data.extend_from_slice(&xform(pb));
+                        }
+                    }
+                }
+                SubObjectRef::Strip(s) => {
+                    // All segments in the strip rendered as edge lines.
+                    if let Some(info) = sel.polyline_lookup.get(node_id) {
+                        let node_start: usize = info
+                            .strip_lengths
+                            .iter()
+                            .take(*s as usize)
+                            .map(|&l| l as usize)
+                            .sum();
+                        let strip_len = info
+                            .strip_lengths
+                            .get(*s as usize)
+                            .copied()
+                            .unwrap_or(info.positions.len() as u32)
+                            as usize;
+                        for j in node_start..node_start + strip_len.saturating_sub(1) {
+                            if let (Some(&pa), Some(&pb)) =
+                                (info.positions.get(j), info.positions.get(j + 1))
+                            {
+                                edge_data.extend_from_slice(&xform(pa));
+                                edge_data.extend_from_slice(&xform(pb));
                             }
                         }
                     }

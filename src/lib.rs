@@ -165,7 +165,7 @@ pub use interaction::selection::{NodeId, Selection};
 pub use interaction::snap::{ConstraintOverlay, SnapConfig};
 pub use interaction::pick_mask::PickMask;
 pub use interaction::sub_object;
-pub use interaction::sub_object::{CellSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef, VolumeSelectionInfo};
+pub use interaction::sub_object::{CellSelectionInfo, PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef, VolumeSelectionInfo};
 
 pub use widgets::axes_indicator::AxisView;
 

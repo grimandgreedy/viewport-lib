@@ -335,6 +335,19 @@ pub struct VolumeSelectionInfo {
     pub model: [[f32; 4]; 4],
 }
 
+/// Geometry info needed to highlight [`SubObjectRef::Point`], [`SubObjectRef::Segment`],
+/// and [`SubObjectRef::Strip`] selections on a polyline item.
+///
+/// Pass one entry per polyline object via [`SubSelectionRef::with_polylines`].
+pub struct PolylineSelectionInfo {
+    /// World-space vertex positions. Each entry is one polyline node.
+    pub positions: Vec<[f32; 3]>,
+    /// Strip lengths. Same encoding as [`PolylineItem::strip_lengths`](crate::renderer::types::items::PolylineItem::strip_lengths):
+    /// each entry is the number of nodes in that strip. If empty, all positions
+    /// belong to a single strip.
+    pub strip_lengths: Vec<u32>,
+}
+
 /// Geometry info needed to highlight a [`SubObjectRef::Cell`] selection.
 ///
 /// Contains the vertex positions and cell connectivity from the host's
@@ -399,6 +412,13 @@ pub struct SubSelectionRef {
     /// vertex positions and cell connectivity so the renderer can draw edge
     /// outlines around selected cells.
     pub(crate) cell_lookup: std::collections::HashMap<u64, CellSelectionInfo>,
+    /// Polyline geometry keyed by node id.
+    ///
+    /// Required for [`SubObjectRef::Point`], [`SubObjectRef::Segment`], and
+    /// [`SubObjectRef::Strip`] highlights on polyline items. Each entry provides
+    /// the positions and strip lengths so the renderer can draw node sprites and
+    /// segment edge lines.
+    pub(crate) polyline_lookup: std::collections::HashMap<u64, PolylineSelectionInfo>,
     /// Version counter copied from the source [`SubSelection::version()`].
     ///
     /// The renderer uses this to skip GPU buffer rebuilds when the selection
@@ -430,6 +450,7 @@ impl SubSelectionRef {
             point_positions,
             voxel_lookup: std::collections::HashMap::new(),
             cell_lookup: std::collections::HashMap::new(),
+            polyline_lookup: std::collections::HashMap::new(),
             version: sub_selection.version(),
         }
     }
@@ -455,6 +476,20 @@ impl SubSelectionRef {
         lookup: std::collections::HashMap<u64, CellSelectionInfo>,
     ) -> Self {
         self.cell_lookup = lookup;
+        self
+    }
+
+    /// Attach polyline geometry for [`SubObjectRef::Point`], [`SubObjectRef::Segment`],
+    /// and [`SubObjectRef::Strip`] highlight rendering.
+    ///
+    /// `lookup` maps each polyline item's node id to its [`PolylineSelectionInfo`].
+    /// Without this, selected polyline nodes and segments are silently skipped during
+    /// highlight geometry build.
+    pub fn with_polylines(
+        mut self,
+        lookup: std::collections::HashMap<u64, PolylineSelectionInfo>,
+    ) -> Self {
+        self.polyline_lookup = lookup;
         self
     }
 

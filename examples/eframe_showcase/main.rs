@@ -3042,12 +3042,19 @@ impl App {
                         cells: tet_data.cells.clone(),
                     });
                 }
+                let mut polyline_lookup: HashMap<u64, viewport_lib::PolylineSelectionInfo> = HashMap::new();
+                if !self.pl_state.polyline_positions.is_empty() {
+                    polyline_lookup.insert(30, viewport_lib::PolylineSelectionInfo {
+                        positions: self.pl_state.polyline_positions.clone(),
+                        strip_lengths: self.pl_state.polyline_strip_lengths.clone(),
+                    });
+                }
                 fd.interaction.sub_selection = Some(SubSelectionRef::new(
                     &self.pl_state.sub_selection,
                     mesh_lookup,
                     model_matrices,
                     point_positions,
-                ).with_voxels(voxel_lookup).with_cells(cell_lookup));
+                ).with_voxels(voxel_lookup).with_cells(cell_lookup).with_polylines(polyline_lookup));
                 fd.interaction.sub_highlight_face_fill_color = [1.0, 0.85, 0.0, 0.25];
                 fd.interaction.sub_highlight_edge_color = [1.0, 0.85, 0.0, 1.0];
                 fd.interaction.sub_highlight_edge_width_px = 2.5;
