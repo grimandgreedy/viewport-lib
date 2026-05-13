@@ -2556,7 +2556,7 @@ impl App {
                     tvm_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
                     tvm_item.visible = true;
                     tvm_item.pick_id = PickId(11);
-                    tvm_item.selected = self.pl_state.tvm_selected;
+                    tvm_item.selected = self.pl_state.selection.contains(11);
                     tvm_item.material = viewport_lib::Material::from_color([0.8, 0.45, 0.2]);
                     items.push(tvm_item);
                 }
@@ -2567,7 +2567,7 @@ impl App {
                     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
                     item.visible = true;
                     item.pick_id = PickId(12);
-                    item.selected = self.pl_state.tvm_tet_selected;
+                    item.selected = self.pl_state.selection.contains(12);
                     item.material = viewport_lib::Material::from_color([0.55, 0.75, 0.85]);
                     items.push(item);
                 }
@@ -2840,20 +2840,10 @@ impl App {
             || interact_outline
             || (self.mode == ShowcaseMode::ScalarFields && !self.scalar_state.selection.is_empty())
             || (self.mode == ShowcaseMode::PickLevels && !self.pl_state.selection.is_empty())
-            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.splat_selected)
-            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.pc_selected)
-            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.tvm_selected)
-            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.tvm_tet_selected)
-            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.vol_selected)
-            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.polyline_selected)
-            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.arrow_glyph_selected)
-            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.tensor_glyph_selected)
-            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.sprite_selected)
-            || (self.mode == ShowcaseMode::PickLevels && self.pl_state.xo_sprite_selected)
             || (self.mode == ShowcaseMode::PickLevels && self.pl_state.sub_selection.iter().any(|(id, sub)| {
                 match sub {
                     viewport_lib::SubObjectRef::Instance(_) => matches!(*id, 31 | 32 | 33 | 34),
-                    viewport_lib::SubObjectRef::Point(_)    => matches!(*id, 1 | 100),
+                    viewport_lib::SubObjectRef::Point(_)    => *id == 100,
                     viewport_lib::SubObjectRef::Splat(_)    => *id == 10,
                     _ => false,
                 }
@@ -2968,7 +2958,7 @@ impl App {
                 pc.point_size = 18.0;
                 pc.default_color = [0.5, 0.8, 1.0, 1.0];
                 pc.id = 100;
-                pc.selected = self.pl_state.pc_selected;
+                pc.selected = self.pl_state.selection.contains(100);
                 fd.scene.point_clouds.push(pc);
             }
             // Gaussian splat grid (pickable via pick_id=10).
@@ -2977,7 +2967,7 @@ impl App {
                 item.id = splat_id;
                 item.model = showcase_33_picking_levels::pl_splat_model().to_cols_array_2d();
                 item.pick_id = 10;
-                item.selected = self.pl_state.splat_selected;
+                item.selected = self.pl_state.selection.contains(10);
                 fd.scene.gaussian_splats.push(item);
             }
             // Hex cylinder submitted as invisible TVM item so renderer.pick() with
@@ -3084,7 +3074,7 @@ impl App {
                 vol.threshold_max = 1.0;
                 vol.opacity_scale = 0.6;
                 vol.enable_shading = true;
-                vol.selected = self.pl_state.vol_selected;
+                vol.selected = self.pl_state.selection.contains(20);
                 vol.pick_id = 20;
                 vol.volume_data = self.pl_state.volume_data.as_ref()
                     .map(|d| std::sync::Arc::new(d.clone()));
@@ -3102,7 +3092,7 @@ impl App {
                 pl.default_color = [0.2, 0.85, 0.35, 1.0];
                 pl.line_width    = 3.0;
                 pl.id            = 30;
-                pl.selected      = self.pl_state.polyline_selected;
+                pl.selected      = self.pl_state.selection.contains(30);
                 fd.scene.polylines.push(pl);
             }
             // Arrow glyphs (pick_id=31).
@@ -3117,7 +3107,7 @@ impl App {
                 g.default_color  = [0.75, 0.1, 1.0, 1.0];
                 g.glyph_type     = GlyphType::Arrow;
                 g.id             = 31;
-                g.selected       = self.pl_state.arrow_glyph_selected;
+                g.selected       = self.pl_state.selection.contains(31);
                 fd.scene.glyphs.push(g);
             }
             // Tensor glyphs (pick_id=32).
@@ -3129,7 +3119,7 @@ impl App {
                 tg.scale         = 0.5;
                 tg.colormap_id   = Some(ColormapId(BuiltinColormap::Coolwarm as usize));
                 tg.id            = 32;
-                tg.selected      = self.pl_state.tensor_glyph_selected;
+                tg.selected      = self.pl_state.selection.contains(32);
                 fd.scene.tensor_glyphs.push(tg);
             }
             // Sprites (pick_id=33).
@@ -3142,7 +3132,7 @@ impl App {
                 s.default_size  = 28.0;
                 s.depth_write   = true;
                 s.id            = 33;
-                s.selected      = self.pl_state.sprite_selected;
+                s.selected      = self.pl_state.selection.contains(33);
                 fd.scene.sprite_items.push(s);
             }
             if !self.pl_state.xo_sprite_positions.is_empty() {
@@ -3154,7 +3144,7 @@ impl App {
                 s.default_size  = 30.0;
                 s.depth_write   = true;
                 s.id            = 34;
-                s.selected      = self.pl_state.xo_sprite_selected;
+                s.selected      = self.pl_state.selection.contains(34);
                 fd.scene.sprite_items.push(s);
             }
         }

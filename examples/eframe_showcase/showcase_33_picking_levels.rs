@@ -296,16 +296,6 @@ pub(crate) struct PlState {
     pub splat_positions: Vec<[f32; 3]>,
     /// GPU handle for the uploaded Gaussian splat data.
     pub splat_id:    Option<GaussianSplatId>,
-    /// Whether the point cloud is selected at the object level.
-    pub pc_selected: bool,
-    /// Whether the TVM capsule (pick_id=11) is selected at the object level.
-    pub tvm_selected: bool,
-    /// Whether the hex cylinder (pick_id=12) is selected at the object level.
-    pub tvm_tet_selected: bool,
-    /// Whether the Gaussian splat object is selected at the object level.
-    pub splat_selected: bool,
-    /// Whether the volume is selected at the object level.
-    pub vol_selected: bool,
     /// Opaque mesh handle for TVM rendering (boundary surface).
     pub tvm_mesh_id: Option<MeshId>,
     /// face_to_cell mapping from upload_volume_mesh_data for the capsule (pick_id=11).
@@ -342,12 +332,6 @@ pub(crate) struct PlState {
     pub xo_sprite_sizes:        Vec<f32>,
     /// Per-instance colors for the noughts-and-crosses set.
     pub xo_sprite_colors:       Vec<[f32; 4]>,
-    /// Object-level selection flags for new item types.
-    pub polyline_selected:      bool,
-    pub arrow_glyph_selected:   bool,
-    pub tensor_glyph_selected:  bool,
-    pub sprite_selected:        bool,
-    pub xo_sprite_selected:     bool,
 }
 
 impl Default for PlState {
@@ -375,11 +359,6 @@ impl Default for PlState {
             volume_data:      None,
             splat_positions:  Vec::new(),
             splat_id:         None,
-            pc_selected:      false,
-            tvm_selected:     false,
-            tvm_tet_selected: false,
-            splat_selected:   false,
-            vol_selected:     false,
             tvm_mesh_id:           None,
             tvm_face_to_cell:      Vec::new(),
             tvm_data:              None,
@@ -398,84 +377,28 @@ impl Default for PlState {
             xo_sprite_positions:    Vec::new(),
             xo_sprite_sizes:        Vec::new(),
             xo_sprite_colors:       Vec::new(),
-            polyline_selected:      false,
-            arrow_glyph_selected:   false,
-            tensor_glyph_selected:  false,
-            sprite_selected:        false,
-            xo_sprite_selected:     false,
         }
     }
 }
 
 impl PlState {
-    /// Clear all selection state: scene-graph selection, sub-selection, and
-    /// every per-item boolean flag.
+    /// Clear all selection state.
     pub(crate) fn clear_selection(&mut self) {
         self.selection.clear();
         self.sub_selection.clear();
-        self.pc_selected = false;
-        self.tvm_selected = false;
-        self.tvm_tet_selected = false;
-        self.splat_selected = false;
-        self.vol_selected = false;
-        self.polyline_selected = false;
-        self.arrow_glyph_selected = false;
-        self.tensor_glyph_selected = false;
-        self.sprite_selected = false;
-        self.xo_sprite_selected = false;
         self.last_hit = None;
         self.hit_marker = None;
-    }
-
-    /// Set the boolean flag for a non-mesh item.  Returns false if the ID
-    /// is not a flag item (i.e. it is a mesh node).
-    fn set_flag(&mut self, id: NodeId, selected: bool) -> bool {
-        match id {
-            100 => { self.pc_selected = selected; true }
-            10  => { self.splat_selected = selected; true }
-            11  => { self.tvm_selected = selected; true }
-            12  => { self.tvm_tet_selected = selected; true }
-            20  => { self.vol_selected = selected; true }
-            30  => { self.polyline_selected = selected; true }
-            31  => { self.arrow_glyph_selected = selected; true }
-            32  => { self.tensor_glyph_selected = selected; true }
-            33  => { self.sprite_selected = selected; true }
-            34  => { self.xo_sprite_selected = selected; true }
-            _   => false,
-        }
-    }
-
-    /// Toggle the boolean flag for a non-mesh item.
-    fn toggle_flag(&mut self, id: NodeId) -> bool {
-        let current = match id {
-            100 => self.pc_selected,
-            10  => self.splat_selected,
-            11  => self.tvm_selected,
-            12  => self.tvm_tet_selected,
-            20  => self.vol_selected,
-            30  => self.polyline_selected,
-            31  => self.arrow_glyph_selected,
-            32  => self.tensor_glyph_selected,
-            33  => self.sprite_selected,
-            34  => self.xo_sprite_selected,
-            _   => return false,
-        };
-        self.set_flag(id, !current)
     }
 
     /// Select a single object (clear everything else first).
     pub(crate) fn select_object(&mut self, id: NodeId) {
         self.clear_selection();
-        if !self.set_flag(id, true) {
-            self.selection.add(id);
-        }
+        self.selection.add(id);
     }
 
     /// Toggle an object's selection without clearing others.
     pub(crate) fn toggle_object(&mut self, id: NodeId) {
-        if !self.toggle_flag(id) {
-            self.selection.toggle(id);
-        }
+        self.selection.toggle(id);
     }
 }
 
@@ -808,7 +731,7 @@ impl App {
                     );
                 } else if vol_hit {
                     if shift {
-                        self.pl_state.vol_selected = !self.pl_state.vol_selected;
+                        self.pl_state.selection.toggle(20);
                     } else {
                         self.pl_state.select_object(20);
                     }
@@ -1192,9 +1115,7 @@ impl App {
         let result: PickRectResult = renderer.pick_rect(r_min, r_max, vp_size, view_proj, mask);
 
         for id in &result.objects {
-            if !self.pl_state.set_flag(*id, true) {
-                self.pl_state.selection.add(*id);
-            }
+            self.pl_state.selection.add(*id);
         }
         for (id, sub) in &result.elements {
             self.pl_state.sub_selection.add(*id, *sub);
