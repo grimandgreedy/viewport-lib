@@ -85,7 +85,8 @@ fn vs_main(
     clip.y += ndc_offset.y * clip.w;
 
     // Clip-space depth nudge : shifts edge just in front of the surface.
-    clip.z -= 0.0001 / clip.w;
+    // 0.001 in NDC gives reliable front-placement at all typical distances.
+    clip.z -= 0.001 / clip.w;
 
     return VsOut(clip);
 }

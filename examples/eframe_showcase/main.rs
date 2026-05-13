@@ -2589,7 +2589,7 @@ impl App {
                             ..Default::default()
                         },
                     ],
-                    hemisphere_intensity: 0.5,
+                    hemisphere_intensity: 0.7,
                     sky_color: [1.0, 1.0, 1.0],
                     ground_color: [0.8, 0.8, 0.8],
                     ..LightingSettings::default()
@@ -2861,6 +2861,9 @@ impl App {
         if scene_graph_outline {
             fd.interaction.outline_width_px = scene_graph_outline_width;
         }
+        if self.mode == ShowcaseMode::PickLevels {
+            fd.interaction.outline_color = [1.0, 0.85, 0.0, 1.0];
+        }
         fd.interaction.xray_selected = adv_xray;
         fd.scene.generation = scene_gen;
         fd.interaction.selection_generation = sel_gen;
@@ -3056,7 +3059,7 @@ impl App {
                 ).with_voxels(voxel_lookup).with_cells(cell_lookup).with_polylines(polyline_lookup));
                 fd.interaction.sub_highlight_face_fill_color = [1.0, 0.85, 0.0, 0.25];
                 fd.interaction.sub_highlight_edge_color = [1.0, 0.85, 0.0, 1.0];
-                fd.interaction.sub_highlight_edge_width_px = 2.5;
+                fd.interaction.sub_highlight_edge_width_px = 5.0;
                 fd.interaction.sub_highlight_vertex_size_px = 14.0;
             }
             // Orange crosshair marker at the click point.
@@ -3112,7 +3115,7 @@ impl App {
                 g.scale          = 0.8;
                 g.scale_by_magnitude = false;
                 g.use_default_color  = true;
-                g.default_color  = [0.95, 0.55, 0.10, 1.0];
+                g.default_color  = [0.75, 0.1, 1.0, 1.0];
                 g.glyph_type     = GlyphType::Arrow;
                 g.id             = 31;
                 g.selected       = self.pl_state.arrow_glyph_selected;
