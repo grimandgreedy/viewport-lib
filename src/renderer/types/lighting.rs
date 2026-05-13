@@ -219,7 +219,7 @@ impl Default for LightingSettings {
             shadow_bias: 0.0001,
             shadows_enabled: true,
             sky_color: [0.8, 0.9, 1.0],
-            ground_color: [0.3, 0.2, 0.1],
+            ground_color: [0.5, 0.55, 0.6],
             hemisphere_intensity: 0.5,
             shadow_extent_override: None,
             shadow_cascade_count: 4,

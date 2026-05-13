@@ -3019,8 +3019,7 @@ impl App {
                     }
                 }
                 let mut point_positions: HashMap<u64, Vec<[f32; 3]>> = HashMap::new();
-                point_positions.insert(1, self.pl_state.pc_positions.clone());   // per-type mode
-                point_positions.insert(100, self.pl_state.pc_positions.clone()); // unified mode
+                point_positions.insert(100, self.pl_state.pc_positions.clone());
                 let mut voxel_lookup: HashMap<u64, viewport_lib::VolumeSelectionInfo> = HashMap::new();
                 if self.pl_state.volume_id.is_some() {
                     voxel_lookup.insert(20, viewport_lib::VolumeSelectionInfo {

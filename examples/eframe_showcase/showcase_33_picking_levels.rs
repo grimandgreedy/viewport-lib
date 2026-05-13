@@ -447,19 +447,20 @@ impl PlState {
 
     /// Toggle the boolean flag for a non-mesh item.
     fn toggle_flag(&mut self, id: NodeId) -> bool {
-        match id {
-            100 => { self.pc_selected = !self.pc_selected; true }
-            10  => { self.splat_selected = !self.splat_selected; true }
-            11  => { self.tvm_selected = !self.tvm_selected; true }
-            12  => { self.tvm_tet_selected = !self.tvm_tet_selected; true }
-            20  => { self.vol_selected = !self.vol_selected; true }
-            30  => { self.polyline_selected = !self.polyline_selected; true }
-            31  => { self.arrow_glyph_selected = !self.arrow_glyph_selected; true }
-            32  => { self.tensor_glyph_selected = !self.tensor_glyph_selected; true }
-            33  => { self.sprite_selected = !self.sprite_selected; true }
-            34  => { self.xo_sprite_selected = !self.xo_sprite_selected; true }
-            _   => false,
-        }
+        let current = match id {
+            100 => self.pc_selected,
+            10  => self.splat_selected,
+            11  => self.tvm_selected,
+            12  => self.tvm_tet_selected,
+            20  => self.vol_selected,
+            30  => self.polyline_selected,
+            31  => self.arrow_glyph_selected,
+            32  => self.tensor_glyph_selected,
+            33  => self.sprite_selected,
+            34  => self.xo_sprite_selected,
+            _   => return false,
+        };
+        self.set_flag(id, !current)
     }
 
     /// Select a single object (clear everything else first).
@@ -896,11 +897,11 @@ impl App {
             PlPickLevel::Point => {
                 let mut pc_item = viewport_lib::PointCloudItem::default();
                 pc_item.positions = self.pl_state.pc_positions.clone();
-                pc_item.id = 1;
-                let hit = viewport_lib::pick_point_cloud_cpu(pos, 1, &pc_item, view_proj, vp_size, 20.0);
+                pc_item.id = 100;
+                let hit = viewport_lib::pick_point_cloud_cpu(pos, 100, &pc_item, view_proj, vp_size, 20.0);
                 if let Some(hit) = hit {
                     let sub = hit.sub_object.unwrap();
-                    select_sub!(1, sub);
+                    select_sub!(100, sub);
                     record_hit!(
                         "Point Cloud".to_string(), "Point Cloud",
                         hit.world_pos, glam::Vec3::Y, Some(sub), None
@@ -1041,7 +1042,7 @@ impl App {
                     if screen.x >= r_min.x && screen.x <= r_max.x
                         && screen.y >= r_min.y && screen.y <= r_max.y
                     {
-                        self.pl_state.sub_selection.add(1, SubObjectRef::Point(i as u32));
+                        self.pl_state.sub_selection.add(100, SubObjectRef::Point(i as u32));
                     }
                 }
             }
@@ -1153,6 +1154,8 @@ impl App {
             Some(SubObjectRef::Instance(_)) => "Glyph",
             Some(SubObjectRef::Segment(_))  => "Polyline",
             Some(SubObjectRef::Strip(_))    => "Polyline",
+            Some(SubObjectRef::Cell(_))     => "Volume Mesh",
+            Some(SubObjectRef::Voxel(_))    => "Volume",
             Some(_)                         => "Object",
         };
 
@@ -1252,6 +1255,7 @@ impl App {
             31  => Some("Arrow Glyphs"),
             32  => Some("Tensor Glyphs"),
             33  => Some("Sprites"),
+            34  => Some("XO Sprites"),
             _   => None,
         }
     }
