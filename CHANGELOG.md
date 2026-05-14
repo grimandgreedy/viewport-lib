@@ -1,8 +1,19 @@
 # Changelog
 
-## [0.13.3] (dev, current, unreleased)
+## [0.13.3]
 
 ### Features
+- Unified picking: a single call now dispatches across all item types in the scene, controlled by a mask specifying what level of detail you want back -- whole objects, mesh faces, or individual point-like elements (vertices, cloud points, cells, voxels, splats) across all participating types at once. The renderer handles dispatch internally from the last rendered frame; no per-type dispatch is needed in host code.
+    - The mask uses dimensional groups (object, point-like, edge-like, face-like) for the common cases, with individual element-type bits available when finer control is needed -- for example including mesh vertices but not volume cells.
+    - Mesh face and vertex picking requires opting in to CPU data retention at upload time. This can be turned off later to free memory when picking is no longer needed.
+    - Pick results can now identify individual elements in Gaussian splat sets, instanced items (glyphs, sprites, tensor glyphs), individual curve segments, and strips within multi-strip items.
+- Per-type picking extensions, adding support to item types that previously returned nothing when clicked:
+    - Scalar volumes, Gaussian splat sets, and unstructured volume meshes now support both single-click and box-selection picking.
+    - A helper returns the closest mesh vertex to a face-level click, for workflows that need to snap selection to vertices.
+    - Selected volume mesh cells now highlight with the same edge-outline style as selected mesh faces and voxels, across tet, pyramid, wedge, and hex cell types.
+    - Glyphs, tensor glyphs, and sprites now support click and box-selection picking.
+    - Polylines now support click and box-selection picking for nodes, segments, and strips.
+    - Streamtubes, tubes, and ribbons now support click and box-selection picking for segments and strips.
 - Selection highlight extensions:
     - Gaussian splat sets now show an object-level outline when selected. The outline traces the screen-space silhouette of the whole cloud and updates naturally as the camera moves. Color, opacity, and width follow the same per-frame outline controls that already apply to mesh outlines.
     - Selecting an individual Gaussian splat now shows a point marker at that splat's position.
@@ -16,17 +27,6 @@
     - Streamtubes, tubes, and ribbons now show an object-level outline when selected. Set `selected = true` on any of the three item types.
     - Tensor glyphs now show an object-level outline when selected. Set `TensorGlyphItem::selected = true`.
 - `VolumeMeshItem`: a render item for opaque volume meshes that retains cell-level identity after upload. Wraps the `MeshId` and a face-to-cell mapping produced by `upload_volume_mesh_data`.
-- Unified picking: a single call now dispatches across all item types in the scene, controlled by a mask specifying what level of detail you want back -- whole objects, mesh faces, or individual point-like elements (vertices, cloud points, cells, voxels, splats) across all participating types at once. The renderer handles dispatch internally from the last rendered frame; no per-type dispatch is needed in host code.
-    - The mask uses dimensional groups (object, point-like, edge-like, face-like) for the common cases, with individual element-type bits available when finer control is needed -- for example including mesh vertices but not volume cells.
-    - Mesh face and vertex picking requires opting in to CPU data retention at upload time. This can be turned off later to free memory when picking is no longer needed.
-    - Pick results can now identify individual elements in Gaussian splat sets, instanced items (glyphs, sprites, tensor glyphs), individual curve segments, and strips within multi-strip items.
-- Per-type picking extensions, adding support to item types that previously returned nothing when clicked:
-    - Scalar volumes, Gaussian splat sets, and unstructured volume meshes now support both single-click and box-selection picking.
-    - A helper returns the closest mesh vertex to a face-level click, for workflows that need to snap selection to vertices.
-    - Selected volume mesh cells now highlight with the same edge-outline style as selected mesh faces and voxels, across tet, pyramid, wedge, and hex cell types.
-    - Glyphs, tensor glyphs, and sprites now support click and box-selection picking.
-    - Polylines now support click and box-selection picking for nodes, segments, and strips.
-    - Streamtubes, tubes, and ribbons now support click and box-selection picking for segments and strips.
 
 ### Fixes
 - Arrow glyphs had an invisible face where the cone head meets the shaft. The cone base cap was wound in the wrong direction and was culled by back-face culling.
