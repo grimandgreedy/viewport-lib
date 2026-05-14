@@ -338,8 +338,44 @@ impl ViewportRenderer {
                                     }
                                     other => other,
                                 }
+                            } else if wants_vertex {
+                                // No cell map for this item; try vertex picking instead.
+                                // Fall through to the vertex branch below by
+                                // re-evaluating with the vertex logic inline.
+                                match feature_sub {
+                                    Some(SubObjectRef::Face(face_raw)) => {
+                                        let n_tri = indices.len() / 3;
+                                        let face = if (face_raw as usize) >= n_tri {
+                                            face_raw as usize - n_tri
+                                        } else {
+                                            face_raw as usize
+                                        };
+                                        if face * 3 + 2 < indices.len() {
+                                            let vis = [
+                                                indices[face * 3] as usize,
+                                                indices[face * 3 + 1] as usize,
+                                                indices[face * 3 + 2] as usize,
+                                            ];
+                                            let (best_vi, _) = vis
+                                                .iter()
+                                                .map(|&i| {
+                                                    let p = model.transform_point3(
+                                                        glam::Vec3::from(positions[i]),
+                                                    );
+                                                    (i, p.distance(world_pos))
+                                                })
+                                                .fold((vis[0], f32::MAX), |acc, (i, d)| {
+                                                    if d < acc.1 { (i, d) } else { acc }
+                                                });
+                                            Some(SubObjectRef::Vertex(best_vi as u32))
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    other => other,
+                                }
                             } else {
-                                // No cell map for this item; fall through to object-only.
+                                // No cell map and vertex not wanted; no sub-element.
                                 None
                             }
                         } else if wants_vertex {
@@ -983,6 +1019,16 @@ impl ViewportRenderer {
                                             result.elements.push((id, SubObjectRef::Cell(ci)));
                                         }
                                     }
+                                    item_hit = true;
+                                }
+                            }
+                        }
+                    } else if wants_vertex {
+                        // No cell map; fall through to vertex picking for regular meshes.
+                        for (vi, pos) in positions.iter().enumerate() {
+                            if let Some((sx, sy)) = project(mvp, glam::Vec3::from(*pos)) {
+                                if in_rect(sx, sy) {
+                                    result.elements.push((id, SubObjectRef::Vertex(vi as u32)));
                                     item_hit = true;
                                 }
                             }
