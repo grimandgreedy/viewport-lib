@@ -55,17 +55,27 @@ fn aces(x: vec3<f32>) -> vec3<f32> {
     );
 }
 
-fn khronos_neutral(x: vec3<f32>) -> vec3<f32> {
-    let a: f32 = 0.15;
-    let b: f32 = 0.50;
-    let c: f32 = 0.10;
-    let d: f32 = 0.20;
-    let e: f32 = 0.02;
-    let f: f32 = 0.30;
-    let w: f32 = 11.2;
-    let curve = (x * (a * x + c * b) + d * e) / (x * (a * x + b) + d * f) - e / f;
-    let white = (w * (a * w + c * b) + d * e) / (w * (a * w + b) + d * f) - e / f;
-    return clamp(curve / white, vec3<f32>(0.0), vec3<f32>(1.0));
+// Khronos PBR Neutral tone mapper (https://github.com/KhronosGroup/ToneMapping).
+// Passes values below ~0.76 through with only a small black-point offset,
+// then compresses highlights. Designed to preserve hand-authored SDR colors.
+fn khronos_neutral(color: vec3<f32>) -> vec3<f32> {
+    let start_compression: f32 = 0.8 - 0.04;
+    let desaturation: f32 = 0.15;
+
+    let x = min(color.r, min(color.g, color.b));
+    let offset = select(x - 6.25 * x * x, 0.04, x < 0.08);
+    let c = color - offset;
+
+    let peak = max(c.r, max(c.g, c.b));
+    if peak < start_compression {
+        return c;
+    }
+
+    let d = 1.0 - start_compression;
+    let new_peak = 1.0 - d * d / (peak + d - start_compression);
+    let scaled = c * (new_peak / peak);
+    let g = 1.0 - 1.0 / (desaturation * (peak - new_peak) + 1.0);
+    return mix(scaled, vec3<f32>(new_peak), g);
 }
 
 @fragment
@@ -159,9 +169,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     } else {
         color = khronos_neutral(color);
     }
-
-    // Gamma correction (linear -> sRGB approximation).
-    color = pow(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));
 
     return vec4<f32>(color, 1.0);
 }

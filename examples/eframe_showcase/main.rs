@@ -26,7 +26,6 @@ use viewport_lib::{LoadingBarAnchor, LoadingBarItem};
 
 mod geometry;
 mod gizmo_helpers;
-mod hdr_viewport_callback;
 mod multi_viewport_callback;
 mod shared;
 mod showcase_01_basic;
@@ -134,9 +133,6 @@ fn main() -> eframe::Result {
                 .callback_resources
                 .insert(renderer);
 
-            // HDR blit resources (used by Showcase 24 and any other mode that
-            // needs the full post-processing pipeline via HdrViewportCallback).
-            hdr_viewport_callback::init_hdr_blit_resources(wgpu_render_state, format);
 
             let box_mesh = viewport_lib::primitives::cube(1.0);
 
@@ -1156,32 +1152,11 @@ impl eframe::App for App {
             }
 
             // ----- Schedule paint callback -----
-            // Some showcases use the HDR path: PostProcess for DoF/bloom/SSAO,
-            // BackfacePolicy/ImplicitSurface for SSAA, DepthCompositeImages because
-            // depth compositing requires a real depth buffer, Lights/SurfaceLIC/VolumeMesh
-            // for their respective post-processing needs.
-            if self.mode == ShowcaseMode::PostProcess
-                || self.mode == ShowcaseMode::BackfacePolicy
-                || self.mode == ShowcaseMode::DepthCompositeImages
-                || self.mode == ShowcaseMode::ImplicitSurface
-                || self.mode == ShowcaseMode::Lights
-                || self.mode == ShowcaseMode::SurfaceLIC
-                || self.mode == ShowcaseMode::VolumeMesh
-            {
-                ui.painter()
-                    .add(eframe::egui_wgpu::Callback::new_paint_callback(
-                        rect,
-                        hdr_viewport_callback::HdrViewportCallback {
-                            frame: frame_data,
-                        },
-                    ));
-            } else {
-                ui.painter()
-                    .add(eframe::egui_wgpu::Callback::new_paint_callback(
-                        rect,
-                        viewport_callback::ViewportCallback::new(frame_data),
-                    ));
-            }
+            ui.painter()
+                .add(eframe::egui_wgpu::Callback::new_paint_callback(
+                    rect,
+                    viewport_callback::ViewportCallback::new(frame_data),
+                ));
 
             // ----- PickLevels: rubber-band drag rect overlay -----
             if self.mode == ShowcaseMode::PickLevels {

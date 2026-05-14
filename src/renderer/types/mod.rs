@@ -30,12 +30,14 @@ mod frame;
 mod items;
 mod lighting;
 mod overlay;
+mod postprocess;
 
 pub use self::clip::*;
 pub use self::frame::*;
 pub use self::items::*;
 pub use self::lighting::*;
 pub use self::overlay::*;
+pub use self::postprocess::*;
 // ---------------------------------------------------------------------------
 
 /// All data needed to render one frame of the viewport.

@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.14.0] (dev, current, unreleased)
+
+### Breaking changes
+- `PostProcessSettings::enabled` now defaults to `true`. The HDR pipeline (tone mapping, OIT, SSAO, bloom, etc.) is active by default. Applications that previously relied on the LDR path should set `enabled: false` explicitly. The `render()` and `render_viewport()` entry points support both paths; `paint_to` and `paint_viewport_to` are always LDR regardless of this setting.
+
+### Improvements
+- `PostProcessSettings` and `ToneMapping` have moved from `renderer/types/lighting.rs` to a dedicated `renderer/types/postprocess.rs` module. All existing import paths are unaffected.
+- The default tone mapping operator is now `ToneMapping::KhronosNeutral` instead of `ToneMapping::Aces`. Khronos Neutral preserves colors in the [0, 1] range with minimal shift, which is less disruptive for scenes authored against the previous LDR path. ACES remains available for scenes that want a cinematic look.
+- `TransparentVolumeMeshItem` now documents that `PostProcessSettings::enabled = true` is required. Transparent volume meshes are rendered via the OIT pass which only exists in the HDR pipeline.
+
+### Fixes
+- `ClipShape::Plane` was missing the `display_center` field in `tests/clip_volume.rs`. Added `display_center: None` to the struct literal.
+- Unused `mut` on closure bindings in `eframe_primitives`, `eframe_minimal`, and `winit_minimal` examples. Removed `mut` from `item`, `make`, and `make_item`.
+- Unused `queue` variable in `eframe_testing`. Renamed to `_queue`.
+- The HDR callback intermediate texture (`prepare_hdr_callback`) was allocated at logical pixel size instead of physical pixel size. On HiDPI displays this caused a wgpu validation error when the grid, ground plane, or editor overlay passes paired the logical-size color attachment with the physical-size HDR depth buffer. The intermediate texture is now allocated at `viewport_size * pixels_per_point`, matching the depth buffer.
+- The tone map shader was applying manual gamma correction (`pow(x, 1/2.2)`) before writing to the swapchain surface, which already applies sRGB encoding automatically. This double-gamma made all tone-mapped output significantly lighter than the LDR path. The manual gamma line has been removed.
+- The `khronos_neutral` tone mapping function was implemented with Uncharted 2 (Hable filmic) constants rather than the actual Khronos PBR Neutral algorithm. The correct implementation now passes values below ~0.76 through with only a small black-point offset and compresses only HDR highlights above that threshold, matching LDR output closely for hand-authored SDR colors.
+- Screen images submitted with per-pixel depth data (`ScreenImageItem::depth`) were invisible in the HDR path. The depth-composite pipeline compares each image fragment's depth against the scene depth buffer. The axes indicator pass and editor overlay pass both open that depth buffer with `StoreOp::Discard`; on Metal, a subsequent `LoadOp::Load` returns 0.0 (near plane), so every depth comparison failed and no fragments were drawn. The screen image pass now runs before those two passes while the scene depth is still valid.
+- The viewport background went black whenever any sub-object was selected (e.g. a face, point, or cell) in the HDR path. The sub-object highlight pass used `StoreOp::Discard` on `hdr_depth_view` even though all three highlight pipelines (face fill, edge outline, vertex sprite) have `depth_write_enabled: false` and leave the depth values completely unchanged. On Metal, discarding a depth attachment clears tile memory, so the tone-map pass's sampled read of the same texture returned 0.0 for every pixel. The tone-map shader's `if depth >= 0.999999` background check then never triggered, causing the cleared HDR color (black) to be output instead of the configured background color. Changed the sub-highlight pass to `StoreOp::Store` so the unmodified depth values are preserved.
+
+### Removals
+- `examples/eframe_showcase/hdr_viewport_callback.rs` and its `shaders/hdr_blit.wgsl` have been deleted. The `ViewportCallback` (which calls `prepare_callback` / `paint_callback`) handles HDR internally and replaces the manual intermediate-texture path for all showcases.
+
 ## [0.13.3]
 
 ### Features

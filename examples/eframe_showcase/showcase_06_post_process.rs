@@ -1,9 +1,8 @@
 //! Showcase 6: Post-Processing : build and controls.
 //!
-//! Note: the full HDR pipeline (`renderer.render()`) requires direct access to the
-//! surface texture view, which is not available via eframe's paint callback.
-//! Post-process toggles (bloom, SSAO, FXAA, tone mapping) are reflected in
-//! `PostProcessSettings` but the HDR pass is not applied in this path.
+//! Post-processing showcase: bloom, SSAO, FXAA, tone mapping, and EDL controls.
+//! Uses `prepare_callback` + `paint_callback` which dispatches to the full HDR
+//! pipeline when `PostProcessSettings::enabled` is true (the default).
 
 use crate::App;
 use crate::geometry::make_uv_sphere;

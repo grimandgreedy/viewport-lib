@@ -681,7 +681,7 @@ pub struct EffectsFrame {
     pub clip_objects: Vec<ClipObject>,
     /// Whether to render filled caps at clip plane cross-sections. Default: true.
     pub cap_fill_enabled: bool,
-    /// Optional post-processing settings. Default: disabled.
+    /// Post-processing settings. Default: enabled (HDR pipeline active, all effects off).
     pub post_process: PostProcessSettings,
     /// GPU compute filter items dispatched before the render pass.
     pub compute_filter_items: Vec<ComputeFilterItem>,
