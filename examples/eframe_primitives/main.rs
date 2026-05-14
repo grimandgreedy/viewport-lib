@@ -77,7 +77,7 @@ fn main() -> eframe::Result {
             let cx = [-5.25f32, -1.75, 1.75, 5.25];
             let rz = [-7.0f32, -3.5, 0.0, 3.5, 7.0];
 
-            let mut item = |mesh_id: MeshId, x, z, color: [f32; 3]| {
+            let item = |mesh_id: MeshId, x, z, color: [f32; 3]| {
                 let mut s = SceneRenderItem::default();
                 s.mesh_id = mesh_id;
                 s.model =

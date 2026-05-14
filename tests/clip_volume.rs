@@ -39,7 +39,7 @@ fn clip_objects_construct_and_assign() {
 
     // Plane variant
     let mut obj = ClipObject::default();
-    obj.shape = ClipShape::Plane { normal: [0.0, 1.0, 0.0], distance: -5.0, cap_color: None };
+    obj.shape = ClipShape::Plane { normal: [0.0, 1.0, 0.0], distance: -5.0, cap_color: None, display_center: None };
     frame.effects.clip_objects.push(obj);
     assert!(matches!(
         frame.effects.clip_objects[0].shape,

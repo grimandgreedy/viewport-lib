@@ -69,7 +69,7 @@ struct App {
 
 impl App {
     fn new(m_sphere: MeshId, m_cube: MeshId, m_torus: MeshId) -> Self {
-        let mut make = |mesh_id: MeshId, [x, y, z]: [f32; 3], color: [f32; 3]| {
+        let make = |mesh_id: MeshId, [x, y, z]: [f32; 3], color: [f32; 3]| {
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();

@@ -37,7 +37,7 @@ fn main() -> eframe::Result {
         Box::new(|cc| {
             let rs = cc.wgpu_render_state.as_ref().expect("wgpu backend required");
             let device = &rs.device;
-            let queue = &rs.queue;
+            let _queue = &rs.queue;
 
             let mut renderer = ViewportRenderer::new(device, rs.target_format);
             let res = renderer.resources_mut();
