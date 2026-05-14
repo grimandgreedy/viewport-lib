@@ -544,11 +544,12 @@ impl ViewportRenderer {
         // 6. Instance picks (INSTANCE or OBJECT fallback) for glyphs, tensor glyphs, sprites.
         let wants_instance = mask.intersects(PickMask::INSTANCE);
         if wants_instance || wants_object {
-            // Convert a world-space radius at the model centroid to a pixel threshold.
-            let instance_radius_px = |model: glam::Mat4, world_r: f32| -> f32 {
-                let center = model.transform_point3(glam::Vec3::ZERO);
-                let p0 = view_proj * center.extend(1.0);
-                let p1 = view_proj * (center + glam::Vec3::X * world_r).extend(1.0);
+            // Convert a world-space radius at a given world position to a pixel threshold.
+            // Using the actual instance centroid rather than the model origin gives a correct
+            // pixel size when instances are offset far from the model's local origin.
+            let instance_radius_px = |world_center: glam::Vec3, world_r: f32| -> f32 {
+                let p0 = view_proj * world_center.extend(1.0);
+                let p1 = view_proj * (world_center + glam::Vec3::X * world_r).extend(1.0);
                 if p0.w.abs() > 1e-6 && p1.w.abs() > 1e-6 {
                     let n0 = glam::Vec2::new(p0.x, p0.y) / p0.w;
                     let n1 = glam::Vec2::new(p1.x, p1.y) / p1.w;
@@ -564,7 +565,7 @@ impl ViewportRenderer {
                     continue;
                 }
                 let model = glam::Mat4::from_cols_array_2d(&item.model);
-                let world_r = if item.scale_by_magnitude && !item.vectors.is_empty() {
+                let full_len = if item.scale_by_magnitude && !item.vectors.is_empty() {
                     let mean_mag = item.vectors.iter()
                         .map(|v| glam::Vec3::from(*v).length())
                         .sum::<f32>() / item.vectors.len() as f32;
@@ -572,18 +573,40 @@ impl ViewportRenderer {
                 } else {
                     item.scale.max(0.01)
                 };
-                let radius_px = instance_radius_px(model, world_r);
-                if let Some(mut hit) = pick_gaussian_splat_cpu(
-                    click_pos, item.id, &item.positions, model, view_proj, viewport_size, radius_px,
-                ) {
-                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
-                    if wants_instance {
-                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
-                            hit.sub_object = Some(SubObjectRef::Instance(idx));
-                        }
+                // Test against the midpoint of each arrow (base + half-vector) with
+                // world_r = half-length. This prevents the hit circle from extending a full
+                // arrow-length behind the base when the arrow points away from the camera.
+                let has_vecs = item.vectors.len() == item.positions.len();
+                let midpoints: Vec<[f32; 3]> = item.positions.iter().enumerate().map(|(i, pos)| {
+                    if has_vecs {
+                        let p = glam::Vec3::from(*pos);
+                        let v = glam::Vec3::from(item.vectors[i]);
+                        let len = if item.scale_by_magnitude { v.length() * item.scale } else { item.scale };
+                        (p + v.normalize_or_zero() * len * 0.5).to_array()
                     } else {
-                        hit.sub_object = None;
+                        *pos
                     }
+                }).collect();
+                let n = midpoints.len() as f32;
+                let centroid = model.transform_point3(
+                    midpoints.iter().map(|p| glam::Vec3::from(*p)).sum::<glam::Vec3>() / n
+                );
+                let radius_px = instance_radius_px(centroid, full_len * 0.5);
+                if let Some(mut hit) = pick_gaussian_splat_cpu(
+                    click_pos, item.id, &midpoints, model, view_proj, viewport_size, radius_px,
+                ) {
+                    // Report the base position, not the midpoint.
+                    if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
+                        if let Some(base) = item.positions.get(idx as usize) {
+                            hit.world_pos = model.transform_point3(glam::Vec3::from(*base));
+                        }
+                        if wants_instance {
+                            hit.sub_object = Some(SubObjectRef::Instance(idx));
+                        } else {
+                            hit.sub_object = None;
+                        }
+                    }
+                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
                     consider(toi, hit);
                 }
             }
@@ -594,15 +617,22 @@ impl ViewportRenderer {
                     continue;
                 }
                 let model = glam::Mat4::from_cols_array_2d(&item.model);
+                // Use the max eigenvalue across all instances so the largest ellipsoid
+                // is fully covered. Use the centroid of instance positions for an accurate
+                // pixel-size estimate (instances may be far from the model origin).
                 let world_r = if !item.eigenvalues.is_empty() {
-                    let mean_max = item.eigenvalues.iter()
+                    let max_ev = item.eigenvalues.iter()
                         .map(|ev| ev[0].abs().max(ev[1].abs()).max(ev[2].abs()))
-                        .sum::<f32>() / item.eigenvalues.len() as f32;
-                    (mean_max * item.scale).max(0.01)
+                        .fold(0.0_f32, f32::max);
+                    (max_ev * item.scale).max(0.01)
                 } else {
                     item.scale.max(0.01)
                 };
-                let radius_px = instance_radius_px(model, world_r);
+                let n = item.positions.len() as f32;
+                let centroid = model.transform_point3(
+                    item.positions.iter().map(|p| glam::Vec3::from(*p)).sum::<glam::Vec3>() / n
+                );
+                let radius_px = instance_radius_px(centroid, world_r);
                 if let Some(mut hit) = pick_gaussian_splat_cpu(
                     click_pos, item.id, &item.positions, model, view_proj, viewport_size, radius_px,
                 ) {
@@ -627,7 +657,11 @@ impl ViewportRenderer {
                 let radius_px = match item.size_mode {
                     SpriteSizeMode::ScreenSpace => (item.default_size * 0.5).max(4.0),
                     SpriteSizeMode::WorldSpace => {
-                        instance_radius_px(model, (item.default_size * 0.5).max(0.01))
+                        let n = item.positions.len() as f32;
+                        let centroid = model.transform_point3(
+                            item.positions.iter().map(|p| glam::Vec3::from(*p)).sum::<glam::Vec3>() / n
+                        );
+                        instance_radius_px(centroid, (item.default_size * 0.5).max(0.01))
                     }
                 };
                 if let Some(mut hit) = pick_gaussian_splat_cpu(
