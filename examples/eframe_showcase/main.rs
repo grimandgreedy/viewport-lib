@@ -3260,6 +3260,7 @@ impl App {
                     material:  mat,
                     id:        54,
                     selected:  self.pl_state.selection.contains(54),
+                    cpu_data:  self.pl_state.mc_volume_data.clone(),
                 });
             }
         }

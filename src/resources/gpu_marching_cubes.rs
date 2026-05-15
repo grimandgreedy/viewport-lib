@@ -43,6 +43,12 @@ pub struct GpuMarchingCubesJob {
     pub id: u64,
     /// If `true`, draws an outline ring around the marching cubes surface.
     pub selected: bool,
+    /// CPU-side volume data for `pick()` and `pick_rect()`.
+    ///
+    /// When set, the CPU picker ray-marches the actual scalar field and detects
+    /// isovalue crossings rather than falling back to the volume AABB. `None`
+    /// means the item is not reachable by the CPU picking path.
+    pub cpu_data: Option<std::sync::Arc<crate::geometry::marching_cubes::VolumeData>>,
 }
 
 // ---------------------------------------------------------------------------

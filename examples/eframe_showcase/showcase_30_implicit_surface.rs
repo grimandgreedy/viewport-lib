@@ -448,6 +448,7 @@ impl App {
             material: mat,
             id: 0,
             selected: false,
+            cpu_data: None,
         });
     }
 

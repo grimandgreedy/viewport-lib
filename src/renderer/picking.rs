@@ -260,6 +260,206 @@ fn ribbon_lateral_frames(
 }
 
 // ---------------------------------------------------------------------------
+// CPU SDF evaluation for GPU implicit surfaces (mirrors implicit.wgsl)
+// ---------------------------------------------------------------------------
+
+/// Evaluate one implicit primitive's signed distance from `p`.
+fn eval_implicit_primitive(p: glam::Vec3, prim: &crate::resources::ImplicitPrimitive) -> f32 {
+    match prim.kind {
+        1 => {
+            // Sphere: center=params[0..3], radius=params[3]
+            let center = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]);
+            (p - center).length() - prim.params[3]
+        }
+        2 => {
+            // Box: center=params[0..3], half-extents=params[4..7]
+            let center = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]);
+            let half   = glam::Vec3::new(prim.params[4], prim.params[5], prim.params[6]);
+            let q = (p - center).abs() - half;
+            q.max(glam::Vec3::ZERO).length() + q.x.max(q.y).max(q.z).min(0.0)
+        }
+        3 => {
+            // Plane: normal=params[0..3], offset=params[3]
+            let n = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2])
+                .normalize_or_zero();
+            p.dot(n) + prim.params[3]
+        }
+        4 => {
+            // Capsule: a=params[0..3], radius=params[3], b=params[4..7]
+            let a  = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]);
+            let r  = prim.params[3];
+            let b  = glam::Vec3::new(prim.params[4], prim.params[5], prim.params[6]);
+            let pa = p - a;
+            let ba = b - a;
+            let h  = (pa.dot(ba) / ba.dot(ba).max(1e-10)).clamp(0.0, 1.0);
+            (pa - ba * h).length() - r
+        }
+        _ => f32::MAX,
+    }
+}
+
+/// Polynomial smooth-min (Inigo Quilez).
+#[inline]
+fn smin_implicit(a: f32, b: f32, k: f32) -> f32 {
+    let h = (0.5 + 0.5 * (b - a) / k).clamp(0.0, 1.0);
+    a * h + b * (1.0 - h) - k * h * (1.0 - h)
+}
+
+/// Evaluate the combined SDF for all primitives in one GPU implicit item.
+fn eval_implicit_sdf(p: glam::Vec3, item: &GpuImplicitPickItem) -> f32 {
+    use crate::resources::ImplicitBlendMode;
+    let mut d = item.max_distance;
+    for (i, prim) in item.primitives.iter().enumerate() {
+        let pd = eval_implicit_primitive(p, prim);
+        match item.blend_mode {
+            ImplicitBlendMode::Union => {
+                d = d.min(pd);
+            }
+            ImplicitBlendMode::SmoothUnion => {
+                let k = if prim.blend > 0.0 { prim.blend } else { 1e-5 };
+                d = smin_implicit(d, pd, k);
+            }
+            ImplicitBlendMode::Intersection => {
+                if i == 0 { d = pd; } else { d = d.max(pd); }
+            }
+        }
+    }
+    d
+}
+
+/// CPU ray-march against the implicit SDF. Returns `(toi, world_pos)` on hit.
+fn pick_implicit_sdf(
+    ray_origin: glam::Vec3,
+    ray_dir:    glam::Vec3,
+    item:       &GpuImplicitPickItem,
+) -> Option<(f32, glam::Vec3)> {
+    let max_steps = item.max_steps.min(512) as usize;
+    let scale     = item.step_scale.clamp(0.01, 1.0);
+    let hit_thr   = item.hit_threshold;
+    let max_dist  = item.max_distance;
+    let min_step  = hit_thr * 0.5;
+
+    let mut t = 0.0f32;
+    for _ in 0..max_steps {
+        if t > max_dist {
+            break;
+        }
+        let p = ray_origin + ray_dir * t;
+        let d = eval_implicit_sdf(p, item);
+        if d < hit_thr {
+            return Some((t, p));
+        }
+        t += d.abs().max(min_step) * scale;
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// CPU volume ray-march for GPU marching cubes isosurface picking
+// ---------------------------------------------------------------------------
+
+/// Slab test: returns (t_enter, t_exit) for a ray vs axis-aligned box, or None.
+fn ray_aabb_slab(
+    ray_orig: glam::Vec3,
+    ray_dir:  glam::Vec3,
+    bbox_min: glam::Vec3,
+    bbox_max: glam::Vec3,
+) -> Option<(f32, f32)> {
+    // Avoid division by zero for axis-aligned rays.
+    let inv = glam::Vec3::new(
+        if ray_dir.x.abs() > 1e-30 { 1.0 / ray_dir.x } else { f32::INFINITY * ray_dir.x.signum() },
+        if ray_dir.y.abs() > 1e-30 { 1.0 / ray_dir.y } else { f32::INFINITY * ray_dir.y.signum() },
+        if ray_dir.z.abs() > 1e-30 { 1.0 / ray_dir.z } else { f32::INFINITY * ray_dir.z.signum() },
+    );
+    let t1 = (bbox_min - ray_orig) * inv;
+    let t2 = (bbox_max - ray_orig) * inv;
+    let tmin = t1.min(t2);
+    let tmax = t1.max(t2);
+    let t_enter = tmin.x.max(tmin.y).max(tmin.z);
+    let t_exit  = tmax.x.min(tmax.y).min(tmax.z);
+    if t_enter <= t_exit && t_exit >= 0.0 {
+        Some((t_enter, t_exit))
+    } else {
+        None
+    }
+}
+
+/// Bisect to refine the isovalue crossing between t_lo and t_hi (8 iterations).
+fn bisect_mc_crossing(
+    ray_orig:  glam::Vec3,
+    ray_dir:   glam::Vec3,
+    vol:       &crate::geometry::marching_cubes::VolumeData,
+    isovalue:  f32,
+    mut t_lo:  f32,
+    mut t_hi:  f32,
+) -> f32 {
+    let s0 = crate::geometry::marching_cubes::trilinear_sample(
+        vol, (ray_orig + ray_dir * t_lo).to_array(),
+    ) - isovalue;
+    let mut lo_sign = s0 < 0.0;
+    for _ in 0..8 {
+        let mid = (t_lo + t_hi) * 0.5;
+        let s = crate::geometry::marching_cubes::trilinear_sample(
+            vol, (ray_orig + ray_dir * mid).to_array(),
+        ) - isovalue;
+        if (s < 0.0) == lo_sign {
+            t_lo = mid;
+        } else {
+            t_hi = mid;
+            lo_sign = !lo_sign;
+        }
+    }
+    (t_lo + t_hi) * 0.5
+}
+
+/// CPU ray-march against a MC isosurface. Returns `(toi, world_pos)` on hit.
+///
+/// Steps through the volume AABB at half-cell intervals and refines any
+/// isovalue crossing to 8 bisection steps.
+fn pick_mc_volume(
+    ray_orig: glam::Vec3,
+    ray_dir:  glam::Vec3,
+    item:     &GpuMcPickItem,
+) -> Option<(f32, glam::Vec3)> {
+    use crate::geometry::marching_cubes::trilinear_sample;
+
+    let vol      = &item.volume_data;
+    let isovalue = item.isovalue;
+    let [nx, ny, nz] = vol.dims;
+    let origin  = glam::Vec3::from(vol.origin);
+    let spacing = glam::Vec3::from(vol.spacing);
+    let extent  = spacing * glam::Vec3::new(nx as f32, ny as f32, nz as f32);
+
+    let (t_enter, t_exit) = ray_aabb_slab(ray_orig, ray_dir, origin, origin + extent)?;
+    let t_start = t_enter.max(0.0);
+    if t_start >= t_exit {
+        return None;
+    }
+
+    // Step at half the smallest cell spacing so we don't skip thin features.
+    let step = spacing.min_element() * 0.5;
+    let mut t    = t_start;
+    let mut prev = trilinear_sample(vol, (ray_orig + ray_dir * t).to_array()) - isovalue;
+
+    loop {
+        t += step;
+        if t > t_exit {
+            break;
+        }
+        let p = ray_orig + ray_dir * t;
+        let cur = trilinear_sample(vol, p.to_array()) - isovalue;
+        if prev * cur <= 0.0 {
+            // Sign change detected: bisect and return.
+            let t_hit = bisect_mc_crossing(ray_orig, ray_dir, vol, isovalue, t - step, t);
+            let world_pos = ray_orig + ray_dir * t_hit;
+            return Some((t_hit, world_pos));
+        }
+        prev = cur;
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
 // PickRectResult
 // ---------------------------------------------------------------------------
 
@@ -1220,6 +1420,42 @@ impl ViewportRenderer {
             }
         }
 
+        // 11. GPU implicit surface picks (OBJECT only -- no sub-element model).
+        if wants_object {
+            for item in &self.pick_implicit_items {
+                if let Some((toi, world_pos)) = pick_implicit_sdf(ray_origin, ray_dir, item) {
+                    #[allow(deprecated)]
+                    consider(toi, PickHit {
+                        id: item.id,
+                        sub_object: None,
+                        world_pos,
+                        normal: glam::Vec3::Y,
+                        triangle_index: u32::MAX,
+                        point_index: None,
+                        scalar_value: None,
+                    });
+                }
+            }
+        }
+
+        // 12. GPU marching cubes surface picks (OBJECT only).
+        if wants_object {
+            for item in &self.pick_mc_items {
+                if let Some((toi, world_pos)) = pick_mc_volume(ray_origin, ray_dir, item) {
+                    #[allow(deprecated)]
+                    consider(toi, PickHit {
+                        id: item.id,
+                        sub_object: None,
+                        world_pos,
+                        normal: glam::Vec3::Y,
+                        triangle_index: u32::MAX,
+                        point_index: None,
+                        scalar_value: None,
+                    });
+                }
+            }
+        }
+
         best.map(|(_, hit)| hit)
     }
 
@@ -2018,6 +2254,117 @@ impl ViewportRenderer {
                 let overlap = sx <= rect_max.x && sx + img_w >= rect_min.x
                     && sy <= rect_max.y && sy + img_h >= rect_min.y;
                 if overlap {
+                    result.objects.push(item.id);
+                }
+            }
+        }
+
+        // 11. GPU implicit surface rect picks (OBJECT only).
+        //
+        // For each primitive compute a conservative screen-space AABB by projecting
+        // the primitive's bounding sphere. If any projected AABB corner falls inside
+        // the pick rect, the item is a hit. This is approximate (the actual rendered
+        // surface may be smaller) but avoids per-pixel SDF marching for rect queries.
+        if wants_object {
+            for item in &self.pick_implicit_items {
+                let mut hit = false;
+                'prim_loop: for prim in &item.primitives {
+                    // Derive a bounding sphere center and radius for each primitive.
+                    let (center, radius) = match prim.kind {
+                        1 => {
+                            // Sphere
+                            let c = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]);
+                            (c, prim.params[3].abs())
+                        }
+                        2 => {
+                            // Box: center + max half-extent as radius
+                            let c = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]);
+                            let h = glam::Vec3::new(prim.params[4], prim.params[5], prim.params[6]);
+                            (c, h.length())
+                        }
+                        3 => {
+                            // Plane: not bounded -- skip.
+                            continue;
+                        }
+                        4 => {
+                            // Capsule: midpoint of segment + (half-length + radius)
+                            let a = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]);
+                            let b = glam::Vec3::new(prim.params[4], prim.params[5], prim.params[6]);
+                            let r = prim.params[3].abs();
+                            ((a + b) * 0.5, (b - a).length() * 0.5 + r)
+                        }
+                        _ => continue,
+                    };
+                    // Project 8 AABB corners of the bounding sphere box.
+                    for dx in [-radius, radius] {
+                        for dy in [-radius, radius] {
+                            for dz in [-radius, radius] {
+                                let corner = center + glam::Vec3::new(dx, dy, dz);
+                                if let Some((sx, sy)) = project(view_proj, corner) {
+                                    if in_rect(sx, sy) {
+                                        hit = true;
+                                        break 'prim_loop;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if hit {
+                    result.objects.push(item.id);
+                }
+            }
+        }
+
+        // 12. GPU marching cubes surface rect picks (OBJECT only).
+        //
+        // Iterates over all cells in the volume where the scalar field straddles
+        // the isovalue (MC would generate triangles there). If any such cell's
+        // center projects into the pick rect, the item is a hit.
+        if wants_object {
+            for item in &self.pick_mc_items {
+                let vol      = &item.volume_data;
+                let isovalue = item.isovalue;
+                let [nx, ny, nz] = vol.dims;
+                let origin  = glam::Vec3::from(vol.origin);
+                let spacing = glam::Vec3::from(vol.spacing);
+
+                let mut hit = false;
+                'mc_rect: for iz in 0..nz.saturating_sub(1) {
+                    for iy in 0..ny.saturating_sub(1) {
+                        for ix in 0..nx.saturating_sub(1) {
+                            // A cell straddles the isovalue when not all 8 corners
+                            // are on the same side. Check for both above and below.
+                            let mut has_below = false;
+                            let mut has_above = false;
+                            'corners: for dz in 0u32..=1 {
+                                for dy in 0u32..=1 {
+                                    for dx in 0u32..=1 {
+                                        let s = vol.sample(ix + dx, iy + dy, iz + dz);
+                                        if s < isovalue { has_below = true; }
+                                        else            { has_above = true; }
+                                        if has_below && has_above { break 'corners; }
+                                    }
+                                }
+                            }
+                            if !(has_below && has_above) {
+                                continue;
+                            }
+                            let cell_center = origin + spacing * glam::Vec3::new(
+                                ix as f32 + 0.5,
+                                iy as f32 + 0.5,
+                                iz as f32 + 0.5,
+                            );
+                            if let Some((sx, sy)) = project(view_proj, cell_center) {
+                                if in_rect(sx, sy) {
+                                    hit = true;
+                                    break 'mc_rect;
+                                }
+                            }
+                        }
+                    }
+                }
+                if hit {
                     result.objects.push(item.id);
                 }
             }

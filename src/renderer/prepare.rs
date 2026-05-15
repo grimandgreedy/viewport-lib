@@ -1069,6 +1069,7 @@ impl ViewportRenderer {
         // Phase 16 : GPU implicit surface items.
         // ------------------------------------------------------------------
         self.implicit_gpu_data.clear();
+        self.pick_implicit_items.clear();
         if !frame.scene.gpu_implicit.is_empty() {
             resources.ensure_implicit_pipeline(device);
             for item in &frame.scene.gpu_implicit {
@@ -1077,6 +1078,17 @@ impl ViewportRenderer {
                 }
                 let gpu = resources.upload_implicit_item(device, item);
                 self.implicit_gpu_data.push(gpu);
+                if item.id != 0 {
+                    self.pick_implicit_items.push(GpuImplicitPickItem {
+                        id:            item.id,
+                        primitives:    item.primitives.clone(),
+                        blend_mode:    item.blend_mode,
+                        max_steps:     item.march_options.max_steps,
+                        step_scale:    item.march_options.step_scale,
+                        hit_threshold: item.march_options.hit_threshold,
+                        max_distance:  item.march_options.max_distance,
+                    });
+                }
             }
         }
 
@@ -1084,10 +1096,22 @@ impl ViewportRenderer {
         // Phase 17 : GPU marching cubes compute dispatch.
         // ------------------------------------------------------------------
         self.mc_gpu_data.clear();
+        self.pick_mc_items.clear();
         if !frame.scene.gpu_mc_jobs.is_empty() {
             resources.ensure_mc_pipelines(device);
             self.mc_gpu_data =
                 resources.run_mc_jobs(device, queue, &frame.scene.gpu_mc_jobs);
+            for job in &frame.scene.gpu_mc_jobs {
+                if job.id != 0 {
+                    if let Some(cpu_data) = &job.cpu_data {
+                        self.pick_mc_items.push(GpuMcPickItem {
+                            id:          job.id,
+                            isovalue:    job.isovalue,
+                            volume_data: cpu_data.clone(),
+                        });
+                    }
+                }
+            }
         }
 
         // ------------------------------------------------------------------

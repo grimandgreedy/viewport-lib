@@ -164,6 +164,24 @@ pub(crate) struct ViewportSlot {
     pub sub_highlight_generation: u64,
 }
 
+/// Retained pick state for one GPU implicit surface, built during `prepare()`.
+struct GpuImplicitPickItem {
+    id: u64,
+    primitives: Vec<crate::resources::ImplicitPrimitive>,
+    blend_mode: crate::resources::ImplicitBlendMode,
+    max_steps: u32,
+    step_scale: f32,
+    hit_threshold: f32,
+    max_distance: f32,
+}
+
+/// Retained pick state for one GPU marching cubes job, built during `prepare()`.
+struct GpuMcPickItem {
+    id: u64,
+    isovalue: f32,
+    volume_data: std::sync::Arc<crate::geometry::marching_cubes::VolumeData>,
+}
+
 /// Renderer wrapping all GPU resources and providing `prepare()` and `paint()` methods.
 pub struct ViewportRenderer {
     resources: ViewportGpuResources,
@@ -311,6 +329,10 @@ pub struct ViewportRenderer {
     pick_volume_surface_slice_items: Vec<VolumeSurfaceSliceItem>,
     /// Screen image items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_screen_image_items: Vec<ScreenImageItem>,
+    /// GPU implicit surface items from the last `prepare()` call, retained for `pick()` dispatch.
+    pick_implicit_items: Vec<GpuImplicitPickItem>,
+    /// GPU marching cubes jobs from the last `prepare()` call, retained for `pick()` dispatch.
+    pick_mc_items: Vec<GpuMcPickItem>,
 
     // --- Phase 4 : GPU timestamp queries ---
     /// Timestamp query set with 2 entries (scene-pass begin + end).
@@ -431,6 +453,8 @@ impl ViewportRenderer {
             pick_image_slice_items: Vec::new(),
             pick_volume_surface_slice_items: Vec::new(),
             pick_screen_image_items: Vec::new(),
+            pick_implicit_items: Vec::new(),
+            pick_mc_items: Vec::new(),
             ts_query_set: None,
             ts_resolve_buf: None,
             ts_staging_buf: None,

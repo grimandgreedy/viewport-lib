@@ -348,6 +348,8 @@ pub(crate) struct PlState {
     pub surface_slice_mesh_id:  Option<MeshId>,
     /// GPU volume handle for the GpuMarchingCubesJob (pick_id=54).
     pub mc_volume_id:           Option<VolumeGpuId>,
+    /// CPU-side copy of the MC volume data, retained for CPU picking.
+    pub mc_volume_data:         Option<std::sync::Arc<viewport_lib::VolumeData>>,
 }
 
 impl Default for PlState {
@@ -401,6 +403,7 @@ impl Default for PlState {
             ribbon_strip_lengths:   Vec::new(),
             surface_slice_mesh_id:  None,
             mc_volume_id:           None,
+            mc_volume_data:         None,
         }
     }
 }
@@ -548,11 +551,13 @@ impl App {
                 }
             }
             let vol = VolumeData { data, dims: [n, n, n], origin, spacing };
+            let vol_arc = std::sync::Arc::new(vol);
             if let Ok(id) = renderer
                 .resources_mut()
-                .upload_volume_for_mc(&self.device, &self.queue, &vol)
+                .upload_volume_for_mc(&self.device, &self.queue, &vol_arc)
             {
-                self.pl_state.mc_volume_id = Some(id);
+                self.pl_state.mc_volume_id   = Some(id);
+                self.pl_state.mc_volume_data = Some(vol_arc);
             }
         }
 
