@@ -420,6 +420,10 @@ impl ViewportGpuResources {
                     binding: 9,
                     resource: warp_buf.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: wgpu::BindingResource::Sampler(&self.lut_sampler),
+                },
             ],
         });
         mesh.last_tex_key = key;

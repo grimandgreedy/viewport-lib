@@ -189,6 +189,7 @@ fn clip_volume_test(p: vec3<f32>) -> bool {
 @group(1) @binding(7) var matcap_texture: texture_2d<f32>;
 @group(1) @binding(8) var<storage, read> face_color_buffer: array<vec4<f32>>;
 @group(1) @binding(9) var<storage, read> warp_buffer: array<f32>;
+@group(1) @binding(10) var lut_sampler: sampler;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -607,7 +608,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
             select(0.0, (raw - object.scalar_min) / range, range > 0.0001),
             0.0, 1.0,
         );
-        base_color = textureSampleLevel(lut_texture, obj_sampler, vec2<f32>(t, 0.5), 0.0).rgb;
+        base_color = textureSampleLevel(lut_texture, lut_sampler, vec2<f32>(t, 0.5), 0.0).rgb;
     }
 
     // Resolve shading normal: TBN normal mapping or geometric normal.

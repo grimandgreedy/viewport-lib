@@ -20,6 +20,7 @@ impl ViewportGpuResources {
             &self.fallback_normal_map_view,
             &self.fallback_ao_map_view,
             &self.material_sampler,
+            &self.lut_sampler,
             &self.fallback_lut_view,
             &self.fallback_scalar_buf,
             &self.fallback_texture.view,
@@ -93,6 +94,7 @@ impl ViewportGpuResources {
             &self.fallback_normal_map_view,
             &self.fallback_ao_map_view,
             &self.material_sampler,
+            &self.lut_sampler,
             &self.fallback_lut_view,
             &self.fallback_scalar_buf,
             &self.fallback_texture.view,
@@ -400,6 +402,7 @@ impl ViewportGpuResources {
             &self.fallback_normal_map_view,
             &self.fallback_ao_map_view,
             &self.material_sampler,
+            &self.lut_sampler,
             &self.fallback_lut_view,
             &self.fallback_scalar_buf,
             &self.fallback_texture.view,
@@ -1101,6 +1104,7 @@ impl ViewportGpuResources {
         fallback_normal_view: &wgpu::TextureView,
         fallback_ao_view: &wgpu::TextureView,
         fallback_sampler: &wgpu::Sampler,
+        lut_sampler: &wgpu::Sampler,
         fallback_lut_view: &wgpu::TextureView,
         fallback_scalar_buf: &wgpu::Buffer,
         fallback_matcap_view: &wgpu::TextureView,
@@ -1116,6 +1120,7 @@ impl ViewportGpuResources {
             fallback_normal_view,
             fallback_ao_view,
             fallback_sampler,
+            lut_sampler,
             fallback_lut_view,
             fallback_scalar_buf,
             fallback_matcap_view,
@@ -1134,6 +1139,7 @@ impl ViewportGpuResources {
         fallback_normal_view: &wgpu::TextureView,
         fallback_ao_view: &wgpu::TextureView,
         fallback_sampler: &wgpu::Sampler,
+        lut_sampler: &wgpu::Sampler,
         fallback_lut_view: &wgpu::TextureView,
         fallback_scalar_buf: &wgpu::Buffer,
         fallback_matcap_view: &wgpu::TextureView,
@@ -1275,6 +1281,10 @@ impl ViewportGpuResources {
                     binding: 9,
                     resource: fallback_warp_buf.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: wgpu::BindingResource::Sampler(lut_sampler),
+                },
             ],
         });
 
@@ -1366,6 +1376,10 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 9,
                     resource: fallback_warp_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: wgpu::BindingResource::Sampler(lut_sampler),
                 },
             ],
         });

@@ -1867,6 +1867,8 @@ pub struct ViewportGpuResources {
     pub(crate) fallback_ao_map_view: wgpu::TextureView,
     /// Shared linear-repeat sampler for material textures.
     pub(crate) material_sampler: wgpu::Sampler,
+    /// Shared linear-clamp sampler for colormap LUT lookups.
+    pub(crate) lut_sampler: wgpu::Sampler,
     /// Cache of material bind groups keyed by (albedo_id, normal_map_id, ao_map_id).
     /// u64::MAX sentinel = use fallback texture for that slot.
     #[allow(dead_code)]

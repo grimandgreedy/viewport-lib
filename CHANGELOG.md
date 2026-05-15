@@ -15,6 +15,7 @@
 - Transparent volume meshes require the HDR/post-processing path. This was already true in practice and is now called out clearly in the API documentation.
 
 ### Fixes
+- Meshes with scalar colormap attributes could show a dot of the wrong color at scalar extremes: a blue dot at the peak of a red mound, or a red dot at the trough of a blue one. The colormap sampler was configured for tiling rather than clamping, so values at the top or bottom of the scalar range wrapped around to the opposite end of the colormap.
 - Selection highlights for streamtubes, tubes, and ribbons are now visible and complete. Selected segments could disappear inside the rendered surface, and selected control points could fail to show at all.
 - HDR callback rendering now uses physical pixel resolution on HiDPI and Retina displays. This fixes validation errors caused by mismatched attachment sizes.
 - Tone-mapped output was too bright in HDR mode. The swapchain was being gamma-corrected twice, and the Khronos Neutral operator was not matching the real algorithm closely enough. Colors in the normal SDR range now stay much closer to the old LDR look.

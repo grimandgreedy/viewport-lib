@@ -268,6 +268,13 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
+                // binding 10: LUT clamp sampler (FRAGMENT, filtering)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 10,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
 
@@ -1397,6 +1404,17 @@ impl ViewportGpuResources {
             ..Default::default()
         });
 
+        // Clamp-to-edge sampler for colormap LUT lookups (prevents wrap artifact at scalar extremes).
+        let lut_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("lut_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
         // ------------------------------------------------------------------
         // Fallback normal map: 1×1 [128, 128, 255, 255] : flat tangent-space normal
         // ------------------------------------------------------------------
@@ -1568,6 +1586,7 @@ impl ViewportGpuResources {
             &fallback_normal_map_view,
             &fallback_ao_map_view,
             &fallback_texture.sampler,
+            &lut_sampler,
             &fallback_lut_view,
             &fallback_scalar_buf,
             &fallback_texture.view,
@@ -1989,6 +2008,7 @@ impl ViewportGpuResources {
             fallback_ao_map,
             fallback_ao_map_view,
             material_sampler,
+            lut_sampler,
             material_bind_groups: std::collections::HashMap::new(),
             textures: Vec::new(),
             matcap_textures: Vec::new(),
