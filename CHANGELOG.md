@@ -15,6 +15,8 @@
 - `TransparentVolumeMeshItem` now documents that `PostProcessSettings::enabled = true` is required. Transparent volume meshes are rendered via the OIT pass which only exists in the HDR pipeline.
 
 ### Fixes
+- Sub-element edge and sprite highlights for streamtube and tube segments were invisible because those items' control-curve positions sit inside the rendered 3D mesh. The edge-line and sprite pipelines now use `CompareFunction::Always` so selection highlights are visible regardless of depth occlusion. Ribbon was unaffected (its centerline is on the surface).
+- `SubObjectRef::Point` highlights were missing for streamtube, tube, and ribbon picks in POLY_NODE mode. The handler only checked `polyline_lookup` and `point_positions`; it now also falls back to `curve_family_lookup` so selected control-point sprites render for all three types.
 - `ClipShape::Plane` was missing the `display_center` field in `tests/clip_volume.rs`. Added `display_center: None` to the struct literal.
 - Unused `mut` on closure bindings in `eframe_primitives`, `eframe_minimal`, and `winit_minimal` examples. Removed `mut` from `item`, `make`, and `make_item`.
 - Unused `queue` variable in `eframe_testing`. Renamed to `_queue`.

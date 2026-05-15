@@ -147,10 +147,13 @@ impl ViewportGpuResources {
                     cull_mode: None,
                     ..Default::default()
                 },
+                // Always pass depth so edge lines are visible even when the
+                // geometry they belong to is a 3D solid (e.g. tube/streamtube
+                // where the control curve sits inside the rendered mesh).
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth24PlusStencil8,
                     depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    depth_compare: wgpu::CompareFunction::Always,
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
@@ -188,10 +191,12 @@ impl ViewportGpuResources {
                     cull_mode: None,
                     ..Default::default()
                 },
+                // Always pass depth so point sprites are visible even when
+                // the control point is inside a 3D solid (e.g. tube/streamtube).
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth24PlusStencil8,
                     depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    depth_compare: wgpu::CompareFunction::Always,
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
@@ -367,9 +372,12 @@ impl ViewportGpuResources {
                     }
                 }
                 SubObjectRef::Point(i) => {
-                    // Polyline node sprite. Falls back to point_positions for
+                    // Polyline node sprite. Falls back to curve_family_lookup for
+                    // streamtube/tube/ribbon picks, then point_positions for
                     // point-cloud picks that share the same SubObjectRef variant.
-                    if let Some(info) = sel.polyline_lookup.get(node_id) {
+                    if let Some(info) = sel.polyline_lookup.get(node_id)
+                        .or_else(|| sel.curve_family_lookup.get(node_id))
+                    {
                         if let Some(&pos) = info.positions.get(*i as usize) {
                             sprite_pos.push(xform(pos));
                         }
