@@ -91,12 +91,12 @@ impl Default for GpuImplicitOptions {
 /// prim.params = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0];  // center=origin, radius=1
 /// prim.color  = [1.0, 0.5, 0.2, 1.0];
 ///
-/// let item = GpuImplicitItem {
-///     primitives:    vec![prim],
-///     blend_mode:    ImplicitBlendMode::SmoothUnion,
-///     march_options: GpuImplicitOptions::default(),
-/// };
+/// let mut item = GpuImplicitItem::default();
+/// item.primitives    = vec![prim];
+/// item.blend_mode    = ImplicitBlendMode::SmoothUnion;
+/// item.march_options = GpuImplicitOptions::default();
 /// ```
+#[non_exhaustive]
 pub struct GpuImplicitItem {
     /// Primitive descriptors (max 16 entries; excess entries are ignored).
     pub primitives: Vec<ImplicitPrimitive>,
@@ -104,6 +104,22 @@ pub struct GpuImplicitItem {
     pub blend_mode: ImplicitBlendMode,
     /// Ray-march quality settings.
     pub march_options: GpuImplicitOptions,
+    /// Pick ID for unified selection API. `0` = not selectable.
+    pub id: u64,
+    /// If `true`, draws an outline ring around the implicit surface.
+    pub selected: bool,
+}
+
+impl Default for GpuImplicitItem {
+    fn default() -> Self {
+        Self {
+            primitives: Vec::new(),
+            blend_mode: crate::resources::ImplicitBlendMode::Union,
+            march_options: GpuImplicitOptions::default(),
+            id: 0,
+            selected: false,
+        }
+    }
 }
 
 impl ImplicitPrimitive {
@@ -229,6 +245,76 @@ impl ViewportGpuResources {
             ldr: make(self.target_format),
             hdr: make(wgpu::TextureFormat::Rgba16Float),
         });
+    }
+
+    /// Lazily create the implicit surface outline mask pipeline.
+    ///
+    /// Reuses the same bind group layouts as `ensure_implicit_pipeline`. Must be
+    /// called after `ensure_implicit_pipeline` so that `implicit_bgl` is set.
+    /// No-op if already created.
+    pub(crate) fn ensure_implicit_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
+        if self.implicit_outline_mask_pipeline.is_some() {
+            return;
+        }
+
+        let implicit_bgl = self
+            .implicit_bgl
+            .as_ref()
+            .expect("ensure_implicit_pipeline must be called before ensure_implicit_outline_mask_pipeline");
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("implicit_outline_mask_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/implicit_outline_mask.wgsl").into(),
+            ),
+        });
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("implicit_outline_mask_pipeline_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, implicit_bgl],
+            push_constant_ranges: &[],
+        });
+
+        self.implicit_outline_mask_pipeline =
+            Some(device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("implicit_outline_mask_pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R8Unorm,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            }));
     }
 
     /// Upload one [`GpuImplicitItem`] to GPU, returning the per-draw GPU data.

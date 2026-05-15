@@ -2048,6 +2048,39 @@ impl ViewportRenderer {
                     mask_bind_group: bg,
                 });
             }
+            // Selected volume surface slices: use their mesh directly.
+            for item in &frame.scene.volume_surface_slices {
+                if !item.selected {
+                    continue;
+                }
+                let uniform = OutlineUniform {
+                    model: item.model,
+                    color: [0.0; 4],
+                    pixel_offset: 0.0,
+                    _pad: [0.0; 3],
+                };
+                let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("outline_mask_uniform_buf"),
+                    size: std::mem::size_of::<OutlineUniform>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue.write_buffer(&buf, 0, bytemuck::cast_slice(&[uniform]));
+                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("outline_mask_object_bg"),
+                    layout: &resources.outline_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buf.as_entire_binding(),
+                    }],
+                });
+                outline_object_buffers.push(OutlineObjectBuffers {
+                    mesh_id: item.mesh_id,
+                    two_sided: false,
+                    _mask_uniform_buf: buf,
+                    mask_bind_group: bg,
+                });
+            }
         }
 
         // Splat outline buffers: point sprite discs for selected Gaussian splat sets.
@@ -2579,6 +2612,180 @@ impl ViewportRenderer {
             }
         }
 
+        // Image slice outlines: compute world-space quad corners and create inline vertex/index buffers.
+        let mut raw_geom_outline_buffers: Vec<crate::resources::RawGeomOutlineBuffers> = Vec::new();
+        if frame.interaction.outline_selected {
+            let resources = &self.resources;
+            for item in &frame.scene.image_slices {
+                if !item.selected {
+                    continue;
+                }
+                use crate::SliceAxis;
+                let [bmin, bmax] = [item.bbox_min, item.bbox_max];
+                let t = item.offset;
+                let (v0, v1, v2, v3) = match item.axis {
+                    SliceAxis::X => {
+                        let x = bmin[0] + t * (bmax[0] - bmin[0]);
+                        ([x, bmin[1], bmin[2]], [x, bmax[1], bmin[2]], [x, bmax[1], bmax[2]], [x, bmin[1], bmax[2]])
+                    }
+                    SliceAxis::Y => {
+                        let y = bmin[1] + t * (bmax[1] - bmin[1]);
+                        ([bmin[0], y, bmin[2]], [bmax[0], y, bmin[2]], [bmax[0], y, bmax[2]], [bmin[0], y, bmax[2]])
+                    }
+                    SliceAxis::Z => {
+                        let z = bmin[2] + t * (bmax[2] - bmin[2]);
+                        ([bmin[0], bmin[1], z], [bmax[0], bmin[1], z], [bmax[0], bmax[1], z], [bmin[0], bmax[1], z])
+                    }
+                };
+                let verts: [[f32; 3]; 4] = [v0, v1, v2, v3];
+                let indices: [u32; 6] = [0, 1, 2, 0, 2, 3];
+                let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("image_slice_outline_verts"),
+                    contents: bytemuck::cast_slice(&verts),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+                let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("image_slice_outline_indices"),
+                    contents: bytemuck::cast_slice(&indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                });
+                let uniform = OutlineUniform {
+                    model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+                    color: [0.0; 4],
+                    pixel_offset: 0.0,
+                    _pad: [0.0; 3],
+                };
+                let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("outline_mask_uniform_buf"),
+                    size: std::mem::size_of::<OutlineUniform>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue.write_buffer(&uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
+                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("outline_mask_object_bg"),
+                    layout: &resources.outline_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buf.as_entire_binding(),
+                    }],
+                });
+                raw_geom_outline_buffers.push(crate::resources::RawGeomOutlineBuffers {
+                    vertex_buf,
+                    index_buf,
+                    index_count: 6,
+                    two_sided: true,
+                    _uniform_buf: uniform_buf,
+                    mask_bind_group: bg,
+                });
+            }
+        }
+
+        // Screen image outlines: compute NDC bounds and create outline buffers.
+        let mut screen_rect_outline_buffers: Vec<crate::resources::ScreenRectOutlineBuffers> = Vec::new();
+        if frame.interaction.outline_selected
+            && frame.scene.screen_images.iter().any(|i| i.selected)
+        {
+            self.resources.ensure_screen_rect_outline_mask_pipeline(device);
+            let [vp_w, vp_h] = frame.camera.viewport_size;
+            if let Some(bgl) = self.resources.screen_rect_outline_bgl.as_ref() {
+                for item in &frame.scene.screen_images {
+                    if !item.selected || item.width == 0 || item.height == 0 {
+                        continue;
+                    }
+                    use crate::ImageAnchor;
+                    let img_w_ndc = 2.0 * item.width as f32 * item.scale / vp_w.max(1.0);
+                    let img_h_ndc = 2.0 * item.height as f32 * item.scale / vp_h.max(1.0);
+                    let (ndc_min_x, ndc_max_x, ndc_min_y, ndc_max_y) = match item.anchor {
+                        ImageAnchor::TopLeft    => (-1.0, -1.0 + img_w_ndc,  1.0 - img_h_ndc,  1.0),
+                        ImageAnchor::TopRight   => ( 1.0 - img_w_ndc,  1.0,  1.0 - img_h_ndc,  1.0),
+                        ImageAnchor::BottomLeft => (-1.0, -1.0 + img_w_ndc, -1.0, -1.0 + img_h_ndc),
+                        ImageAnchor::BottomRight => (1.0 - img_w_ndc,  1.0, -1.0, -1.0 + img_h_ndc),
+                        _ => (-img_w_ndc * 0.5, img_w_ndc * 0.5, -img_h_ndc * 0.5, img_h_ndc * 0.5),
+                    };
+                    #[repr(C)]
+                    #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
+                    struct NdcRectUniform { ndc_min: [f32; 2], ndc_max: [f32; 2] }
+                    let uniform_data = NdcRectUniform {
+                        ndc_min: [ndc_min_x, ndc_min_y],
+                        ndc_max: [ndc_max_x, ndc_max_y],
+                    };
+                    let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("screen_rect_outline_uniform"),
+                        contents: bytemuck::bytes_of(&uniform_data),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    });
+                    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("screen_rect_outline_bg"),
+                        layout: bgl,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: uniform_buf.as_entire_binding(),
+                        }],
+                    });
+                    screen_rect_outline_buffers.push(crate::resources::ScreenRectOutlineBuffers {
+                        _uniform_buf: uniform_buf,
+                        bind_group: bg,
+                    });
+                }
+            }
+        }
+
+        // Implicit surface outlines: record indices into implicit_gpu_data for selected items.
+        let mut implicit_outline_indices: Vec<usize> = Vec::new();
+        if frame.interaction.outline_selected {
+            let mut gpu_idx = 0usize;
+            for item in &frame.scene.gpu_implicit {
+                if item.primitives.is_empty() {
+                    continue;
+                }
+                if item.selected {
+                    self.resources.ensure_implicit_pipeline(device);
+                    self.resources.ensure_implicit_outline_mask_pipeline(device);
+                    implicit_outline_indices.push(gpu_idx);
+                }
+                gpu_idx += 1;
+            }
+        }
+
+        // MC surface outlines: build per-job outline uniform + bind group.
+        let mut mc_outline_data: Vec<crate::resources::gpu_marching_cubes::McOutlineItem> = Vec::new();
+        if frame.interaction.outline_selected {
+            for (i, job) in frame.scene.gpu_mc_jobs.iter().enumerate() {
+                if !job.selected {
+                    continue;
+                }
+                self.resources.ensure_mc_pipelines(device);
+                self.resources.ensure_mc_outline_mask_pipeline(device);
+                let uniform = OutlineUniform {
+                    model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+                    color: [0.0; 4],
+                    pixel_offset: 0.0,
+                    _pad: [0.0; 3],
+                };
+                let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("mc_outline_uniform_buf"),
+                    size: std::mem::size_of::<OutlineUniform>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue.write_buffer(&buf, 0, bytemuck::cast_slice(&[uniform]));
+                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("mc_outline_bg"),
+                    layout: &self.resources.outline_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buf.as_entire_binding(),
+                    }],
+                });
+                mc_outline_data.push(crate::resources::gpu_marching_cubes::McOutlineItem {
+                    mc_gpu_idx: i,
+                    _uniform_buf: buf,
+                    mask_bind_group: bg,
+                });
+            }
+        }
+
         // X-ray buffers for selected objects.
         let mut xray_object_buffers: Vec<(crate::resources::mesh_store::MeshId, wgpu::Buffer, wgpu::BindGroup)> = Vec::new();
         if frame.interaction.xray_selected {
@@ -2838,6 +3045,10 @@ impl ViewportRenderer {
             slot.glyph_outline_indices = glyph_outline_indices;
             slot.tensor_glyph_outline_indices = tensor_glyph_outline_indices;
             slot.sprite_outline_indices = sprite_outline_indices;
+            slot.raw_geom_outline_buffers = raw_geom_outline_buffers;
+            slot.screen_rect_outline_buffers = screen_rect_outline_buffers;
+            slot.implicit_outline_indices = implicit_outline_indices;
+            slot.mc_outline_data = mc_outline_data;
             slot.xray_object_buffers = xray_object_buffers;
             slot.constraint_line_buffers = constraint_line_buffers;
             slot.clip_plane_fill_buffers = clip_plane_fill_buffers;
@@ -2907,7 +3118,11 @@ impl ViewportRenderer {
                 || !self.viewport_slots[vp_idx].volume_outline_indices.is_empty()
                 || !self.viewport_slots[vp_idx].glyph_outline_indices.is_empty()
                 || !self.viewport_slots[vp_idx].tensor_glyph_outline_indices.is_empty()
-                || !self.viewport_slots[vp_idx].sprite_outline_indices.is_empty())
+                || !self.viewport_slots[vp_idx].sprite_outline_indices.is_empty()
+                || !self.viewport_slots[vp_idx].raw_geom_outline_buffers.is_empty()
+                || !self.viewport_slots[vp_idx].screen_rect_outline_buffers.is_empty()
+                || !self.viewport_slots[vp_idx].implicit_outline_indices.is_empty()
+                || !self.viewport_slots[vp_idx].mc_outline_data.is_empty())
         {
             let ppp = frame.camera.pixels_per_point;
             let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
@@ -2955,12 +3170,24 @@ impl ViewportRenderer {
                 &slot_ref.tensor_glyph_outline_indices as *const Vec<(usize, Option<Vec<u32>>)>;
             let sprite_outline_idx_ptr =
                 &slot_ref.sprite_outline_indices as *const Vec<(usize, Option<Vec<u32>>)>;
+            let raw_geom_outlines_ptr =
+                &slot_ref.raw_geom_outline_buffers as *const Vec<crate::resources::RawGeomOutlineBuffers>;
+            let screen_rect_outlines_ptr =
+                &slot_ref.screen_rect_outline_buffers as *const Vec<crate::resources::ScreenRectOutlineBuffers>;
+            let implicit_outline_idx_ptr =
+                &slot_ref.implicit_outline_indices as *const Vec<usize>;
+            let mc_outlines_ptr =
+                &slot_ref.mc_outline_data as *const Vec<crate::resources::gpu_marching_cubes::McOutlineItem>;
             let glyph_gpu_ptr =
                 &self.glyph_gpu_data as *const Vec<crate::resources::GlyphGpuData>;
             let tensor_glyph_gpu_ptr =
                 &self.tensor_glyph_gpu_data as *const Vec<crate::resources::TensorGlyphGpuData>;
             let sprite_gpu_ptr =
                 &self.sprite_gpu_data as *const Vec<crate::resources::SpriteGpuData>;
+            let implicit_gpu_ptr =
+                &self.implicit_gpu_data as *const Vec<crate::resources::implicit::ImplicitGpuItem>;
+            let mc_gpu_data_ptr =
+                &self.mc_gpu_data as *const Vec<crate::resources::gpu_marching_cubes::McFrameData>;
             let camera_bg_ptr = &slot_ref.camera_bind_group as *const wgpu::BindGroup;
             let slot_hdr = slot_ref.hdr.as_ref().unwrap();
             let mask_view_ptr = &slot_hdr.outline_mask_view as *const wgpu::TextureView;
@@ -2972,7 +3199,10 @@ impl ViewportRenderer {
             let (outlines, splat_outlines, vol_outline_indices,
                  glyph_outline_indices, tensor_glyph_outline_indices,
                  sprite_outline_indices,
+                 raw_geom_outlines, screen_rect_outlines,
+                 implicit_outline_idxs, mc_outlines,
                  glyph_gpu_data, tensor_glyph_gpu_data, sprite_gpu_data,
+                 implicit_gpu_data, mc_gpu_frame_data,
                  camera_bg, mask_view, color_view, depth_view, edge_bg) = unsafe {
                 (
                     &*outlines_ptr,
@@ -2981,9 +3211,15 @@ impl ViewportRenderer {
                     &*glyph_outline_idx_ptr,
                     &*tensor_glyph_outline_idx_ptr,
                     &*sprite_outline_idx_ptr,
+                    &*raw_geom_outlines_ptr,
+                    &*screen_rect_outlines_ptr,
+                    &*implicit_outline_idx_ptr,
+                    &*mc_outlines_ptr,
                     &*glyph_gpu_ptr,
                     &*tensor_glyph_gpu_ptr,
                     &*sprite_gpu_ptr,
+                    &*implicit_gpu_ptr,
+                    &*mc_gpu_data_ptr,
                     &*camera_bg_ptr,
                     &*mask_view_ptr,
                     &*color_view_ptr,
@@ -3143,6 +3379,65 @@ impl ViewportRenderer {
                                 pass.set_vertex_buffer(0, vol.vertex_buffer.slice(..));
                                 pass.set_index_buffer(vol.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                                 pass.draw_indexed(0..36, 0, 0..1);
+                            }
+                        }
+                    }
+                }
+
+                // Draw inline-geometry quads for image slices.
+                for raw in raw_geom_outlines {
+                    let pipeline = if raw.two_sided {
+                        &self.resources.outline_mask_two_sided_pipeline
+                    } else {
+                        &self.resources.outline_mask_pipeline
+                    };
+                    pass.set_pipeline(pipeline);
+                    pass.set_bind_group(0, camera_bg, &[]);
+                    pass.set_bind_group(1, &raw.mask_bind_group, &[]);
+                    pass.set_vertex_buffer(0, raw.vertex_buf.slice(..));
+                    pass.set_index_buffer(raw.index_buf.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..raw.index_count, 0, 0..1);
+                }
+
+                // Draw screen-space rect outlines for screen images.
+                if !screen_rect_outlines.is_empty() {
+                    if let Some(pipeline) = self.resources.screen_rect_outline_mask_pipeline.as_ref() {
+                        pass.set_pipeline(pipeline);
+                        for sr in screen_rect_outlines {
+                            pass.set_bind_group(0, &sr.bind_group, &[]);
+                            pass.draw(0..6, 0..1);
+                        }
+                    }
+                }
+
+                // Draw GPU implicit surface outlines via ray-march to mask.
+                if !implicit_outline_idxs.is_empty() {
+                    if let Some(pipeline) = self.resources.implicit_outline_mask_pipeline.as_ref() {
+                        pass.set_pipeline(pipeline);
+                        pass.set_bind_group(0, camera_bg, &[]);
+                        for &idx in implicit_outline_idxs {
+                            if let Some(gpu) = implicit_gpu_data.get(idx) {
+                                pass.set_bind_group(1, &gpu.bind_group, &[]);
+                                pass.draw(0..6, 0..1);
+                            }
+                        }
+                    }
+                }
+
+                // Draw GPU marching cubes outlines (stride-24 vertex buffer, draw_indirect).
+                if !mc_outlines.is_empty() {
+                    if let Some(pipeline) = self.resources.mc_outline_mask_pipeline.as_ref() {
+                        pass.set_pipeline(pipeline);
+                        pass.set_bind_group(0, camera_bg, &[]);
+                        for mc_out in mc_outlines {
+                            pass.set_bind_group(1, &mc_out.mask_bind_group, &[]);
+                            if let Some(mc) = mc_gpu_frame_data.get(mc_out.mc_gpu_idx) {
+                                if let Some(vol) = self.resources.mc_volumes.get(mc.volume_idx) {
+                                    for slab in &vol.slabs {
+                                        pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
+                                        pass.draw_indirect(&slab.indirect_buf, 0);
+                                    }
+                                }
                             }
                         }
                     }

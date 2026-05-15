@@ -39,6 +39,10 @@ pub struct GpuMarchingCubesJob {
     pub isovalue: f32,
     /// Surface material (colour + roughness).
     pub material: Material,
+    /// Pick ID for unified selection API. `0` = not selectable.
+    pub id: u64,
+    /// If `true`, draws an outline ring around the marching cubes surface.
+    pub selected: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -79,6 +83,14 @@ pub(crate) struct McVolumeGpuData {
 pub(crate) struct McFrameData {
     pub volume_idx: usize,
     pub render_bg:  wgpu::BindGroup,
+}
+
+/// Per-selected MC job data for the outline mask pass.
+pub(crate) struct McOutlineItem {
+    /// Index into `mc_gpu_data` (frame-level array of processed MC jobs).
+    pub mc_gpu_idx: usize,
+    pub _uniform_buf: wgpu::Buffer,
+    pub mask_bind_group: wgpu::BindGroup,
 }
 
 // ---------------------------------------------------------------------------
@@ -553,6 +565,83 @@ impl ViewportGpuResources {
         if let Some(v) = self.mc_volumes.get_mut(id.0) {
             v.alive = false;
         }
+    }
+
+    /// Lazily create the MC surface outline mask pipeline.
+    ///
+    /// Layout is `[camera_bind_group_layout, outline_bind_group_layout]`. The vertex
+    /// buffer matches the MC output format: stride 24 (position f32x3 at offset 0,
+    /// normal f32x3 at offset 12). Uses the existing `outline_mask.wgsl` shader since
+    /// only position is needed. No-op if already created.
+    pub(crate) fn ensure_mc_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
+        if self.mc_outline_mask_pipeline.is_some() {
+            return;
+        }
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("mc_outline_mask_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/outline_mask.wgsl").into(),
+            ),
+        });
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("mc_outline_mask_pipeline_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, &self.outline_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let vert_attrs = [wgpu::VertexAttribute {
+            offset: 0,
+            shader_location: 0,
+            format: wgpu::VertexFormat::Float32x3,
+        }];
+        let vert_layout = wgpu::VertexBufferLayout {
+            array_stride: 24, // position (12 bytes) + normal (12 bytes)
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &vert_attrs,
+        };
+
+        self.mc_outline_mask_pipeline =
+            Some(device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("mc_outline_mask_pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[vert_layout],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R8Unorm,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            }));
     }
 
     /// Dispatch all three compute passes for every pending MC job.

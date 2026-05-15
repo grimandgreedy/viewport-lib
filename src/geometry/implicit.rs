@@ -288,6 +288,7 @@ where
         scale: 1.0,
         alpha: 1.0,
         depth: Some(depths),
+        ..Default::default()
     }
 }
 

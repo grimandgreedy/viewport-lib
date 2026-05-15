@@ -852,6 +852,25 @@ pub(crate) struct SplatOutlineBuffers {
     pub(crate) bind_group: wgpu::BindGroup,
 }
 
+/// Inline geometry outline buffers for flat world-space quads (image slices).
+///
+/// Unlike `OutlineObjectBuffers`, the vertex/index data is owned here rather than
+/// looked up via a `MeshId`.
+pub(crate) struct RawGeomOutlineBuffers {
+    pub vertex_buf: wgpu::Buffer,
+    pub index_buf: wgpu::Buffer,
+    pub index_count: u32,
+    pub two_sided: bool,
+    pub _uniform_buf: wgpu::Buffer,
+    pub mask_bind_group: wgpu::BindGroup,
+}
+
+/// NDC-space rect outline for screen image overlays.
+pub(crate) struct ScreenRectOutlineBuffers {
+    pub _uniform_buf: wgpu::Buffer,
+    pub bind_group: wgpu::BindGroup,
+}
+
 /// Uniform for the fullscreen outline edge-detection pass (32 bytes).
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -2332,6 +2351,8 @@ pub struct ViewportGpuResources {
     pub(crate) implicit_pipeline: Option<DualPipeline>,
     /// Bind group layout for group 1 of the implicit pipeline (ImplicitUniformRaw).
     pub(crate) implicit_bgl: Option<wgpu::BindGroupLayout>,
+    /// Outline mask pipeline for implicit surfaces (ray-march to R8Unorm mask). None until first selected item.
+    pub(crate) implicit_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
 
     // --- Phase 17: GPU marching cubes (lazily created) ---
     pub(crate) mc_classify_pipeline:     Option<wgpu::ComputePipeline>,
@@ -2345,6 +2366,8 @@ pub struct ViewportGpuResources {
     pub(crate) mc_case_count_buf:        Option<wgpu::Buffer>,
     pub(crate) mc_case_table_buf:        Option<wgpu::Buffer>,
     pub(crate) mc_volumes:               Vec<crate::resources::gpu_marching_cubes::McVolumeGpuData>,
+    /// Outline mask pipeline for MC surfaces (stride-24 vertex buffer, draw_indirect). None until first selected item.
+    pub(crate) mc_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
 
     // --- Phase 10B / Phase 12: Screen-space image overlays (lazily created) ---
     /// Render pipeline for screen-space image quads. None until first screen image is submitted.
@@ -2356,6 +2379,10 @@ pub struct ViewportGpuResources {
     pub(crate) screen_image_dc_pipeline: Option<wgpu::RenderPipeline>,
     /// Bind group layout for the dc pipeline (group 0: uniform + colour tex + sampler + depth tex).
     pub(crate) screen_image_dc_bgl: Option<wgpu::BindGroupLayout>,
+    /// Outline mask pipeline for screen-space rect images (NDC quad, R8Unorm target). None until first selected item.
+    pub(crate) screen_rect_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for screen_rect_outline_mask_pipeline (binding 0: NdcRectUniform).
+    pub(crate) screen_rect_outline_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- Phase K: GPU object-ID picking (lazily created) ---
     /// Render pipeline that outputs flat u32 object IDs to R32Uint + R32Float targets.

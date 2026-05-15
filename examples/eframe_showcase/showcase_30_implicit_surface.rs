@@ -418,16 +418,16 @@ impl App {
             primitives.push(prim);
         }
 
-        fd.scene.gpu_implicit.push(GpuImplicitItem {
-            primitives,
-            blend_mode: ImplicitBlendMode::SmoothUnion,
-            march_options: GpuImplicitOptions {
-                max_steps: 128,
-                step_scale: 0.85,
-                hit_threshold: 5e-4,
-                max_distance: self.camera.zfar,
-            },
-        });
+        let mut item = GpuImplicitItem::default();
+        item.primitives = primitives;
+        item.blend_mode = ImplicitBlendMode::SmoothUnion;
+        item.march_options = GpuImplicitOptions {
+            max_steps: 128,
+            step_scale: 0.85,
+            hit_threshold: 5e-4,
+            max_distance: self.camera.zfar,
+        };
+        fd.scene.gpu_implicit.push(item);
     }
 
     /// Submit a GPU marching cubes job for the gyroid field (Phase 17).
@@ -446,6 +446,8 @@ impl App {
             volume_id,
             isovalue: self.is_state.gmc_isovalue,
             material: mat,
+            id: 0,
+            selected: false,
         });
     }
 

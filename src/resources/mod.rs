@@ -57,6 +57,7 @@ pub(crate) use self::types::{
     SplatOutlineMaskUniform, SpriteGpuData, SsaoUniform,
     StreamtubeGpuData, SubHighlightGpuData,
     TensorGlyphGpuData, ToneMapUniform, ViewportHdrState,
+    RawGeomOutlineBuffers, ScreenRectOutlineBuffers,
 };
 pub use self::implicit::{
     GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,

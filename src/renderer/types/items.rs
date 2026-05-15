@@ -800,6 +800,10 @@ pub struct ImageSliceItem {
     pub color_lut: Option<crate::resources::ColormapId>,
     /// Overall opacity of the slice quad. Default: `1.0`.
     pub opacity: f32,
+    /// Pick ID for unified selection API. `0` = not selectable.
+    pub id: u64,
+    /// If `true`, draws an outline ring around the slice quad.
+    pub selected: bool,
 }
 
 impl Default for ImageSliceItem {
@@ -813,6 +817,8 @@ impl Default for ImageSliceItem {
             scalar_range: (0.0, 1.0),
             color_lut: None,
             opacity: 1.0,
+            id: 0,
+            selected: false,
         }
     }
 }
@@ -853,6 +859,10 @@ pub struct VolumeSurfaceSliceItem {
     pub opacity: f32,
     /// World-space model matrix for the slice mesh. Default: identity.
     pub model: [[f32; 4]; 4],
+    /// Pick ID for unified selection API. `0` = not selectable.
+    pub id: u64,
+    /// If `true`, draws an outline ring around the slice mesh.
+    pub selected: bool,
 }
 
 impl Default for VolumeSurfaceSliceItem {
@@ -866,6 +876,8 @@ impl Default for VolumeSurfaceSliceItem {
             color_lut: None,
             opacity: 1.0,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            id: 0,
+            selected: false,
         }
     }
 }
@@ -1145,6 +1157,10 @@ pub struct ScreenImageItem {
     /// geometry. Must contain exactly `width * height` values if `Some`.
     /// `None` (default) renders the image on top of all geometry (no depth test).
     pub depth: Option<Vec<f32>>,
+    /// Pick ID for unified selection API. `0` = not selectable.
+    pub id: u64,
+    /// If `true`, draws an outline ring around the image rect.
+    pub selected: bool,
 }
 
 impl Default for ScreenImageItem {
@@ -1157,6 +1173,8 @@ impl Default for ScreenImageItem {
             scale: 1.0,
             alpha: 1.0,
             depth: None,
+            id: 0,
+            selected: false,
         }
     }
 }

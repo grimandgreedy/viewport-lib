@@ -92,6 +92,14 @@ pub(crate) struct ViewportSlot {
     pub tensor_glyph_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
     /// Indices into `sprite_gpu_data` for selected sprite sets, rebuilt in prepare().
     pub sprite_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
+    /// Per-frame inline quad outline buffers for selected image slices, rebuilt in prepare().
+    pub raw_geom_outline_buffers: Vec<crate::resources::RawGeomOutlineBuffers>,
+    /// Per-frame NDC rect outline buffers for selected screen images, rebuilt in prepare().
+    pub screen_rect_outline_buffers: Vec<crate::resources::ScreenRectOutlineBuffers>,
+    /// Indices into `implicit_gpu_data` for selected GPU implicit items, rebuilt in prepare().
+    pub implicit_outline_indices: Vec<usize>,
+    /// Per-frame outline data for selected GPU marching cubes jobs, rebuilt in prepare().
+    pub mc_outline_data: Vec<crate::resources::gpu_marching_cubes::McOutlineItem>,
     /// Per-frame x-ray buffers for selected objects, rebuilt in prepare().
     pub xray_object_buffers: Vec<(crate::resources::mesh_store::MeshId, wgpu::Buffer, wgpu::BindGroup)>,
     /// Per-frame constraint guide line buffers, rebuilt in prepare().
@@ -726,6 +734,10 @@ impl ViewportRenderer {
                 glyph_outline_indices: Vec::new(),
                 tensor_glyph_outline_indices: Vec::new(),
                 sprite_outline_indices: Vec::new(),
+                raw_geom_outline_buffers: Vec::new(),
+                screen_rect_outline_buffers: Vec::new(),
+                implicit_outline_indices: Vec::new(),
+                mc_outline_data: Vec::new(),
                 xray_object_buffers: Vec::new(),
                 constraint_line_buffers: Vec::new(),
                 cap_buffers: Vec::new(),
