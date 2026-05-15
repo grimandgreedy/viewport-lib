@@ -2531,17 +2531,6 @@ impl App {
                     tvm_item.material = viewport_lib::Material::from_color([0.8, 0.45, 0.2]);
                     items.push(tvm_item);
                 }
-                // Hex cylinder boundary surface (pick_id=12, opaque LDR fallback).
-                if let Some(mesh_id) = self.pl_state.tvm_tet_mesh_id {
-                    let mut item = SceneRenderItem::default();
-                    item.mesh_id = mesh_id;
-                    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-                    item.visible = true;
-                    item.pick_id = PickId(12);
-                    item.selected = self.pl_state.selection.contains(12);
-                    item.material = viewport_lib::Material::from_color([0.55, 0.75, 0.85]);
-                    items.push(item);
-                }
                 let sg = self.pl_state.scene.version();
                 let lighting = LightingSettings {
                     lights: vec![
@@ -2941,17 +2930,19 @@ impl App {
                 item.selected = self.pl_state.selection.contains(10);
                 fd.scene.gaussian_splats.push(item);
             }
-            // Hex cylinder submitted as invisible TVM item so renderer.pick() with
-            // PointLike mask can return Cell sub_objects for it.
+            // Hex cylinder: transparent volume mesh (pick_id=12).
+            // Rendered via OIT; boundary mesh used for the selection outline.
             if let (Some(tet_id), Some(tet_data)) = (
                 self.pl_state.tvm_tet_id,
                 self.pl_state.tvm_tet_data.as_ref(),
             ) {
-                let mut tvm_pick = TransparentVolumeMeshItem::new(tet_id);
-                tvm_pick.pick_id = 12;
-                tvm_pick.volume_mesh_data = Some(tet_data.clone());
-                tvm_pick.visible = false;
-                fd.scene.transparent_volume_meshes.push(tvm_pick);
+                let mut tvm = TransparentVolumeMeshItem::new(tet_id);
+                tvm.pick_id = 12;
+                tvm.volume_mesh_data = Some(tet_data.clone());
+                tvm.selected = self.pl_state.selection.contains(12);
+                tvm.boundary_mesh_id = self.pl_state.tvm_tet_mesh_id;
+                tvm.density = 2.0;
+                fd.scene.transparent_volume_meshes.push(tvm);
             }
             // TVM capsule (pick_id=11) submitted as VolumeMeshItem so renderer.pick()
             // with PointLike mask can return Cell sub_objects for it via face_to_cell.
@@ -3051,10 +3042,6 @@ impl App {
                     .map(|d| std::sync::Arc::new(d.clone()));
                 fd.scene.volumes.push(vol);
             }
-            // Hex cylinder (pick_id=12) is rendered as an opaque boundary
-            // surface above (tvm_tet_mesh_id). The projected-tet data is kept
-            // for cell-level picking but not submitted as a TransparentVolumeMeshItem
-            // because OIT requires the HDR path which is not active here.
             // Polyline: 3 strips (pick_id=30).
             if !self.pl_state.polyline_positions.is_empty() {
                 let mut pl = PolylineItem::default();

@@ -6,6 +6,7 @@
 - `PostProcessSettings::enabled` now defaults to `true`. The HDR pipeline (tone mapping, OIT, SSAO, bloom, etc.) is active by default. Applications that previously relied on the LDR path should set `enabled: false` explicitly. The `render()` and `render_viewport()` entry points support both paths; `paint_to` and `paint_viewport_to` are always LDR regardless of this setting.
 
 ### Improvements
+- `TransparentVolumeMeshItem` now supports object-level selection highlight. Set `selected = true` and supply `boundary_mesh_id` with the `MeshId` from `upload_volume_mesh_data` for the same geometry; the outline pass uses the boundary surface to draw the selection ring.
 - `PostProcessSettings` and `ToneMapping` have moved from `renderer/types/lighting.rs` to a dedicated `renderer/types/postprocess.rs` module. All existing import paths are unaffected.
 - The default tone mapping operator is now `ToneMapping::KhronosNeutral` instead of `ToneMapping::Aces`. Khronos Neutral preserves colors in the [0, 1] range with minimal shift, which is less disruptive for scenes authored against the previous LDR path. ACES remains available for scenes that want a cinematic look.
 - `TransparentVolumeMeshItem` now documents that `PostProcessSettings::enabled = true` is required. Transparent volume meshes are rendered via the OIT pass which only exists in the HDR pipeline.

@@ -2012,6 +2012,42 @@ impl ViewportRenderer {
                     mask_bind_group: bg,
                 });
             }
+            // Selected transparent volume meshes: use their boundary surface for the outline.
+            for item in &frame.scene.transparent_volume_meshes {
+                if !item.selected {
+                    continue;
+                }
+                let Some(mesh_id) = item.boundary_mesh_id else {
+                    continue;
+                };
+                let uniform = OutlineUniform {
+                    model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+                    color: [0.0; 4],
+                    pixel_offset: 0.0,
+                    _pad: [0.0; 3],
+                };
+                let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("outline_mask_uniform_buf"),
+                    size: std::mem::size_of::<OutlineUniform>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue.write_buffer(&buf, 0, bytemuck::cast_slice(&[uniform]));
+                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("outline_mask_object_bg"),
+                    layout: &resources.outline_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buf.as_entire_binding(),
+                    }],
+                });
+                outline_object_buffers.push(OutlineObjectBuffers {
+                    mesh_id,
+                    two_sided: false,
+                    _mask_uniform_buf: buf,
+                    mask_bind_group: bg,
+                });
+            }
         }
 
         // Splat outline buffers: point sprite discs for selected Gaussian splat sets.

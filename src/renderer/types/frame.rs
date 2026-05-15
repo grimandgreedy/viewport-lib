@@ -262,6 +262,14 @@ impl SurfaceLICItem {
 /// Set `pick_id` to a non-zero value and provide `volume_mesh_data` to enable cell-level
 /// picking via `renderer.pick()` and `renderer.pick_rect()`. `volume_mesh_data` must be
 /// the same data passed to `upload_projected_tet_mesh` for this item.
+///
+/// # Selection highlight
+///
+/// Set `selected = true` to draw an object-level outline ring around this mesh.
+/// Also supply `boundary_mesh_id` with the `MeshId` returned by
+/// [`upload_volume_mesh_data`](crate::resources::ViewportGpuResources::upload_volume_mesh_data)
+/// for the same geometry; the outline pass uses that boundary surface to compute
+/// the silhouette. Without `boundary_mesh_id` the `selected` flag has no visual effect.
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct TransparentVolumeMeshItem {
@@ -295,6 +303,16 @@ pub struct TransparentVolumeMeshItem {
     pub threshold_max: f32,
     /// Whether this item is drawn this frame.
     pub visible: bool,
+    /// Draw a selection outline ring around this mesh when `true`.
+    ///
+    /// Requires `boundary_mesh_id` to be set; see the type-level docs.
+    pub selected: bool,
+    /// Boundary surface mesh used for the selection outline mask pass.
+    ///
+    /// Pass the `MeshId` returned by `upload_volume_mesh_data` for the same
+    /// geometry. The mesh positions are assumed to be in world space (identity
+    /// model matrix).
+    pub boundary_mesh_id: Option<crate::resources::mesh_store::MeshId>,
 }
 
 impl TransparentVolumeMeshItem {
@@ -309,6 +327,8 @@ impl TransparentVolumeMeshItem {
             threshold_min: f32::NEG_INFINITY,
             threshold_max: f32::INFINITY,
             visible: true,
+            selected: false,
+            boundary_mesh_id: None,
         }
     }
 }
