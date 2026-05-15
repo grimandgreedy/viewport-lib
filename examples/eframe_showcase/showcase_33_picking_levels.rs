@@ -1311,7 +1311,6 @@ impl App {
             40  => Some("Streamtube"),
             41  => Some("Tube"),
             42  => Some("Ribbon"),
-            50  => Some("Image Slice"),
             51  => Some("Surface Slice"),
             52  => Some("Screen Image"),
             53  => Some("GPU Implicit"),

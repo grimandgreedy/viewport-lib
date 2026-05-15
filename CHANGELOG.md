@@ -3,35 +3,30 @@
 ## [0.14.0] (dev, current, unreleased)
 
 ### Breaking changes
-- `PostProcessSettings::enabled` now defaults to `true`. The HDR pipeline (tone mapping, OIT, SSAO, bloom, etc.) is active by default. Applications that previously relied on the LDR path should set `enabled: false` explicitly. The `render()` and `render_viewport()` entry points support both paths; `paint_to` and `paint_viewport_to` are always LDR regardless of this setting.
+- HDR rendering is now on by default. Applications that relied on the old LDR-only path should explicitly disable post-processing. The main rendering entry points support both modes; the paint-to-texture helpers remain LDR-only.
 
 ### Improvements
-- `GpuImplicitItem` now supports object-level picking via `renderer.pick()` and `renderer.pick_rect()`. Set `id` to a non-zero value to make the item selectable. `pick()` ray-marches the CPU SDF (same primitive types as the GPU shader: sphere, box, plane, capsule) and returns the actual surface hit, not a proxy. `pick_rect()` checks projected bounding-sphere AABB corners for each primitive.
-- `GpuMarchingCubesJob` now supports object-level picking via `renderer.pick()` and `renderer.pick_rect()`. Supply `cpu_data: Some(Arc::new(vol))` with the same `VolumeData` passed to `upload_volume_for_mc`. `pick()` ray-marches through the volume and detects isovalue crossings, picking the actual isosurface. `pick_rect()` projects cells where the scalar field straddles the isovalue. Both methods gain a `cpu_data` field; `cpu_data: None` leaves the item unreachable by the CPU picking path.
-- `ImageSliceItem`, `VolumeSurfaceSliceItem`, and `ScreenImageItem` now support object-level picking via `renderer.pick()` and `renderer.pick_rect()`. Set `id` to a non-zero value to make the item selectable. `ImageSliceItem` uses ray/plane intersection against the axis-aligned quad; `VolumeSurfaceSliceItem` uses ray/mesh intersection against the retained CPU mesh; `ScreenImageItem` uses a screen-space rect test.
-- `ImageSliceItem`, `VolumeSurfaceSliceItem`, and `ScreenImageItem` now support object-level selection highlight (phase 14). Add `selected: true` to get an outline ring. `ImageSliceItem` and `ScreenImageItem` also gain an `id: u64` field for the unified pick API.
-- `GpuImplicitItem` and `GpuMarchingCubesJob` now support object-level selection highlight (phase 15). Set `selected: true`; the implicit surface outline uses the same ray-march path as rendering, so the outline hugs the actual SDF silhouette. The MC outline uses the generated vertex buffer. Both types gain `id: u64` and `selected: bool` fields; `GpuImplicitItem` is now `#[non_exhaustive]` with a `Default` impl.
-- `SubSelectionRef` now supports `Segment` and `Strip` sub-element highlights for streamtube, tube, and ribbon items. Supply a `with_curve_families()` lookup with `PolylineSelectionInfo` (same `positions` / `strip_lengths` encoding those types already use); the renderer draws the same edge-line and strip geometry as polylines.
-- `TransparentVolumeMeshItem` now supports object-level selection highlight. Set `selected = true` and supply `boundary_mesh_id` with the `MeshId` from `upload_volume_mesh_data` for the same geometry; the outline pass uses the boundary surface to draw the selection ring.
-- `PostProcessSettings` and `ToneMapping` have moved from `renderer/types/lighting.rs` to a dedicated `renderer/types/postprocess.rs` module. All existing import paths are unaffected.
-- The default tone mapping operator is now `ToneMapping::KhronosNeutral` instead of `ToneMapping::Aces`. Khronos Neutral preserves colors in the [0, 1] range with minimal shift, which is less disruptive for scenes authored against the previous LDR path. ACES remains available for scenes that want a cinematic look.
-- `TransparentVolumeMeshItem` now documents that `PostProcessSettings::enabled = true` is required. Transparent volume meshes are rendered via the OIT pass which only exists in the HDR pipeline.
+- Picking and selection highlight coverage now extends to more scene types:
+    - Implicit surfaces, marching-cubes surfaces, image slices, surface slices, and screen images now participate in the unified picking API and can show object-level selection outlines.
+    - Streamtubes, tubes, and ribbons can now highlight selected segments and strips in the same style as polylines.
+    - Transparent volume meshes can now show object-level selection outlines.
+- Tone mapping now defaults to Khronos Neutral instead of ACES. This keeps ordinary SDR colors closer to how they looked in the older LDR path, while still preserving HDR highlight compression. ACES remains available for scenes that want a stronger filmic look.
+- Post-processing types now live in a dedicated module, without changing existing import paths.
+- Transparent volume meshes require the HDR/post-processing path. This was already true in practice and is now called out clearly in the API documentation.
 
 ### Fixes
-- Sub-element edge and sprite highlights for streamtube and tube segments were invisible because those items' control-curve positions sit inside the rendered 3D mesh. The edge-line and sprite pipelines now use `CompareFunction::Always` so selection highlights are visible regardless of depth occlusion. Ribbon was unaffected (its centerline is on the surface).
-- `SubObjectRef::Point` highlights were missing for streamtube, tube, and ribbon picks in POLY_NODE mode. The handler only checked `polyline_lookup` and `point_positions`; it now also falls back to `curve_family_lookup` so selected control-point sprites render for all three types.
-- `ClipShape::Plane` was missing the `display_center` field in `tests/clip_volume.rs`. Added `display_center: None` to the struct literal.
-- Unused `mut` on closure bindings in `eframe_primitives`, `eframe_minimal`, and `winit_minimal` examples. Removed `mut` from `item`, `make`, and `make_item`.
-- Unused `queue` variable in `eframe_testing`. Renamed to `_queue`.
-- The HDR callback intermediate texture (`prepare_hdr_callback`) was allocated at logical pixel size instead of physical pixel size. On HiDPI displays this caused a wgpu validation error when the grid, ground plane, or editor overlay passes paired the logical-size color attachment with the physical-size HDR depth buffer. The intermediate texture is now allocated at `viewport_size * pixels_per_point`, matching the depth buffer.
-- The tone map shader was applying manual gamma correction (`pow(x, 1/2.2)`) before writing to the swapchain surface, which already applies sRGB encoding automatically. This double-gamma made all tone-mapped output significantly lighter than the LDR path. The manual gamma line has been removed.
-- The `khronos_neutral` tone mapping function was implemented with Uncharted 2 (Hable filmic) constants rather than the actual Khronos PBR Neutral algorithm. The correct implementation now passes values below ~0.76 through with only a small black-point offset and compresses only HDR highlights above that threshold, matching LDR output closely for hand-authored SDR colors.
-- Screen images submitted with per-pixel depth data (`ScreenImageItem::depth`) were invisible in the HDR path. The depth-composite pipeline compares each image fragment's depth against the scene depth buffer. The axes indicator pass and editor overlay pass both open that depth buffer with `StoreOp::Discard`; on Metal, a subsequent `LoadOp::Load` returns 0.0 (near plane), so every depth comparison failed and no fragments were drawn. The screen image pass now runs before those two passes while the scene depth is still valid.
-- `renderer.pick()` and `renderer.pick_rect()` did not return mesh vertex hits when called with a mask that included both `CELL` and `VERTEX` (e.g. `POINT_LIKE`). The `wants_cell` branch ran before `wants_vertex` in the mesh dispatch; for regular mesh items with no face-to-cell map it returned `None` without ever trying vertex picking. Added an `else if wants_vertex` fallback inside the `wants_cell` block so regular meshes produce vertex hits when no cell map is present.
-- The viewport background went black whenever any sub-object was selected (e.g. a face, point, or cell) in the HDR path. The sub-object highlight pass used `StoreOp::Discard` on `hdr_depth_view` even though all three highlight pipelines (face fill, edge outline, vertex sprite) have `depth_write_enabled: false` and leave the depth values completely unchanged. On Metal, discarding a depth attachment clears tile memory, so the tone-map pass's sampled read of the same texture returned 0.0 for every pixel. The tone-map shader's `if depth >= 0.999999` background check then never triggered, causing the cleared HDR color (black) to be output instead of the configured background color. Changed the sub-highlight pass to `StoreOp::Store` so the unmodified depth values are preserved.
+- Selection highlights for streamtubes, tubes, and ribbons are now visible and complete. Selected segments could disappear inside the rendered surface, and selected control points could fail to show at all.
+- HDR callback rendering now uses physical pixel resolution on HiDPI and Retina displays. This fixes validation errors caused by mismatched attachment sizes.
+- Tone-mapped output was too bright in HDR mode. The swapchain was being gamma-corrected twice, and the Khronos Neutral operator was not matching the real algorithm closely enough. Colors in the normal SDR range now stay much closer to the old LDR look.
+- Screen images with per-pixel depth now render correctly in HDR scenes. Previously they could disappear entirely.
+- Unified picking now returns mesh vertex hits correctly when the pick mask asks for both cells and vertices at once.
+- The viewport background could turn black in HDR mode when any sub-object highlight was active. Depth is now preserved correctly through the highlight pass.
+- Example and test cleanup:
+    - Fixed a missing `display_center` field in `tests/clip_volume.rs`.
+    - Removed a few unused `mut` bindings and an unused `queue` variable in examples/tests.
 
 ### Removals
-- `examples/eframe_showcase/hdr_viewport_callback.rs` and its `shaders/hdr_blit.wgsl` have been deleted. The `ViewportCallback` (which calls `prepare_callback` / `paint_callback`) handles HDR internally and replaces the manual intermediate-texture path for all showcases.
+- Removed the old HDR showcase callback example and its custom blit shader. The built-in `ViewportCallback` now covers that workflow directly.
 
 ## [0.13.3]
 

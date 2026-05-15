@@ -9,13 +9,13 @@ use viewport_lib::{
     CameraAnimator, CameraFrame, ClipObject, ColormapId,
     FrameData, GaussianSplatItem,
     GizmoAxis, GizmoInfo, GizmoMode, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode,
-    GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob, ImageAnchor, ImageSliceItem,
+    GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob, ImageAnchor,
     ImplicitBlendMode, ImplicitPrimitive,
     LightKind, LightSource, LightingSettings, ManipResult, ManipulationContext,
     MeshData, MeshId, OrbitCameraController,
     PickId, PointCloudItem, PolylineItem, PostProcessSettings,
     RenderCamera, RuntimeMode, SceneFrame,
-    CellSelectionInfo, SceneRenderItem, ScrollUnits, Selection, ShadowFilter, SliceAxis,
+    CellSelectionInfo, SceneRenderItem, ScrollUnits, Selection, ShadowFilter,
     ScreenImageItem, SpriteItem,
     SubSelectionRef, TensorGlyphItem, TransparentVolumeMeshItem, VolumeMeshItem,
     PolylineSelectionInfo, StreamtubeItem, TubeItem, RibbonItem,
@@ -3163,22 +3163,9 @@ impl App {
                 rb.selected      = self.pl_state.selection.contains(42);
                 fd.scene.ribbon_items.push(rb);
             }
-            // Image slice (pick_id=50): Z-axis cross-section of the existing volume.
-            // The volume's world bbox is (-2,-1,-6) to (2,3,-2); the slice plane sits at z=-4.
-            if let Some(vol_id) = self.pl_state.volume_id {
-                let mut item = ImageSliceItem::default();
-                item.volume_id   = vol_id;
-                item.axis        = SliceAxis::Z;
-                item.offset      = 0.5;
-                item.bbox_min    = [-2.0, -1.0, -6.0];
-                item.bbox_max    = [2.0, 3.0, -2.0];
-                item.scalar_range = (0.0, 1.0);
-                item.id          = 50;
-                item.selected    = self.pl_state.selection.contains(50);
-                fd.scene.image_slices.push(item);
-            }
-            // Volume surface slice (pick_id=51): flat plane mesh colored by the same volume.
-            // Plane mesh is a 3.6x3.6 XZ quad; model places it at (0, 1, -4), within the volume bbox.
+            // Volume surface slice (pick_id=51): plane mesh colored by the same volume.
+            // Plane mesh is a 3.6x3.6 XZ quad; model places it at (0, 1, -4) and tilts it
+            // 60 degrees around X so the plane makes a 30 degree angle with the XY plane.
             if let (Some(vol_id), Some(mesh_id)) = (
                 self.pl_state.volume_id,
                 self.pl_state.surface_slice_mesh_id,
@@ -3189,7 +3176,8 @@ impl App {
                 item.bbox_min    = [-2.0, -1.0, -6.0];
                 item.bbox_max    = [2.0, 3.0, -2.0];
                 item.scalar_range = (0.0, 1.0);
-                item.model       = glam::Mat4::from_translation(glam::vec3(0.0, 1.0, -4.0))
+                item.model       = (glam::Mat4::from_translation(glam::vec3(0.0, 1.0, -4.0))
+                    * glam::Mat4::from_rotation_x(60_f32.to_radians()))
                     .to_cols_array_2d();
                 item.id          = 51;
                 item.selected    = self.pl_state.selection.contains(51);

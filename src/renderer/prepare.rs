@@ -2100,7 +2100,7 @@ impl ViewportRenderer {
                 });
                 outline_object_buffers.push(OutlineObjectBuffers {
                     mesh_id: item.mesh_id,
-                    two_sided: false,
+                    two_sided: true,
                     _mask_uniform_buf: buf,
                     mask_bind_group: bg,
                 });
