@@ -20,7 +20,7 @@ use eframe::egui;
 use viewport_lib::{
     GaussianSplatData, GaussianSplatId,
     Material, MeshId, NodeId, PickMask, PickRectResult, ProjectedTetId,
-    ShDegree, SubObjectRef, VolumeData, VolumeMeshData, ViewportRenderer,
+    ShDegree, SubObjectRef, VolumeData, VolumeMeshData, ViewportRenderer, VolumeGpuId,
 };
 
 use crate::App;
@@ -344,6 +344,10 @@ pub(crate) struct PlState {
     pub ribbon_positions:       Vec<[f32; 3]>,
     /// Strip lengths for the ribbon set.
     pub ribbon_strip_lengths:   Vec<u32>,
+    /// Plane mesh uploaded for VolumeSurfaceSliceItem (pick_id=51).
+    pub surface_slice_mesh_id:  Option<MeshId>,
+    /// GPU volume handle for the GpuMarchingCubesJob (pick_id=54).
+    pub mc_volume_id:           Option<VolumeGpuId>,
 }
 
 impl Default for PlState {
@@ -395,6 +399,8 @@ impl Default for PlState {
             tube_strip_lengths:     Vec::new(),
             ribbon_positions:       Vec::new(),
             ribbon_strip_lengths:   Vec::new(),
+            surface_slice_mesh_id:  None,
+            mc_volume_id:           None,
         }
     }
 }
@@ -509,6 +515,46 @@ impl App {
             origin: [0.0, 0.0, 0.0],
             spacing: [0.25, 0.25, 0.25],
         });
+
+        // --- Surface slice mesh: flat XZ-plane inside the volume bbox (pick_id=51) ---
+        // The plane is 3.6x3.6, centered at (0, 1, -4) so it sits within the
+        // volume's world bbox of (-2,-1,-6) to (2,3,-2).
+        let plane_mesh = viewport_lib::primitives::plane(3.6, 3.6);
+        if let Ok(plane_id) = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &plane_mesh)
+        {
+            self.pl_state.surface_slice_mesh_id = Some(plane_id);
+        }
+
+        // --- GPU MC volume: 32^3 gyroid field centered near (13, 0, -5) (pick_id=54) ---
+        // The volume spans one full gyroid period (2pi) in each axis so the
+        // isovalue=0 surface fills the box.
+        {
+            let n: u32 = 32;
+            let step = std::f32::consts::TAU / (n - 1) as f32;
+            let half = std::f32::consts::PI;
+            let origin = [13.0_f32 - half, 0.0 - half, -5.0 - half];
+            let spacing = [step; 3];
+            let mut data = Vec::with_capacity((n * n * n) as usize);
+            for iz in 0..n {
+                for iy in 0..n {
+                    for ix in 0..n {
+                        let x = ix as f32 * step;
+                        let y = iy as f32 * step;
+                        let z = iz as f32 * step;
+                        data.push(x.sin() * y.cos() + y.sin() * z.cos() + z.sin() * x.cos());
+                    }
+                }
+            }
+            let vol = VolumeData { data, dims: [n, n, n], origin, spacing };
+            if let Ok(id) = renderer
+                .resources_mut()
+                .upload_volume_for_mc(&self.device, &self.queue, &vol)
+            {
+                self.pl_state.mc_volume_id = Some(id);
+            }
+        }
 
         // --- Gaussian splats: 3x3 grid in local space, rendered at y=5 ---
         let mut splat_positions: Vec<[f32; 3]> = Vec::with_capacity(9);
@@ -1260,6 +1306,11 @@ impl App {
             40  => Some("Streamtube"),
             41  => Some("Tube"),
             42  => Some("Ribbon"),
+            50  => Some("Image Slice"),
+            51  => Some("Surface Slice"),
+            52  => Some("Screen Image"),
+            53  => Some("GPU Implicit"),
+            54  => Some("GPU Marching Cubes"),
             _   => None,
         }
     }

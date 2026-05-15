@@ -9,13 +9,17 @@ use viewport_lib::{
     CameraAnimator, CameraFrame, ClipObject, ColormapId,
     FrameData, GaussianSplatItem,
     GizmoAxis, GizmoInfo, GizmoMode, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode,
+    GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob, ImageAnchor, ImageSliceItem,
+    ImplicitBlendMode, ImplicitPrimitive,
     LightKind, LightSource, LightingSettings, ManipResult, ManipulationContext,
     MeshData, MeshId, OrbitCameraController,
     PickId, PointCloudItem, PolylineItem, PostProcessSettings,
     RenderCamera, RuntimeMode, SceneFrame,
-    CellSelectionInfo, SceneRenderItem, ScrollUnits, Selection, ShadowFilter, SpriteItem,
+    CellSelectionInfo, SceneRenderItem, ScrollUnits, Selection, ShadowFilter, SliceAxis,
+    ScreenImageItem, SpriteItem,
     SubSelectionRef, TensorGlyphItem, TransparentVolumeMeshItem, VolumeMeshItem,
     PolylineSelectionInfo, StreamtubeItem, TubeItem, RibbonItem,
+    VolumeSurfaceSliceItem,
     ViewportContext,
     ViewportEvent, ViewportRenderer,
     geometry::isoline::IsolineItem,
@@ -3158,6 +3162,105 @@ impl App {
                 rb.id            = 42;
                 rb.selected      = self.pl_state.selection.contains(42);
                 fd.scene.ribbon_items.push(rb);
+            }
+            // Image slice (pick_id=50): Z-axis cross-section of the existing volume.
+            // The volume's world bbox is (-2,-1,-6) to (2,3,-2); the slice plane sits at z=-4.
+            if let Some(vol_id) = self.pl_state.volume_id {
+                let mut item = ImageSliceItem::default();
+                item.volume_id   = vol_id;
+                item.axis        = SliceAxis::Z;
+                item.offset      = 0.5;
+                item.bbox_min    = [-2.0, -1.0, -6.0];
+                item.bbox_max    = [2.0, 3.0, -2.0];
+                item.scalar_range = (0.0, 1.0);
+                item.id          = 50;
+                item.selected    = self.pl_state.selection.contains(50);
+                fd.scene.image_slices.push(item);
+            }
+            // Volume surface slice (pick_id=51): flat plane mesh colored by the same volume.
+            // Plane mesh is a 3.6x3.6 XZ quad; model places it at (0, 1, -4), within the volume bbox.
+            if let (Some(vol_id), Some(mesh_id)) = (
+                self.pl_state.volume_id,
+                self.pl_state.surface_slice_mesh_id,
+            ) {
+                let mut item = VolumeSurfaceSliceItem::default();
+                item.volume_id   = vol_id;
+                item.mesh_id     = mesh_id;
+                item.bbox_min    = [-2.0, -1.0, -6.0];
+                item.bbox_max    = [2.0, 3.0, -2.0];
+                item.scalar_range = (0.0, 1.0);
+                item.model       = glam::Mat4::from_translation(glam::vec3(0.0, 1.0, -4.0))
+                    .to_cols_array_2d();
+                item.id          = 51;
+                item.selected    = self.pl_state.selection.contains(51);
+                fd.scene.volume_surface_slices.push(item);
+            }
+            // Screen image (pick_id=52): small checkerboard pinned to the top-right corner.
+            {
+                let iw = 48u32;
+                let ih = 48u32;
+                let pixels: Vec<[u8; 4]> = (0..iw * ih)
+                    .map(|i| {
+                        let x = i % iw;
+                        let y = i / iw;
+                        if (x / 6 + y / 6) % 2 == 0 {
+                            [255, 200, 50, 220]
+                        } else {
+                            [80, 50, 200, 220]
+                        }
+                    })
+                    .collect();
+                let mut img = ScreenImageItem::default();
+                img.pixels   = pixels;
+                img.width    = iw;
+                img.height   = ih;
+                img.anchor   = ImageAnchor::TopRight;
+                img.scale    = 2.0;
+                img.id       = 52;
+                img.selected = self.pl_state.selection.contains(52);
+                fd.scene.screen_images.push(img);
+            }
+            // GPU implicit (pick_id=53): two smooth-blended spheres at (13, 0, 0) / (15, 0, 0).
+            {
+                let centers: [[f32; 3]; 2] = [[13.0, 0.0, 0.0], [15.0, 0.0, 0.0]];
+                let colors: [[f32; 4]; 2] = [
+                    [0.9, 0.4, 0.2, 1.0],
+                    [0.2, 0.5, 1.0, 1.0],
+                ];
+                let mut item = GpuImplicitItem::default();
+                for i in 0..2 {
+                    let mut prim = ImplicitPrimitive::zeroed();
+                    prim.kind     = 1; // sphere
+                    prim.blend    = 0.8;
+                    prim.params[0] = centers[i][0];
+                    prim.params[1] = centers[i][1];
+                    prim.params[2] = centers[i][2];
+                    prim.params[3] = 1.2; // radius
+                    prim.color    = colors[i];
+                    item.primitives.push(prim);
+                }
+                item.blend_mode   = ImplicitBlendMode::SmoothUnion;
+                item.march_options = GpuImplicitOptions {
+                    max_steps:     64,
+                    step_scale:    0.9,
+                    hit_threshold: 1e-3,
+                    max_distance:  self.camera.zfar,
+                };
+                item.id       = 53;
+                item.selected = self.pl_state.selection.contains(53);
+                fd.scene.gpu_implicit.push(item);
+            }
+            // GPU marching cubes (pick_id=54): gyroid surface centered near (13, 0, -5).
+            if let Some(mc_vol_id) = self.pl_state.mc_volume_id {
+                let mut mat = viewport_lib::Material::from_color([0.5, 0.8, 0.55]);
+                mat.roughness = 0.4;
+                fd.scene.gpu_mc_jobs.push(GpuMarchingCubesJob {
+                    volume_id: mc_vol_id,
+                    isovalue:  0.0,
+                    material:  mat,
+                    id:        54,
+                    selected:  self.pl_state.selection.contains(54),
+                });
             }
         }
 
