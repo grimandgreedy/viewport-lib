@@ -332,6 +332,18 @@ pub(crate) struct PlState {
     pub xo_sprite_sizes:        Vec<f32>,
     /// Per-instance colors for the noughts-and-crosses set.
     pub xo_sprite_colors:       Vec<[f32; 4]>,
+    /// Positions for the streamtube set (pick_id=40).
+    pub streamtube_positions:   Vec<[f32; 3]>,
+    /// Strip lengths for the streamtube set.
+    pub streamtube_strip_lengths: Vec<u32>,
+    /// Positions for the tube set (pick_id=41).
+    pub tube_positions:         Vec<[f32; 3]>,
+    /// Strip lengths for the tube set.
+    pub tube_strip_lengths:     Vec<u32>,
+    /// Positions for the ribbon set (pick_id=42).
+    pub ribbon_positions:       Vec<[f32; 3]>,
+    /// Strip lengths for the ribbon set.
+    pub ribbon_strip_lengths:   Vec<u32>,
 }
 
 impl Default for PlState {
@@ -377,6 +389,12 @@ impl Default for PlState {
             xo_sprite_positions:    Vec::new(),
             xo_sprite_sizes:        Vec::new(),
             xo_sprite_colors:       Vec::new(),
+            streamtube_positions:   Vec::new(),
+            streamtube_strip_lengths: Vec::new(),
+            tube_positions:         Vec::new(),
+            tube_strip_lengths:     Vec::new(),
+            ribbon_positions:       Vec::new(),
+            ribbon_strip_lengths:   Vec::new(),
         }
     }
 }
@@ -651,6 +669,68 @@ impl App {
             self.pl_state.xo_sprite_positions = positions;
             self.pl_state.xo_sprite_sizes = sizes;
             self.pl_state.xo_sprite_colors = colors;
+        }
+
+        // --- Streamtube: 2 spiraling strips above the scene (pick_id=40) ---
+        // Two corkscrew paths at y=5, separated on X so individual segment
+        // and strip picking are both easy to exercise.
+        {
+            let n: u32 = 30;
+            let mut pos: Vec<[f32; 3]> = Vec::new();
+            let mut lens: Vec<u32> = Vec::new();
+            for strip in 0..2_i32 {
+                let x_off = (strip - 1) as f32 * 3.0;
+                let r = 1.0_f32;
+                for i in 0..n {
+                    let t = i as f32 / (n - 1) as f32;
+                    let angle = t * std::f32::consts::TAU * 1.5;
+                    pos.push([x_off + r * angle.cos(), 5.0 + t * 2.5, r * angle.sin()]);
+                }
+                lens.push(n);
+            }
+            self.pl_state.streamtube_positions    = pos;
+            self.pl_state.streamtube_strip_lengths = lens;
+        }
+
+        // --- Tube: 2 wavy strips at y=-6 (pick_id=41) ---
+        // Smooth sine-wave paths with per-point radius variation.
+        {
+            let n: u32 = 24;
+            let mut pos: Vec<[f32; 3]> = Vec::new();
+            let mut lens: Vec<u32> = Vec::new();
+            for strip in 0..2_i32 {
+                let z_off = (strip - 1) as f32 * 2.5;
+                for i in 0..n {
+                    let t = i as f32 / (n - 1) as f32;
+                    let x = -5.0 + t * 10.0;
+                    let y = -6.0 + (t * std::f32::consts::TAU).sin() * 0.8;
+                    pos.push([x, y, z_off]);
+                }
+                lens.push(n);
+            }
+            self.pl_state.tube_positions    = pos;
+            self.pl_state.tube_strip_lengths = lens;
+        }
+
+        // --- Ribbon: 2 strips at x=-12 (pick_id=42) ---
+        // S-shaped paths whose twist vector is set to the world Y axis so the
+        // ribbon lies flat and is easy to click.
+        {
+            let n: u32 = 20;
+            let mut pos: Vec<[f32; 3]> = Vec::new();
+            let mut lens: Vec<u32> = Vec::new();
+            for strip in 0..2_i32 {
+                let y_off = (strip - 1) as f32 * 2.5;
+                for i in 0..n {
+                    let t = i as f32 / (n - 1) as f32;
+                    let z = -4.0 + t * 8.0;
+                    let x = -12.0 + (t * std::f32::consts::PI).sin() * 1.2;
+                    pos.push([x, y_off, z]);
+                }
+                lens.push(n);
+            }
+            self.pl_state.ribbon_positions    = pos;
+            self.pl_state.ribbon_strip_lengths = lens;
         }
 
         self.pl_state.built = true;
@@ -1177,6 +1257,9 @@ impl App {
             32  => Some("Tensor Glyphs"),
             33  => Some("Sprites"),
             34  => Some("XO Sprites"),
+            40  => Some("Streamtube"),
+            41  => Some("Tube"),
+            42  => Some("Ribbon"),
             _   => None,
         }
     }

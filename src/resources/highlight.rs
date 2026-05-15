@@ -380,9 +380,11 @@ impl ViewportGpuResources {
                     }
                 }
                 SubObjectRef::Segment(idx) => {
-                    // Polyline segment edge. Recover the two endpoint positions
-                    // for the global segment index by walking strip_lengths.
-                    if let Some(info) = sel.polyline_lookup.get(node_id) {
+                    // Polyline or curve-family segment edge. Recover the two endpoint
+                    // positions for the global segment index by walking strip_lengths.
+                    let info = sel.polyline_lookup.get(node_id)
+                        .or_else(|| sel.curve_family_lookup.get(node_id));
+                    if let Some(info) = info {
                         if let Some((pa, pb)) =
                             segment_endpoints(*idx, &info.positions, &info.strip_lengths)
                         {
@@ -393,7 +395,9 @@ impl ViewportGpuResources {
                 }
                 SubObjectRef::Strip(s) => {
                     // All segments in the strip rendered as edge lines.
-                    if let Some(info) = sel.polyline_lookup.get(node_id) {
+                    let info = sel.polyline_lookup.get(node_id)
+                        .or_else(|| sel.curve_family_lookup.get(node_id));
+                    if let Some(info) = info {
                         let node_start: usize = info
                             .strip_lengths
                             .iter()

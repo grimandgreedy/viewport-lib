@@ -15,6 +15,7 @@ use viewport_lib::{
     RenderCamera, RuntimeMode, SceneFrame,
     CellSelectionInfo, SceneRenderItem, ScrollUnits, Selection, ShadowFilter, SpriteItem,
     SubSelectionRef, TensorGlyphItem, TransparentVolumeMeshItem, VolumeMeshItem,
+    PolylineSelectionInfo, StreamtubeItem, TubeItem, RibbonItem,
     ViewportContext,
     ViewportEvent, ViewportRenderer,
     geometry::isoline::IsolineItem,
@@ -2995,11 +2996,30 @@ impl App {
                         cells: tet_data.cells.clone(),
                     });
                 }
-                let mut polyline_lookup: HashMap<u64, viewport_lib::PolylineSelectionInfo> = HashMap::new();
+                let mut polyline_lookup: HashMap<u64, PolylineSelectionInfo> = HashMap::new();
                 if !self.pl_state.polyline_positions.is_empty() {
-                    polyline_lookup.insert(30, viewport_lib::PolylineSelectionInfo {
+                    polyline_lookup.insert(30, PolylineSelectionInfo {
                         positions: self.pl_state.polyline_positions.clone(),
                         strip_lengths: self.pl_state.polyline_strip_lengths.clone(),
+                    });
+                }
+                let mut curve_family_lookup: HashMap<u64, PolylineSelectionInfo> = HashMap::new();
+                if !self.pl_state.streamtube_positions.is_empty() {
+                    curve_family_lookup.insert(40, PolylineSelectionInfo {
+                        positions: self.pl_state.streamtube_positions.clone(),
+                        strip_lengths: self.pl_state.streamtube_strip_lengths.clone(),
+                    });
+                }
+                if !self.pl_state.tube_positions.is_empty() {
+                    curve_family_lookup.insert(41, PolylineSelectionInfo {
+                        positions: self.pl_state.tube_positions.clone(),
+                        strip_lengths: self.pl_state.tube_strip_lengths.clone(),
+                    });
+                }
+                if !self.pl_state.ribbon_positions.is_empty() {
+                    curve_family_lookup.insert(42, PolylineSelectionInfo {
+                        positions: self.pl_state.ribbon_positions.clone(),
+                        strip_lengths: self.pl_state.ribbon_strip_lengths.clone(),
                     });
                 }
                 fd.interaction.sub_selection = Some(SubSelectionRef::new(
@@ -3007,7 +3027,8 @@ impl App {
                     mesh_lookup,
                     model_matrices,
                     point_positions,
-                ).with_voxels(voxel_lookup).with_cells(cell_lookup).with_polylines(polyline_lookup));
+                ).with_voxels(voxel_lookup).with_cells(cell_lookup).with_polylines(polyline_lookup)
+                 .with_curve_families(curve_family_lookup));
                 fd.interaction.sub_highlight_face_fill_color = [1.0, 0.85, 0.0, 0.25];
                 fd.interaction.sub_highlight_edge_color = [1.0, 0.85, 0.0, 1.0];
                 fd.interaction.sub_highlight_edge_width_px = 5.0;
@@ -3104,6 +3125,39 @@ impl App {
                 s.id            = 34;
                 s.selected      = self.pl_state.selection.contains(34);
                 fd.scene.sprite_items.push(s);
+            }
+            // Streamtube (pick_id=40).
+            if !self.pl_state.streamtube_positions.is_empty() {
+                let mut st = StreamtubeItem::default();
+                st.positions     = self.pl_state.streamtube_positions.clone();
+                st.strip_lengths = self.pl_state.streamtube_strip_lengths.clone();
+                st.radius        = 0.12;
+                st.color         = [0.3, 0.8, 0.55, 1.0];
+                st.id            = 40;
+                st.selected      = self.pl_state.selection.contains(40);
+                fd.scene.streamtube_items.push(st);
+            }
+            // Tube (pick_id=41).
+            if !self.pl_state.tube_positions.is_empty() {
+                let mut tb = TubeItem::default();
+                tb.positions     = self.pl_state.tube_positions.clone();
+                tb.strip_lengths = self.pl_state.tube_strip_lengths.clone();
+                tb.radius        = 0.15;
+                tb.color         = [0.85, 0.4, 0.2, 1.0];
+                tb.id            = 41;
+                tb.selected      = self.pl_state.selection.contains(41);
+                fd.scene.tube_items.push(tb);
+            }
+            // Ribbon (pick_id=42).
+            if !self.pl_state.ribbon_positions.is_empty() {
+                let mut rb = RibbonItem::default();
+                rb.positions     = self.pl_state.ribbon_positions.clone();
+                rb.strip_lengths = self.pl_state.ribbon_strip_lengths.clone();
+                rb.width         = 0.4;
+                rb.color         = [0.6, 0.3, 0.9, 1.0];
+                rb.id            = 42;
+                rb.selected      = self.pl_state.selection.contains(42);
+                fd.scene.ribbon_items.push(rb);
             }
         }
 

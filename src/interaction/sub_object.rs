@@ -419,6 +419,15 @@ pub struct SubSelectionRef {
     /// the positions and strip lengths so the renderer can draw node sprites and
     /// segment edge lines.
     pub(crate) polyline_lookup: std::collections::HashMap<u64, PolylineSelectionInfo>,
+    /// Curve-family geometry keyed by node id.
+    ///
+    /// Covers [`StreamtubeItem`](crate::renderer::types::items::StreamtubeItem),
+    /// [`TubeItem`](crate::renderer::types::items::TubeItem), and
+    /// [`RibbonItem`](crate::renderer::types::items::RibbonItem).
+    /// Required for [`SubObjectRef::Segment`] and [`SubObjectRef::Strip`] highlights
+    /// on these types. Uses the same [`PolylineSelectionInfo`] encoding since all
+    /// three share identical `positions` / `strip_lengths` fields.
+    pub(crate) curve_family_lookup: std::collections::HashMap<u64, PolylineSelectionInfo>,
     /// Version counter copied from the source [`SubSelection::version()`].
     ///
     /// The renderer uses this to skip GPU buffer rebuilds when the selection
@@ -451,6 +460,7 @@ impl SubSelectionRef {
             voxel_lookup: std::collections::HashMap::new(),
             cell_lookup: std::collections::HashMap::new(),
             polyline_lookup: std::collections::HashMap::new(),
+            curve_family_lookup: std::collections::HashMap::new(),
             version: sub_selection.version(),
         }
     }
@@ -490,6 +500,20 @@ impl SubSelectionRef {
         lookup: std::collections::HashMap<u64, PolylineSelectionInfo>,
     ) -> Self {
         self.polyline_lookup = lookup;
+        self
+    }
+
+    /// Attach curve-family geometry for [`SubObjectRef::Segment`] and
+    /// [`SubObjectRef::Strip`] highlight rendering on streamtube, tube, and ribbon items.
+    ///
+    /// `lookup` maps each item's node id to a [`PolylineSelectionInfo`] (same
+    /// `positions` / `strip_lengths` encoding). Without this, selected segments
+    /// and strips on these types are silently skipped during highlight geometry build.
+    pub fn with_curve_families(
+        mut self,
+        lookup: std::collections::HashMap<u64, PolylineSelectionInfo>,
+    ) -> Self {
+        self.curve_family_lookup = lookup;
         self
     }
 
