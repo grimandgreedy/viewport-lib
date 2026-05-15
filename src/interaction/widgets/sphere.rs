@@ -34,10 +34,10 @@ pub struct SphereWidget {
     pub center: glam::Vec3,
     /// Radius in world units.
     pub radius: f32,
-    /// RGBA fill color (alpha controls transparency of the fill).
-    pub color: [f32; 4],
-    /// RGBA color for the drag handles. When set (non-zero alpha), overrides the default LUT coloring.
-    pub handle_color: [f32; 4],
+    /// RGBA fill colour (alpha controls transparency of the fill).
+    pub colour: [f32; 4],
+    /// RGBA colour for the drag handles. When set (non-zero alpha), overrides the default LUT colouring.
+    pub handle_colour: [f32; 4],
 
     hovered_handle: Option<SphereHandle>,
     active_handle: Option<SphereHandle>,
@@ -53,8 +53,8 @@ impl SphereWidget {
         Self {
             center,
             radius: radius.max(0.01),
-            color: [0.3, 0.6, 1.0, 0.25],
-            handle_color: [0.0; 4],
+            colour: [0.3, 0.6, 1.0, 0.25],
+            handle_colour: [0.0; 4],
             hovered_handle: None,
             active_handle: None,
             drag_plane_normal: glam::Vec3::Z,
@@ -140,14 +140,14 @@ impl SphereWidget {
     /// Push into `fd.effects.clip_objects`. `clip_geometry` is set to `false` so
     /// the sphere only renders as a visual indicator and does not clip geometry.
     pub fn clip_object(&self) -> ClipObject {
-        let edge = [self.color[0], self.color[1], self.color[2], 1.0];
+        let edge = [self.colour[0], self.colour[1], self.colour[2], 1.0];
         ClipObject {
             shape: ClipShape::Sphere {
                 center: self.center.to_array(),
                 radius: self.radius,
             },
-            color: Some(self.color),
-            edge_color: Some(edge),
+            colour: Some(self.colour),
+            edge_colour: Some(edge),
             clip_geometry: false,
             enabled: true,
             hovered: self.hovered_handle.is_some(),
@@ -181,11 +181,11 @@ impl SphereWidget {
             strip_lengths.push((STEPS + 1) as u32);
         }
 
-        let line_color = [self.color[0], self.color[1], self.color[2], 1.0];
+        let line_colour = [self.colour[0], self.colour[1], self.colour[2], 1.0];
         PolylineItem {
             positions,
             strip_lengths,
-            default_color: line_color,
+            default_colour: line_colour,
             line_width: 1.5,
             id,
             ..PolylineItem::default()
@@ -225,8 +225,8 @@ impl SphereWidget {
             scalar_range: Some((0.0, 1.0)),
             glyph_type: GlyphType::Sphere,
             id: id_base,
-            default_color: self.handle_color,
-            use_default_color: self.handle_color[3] > 0.0,
+            default_colour: self.handle_colour,
+            use_default_colour: self.handle_colour[3] > 0.0,
             ..GlyphItem::default()
         }
     }

@@ -30,7 +30,7 @@ fn segment_endpoints(
 
 impl ViewportGpuResources {
     /// Lazily create sub-object highlight pipelines for both the HDR path
-    /// (`Rgba16Float` color target) and the LDR path (swapchain `target_format`).
+    /// (`Rgba16Float` colour target) and the LDR path (swapchain `target_format`).
     /// Idempotent: returns immediately if already created.
     pub(crate) fn ensure_sub_highlight_pipelines(&mut self, device: &wgpu::Device) {
         if self.sub_highlight_fill_pipeline.is_some() {
@@ -76,7 +76,7 @@ impl ViewportGpuResources {
             ),
         });
 
-        // Inline helper: build one fill pipeline for the given color format.
+        // Inline helper: build one fill pipeline for the given colour format.
         let make_fill = |label: &'static str, fmt: wgpu::TextureFormat| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
@@ -258,8 +258,8 @@ impl ViewportGpuResources {
         sel: Option<&SubSelectionRef>,
         _splat_positions: &std::collections::HashMap<u64, Vec<[f32; 3]>>,
         extra_edge_data: &[f32],
-        fill_color: [f32; 4],
-        edge_color: [f32; 4],
+        fill_colour: [f32; 4],
+        edge_colour: [f32; 4],
         edge_width: f32,
         vertex_size: f32,
         viewport_width: f32,
@@ -548,8 +548,8 @@ impl ViewportGpuResources {
 
         // Shared highlight uniform buffer.
         let uniform = SubHighlightUniform {
-            fill_color,
-            edge_color,
+            fill_colour,
+            edge_colour,
             edge_width,
             vertex_size,
             viewport_width,

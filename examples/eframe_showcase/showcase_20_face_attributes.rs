@@ -4,21 +4,21 @@
 //!
 //!   Left   : `AttributeKind::Vertex`    smooth, Gouraud-interpolated scalar
 //!   Centre : `AttributeKind::Face`      flat per-triangle scalar, same data
-//!   Right  : `AttributeKind::FaceColor` direct per-face RGBA, no colormap
+//!   Right  : `AttributeKind::FaceColour` direct per-face RGBA, no colourmap
 //!
 //! The left and centre objects carry the same scalar value (face-centroid Z
 //! normalised 0->1).  The visual difference:crisp flat facets on Face vs a
 //! smooth gradient on Vertex:is the whole point of the showcase.
 //!
-//! The right object uses `FaceColor` with a hue-cycled rainbow to demonstrate
-//! that RGBA colours are applied directly without going through a colormap.
+//! The right object uses `FaceColour` with a hue-cycled rainbow to demonstrate
+//! that RGBA colours are applied directly without going through a colourmap.
 //! Use the opacity slider to push it into the OIT (order-independent
 //! transparency) path and verify correct blending.
 
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    AttributeData, BuiltinColormap, Material, MeshId, NodeId, ViewportRenderer, scene::Scene,
+    AttributeData, BuiltinColourmap, Material, MeshId, NodeId, ViewportRenderer, scene::Scene,
 };
 
 // ---------------------------------------------------------------------------
@@ -30,7 +30,7 @@ pub(crate) struct FaceAttrState {
     pub built: bool,
     pub mesh_indices: [MeshId; 3],
     pub node_ids: [NodeId; 3],
-    pub colormap: BuiltinColormap,
+    pub colourmap: BuiltinColourmap,
     pub opacity: f32,
 }
 
@@ -41,7 +41,7 @@ impl Default for FaceAttrState {
             built: false,
             mesh_indices: [MeshId::from_index(0); 3],
             node_ids: [0; 3],
-            colormap: BuiltinColormap::Viridis,
+            colourmap: BuiltinColourmap::Viridis,
             opacity: 1.0,
         }
     }
@@ -70,7 +70,7 @@ impl App {
         // between the pre-normalised data and an explicit scalar_range override.
         //
         // Both Vertex and Face objects use the same underlying Z values, so
-        // the renderer maps them to identical colormap extents automatically.
+        // the renderer maps them to identical colourmap extents automatically.
         let vertex_scalars: Vec<f32> = ref_sphere.positions.iter().map(|p| p[2]).collect();
 
         let face_scalars: Vec<f32> = (0..n_tris)
@@ -85,13 +85,13 @@ impl App {
             })
             .collect();
 
-        // ---- Rainbow colours for FaceColor object ----
+        // ---- Rainbow colours for FaceColour object ----
         // Hue is derived from face centroid Z so every triangle in the same
         // latitude band maps to the same hue, producing closed colour rings.
         // This mirrors the scalar data on the other two spheres and makes the
         // contrast clear: same Z-based data, but colours are applied as direct
-        // RGBA rather than through a colormap.
-        let face_colors: Vec<[f32; 4]> = (0..n_tris)
+        // RGBA rather than through a colourmap.
+        let face_colours: Vec<[f32; 4]> = (0..n_tris)
             .map(|fi| {
                 let i0 = ref_sphere.indices[fi * 3] as usize;
                 let i1 = ref_sphere.indices[fi * 3 + 1] as usize;
@@ -114,7 +114,7 @@ impl App {
             .collect();
 
         let grey_mat = {
-            let mut m = Material::from_color([0.8, 0.8, 0.8]);
+            let mut m = Material::from_colour([0.8, 0.8, 0.8]);
             m.roughness = 0.5;
             m
         };
@@ -151,21 +151,21 @@ impl App {
             grey_mat,
         );
 
-        // ---- Mesh 2: FaceColor attribute (direct RGBA, no colormap) ----
+        // ---- Mesh 2: FaceColour attribute (direct RGBA, no colourmap) ----
         let mut mesh2 = viewport_lib::primitives::sphere(2.0, 48, 24);
         mesh2
             .attributes
-            .insert("color".to_string(), AttributeData::FaceColor(face_colors));
+            .insert("colour".to_string(), AttributeData::FaceColour(face_colours));
         let idx2 = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &mesh2)
             .expect("face attr mesh 2");
         let node2 = self.face_state.scene.add_named(
-            "FaceColor (direct RGBA)",
+            "FaceColour (direct RGBA)",
             Some(idx2),
             glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)),
             {
-                let mut m = Material::from_color([1.0, 1.0, 1.0]);
+                let mut m = Material::from_colour([1.0, 1.0, 1.0]);
                 m.roughness = 0.5;
                 m
             },
@@ -186,31 +186,31 @@ pub(crate) fn controls_face_attr(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(2.0);
     ui.label("  Left   : Vertex  (Gouraud-interpolated)");
     ui.label("  Centre : Face    (flat per-triangle)");
-    ui.label("  Right  : FaceColor (direct RGBA, no colormap)");
+    ui.label("  Right  : FaceColour (direct RGBA, no colourmap)");
 
     ui.separator();
-    ui.label("Colormap  (Vertex + Face objects):");
-    egui::ComboBox::from_id_salt("face_attr_colormap")
-        .selected_text(format!("{:?}", app.face_state.colormap))
+    ui.label("Colourmap  (Vertex + Face objects):");
+    egui::ComboBox::from_id_salt("face_attr_colourmap")
+        .selected_text(format!("{:?}", app.face_state.colourmap))
         .show_ui(ui, |ui| {
             for cm in [
-                BuiltinColormap::Viridis,
-                BuiltinColormap::Plasma,
-                BuiltinColormap::Magma,
-                BuiltinColormap::Inferno,
-                BuiltinColormap::Turbo,
-                BuiltinColormap::Greyscale,
-                BuiltinColormap::Coolwarm,
-                BuiltinColormap::RdBu,
-                BuiltinColormap::Rainbow,
-                BuiltinColormap::Jet,
+                BuiltinColourmap::Viridis,
+                BuiltinColourmap::Plasma,
+                BuiltinColourmap::Magma,
+                BuiltinColourmap::Inferno,
+                BuiltinColourmap::Turbo,
+                BuiltinColourmap::Greyscale,
+                BuiltinColourmap::Coolwarm,
+                BuiltinColourmap::RdBu,
+                BuiltinColourmap::Rainbow,
+                BuiltinColourmap::Jet,
             ] {
-                ui.selectable_value(&mut app.face_state.colormap, cm, format!("{cm:?}"));
+                ui.selectable_value(&mut app.face_state.colourmap, cm, format!("{cm:?}"));
             }
         });
 
     ui.separator();
-    ui.label("FaceColor opacity  (tests OIT path < 1.0):");
+    ui.label("FaceColour opacity  (tests OIT path < 1.0):");
     ui.add(egui::Slider::new(&mut app.face_state.opacity, 0.05_f32..=1.0).step_by(0.05));
 
     ui.separator();

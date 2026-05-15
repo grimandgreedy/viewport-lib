@@ -55,7 +55,7 @@ pub struct LabelItem {
     pub text: String,
 
     /// RGBA text colour in linear float format.
-    pub color: [f32; 4],
+    pub colour: [f32; 4],
 
     /// Font size in logical pixels.
     pub font_size: f32,
@@ -67,7 +67,7 @@ pub struct LabelItem {
     pub background: bool,
 
     /// RGBA colour of the background rectangle.
-    pub background_color: [f32; 4],
+    pub background_colour: [f32; 4],
 
     /// Padding between the text and the background rectangle edge in logical
     /// pixels.  Only used when `background` is `true`.  Default: `3.0`.
@@ -78,7 +78,7 @@ pub struct LabelItem {
     pub leader_line: bool,
 
     /// RGBA colour of the leader line.
-    pub leader_color: [f32; 4],
+    pub leader_colour: [f32; 4],
 
     /// Horizontal alignment of the label text relative to its anchor.
     pub anchor_align: LabelAnchor,
@@ -115,14 +115,14 @@ impl Default for LabelItem {
             world_anchor: None,
             screen_anchor: None,
             text: String::new(),
-            color: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0],
             font_size: 14.0,
             font: None,
             background: false,
-            background_color: [0.0, 0.0, 0.0, 0.55],
+            background_colour: [0.0, 0.0, 0.0, 0.55],
             padding: 3.0,
             leader_line: false,
-            leader_color: [1.0, 1.0, 1.0, 0.6],
+            leader_colour: [1.0, 1.0, 1.0, 0.6],
             anchor_align: LabelAnchor::Leading,
             offset: [0.0, 0.0],
             opacity: 1.0,
@@ -160,7 +160,7 @@ pub enum ScalarBarOrientation {
 
 /// A colour-legend (scalar bar) rendered as a screen-space overlay.
 ///
-/// References an already-uploaded [`crate::resources::ColormapId`] and draws a
+/// References an already-uploaded [`crate::resources::ColourmapId`] and draws a
 /// gradient strip with evenly-spaced tick labels directly in the overlay pass,
 /// without requiring any application-side painting.
 ///
@@ -169,7 +169,7 @@ pub enum ScalarBarOrientation {
 /// ```rust
 /// # use viewport_lib::{ScalarBarItem, ScalarBarAnchor, ScalarBarOrientation};
 /// let bar = ScalarBarItem {
-///     colormap_id: viewport_lib::ColormapId(0),
+///     colourmap_id: viewport_lib::ColourmapId(0),
 ///     scalar_min: 0.0,
 ///     scalar_max: 1.0,
 ///     title: Some("Height (m)".into()),
@@ -180,8 +180,8 @@ pub enum ScalarBarOrientation {
 /// ```
 #[derive(Debug, Clone)]
 pub struct ScalarBarItem {
-    /// Colormap to sample for the gradient strip.
-    pub colormap_id: crate::resources::ColormapId,
+    /// Colourmap to sample for the gradient strip.
+    pub colourmap_id: crate::resources::ColourmapId,
 
     /// Scalar value at the low end (bottom or left) of the gradient.
     pub scalar_min: f32,
@@ -214,7 +214,7 @@ pub struct ScalarBarItem {
     pub font_size: f32,
 
     /// RGBA colour for tick labels and title.  Default: white.
-    pub label_color: [f32; 4],
+    pub label_colour: [f32; 4],
 
     /// Number of evenly-spaced labelled ticks (including min and max).  Default: `5`.
     pub tick_count: u32,
@@ -222,7 +222,7 @@ pub struct ScalarBarItem {
     /// RGBA background box colour (including alpha).
     ///
     /// Default: semi-transparent black `[0.0, 0.0, 0.0, 0.63]`.
-    pub background_color: [f32; 4],
+    pub background_colour: [f32; 4],
 
     /// Reverse the value direction of the gradient.
     ///
@@ -240,7 +240,7 @@ pub struct ScalarBarItem {
 impl Default for ScalarBarItem {
     fn default() -> Self {
         Self {
-            colormap_id: crate::resources::ColormapId(0),
+            colourmap_id: crate::resources::ColourmapId(0),
             scalar_min: 0.0,
             scalar_max: 1.0,
             title: None,
@@ -251,9 +251,9 @@ impl Default for ScalarBarItem {
             margin_px: 16.0,
             font: None,
             font_size: 12.0,
-            label_color: [1.0, 1.0, 1.0, 1.0],
+            label_colour: [1.0, 1.0, 1.0, 1.0],
             tick_count: 5,
-            background_color: [0.0, 0.0, 0.0, 0.63],
+            background_colour: [0.0, 0.0, 0.0, 0.63],
             ticks_reversed: false,
             title_font_size: None,
         }
@@ -273,7 +273,7 @@ impl Default for ScalarBarItem {
 /// let ruler = RulerItem {
 ///     start: [0.0, 0.0, 0.0],
 ///     end: [2.5, 0.0, 0.0],
-///     color: [1.0, 1.0, 1.0, 1.0],
+///     colour: [1.0, 1.0, 1.0, 1.0],
 ///     label_format: Some("{:.2} m".into()),
 ///     ..Default::default()
 /// };
@@ -284,16 +284,16 @@ pub struct RulerItem {
     pub start: [f32; 3],
     /// World-space end endpoint.
     pub end: [f32; 3],
-    /// RGBA color for the ruler line and end caps. Default: white.
-    pub color: [f32; 4],
+    /// RGBA colour for the ruler line and end caps. Default: white.
+    pub colour: [f32; 4],
     /// Line thickness in screen pixels. Default: `1.5`.
     pub line_width_px: f32,
     /// Font for the distance label. `None` = built-in default.
     pub font: Option<crate::resources::FontHandle>,
     /// Font size for the distance label in logical pixels. Default: `13.0`.
     pub font_size: f32,
-    /// RGBA color for the distance label text. Default: white.
-    pub label_color: [f32; 4],
+    /// RGBA colour for the distance label text. Default: white.
+    pub label_colour: [f32; 4],
     /// Format string for the distance value using Rust `format!` syntax.
     ///
     /// The `{}` placeholder is replaced with the computed distance.
@@ -309,11 +309,11 @@ impl Default for RulerItem {
         Self {
             start: [0.0; 3],
             end: [1.0, 0.0, 0.0],
-            color: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0],
             line_width_px: 1.5,
             font: None,
             font_size: 13.0,
-            label_color: [1.0, 1.0, 1.0, 1.0],
+            label_colour: [1.0, 1.0, 1.0, 1.0],
             label_format: None,
             end_caps: true,
         }
@@ -399,11 +399,11 @@ pub struct LoadingBarItem {
     /// Distance from the anchored viewport edge in logical pixels.
     pub margin_px: f32,
     /// Background (unfilled) colour.
-    pub background_color: [f32; 4],
+    pub background_colour: [f32; 4],
     /// Fill (progress) colour.
-    pub fill_color: [f32; 4],
+    pub fill_colour: [f32; 4],
     /// Label text colour.
-    pub label_color: [f32; 4],
+    pub label_colour: [f32; 4],
     /// Font size for the label in logical pixels.
     pub font_size: f32,
     /// Corner radius of the bar rectangles in logical pixels.
@@ -419,9 +419,9 @@ impl Default for LoadingBarItem {
             width_px: 300.0,
             height_px: 16.0,
             margin_px: 24.0,
-            background_color: [0.12, 0.12, 0.12, 0.88],
-            fill_color: [0.22, 0.60, 1.0, 1.0],
-            label_color: [1.0, 1.0, 1.0, 1.0],
+            background_colour: [0.12, 0.12, 0.12, 0.88],
+            fill_colour: [0.22, 0.60, 1.0, 1.0],
+            label_colour: [1.0, 1.0, 1.0, 1.0],
             font_size: 13.0,
             corner_radius: 4.0,
         }

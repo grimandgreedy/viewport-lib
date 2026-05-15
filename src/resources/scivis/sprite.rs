@@ -172,7 +172,7 @@ impl ViewportGpuResources {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct GpuSpriteInstance {
-            color: [f32; 4],
+            colour: [f32; 4],
             size: f32,
             rotation: f32,
             _pad0: f32,
@@ -182,10 +182,10 @@ impl ViewportGpuResources {
 
         let instances: Vec<GpuSpriteInstance> = (0..item.positions.len())
             .map(|i| GpuSpriteInstance {
-                color: if i < item.colors.len() {
-                    item.colors[i]
+                colour: if i < item.colours.len() {
+                    item.colours[i]
                 } else {
-                    item.default_color
+                    item.default_colour
                 },
                 size: if i < item.sizes.len() {
                     item.sizes[i]

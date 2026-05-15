@@ -1,7 +1,7 @@
 // tensor_glyph_outline_mask.wgsl : renders selected tensor glyph instances
 // as solid geometry into the R8 outline mask texture.  Uses the same bind
 // group layout and vertex transform as tensor_glyph.wgsl but outputs a
-// flat mask value instead of lit/colored fragments.
+// flat mask value instead of lit/coloured fragments.
 //
 // Group 0: Camera (view_proj).
 // Group 1: TensorGlyphUniform + LUT texture + sampler (unused, layout must match).
@@ -44,7 +44,7 @@ struct TensorInstance {
 struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) normal:   vec3<f32>,
-    @location(2) color:    vec4<f32>,
+    @location(2) colour:    vec4<f32>,
     @location(3) uv:       vec2<f32>,
     @location(4) tangent:  vec4<f32>,
     @builtin(instance_index) instance_index: u32,

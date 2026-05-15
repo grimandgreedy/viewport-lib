@@ -34,9 +34,9 @@ pub(crate) enum AuxSubMode {
     Track,
 }
 
-const COLOR_A: [f32; 4] = [0.4, 0.7, 1.0, 1.0];
-const COLOR_B: [f32; 4] = [1.0, 0.6, 0.3, 1.0];
-const COLOR_C: [f32; 4] = [0.5, 1.0, 0.5, 1.0];
+const COLOUR_A: [f32; 4] = [0.4, 0.7, 1.0, 1.0];
+const COLOUR_B: [f32; 4] = [1.0, 0.6, 0.3, 1.0];
+const COLOUR_C: [f32; 4] = [0.5, 1.0, 0.5, 1.0];
 
 /// Build a camera-to-world pose from eye/target/up (Z-up world).
 fn camera_pose(eye: glam::Vec3, target: glam::Vec3, up: glam::Vec3) -> [[f32; 4]; 4] {
@@ -118,7 +118,7 @@ impl App {
             Some(platform_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.125)),
             {
-                let mut m = Material::from_color([1.0, 1.0, 1.0]);
+                let mut m = Material::from_colour([1.0, 1.0, 1.0]);
                 m.roughness = 0.9;
                 m
             },
@@ -134,7 +134,7 @@ impl App {
             Some(wall_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.2)),
             {
-                let mut m = Material::from_color([1.0, 1.0, 1.0]);
+                let mut m = Material::from_colour([1.0, 1.0, 1.0]);
                 m.roughness = 0.8;
                 m
             },
@@ -156,7 +156,7 @@ impl App {
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(-2.5, -3.0, 0.6)),
             {
-                let mut m = Material::from_color([0.85, 0.22, 0.18]);
+                let mut m = Material::from_colour([0.85, 0.22, 0.18]);
                 m.roughness = 0.3;
                 m
             },
@@ -166,7 +166,7 @@ impl App {
             Some(box_id),
             glam::Mat4::from_translation(glam::Vec3::new(2.5, -2.5, 0.6)),
             {
-                let mut m = Material::from_color([0.95, 0.55, 0.10]);
+                let mut m = Material::from_colour([0.95, 0.55, 0.10]);
                 m.roughness = 0.5;
                 m
             },
@@ -178,7 +178,7 @@ impl App {
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(2.5, 3.0, 0.6)),
             {
-                let mut m = Material::from_color([0.15, 0.65, 0.80]);
+                let mut m = Material::from_colour([0.15, 0.65, 0.80]);
                 m.roughness = 0.3;
                 m
             },
@@ -188,7 +188,7 @@ impl App {
             Some(box_id),
             glam::Mat4::from_translation(glam::Vec3::new(-2.5, 3.0, 0.6)),
             {
-                let mut m = Material::from_color([0.55, 0.20, 0.80]);
+                let mut m = Material::from_colour([0.55, 0.20, 0.80]);
                 m.roughness = 0.5;
                 m
             },
@@ -202,7 +202,7 @@ impl App {
         fa.aspect = 16.0 / 9.0;
         fa.near = 0.5;
         fa.far = 3.5;
-        fa.color = COLOR_A;
+        fa.colour = COLOUR_A;
 
         // Camera B : north of the scene, angled down at the cool objects.
         let eye_b = glam::vec3(0.0, 14.0, 2.5);
@@ -212,7 +212,7 @@ impl App {
         fb.aspect = 16.0 / 9.0;
         fb.near = 0.5;
         fb.far = 3.5;
-        fb.color = COLOR_B;
+        fb.colour = COLOUR_B;
 
         // Camera C : west end, aimed at wall mid-height.
         let eye_c = glam::vec3(-18.0, 0.0, 2.0);
@@ -222,7 +222,7 @@ impl App {
         fc.aspect = 16.0 / 9.0;
         fc.near = 0.5;
         fc.far = 4.5;
-        fc.color = COLOR_C;
+        fc.colour = COLOUR_C;
 
         self.aux_state.frustums = vec![fa, fb, fc];
 
@@ -238,7 +238,7 @@ impl App {
                 kind: LightKind::Directional {
                     direction: [0.3, -0.5, 0.8],
                 },
-                color: [1.0, 0.97, 0.90],
+                colour: [1.0, 0.97, 0.90],
                 intensity: 1.8,
                 ..LightSource::default()
             }],
@@ -530,9 +530,9 @@ impl App {
         if self.aux_state.sub_mode != AuxSubMode::Framing {
             return;
         }
-        let (color, size, arm_len, thick) = match self.aux_state.active_frustum {
+        let (colour, size, arm_len, thick) = match self.aux_state.active_frustum {
             Some(idx) => {
-                let fc = self.aux_state.frustums[idx].color;
+                let fc = self.aux_state.frustums[idx].colour;
                 let c = [
                     (fc[0] * 255.0) as u8,
                     (fc[1] * 255.0) as u8,
@@ -551,7 +551,7 @@ impl App {
             (ImageAnchor::BottomRight, true, true),
         ] {
             let mut item = ScreenImageItem::default();
-            item.pixels = bracket_pixels(color, size, arm_len, thick, fx, fy);
+            item.pixels = bracket_pixels(colour, size, arm_len, thick, fx, fy);
             item.width = size;
             item.height = size;
             item.anchor = anchor;
@@ -562,7 +562,7 @@ impl App {
 
         if self.aux_state.active_frustum.is_some() {
             let mut item = ScreenImageItem::default();
-            item.pixels = crosshair_pixels(color, 40, 3, 5);
+            item.pixels = crosshair_pixels(colour, 40, 3, 5);
             item.width = 40;
             item.height = 40;
             item.anchor = ImageAnchor::Center;
@@ -574,7 +574,7 @@ impl App {
 }
 
 fn bracket_pixels(
-    color: [u8; 4],
+    colour: [u8; 4],
     size: u32,
     arm: u32,
     thick: u32,
@@ -586,16 +586,16 @@ fn bracket_pixels(
         for t in 0..thick {
             let x = if fx { size - 1 - i } else { i };
             let y = if fy { size - 1 - t } else { t };
-            p[(y * size + x) as usize] = color;
+            p[(y * size + x) as usize] = colour;
             let x2 = if fx { size - 1 - t } else { t };
             let y2 = if fy { size - 1 - i } else { i };
-            p[(y2 * size + x2) as usize] = color;
+            p[(y2 * size + x2) as usize] = colour;
         }
     }
     p
 }
 
-fn crosshair_pixels(color: [u8; 4], size: u32, thick: u32, gap: u32) -> Vec<[u8; 4]> {
+fn crosshair_pixels(colour: [u8; 4], size: u32, thick: u32, gap: u32) -> Vec<[u8; 4]> {
     let mut p = vec![[0u8; 4]; (size * size) as usize];
     let c = size / 2;
     let ht = thick / 2;
@@ -606,11 +606,11 @@ fn crosshair_pixels(color: [u8; 4], size: u32, thick: u32, gap: u32) -> Vec<[u8;
         for t in 0..thick {
             let y = c.saturating_sub(ht) + t;
             if y < size {
-                p[(y * size + i) as usize] = color;
+                p[(y * size + i) as usize] = colour;
             }
             let x = c.saturating_sub(ht) + t;
             if x < size {
-                p[(i * size + x) as usize] = color;
+                p[(i * size + x) as usize] = colour;
             }
         }
     }

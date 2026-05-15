@@ -62,13 +62,13 @@ impl App {
             ("+Z Up", glam::Vec3::new(0.0, 0.0, 4.0), [0.25, 0.50, 0.90]),
         ];
 
-        for (name, pos, color) in objects {
+        for (name, pos, colour) in objects {
             let mesh = self.upload_box(renderer);
             self.ct_state.scene.add_named(
                 name,
                 Some(mesh),
                 glam::Mat4::from_translation(*pos),
-                Material::from_color(*color),
+                Material::from_colour(*colour),
             );
         }
 
@@ -141,6 +141,6 @@ pub(crate) fn controls_camera_tools(app: &mut App, ui: &mut egui::Ui) {
         }
     }
     ui.separator();
-    ui.label("The colored boxes identify each axis:");
+    ui.label("The coloured boxes identify each axis:");
     ui.label("Red = +X,  Green = +Y,  Blue = +Z");
 }

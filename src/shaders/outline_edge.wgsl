@@ -7,7 +7,7 @@
 // Group 0: mask texture + sampler + OutlineEdgeUniform.
 
 struct OutlineEdgeUniform {
-    color: vec4<f32>,
+    colour: vec4<f32>,
     radius: f32,
     viewport_w: f32,
     viewport_h: f32,
@@ -89,5 +89,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    return vec4<f32>(params.color.rgb, params.color.a * edge);
+    return vec4<f32>(params.colour.rgb, params.colour.a * edge);
 }

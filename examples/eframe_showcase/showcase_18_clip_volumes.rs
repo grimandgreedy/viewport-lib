@@ -11,7 +11,7 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BuiltinColormap, ClipObject, ColormapId, Gizmo, Material, ViewportRenderer, VolumeId,
+    BuiltinColourmap, ClipObject, ColourmapId, Gizmo, Material, ViewportRenderer, VolumeId,
     VolumeItem, scene::Scene,
 };
 
@@ -126,7 +126,7 @@ impl App {
         self.clipvol_state
             .scene
             .add_named("Torus", Some(torus_id), glam::Mat4::IDENTITY, {
-                let mut m = Material::from_color([0.82, 0.42, 0.18]);
+                let mut m = Material::from_colour([0.82, 0.42, 0.18]);
                 m.roughness = 0.35;
                 m.metallic = 0.15;
                 m
@@ -142,7 +142,7 @@ impl App {
         self.clipvol_state
             .scene
             .add_named("Capsule", Some(capsule_id), glam::Mat4::IDENTITY, {
-                let mut m = Material::from_color([0.28, 0.58, 0.92]);
+                let mut m = Material::from_colour([0.28, 0.58, 0.92]);
                 m.roughness = 0.25;
                 m.metallic = 0.35;
                 m
@@ -442,7 +442,7 @@ impl App {
         let vol_id = self.clipvol_state.volume_id?;
         let mut item = VolumeItem::default();
         item.volume_id = vol_id;
-        item.color_lut = Some(ColormapId(BuiltinColormap::Turbo as usize));
+        item.colour_lut = Some(ColourmapId(BuiltinColourmap::Turbo as usize));
         item.opacity_scale = 1.0;
         item.scalar_range = (0.0, 1.0);
         item.threshold_min = 0.05;
@@ -479,7 +479,7 @@ impl App {
                 } => {
                     let normal = plane_normal(*elevation, *azimuth);
                     let mut co = ClipObject::plane(normal, *distance);
-                    co.color = plane_overlay;
+                    co.colour = plane_overlay;
                     co
                 }
                 ActiveClip::Box {
@@ -491,12 +491,12 @@ impl App {
                     let (sin_y, cos_y) = yaw_rad.sin_cos();
                     let orient = [[cos_y, sin_y, 0.0], [-sin_y, cos_y, 0.0], [0.0, 0.0, 1.0]];
                     let mut co = ClipObject::box_shape(*center, *half_extents, orient);
-                    co.color = overlay;
+                    co.colour = overlay;
                     co
                 }
                 ActiveClip::Sphere { center, radius } => {
                     let mut co = ClipObject::sphere(*center, *radius);
-                    co.color = overlay;
+                    co.colour = overlay;
                     co
                 }
                 ActiveClip::Cylinder {
@@ -510,7 +510,7 @@ impl App {
                     let (sp, cp) = axis_pitch.to_radians().sin_cos();
                     let axis = [cp * cy, cp * sy, sp];
                     let mut co = ClipObject::cylinder(*center, axis, *radius, *half_length);
-                    co.color = overlay;
+                    co.colour = overlay;
                     co
                 }
             })

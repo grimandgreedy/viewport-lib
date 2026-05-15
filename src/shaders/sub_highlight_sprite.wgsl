@@ -5,7 +5,7 @@
 // in the fragment shader to produce a round sprite.
 //
 // Group 0: Camera uniform (matching camera_bgl binding 0).
-// Group 1: SubHighlightUniform (edge_color used for sprite color, vertex_size
+// Group 1: SubHighlightUniform (edge_colour used for sprite colour, vertex_size
 //          controls the diameter in pixels, viewport_width/height for expansion).
 //
 // Instance input (12 bytes per point, step_mode = Instance):
@@ -18,8 +18,8 @@ struct Camera {
 }
 
 struct SubHighlight {
-    fill_color:      vec4<f32>,
-    edge_color:      vec4<f32>,
+    fill_colour:      vec4<f32>,
+    edge_colour:      vec4<f32>,
     edge_width:      f32,
     vertex_size:     f32,
     viewport_width:  f32,
@@ -69,5 +69,5 @@ fn vs_main(
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Circular disc discard.
     if dot(in.uv, in.uv) > 1.0 { discard; }
-    return hl.edge_color;
+    return hl.edge_colour;
 }

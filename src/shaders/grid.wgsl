@@ -3,7 +3,7 @@
 // No vertex buffer : triangle positions are hardcoded in vs_main (full-screen triangle).
 // The fragment shader unprojects each pixel to a world-space ray, intersects with the
 // horizontal grid plane z = grid_z (Z-up, XY ground plane), and writes both an
-// analytically anti-aliased grid color and the correct clip-space depth via
+// analytically anti-aliased grid colour and the correct clip-space depth via
 // @builtin(frag_depth).
 //
 // Horizon fade: lines fade to transparent as the viewing angle approaches horizontal,
@@ -20,8 +20,8 @@ struct GridUniform {
     spacing_minor: f32,          // offset 144
     spacing_major: f32,          // offset 148
     snap_origin:  vec2<f32>,     // offset 152
-    color_minor:  vec4<f32>,     // offset 160
-    color_major:  vec4<f32>,     // offset 176
+    colour_minor:  vec4<f32>,     // offset 160
+    colour_major:  vec4<f32>,     // offset 176
 }
 
 @group(0) @binding(0) var<uniform> grid: GridUniform;
@@ -44,7 +44,7 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 }
 
 struct FragOut {
-    @location(0)         color: vec4<f32>,
+    @location(0)         colour: vec4<f32>,
     @builtin(frag_depth) depth: f32,
 }
 
@@ -95,21 +95,21 @@ fn fs_main(in: VertexOutput) -> FragOut {
     let d_minor  = abs(fract(c_minor - 0.5) - 0.5);
     let fw_minor = max(fwidth(c_minor), vec2<f32>(1e-4));
     let line_minor  = 1.0 - smoothstep(vec2<f32>(0.0), fw_minor, d_minor);
-    let alpha_minor = max(line_minor.x, line_minor.y) * grid.color_minor.a * fade;
+    let alpha_minor = max(line_minor.x, line_minor.y) * grid.colour_minor.a * fade;
 
     // Major grid lines (every spacing_major units, typically 10x minor).
     let c_major  = pos / grid.spacing_major;
     let d_major  = abs(fract(c_major - 0.5) - 0.5);
     let fw_major = max(fwidth(c_major), vec2<f32>(1e-4));
     let line_major  = 1.0 - smoothstep(vec2<f32>(0.0), fw_major, d_major);
-    let alpha_major = max(line_major.x, line_major.y) * grid.color_major.a * fade;
+    let alpha_major = max(line_major.x, line_major.y) * grid.colour_major.a * fade;
 
     let final_alpha = clamp(alpha_minor + alpha_major, 0.0, 1.0);
     if final_alpha < 0.001 { discard; }
 
-    // Blend major color over minor color proportional to their contributions.
+    // Blend major colour over minor colour proportional to their contributions.
     let t_blend = clamp(alpha_major / (alpha_minor + alpha_major + 1e-5), 0.0, 1.0);
-    let rgb = mix(grid.color_minor.rgb, grid.color_major.rgb, t_blend);
+    let rgb = mix(grid.colour_minor.rgb, grid.colour_major.rgb, t_blend);
 
     return FragOut(vec4<f32>(rgb, final_alpha), grid_depth);
 }

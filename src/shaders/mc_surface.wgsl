@@ -9,7 +9,7 @@
 //   binding 3 : Lights uniform
 //
 // Group 1 : per-draw material
-//   binding 0 : McSurfaceUniform (base_color vec3, roughness f32)
+//   binding 0 : McSurfaceUniform (base_colour vec3, roughness f32)
 
 // ---------------------------------------------------------------------------
 // Group 0: camera + lights (identical structs to implicit.wgsl)
@@ -29,7 +29,7 @@ struct SingleLight {
     light_view_proj: mat4x4<f32>,
     pos_or_dir:      vec3<f32>,
     light_type:      u32,
-    color:           vec3<f32>,
+    colour:           vec3<f32>,
     intensity:       f32,
     range:           f32,
     inner_angle:     f32,
@@ -43,9 +43,9 @@ struct Lights {
     shadow_bias:          f32,
     shadows_enabled:      u32,
     _pad:                 u32,
-    sky_color:            vec3<f32>,
+    sky_colour:            vec3<f32>,
     hemisphere_intensity: f32,
-    ground_color:         vec3<f32>,
+    ground_colour:         vec3<f32>,
     _pad2:                f32,
     lights:               array<SingleLight, 8>,
     ibl_enabled:          u32,
@@ -62,7 +62,7 @@ struct Lights {
 // ---------------------------------------------------------------------------
 
 struct McSurfaceUniform {
-    base_color: vec3<f32>,
+    base_colour: vec3<f32>,
     roughness:  f32,
 };
 
@@ -104,8 +104,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Hemisphere ambient.
     let up_dot = dot(N, vec3<f32>(0.0, 1.0, 0.0)) * 0.5 + 0.5;
     let ambient = mix(
-        lights.ground_color * lights.hemisphere_intensity,
-        lights.sky_color    * lights.hemisphere_intensity,
+        lights.ground_colour * lights.hemisphere_intensity,
+        lights.sky_colour    * lights.hemisphere_intensity,
         up_dot,
     );
 
@@ -120,7 +120,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // from scene is -pos_or_dir for directional lights).
         let L     = normalize(-light.pos_or_dir);
         let H     = normalize(L + V);
-        let light_rgb = light.color * light.intensity;
+        let light_rgb = light.colour * light.intensity;
 
         let diff  = max(dot(N, L), 0.0);
         // Blinn-Phong specular; map roughness [0,1] -> shininess [2, 128].
@@ -131,6 +131,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         specular += light_rgb * spec;
     }
 
-    let final_color = material.base_color * (ambient + diffuse) + specular;
-    return vec4<f32>(final_color, 1.0);
+    let final_colour = material.base_colour * (ambient + diffuse) + specular;
+    return vec4<f32>(final_colour, 1.0);
 }

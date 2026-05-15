@@ -31,7 +31,7 @@ struct SingleLight {
     light_view_proj: mat4x4<f32>,
     pos_or_dir:      vec3<f32>,
     light_type:      u32,
-    color:           vec3<f32>,
+    colour:           vec3<f32>,
     intensity:       f32,
     range:           f32,
     inner_angle:     f32,
@@ -45,9 +45,9 @@ struct Lights {
     shadow_bias:          f32,
     shadows_enabled:      u32,
     _pad:                 u32,
-    sky_color:            vec3<f32>,
+    sky_colour:            vec3<f32>,
     hemisphere_intensity: f32,
-    ground_color:         vec3<f32>,
+    ground_colour:         vec3<f32>,
     _pad2:                f32,
     lights:               array<SingleLight, 8>,
     ibl_enabled:          u32,
@@ -71,7 +71,7 @@ struct ImplicitPrimitive {
     _pad1:   f32,
     params0: vec4<f32>,  // sphere: (cx,cy,cz,r)  box: (cx,cy,cz,_)  plane: (nx,ny,nz,d)  capsule: (ax,ay,az,r)
     params1: vec4<f32>,  // box: (hx,hy,hz,_)     capsule: (bx,by,bz,_)
-    color:   vec4<f32>,  // linear RGBA per primitive
+    colour:   vec4<f32>,  // linear RGBA per primitive
 };
 
 // Matches ImplicitUniformRaw in src/resources/implicit.rs.
@@ -183,8 +183,8 @@ fn scene_sdf(p: vec3<f32>) -> f32 {
     return d;
 }
 
-// Proximity-weighted color blend across all primitives (matches blob_color logic).
-fn scene_color(p: vec3<f32>) -> vec4<f32> {
+// Proximity-weighted colour blend across all primitives (matches blob_colour logic).
+fn scene_colour(p: vec3<f32>) -> vec4<f32> {
     var total_w = 0.0;
     var col = vec4<f32>(0.0);
     for (var i: u32 = 0u; i < u.num_primitives; i++) {
@@ -192,11 +192,11 @@ fn scene_color(p: vec3<f32>) -> vec4<f32> {
         let d = eval_primitive(p, prim);
         let blend = select(0.9, prim.blend, prim.blend > 0.0);
         let w = max(-d + blend, 0.0);
-        col   += prim.color * w;
+        col   += prim.colour * w;
         total_w += w;
     }
     if total_w < 1e-5 {
-        return u.primitives[0].color;
+        return u.primitives[0].colour;
     }
     return col / total_w;
 }
@@ -216,7 +216,7 @@ fn estimate_normal(p: vec3<f32>) -> vec3<f32> {
 // ---------------------------------------------------------------------------
 
 struct FragOutput {
-    @location(0)         color: vec4<f32>,
+    @location(0)         colour: vec4<f32>,
     @builtin(frag_depth) depth: f32,
 };
 
@@ -260,7 +260,7 @@ fn fs_main(in: VertexOutput) -> FragOutput {
 
     // Normal and shading.
     let normal     = estimate_normal(hit_pos);
-    let base_color = scene_color(hit_pos);
+    let base_colour = scene_colour(hit_pos);
 
     // First directional light (or hardcoded fallback).
     var light_dir: vec3<f32>;
@@ -268,7 +268,7 @@ fn fs_main(in: VertexOutput) -> FragOutput {
     if lights.count > 0u && lights.lights[0].light_type == 0u {
         // Directional: pos_or_dir is the light direction (pointing away from surface).
         light_dir = normalize(-lights.lights[0].pos_or_dir);
-        light_rgb = lights.lights[0].color * lights.lights[0].intensity;
+        light_rgb = lights.lights[0].colour * lights.lights[0].intensity;
     } else {
         light_dir = normalize(vec3<f32>(0.577, 0.577, 0.577));
         light_rgb = vec3<f32>(1.0);
@@ -277,14 +277,14 @@ fn fs_main(in: VertexOutput) -> FragOutput {
     const AMBIENT: f32 = 0.25;
     let diffuse   = max(dot(normal, light_dir), 0.0);
     let shade_fac = AMBIENT + (1.0 - AMBIENT) * diffuse;
-    let shaded    = vec4<f32>(base_color.rgb * light_rgb * shade_fac, base_color.a);
+    let shaded    = vec4<f32>(base_colour.rgb * light_rgb * shade_fac, base_colour.a);
 
     // Compute NDC depth of the hit point so the hardware depth test fires correctly.
     let clip_hit = camera.view_proj * vec4<f32>(hit_pos, 1.0);
     let ndc_depth = clip_hit.z / clip_hit.w;
 
     var out: FragOutput;
-    out.color = shaded;
+    out.colour = shaded;
     out.depth = ndc_depth;
     return out;
 }

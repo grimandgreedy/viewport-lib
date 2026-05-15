@@ -47,7 +47,7 @@ impl ViewportGpuResources {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 },
-                // binding 3: lut_tex (colormap texture_2d)
+                // binding 3: lut_tex (colourmap texture_2d)
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -194,11 +194,11 @@ impl ViewportGpuResources {
         });
 
         // Resolve LUT view index before creating any bind group references.
-        let lut_view_idx: Option<usize> = self.builtin_colormap_ids.and_then(|ids| {
+        let lut_view_idx: Option<usize> = self.builtin_colourmap_ids.and_then(|ids| {
             let preset_id = item
-                .color_lut
-                .unwrap_or(ids[crate::resources::BuiltinColormap::Viridis as usize]);
-            if preset_id.0 < self.colormap_views.len() {
+                .colour_lut
+                .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
+            if preset_id.0 < self.colourmap_views.len() {
                 Some(preset_id.0)
             } else {
                 None
@@ -213,7 +213,7 @@ impl ViewportGpuResources {
         // Borrow vol_view and lut_view after all mutable references are resolved.
         let vol_view = &self.volume_textures[item.volume_id.0].1;
         let lut_view = lut_view_idx
-            .map(|i| &self.colormap_views[i])
+            .map(|i| &self.colourmap_views[i])
             .unwrap_or(&self.fallback_lut_view);
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -876,7 +876,7 @@ impl ViewportGpuResources {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 },
-                // binding 3: lut_tex (colormap texture_2d)
+                // binding 3: lut_tex (colourmap texture_2d)
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -962,7 +962,7 @@ impl ViewportGpuResources {
     /// Upload one [`VolumeSurfaceSliceItem`] and return per-frame GPU data.
     ///
     /// Creates a uniform buffer and a bind group pointing at the existing uploaded
-    /// volume texture and colormap LUT. The mesh vertex/index buffers are referenced
+    /// volume texture and colourmap LUT. The mesh vertex/index buffers are referenced
     /// by `MeshId` and looked up from the mesh store at draw time.
     pub(crate) fn upload_volume_surface_slice(
         &mut self,
@@ -1018,11 +1018,11 @@ impl ViewportGpuResources {
             ..Default::default()
         });
 
-        let lut_view_idx: Option<usize> = self.builtin_colormap_ids.and_then(|ids| {
+        let lut_view_idx: Option<usize> = self.builtin_colourmap_ids.and_then(|ids| {
             let preset_id = item
-                .color_lut
-                .unwrap_or(ids[crate::resources::BuiltinColormap::Viridis as usize]);
-            if preset_id.0 < self.colormap_views.len() {
+                .colour_lut
+                .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
+            if preset_id.0 < self.colourmap_views.len() {
                 Some(preset_id.0)
             } else {
                 None
@@ -1036,7 +1036,7 @@ impl ViewportGpuResources {
 
         let vol_view = &self.volume_textures[item.volume_id.0].1;
         let lut_view = lut_view_idx
-            .map(|i| &self.colormap_views[i])
+            .map(|i| &self.colourmap_views[i])
             .unwrap_or(&self.fallback_lut_view);
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {

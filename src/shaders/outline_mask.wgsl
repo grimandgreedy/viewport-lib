@@ -13,7 +13,7 @@ struct Camera {
 
 struct OutlineUniform {
     model: mat4x4<f32>,
-    color: vec4<f32>,
+    colour: vec4<f32>,
     pixel_offset: f32,
     _pad0: f32,
     _pad1: f32,

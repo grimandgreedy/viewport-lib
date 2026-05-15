@@ -51,16 +51,16 @@ impl App {
             [-1.5, 1.5, 0.0],
             [1.5, 1.5, 0.0],
         ];
-        let colors = [
+        let colours = [
             [0.9, 0.3, 0.3],
             [0.3, 0.9, 0.3],
             [0.3, 0.3, 0.9],
             [0.9, 0.9, 0.3],
         ];
-        for (i, (pos, color)) in positions.iter().zip(&colors).enumerate() {
+        for (i, (pos, colour)) in positions.iter().zip(&colours).enumerate() {
             let mesh = self.upload_box(renderer);
             let transform = glam::Mat4::from_translation(glam::Vec3::from(*pos));
-            let mat = Material::from_color(*color);
+            let mat = Material::from_colour(*colour);
             let name = format!("Box {}", i + 1);
             let id = self
                 .sg_state
@@ -145,7 +145,7 @@ pub(crate) fn controls_scene_graph(app: &mut App, ui: &mut egui::Ui, frame: &efr
                 "Child",
                 Some(mesh),
                 local,
-                Material::from_color([1.0, 0.6, 0.2]),
+                Material::from_colour([1.0, 0.6, 0.2]),
             );
             app.sg_state.scene.set_parent(child_id, Some(parent_id));
             app.sg_state.selection.select_one(child_id);
@@ -202,21 +202,21 @@ pub(crate) fn material_preset(index: usize) -> Material {
     match index % 4 {
         0 => Material::default(),
         1 => {
-            let mut m = Material::from_color([0.8, 0.2, 0.2]);
+            let mut m = Material::from_colour([0.8, 0.2, 0.2]);
             m.specular = 0.8;
             m.shininess = 64.0;
             m.ambient = 0.1;
             m
         }
         2 => {
-            let mut m = Material::from_color([0.2, 0.4, 0.9]);
+            let mut m = Material::from_colour([0.2, 0.4, 0.9]);
             m.opacity = 0.5;
             m.specular = 0.9;
             m.shininess = 128.0;
             m
         }
         3 => {
-            let mut m = Material::from_color([0.3, 0.7, 0.3]);
+            let mut m = Material::from_colour([0.3, 0.7, 0.3]);
             m.specular = 0.1;
             m.shininess = 8.0;
             m.diffuse = 0.9;
@@ -226,9 +226,9 @@ pub(crate) fn material_preset(index: usize) -> Material {
     }
 }
 
-pub(crate) fn background_color(index: usize) -> [f32; 4] {
+pub(crate) fn background_colour(index: usize) -> [f32; 4] {
     match index % 3 {
-        0 => crate::BG_COLOR,
+        0 => crate::BG_COLOUR,
         1 => [0.05, 0.08, 0.15, 1.0],
         2 => [0.18, 0.16, 0.14, 1.0],
         _ => unreachable!(),

@@ -127,7 +127,7 @@ impl App {
             [0.0, -3.0, 0.0],
             [0.0, 0.0, 3.0],
         ];
-        let colors: [[f32; 3]; 6] = [
+        let colours: [[f32; 3]; 6] = [
             [0.85, 0.85, 0.85],
             [0.9, 0.3, 0.3],
             [0.3, 0.9, 0.3],
@@ -137,10 +137,10 @@ impl App {
         ];
         let names = ["Center", "Right", "Left", "Front", "Back", "Top"];
 
-        for (i, ((pos, color), name)) in positions.iter().zip(&colors).zip(&names).enumerate() {
+        for (i, ((pos, colour), name)) in positions.iter().zip(&colours).zip(&names).enumerate() {
             let mesh = self.upload_box(renderer);
             let transform = glam::Mat4::from_translation(glam::Vec3::from(*pos));
-            let mat = Material::from_color(*color);
+            let mat = Material::from_colour(*colour);
             let id = self
                 .mv_state
                 .scene
@@ -459,8 +459,8 @@ impl App {
             .collect_render_items(&self.mv_state.selection);
         let lighting = LightingSettings {
             hemisphere_intensity: 0.5,
-            sky_color: [1.0, 1.0, 1.0],
-            ground_color: [1.0, 1.0, 1.0],
+            sky_colour: [1.0, 1.0, 1.0],
+            ground_colour: [1.0, 1.0, 1.0],
             ..LightingSettings::default()
         };
         let scene_gen = self.mv_state.scene.version();
@@ -496,7 +496,7 @@ impl App {
             fd.effects.lighting = lighting.clone();
             fd.viewport.show_grid = true;
             fd.viewport.show_axes_indicator = true;
-            fd.viewport.background_color = Some(crate::BG_COLOR);
+            fd.viewport.background_colour = Some(crate::BG_COLOUR);
             fd.interaction.outline_selected = has_selection;
             fd.scene.generation = scene_gen;
             fd.interaction.selection_generation = sel_gen;
@@ -519,8 +519,8 @@ impl App {
 
         // --- egui overlays: divider lines + quad labels ---
         let painter = ui.painter_at(rect);
-        let div_color = egui::Color32::from_gray(90);
-        let stroke = egui::Stroke::new(1.0, div_color);
+        let div_colour = egui::Color32::from_gray(90);
+        let stroke = egui::Stroke::new(1.0, div_colour);
         // Vertical centre line.
         painter.line_segment(
             [
@@ -538,14 +538,14 @@ impl App {
             stroke,
         );
         // Quad labels.
-        let label_color = egui::Color32::from_rgba_unmultiplied(200, 200, 200, 160);
+        let label_colour = egui::Color32::from_rgba_unmultiplied(200, 200, 200, 160);
         for (i, qr) in quad_rects.iter().enumerate() {
             painter.text(
                 qr.min + egui::vec2(6.0, 4.0),
                 egui::Align2::LEFT_TOP,
                 QUAD_LABELS[i],
                 egui::FontId::proportional(11.0),
-                label_color,
+                label_colour,
             );
         }
 

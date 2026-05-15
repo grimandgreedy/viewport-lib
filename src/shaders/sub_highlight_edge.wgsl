@@ -10,7 +10,7 @@
 // hardware polygon offset.
 //
 // Group 0: Camera uniform (matching camera_bgl binding 0).
-// Group 1: SubHighlightUniform (contains edge_color, edge_width, viewport dims).
+// Group 1: SubHighlightUniform (contains edge_colour, edge_width, viewport dims).
 //
 // Instance input (24 bytes per segment):
 //   location 0 : pos_a   vec3  (world-space segment start)
@@ -23,8 +23,8 @@ struct Camera {
 }
 
 struct SubHighlight {
-    fill_color:      vec4<f32>,
-    edge_color:      vec4<f32>,
+    fill_colour:      vec4<f32>,
+    edge_colour:      vec4<f32>,
     edge_width:      f32,
     vertex_size:     f32,
     viewport_width:  f32,
@@ -93,5 +93,5 @@ fn vs_main(
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    return hl.edge_color;
+    return hl.edge_colour;
 }

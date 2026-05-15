@@ -3,9 +3,9 @@
 pub enum ToneMapping {
     /// Reinhard tone mapping (simple, good for scenes without extreme HDR).
     Reinhard,
-    /// ACES filmic tone mapping (cinematic look, strong color shift).
+    /// ACES filmic tone mapping (cinematic look, strong colour shift).
     Aces,
-    /// Khronos Neutral tone mapping (perceptually uniform, minimal color shift).
+    /// Khronos Neutral tone mapping (perceptually uniform, minimal colour shift).
     ///
     /// Values in [0, 1] pass through with little change. Only meaningful work
     /// is done on HDR values above 1.0. This is the default.

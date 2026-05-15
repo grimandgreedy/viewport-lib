@@ -281,12 +281,12 @@ fn prefilter_specular(
                 let r = n; // reflect = normal for prefilter
                 let v_dir = r;
 
-                let color =
+                let colour =
                     prefilter_sample(src, src_w, src_h, n, r, v_dir, roughness, num_samples);
                 let idx = (y * mip_w + x) as usize * 4;
-                data[idx] = color[0];
-                data[idx + 1] = color[1];
-                data[idx + 2] = color[2];
+                data[idx] = colour[0];
+                data[idx + 1] = colour[1];
+                data[idx + 2] = colour[2];
                 data[idx + 3] = 1.0;
             }
         }
@@ -329,7 +329,7 @@ fn prefilter_sample(
     roughness: f32,
     num_samples: u32,
 ) -> [f32; 3] {
-    let mut color = [0.0f32; 3];
+    let mut colour = [0.0f32; 3];
     let mut total_weight = 0.0f32;
     let a = roughness * roughness;
 
@@ -341,19 +341,19 @@ fn prefilter_sample(
 
         if n_dot_l > 0.0 {
             let c = sample_equirect(src, src_w, src_h, l);
-            color[0] += c[0] * n_dot_l;
-            color[1] += c[1] * n_dot_l;
-            color[2] += c[2] * n_dot_l;
+            colour[0] += c[0] * n_dot_l;
+            colour[1] += c[1] * n_dot_l;
+            colour[2] += c[2] * n_dot_l;
             total_weight += n_dot_l;
         }
     }
 
     if total_weight > 0.0 {
-        color[0] /= total_weight;
-        color[1] /= total_weight;
-        color[2] /= total_weight;
+        colour[0] /= total_weight;
+        colour[1] /= total_weight;
+        colour[2] /= total_weight;
     }
-    color
+    colour
 }
 
 // -------------------------------------------------------------------------

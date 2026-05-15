@@ -2797,7 +2797,7 @@ impl ViewportRenderer {
         let pick_id_view = pick_id_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let pick_depth_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("pick_depth_color_texture"),
+            label: Some("pick_depth_colour_texture"),
             size: wgpu::Extent3d {
                 width: vp_w,
                 height: vp_h,
@@ -3001,7 +3001,7 @@ impl ViewportRenderer {
         };
         depth_staging.unmap();
 
-        // 0 = miss (clear color or non-pickable surface).
+        // 0 = miss (clear colour or non-pickable surface).
         if object_id == 0 {
             return None;
         }

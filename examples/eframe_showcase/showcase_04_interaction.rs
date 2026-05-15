@@ -67,7 +67,7 @@ impl App {
             [0.0, 3.0, 0.0],
             [0.0, -3.0, 0.0],
         ];
-        let colors = [
+        let colours = [
             [0.85, 0.85, 0.85],
             [0.9, 0.3, 0.3],
             [0.3, 0.9, 0.3],
@@ -76,10 +76,10 @@ impl App {
         ];
         let names = ["Center", "Right", "Left", "Front", "Back"];
 
-        for (i, ((pos, color), name)) in positions.iter().zip(&colors).zip(&names).enumerate() {
+        for (i, ((pos, colour), name)) in positions.iter().zip(&colours).zip(&names).enumerate() {
             let mesh = self.upload_box(renderer);
             let transform = glam::Mat4::from_translation(glam::Vec3::from(*pos));
-            let mat = Material::from_color(*color);
+            let mat = Material::from_colour(*colour);
             let id = self
                 .interact_state
                 .scene

@@ -35,12 +35,12 @@ pub struct LineProbeWidget {
     pub start: glam::Vec3,
     /// World-space position of the second endpoint.
     pub end: glam::Vec3,
-    /// RGBA line and handle color.
-    pub color: [f32; 4],
+    /// RGBA line and handle colour.
+    pub colour: [f32; 4],
     /// Line width in pixels.
     pub line_width: f32,
-    /// RGBA color for the drag handles. When set (non-zero alpha), overrides the default LUT coloring.
-    pub handle_color: [f32; 4],
+    /// RGBA colour for the drag handles. When set (non-zero alpha), overrides the default LUT colouring.
+    pub handle_colour: [f32; 4],
 
     hovered_endpoint: Option<usize>,
     active_endpoint: Option<usize>,
@@ -55,9 +55,9 @@ impl LineProbeWidget {
         Self {
             start,
             end,
-            color: [1.0, 0.6, 0.1, 1.0],
+            colour: [1.0, 0.6, 0.1, 1.0],
             line_width: 2.0,
-            handle_color: [0.0; 4],
+            handle_colour: [0.0; 4],
             hovered_endpoint: None,
             active_endpoint: None,
             drag_plane_normal: glam::Vec3::Z,
@@ -133,7 +133,7 @@ impl LineProbeWidget {
         PolylineItem {
             positions: vec![self.start.to_array(), self.end.to_array()],
             strip_lengths: vec![2],
-            default_color: self.color,
+            default_colour: self.colour,
             line_width: self.line_width,
             id,
             ..PolylineItem::default()
@@ -145,9 +145,9 @@ impl LineProbeWidget {
     /// Handle size is constant in screen space (approximately 10 px radius).
     /// `id_base` is the pick ID for the start handle; the end handle uses `id_base + 1`.
     ///
-    /// Color is driven by the colormap (viridis by default). The scalar for each
+    /// Colour is driven by the colourmap (viridis by default). The scalar for each
     /// handle is `0.0` when idle and `1.0` when hovered or active, so the two
-    /// states map to distinct colormap colors.
+    /// states map to distinct colourmap colours.
     pub fn handle_glyphs(&self, id_base: u64, ctx: &WidgetContext) -> GlyphItem {
         let r0 = handle_world_radius(self.start, &ctx.camera, ctx.viewport_size.y, 10.0);
         let r1 = handle_world_radius(self.end, &ctx.camera, ctx.viewport_size.y, 10.0);
@@ -172,8 +172,8 @@ impl LineProbeWidget {
             scalar_range: Some((0.0, 1.0)),
             glyph_type: GlyphType::Sphere,
             id: id_base,
-            default_color: self.handle_color,
-            use_default_color: self.handle_color[3] > 0.0,
+            default_colour: self.handle_colour,
+            use_default_colour: self.handle_colour[3] > 0.0,
             ..GlyphItem::default()
         }
     }

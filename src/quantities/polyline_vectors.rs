@@ -7,7 +7,7 @@
 //! The renderer calls these automatically when `node_vectors` or `edge_vectors`
 //! are non-empty on a [`PolylineItem`]; the helpers are also public so callers
 //! can customise the resulting [`GlyphItem`] (e.g. change `glyph_type` or add
-//! scalar coloring) before pushing it to the frame.
+//! scalar colouring) before pushing it to the frame.
 //!
 //! # Example
 //!
@@ -45,7 +45,7 @@ pub fn polyline_node_vectors_to_glyphs(item: &PolylineItem) -> GlyphItem {
 ///
 /// Each arrow is placed at the midpoint of the corresponding segment and oriented
 /// along the world-space vector stored in `item.edge_vectors`. Segment indices are
-/// counted in strip order (the same order `edge_scalars`/`edge_colors` use).
+/// counted in strip order (the same order `edge_scalars`/`edge_colours` use).
 /// The global `item.vector_scale` is forwarded to `GlyphItem::scale`. Returns an
 /// empty `GlyphItem` when `edge_vectors` is empty.
 pub fn polyline_edge_vectors_to_glyphs(item: &PolylineItem) -> GlyphItem {

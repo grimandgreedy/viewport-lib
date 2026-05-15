@@ -1,10 +1,10 @@
 //! Showcase 14: Isolines & Contours
 //!
-//! A wave-function grid mesh colored by its scalar field, with isoline
+//! A wave-function grid mesh coloured by its scalar field, with isoline
 //! contour strips rendered on top via the `SceneFrame::isolines` pipeline.
 //!
 //! The mesh is built once and uploaded. `IsolineItem`s are re-submitted each
-//! frame with the current slider/color/width settings : no re-upload needed.
+//! frame with the current slider/colour/width settings : no re-upload needed.
 
 use crate::App;
 use eframe::egui;
@@ -23,9 +23,9 @@ pub(crate) struct IsolinesState {
     pub scalars: Vec<f32>,
     pub grid_resolution: u32,
     pub contour_count: usize,
-    pub line_color: [f32; 4],
+    pub line_colour: [f32; 4],
     pub line_width: f32,
-    pub show_surface_color: bool,
+    pub show_surface_colour: bool,
     pub depth_bias: f32,
 }
 
@@ -40,9 +40,9 @@ impl Default for IsolinesState {
             scalars: Vec::new(),
             grid_resolution: 128,
             contour_count: 8,
-            line_color: [0.0, 0.0, 0.0, 1.0],
+            line_colour: [0.0, 0.0, 0.0, 1.0],
             line_width: 1.5,
-            show_surface_color: true,
+            show_surface_colour: true,
             depth_bias: 0.005,
         }
     }
@@ -74,7 +74,7 @@ impl App {
         self.iso_state
             .scene
             .add_named("Wave Grid", Some(mesh_id), glam::Mat4::IDENTITY, {
-                let mut m = Material::from_color([0.6, 0.65, 0.7]);
+                let mut m = Material::from_colour([0.6, 0.65, 0.7]);
                 m.roughness = 0.6;
                 m
             });
@@ -104,16 +104,16 @@ pub(crate) fn controls_isolines(app: &mut App, ui: &mut egui::Ui) {
 
     ui.separator();
 
-    ui.label("Line color:");
-    let mut color = egui::Color32::from_rgba_unmultiplied(
-        (app.iso_state.line_color[0] * 255.0) as u8,
-        (app.iso_state.line_color[1] * 255.0) as u8,
-        (app.iso_state.line_color[2] * 255.0) as u8,
-        (app.iso_state.line_color[3] * 255.0) as u8,
+    ui.label("Line colour:");
+    let mut colour = egui::Color32::from_rgba_unmultiplied(
+        (app.iso_state.line_colour[0] * 255.0) as u8,
+        (app.iso_state.line_colour[1] * 255.0) as u8,
+        (app.iso_state.line_colour[2] * 255.0) as u8,
+        (app.iso_state.line_colour[3] * 255.0) as u8,
     );
-    if ui.color_edit_button_srgba(&mut color).changed() {
-        let [r, g, b, a] = color.to_array();
-        app.iso_state.line_color = [
+    if ui.color_edit_button_srgba(&mut colour).changed() {
+        let [r, g, b, a] = colour.to_array();
+        app.iso_state.line_colour = [
             r as f32 / 255.0,
             g as f32 / 255.0,
             b as f32 / 255.0,
@@ -129,10 +129,10 @@ pub(crate) fn controls_isolines(app: &mut App, ui: &mut egui::Ui) {
     ui.separator();
 
     ui.checkbox(
-        &mut app.iso_state.show_surface_color,
-        "Surface scalar coloring",
+        &mut app.iso_state.show_surface_colour,
+        "Surface scalar colouring",
     );
-    ui.label("(grey when off, wave-colored when on)");
+    ui.label("(grey when off, wave-coloured when on)");
 
     ui.separator();
 

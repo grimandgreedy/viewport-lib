@@ -244,7 +244,7 @@ impl eframe::App for App {
                         position,
                         range: d * 2.0,
                     },
-                    color: [1.0, 1.0, 1.0],
+                    colour: [1.0, 1.0, 1.0],
                     intensity: 0.5,
                 })
                 .collect();

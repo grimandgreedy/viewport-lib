@@ -144,21 +144,21 @@ pub(crate) fn warp_scene_items(app: &App) -> Vec<SceneRenderItem> {
 
     let [plane_id, lobe_id, y20_id] = app.warp_state.mesh_ids;
 
-    // Colors: coral, steel blue, sage green.
-    let colors: [[f32; 3]; 3] = [[0.85, 0.40, 0.25], [0.30, 0.55, 0.85], [0.35, 0.72, 0.42]];
+    // Colours: coral, steel blue, sage green.
+    let colours: [[f32; 3]; 3] = [[0.85, 0.40, 0.25], [0.30, 0.55, 0.85], [0.35, 0.72, 0.42]];
     let offsets: [f32; 3] = [-4.5, 0.0, 4.5];
     let ids = [plane_id, lobe_id, y20_id];
 
     ids.iter()
-        .zip(colors.iter())
+        .zip(colours.iter())
         .zip(offsets.iter())
-        .map(|((&mesh_id, &color), &tx)| {
+        .map(|((&mesh_id, &colour), &tx)| {
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(tx, 0.0, 0.0)).to_cols_array_2d();
             item.material.backface_policy = BackfacePolicy::Identical;
-            item.material.base_color = color;
+            item.material.base_colour = colour;
             item.material.specular = 0.15;
             item.warp_attribute = Some("warp".to_string());
             item.warp_scale = app.warp_state.scale;
@@ -176,21 +176,21 @@ pub(crate) fn warp_lighting() -> LightingSettings {
                 kind: LightKind::Directional {
                     direction: [0.3, 0.8, 0.5],
                 },
-                color: [1.0, 1.0, 1.0],
+                colour: [1.0, 1.0, 1.0],
                 intensity: 0.7,
             },
             LightSource {
                 kind: LightKind::Directional {
                     direction: [-0.3, -0.5, -0.5],
                 },
-                color: [0.8, 0.85, 1.0],
+                colour: [0.8, 0.85, 1.0],
                 intensity: 0.3,
             },
         ],
         shadows_enabled: false,
         hemisphere_intensity: 0.35,
-        sky_color: [0.9, 0.92, 1.0],
-        ground_color: [0.5, 0.5, 0.55],
+        sky_colour: [0.9, 0.92, 1.0],
+        ground_colour: [0.5, 0.5, 0.55],
         ..LightingSettings::default()
     }
 }

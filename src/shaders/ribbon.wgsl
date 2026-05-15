@@ -5,7 +5,7 @@
 // sides of the ribbon shade correctly under Blinn-Phong.
 //
 // Group 0: Camera uniform (view-projection, eye position) + ClipPlanes + ClipVolume.
-// Group 1: StreamtubeUniform : color (vec4) + radius (f32) + use_vertex_color (u32).
+// Group 1: StreamtubeUniform : colour (vec4) + radius (f32) + use_vertex_colour (u32).
 
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -22,9 +22,9 @@ struct ClipPlanes {
 };
 
 struct StreamtubeUniform {
-    color:            vec4<f32>,
+    colour:            vec4<f32>,
     radius:           f32,
-    use_vertex_color: u32,
+    use_vertex_colour: u32,
     _pad:             vec2<f32>,
 };
 
@@ -87,7 +87,7 @@ fn clip_volume_test(p: vec3<f32>) -> bool {
 struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) normal:   vec3<f32>,
-    @location(2) color:    vec4<f32>,
+    @location(2) colour:    vec4<f32>,
     @location(3) uv:       vec2<f32>,
     @location(4) tangent:  vec4<f32>,
 };
@@ -105,7 +105,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     out.clip_pos  = camera.view_proj * vec4<f32>(in.position, 1.0);
     out.world_pos = in.position;
     out.world_nrm = normalize(in.normal);
-    out.vert_col  = in.color;
+    out.vert_col  = in.colour;
     return out;
 }
 
@@ -128,6 +128,6 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     let n_dot_l   = max(dot(n, light_dir), 0.0);
     let shading   = 0.2 + 0.8 * n_dot_l;
 
-    let base_color = select(tube.color, in.vert_col, tube.use_vertex_color != 0u);
-    return vec4<f32>(base_color.rgb * shading, base_color.a);
+    let base_colour = select(tube.colour, in.vert_col, tube.use_vertex_colour != 0u);
+    return vec4<f32>(base_colour.rgb * shading, base_colour.a);
 }

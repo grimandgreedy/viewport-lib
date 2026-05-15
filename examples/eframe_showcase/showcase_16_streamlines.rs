@@ -9,7 +9,7 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BuiltinColormap, ColormapId, PolylineItem, RibbonItem, StreamtubeItem, TubeItem,
+    BuiltinColourmap, ColourmapId, PolylineItem, RibbonItem, StreamtubeItem, TubeItem,
 };
 
 // ---------------------------------------------------------------------------
@@ -35,10 +35,10 @@ pub(crate) struct StreamlinesState {
     pub render_mode: StreamRenderMode,
     pub tube_radius: f32,
     pub line_width: f32,
-    pub color_by_speed: bool,
-    pub colormap: BuiltinColormap,
-    /// Flat RGBA color used when `color_by_speed` is false, and as tube color.
-    pub flat_color: [f32; 4],
+    pub colour_by_speed: bool,
+    pub colourmap: BuiltinColourmap,
+    /// Flat RGBA colour used when `colour_by_speed` is false, and as tube colour.
+    pub flat_colour: [f32; 4],
     pub seed_count: usize,
     pub step_size: f32,
     /// Cross-section resolution for GeneralTube mode (number of sides).
@@ -59,9 +59,9 @@ impl Default for StreamlinesState {
             render_mode: StreamRenderMode::Polylines,
             tube_radius: 0.06,
             line_width: 4.0,
-            color_by_speed: true,
-            colormap: BuiltinColormap::Viridis,
-            flat_color: [0.4, 0.7, 1.0, 1.0],
+            colour_by_speed: true,
+            colourmap: BuiltinColourmap::Viridis,
+            flat_colour: [0.4, 0.7, 1.0, 1.0],
             seed_count: 32,
             step_size: 0.08,
             tube_sides: 8,
@@ -101,11 +101,11 @@ impl App {
         item.positions = positions;
         item.strip_lengths = strip_lengths;
         item.line_width = s.line_width;
-        if s.color_by_speed {
+        if s.colour_by_speed {
             item.scalars = scalars;
-            item.colormap_id = Some(ColormapId(s.colormap as usize));
+            item.colourmap_id = Some(ColourmapId(s.colourmap as usize));
         } else {
-            item.default_color = s.flat_color;
+            item.default_colour = s.flat_colour;
         }
         item
     }
@@ -119,11 +119,11 @@ impl App {
         item.strip_lengths = strip_lengths;
         item.radius = s.tube_radius;
         item.sides = s.tube_sides;
-        if s.color_by_speed {
+        if s.colour_by_speed {
             item.scalars = scalars;
-            item.colormap_id = Some(ColormapId(s.colormap as usize));
+            item.colourmap_id = Some(ColourmapId(s.colourmap as usize));
         } else {
-            item.color = s.flat_color;
+            item.colour = s.flat_colour;
         }
         item
     }
@@ -136,7 +136,7 @@ impl App {
         item.positions = positions;
         item.strip_lengths = strip_lengths;
         item.radius = s.tube_radius;
-        item.color = s.flat_color;
+        item.colour = s.flat_colour;
         item
     }
 
@@ -148,11 +148,11 @@ impl App {
         item.positions = positions;
         item.strip_lengths = strip_lengths;
         item.width = s.ribbon_width;
-        if s.color_by_speed {
+        if s.colour_by_speed {
             item.scalars = scalars;
-            item.colormap_id = Some(ColormapId(s.colormap as usize));
+            item.colourmap_id = Some(ColourmapId(s.colourmap as usize));
         } else {
-            item.color = s.flat_color;
+            item.colour = s.flat_colour;
         }
         item
     }
@@ -224,51 +224,51 @@ pub(crate) fn controls_streamlines(app: &mut App, ui: &mut egui::Ui) {
     }
 
     ui.separator();
-    ui.label("Coloring:");
+    ui.label("Colouring:");
 
-    // StreamtubeItem only supports flat color; scalar coloring requires Polylines or
-    // GeneralTube (which bakes per-vertex colors CPU-side via TubeItem).
-    let scalar_coloring_supported = s.render_mode != StreamRenderMode::Streamtube;
+    // StreamtubeItem only supports flat colour; scalar colouring requires Polylines or
+    // GeneralTube (which bakes per-vertex colours CPU-side via TubeItem).
+    let scalar_colouring_supported = s.render_mode != StreamRenderMode::Streamtube;
 
-    if scalar_coloring_supported {
+    if scalar_colouring_supported {
         ui.horizontal(|ui| {
-            if ui.radio(!s.color_by_speed, "Flat color").clicked() {
-                s.color_by_speed = false;
+            if ui.radio(!s.colour_by_speed, "Flat colour").clicked() {
+                s.colour_by_speed = false;
             }
-            if ui.radio(s.color_by_speed, "Speed").clicked() {
-                s.color_by_speed = true;
+            if ui.radio(s.colour_by_speed, "Speed").clicked() {
+                s.colour_by_speed = true;
             }
         });
     } else {
-        // Force flat color when switching to Streamtube mode.
-        s.color_by_speed = false;
+        // Force flat colour when switching to Streamtube mode.
+        s.colour_by_speed = false;
     }
 
-    if s.color_by_speed {
-        ui.label("Colormap:");
+    if s.colour_by_speed {
+        ui.label("Colourmap:");
         for (preset, label) in [
-            (BuiltinColormap::Viridis, "Viridis"),
-            (BuiltinColormap::Plasma, "Plasma"),
-            (BuiltinColormap::Magma, "Magma"),
-            (BuiltinColormap::Inferno, "Inferno"),
-            (BuiltinColormap::Turbo, "Turbo"),
-            (BuiltinColormap::Greyscale, "Greyscale"),
-            (BuiltinColormap::Coolwarm, "Coolwarm"),
-            (BuiltinColormap::RdBu, "RdBu"),
-            (BuiltinColormap::Rainbow, "Rainbow"),
-            (BuiltinColormap::Jet, "Jet"),
+            (BuiltinColourmap::Viridis, "Viridis"),
+            (BuiltinColourmap::Plasma, "Plasma"),
+            (BuiltinColourmap::Magma, "Magma"),
+            (BuiltinColourmap::Inferno, "Inferno"),
+            (BuiltinColourmap::Turbo, "Turbo"),
+            (BuiltinColourmap::Greyscale, "Greyscale"),
+            (BuiltinColourmap::Coolwarm, "Coolwarm"),
+            (BuiltinColourmap::RdBu, "RdBu"),
+            (BuiltinColourmap::Rainbow, "Rainbow"),
+            (BuiltinColourmap::Jet, "Jet"),
         ] {
-            if ui.radio(s.colormap == preset, label).clicked() {
-                s.colormap = preset;
+            if ui.radio(s.colourmap == preset, label).clicked() {
+                s.colourmap = preset;
             }
         }
     } else {
-        ui.label("Tube/line color:");
-        let mut rgb = [s.flat_color[0], s.flat_color[1], s.flat_color[2]];
+        ui.label("Tube/line colour:");
+        let mut rgb = [s.flat_colour[0], s.flat_colour[1], s.flat_colour[2]];
         if ui.color_edit_button_rgb(&mut rgb).changed() {
-            s.flat_color[0] = rgb[0];
-            s.flat_color[1] = rgb[1];
-            s.flat_color[2] = rgb[2];
+            s.flat_colour[0] = rgb[0];
+            s.flat_colour[1] = rgb[1];
+            s.flat_colour[2] = rgb[2];
         }
     }
 

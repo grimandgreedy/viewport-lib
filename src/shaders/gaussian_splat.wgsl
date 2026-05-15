@@ -133,7 +133,7 @@ struct VsOut {
     @location(1) sigma_inv_a: f32,       // Sigma2d_inv [0,0]
     @location(2) sigma_inv_b: f32,       // Sigma2d_inv [0,1]=[1,0]
     @location(3) sigma_inv_c: f32,       // Sigma2d_inv [1,1]
-    @location(4) color:       vec3<f32>,
+    @location(4) colour:       vec3<f32>,
     @location(5) opacity:     f32,
     @location(6) world_pos:   vec3<f32>,
 };
@@ -240,12 +240,12 @@ fn vs_main(
     out.sigma_inv_b = -s01 * inv_det;
     out.sigma_inv_c =  s00 * inv_det;
 
-    // -- SH color --
+    // -- SH colour --
     let view_dir = normalize(world_pos - camera.eye_pos);
     if splat_u.sh_degree == 0u {
-        out.color = eval_sh0(splat_idx);
+        out.colour = eval_sh0(splat_idx);
     } else {
-        out.color = eval_sh1(splat_idx, view_dir);
+        out.colour = eval_sh1(splat_idx, view_dir);
     }
     out.opacity = opacity;
 
@@ -288,5 +288,5 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let alpha = in.opacity * exp(-0.5 * d2);
     if alpha < 1.0 / 255.0 { discard; }
 
-    return vec4<f32>(in.color, alpha);
+    return vec4<f32>(in.colour, alpha);
 }

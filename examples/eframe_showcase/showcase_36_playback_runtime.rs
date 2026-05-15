@@ -120,7 +120,7 @@ pub(crate) fn rebuild_pb_static_scene(app: &mut App) {
     let n = app.pb_state.instance_count;
     let per_row = (n as f32).sqrt().ceil() as usize;
     let spacing = 2.5_f32;
-    let mat = Material::from_color([0.4, 0.55, 0.85]);
+    let mat = Material::from_colour([0.4, 0.55, 0.85]);
     for i in 0..n {
         let col = i % per_row;
         let row = i / per_row;
@@ -143,7 +143,7 @@ pub(crate) fn pb_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
     if let Some(mid) = app.pb_state.mesh_id {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mid;
-        let mut mat = Material::from_color([0.9, 0.55, 0.2]);
+        let mut mat = Material::from_colour([0.9, 0.55, 0.2]);
         mat.backface_policy = BackfacePolicy::Identical;
         item.material = mat;
         item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
@@ -484,13 +484,13 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
         // missed_budget dot.
         ui.horizontal(|ui| {
             ui.label("missed_budget:");
-            let color = if s.missed_budget {
+            let colour = if s.missed_budget {
                 egui::Color32::from_rgb(220, 55, 55)
             } else {
                 egui::Color32::from_gray(90)
             };
             let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::empty());
-            ui.painter().circle_filled(rect.center(), 5.0, color);
+            ui.painter().circle_filled(rect.center(), 5.0, colour);
         });
 
         ui.separator();
@@ -516,7 +516,7 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
             ("volumes", eff_allow_volumes, s.volume_quality_reduced),
             ("effects", eff_allow_effects, s.effects_throttled),
         ] {
-            let color = if active {
+            let colour = if active {
                 egui::Color32::from_rgb(220, 55, 55)
             } else if flag_on {
                 egui::Color32::from_gray(140)
@@ -526,7 +526,7 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
             ui.horizontal(|ui| {
                 let (rect, _) =
                     ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::empty());
-                ui.painter().circle_filled(rect.center(), 5.0, color);
+                ui.painter().circle_filled(rect.center(), 5.0, colour);
                 ui.label(label);
             });
         }

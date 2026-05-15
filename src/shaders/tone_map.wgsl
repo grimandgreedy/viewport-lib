@@ -10,7 +10,7 @@ struct ToneMapUniform {
     edl_enabled:             u32,
     edl_radius:              f32,
     edl_strength:            f32,
-    background_color:        vec4<f32>,
+    background_colour:        vec4<f32>,
     near_plane:              f32,
     far_plane:               f32,
     lic_enabled:             u32,
@@ -57,14 +57,14 @@ fn aces(x: vec3<f32>) -> vec3<f32> {
 
 // Khronos PBR Neutral tone mapper (https://github.com/KhronosGroup/ToneMapping).
 // Passes values below ~0.76 through with only a small black-point offset,
-// then compresses highlights. Designed to preserve hand-authored SDR colors.
-fn khronos_neutral(color: vec3<f32>) -> vec3<f32> {
+// then compresses highlights. Designed to preserve hand-authored SDR colours.
+fn khronos_neutral(colour: vec3<f32>) -> vec3<f32> {
     let start_compression: f32 = 0.8 - 0.04;
     let desaturation: f32 = 0.15;
 
-    let x = min(color.r, min(color.g, color.b));
+    let x = min(colour.r, min(colour.g, colour.b));
     let offset = select(x - 6.25 * x * x, 0.04, x < 0.08);
-    let c = color - offset;
+    let c = colour - offset;
 
     let peak = max(c.r, max(c.g, c.b));
     if peak < start_compression {
@@ -90,29 +90,29 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // premul blend. If alpha is still ~0, this is a pure background pixel.
         let hdr_a = textureSample(hdr_texture, hdr_sampler, in.uv).a;
         if hdr_a < 0.001 {
-            return params.background_color;
+            return params.background_colour;
         }
         // OIT contributed here; fall through to tone-map the composite result.
     }
 
-    var color = textureSample(hdr_texture, hdr_sampler, in.uv).rgb;
+    var colour = textureSample(hdr_texture, hdr_sampler, in.uv).rgb;
 
     // Add bloom additively before tone mapping.
     if params.bloom_enabled != 0u {
         let bloom = textureSample(bloom_texture, hdr_sampler, in.uv).rgb;
-        color = color + bloom;
+        colour = colour + bloom;
     }
 
     // Multiply by AO before tone mapping.
     if params.ssao_enabled != 0u {
         let ao = textureSample(ao_texture, hdr_sampler, in.uv).r;
-        color = color * ao;
+        colour = colour * ao;
     }
 
     // Multiply by contact shadow factor before tone mapping.
     if params.contact_shadows_enabled != 0u {
         let cs = textureSample(cs_texture, hdr_sampler, in.uv).r;
-        color = color * cs;
+        colour = colour * cs;
     }
 
     // Eye-Dome Lighting: darken pixels at depth discontinuities.
@@ -148,27 +148,27 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Normalize by sample count then apply exponential response so strength=1
         // gives moderate edge darkening and strength=5 gives near-complete darkening.
         let edl_factor = 1.0 - exp(-params.edl_strength * edl_sum / 8.0);
-        color = color * (1.0 - edl_factor);
+        colour = colour * (1.0 - edl_factor);
     }
 
-    // Surface LIC: modulate color by LIC intensity (0.5 = neutral, no change).
+    // Surface LIC: modulate colour by LIC intensity (0.5 = neutral, no change).
     if params.lic_enabled != 0u {
         let lic_val = textureSample(lic_texture, hdr_sampler, in.uv).r;
         let lic_factor = 1.0 + params.lic_strength * (lic_val * 2.0 - 1.0);
-        color = color * max(0.0, lic_factor);
+        colour = colour * max(0.0, lic_factor);
     }
 
     // Pre-tone-mapping exposure.
-    color = color * params.exposure;
+    colour = colour * params.exposure;
 
     // Tone mapping.
     if params.mode == 0u {
-        color = reinhard(color);
+        colour = reinhard(colour);
     } else if params.mode == 1u {
-        color = aces(color);
+        colour = aces(colour);
     } else {
-        color = khronos_neutral(color);
+        colour = khronos_neutral(colour);
     }
 
-    return vec4<f32>(color, 1.0);
+    return vec4<f32>(colour, 1.0);
 }

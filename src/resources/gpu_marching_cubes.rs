@@ -141,7 +141,7 @@ struct GenerateParams {
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct McSurfaceRaw {
-    base_color: [f32; 3],
+    base_colour: [f32; 3],
     roughness: f32,
 }
 
@@ -680,7 +680,7 @@ impl ViewportGpuResources {
             // Per-job surface material (one bind group shared by all slabs).
             // ----------------------------------------------------------
             let mat_raw = McSurfaceRaw {
-                base_color: job.material.base_color,
+                base_colour: job.material.base_colour,
                 roughness: job.material.roughness,
             };
             let mat_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

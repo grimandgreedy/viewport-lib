@@ -89,7 +89,7 @@ impl App {
                 [0.35, 0.75, 0.45],
             ),
         ];
-        for (name, pos, color) in object_data {
+        for (name, pos, colour) in object_data {
             let mesh_id = if *name == "Sphere Near" {
                 sphere_dense_id
             } else if name.contains("Sphere") {
@@ -101,7 +101,7 @@ impl App {
                 name,
                 Some(mesh_id),
                 glam::Mat4::from_translation(*pos),
-                Material::pbr(*color, 0.0, 0.5),
+                Material::pbr(*colour, 0.0, 0.5),
             );
         }
 

@@ -5,7 +5,7 @@
 //   0 = None        (never reached : draw call is skipped)
 //   1 = ShadowOnly  (invisible plane; shows shadow tint only where shadowed)
 //   2 = Tile        (procedural checker pattern)
-//   3 = SolidColor  (flat solid color)
+//   3 = SolidColour  (flat solid colour)
 //
 // Uses @builtin(frag_depth) for correct depth-tested occlusion against scene geometry.
 // Alpha blending is always enabled; ShadowOnly uses partial alpha, others use alpha=1.
@@ -17,8 +17,8 @@ struct GroundPlaneUniform {
     cam_back:       vec4<f32>,    // offset  96, 16 bytes : camera back axis (world space, = -forward)
     eye_pos:        vec3<f32>,    // offset 112, 12 bytes
     height:         f32,          // offset 124,  4 bytes : ground plane Z coordinate
-    color:          vec4<f32>,    // offset 128, 16 bytes : Tile / SolidColor output color
-    shadow_color:   vec4<f32>,    // offset 144, 16 bytes : ShadowOnly tint color
+    colour:          vec4<f32>,    // offset 128, 16 bytes : Tile / SolidColour output colour
+    shadow_colour:   vec4<f32>,    // offset 144, 16 bytes : ShadowOnly tint colour
     light_vp:       mat4x4<f32>, // offset 160, 64 bytes : cascade 0 light-space view-proj
     tan_half_fov:   f32,          // offset 224,  4 bytes
     aspect:         f32,          // offset 228,  4 bytes
@@ -62,7 +62,7 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 }
 
 struct FragOut {
-    @location(0)         color: vec4<f32>,
+    @location(0)         colour: vec4<f32>,
     @builtin(frag_depth) depth: f32,
 }
 
@@ -98,7 +98,7 @@ fn fs_main(in: VertexOutput) -> FragOut {
     let fade = smoothstep(0.01, 0.08, angle_sin);
     if fade < 0.001 { discard; }
 
-    var out_color: vec4<f32>;
+    var out_colour: vec4<f32>;
 
     if gp.mode == 2u {
         // ------------------------------------------------------------------
@@ -148,14 +148,14 @@ fn fs_main(in: VertexOutput) -> FragOut {
         let b_fine     = mix(b_fine_std, b_fine_emph, emphasis_blend);
         let brightness = mix(b_fine, b_coarse, lod_blend);
 
-        let base = gp.color.rgb * brightness;
-        out_color = vec4<f32>(base, gp.color.a * fade);
+        let base = gp.colour.rgb * brightness;
+        out_colour = vec4<f32>(base, gp.colour.a * fade);
 
     } else if gp.mode == 3u {
         // ------------------------------------------------------------------
-        // SolidColor.
+        // SolidColour.
         // ------------------------------------------------------------------
-        out_color = vec4<f32>(gp.color.rgb, gp.color.a * fade);
+        out_colour = vec4<f32>(gp.colour.rgb, gp.colour.a * fade);
 
     } else if gp.mode == 1u {
         // ------------------------------------------------------------------
@@ -220,11 +220,11 @@ fn fs_main(in: VertexOutput) -> FragOut {
         // shadow_factor == 1.0 -> lit, 0.0 -> fully in shadow.
         let shadow_alpha = (1.0 - shadow_factor) * gp.shadow_opacity * fade;
         if shadow_alpha < 0.005 { discard; }
-        out_color = vec4<f32>(gp.shadow_color.rgb, shadow_alpha);
+        out_colour = vec4<f32>(gp.shadow_colour.rgb, shadow_alpha);
 
     } else {
         discard;
     }
 
-    return FragOut(out_color, frag_depth);
+    return FragOut(out_colour, frag_depth);
 }

@@ -118,7 +118,7 @@ pub fn plane_from_axis_preset(axis: ClipAxis, distance: f32) -> ClipObject {
         shape: ClipShape::Plane {
             normal,
             distance,
-            cap_color: None,
+            cap_colour: None,
             display_center: None,
         },
         ..ClipObject::default()
@@ -157,7 +157,7 @@ pub fn ray_plane_intersection(
 /// Visual data for rendering a clip plane handle in the viewport.
 ///
 /// This is internal data used by the renderer. It is constructed automatically
-/// from [`ClipObject`]s that have a `color` set. Not part of the public API.
+/// from [`ClipObject`]s that have a `colour` set. Not part of the public API.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub(crate) struct ClipPlaneOverlay {
@@ -167,10 +167,10 @@ pub(crate) struct ClipPlaneOverlay {
     pub normal: glam::Vec3,
     /// Half-extent of the visual quad in world units.
     pub extent: f32,
-    /// RGBA fill color of the plane quad (semi-transparent).
-    pub fill_color: [f32; 4],
-    /// RGBA color for the border edges and normal indicator line.
-    pub border_color: [f32; 4],
+    /// RGBA fill colour of the plane quad (semi-transparent).
+    pub fill_colour: [f32; 4],
+    /// RGBA colour for the border edges and normal indicator line.
+    pub border_colour: [f32; 4],
     /// Whether the plane handle is hovered.
     pub _hovered: bool,
     /// Whether the plane is actively being dragged.
@@ -360,7 +360,7 @@ struct ClipPlaneSession {
 /// [`ClipPlaneDelta`] to its own plane state.
 pub struct ClipPlaneController {
     session: Option<ClipPlaneSession>,
-    /// Whether the handle was hovered on the last idle frame (used for overlay color).
+    /// Whether the handle was hovered on the last idle frame (used for overlay colour).
     hovered: bool,
 }
 
@@ -515,7 +515,7 @@ impl ClipPlaneController {
     /// Returns the visual overlay for the current controller state.
     ///
     /// Returns `None` if the plane is not enabled or the shape is not a Plane variant.
-    /// Used internally by the renderer when the `ClipObject` has a color set.
+    /// Used internally by the renderer when the `ClipObject` has a colour set.
     #[allow(dead_code)]
     pub(crate) fn overlay(&self, ctx: &ClipPlaneContext) -> Option<ClipPlaneOverlay> {
         if !ctx.plane.enabled {
@@ -534,14 +534,14 @@ impl ClipPlaneController {
         let active = self.is_active();
         let hovered = self.hovered || active;
 
-        let fill_color = if active {
+        let fill_colour = if active {
             [0.2, 0.6, 1.0, 0.25]
         } else if hovered {
             [0.4, 0.7, 1.0, 0.18]
         } else {
             [0.3, 0.6, 0.9, 0.12]
         };
-        let border_color = if active {
+        let border_colour = if active {
             [0.2, 0.7, 1.0, 0.9]
         } else if hovered {
             [0.5, 0.8, 1.0, 0.8]
@@ -553,8 +553,8 @@ impl ClipPlaneController {
             center,
             normal,
             extent: ctx.plane_extent,
-            fill_color,
-            border_color,
+            fill_colour,
+            border_colour,
             _hovered: hovered,
             _active: active,
         })
@@ -647,7 +647,7 @@ mod tests {
             shape: ClipShape::Plane {
                 normal: [0.0, 1.0, 0.0],
                 distance: 0.0,
-                cap_color: None,
+                cap_colour: None,
                 display_center: None,
             },
             enabled: true,
@@ -840,7 +840,7 @@ mod tests {
             shape: ClipShape::Plane {
                 normal: [1.0, 0.0, 0.0],
                 distance: 5.0,
-                cap_color: None,
+                cap_colour: None,
                 display_center: None,
             },
             enabled: true,

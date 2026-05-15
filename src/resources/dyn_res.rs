@@ -10,15 +10,15 @@ use super::ViewportGpuResources;
 /// Owned by the viewport slot; created or recreated whenever the render scale
 /// or surface size changes.
 pub(crate) struct DynResTarget {
-    /// Scaled color texture (render_scale × surface_size).
-    pub _color_texture: wgpu::Texture,
-    /// View of `color_texture`.
-    pub color_view: wgpu::TextureView,
+    /// Scaled colour texture (render_scale × surface_size).
+    pub _colour_texture: wgpu::Texture,
+    /// View of `colour_texture`.
+    pub colour_view: wgpu::TextureView,
     /// Depth texture matching the scaled resolution.
     pub _depth_texture: wgpu::Texture,
     /// View of `depth_texture`.
     pub depth_view: wgpu::TextureView,
-    /// Bind group for the upscale pass: color_texture + linear sampler.
+    /// Bind group for the upscale pass: colour_texture + linear sampler.
     pub upscale_bind_group: wgpu::BindGroup,
     /// Dimensions of the intermediate target `[w, h]`.
     pub scaled_size: [u32; 2],
@@ -189,8 +189,8 @@ impl ViewportGpuResources {
     ) -> DynResTarget {
         let [sw, sh] = scaled_size;
 
-        let color_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("dyn_res_color"),
+        let colour_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("dyn_res_colour"),
             size: wgpu::Extent3d {
                 width: sw,
                 height: sh,
@@ -203,7 +203,7 @@ impl ViewportGpuResources {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let colour_view = colour_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("dyn_res_depth"),
@@ -229,7 +229,7 @@ impl ViewportGpuResources {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&color_view),
+                    resource: wgpu::BindingResource::TextureView(&colour_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -239,8 +239,8 @@ impl ViewportGpuResources {
         });
 
         DynResTarget {
-            _color_texture: color_texture,
-            color_view,
+            _colour_texture: colour_texture,
+            colour_view,
             _depth_texture: depth_texture,
             depth_view,
             upscale_bind_group,
@@ -311,7 +311,7 @@ impl ViewportGpuResources {
 /// [`paint_hdr_blit`](crate::ViewportRenderer::paint_hdr_blit) to copy the result
 /// into the egui render pass.
 pub(crate) struct HdrCallbackTarget {
-    /// Intermediate LDR color texture (same format as `target_format`).
+    /// Intermediate LDR colour texture (same format as `target_format`).
     ///
     /// Stored so we can create a fresh `TextureView` each frame inside
     /// `prepare_hdr_callback`, avoiding a simultaneous mutable + immutable borrow.

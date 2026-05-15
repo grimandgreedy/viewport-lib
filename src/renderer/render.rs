@@ -382,7 +382,7 @@ impl ViewportRenderer {
         self.ensure_dyn_res_target(device, vp_idx, [sw, sh], [w, h]);
         self.resources.ensure_dyn_res_ds_pipeline(device);
 
-        let bg_color = frame.viewport.background_color.unwrap_or([
+        let bg_colour = frame.viewport.background_colour.unwrap_or([
             65.0 / 255.0,
             65.0 / 255.0,
             65.0 / 255.0,
@@ -392,7 +392,7 @@ impl ViewportRenderer {
         {
             let slot = &self.viewport_slots[vp_idx];
             let dr = slot.dyn_res.as_ref().unwrap();
-            let color_view = &dr.color_view;
+            let colour_view = &dr.colour_view;
             let depth_view = &dr.depth_view;
             let camera_bg = &slot.camera_bind_group;
             let grid_bg = &slot.grid_bind_group;
@@ -400,14 +400,14 @@ impl ViewportRenderer {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("ldr_dyn_res_render_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: color_view,
+                    view: colour_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: bg_color[0] as f64,
-                            g: bg_color[1] as f64,
-                            b: bg_color[2] as f64,
-                            a: bg_color[3] as f64,
+                            r: bg_colour[0] as f64,
+                            g: bg_colour[1] as f64,
+                            b: bg_colour[2] as f64,
+                            a: bg_colour[3] as f64,
                         }),
                         store: wgpu::StoreOp::Store,
                     },
@@ -624,7 +624,7 @@ impl ViewportRenderer {
         // Intermediate texture must be at physical pixel size so it matches the
         // HDR depth buffer allocated inside render_frame_internal (which also
         // uses physical pixels). Using logical size here produces a mismatch on
-        // hidpi displays between the color attachment (this texture) and the
+        // hidpi displays between the colour attachment (this texture) and the
         // depth attachment (hdr_depth_view) in the grid/overlay passes.
         let ppp = frame.camera.pixels_per_point;
         let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
@@ -811,7 +811,7 @@ impl ViewportRenderer {
             SurfaceSubmission::Flat(items) => items.as_ref(),
         };
 
-        let bg_color = frame.viewport.background_color.unwrap_or([
+        let bg_colour = frame.viewport.background_colour.unwrap_or([
             65.0 / 255.0,
             65.0 / 255.0,
             65.0 / 255.0,
@@ -873,10 +873,10 @@ impl ViewportRenderer {
                 let camera_bg = &slot.camera_bind_group;
                 let grid_bg = &slot.grid_bind_group;
                 // Choose render target: dyn_res intermediate or directly output_view.
-                let (scene_color_view, scene_depth_view): (&wgpu::TextureView, &wgpu::TextureView) =
+                let (scene_colour_view, scene_depth_view): (&wgpu::TextureView, &wgpu::TextureView) =
                     if use_dyn_res {
                         let dr = slot.dyn_res.as_ref().unwrap();
-                        (&dr.color_view, &dr.depth_view)
+                        (&dr.colour_view, &dr.depth_view)
                     } else {
                         (output_view, &slot_hdr.outline_depth_view)
                     };
@@ -891,14 +891,14 @@ impl ViewportRenderer {
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("ldr_render_pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: scene_color_view,
+                        view: scene_colour_view,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: bg_color[0] as f64,
-                                g: bg_color[1] as f64,
-                                b: bg_color[2] as f64,
-                                a: bg_color[3] as f64,
+                                r: bg_colour[0] as f64,
+                                g: bg_colour[1] as f64,
+                                b: bg_colour[2] as f64,
+                                a: bg_colour[3] as f64,
                             }),
                             store: wgpu::StoreOp::Store,
                         },
@@ -1079,9 +1079,9 @@ impl ViewportRenderer {
         let pp = &frame.effects.post_process;
 
         let hdr_clear_rgb = [
-            bg_color[0].powf(2.2),
-            bg_color[1].powf(2.2),
-            bg_color[2].powf(2.2),
+            bg_colour[0].powf(2.2),
+            bg_colour[1].powf(2.2),
+            bg_colour[2].powf(2.2),
         ];
 
         // Upload tone map uniform into the per-viewport buffer.
@@ -1099,7 +1099,7 @@ impl ViewportRenderer {
             edl_enabled: if pp.edl_enabled { 1 } else { 0 },
             edl_radius: pp.edl_radius,
             edl_strength: pp.edl_strength,
-            background_color: bg_color,
+            background_colour: bg_colour,
             near_plane: frame.camera.render_camera.near,
             far_plane: frame.camera.render_camera.far,
             lic_enabled: if frame.scene.lic_items.is_empty() {
@@ -1273,10 +1273,10 @@ impl ViewportRenderer {
         {
             // Use SSAA target if enabled, otherwise render directly to hdr_texture.
             let use_ssaa = ssaa_factor > 1
-                && slot_hdr.ssaa_color_view.is_some()
+                && slot_hdr.ssaa_colour_view.is_some()
                 && slot_hdr.ssaa_depth_view.is_some();
-            let scene_color_view = if use_ssaa {
-                slot_hdr.ssaa_color_view.as_ref().unwrap()
+            let scene_colour_view = if use_ssaa {
+                slot_hdr.ssaa_colour_view.as_ref().unwrap()
             } else {
                 &slot_hdr.hdr_view
             };
@@ -1306,7 +1306,7 @@ impl ViewportRenderer {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("hdr_scene_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: scene_color_view,
+                    view: scene_colour_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(clear_wgpu),
@@ -1541,7 +1541,7 @@ impl ViewportRenderer {
                                 matches!(
                                     a.kind,
                                     crate::resources::AttributeKind::Face
-                                        | crate::resources::AttributeKind::FaceColor
+                                        | crate::resources::AttributeKind::FaceColour
                                         | crate::resources::AttributeKind::Halfedge
                                         | crate::resources::AttributeKind::Corner
                                 )

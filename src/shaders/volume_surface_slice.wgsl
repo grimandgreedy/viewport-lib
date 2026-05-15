@@ -6,7 +6,7 @@
 //
 // Group 0: Camera uniform (same layout as all other shaders).
 // Group 1: VolumeSurfaceSliceUniform + volume texture + nearest sampler
-//          + colormap LUT texture + linear sampler.
+//          + colourmap LUT texture + linear sampler.
 
 struct Camera {
     view_proj:     mat4x4<f32>,
@@ -87,7 +87,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let range = slice_ub.scalar_max - slice_ub.scalar_min;
     let t     = select(0.0, (scalar - slice_ub.scalar_min) / range, range > 0.0);
     let u     = clamp(t, 0.0, 1.0);
-    var color = textureSampleLevel(lut_tex, lut_sampler, vec2<f32>(u, 0.5), 0.0);
-    color.a   = color.a * slice_ub.opacity;
-    return color;
+    var colour = textureSampleLevel(lut_tex, lut_sampler, vec2<f32>(u, 0.5), 0.0);
+    colour.a   = colour.a * slice_ub.opacity;
+    return colour;
 }

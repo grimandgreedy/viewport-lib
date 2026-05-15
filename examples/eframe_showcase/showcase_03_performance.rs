@@ -73,7 +73,7 @@ pub(crate) fn build_perf_scene_threaded(
     progress: &AtomicU32,
 ) -> (Scene, PickAccelerator) {
     let spacing = 2.5_f32;
-    let colors: [[f32; 3]; 6] = [
+    let colours: [[f32; 3]; 6] = [
         [0.9, 0.3, 0.3],
         [0.3, 0.9, 0.3],
         [0.3, 0.3, 0.9],
@@ -94,8 +94,8 @@ pub(crate) fn build_perf_scene_threaded(
                     (y as f32) * spacing,
                 );
                 let transform = glam::Mat4::from_translation(pos);
-                let color = colors[count as usize % colors.len()];
-                let mat = Material::from_color(color);
+                let colour = colours[count as usize % colours.len()];
+                let mat = Material::from_colour(colour);
                 scene.add(Some(mesh), transform, mat);
                 count += 1;
                 if count % 10_000 == 0 {

@@ -273,7 +273,7 @@ impl ViewportGpuResources {
     ///   binding 2 -> material sampler (also used for LUT sampling)
     ///   binding 3 -> normal map view
     ///   binding 4 -> AO map view
-    ///   binding 5 -> LUT (colormap) texture view
+    ///   binding 5 -> LUT (colourmap) texture view
     ///   binding 6 -> scalar attribute storage buffer
     pub(crate) fn update_mesh_texture_bind_group(
         &mut self,
@@ -282,7 +282,7 @@ impl ViewportGpuResources {
         albedo_id: Option<u64>,
         normal_map_id: Option<u64>,
         ao_map_id: Option<u64>,
-        lut_id: Option<ColormapId>,
+        lut_id: Option<ColourmapId>,
         active_attr: Option<&str>,
         matcap_id: Option<crate::resources::MatcapId>,
         warp_attr: Option<&str>,
@@ -328,7 +328,7 @@ impl ViewportGpuResources {
             _ => &self.fallback_ao_map_view,
         };
         let lut_view = match lut_id {
-            Some(id) if id.0 < self.colormap_views.len() => &self.colormap_views[id.0],
+            Some(id) if id.0 < self.colourmap_views.len() => &self.colourmap_views[id.0],
             _ => &self.fallback_lut_view,
         };
 
@@ -347,12 +347,12 @@ impl ViewportGpuResources {
             None => &self.fallback_scalar_buf,
         };
 
-        let face_color_buf: &wgpu::Buffer = match active_attr {
+        let face_colour_buf: &wgpu::Buffer = match active_attr {
             Some(name) => mesh
-                .face_color_buffers
+                .face_colour_buffers
                 .get(name)
-                .unwrap_or(&self.fallback_face_color_buf),
-            None => &self.fallback_face_color_buf,
+                .unwrap_or(&self.fallback_face_colour_buf),
+            None => &self.fallback_face_colour_buf,
         };
 
         // Resolve matcap texture view : fallback to 1x1 white when no matcap active.
@@ -410,7 +410,7 @@ impl ViewportGpuResources {
                 },
                 wgpu::BindGroupEntry {
                     binding: 8,
-                    resource: face_color_buf.as_entire_binding(),
+                    resource: face_colour_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 9,
@@ -425,16 +425,16 @@ impl ViewportGpuResources {
         mesh.last_tex_key = key;
     }
 
-    /// Upload a 256-sample RGBA colormap to the GPU and return its `ColormapId`.
+    /// Upload a 256-sample RGBA colourmap to the GPU and return its `ColourmapId`.
     ///
-    /// The returned ID can be stored in `SceneRenderItem::colormap_id`.
-    /// Use `BuiltinColormap` variants + [`Self::builtin_colormap_id`] for the built-in presets.
-    pub fn upload_colormap(
+    /// The returned ID can be stored in `SceneRenderItem::colourmap_id`.
+    /// Use `BuiltinColourmap` variants + [`Self::builtin_colourmap_id`] for the built-in presets.
+    pub fn upload_colourmap(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         rgba_data: &[[u8; 4]; 256],
-    ) -> ColormapId {
+    ) -> ColourmapId {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("lut_texture"),
             size: wgpu::Extent3d {
@@ -470,90 +470,90 @@ impl ViewportGpuResources {
             },
         );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let id = ColormapId(self.colormap_textures.len());
-        self.colormap_textures.push(texture);
-        self.colormap_views.push(view);
-        self.colormaps_cpu.push(*rgba_data);
+        let id = ColourmapId(self.colourmap_textures.len());
+        self.colourmap_textures.push(texture);
+        self.colourmap_views.push(view);
+        self.colourmaps_cpu.push(*rgba_data);
         id
     }
 
-    /// Return the CPU-side colormap LUT for `id` as 256 RGBA8 entries, or `None` if the id is invalid.
+    /// Return the CPU-side colourmap LUT for `id` as 256 RGBA8 entries, or `None` if the id is invalid.
     ///
-    /// Useful for any non-GPU colormap output: PDF export, table cell colouring, custom legend
+    /// Useful for any non-GPU colourmap output: PDF export, table cell colouring, custom legend
     /// widgets, or sampling a colour at a specific scalar value. The data is always in memory
     /// (kept for GPU upload) so this accessor is free.
-    pub fn get_colormap_rgba(&self, id: ColormapId) -> Option<&[[u8; 4]; 256]> {
-        self.colormaps_cpu.get(id.0)
+    pub fn get_colourmap_rgba(&self, id: ColourmapId) -> Option<&[[u8; 4]; 256]> {
+        self.colourmaps_cpu.get(id.0)
     }
 
-    /// Return the `ColormapId` for a built-in preset.
+    /// Return the `ColourmapId` for a built-in preset.
     ///
-    /// Call [`Self::ensure_colormaps_initialized`] first (done automatically by
-    /// `ViewportRenderer::prepare`).  Panics if colormaps have not been initialized yet.
-    pub fn builtin_colormap_id(&self, preset: BuiltinColormap) -> ColormapId {
-        self.builtin_colormap_ids
-            .expect("call ensure_colormaps_initialized before using built-in colormaps")
+    /// Call [`Self::ensure_colourmaps_initialized`] first (done automatically by
+    /// `ViewportRenderer::prepare`).  Panics if colourmaps have not been initialized yet.
+    pub fn builtin_colourmap_id(&self, preset: BuiltinColourmap) -> ColourmapId {
+        self.builtin_colourmap_ids
+            .expect("call ensure_colourmaps_initialized before using built-in colourmaps")
             [preset as usize]
     }
 
-    /// Ensure built-in colormaps are uploaded to the GPU.
+    /// Ensure built-in colourmaps are uploaded to the GPU.
     ///
     /// Called automatically by `ViewportRenderer::prepare()` on the first frame.
     /// Safe to call multiple times : no-op after first invocation.
-    pub fn ensure_colormaps_initialized(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        if self.colormaps_initialized {
+    pub fn ensure_colourmaps_initialized(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if self.colourmaps_initialized {
             return;
         }
-        let viridis = self.upload_colormap(
+        let viridis = self.upload_colourmap(
             device,
             queue,
-            &crate::resources::colormap_data::viridis_rgba(),
+            &crate::resources::colourmap_data::viridis_rgba(),
         );
-        let plasma = self.upload_colormap(
+        let plasma = self.upload_colourmap(
             device,
             queue,
-            &crate::resources::colormap_data::plasma_rgba(),
+            &crate::resources::colourmap_data::plasma_rgba(),
         );
-        let greyscale = self.upload_colormap(
+        let greyscale = self.upload_colourmap(
             device,
             queue,
-            &crate::resources::colormap_data::greyscale_rgba(),
+            &crate::resources::colourmap_data::greyscale_rgba(),
         );
-        let coolwarm = self.upload_colormap(
+        let coolwarm = self.upload_colourmap(
             device,
             queue,
-            &crate::resources::colormap_data::coolwarm_rgba(),
+            &crate::resources::colourmap_data::coolwarm_rgba(),
         );
-        let rainbow = self.upload_colormap(
+        let rainbow = self.upload_colourmap(
             device,
             queue,
-            &crate::resources::colormap_data::rainbow_rgba(),
+            &crate::resources::colourmap_data::rainbow_rgba(),
         );
-        let magma = self.upload_colormap(
+        let magma = self.upload_colourmap(
             device,
             queue,
-            &crate::resources::colormap_data::magma_rgba(),
+            &crate::resources::colourmap_data::magma_rgba(),
         );
-        let inferno = self.upload_colormap(
+        let inferno = self.upload_colourmap(
             device,
             queue,
-            &crate::resources::colormap_data::inferno_rgba(),
+            &crate::resources::colourmap_data::inferno_rgba(),
         );
-        let turbo = self.upload_colormap(
+        let turbo = self.upload_colourmap(
             device,
             queue,
-            &crate::resources::colormap_data::turbo_rgba(),
+            &crate::resources::colourmap_data::turbo_rgba(),
         );
-        let jet = self.upload_colormap(device, queue, &crate::resources::colormap_data::jet_rgba());
-        let rdbu = self.upload_colormap(
+        let jet = self.upload_colourmap(device, queue, &crate::resources::colourmap_data::jet_rgba());
+        let rdbu = self.upload_colourmap(
             device,
             queue,
-            &crate::resources::colormap_data::rdbu_r_rgba(),
+            &crate::resources::colourmap_data::rdbu_r_rgba(),
         );
-        self.builtin_colormap_ids = Some([
+        self.builtin_colourmap_ids = Some([
             viridis, plasma, greyscale, coolwarm, rainbow, magma, inferno, turbo, jet, rdbu,
         ]);
-        self.colormaps_initialized = true;
+        self.colourmaps_initialized = true;
     }
 
     // -----------------------------------------------------------------------
@@ -564,7 +564,7 @@ impl ViewportGpuResources {
     ///
     /// `rgba_data` must be exactly `256 * 256 * 4 = 262_144` bytes.
     /// Set `blendable = true` for matcaps whose alpha channel tints the base
-    /// geometry color; `false` for static matcaps that fully replace the color.
+    /// geometry colour; `false` for static matcaps that fully replace the colour.
     ///
     /// # Errors
     ///

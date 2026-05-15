@@ -10,7 +10,7 @@
 //! Columns (left to right):
 //! - **Cull** (default): back faces invisible, interior hollow.
 //! - **Identical**: back faces shaded the same as front faces.
-//! - **DifferentColor**: back faces shaded red.
+//! - **DifferentColour**: back faces shaded red.
 //! - **Tint**: back faces darkened by 40%.
 //! - **Checker**: checker pattern on back faces.
 //! - **Hatching**: diagonal hatching on back faces.
@@ -55,14 +55,14 @@ fn policies() -> Vec<(BackfacePolicy, &'static str)> {
         (BackfacePolicy::Cull, "Cull"),
         (BackfacePolicy::Identical, "Identical"),
         (
-            BackfacePolicy::DifferentColor([1.0, 0.1, 0.1]),
-            "DifferentColor",
+            BackfacePolicy::DifferentColour([1.0, 0.1, 0.1]),
+            "DifferentColour",
         ),
         (BackfacePolicy::Tint(0.4), "Tint"),
         (
             BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Checker,
-                color: [0.9, 0.2, 0.1],
+                colour: [0.9, 0.2, 0.1],
                 ..Default::default()
             }),
             "Checker",
@@ -70,7 +70,7 @@ fn policies() -> Vec<(BackfacePolicy, &'static str)> {
         (
             BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Hatching,
-                color: [0.1, 0.5, 0.9],
+                colour: [0.1, 0.5, 0.9],
                 ..Default::default()
             }),
             "Hatching",
@@ -78,7 +78,7 @@ fn policies() -> Vec<(BackfacePolicy, &'static str)> {
         (
             BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Crosshatch,
-                color: [0.1, 0.7, 0.2],
+                colour: [0.1, 0.7, 0.2],
                 ..Default::default()
             }),
             "Crosshatch",
@@ -86,7 +86,7 @@ fn policies() -> Vec<(BackfacePolicy, &'static str)> {
         (
             BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Stripes,
-                color: [0.8, 0.6, 0.1],
+                colour: [0.8, 0.6, 0.1],
                 ..Default::default()
             }),
             "Stripes",
@@ -95,7 +95,7 @@ fn policies() -> Vec<(BackfacePolicy, &'static str)> {
 }
 
 fn make_material(policy: BackfacePolicy) -> Material {
-    let mut mat = Material::from_color([0.7, 0.7, 0.7]);
+    let mut mat = Material::from_colour([0.7, 0.7, 0.7]);
     mat.backface_policy = policy;
     mat
 }
@@ -331,8 +331,8 @@ impl App {
                 },
             ],
             hemisphere_intensity: 0.3,
-            sky_color: [1.0, 1.0, 1.0],
-            ground_color: [0.4, 0.4, 0.4],
+            sky_colour: [1.0, 1.0, 1.0],
+            ground_colour: [0.4, 0.4, 0.4],
             ..LightingSettings::default()
         }
     }
@@ -349,7 +349,7 @@ pub(crate) fn controls_surface_appearance(app: &mut App, ui: &mut egui::Ui) {
         ui.label("Cull (default): back faces invisible. Correct for\nmost closed meshes -- the interior is never seen.");
         ui.add_space(2.0);
         ui.label("Identical: back faces shaded same as front.");
-        ui.label("DifferentColor: back faces shaded in a set color.");
+        ui.label("DifferentColour: back faces shaded in a set colour.");
         ui.label("Tint: back faces darkened by a factor.");
         ui.label("Pattern: procedural pattern on back faces\n(Checker / Hatching / Crosshatch / Stripes).");
     });

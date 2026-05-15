@@ -2,7 +2,7 @@
 //!
 //! A simply-supported rectangular beam under a central point load.
 //!
-//! Top: the beam solid, rendered as a transparent hex volume mesh colored by
+//! Top: the beam solid, rendered as a transparent hex volume mesh coloured by
 //! von Mises stress. This is what a scalar field shows you: how intense the
 //! stress is, but not its direction.
 //!
@@ -22,7 +22,7 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap, ColormapId, FrameData, MeshId,
+    AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, ColourmapId, FrameData, MeshId,
     SceneRenderItem, TensorGlyphItem, ViewportRenderer, VolumeMeshData,
 };
 
@@ -50,14 +50,14 @@ const Y_BOT: f32 = -3.5;
 // State
 // ---------------------------------------------------------------------------
 
-const GLYPH_COLORMAPS: &[(BuiltinColormap, &str)] = &[
-    (BuiltinColormap::RdBu, "RdBu"),
-    (BuiltinColormap::Coolwarm, "Coolwarm"),
-    (BuiltinColormap::Viridis, "Viridis"),
-    (BuiltinColormap::Plasma, "Plasma"),
-    (BuiltinColormap::Turbo, "Turbo"),
-    (BuiltinColormap::Inferno, "Inferno"),
-    (BuiltinColormap::Greyscale, "Greyscale"),
+const GLYPH_COLOURMAPS: &[(BuiltinColourmap, &str)] = &[
+    (BuiltinColourmap::RdBu, "RdBu"),
+    (BuiltinColourmap::Coolwarm, "Coolwarm"),
+    (BuiltinColourmap::Viridis, "Viridis"),
+    (BuiltinColourmap::Plasma, "Plasma"),
+    (BuiltinColourmap::Turbo, "Turbo"),
+    (BuiltinColourmap::Inferno, "Inferno"),
+    (BuiltinColourmap::Greyscale, "Greyscale"),
 ];
 
 #[derive(Debug, Clone)]
@@ -66,7 +66,7 @@ pub(crate) struct TensorGlyphState {
     pub mesh_id: Option<MeshId>,
     pub scale: f32,
     pub density: f32,
-    pub colormap: BuiltinColormap,
+    pub colourmap: BuiltinColourmap,
 }
 
 impl Default for TensorGlyphState {
@@ -76,7 +76,7 @@ impl Default for TensorGlyphState {
             mesh_id: None,
             scale: 0.45,
             density: 1.0,
-            colormap: BuiltinColormap::RdBu,
+            colourmap: BuiltinColourmap::RdBu,
         }
     }
 }
@@ -274,7 +274,7 @@ pub(crate) fn submit_tensor_glyphs(app: &App, fd: &mut FrameData) {
         let mut positions = Vec::with_capacity(n_max);
         let mut eigenvalues = Vec::with_capacity(n_max);
         let mut eigenvectors = Vec::with_capacity(n_max);
-        let mut color_attr = Vec::with_capacity(n_max);
+        let mut colour_attr = Vec::with_capacity(n_max);
 
         // Stride-based subsampling over the fine glyph grid.
         // density=1.0 -> all GNX*GNY*GNZ glyphs, 0.5 -> every other, etc.
@@ -299,8 +299,8 @@ pub(crate) fn submit_tensor_glyphs(app: &App, fd: &mut FrameData) {
                     let (evals, evecs) = stress_eigen(sigma_xx, tau_xy);
                     eigenvalues.push(evals);
                     eigenvectors.push(evecs);
-                    // Color by sigma_xx: tension = positive (warm), compression = negative (cool).
-                    color_attr.push(sigma_xx);
+                    // Colour by sigma_xx: tension = positive (warm), compression = negative (cool).
+                    colour_attr.push(sigma_xx);
                 }
             }
         }
@@ -310,9 +310,9 @@ pub(crate) fn submit_tensor_glyphs(app: &App, fd: &mut FrameData) {
         item.eigenvalues = eigenvalues;
         item.eigenvectors = eigenvectors;
         item.scale = state.scale;
-        item.color_attribute = Some(color_attr);
+        item.colour_attribute = Some(colour_attr);
         item.scalar_range = Some((-1.2, 1.2));
-        item.colormap_id = Some(ColormapId(state.colormap as usize));
+        item.colourmap_id = Some(ColourmapId(state.colourmap as usize));
         fd.scene.tensor_glyphs.push(item);
     }
 }
@@ -332,7 +332,7 @@ pub(crate) fn beam_scene_items(app: &App) -> Vec<SceneRenderItem> {
         name: "von_mises".to_string(),
         kind: AttributeKind::Face,
     });
-    item.colormap_id = Some(ColormapId(0)); // viridis
+    item.colourmap_id = Some(ColourmapId(0)); // viridis
     item.material.backface_policy = BackfacePolicy::Identical;
     vec![item]
 }
@@ -341,13 +341,13 @@ pub(crate) fn controls_tensor_glyphs(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Simply-supported beam under a central point load.");
     ui.separator();
 
-    ui.label("Top: beam volume mesh, colored by von Mises stress (scalar).");
+    ui.label("Top: beam volume mesh, coloured by von Mises stress (scalar).");
     ui.label("  Shows intensity -- not direction.");
     ui.separator();
 
     ui.label("Bottom: principal stress tensor glyphs.");
     ui.label("  Top + bottom fibers: elongated along the beam axis.");
-    ui.label("  Color tells you the sign: blue = compression, red = tension.");
+    ui.label("  Colour tells you the sign: blue = compression, red = tension.");
     ui.label("  Neutral axis near the supports: glyphs rotated ~45 deg (pure shear).");
     ui.label("  Mixed zones: gradual rotation between 0 and 45 deg.");
     ui.separator();
@@ -360,17 +360,17 @@ pub(crate) fn controls_tensor_glyphs(app: &mut App, ui: &mut egui::Ui) {
     ui.add(egui::Slider::new(&mut app.tg_state.density, 0.1..=1.0));
 
     ui.separator();
-    ui.label("Glyph colormap:");
-    let selected_name = GLYPH_COLORMAPS
+    ui.label("Glyph colourmap:");
+    let selected_name = GLYPH_COLOURMAPS
         .iter()
-        .find(|(c, _)| *c == app.tg_state.colormap)
+        .find(|(c, _)| *c == app.tg_state.colourmap)
         .map(|(_, n)| *n)
         .unwrap_or("Unknown");
-    egui::ComboBox::from_id_salt("tg_colormap")
+    egui::ComboBox::from_id_salt("tg_colourmap")
         .selected_text(selected_name)
         .show_ui(ui, |ui| {
-            for (cmap, name) in GLYPH_COLORMAPS {
-                ui.selectable_value(&mut app.tg_state.colormap, *cmap, *name);
+            for (cmap, name) in GLYPH_COLOURMAPS {
+                ui.selectable_value(&mut app.tg_state.colourmap, *cmap, *name);
             }
         });
 }

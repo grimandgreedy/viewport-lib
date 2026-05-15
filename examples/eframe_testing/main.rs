@@ -20,10 +20,10 @@ use viewport_lib::{
     ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
 };
 
-// Solid unlit colors for the subsurface objects. Picked to be visually distinct
-// so any bleed-through is immediately identifiable by color.
-const COLOR_MAGENTA: [f32; 3] = [1.0, 0.0, 1.0];
-const COLOR_CYAN: [f32; 3] = [0.0, 1.0, 1.0];
+// Solid unlit colours for the subsurface objects. Picked to be visually distinct
+// so any bleed-through is immediately identifiable by colour.
+const COLOUR_MAGENTA: [f32; 3] = [1.0, 0.0, 1.0];
+const COLOUR_CYAN: [f32; 3] = [0.0, 1.0, 1.0];
 
 fn main() -> eframe::Result {
     eframe::run_native(
@@ -57,7 +57,7 @@ fn main() -> eframe::Result {
             let sphere_id = res.upload_mesh_data(device, &sphere_mesh).unwrap();
 
             // Unlit objects placed below the ground plane. Any visible bleed-through
-            // of their colors indicates the depth issue we are diagnosing.
+            // of their colours indicates the depth issue we are diagnosing.
             let unlit_sphere_mesh = primitives::sphere(2.0, 24, 12);
             let unlit_sphere_id = res.upload_mesh_data(device, &unlit_sphere_mesh).unwrap();
             let unlit_box_mesh = primitives::cuboid(3.0, 3.0, 3.0);
@@ -125,7 +125,7 @@ impl App {
             kind: LightKind::Directional {
                 direction: [0.4, 0.3, 1.5],
             },
-            color: [1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0],
             intensity: 1.0,
         }];
         lighting.hemisphere_intensity = 0.4;
@@ -206,7 +206,7 @@ impl App {
             items.push(item);
         }
 
-        // Unlit objects below the ground plane. Their colors bleed through if
+        // Unlit objects below the ground plane. Their colours bleed through if
         // the depth issue is active. Magenta sphere at the centre, cyan box
         // offset so both are independently visible.
         if self.show_subsurface {
@@ -218,7 +218,7 @@ impl App {
                 item.mesh_id = self.unlit_sphere_id;
                 item.visible = true;
                 let mut m = unlit_mat;
-                m.base_color = COLOR_MAGENTA;
+                m.base_colour = COLOUR_MAGENTA;
                 item.material = m;
                 item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -2.0))
                     .to_cols_array_2d();
@@ -230,7 +230,7 @@ impl App {
                 item.mesh_id = self.unlit_box_id;
                 item.visible = true;
                 let mut m = unlit_mat;
-                m.base_color = COLOR_CYAN;
+                m.base_colour = COLOUR_CYAN;
                 item.material = m;
                 item.model = glam::Mat4::from_translation(glam::Vec3::new(8.0, 5.0, -2.5))
                     .to_cols_array_2d();

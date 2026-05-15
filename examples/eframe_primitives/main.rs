@@ -77,12 +77,12 @@ fn main() -> eframe::Result {
             let cx = [-5.25f32, -1.75, 1.75, 5.25];
             let rz = [-7.0f32, -3.5, 0.0, 3.5, 7.0];
 
-            let item = |mesh_id: MeshId, x, z, color: [f32; 3]| {
+            let item = |mesh_id: MeshId, x, z, colour: [f32; 3]| {
                 let mut s = SceneRenderItem::default();
                 s.mesh_id = mesh_id;
                 s.model =
                     glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, z)).to_cols_array_2d();
-                s.material = Material::from_color(color);
+                s.material = Material::from_colour(colour);
                 s.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
                 s
             };
@@ -223,7 +223,7 @@ impl eframe::App for App {
                         kind: LightKind::Directional {
                             direction: [0.4, -0.5, 1.2],
                         },
-                        color: [1.0, 0.97, 0.92],
+                        colour: [1.0, 0.97, 0.92],
                         intensity: 1.0,
                     },
                     // Cool fill from the opposite side.
@@ -231,13 +231,13 @@ impl eframe::App for App {
                         kind: LightKind::Directional {
                             direction: [-0.8, 0.6, 0.3],
                         },
-                        color: [0.70, 0.82, 1.0],
+                        colour: [0.70, 0.82, 1.0],
                         intensity: 0.35,
                     },
                 ],
                 hemisphere_intensity: 0.35,
-                sky_color: [0.80, 0.90, 1.0],
-                ground_color: [0.35, 0.28, 0.22],
+                sky_colour: [0.80, 0.90, 1.0],
+                ground_colour: [0.35, 0.28, 0.22],
                 ..LightingSettings::default()
             };
             frame_data.viewport.show_grid = false;

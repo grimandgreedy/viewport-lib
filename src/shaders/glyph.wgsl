@@ -13,7 +13,7 @@
 //
 // Each instance is oriented so the glyph local +Y axis aligns with the direction vector.
 // Scale = global_scale * (optional magnitude scaling).
-// Color = LUT(scalar) or LUT(magnitude) depending on has_scalars.
+// Colour = LUT(scalar) or LUT(magnitude) depending on has_scalars.
 
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -40,9 +40,9 @@ struct GlyphUniform {
     mag_clamp_max:      f32,    //  4 bytes
     has_mag_clamp:      u32,    //  4 bytes (1 = clamp magnitude to [min, max])
     // offset 32 : 16-byte aligned, safe for vec4.
-    default_color:      vec4<f32>,  // 16 bytes
-    use_default_color:  u32,        //  4 bytes (1 = color by default_color instead of LUT)
-    unlit:              u32,        //  4 bytes (1 = skip lighting, return raw color)
+    default_colour:      vec4<f32>,  // 16 bytes
+    use_default_colour:  u32,        //  4 bytes (1 = colour by default_colour instead of LUT)
+    unlit:              u32,        //  4 bytes (1 = skip lighting, return raw colour)
     _pad1: u32, _pad2: u32,        //  8 bytes : total 64 bytes
 };
 
@@ -83,7 +83,7 @@ struct SingleLight {
     light_view_proj: mat4x4<f32>,
     pos_or_dir:      vec3<f32>,
     light_type:      u32,
-    color:           vec3<f32>,
+    colour:           vec3<f32>,
     intensity:       f32,
     range:           f32,
     inner_angle:     f32,
@@ -97,9 +97,9 @@ struct Lights {
     hemisphere_intensity: f32,
     _pad0:                u32,
     _pad1:                u32,
-    sky_color:            vec3<f32>,
+    sky_colour:            vec3<f32>,
     _pad2:                f32,
-    ground_color:         vec3<f32>,
+    ground_colour:         vec3<f32>,
     _pad3:                f32,
     lights:               array<SingleLight, 8>,
 };
@@ -146,7 +146,7 @@ struct VertexIn {
     // We only use position (location 0) and normal (location 1).
     @location(0) position: vec3<f32>,
     @location(1) normal:   vec3<f32>,
-    @location(2) color:    vec4<f32>,   // unused : here to match buffer stride
+    @location(2) colour:    vec4<f32>,   // unused : here to match buffer stride
     @location(3) uv:       vec2<f32>,   // unused
     @location(4) tangent:  vec4<f32>,   // unused
     @builtin(instance_index) instance_index: u32,
@@ -154,7 +154,7 @@ struct VertexIn {
 
 struct VertexOut {
     @builtin(position) clip_pos:   vec4<f32>,
-    @location(0)       color:      vec4<f32>,
+    @location(0)       colour:      vec4<f32>,
     @location(1)       world_pos:  vec3<f32>,
     @location(2)       world_nrm:  vec3<f32>,
     @location(3)       unlit:      f32,
@@ -220,26 +220,26 @@ fn vs_main(in: VertexIn) -> VertexOut {
     out.clip_pos  = camera.view_proj * vec4<f32>(world_pos, 1.0);
     out.world_pos = world_pos;
     out.world_nrm = world_nrm;
-    out.unlit     = select(0.0, 1.0, glyph_uniform.use_default_color != 0u || glyph_uniform.unlit != 0u);
+    out.unlit     = select(0.0, 1.0, glyph_uniform.use_default_colour != 0u || glyph_uniform.unlit != 0u);
 
-    // Determine color.
-    if glyph_uniform.use_default_color != 0u {
-        // Use the fixed default_color. Scalar is 1.0 when hovered/active, 0.0-0.2 otherwise.
+    // Determine colour.
+    if glyph_uniform.use_default_colour != 0u {
+        // Use the fixed default_colour. Scalar is 1.0 when hovered/active, 0.0-0.2 otherwise.
         // Invert so inactive handles are full brightness and hovered/active handles are darker.
         let brightness = 1.0 - inst.scalar * 0.7;
-        out.color = vec4<f32>(glyph_uniform.default_color.rgb * brightness, glyph_uniform.default_color.a);
+        out.colour = vec4<f32>(glyph_uniform.default_colour.rgb * brightness, glyph_uniform.default_colour.a);
     } else if glyph_uniform.has_scalars != 0u {
         let raw   = inst.scalar;
         let range = glyph_uniform.scalar_max - glyph_uniform.scalar_min;
         let t     = select(0.0, (raw - glyph_uniform.scalar_min) / range, range > 0.0);
         let u     = clamp(t, 0.0, 1.0);
-        out.color = textureSampleLevel(lut_texture, lut_sampler, vec2<f32>(u, 0.5), 0.0);
+        out.colour = textureSampleLevel(lut_texture, lut_sampler, vec2<f32>(u, 0.5), 0.0);
     } else {
-        // Color by magnitude.
+        // Colour by magnitude.
         let range = glyph_uniform.scalar_max - glyph_uniform.scalar_min;
         let t     = select(0.0, (mag - glyph_uniform.scalar_min) / range, range > 0.0);
         let u     = clamp(t, 0.0, 1.0);
-        out.color = textureSampleLevel(lut_texture, lut_sampler, vec2<f32>(u, 0.5), 0.0);
+        out.colour = textureSampleLevel(lut_texture, lut_sampler, vec2<f32>(u, 0.5), 0.0);
     }
 
     return out;
@@ -257,7 +257,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if !clip_volume_test(in.world_pos) { discard; }
 
     if in.unlit > 0.5 {
-        return in.color;
+        return in.colour;
     }
 
     // Diffuse shading from scene directional lights.
@@ -269,7 +269,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     var light_rgb: vec3<f32>;
     if lights.count > 0u && lights.lights[0].light_type == 0u {
         light_dir = normalize(-lights.lights[0].pos_or_dir);
-        light_rgb = lights.lights[0].color * lights.lights[0].intensity;
+        light_rgb = lights.lights[0].colour * lights.lights[0].intensity;
     } else {
         light_dir = normalize(vec3<f32>(0.3, 1.0, 0.5));
         light_rgb = vec3<f32>(1.0);
@@ -280,5 +280,5 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let diffuse = 0.8 * n_dot_l;
     let shading = ambient + diffuse;
 
-    return vec4<f32>(in.color.rgb * light_rgb * shading, in.color.a);
+    return vec4<f32>(in.colour.rgb * light_rgb * shading, in.colour.a);
 }

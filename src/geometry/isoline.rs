@@ -18,7 +18,7 @@
 //!     indices:   mesh_indices.clone(),
 //!     scalars:   per_vertex_pressure.clone(),
 //!     isovalues: vec![100.0, 200.0, 300.0],
-//!     color:     [1.0, 1.0, 0.0, 1.0],
+//!     colour:     [1.0, 1.0, 0.0, 1.0],
 //!     line_width: 1.5,
 //!     ..IsolineItem::default()
 //! };
@@ -50,7 +50,7 @@ pub struct IsolineItem {
     pub isovalues: Vec<f32>,
 
     /// RGBA colour applied to every line segment.  Defaults to opaque white.
-    pub color: [f32; 4],
+    pub colour: [f32; 4],
 
     /// Line width in pixels.  Defaults to `1.0`.
     pub line_width: f32,
@@ -71,7 +71,7 @@ impl Default for IsolineItem {
             indices: Vec::new(),
             scalars: Vec::new(),
             isovalues: Vec::new(),
-            color: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0],
             line_width: 1.0,
             model_matrix: glam::Mat4::IDENTITY,
             depth_bias: 0.001,

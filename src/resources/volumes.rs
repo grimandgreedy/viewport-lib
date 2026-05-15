@@ -487,13 +487,13 @@ impl ViewportGpuResources {
             offset += 4;
             uniform_data[offset..offset + 4].copy_from_slice(bytemuck::bytes_of(&num_clip));
             offset += 4;
-            let use_nan_color_u32: u32 = if item.nan_color.is_some() { 1 } else { 0 };
+            let use_nan_colour_u32: u32 = if item.nan_colour.is_some() { 1 } else { 0 };
             uniform_data[offset..offset + 4]
-                .copy_from_slice(bytemuck::bytes_of(&use_nan_color_u32));
+                .copy_from_slice(bytemuck::bytes_of(&use_nan_colour_u32));
             offset += 4;
             offset += 4;
-            let nan_color = item.nan_color.unwrap_or([0.0f32; 4]);
-            uniform_data[offset..offset + 16].copy_from_slice(bytemuck::bytes_of(&nan_color));
+            let nan_colour = item.nan_colour.unwrap_or([0.0f32; 4]);
+            uniform_data[offset..offset + 16].copy_from_slice(bytemuck::bytes_of(&nan_colour));
             offset += 16;
             for cp in &clip_plane_data {
                 uniform_data[offset..offset + 16].copy_from_slice(bytemuck::bytes_of(cp));
@@ -516,12 +516,12 @@ impl ViewportGpuResources {
 
         let volume_view = &self.volume_textures[vol_id].1;
 
-        let color_lut_view = if let Some(cmap_id) = item.color_lut {
-            self.colormap_views
+        let colour_lut_view = if let Some(cmap_id) = item.colour_lut {
+            self.colourmap_views
                 .get(cmap_id.0)
                 .unwrap_or(&self.fallback_lut_view)
-        } else if let Some(ids) = &self.builtin_colormap_ids {
-            self.colormap_views
+        } else if let Some(ids) = &self.builtin_colourmap_ids {
+            self.colourmap_views
                 .get(ids[0].0)
                 .unwrap_or(&self.fallback_lut_view)
         } else {
@@ -529,7 +529,7 @@ impl ViewportGpuResources {
         };
 
         let opacity_lut_view = if let Some(cmap_id) = item.opacity_lut {
-            self.colormap_views
+            self.colourmap_views
                 .get(cmap_id.0)
                 .unwrap_or(self.volume_default_opacity_lut_view.as_ref().unwrap())
         } else {
@@ -581,7 +581,7 @@ impl ViewportGpuResources {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(color_lut_view),
+                    resource: wgpu::BindingResource::TextureView(colour_lut_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,

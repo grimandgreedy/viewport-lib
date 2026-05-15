@@ -39,10 +39,10 @@ pub struct PlaneWidget {
     pub center: glam::Vec3,
     /// Unit normal vector of the plane (always normalized on output).
     pub normal: glam::Vec3,
-    /// RGBA color for the wireframe square outline and normal line.
-    pub color: [f32; 4],
-    /// RGBA color for the drag handles. Non-zero alpha overrides LUT coloring.
-    pub handle_color: [f32; 4],
+    /// RGBA colour for the wireframe square outline and normal line.
+    pub colour: [f32; 4],
+    /// RGBA colour for the drag handles. Non-zero alpha overrides LUT colouring.
+    pub handle_colour: [f32; 4],
     /// Half-size of the visual square in world space.
     pub display_half_size: f32,
     /// Distance from center to the normal-tip handle sphere.
@@ -69,8 +69,8 @@ impl PlaneWidget {
         Self {
             center,
             normal,
-            color: [0.3, 0.7, 1.0, 1.0],
-            handle_color: [0.0; 4],
+            colour: [0.3, 0.7, 1.0, 1.0],
+            handle_colour: [0.0; 4],
             display_half_size: 1.5,
             normal_display_length: 2.0,
             hovered_handle: None,
@@ -174,7 +174,7 @@ impl PlaneWidget {
         PolylineItem {
             positions,
             strip_lengths: vec![5, 2],
-            default_color: self.color,
+            default_colour: self.colour,
             line_width: 1.5,
             id,
             ..PolylineItem::default()
@@ -213,8 +213,8 @@ impl PlaneWidget {
             scalar_range: Some((0.0, 1.0)),
             glyph_type: GlyphType::Sphere,
             id: id_base,
-            default_color: self.handle_color,
-            use_default_color: self.handle_color[3] > 0.0,
+            default_colour: self.handle_colour,
+            use_default_colour: self.handle_colour[3] > 0.0,
             ..GlyphItem::default()
         }
     }

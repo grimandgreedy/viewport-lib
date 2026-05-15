@@ -1,6 +1,6 @@
 //! CPU sphere-marching of implicit surfaces (signed-distance functions).
 //!
-//! [`march_implicit_surface`] and [`march_implicit_surface_color`] accept a
+//! [`march_implicit_surface`] and [`march_implicit_surface_colour`] accept a
 //! user-supplied SDF closure, fire rays from the camera for each pixel, and
 //! produce a [`crate::renderer::types::ScreenImageItem`] with per-pixel NDC
 //! depth suitable for depth-compositing against scene geometry via Phase 12.
@@ -18,13 +18,13 @@
 //! fd.scene.screen_images.push(img);
 //! ```
 //!
-//! For colored surfaces supply a closure returning `(sdf_value, [r, g, b, a])`:
+//! For coloured surfaces supply a closure returning `(sdf_value, [r, g, b, a])`:
 //!
 //! ```rust,ignore
-//! let img = march_implicit_surface_color(&camera, &opts, |p| {
+//! let img = march_implicit_surface_colour(&camera, &opts, |p| {
 //!     let d = p.length() - 1.5;
-//!     let color = [200u8, 100, 50, 255];
-//!     (d, color)
+//!     let colour = [200u8, 100, 50, 255];
+//!     (d, colour)
 //! });
 //! ```
 //!
@@ -71,12 +71,12 @@ pub struct ImplicitRenderOptions {
     /// Maximum ray travel distance; rays that exceed this without a hit are
     /// treated as background. Default: `1000.0`.
     pub max_distance: f32,
-    /// RGBA8 surface color used by [`march_implicit_surface`].
+    /// RGBA8 surface colour used by [`march_implicit_surface`].
     ///
-    /// Ignored by [`march_implicit_surface_color`] (color comes from the closure).
+    /// Ignored by [`march_implicit_surface_colour`] (colour comes from the closure).
     /// Default: light grey `[200, 200, 200, 255]`.
-    pub surface_color: [u8; 4],
-    /// RGBA8 background color for pixels that miss the surface. Default: fully
+    pub surface_colour: [u8; 4],
+    /// RGBA8 background colour for pixels that miss the surface. Default: fully
     /// transparent black `[0, 0, 0, 0]`.
     pub background: [u8; 4],
 }
@@ -90,7 +90,7 @@ impl Default for ImplicitRenderOptions {
             step_scale: 0.9,
             hit_threshold: 5e-4,
             max_distance: 1000.0,
-            surface_color: [200, 200, 200, 255],
+            surface_colour: [200, 200, 200, 255],
             background: [0, 0, 0, 0],
         }
     }
@@ -120,16 +120,16 @@ pub fn march_implicit_surface<F>(
 where
     F: Fn(Vec3) -> f32 + Sync,
 {
-    let color = options.surface_color;
-    march_impl(camera, options, move |p| (sdf(p), color))
+    let colour = options.surface_colour;
+    march_impl(camera, options, move |p| (sdf(p), colour))
 }
 
-/// Sphere-march a colored signed-distance function and produce a depth-composited
+/// Sphere-march a coloured signed-distance function and produce a depth-composited
 /// [`ScreenImageItem`].
 ///
-/// The closure `sdf_color` returns `(sdf_value, rgba8_color)`. The SDF value
-/// drives the ray-march; the color is modulated by the same diffuse + ambient
-/// shading as [`march_implicit_surface`]. The color closure is also called
+/// The closure `sdf_colour` returns `(sdf_value, rgba8_colour)`. The SDF value
+/// drives the ray-march; the colour is modulated by the same diffuse + ambient
+/// shading as [`march_implicit_surface`]. The colour closure is also called
 /// (6 times per hit point) for normal estimation — only the SDF value is
 /// used in those calls.
 ///
@@ -137,22 +137,22 @@ where
 /// `1.0` (far plane) so scene geometry is never occluded by them.
 ///
 /// See the module-level documentation for a usage example.
-pub fn march_implicit_surface_color<F>(
+pub fn march_implicit_surface_colour<F>(
     camera: &Camera,
     options: &ImplicitRenderOptions,
-    sdf_color: F,
+    sdf_colour: F,
 ) -> ScreenImageItem
 where
     F: Fn(Vec3) -> (f32, [u8; 4]) + Sync,
 {
-    march_impl(camera, options, sdf_color)
+    march_impl(camera, options, sdf_colour)
 }
 
 // ---------------------------------------------------------------------------
 // Core implementation
 // ---------------------------------------------------------------------------
 
-fn march_impl<F>(camera: &Camera, options: &ImplicitRenderOptions, sdf_color: F) -> ScreenImageItem
+fn march_impl<F>(camera: &Camera, options: &ImplicitRenderOptions, sdf_colour: F) -> ScreenImageItem
 where
     F: Fn(Vec3) -> (f32, [u8; 4]) + Sync,
 {
@@ -222,15 +222,15 @@ where
             let mut t = znear;
             let mut hit = false;
             let mut hit_pos = Vec3::ZERO;
-            let mut hit_color = options.surface_color;
+            let mut hit_colour = options.surface_colour;
 
             for _ in 0..options.max_steps {
                 let pos = ray_o + ray_d * t;
-                let (d, color) = sdf_color(pos);
+                let (d, colour) = sdf_colour(pos);
                 if d.abs() < options.hit_threshold {
                     hit = true;
                     hit_pos = pos;
-                    hit_color = color;
+                    hit_colour = colour;
                     break;
                 }
                 t += d * options.step_scale;
@@ -242,11 +242,11 @@ where
             if hit {
                 // Normal from central differences.
                 let gx =
-                    sdf_color(hit_pos + Vec3::X * eps).0 - sdf_color(hit_pos - Vec3::X * eps).0;
+                    sdf_colour(hit_pos + Vec3::X * eps).0 - sdf_colour(hit_pos - Vec3::X * eps).0;
                 let gy =
-                    sdf_color(hit_pos + Vec3::Y * eps).0 - sdf_color(hit_pos - Vec3::Y * eps).0;
+                    sdf_colour(hit_pos + Vec3::Y * eps).0 - sdf_colour(hit_pos - Vec3::Y * eps).0;
                 let gz =
-                    sdf_color(hit_pos + Vec3::Z * eps).0 - sdf_color(hit_pos - Vec3::Z * eps).0;
+                    sdf_colour(hit_pos + Vec3::Z * eps).0 - sdf_colour(hit_pos - Vec3::Z * eps).0;
                 let normal = Vec3::new(gx, gy, gz).normalize_or_zero();
 
                 // Diffuse + ambient shading.
@@ -254,10 +254,10 @@ where
                 let shade = (AMBIENT + (1.0 - AMBIENT) * diffuse).min(1.0);
 
                 *pix = [
-                    (hit_color[0] as f32 * shade) as u8,
-                    (hit_color[1] as f32 * shade) as u8,
-                    (hit_color[2] as f32 * shade) as u8,
-                    hit_color[3],
+                    (hit_colour[0] as f32 * shade) as u8,
+                    (hit_colour[1] as f32 * shade) as u8,
+                    (hit_colour[2] as f32 * shade) as u8,
+                    hit_colour[3],
                 ];
 
                 // NDC depth (wgpu: 0 = near plane, 1 = far plane).
@@ -321,7 +321,7 @@ mod tests {
             max_steps: 256,
             hit_threshold: 1e-4,
             max_distance: 200.0,
-            surface_color: [255, 0, 0, 255],
+            surface_colour: [255, 0, 0, 255],
             ..Default::default()
         };
         // Unit sphere at origin — camera is at z=6, looking at origin.
@@ -390,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn march_color_closure_applies_color() {
+    fn march_colour_closure_applies_colour() {
         let cam = default_cam();
         let opts = ImplicitRenderOptions {
             width: 32,
@@ -401,7 +401,7 @@ mod tests {
             ..Default::default()
         };
         let target_alpha = 200u8;
-        let img = march_implicit_surface_color(&cam, &opts, |p| {
+        let img = march_implicit_surface_colour(&cam, &opts, |p| {
             (p.length() - 1.0, [0, 255, 0, target_alpha])
         });
 
@@ -442,7 +442,7 @@ mod tests {
             max_steps: 256,
             hit_threshold: 1e-4,
             max_distance: 200.0,
-            surface_color: [255, 255, 255, 255],
+            surface_colour: [255, 255, 255, 255],
             ..Default::default()
         };
         let img = march_implicit_surface(&cam, &opts, |p| p.length() - 1.0);

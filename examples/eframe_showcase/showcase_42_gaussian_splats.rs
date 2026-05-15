@@ -6,7 +6,7 @@
 //!   A) Diffusion tensor field: two orthogonal fiber tracts crossing at the
 //!      origin. Each voxel is a Gaussian whose shape encodes the local
 //!      diffusion tensor. Cigar-shaped splats in the tracts, spheres in the
-//!      background. Color by fractional anisotropy. Tilt along each tract axis
+//!      background. Colour by fractional anisotropy. Tilt along each tract axis
 //!      and the splats foreshorten; the other tract remains visible. A point
 //!      cloud cannot encode orientation at all.
 //!
@@ -73,7 +73,7 @@ pub(crate) fn build_gaussian_splat_scene(app: &mut App, renderer: &mut ViewportR
 
 // Two orthogonal fiber tracts (axes X and Z) crossing at the origin.
 // Each voxel has a diffusion tensor encoded as position/scale/rotation.
-// Color by fractional anisotropy (FA): orange = high, blue = isotropic.
+// Colour by fractional anisotropy (FA): orange = high, blue = isotropic.
 fn generate_dti() -> GaussianSplatData {
     const SH0_C: f32 = 0.28209479177;
     const TRACT_R: f32 = 0.60; // tract inclusion radius
@@ -143,7 +143,7 @@ fn generate_dti() -> GaussianSplatData {
                     ([SCALE_ISO, SCALE_ISO, SCALE_ISO], [0.0_f32, 0.0, 0.0, 1.0])
                 };
 
-                // Color: hue 0.63 (blue) at FA=0 -> hue 0.07 (orange) at FA=1.
+                // Colour: hue 0.63 (blue) at FA=0 -> hue 0.07 (orange) at FA=1.
                 let hue = 0.63 - fa * 0.56;
                 let (r, g, b) = hsl_to_linear(hue, 0.85, 0.55);
 
@@ -194,7 +194,7 @@ fn fa_blend(dist: f32, radius: f32, blend_width: f32) -> f32 {
 //   omega_z =  2 sin(x) sin(y) cos(z)
 //
 // Splats are placed where |omega| exceeds a threshold, elongated along omega.
-// Color: red (omega_z > 0, CCW), blue (omega_z < 0, CW).
+// Colour: red (omega_z > 0, CCW), blue (omega_z < 0, CW).
 fn generate_tgv() -> GaussianSplatData {
     const SH0_C: f32 = 0.28209479177;
     const THRESHOLD: f32 = 0.40; // fraction of max |omega| below which to skip
@@ -252,7 +252,7 @@ fn generate_tgv() -> GaussianSplatData {
         let inv = 1.0 / mag;
         let rot = quat_align_z_to([ox * inv, oy * inv, oz * inv]);
 
-        // Color by sign of omega_z: red (CCW) vs blue (CW).
+        // Colour by sign of omega_z: red (CCW) vs blue (CW).
         let hue = if *oz >= 0.0 { 0.02 } else { 0.62 };
         let (r, g, b) = hsl_to_linear(hue, 0.90, 0.55);
 
@@ -337,7 +337,7 @@ pub(crate) fn controls_gaussian_splats(app: &mut App, ui: &mut egui::Ui) {
 
     match app.splat_state.scene {
         SplatScene::Dti => {
-            ui.label("Two fiber tracts (X and Z axes) cross at the origin. Each splat encodes the local diffusion tensor: cigar-shaped in tracts, spherical in background. Color = fractional anisotropy (orange high, blue low).");
+            ui.label("Two fiber tracts (X and Z axes) cross at the origin. Each splat encodes the local diffusion tensor: cigar-shaped in tracts, spherical in background. Colour = fractional anisotropy (orange high, blue low).");
             ui.label("Tip: look along the X axis -- that tract foreshortens to dots while the Z tract remains as needles.");
         }
         SplatScene::Tgv => {

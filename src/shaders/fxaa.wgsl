@@ -5,7 +5,7 @@
 //
 // Based on the NVIDIA FXAA 3.11 algorithm, simplified for clarity.
 // Input: LDR Rgba16Float or Rgba8Unorm tone-mapped texture.
-// Output: Anti-aliased LDR color.
+// Output: Anti-aliased LDR colour.
 
 @group(0) @binding(0) var input_texture: texture_2d<f32>;
 @group(0) @binding(1) var input_sampler: sampler;
@@ -28,7 +28,7 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
     return VertexOutput(vec4<f32>(p, 0.0, 1.0), uv);
 }
 
-// Perceived luminance of an LDR RGB color.
+// Perceived luminance of an LDR RGB colour.
 fn luminance(rgb: vec3<f32>) -> f32 {
     return dot(rgb, vec3<f32>(0.299, 0.587, 0.114));
 }

@@ -3,9 +3,9 @@
 //! Demonstrates the Phase 11 curve-network quantity system on a single helix
 //! polyline. Each mode shows one of the new attributes added to `PolylineItem`:
 //!
-//! - **EdgeScalar**: per-edge scalar -> colormap (flat constant color per segment)
-//! - **NodeColor**: per-node direct RGBA (smooth gradient along strip)
-//! - **EdgeColor**: per-edge direct RGBA (flat constant color per segment)
+//! - **EdgeScalar**: per-edge scalar -> colourmap (flat constant colour per segment)
+//! - **NodeColour**: per-node direct RGBA (smooth gradient along strip)
+//! - **EdgeColour**: per-edge direct RGBA (flat constant colour per segment)
 //! - **NodeRadius**: per-node line width that varies along the strip
 //! - **NodeVectors**: tangent arrows at each node (auto-rendered via GlyphItem)
 //! - **EdgeVectors**: normal arrows at each segment midpoint
@@ -13,13 +13,13 @@
 use crate::App;
 use eframe::egui;
 use std::f32::consts::TAU;
-use viewport_lib::{BuiltinColormap, ColormapId, PolylineItem};
+use viewport_lib::{BuiltinColourmap, ColourmapId, PolylineItem};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CnqMode {
     EdgeScalar,
-    NodeColor,
-    EdgeColor,
+    NodeColour,
+    EdgeColour,
     NodeRadius,
     NodeVectors,
     EdgeVectors,
@@ -42,9 +42,9 @@ impl Default for CnqState {
 pub(crate) fn controls_cnq(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Quantity mode:");
     for (mode, label) in [
-        (CnqMode::EdgeScalar, "Edge scalar (LUT coloring)"),
-        (CnqMode::NodeColor, "Node color (direct RGBA)"),
-        (CnqMode::EdgeColor, "Edge color (direct RGBA)"),
+        (CnqMode::EdgeScalar, "Edge scalar (LUT colouring)"),
+        (CnqMode::NodeColour, "Node colour (direct RGBA)"),
+        (CnqMode::EdgeColour, "Edge colour (direct RGBA)"),
         (CnqMode::NodeRadius, "Node radius (varying width)"),
         (CnqMode::NodeVectors, "Node vectors (tangent arrows)"),
         (CnqMode::EdgeVectors, "Edge vectors (normal arrows)"),
@@ -107,12 +107,12 @@ pub(crate) fn make_cnq_polyline_item(app: &App) -> PolylineItem {
             item.edge_scalars = (0..num_segs)
                 .map(|i| i as f32 / (num_segs - 1) as f32)
                 .collect();
-            item.colormap_id = Some(ColormapId(BuiltinColormap::Plasma as usize));
+            item.colourmap_id = Some(ColourmapId(BuiltinColourmap::Plasma as usize));
         }
 
-        CnqMode::NodeColor => {
-            // Per-node color: RGB rainbow cycling along the strip.
-            item.node_colors = (0..n)
+        CnqMode::NodeColour => {
+            // Per-node colour: RGB rainbow cycling along the strip.
+            item.node_colours = (0..n)
                 .map(|k| {
                     let t = k as f32 / (n - 1) as f32;
                     let hue = t * TAU;
@@ -133,9 +133,9 @@ pub(crate) fn make_cnq_polyline_item(app: &App) -> PolylineItem {
                 .collect();
         }
 
-        CnqMode::EdgeColor => {
-            // Per-edge color: alternating two colors per segment.
-            item.edge_colors = (0..num_segs)
+        CnqMode::EdgeColour => {
+            // Per-edge colour: alternating two colours per segment.
+            item.edge_colours = (0..num_segs)
                 .map(|i| {
                     if i % 2 == 0 {
                         [0.2, 0.6, 1.0, 1.0]

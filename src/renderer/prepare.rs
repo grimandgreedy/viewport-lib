@@ -27,8 +27,8 @@ impl ViewportRenderer {
             self.compute_filter_results.clear();
         }
 
-        // Ensure built-in colormaps and matcaps are uploaded on first frame.
-        self.resources.ensure_colormaps_initialized(device, queue);
+        // Ensure built-in colourmaps and matcaps are uploaded on first frame.
+        self.resources.ensure_colourmaps_initialized(device, queue);
         self.resources.ensure_matcaps_initialized(device, queue);
 
         let resources = &mut self.resources;
@@ -125,7 +125,7 @@ impl ViewportRenderer {
                     light_view_proj: shadow_mat.to_cols_array_2d(),
                     pos_or_dir: *direction,
                     light_type: 0,
-                    color: src.color,
+                    colour: src.colour,
                     intensity: src.intensity,
                     range: 0.0,
                     inner_angle: 0.0,
@@ -138,7 +138,7 @@ impl ViewportRenderer {
                     light_view_proj: shadow_mat.to_cols_array_2d(),
                     pos_or_dir: *position,
                     light_type: 1,
-                    color: src.color,
+                    colour: src.colour,
                     intensity: src.intensity,
                     range: *range,
                     inner_angle: 0.0,
@@ -157,7 +157,7 @@ impl ViewportRenderer {
                     light_view_proj: shadow_mat.to_cols_array_2d(),
                     pos_or_dir: *position,
                     light_type: 2,
-                    color: src.color,
+                    colour: src.colour,
                     intensity: src.intensity,
                     range: *range,
                     inner_angle: *inner_angle,
@@ -175,7 +175,7 @@ impl ViewportRenderer {
             light_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
             pos_or_dir: [0.0; 3],
             light_type: 0,
-            color: [1.0; 3],
+            colour: [1.0; 3],
             intensity: 1.0,
             range: 0.0,
             inner_angle: 0.0,
@@ -342,9 +342,9 @@ impl ViewportRenderer {
             shadow_bias: lighting.shadow_bias,
             shadows_enabled: if lighting.shadows_enabled { 1 } else { 0 },
             _pad: 0,
-            sky_color: lighting.sky_color,
+            sky_colour: lighting.sky_colour,
             hemisphere_intensity: lighting.hemisphere_intensity,
-            ground_color: lighting.ground_color,
+            ground_colour: lighting.ground_colour,
             _pad2: 0.0,
             lights: lights_arr,
             ibl_enabled,
@@ -446,7 +446,7 @@ impl ViewportRenderer {
                 };
                 let obj_uniform = ObjectUniform {
                     model: item.model,
-                    color: [m.base_color[0], m.base_color[1], m.base_color[2], m.opacity],
+                    colour: [m.base_colour[0], m.base_colour[1], m.base_colour[2], m.opacity],
                     selected: if item.selected { 1 } else { 0 },
                     wireframe: if frame.viewport.wireframe_mode || item.render_as_wireframe {
                         1
@@ -467,27 +467,27 @@ impl ViewportRenderer {
                     scalar_min: s_min,
                     scalar_max: s_max,
                     _pad_scalar: 0,
-                    nan_color: item.nan_color.unwrap_or([0.0; 4]),
-                    use_nan_color: if item.nan_color.is_some() { 1 } else { 0 },
+                    nan_colour: item.nan_colour.unwrap_or([0.0; 4]),
+                    use_nan_colour: if item.nan_colour.is_some() { 1 } else { 0 },
                     use_matcap: if m.matcap_id.is_some() { 1 } else { 0 },
                     matcap_blendable: m.matcap_id.map_or(0, |id| if id.blendable { 1 } else { 0 }),
                     unlit: if m.unlit { 1 } else { 0 },
-                    use_face_color: u32::from(item.active_attribute.as_ref().map_or(false, |a| {
-                        a.kind == crate::resources::AttributeKind::FaceColor
+                    use_face_colour: u32::from(item.active_attribute.as_ref().map_or(false, |a| {
+                        a.kind == crate::resources::AttributeKind::FaceColour
                     })),
                     uv_vis_mode: m.param_vis.map_or(0, |pv| pv.mode as u32),
                     uv_vis_scale: m.param_vis.map_or(8.0, |pv| pv.scale),
                     backface_policy: match m.backface_policy {
                         crate::scene::material::BackfacePolicy::Cull => 0,
                         crate::scene::material::BackfacePolicy::Identical => 1,
-                        crate::scene::material::BackfacePolicy::DifferentColor(_) => 2,
+                        crate::scene::material::BackfacePolicy::DifferentColour(_) => 2,
                         crate::scene::material::BackfacePolicy::Tint(_) => 3,
                         crate::scene::material::BackfacePolicy::Pattern(cfg) => {
                             4 + cfg.pattern as u32
                         }
                     },
-                    backface_color: match m.backface_policy {
-                        crate::scene::material::BackfacePolicy::DifferentColor(c) => {
+                    backface_colour: match m.backface_policy {
+                        crate::scene::material::BackfacePolicy::DifferentColour(c) => {
                             [c[0], c[1], c[2], 1.0]
                         }
                         crate::scene::material::BackfacePolicy::Tint(factor) => {
@@ -505,7 +505,7 @@ impl ViewportRenderer {
                                 .unwrap_or(1.0)
                                 .max(1e-6);
                             let world_scale = cfg.scale / world_extent;
-                            [cfg.color[0], cfg.color[1], cfg.color[2], world_scale]
+                            [cfg.colour[0], cfg.colour[1], cfg.colour[2], world_scale]
                         }
                         _ => [0.0; 4],
                     },
@@ -516,7 +516,7 @@ impl ViewportRenderer {
 
                 let normal_obj_uniform = ObjectUniform {
                     model: item.model,
-                    color: [1.0, 1.0, 1.0, 1.0],
+                    colour: [1.0, 1.0, 1.0, 1.0],
                     selected: 0,
                     wireframe: 0,
                     ambient: 0.15,
@@ -533,16 +533,16 @@ impl ViewportRenderer {
                     scalar_min: 0.0,
                     scalar_max: 1.0,
                     _pad_scalar: 0,
-                    nan_color: [0.0; 4],
-                    use_nan_color: 0,
+                    nan_colour: [0.0; 4],
+                    use_nan_colour: 0,
                     use_matcap: 0,
                     matcap_blendable: 0,
                     unlit: 0,
-                    use_face_color: 0,
+                    use_face_colour: 0,
                     uv_vis_mode: 0,
                     uv_vis_scale: 8.0,
                     backface_policy: 0,
-                    backface_color: [0.0; 4],
+                    backface_colour: [0.0; 4],
                     has_warp: 0,
                     warp_scale: 1.0,
                     _pad_warp: [0; 2],
@@ -575,7 +575,7 @@ impl ViewportRenderer {
                     item.material.texture_id,
                     item.material.normal_map_id,
                     item.material.ao_map_id,
-                    item.colormap_id,
+                    item.colourmap_id,
                     item.active_attribute.as_ref().map(|a| a.name.as_str()),
                     item.material.matcap_id,
                     item.warp_attribute.as_deref(),
@@ -648,7 +648,7 @@ impl ViewportRenderer {
                         },
                         wgpu::BindGroupEntry {
                             binding: 8,
-                            resource: resources.fallback_face_color_buf.as_entire_binding(),
+                            resource: resources.fallback_face_colour_buf.as_entire_binding(),
                         },
                         wgpu::BindGroupEntry {
                             binding: 9,
@@ -753,10 +753,10 @@ impl ViewportRenderer {
                                 let m = &item.material;
                                 all_instances.push(InstanceData {
                                     model: item.model,
-                                    color: [
-                                        m.base_color[0],
-                                        m.base_color[1],
-                                        m.base_color[2],
+                                    colour: [
+                                        m.base_colour[0],
+                                        m.base_colour[1],
+                                        m.base_colour[2],
                                         m.opacity,
                                     ],
                                     selected: if item.selected { 1 } else { 0 },
@@ -1064,8 +1064,8 @@ impl ViewportRenderer {
                     scalars: Vec::new(),
                     strip_lengths,
                     scalar_range: None,
-                    colormap_id: None,
-                    default_color: item.color,
+                    colourmap_id: None,
+                    default_colour: item.colour,
                     line_width: item.line_width,
                     id: 0,
                     ..Default::default()
@@ -1943,8 +1943,8 @@ impl ViewportRenderer {
                         spacing_minor: spacing,
                         spacing_major,
                         snap_origin: [snap_x, snap_y],
-                        color_minor: [0.35, 0.35, 0.35, 0.4 * minor_fade],
-                        color_major: [0.40, 0.40, 0.40, 0.4 + 0.2 * minor_fade],
+                        colour_minor: [0.35, 0.35, 0.35, 0.4 * minor_fade],
+                        colour_major: [0.40, 0.40, 0.40, 0.4 + 0.2 * minor_fade],
                     };
                     // Write to per-viewport slot buffer.
                     if let Some(slot) = self.viewport_slots.get(frame.camera.viewport_index) {
@@ -1967,7 +1967,7 @@ impl ViewportRenderer {
                     crate::renderer::types::GroundPlaneMode::None => 0,
                     crate::renderer::types::GroundPlaneMode::ShadowOnly => 1,
                     crate::renderer::types::GroundPlaneMode::Tile => 2,
-                    crate::renderer::types::GroundPlaneMode::SolidColor => 3,
+                    crate::renderer::types::GroundPlaneMode::SolidColour => 3,
                 };
                 let orient = frame.camera.render_camera.orientation;
                 let right = orient * glam::Vec3::X;
@@ -1983,8 +1983,8 @@ impl ViewportRenderer {
                     cam_back: [back.x, back.y, back.z, 0.0],
                     eye_pos: frame.camera.render_camera.eye_position,
                     height: gp.height,
-                    color: gp.color,
-                    shadow_color: gp.shadow_color,
+                    colour: gp.colour,
+                    shadow_colour: gp.shadow_colour,
                     light_vp: gp_cascade0_mat,
                     tan_half_fov,
                     aspect,
@@ -2020,7 +2020,7 @@ impl ViewportRenderer {
                 }
                 let uniform = OutlineUniform {
                     model: item.model,
-                    color: [0.0; 4], // unused by mask shader
+                    colour: [0.0; 4], // unused by mask shader
                     pixel_offset: 0.0,
                     _pad: [0.0; 3],
                 };
@@ -2056,7 +2056,7 @@ impl ViewportRenderer {
                 };
                 let uniform = OutlineUniform {
                     model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                    color: [0.0; 4],
+                    colour: [0.0; 4],
                     pixel_offset: 0.0,
                     _pad: [0.0; 3],
                 };
@@ -2089,7 +2089,7 @@ impl ViewportRenderer {
                 }
                 let uniform = OutlineUniform {
                     model: item.model,
-                    color: [0.0; 4],
+                    colour: [0.0; 4],
                     pixel_offset: 0.0,
                     _pad: [0.0; 3],
                 };
@@ -2743,7 +2743,7 @@ impl ViewportRenderer {
                 });
                 let uniform = OutlineUniform {
                     model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                    color: [0.0; 4],
+                    colour: [0.0; 4],
                     pixel_offset: 0.0,
                     _pad: [0.0; 3],
                 };
@@ -2863,7 +2863,7 @@ impl ViewportRenderer {
                 self.resources.ensure_mc_outline_mask_pipeline(device);
                 let uniform = OutlineUniform {
                     model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                    color: [0.0; 4],
+                    colour: [0.0; 4],
                     pixel_offset: 0.0,
                     _pad: [0.0; 3],
                 };
@@ -2904,7 +2904,7 @@ impl ViewportRenderer {
                 }
                 let uniform = OutlineUniform {
                     model: item.model,
-                    color: frame.interaction.xray_color,
+                    colour: frame.interaction.xray_colour,
                     pixel_offset: 0.0,
                     _pad: [0.0; 3],
                 };
@@ -2933,12 +2933,12 @@ impl ViewportRenderer {
             constraint_line_buffers.push(self.resources.create_constraint_overlay(device, overlay));
         }
 
-        // Clip plane overlays : generated automatically from clip_objects with a color set.
+        // Clip plane overlays : generated automatically from clip_objects with a colour set.
         let mut clip_plane_fill_buffers = Vec::new();
         let mut clip_plane_line_buffers = Vec::new();
         for obj in viewport_fx.clip_objects.iter().filter(|o| o.enabled) {
-            // Skip if neither fill nor edge color is set.
-            if obj.color.is_none() && obj.edge_color.is_none() {
+            // Skip if neither fill nor edge colour is set.
+            if obj.colour.is_none() && obj.edge_colour.is_none() {
                 continue;
             }
             if let ClipShape::Plane {
@@ -2959,37 +2959,37 @@ impl ViewportRenderer {
                 let active = obj.active;
                 let hovered = obj.hovered || active;
 
-                // Fill quad: derived from `color`; transparent if not set.
-                let fill_color = if let Some(base_color) = obj.color {
+                // Fill quad: derived from `colour`; transparent if not set.
+                let fill_colour = if let Some(base_colour) = obj.colour {
                     if active {
                         [
-                            base_color[0] * 0.5,
-                            base_color[1] * 0.5,
-                            base_color[2] * 0.5,
-                            base_color[3] * 0.5,
+                            base_colour[0] * 0.5,
+                            base_colour[1] * 0.5,
+                            base_colour[2] * 0.5,
+                            base_colour[3] * 0.5,
                         ]
                     } else if hovered {
                         [
-                            base_color[0] * 0.8,
-                            base_color[1] * 0.8,
-                            base_color[2] * 0.8,
-                            base_color[3] * 0.6,
+                            base_colour[0] * 0.8,
+                            base_colour[1] * 0.8,
+                            base_colour[2] * 0.8,
+                            base_colour[3] * 0.6,
                         ]
                     } else {
                         [
-                            base_color[0] * 0.5,
-                            base_color[1] * 0.5,
-                            base_color[2] * 0.5,
-                            base_color[3] * 0.3,
+                            base_colour[0] * 0.5,
+                            base_colour[1] * 0.5,
+                            base_colour[2] * 0.5,
+                            base_colour[3] * 0.3,
                         ]
                     }
                 } else {
                     [0.0, 0.0, 0.0, 0.0]
                 };
 
-                // Border edge: use `edge_color` when set, otherwise derive from `color`.
-                let border_base = obj.edge_color.or(obj.color).unwrap_or([1.0, 1.0, 1.0, 1.0]);
-                let border_color = if active {
+                // Border edge: use `edge_colour` when set, otherwise derive from `colour`.
+                let border_base = obj.edge_colour.or(obj.colour).unwrap_or([1.0, 1.0, 1.0, 1.0]);
+                let border_colour = if active {
                     [border_base[0], border_base[1], border_base[2], 0.9]
                 } else if hovered {
                     [border_base[0], border_base[1], border_base[2], 0.8]
@@ -3006,12 +3006,12 @@ impl ViewportRenderer {
                     center,
                     normal: n,
                     extent: obj.extent,
-                    fill_color,
-                    border_color,
+                    fill_colour,
+                    border_colour,
                     _hovered: hovered,
                     _active: active,
                 };
-                if obj.color.is_some() {
+                if obj.colour.is_some() {
                     clip_plane_fill_buffers.push(
                         self.resources
                             .create_clip_plane_fill_overlay(device, &overlay),
@@ -3026,7 +3026,7 @@ impl ViewportRenderer {
                 // These use the clip-exempt pipeline so the outline is always fully visible,
                 // even when multiple clip volumes are active (the user needs to see where each
                 // clip is positioned to understand the combined result).
-                let base_color = obj.color.unwrap_or([1.0, 1.0, 1.0, 1.0]);
+                let base_colour = obj.colour.unwrap_or([1.0, 1.0, 1.0, 1.0]);
                 self.resources.ensure_polyline_no_clip_pipeline(device);
                 match obj.shape {
                     ClipShape::Box {
@@ -3035,7 +3035,7 @@ impl ViewportRenderer {
                         orientation,
                     } => {
                         let polyline =
-                            clip_box_outline(center, half_extents, orientation, base_color);
+                            clip_box_outline(center, half_extents, orientation, base_colour);
                         let vp_size = frame.camera.viewport_size;
                         let mut gpu = self
                             .resources
@@ -3044,7 +3044,7 @@ impl ViewportRenderer {
                         self.polyline_gpu_data.push(gpu);
                     }
                     ClipShape::Sphere { center, radius } => {
-                        let polyline = clip_sphere_outline(center, radius, base_color);
+                        let polyline = clip_sphere_outline(center, radius, base_colour);
                         let vp_size = frame.camera.viewport_size;
                         let mut gpu = self
                             .resources
@@ -3059,7 +3059,7 @@ impl ViewportRenderer {
                         half_length,
                     } => {
                         let polyline =
-                            clip_cylinder_outline(center, axis, radius, half_length, base_color);
+                            clip_cylinder_outline(center, axis, radius, half_length, base_colour);
                         let vp_size = frame.camera.viewport_size;
                         let mut gpu = self
                             .resources
@@ -3079,7 +3079,7 @@ impl ViewportRenderer {
                 if let ClipShape::Plane {
                     normal,
                     distance,
-                    cap_color,
+                    cap_colour,
                     ..
                 } = obj.shape
                 {
@@ -3100,9 +3100,9 @@ impl ViewportRenderer {
                         if let Some(cap) = crate::geometry::cap_geometry::generate_cap_mesh(
                             pos, idx, &model, plane_n, distance,
                         ) {
-                            let bc = item.material.base_color;
-                            let color = cap_color.unwrap_or([bc[0], bc[1], bc[2], 1.0]);
-                            let buf = self.resources.upload_cap_geometry(device, &cap, color);
+                            let bc = item.material.base_colour;
+                            let colour = cap_colour.unwrap_or([bc[0], bc[1], bc[2], 1.0]);
+                            let buf = self.resources.upload_cap_geometry(device, &cap, colour);
                             cap_buffers.push(buf);
                         }
                     }
@@ -3208,9 +3208,9 @@ impl ViewportRenderer {
         //
         // 1. Render selected objects to an R8 mask texture (white on black).
         // 2. Run a fullscreen edge-detection pass reading the mask and writing
-        //    an anti-aliased outline ring to the outline color texture.
+        //    an anti-aliased outline ring to the outline colour texture.
         //
-        // The outline color texture is later composited onto the main target
+        // The outline colour texture is later composited onto the main target
         // by the composite pass in paint()/render().
         // ------------------------------------------------------------------
         if frame.interaction.outline_selected
@@ -3253,11 +3253,11 @@ impl ViewportRenderer {
                 frame.effects.post_process.ssaa_factor.max(1),
             );
 
-            // Write edge-detection uniform (color, radius, viewport size).
+            // Write edge-detection uniform (colour, radius, viewport size).
             {
                 let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
                 let edge_uniform = OutlineEdgeUniform {
-                    color: frame.interaction.outline_color,
+                    colour: frame.interaction.outline_colour,
                     radius: frame.interaction.outline_width_px,
                     viewport_w: w as f32,
                     viewport_h: h as f32,
@@ -3302,7 +3302,7 @@ impl ViewportRenderer {
             let camera_bg_ptr = &slot_ref.camera_bind_group as *const wgpu::BindGroup;
             let slot_hdr = slot_ref.hdr.as_ref().unwrap();
             let mask_view_ptr = &slot_hdr.outline_mask_view as *const wgpu::TextureView;
-            let color_view_ptr = &slot_hdr.outline_color_view as *const wgpu::TextureView;
+            let colour_view_ptr = &slot_hdr.outline_colour_view as *const wgpu::TextureView;
             let depth_view_ptr = &slot_hdr.outline_depth_view as *const wgpu::TextureView;
             let edge_bg_ptr = &slot_hdr.outline_edge_bind_group as *const wgpu::BindGroup;
             // SAFETY: slot fields remain valid for the duration of this function;
@@ -3325,7 +3325,7 @@ impl ViewportRenderer {
                 mc_gpu_frame_data,
                 camera_bg,
                 mask_view,
-                color_view,
+                colour_view,
                 depth_view,
                 edge_bg,
             ) = unsafe {
@@ -3347,7 +3347,7 @@ impl ViewportRenderer {
                     &*mc_gpu_data_ptr,
                     &*camera_bg_ptr,
                     &*mask_view_ptr,
-                    &*color_view_ptr,
+                    &*colour_view_ptr,
                     &*depth_view_ptr,
                     &*edge_bg_ptr,
                 )
@@ -3590,12 +3590,12 @@ impl ViewportRenderer {
                 }
             }
 
-            // Pass 2: fullscreen edge detection (reads mask, writes color).
+            // Pass 2: fullscreen edge detection (reads mask, writes colour).
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("outline_edge_pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: color_view,
+                        view: colour_view,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -3645,8 +3645,8 @@ impl ViewportRenderer {
                         sel_ref,
                         &std::collections::HashMap::new(),
                         &[],
-                        frame.interaction.sub_highlight_face_fill_color,
-                        frame.interaction.sub_highlight_edge_color,
+                        frame.interaction.sub_highlight_face_fill_colour,
+                        frame.interaction.sub_highlight_edge_colour,
                         frame.interaction.sub_highlight_edge_width_px,
                         frame.interaction.sub_highlight_vertex_size_px,
                         w,
@@ -3750,7 +3750,7 @@ impl ViewportRenderer {
                         let by0 = text_y - pad;
                         let bx1 = text_x + layout.total_width + pad;
                         let by1 = text_y + layout.height + pad;
-                        let bg_color = apply_opacity(label.background_color, opacity);
+                        let bg_colour = apply_opacity(label.background_colour, opacity);
                         if label.border_radius > 0.0 {
                             emit_rounded_quad(
                                 &mut verts,
@@ -3759,12 +3759,12 @@ impl ViewportRenderer {
                                 bx1,
                                 by1,
                                 label.border_radius,
-                                bg_color,
+                                bg_colour,
                                 vp_w,
                                 vp_h,
                             );
                         } else {
-                            emit_solid_quad(&mut verts, bx0, by0, bx1, by1, bg_color, vp_w, vp_h);
+                            emit_solid_quad(&mut verts, bx0, by0, bx1, by1, bg_colour, vp_w, vp_h);
                         }
                     }
 
@@ -3780,7 +3780,7 @@ impl ViewportRenderer {
                                     text_x,
                                     text_y + layout.height * 0.5,
                                     1.5,
-                                    apply_opacity(label.leader_color, opacity),
+                                    apply_opacity(label.leader_colour, opacity),
                                     vp_w,
                                     vp_h,
                                 );
@@ -3789,7 +3789,7 @@ impl ViewportRenderer {
                     }
 
                     // Glyph quads.
-                    let text_color = apply_opacity(label.color, opacity);
+                    let text_colour = apply_opacity(label.colour, opacity);
                     for gq in &layout.quads {
                         let gx = text_x + gq.pos[0];
                         let gy = text_y + ascent + gq.pos[1];
@@ -3801,7 +3801,7 @@ impl ViewportRenderer {
                             gy + gq.size[1],
                             gq.uv_min,
                             gq.uv_max,
-                            text_color,
+                            text_colour,
                             vp_w,
                             vp_h,
                         );
@@ -3860,7 +3860,7 @@ impl ViewportRenderer {
                     // is released before the mutable glyph_atlas borrow below.
                     let Some(lut) = self
                         .resources
-                        .get_colormap_rgba(bar.colormap_id)
+                        .get_colourmap_rgba(bar.colourmap_id)
                         .map(|l| l.to_vec())
                     else {
                         continue;
@@ -4002,12 +4002,12 @@ impl ViewportRenderer {
                         bg_x1,
                         bg_y1,
                         3.0,
-                        bar.background_color,
+                        bar.background_colour,
                         vp_w,
                         vp_h,
                     );
 
-                    // Gradient strip: 64 solid quads sampled from the colormap LUT.
+                    // Gradient strip: 64 solid quads sampled from the colourmap LUT.
                     let steps: usize = 64;
                     for s in 0..steps {
                         let (qx0, qy0, qx1, qy1, t) = if is_vertical {
@@ -4033,13 +4033,13 @@ impl ViewportRenderer {
                         };
                         let lut_idx = (t * 255.0).clamp(0.0, 255.0) as usize;
                         let [r, g, b, a] = lut[lut_idx];
-                        let color = [
+                        let colour = [
                             r as f32 / 255.0,
                             g as f32 / 255.0,
                             b as f32 / 255.0,
                             a as f32 / 255.0,
                         ];
-                        emit_solid_quad(&mut verts, qx0, qy0, qx1, qy1, color, vp_w, vp_h);
+                        emit_solid_quad(&mut verts, qx0, qy0, qx1, qy1, colour, vp_w, vp_h);
                     }
 
                     // Tick labels.
@@ -4080,7 +4080,7 @@ impl ViewportRenderer {
                                 gy + gq.size[1],
                                 gq.uv_min,
                                 gq.uv_max,
-                                bar.label_color,
+                                bar.label_colour,
                                 vp_w,
                                 vp_h,
                             );
@@ -4109,7 +4109,7 @@ impl ViewportRenderer {
                                 gy + gq.size[1],
                                 gq.uv_min,
                                 gq.uv_max,
-                                bar.label_color,
+                                bar.label_colour,
                                 vp_w,
                                 vp_h,
                             );
@@ -4198,7 +4198,7 @@ impl ViewportRenderer {
                         ex,
                         ey,
                         ruler.line_width_px,
-                        ruler.color,
+                        ruler.colour,
                         vp_w,
                         vp_h,
                     );
@@ -4220,7 +4220,7 @@ impl ViewportRenderer {
                                 sx + px,
                                 sy + py,
                                 ruler.line_width_px,
-                                ruler.color,
+                                ruler.colour,
                                 vp_w,
                                 vp_h,
                             );
@@ -4233,7 +4233,7 @@ impl ViewportRenderer {
                                 ex + px,
                                 ey + py,
                                 ruler.line_width_px,
-                                ruler.color,
+                                ruler.colour,
                                 vp_w,
                                 vp_h,
                             );
@@ -4291,7 +4291,7 @@ impl ViewportRenderer {
                             gy + gq.size[1],
                             gq.uv_min,
                             gq.uv_max,
-                            ruler.label_color,
+                            ruler.label_colour,
                             vp_w,
                             vp_h,
                         );
@@ -4386,7 +4386,7 @@ impl ViewportRenderer {
                                 gy + gq.size[1],
                                 gq.uv_min,
                                 gq.uv_max,
-                                bar.label_color,
+                                bar.label_colour,
                                 vp_w,
                                 vp_h,
                             );
@@ -4401,7 +4401,7 @@ impl ViewportRenderer {
                         bar_x + bar.width_px,
                         bar_y + bar.height_px,
                         bar.corner_radius,
-                        bar.background_color,
+                        bar.background_colour,
                         vp_w,
                         vp_h,
                     );
@@ -4416,7 +4416,7 @@ impl ViewportRenderer {
                             bar_x + fill_w,
                             bar_y + bar.height_px,
                             bar.corner_radius,
-                            bar.fill_color,
+                            bar.fill_colour,
                             vp_w,
                             vp_h,
                         );
@@ -4794,7 +4794,7 @@ fn clip_box_outline(
     center: [f32; 3],
     half: [f32; 3],
     orientation: [[f32; 3]; 3],
-    color: [f32; 4],
+    colour: [f32; 4],
 ) -> PolylineItem {
     let ax = glam::Vec3::from(orientation[0]) * half[0];
     let ay = glam::Vec3::from(orientation[1]) * half[1];
@@ -4837,13 +4837,13 @@ fn clip_box_outline(
     let mut item = PolylineItem::default();
     item.positions = positions;
     item.strip_lengths = strip_lengths;
-    item.default_color = color;
+    item.default_colour = colour;
     item.line_width = 2.0;
     item
 }
 
 /// Wireframe outline for a clip sphere (three great circles).
-fn clip_sphere_outline(center: [f32; 3], radius: f32, color: [f32; 4]) -> PolylineItem {
+fn clip_sphere_outline(center: [f32; 3], radius: f32, colour: [f32; 4]) -> PolylineItem {
     let c = glam::Vec3::from(center);
     let segs = 64usize;
     let mut positions = Vec::with_capacity((segs + 1) * 3);
@@ -4867,7 +4867,7 @@ fn clip_sphere_outline(center: [f32; 3], radius: f32, color: [f32; 4]) -> Polyli
     let mut item = PolylineItem::default();
     item.positions = positions;
     item.strip_lengths = strip_lengths;
-    item.default_color = color;
+    item.default_colour = colour;
     item.line_width = 2.0;
     item
 }
@@ -4878,7 +4878,7 @@ fn clip_cylinder_outline(
     axis: [f32; 3],
     radius: f32,
     half_length: f32,
-    color: [f32; 4],
+    colour: [f32; 4],
 ) -> PolylineItem {
     let c = glam::Vec3::from(center);
     let ax = glam::Vec3::from(axis).normalize();
@@ -4925,7 +4925,7 @@ fn clip_cylinder_outline(
     let mut item = PolylineItem::default();
     item.positions = positions;
     item.strip_lengths = strip_lengths;
-    item.default_color = color;
+    item.default_colour = colour;
     item.line_width = 2.0;
     item
 }
@@ -5034,7 +5034,7 @@ fn emit_solid_quad(
     y0: f32,
     x1: f32,
     y1: f32,
-    color: [f32; 4],
+    colour: [f32; 4],
     vp_w: f32,
     vp_h: f32,
 ) {
@@ -5047,7 +5047,7 @@ fn emit_solid_quad(
     let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
         position: pos,
         uv,
-        color,
+        colour,
         use_texture: tex,
         _pad: 0.0,
     };
@@ -5063,7 +5063,7 @@ fn emit_textured_quad(
     y1: f32,
     uv_min: [f32; 2],
     uv_max: [f32; 2],
-    color: [f32; 4],
+    colour: [f32; 4],
     vp_w: f32,
     vp_h: f32,
 ) {
@@ -5075,7 +5075,7 @@ fn emit_textured_quad(
     let v = |pos: [f32; 2], uv: [f32; 2]| crate::resources::OverlayTextVertex {
         position: pos,
         uv,
-        color,
+        colour,
         use_texture: tex,
         _pad: 0.0,
     };
@@ -5098,7 +5098,7 @@ fn emit_line_quad(
     x1: f32,
     y1: f32,
     thickness: f32,
-    color: [f32; 4],
+    colour: [f32; 4],
     vp_w: f32,
     vp_h: f32,
 ) {
@@ -5121,7 +5121,7 @@ fn emit_line_quad(
     let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
         position: pos,
         uv,
-        color,
+        colour,
         use_texture: tex,
         _pad: 0.0,
     };
@@ -5130,8 +5130,8 @@ fn emit_line_quad(
 
 /// Apply an opacity multiplier to a colour's alpha channel.
 #[inline]
-fn apply_opacity(color: [f32; 4], opacity: f32) -> [f32; 4] {
-    [color[0], color[1], color[2], color[3] * opacity]
+fn apply_opacity(colour: [f32; 4], opacity: f32) -> [f32; 4] {
+    [colour[0], colour[1], colour[2], colour[3] * opacity]
 }
 
 /// Emit a rounded rectangle as solid quads: one center rect + four edge rects +
@@ -5144,7 +5144,7 @@ fn emit_rounded_quad(
     x1: f32,
     y1: f32,
     radius: f32,
-    color: [f32; 4],
+    colour: [f32; 4],
     vp_w: f32,
     vp_h: f32,
 ) {
@@ -5153,17 +5153,17 @@ fn emit_rounded_quad(
     let r = radius.min(w * 0.5).min(h * 0.5).max(0.0);
 
     if r < 0.5 {
-        emit_solid_quad(verts, x0, y0, x1, y1, color, vp_w, vp_h);
+        emit_solid_quad(verts, x0, y0, x1, y1, colour, vp_w, vp_h);
         return;
     }
 
     // Center cross (two rects that cover everything except the corners).
     // Horizontal bar (full width, inset top/bottom by r).
-    emit_solid_quad(verts, x0, y0 + r, x1, y1 - r, color, vp_w, vp_h);
+    emit_solid_quad(verts, x0, y0 + r, x1, y1 - r, colour, vp_w, vp_h);
     // Top bar (inset left/right by r, top edge).
-    emit_solid_quad(verts, x0 + r, y0, x1 - r, y0 + r, color, vp_w, vp_h);
+    emit_solid_quad(verts, x0 + r, y0, x1 - r, y0 + r, colour, vp_w, vp_h);
     // Bottom bar.
-    emit_solid_quad(verts, x0 + r, y1 - r, x1 - r, y1, color, vp_w, vp_h);
+    emit_solid_quad(verts, x0 + r, y1 - r, x1 - r, y1, colour, vp_w, vp_h);
 
     // Four corner fans.
     let corners = [
@@ -5193,7 +5193,7 @@ fn emit_rounded_quad(
     let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
         position: pos,
         uv,
-        color,
+        colour,
         use_texture: tex,
         _pad: 0.0,
     };

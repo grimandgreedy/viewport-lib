@@ -36,7 +36,7 @@ struct VertexOutput {
 }
 
 struct FragOutput {
-    @location(0)         color: vec4<f32>,
+    @location(0)         colour: vec4<f32>,
     @builtin(frag_depth) depth: f32,
 }
 
@@ -67,8 +67,8 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 @fragment
 fn fs_main(in: VertexOutput) -> FragOutput {
     // Sample colour from the RGBA image.
-    var color = textureSample(img, img_sampler, in.uv);
-    color.a *= u.alpha;
+    var colour = textureSample(img, img_sampler, in.uv);
+    colour.a *= u.alpha;
 
     // Load depth from the R32Float depth image using nearest-pixel lookup so
     // depth values are not blended across pixel boundaries.
@@ -78,7 +78,7 @@ fn fs_main(in: VertexOutput) -> FragOutput {
     let img_depth = textureLoad(depth_img, vec2<i32>(px_x, px_y), 0).r;
 
     var out: FragOutput;
-    out.color = color;
+    out.colour = colour;
     // Hardware depth test (LessEqual) will discard this fragment if img_depth
     // is greater than the scene depth already in the depth buffer.
     out.depth = img_depth;

@@ -272,7 +272,7 @@ pub struct ViewportRenderer {
     compute_filter_results: Vec<crate::resources::ComputeFilterResult>,
     /// Per-item uniform buffers for wireframe mode. In wireframe mode multiple scene
     /// items can share the same MeshId, but each needs its own object uniform (model
-    /// matrix, color, etc.). The mesh's single `object_uniform_buf` gets overwritten
+    /// matrix, colour, etc.). The mesh's single `object_uniform_buf` gets overwritten
     /// by the last item prepared, so we maintain a separate pool here. Indexed in the
     /// same order as the visible scene items. Grown lazily, never shrunk.
     wireframe_uniform_bufs: Vec<wgpu::Buffer>,
@@ -382,7 +382,7 @@ impl ViewportRenderer {
     /// Create a new renderer with the specified MSAA sample count (1, 2, or 4).
     ///
     /// When using MSAA (sample_count > 1), the caller must create multisampled
-    /// color and depth textures and use them as render pass attachments with the
+    /// colour and depth textures and use them as render pass attachments with the
     /// final surface texture as the resolve target.
     pub fn with_sample_count(
         device: &wgpu::Device,

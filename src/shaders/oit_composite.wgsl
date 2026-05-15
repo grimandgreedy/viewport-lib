@@ -1,8 +1,8 @@
 // OIT composite shader : blends weighted-blended accum/reveal into the HDR buffer.
 //
 // Reads the accum (Rgba16Float) and reveal (R8Unorm) textures produced by the OIT
-// geometry pass and reconstructs the final composite color using the McGuire & Bavoil
-// formula, writing premultiplied alpha RGBA into the HDR color target.
+// geometry pass and reconstructs the final composite colour using the McGuire & Bavoil
+// formula, writing premultiplied alpha RGBA into the HDR colour target.
 //
 // Group 0:
 //   binding 0 : accum_tex:  texture_2d<f32>   (Rgba16Float accumulation)
@@ -42,7 +42,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         discard;
     }
 
-    let avg_color = accum.rgb / max(accum.a, 1e-5);
+    let avg_colour = accum.rgb / max(accum.a, 1e-5);
     // Output premultiplied alpha so the HDR blend state (One / OneMinusSrcAlpha) composites correctly.
-    return vec4<f32>(avg_color * (1.0 - r), 1.0 - r);
+    return vec4<f32>(avg_colour * (1.0 - r), 1.0 - r);
 }

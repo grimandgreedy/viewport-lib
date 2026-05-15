@@ -203,10 +203,10 @@ impl ViewportGpuResources {
             (buf, 0u32, 0.0f32, 1.0f32)
         };
 
-        let (color_buf, has_colors) = if !item.colors.is_empty() && has_scalars == 0 {
-            let bytes: &[u8] = bytemuck::cast_slice(&item.colors);
+        let (colour_buf, has_colours) = if !item.colours.is_empty() && has_scalars == 0 {
+            let bytes: &[u8] = bytemuck::cast_slice(&item.colours);
             let buf = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("pc_color_buf"),
+                label: Some("pc_colour_buf"),
                 size: bytes.len().max(16) as u64,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
@@ -215,7 +215,7 @@ impl ViewportGpuResources {
             (buf, 1u32)
         } else {
             let buf = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("pc_color_buf_fallback"),
+                label: Some("pc_colour_buf_fallback"),
                 size: 16,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
@@ -298,12 +298,12 @@ impl ViewportGpuResources {
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct PointCloudUniform {
             model: [[f32; 4]; 4],
-            default_color: [f32; 4],
+            default_colour: [f32; 4],
             point_size: f32,
             has_scalars: u32,
             scalar_min: f32,
             scalar_max: f32,
-            has_colors: u32,
+            has_colours: u32,
             has_radius: u32,
             has_transparency: u32,
             gaussian: u32,
@@ -313,12 +313,12 @@ impl ViewportGpuResources {
         }
         let uniform_data = PointCloudUniform {
             model: item.model,
-            default_color: item.default_color,
+            default_colour: item.default_colour,
             point_size: item.point_size,
             has_scalars,
             scalar_min,
             scalar_max,
-            has_colors,
+            has_colours,
             has_radius,
             has_transparency,
             gaussian: if item.gaussian { 1 } else { 0 },
@@ -337,12 +337,12 @@ impl ViewportGpuResources {
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
         let lut_view = self
-            .builtin_colormap_ids
+            .builtin_colourmap_ids
             .and_then(|ids| {
                 let preset_id = item
-                    .colormap_id
-                    .unwrap_or(ids[crate::resources::BuiltinColormap::Viridis as usize]);
-                self.colormap_views.get(preset_id.0)
+                    .colourmap_id
+                    .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
+                self.colourmap_views.get(preset_id.0)
             })
             .unwrap_or(&self.fallback_lut_view);
 
@@ -374,7 +374,7 @@ impl ViewportGpuResources {
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: color_buf.as_entire_binding(),
+                    resource: colour_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
@@ -393,7 +393,7 @@ impl ViewportGpuResources {
             bind_group,
             _uniform_buf: uniform_buf,
             _scalar_buf: scalar_buf,
-            _color_buf: color_buf,
+            _colour_buf: colour_buf,
             _radius_buf: radius_buf,
             _transparency_buf: transparency_buf,
         }

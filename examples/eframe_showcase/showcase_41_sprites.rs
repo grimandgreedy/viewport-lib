@@ -44,8 +44,8 @@ pub(crate) struct Ring {
     pub spin_axis: [f32; 3],
     /// Ring radius.
     pub radius: f32,
-    /// Base color (RGB).
-    pub color: [f32; 3],
+    /// Base colour (RGB).
+    pub colour: [f32; 3],
     /// Wire outline lifetime for the fade/reappear cycle.
     pub life: f32,
     pub max_life: f32,
@@ -102,7 +102,7 @@ impl Default for SpriteState {
                     spin_rate: 0.7,
                     spin_axis: [0.0, 1.0, 0.0], // equatorial (XZ plane)
                     radius: 3.0,
-                    color: [0.35, 0.75, 1.0],
+                    colour: [0.35, 0.75, 1.0],
                     life: 5.0,
                     max_life: 5.0,
                     particle_phases: Vec::new(),
@@ -113,7 +113,7 @@ impl Default for SpriteState {
                     spin_rate: -0.5,
                     spin_axis: [1.0, 0.0, 0.0], // polar (YZ plane)
                     radius: 3.0,
-                    color: [1.0, 0.5, 0.15],
+                    colour: [1.0, 0.5, 0.15],
                     life: 2.5, // staggered so they don't expire together
                     max_life: 5.0,
                     particle_phases: Vec::new(),
@@ -477,8 +477,8 @@ fn ring_polyline(ring: &Ring, segments: usize) -> PolylineItem {
     let wire_alpha = (ring.life / ring.max_life).clamp(0.0, 1.0);
     // Keep the wire dim so it reads as a guide rather than the main feature.
     let wire_alpha = wire_alpha * 0.35;
-    let [r, g, b] = ring.color;
-    let color = [r, g, b, wire_alpha];
+    let [r, g, b] = ring.colour;
+    let colour = [r, g, b, wire_alpha];
 
     let mut positions = Vec::with_capacity(segments + 1);
     for i in 0..=segments {
@@ -488,12 +488,12 @@ fn ring_polyline(ring: &Ring, segments: usize) -> PolylineItem {
     }
 
     let n = positions.len() as u32;
-    let node_colors = vec![color; positions.len()];
+    let node_colours = vec![colour; positions.len()];
 
     let mut item = PolylineItem::default();
     item.positions = positions;
     item.strip_lengths = vec![n];
-    item.node_colors = node_colors;
+    item.node_colours = node_colours;
     item.line_width = 1.5;
     item
 }
@@ -523,7 +523,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
             let mut item = SpriteItem::default();
             item.texture_id = Some(app.sprite_state.sprite_tex);
             item.positions = app.sprite_state.placed_positions.clone();
-            item.default_color = [1.0, 1.0, 1.0, 1.0];
+            item.default_colour = [1.0, 1.0, 1.0, 1.0];
             item.default_size = 0.6;
             item.size_mode = SpriteSizeMode::WorldSpace;
             item.depth_write = true;
@@ -537,7 +537,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
             {
                 let positions: Vec<[f32; 3]> =
                     app.sprite_state.particles.iter().map(|p| p.pos).collect();
-                let colors: Vec<[f32; 4]> = app
+                let colours: Vec<[f32; 4]> = app
                     .sprite_state
                     .particles
                     .iter()
@@ -549,7 +549,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
                 let mut item = SpriteItem::default();
                 item.texture_id = Some(app.sprite_state.glow_tex);
                 item.positions = positions;
-                item.colors = colors;
+                item.colours = colours;
                 item.default_size = 14.0;
                 item.size_mode = SpriteSizeMode::ScreenSpace;
                 item.depth_write = false;
@@ -568,7 +568,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
 
                 let n = ring.particle_phases.len();
                 let mut positions = Vec::with_capacity(n);
-                let mut colors = Vec::with_capacity(n);
+                let mut colours = Vec::with_capacity(n);
                 let mut sizes = Vec::with_capacity(n);
 
                 for i in 0..n {
@@ -587,15 +587,15 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
                     let alpha = (1.0 - t).powf(1.4) * 0.90 + 0.05;
                     let size = 6.0 + (1.0 - t) * 14.0; // head=20, tail=6
 
-                    let [r, g, b] = ring.color;
-                    colors.push([r, g, b, alpha]);
+                    let [r, g, b] = ring.colour;
+                    colours.push([r, g, b, alpha]);
                     sizes.push(size);
                 }
 
                 let mut item = SpriteItem::default();
                 item.texture_id = Some(app.sprite_state.glow_tex);
                 item.positions = positions;
-                item.colors = colors;
+                item.colours = colours;
                 item.sizes = sizes;
                 item.size_mode = SpriteSizeMode::ScreenSpace;
                 item.depth_write = false;
@@ -622,7 +622,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
             item.texture_id = Some(app.sprite_state.atlas_tex);
             item.positions = app.sprite_state.atlas_positions.clone();
             item.uv_rects = uv_rects;
-            item.default_color = [1.0, 1.0, 1.0, 1.0];
+            item.default_colour = [1.0, 1.0, 1.0, 1.0];
             item.default_size = 1.2;
             item.size_mode = SpriteSizeMode::WorldSpace;
             item.depth_write = true;
@@ -641,7 +641,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
     }
     let mut item = SceneRenderItem::default();
     item.mesh_id = app.sprite_state.sphere_id;
-    item.material.base_color = [0.3, 0.45, 0.7];
+    item.material.base_colour = [0.3, 0.45, 0.7];
     item.material.specular = 0.2;
     vec![item]
 }
@@ -656,13 +656,13 @@ pub(crate) fn sprite_lighting() -> LightingSettings {
             kind: LightKind::Directional {
                 direction: [0.4, 0.7, 0.6],
             },
-            color: [1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0],
             intensity: 0.8,
         }],
         shadows_enabled: false,
         hemisphere_intensity: 0.4,
-        sky_color: [0.85, 0.9, 1.0],
-        ground_color: [0.4, 0.4, 0.5],
+        sky_colour: [0.85, 0.9, 1.0],
+        ground_colour: [0.4, 0.4, 0.5],
         ..LightingSettings::default()
     }
 }

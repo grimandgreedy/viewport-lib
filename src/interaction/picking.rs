@@ -316,8 +316,8 @@ fn probe_scalar(hit: &mut PickHit, binding: &ProbeBinding<'_>) {
                 }
             }
         }
-        AttributeKind::FaceColor => {
-            // FaceColor attribute: no scalar value to report.
+        AttributeKind::FaceColour => {
+            // FaceColour attribute: no scalar value to report.
         }
         AttributeKind::Vertex => {
             // Vertex attribute: barycentric interpolation from triangle corners.
@@ -1515,7 +1515,7 @@ mod tests {
         fn is_visible(&self) -> bool {
             self.visible
         }
-        fn color(&self) -> glam::Vec3 {
+        fn colour(&self) -> glam::Vec3 {
             glam::Vec3::ONE
         }
     }

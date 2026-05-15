@@ -42,7 +42,7 @@ pub(super) fn build_unit_cube() -> (Vec<Vertex>, Vec<u32>) {
             verts.push(Vertex {
                 position: *pos,
                 normal,
-                color: white,
+                colour: white,
                 uv: [0.0, 0.0],
                 tangent: [0.0, 0.0, 0.0, 1.0],
             });
@@ -155,7 +155,7 @@ pub(super) fn build_glyph_arrow() -> (Vec<Vertex>, Vec<u32>) {
             verts.push(Vertex {
                 position: [c * r, y, s * r],
                 normal: [nx / len, normal_y / len, nz / len],
-                color: white,
+                colour: white,
                 uv: [0.0, 0.0],
                 tangent: [0.0, 0.0, 0.0, 1.0],
             });
@@ -172,7 +172,7 @@ pub(super) fn build_glyph_arrow() -> (Vec<Vertex>, Vec<u32>) {
     verts.push(Vertex {
         position: [0.0, shaft_bot, 0.0],
         normal: [0.0, -1.0, 0.0],
-        color: white,
+        colour: white,
         uv: [0.0, 0.0],
         tangent: [0.0, 0.0, 0.0, 1.0],
     });
@@ -210,7 +210,7 @@ pub(super) fn build_glyph_arrow() -> (Vec<Vertex>, Vec<u32>) {
         verts.push(Vertex {
             position: [c * cone_r, cone_bot, s * cone_r],
             normal: [c * normal_r_cone, normal_y_cone, s * normal_r_cone],
-            color: white,
+            colour: white,
             uv: [0.0, 0.0],
             tangent: [0.0, 0.0, 0.0, 1.0],
         });
@@ -221,7 +221,7 @@ pub(super) fn build_glyph_arrow() -> (Vec<Vertex>, Vec<u32>) {
     verts.push(Vertex {
         position: [0.0, cone_tip, 0.0],
         normal: [0.0, 1.0, 0.0],
-        color: white,
+        colour: white,
         uv: [0.0, 0.0],
         tangent: [0.0, 0.0, 0.0, 1.0],
     });
@@ -240,7 +240,7 @@ pub(super) fn build_glyph_arrow() -> (Vec<Vertex>, Vec<u32>) {
         verts.push(Vertex {
             position: [c * cone_r, cone_bot, s * cone_r],
             normal: [0.0, -1.0, 0.0],
-            color: white,
+            colour: white,
             uv: [0.0, 0.0],
             tangent: [0.0, 0.0, 0.0, 1.0],
         });
@@ -249,7 +249,7 @@ pub(super) fn build_glyph_arrow() -> (Vec<Vertex>, Vec<u32>) {
     verts.push(Vertex {
         position: [0.0, cone_bot, 0.0],
         normal: [0.0, -1.0, 0.0],
-        color: white,
+        colour: white,
         uv: [0.0, 0.0],
         tangent: [0.0, 0.0, 0.0, 1.0],
     });
@@ -370,7 +370,7 @@ pub(super) fn build_glyph_sphere() -> (Vec<Vertex>, Vec<u32>) {
         .map(|&p| Vertex {
             position: p,
             normal: p, // unit sphere: position = normal
-            color: white,
+            colour: white,
             uv: [0.0, 0.0],
             tangent: [0.0, 0.0, 0.0, 1.0],
         })
@@ -692,7 +692,7 @@ impl ViewportGpuResources {
         if need_textures {
             self.oit_size = [w, h];
 
-            // Accum texture: Rgba16Float for accumulation of weighted color+alpha.
+            // Accum texture: Rgba16Float for accumulation of weighted colour+alpha.
             let accum_tex = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("oit_accum_texture"),
                 size: wgpu::Extent3d {
@@ -849,7 +849,7 @@ impl ViewportGpuResources {
                 },
             };
 
-            // Reveal blend: src=Zero, dst=OneMinusSrcColor (multiplicative transmittance).
+            // Reveal blend: src=Zero, dst=OneMinusSrcColour (multiplicative transmittance).
             let reveal_blend = wgpu::BlendState {
                 color: wgpu::BlendComponent {
                     src_factor: wgpu::BlendFactor::Zero,
@@ -987,7 +987,7 @@ impl ViewportGpuResources {
                 bind_group_layouts: &[bgl],
                 push_constant_ranges: &[],
             });
-            // Premultiplied alpha blend: One / OneMinusSrcAlpha : composites avg_color*(1-r) onto HDR.
+            // Premultiplied alpha blend: One / OneMinusSrcAlpha : composites avg_colour*(1-r) onto HDR.
             let premul_blend = wgpu::BlendState {
                 color: wgpu::BlendComponent {
                     src_factor: wgpu::BlendFactor::One,

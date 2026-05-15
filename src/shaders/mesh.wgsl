@@ -15,7 +15,7 @@
 // Shadow mapping: CSM with atlas-based cascade selection.
 //   PCF (3x3) or PCSS (blocker search + variable-width PCF) via shadow_atlas.shadow_filter.
 // Selection: orange tint when object.selected == 1u.
-// Wireframe: gray color override when object.wireframe == 1u.
+// Wireframe: gray colour override when object.wireframe == 1u.
 // Section views: fragment discarded when world_pos fails any active clip plane.
 // Normal maps: tangent-space normal mapping via TBN when object.has_normal_map != 0u.
 // AO maps: ambient occlusion applied to ambient + diffuse when object.has_ao_map != 0u.
@@ -35,7 +35,7 @@ struct SingleLight {
     light_view_proj: mat4x4<f32>,  // 64 bytes (shadow matrix, lights[0] only)
     pos_or_dir: vec3<f32>,          // 12 bytes
     light_type: u32,               //  4 bytes (0=directional, 1=point, 2=spot)
-    color: vec3<f32>,              // 12 bytes
+    colour: vec3<f32>,              // 12 bytes
     intensity: f32,                //  4 bytes
     range: f32,                    //  4 bytes
     inner_angle: f32,              //  4 bytes
@@ -49,9 +49,9 @@ struct Lights {
     shadow_bias: f32,
     shadows_enabled: u32,
     _pad: u32,
-    sky_color: vec3<f32>,
+    sky_colour: vec3<f32>,
     hemisphere_intensity: f32,
-    ground_color: vec3<f32>,
+    ground_colour: vec3<f32>,
     _pad2: f32,
     lights: array<SingleLight, 8>,
     ibl_enabled: u32,
@@ -83,7 +83,7 @@ struct ShadowAtlas {
 // Per-object uniform : 208 bytes.
 struct Object {
     model: mat4x4<f32>,
-    color: vec4<f32>,
+    colour: vec4<f32>,
     selected: u32,
     wireframe: u32,
     ambient: f32,
@@ -100,16 +100,16 @@ struct Object {
     scalar_min: f32,
     scalar_max: f32,
     _pad_scalar: u32,
-    nan_color: vec4<f32>,       // offset 144
-    use_nan_color: u32,         // offset 160
+    nan_colour: vec4<f32>,       // offset 144
+    use_nan_colour: u32,         // offset 160
     use_matcap: u32,            // offset 164
     matcap_blendable: u32,      // offset 168
     unlit: u32,                 // offset 172
-    use_face_color: u32,        // offset 176
+    use_face_colour: u32,        // offset 176
     uv_vis_mode: u32,           // offset 180 : 0=off 1=checker 2=grid 3=localcheck 4=localrad
     uv_vis_scale: f32,          // offset 184 : tile frequency multiplier
-    backface_policy: u32,       // offset 188 : 0=Cull 1=Identical 2=DiffColor 3=Tint 4..7=Pattern
-    backface_color: vec4<f32>,  // offset 192
+    backface_policy: u32,       // offset 188 : 0=Cull 1=Identical 2=DiffColour 3=Tint 4..7=Pattern
+    backface_colour: vec4<f32>,  // offset 192
     has_warp: u32,              // offset 208
     warp_scale: f32,            // offset 212
     _pad_warp0: u32,            // offset 216
@@ -187,14 +187,14 @@ fn clip_volume_test(p: vec3<f32>) -> bool {
 @group(1) @binding(5) var lut_texture: texture_2d<f32>;
 @group(1) @binding(6) var<storage, read> scalar_buffer: array<f32>;
 @group(1) @binding(7) var matcap_texture: texture_2d<f32>;
-@group(1) @binding(8) var<storage, read> face_color_buffer: array<vec4<f32>>;
+@group(1) @binding(8) var<storage, read> face_colour_buffer: array<vec4<f32>>;
 @group(1) @binding(9) var<storage, read> warp_buffer: array<f32>;
 @group(1) @binding(10) var lut_sampler: sampler;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) normal:   vec3<f32>,
-    @location(2) color:    vec4<f32>,
+    @location(2) colour:    vec4<f32>,
     @location(3) uv:       vec2<f32>,
     @location(4) tangent:  vec4<f32>,
     @builtin(vertex_index) vertex_index: u32,
@@ -202,7 +202,7 @@ struct VertexIn {
 
 struct VertexOut {
     @builtin(position) clip_pos: vec4<f32>,
-    @location(0) color:          vec4<f32>,
+    @location(0) colour:          vec4<f32>,
     @location(1) world_normal:   vec3<f32>,
     @location(2) world_pos:      vec3<f32>,
     @location(3) uv:             vec2<f32>,
@@ -211,7 +211,7 @@ struct VertexOut {
     // 1.0 if the source scalar vertex value was NaN, 0.0 otherwise.
     // Detected in vs_main before interpolation can corrupt the NaN bit pattern.
     @location(6) is_nan_scalar:  f32,
-    @location(7) face_color:     vec4<f32>,
+    @location(7) face_colour:     vec4<f32>,
 };
 
 @vertex
@@ -227,7 +227,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     }
     let world_pos = object.model * vec4<f32>(local_pos, 1.0);
     out.clip_pos = camera.view_proj * world_pos;
-    out.color = in.color;
+    out.colour = in.colour;
     out.world_pos = world_pos.xyz;
     let model3 = mat3x3<f32>(
         object.model[0].xyz,
@@ -248,14 +248,14 @@ fn vs_main(in: VertexIn) -> VertexOut {
     let sv_bits = bitcast<u32>(raw_scalar);
     let sv_is_nan = has_attr && (sv_bits & 0x7F800000u) == 0x7F800000u && (sv_bits & 0x007FFFFFu) != 0u;
     out.is_nan_scalar = select(0.0, 1.0, sv_is_nan);
-    // Per-face RGBA color (FaceColor attribute kind). Indexed by vertex_index which
+    // Per-face RGBA colour (FaceColour attribute kind). Indexed by vertex_index which
     // equals the sequential draw invocation counter for non-indexed face draws.
-    let fc_len = arrayLength(&face_color_buffer);
+    let fc_len = arrayLength(&face_colour_buffer);
     let fc_idx = min(idx, select(0u, fc_len - 1u, fc_len > 0u));
-    out.face_color = select(
+    out.face_colour = select(
         vec4<f32>(1.0),
-        face_color_buffer[fc_idx],
-        object.use_face_color != 0u && fc_len > 0u,
+        face_colour_buffer[fc_idx],
+        object.use_face_colour != 0u && fc_len > 0u,
     );
     return out;
 }
@@ -477,7 +477,7 @@ fn sample_brdf_lut(NdotV: f32, roughness: f32) -> vec2<f32> {
 fn ibl_ambient(
     N: vec3<f32>,
     V: vec3<f32>,
-    base_color: vec3<f32>,
+    base_colour: vec3<f32>,
     metallic: f32,
     roughness: f32,
     F0: vec3<f32>,
@@ -492,7 +492,7 @@ fn ibl_ambient(
 
     // Diffuse IBL.
     let irradiance = sample_ibl_irradiance(N, rotation);
-    let diffuse_ibl = kD * irradiance * base_color;
+    let diffuse_ibl = kD * irradiance * base_colour;
 
     // Specular IBL (split-sum approximation).
     let R = reflect(-V, N);
@@ -512,7 +512,7 @@ fn pbr_light_contrib(
     V: vec3<f32>,
     L: vec3<f32>,
     radiance: vec3<f32>,
-    base_color: vec3<f32>,
+    base_colour: vec3<f32>,
     metallic: f32,
     roughness: f32,
     F0: vec3<f32>,
@@ -532,13 +532,13 @@ fn pbr_light_contrib(
     let kD = (vec3<f32>(1.0) - kS) * (1.0 - metallic);
 
     let specular = (D * G * F) / (4.0 * NdotV * NdotL + 0.001);
-    return (kD * base_color / 3.14159265 + specular) * radiance * NdotL;
+    return (kD * base_colour / 3.14159265 + specular) * radiance * NdotL;
 }
 
-// UV parameterization visualization : returns a procedural RGB color from UV coordinates.
+// UV parameterization visualization : returns a procedural RGB colour from UV coordinates.
 // mode: 1=checker, 2=grid, 3=localcheck (polar checker), 4=localrad (concentric rings).
 // scale: tile frequency multiplier applied to uv before pattern evaluation.
-fn param_vis_color(uv: vec2<f32>, mode: u32, scale: f32) -> vec3<f32> {
+fn param_vis_colour(uv: vec2<f32>, mode: u32, scale: f32) -> vec3<f32> {
     let col_a      = vec3<f32>(0.85, 0.85, 0.85);
     let col_b      = vec3<f32>(0.2,  0.2,  0.2);
     let line_col   = vec3<f32>(0.1,  0.1,  0.1);
@@ -580,27 +580,27 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     }
     if !clip_volume_test(in.world_pos) { discard; }
 
-    // Wireframe mode: override color to gray, no lighting.
+    // Wireframe mode: override colour to gray, no lighting.
     if object.wireframe != 0u {
         return vec4<f32>(0.75, 0.75, 0.75, 1.0);
     }
 
     // Sample texture if one is assigned; fallback texture is 1x1 white (neutral multiply).
-    var tex_color = vec4<f32>(1.0);
+    var tex_colour = vec4<f32>(1.0);
     if object.has_texture == 1u {
-        tex_color = textureSample(obj_texture, obj_sampler, in.uv);
+        tex_colour = textureSample(obj_texture, obj_sampler, in.uv);
     }
-    let obj_color = vec4<f32>(object.color.rgb * in.color.rgb * tex_color.rgb,
-                               object.color.a   * in.color.a   * tex_color.a);
-    var base_color = obj_color.rgb;
+    let obj_colour = vec4<f32>(object.colour.rgb * in.colour.rgb * tex_colour.rgb,
+                               object.colour.a   * in.colour.a   * tex_colour.a);
+    var base_colour = obj_colour.rgb;
 
     // Scalar attribute colour override: sample LUT when has_attribute is set.
     if object.has_attribute != 0u {
         if in.is_nan_scalar > 0.5 {
-            if object.use_nan_color == 0u {
+            if object.use_nan_colour == 0u {
                 discard;
             }
-            return vec4<f32>(object.nan_color.rgb, object.nan_color.a);
+            return vec4<f32>(object.nan_colour.rgb, object.nan_colour.a);
         }
         let raw = in.scalar_val;
         let range = object.scalar_max - object.scalar_min;
@@ -608,7 +608,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
             select(0.0, (raw - object.scalar_min) / range, range > 0.0001),
             0.0, 1.0,
         );
-        base_color = textureSampleLevel(lut_texture, lut_sampler, vec2<f32>(t, 0.5), 0.0).rgb;
+        base_colour = textureSampleLevel(lut_texture, lut_sampler, vec2<f32>(t, 0.5), 0.0).rgb;
     }
 
     // Resolve shading normal: TBN normal mapping or geometric normal.
@@ -626,22 +626,22 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         N = normalize(in.world_normal);
     }
 
-    // Back-face policy handling: flip normal and optionally override color for back faces.
+    // Back-face policy handling: flip normal and optionally override colour for back faces.
     // Runs before matcap/uv_vis/PBR so all downstream lighting paths use the substituted values.
-    // 0=Cull, 1=Identical, 2=DifferentColor, 3=Tint, 4=Checker, 5=Hatching, 6=Crosshatch, 7=Stripes.
+    // 0=Cull, 1=Identical, 2=DifferentColour, 3=Tint, 4=Checker, 5=Hatching, 6=Crosshatch, 7=Stripes.
     if !is_front && object.backface_policy >= 2u {
         N = -N;
         if object.backface_policy == 2u {
-            // DifferentColor: replace base_color entirely.
-            base_color = object.backface_color.rgb;
+            // DifferentColour: replace base_colour entirely.
+            base_colour = object.backface_colour.rgb;
         } else if object.backface_policy == 3u {
-            // Tint: darken base_color by factor stored in backface_color.r.
-            base_color = base_color * (1.0 - object.backface_color.r);
+            // Tint: darken base_colour by factor stored in backface_colour.r.
+            base_colour = base_colour * (1.0 - object.backface_colour.r);
         } else {
             // Pattern modes (4..7): procedural pattern scaled to object size.
-            let pattern_color = object.backface_color.rgb;
+            let pattern_colour = object.backface_colour.rgb;
             let pattern_type = object.backface_policy - 4u;
-            let wp = in.world_pos * object.backface_color.w;
+            let wp = in.world_pos * object.backface_colour.w;
             var use_pattern = false;
             if pattern_type == 0u {
                 // Checker: alternating squares in world XZ.
@@ -657,7 +657,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
                 // Stripes: horizontal lines in world Z.
                 use_pattern = fract(wp.z * 0.5) < 0.4;
             }
-            base_color = select(base_color, pattern_color, use_pattern);
+            base_colour = select(base_colour, pattern_colour, use_pattern);
         }
     }
 
@@ -668,13 +668,13 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     }
 
     // Matcap shading : replaces the Blinn-Phong / PBR path.
-    // Per-face RGBA color: use directly, bypassing all lighting and colormap logic.
-    if object.use_face_color != 0u {
-        var fc = in.face_color;
+    // Per-face RGBA colour: use directly, bypassing all lighting and colourmap logic.
+    if object.use_face_colour != 0u {
+        var fc = in.face_colour;
         if object.selected != 0u {
             fc = mix(fc, vec4<f32>(1.0, 0.55, 0.1, 1.0), 0.35);
         }
-        return vec4<f32>(fc.rgb, fc.a * object.color.a);
+        return vec4<f32>(fc.rgb, fc.a * object.colour.a);
     }
 
     // The matcap texture encodes material appearance as a sphere-space lookup.
@@ -697,24 +697,24 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         );
         let mc = textureSample(matcap_texture, obj_sampler, matcap_uv);
         if object.matcap_blendable != 0u {
-            // Blendable: RGB is the matcap color; A tints the base geometry color.
-            let blended = clamp(mc.rgb + mc.a * base_color, vec3<f32>(0.0), vec3<f32>(1.0));
-            return vec4<f32>(blended, obj_color.a);
+            // Blendable: RGB is the matcap colour; A tints the base geometry colour.
+            let blended = clamp(mc.rgb + mc.a * base_colour, vec3<f32>(0.0), vec3<f32>(1.0));
+            return vec4<f32>(blended, obj_colour.a);
         } else {
-            // Static: matcap RGB fully overrides the object color.
-            return vec4<f32>(mc.rgb, obj_color.a);
+            // Static: matcap RGB fully overrides the object colour.
+            return vec4<f32>(mc.rgb, obj_colour.a);
         }
     }
 
     // UV parameterization visualization: procedural pattern replaces all lighting.
     if object.uv_vis_mode != 0u {
-        let vis = param_vis_color(in.uv, object.uv_vis_mode, object.uv_vis_scale);
-        return vec4<f32>(vis, obj_color.a);
+        let vis = param_vis_colour(in.uv, object.uv_vis_mode, object.uv_vis_scale);
+        return vec4<f32>(vis, obj_colour.a);
     }
 
-    // Unlit: skip all lighting, return raw color directly.
+    // Unlit: skip all lighting, return raw colour directly.
     if object.unlit != 0u {
-        return vec4<f32>(base_color, obj_color.a);
+        return vec4<f32>(base_colour, obj_colour.a);
     }
 
     // Use the smooth vertex normal for shadow bias. Screen-space derivatives
@@ -733,7 +733,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         // Cook-Torrance PBR path
         let metallic  = clamp(object.metallic,  0.0, 1.0);
         let roughness = max(object.roughness, 0.04);
-        let F0 = mix(vec3<f32>(0.04), base_color, metallic);
+        let F0 = mix(vec3<f32>(0.04), base_colour, metallic);
 
         var Lo = vec3<f32>(0.0);
         for (var i = 0u; i < lights_uniform.count; i++) {
@@ -743,13 +743,13 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
 
             if l.light_type == 0u {
                 L = normalize(l.pos_or_dir);
-                radiance = l.color * l.intensity;
+                radiance = l.colour * l.intensity;
             } else if l.light_type == 1u {
                 let to_light = l.pos_or_dir - in.world_pos;
                 let dist = length(to_light);
                 L = to_light / max(dist, 0.0001);
                 let falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-                radiance = l.color * l.intensity * falloff * falloff;
+                radiance = l.colour * l.intensity * falloff * falloff;
             } else {
                 let to_light = l.pos_or_dir - in.world_pos;
                 let dist = length(to_light);
@@ -763,7 +763,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
                     (cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001),
                     0.0, 1.0,
                 );
-                radiance = l.color * l.intensity * dist_falloff * dist_falloff * cone_att;
+                radiance = l.colour * l.intensity * dist_falloff * dist_falloff * cone_att;
             }
 
             // Shadow factor (lights[0] only) : CSM.
@@ -779,27 +779,27 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
             }
             radiance *= shadow_factor;
 
-            Lo += pbr_light_contrib(N, V, L, radiance, base_color,
+            Lo += pbr_light_contrib(N, V, L, radiance, base_colour,
                                     metallic, roughness, F0);
         }
 
         // Ambient: IBL when enabled, hemisphere fallback otherwise.
         var ambient: vec3<f32>;
         if lights_uniform.ibl_enabled != 0u {
-            ambient = ibl_ambient(N, V, base_color, metallic, roughness, F0,
+            ambient = ibl_ambient(N, V, base_colour, metallic, roughness, F0,
                                   ao_factor, lights_uniform.ibl_intensity,
                                   lights_uniform.ibl_rotation);
         } else {
             let hemi_t = clamp(in.world_normal.y * 0.5 + 0.5, 0.0, 1.0);
-            let hemi_color = mix(lights_uniform.ground_color, lights_uniform.sky_color, hemi_t);
-            let ambient_scale = vec3<f32>(object.ambient) + hemi_color * lights_uniform.hemisphere_intensity;
-            ambient = ambient_scale * (base_color * (1.0 - metallic) + F0 * metallic) * ao_factor;
+            let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
+            let ambient_scale = vec3<f32>(object.ambient) + hemi_colour * lights_uniform.hemisphere_intensity;
+            ambient = ambient_scale * (base_colour * (1.0 - metallic) + F0 * metallic) * ao_factor;
         }
 
         final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     } else {
         // Multi-light Blinn-Phong path
-        var total_color_contrib = vec3<f32>(0.0);
+        var total_colour_contrib = vec3<f32>(0.0);
 
         for (var i = 0u; i < lights_uniform.count; i++) {
             let l = lights_uniform.lights[i];
@@ -848,18 +848,18 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
             let specular_contrib = object.specular * pow(n_dot_h, object.shininess)
                                  * l.intensity * attenuation * shadow;
 
-            total_color_contrib += (diffuse_contrib + specular_contrib) * l.color;
+            total_colour_contrib += (diffuse_contrib + specular_contrib) * l.colour;
         }
 
         let ambient_contrib = object.ambient;
         let hemi_t = clamp(in.world_normal.y * 0.5 + 0.5, 0.0, 1.0);
-        let hemi_color = mix(lights_uniform.ground_color, lights_uniform.sky_color, hemi_t);
-        let hemi_ambient = hemi_color * lights_uniform.hemisphere_intensity;
+        let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
+        let hemi_ambient = hemi_colour * lights_uniform.hemisphere_intensity;
 
-        let lit_rgb = base_color * (ambient_contrib + hemi_ambient) * ao_factor
-                    + base_color * total_color_contrib;
+        let lit_rgb = base_colour * (ambient_contrib + hemi_ambient) * ao_factor
+                    + base_colour * total_colour_contrib;
         final_rgb = clamp(lit_rgb * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
-    return vec4<f32>(final_rgb, obj_color.a);
+    return vec4<f32>(final_rgb, obj_colour.a);
 }

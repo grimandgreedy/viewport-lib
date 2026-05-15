@@ -28,7 +28,7 @@
 - **Geometry**: mesh, point cloud, polyline, volume, glyph, and streamtube rendering
 - **Lighting**: directional, point, and spot lights; shadow maps;
 - **Materials**: PBR and Blinn-Phong shading, normal maps, transparency
-- **Scene tools**: clip planes, section views, scalar coloring, and colourmaps
+- **Scene tools**: clip planes, section views, scalar colouring, and colourmaps
 - **Camera**: arcball orbit, orthographic projection, view presets, smooth animation, and frame-to-selection
 - **Interaction**: CPU/GPU picking, rectangle selection, transform gizmos, and snapping
 - **Overlays**: labels, scalar bar, rulers, and axes indicator

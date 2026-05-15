@@ -2,7 +2,7 @@
 //!
 //! Displays all eight built-in matcap presets (four blendable, four static) plus a
 //! custom matcap generated procedurally at build time.  The controls panel lets you
-//! change the `base_color` used by the blendable presets and regenerate the custom
+//! change the `base_colour` used by the blendable presets and regenerate the custom
 //! matcap with a different hue.
 
 use crate::App;
@@ -33,8 +33,8 @@ pub(crate) struct MatcapState {
     pub builtin_node_ids: [NodeId; 8],
     pub custom_node: Option<NodeId>,
     pub custom_id: Option<MatcapId>,
-    /// Base color applied to blendable matcap spheres.
-    pub blendable_color: [f32; 3],
+    /// Base colour applied to blendable matcap spheres.
+    pub blendable_colour: [f32; 3],
     /// Hue (0..360) for the custom matcap.
     pub custom_hue: f32,
 }
@@ -47,7 +47,7 @@ impl Default for MatcapState {
             builtin_node_ids: [0; 8],
             custom_node: None,
             custom_id: None,
-            blendable_color: [0.7, 0.7, 0.7],
+            blendable_colour: [0.7, 0.7, 0.7],
             custom_hue: 200.0,
         }
     }
@@ -95,7 +95,7 @@ impl App {
             let sphere_id = upload_sphere(renderer, &self.device);
             let matcap_id = renderer.resources().builtin_matcap_id(*preset);
             let mat = {
-                let mut m = Material::from_color(self.matcap_state.blendable_color);
+                let mut m = Material::from_colour(self.matcap_state.blendable_colour);
                 m.matcap_id = Some(matcap_id);
                 m
             };
@@ -149,8 +149,8 @@ impl App {
         }
     }
 
-    /// Push the current `blendable_color` to all blendable preset nodes.
-    pub(crate) fn update_matcap_blendable_colors(&mut self, renderer: &mut ViewportRenderer) {
+    /// Push the current `blendable_colour` to all blendable preset nodes.
+    pub(crate) fn update_matcap_blendable_colours(&mut self, renderer: &mut ViewportRenderer) {
         for (i, (preset, _, blendable)) in BUILTIN_PRESETS.iter().enumerate() {
             if !blendable {
                 continue;
@@ -159,7 +159,7 @@ impl App {
             self.matcap_state
                 .scene
                 .set_material(self.matcap_state.builtin_node_ids[i], {
-                    let mut m = Material::from_color(self.matcap_state.blendable_color);
+                    let mut m = Material::from_colour(self.matcap_state.blendable_colour);
                     m.matcap_id = Some(matcap_id);
                     m
                 });
@@ -178,19 +178,19 @@ pub(crate) fn controls_matcap(app: &mut App, ui: &mut egui::Ui, frame: &eframe::
     ui.label("  Front (y-): custom procedural upload");
 
     ui.separator();
-    ui.label("Blendable base color:");
+    ui.label("Blendable base colour:");
     ui.horizontal(|ui| {
-        let mut col = app.matcap_state.blendable_color;
+        let mut col = app.matcap_state.blendable_colour;
         let changed = ui.color_edit_button_rgb(&mut col).changed();
         if changed {
-            app.matcap_state.blendable_color = col;
+            app.matcap_state.blendable_colour = col;
             let rs = frame.wgpu_render_state().expect("wgpu must be enabled");
             let mut guard = rs.renderer.write();
             let renderer = guard
                 .callback_resources
                 .get_mut::<ViewportRenderer>()
                 .expect("ViewportRenderer");
-            app.update_matcap_blendable_colors(renderer);
+            app.update_matcap_blendable_colours(renderer);
         }
     });
     ui.label("(tints Clay, Wax, Candy, Flat)");

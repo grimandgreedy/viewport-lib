@@ -200,8 +200,8 @@ pub struct SurfaceLICConfig {
     /// Distance advanced per step, in screen pixels. Together with `steps`, controls total
     /// streak length: `steps * step_size` pixels each way. Default: 1.5.
     pub step_size: f32,
-    /// How strongly the LIC intensity modulates the surface color. At 0 there is no effect;
-    /// at 1.0 the surface color is scaled by up to 2x brighter or darkened to black depending
+    /// How strongly the LIC intensity modulates the surface colour. At 0 there is no effect;
+    /// at 1.0 the surface colour is scaled by up to 2x brighter or darkened to black depending
     /// on the local LIC value. Values above 1.0 increase contrast further. Default: 1.0.
     pub strength: f32,
 }
@@ -289,7 +289,7 @@ pub struct TransparentVolumeMeshItem {
     ///
     /// Higher values make the volume more opaque.  Typical range: 0.1 to 5.0.
     pub density: f32,
-    /// Override the auto-detected scalar range `[min, max]` used to normalize colormap lookup.
+    /// Override the auto-detected scalar range `[min, max]` used to normalize colourmap lookup.
     ///
     /// `None` uses the range computed at upload time.
     pub scalar_range: Option<(f32, f32)>,
@@ -490,8 +490,8 @@ impl SceneFrame {
 /// independent of world-space content.
 #[non_exhaustive]
 pub struct ViewportFrame {
-    /// Optional background/clear color [r, g, b, a]. None = adapter default.
-    pub background_color: Option<[f32; 4]>,
+    /// Optional background/clear colour [r, g, b, a]. None = adapter default.
+    pub background_colour: Option<[f32; 4]>,
     /// Whether to render the scene in wireframe mode. Default: false.
     pub wireframe_mode: bool,
     /// Whether to render the ground-plane grid. Default: false.
@@ -509,7 +509,7 @@ pub struct ViewportFrame {
 impl Default for ViewportFrame {
     fn default() -> Self {
         Self {
-            background_color: None,
+            background_colour: None,
             wireframe_mode: false,
             show_grid: false,
             grid_cell_size: 0.0,
@@ -544,14 +544,14 @@ pub struct InteractionFrame {
     pub constraint_overlays: Vec<ConstraintOverlay>,
     /// Draw a stencil-outline ring around selected objects. Default: false.
     pub outline_selected: bool,
-    /// RGBA color of the selection outline ring. Default: white [1.0, 1.0, 1.0, 1.0].
-    pub outline_color: [f32; 4],
+    /// RGBA colour of the selection outline ring. Default: white [1.0, 1.0, 1.0, 1.0].
+    pub outline_colour: [f32; 4],
     /// Width of the outline ring in pixels. Default: 2.0.
     pub outline_width_px: f32,
     /// Render selected objects as a semi-transparent x-ray overlay. Default: false.
     pub xray_selected: bool,
-    /// RGBA color of the x-ray tint (should have alpha < 1). Default: [0.3, 0.7, 1.0, 0.25].
-    pub xray_color: [f32; 4],
+    /// RGBA colour of the x-ray tint (should have alpha < 1). Default: [0.3, 0.7, 1.0, 0.25].
+    pub xray_colour: [f32; 4],
 
     // --- Sub-object highlight ---
     /// Sub-object selection to highlight this frame.
@@ -560,12 +560,12 @@ pub struct InteractionFrame {
     /// builds face fill, edge outline, and vertex/point sprite geometry from
     /// the snapshot and draws them after the opaque scene pass.
     pub sub_selection: Option<SubSelectionRef>,
-    /// Fill color (RGBA) for selected faces. The alpha component controls
+    /// Fill colour (RGBA) for selected faces. The alpha component controls
     /// fill opacity. Default: translucent yellow `[1.0, 0.85, 0.0, 0.25]`.
-    pub sub_highlight_face_fill_color: [f32; 4],
-    /// Edge color (RGBA) for selected face outlines. Default: opaque yellow
+    pub sub_highlight_face_fill_colour: [f32; 4],
+    /// Edge colour (RGBA) for selected face outlines. Default: opaque yellow
     /// `[1.0, 0.85, 0.0, 1.0]`.
-    pub sub_highlight_edge_color: [f32; 4],
+    pub sub_highlight_edge_colour: [f32; 4],
     /// Line width in pixels for face edge outlines. Default: `2.0`.
     pub sub_highlight_edge_width_px: f32,
     /// Point sprite size in pixels for selected vertices and point cloud
@@ -583,13 +583,13 @@ impl Default for InteractionFrame {
             gizmo_space_orientation: glam::Quat::IDENTITY,
             constraint_overlays: Vec::new(),
             outline_selected: false,
-            outline_color: [1.0, 1.0, 1.0, 1.0],
+            outline_colour: [1.0, 1.0, 1.0, 1.0],
             outline_width_px: 2.0,
             xray_selected: false,
-            xray_color: [0.3, 0.7, 1.0, 0.25],
+            xray_colour: [0.3, 0.7, 1.0, 0.25],
             sub_selection: None,
-            sub_highlight_face_fill_color: [1.0, 0.85, 0.0, 0.25],
-            sub_highlight_edge_color: [1.0, 0.85, 0.0, 1.0],
+            sub_highlight_face_fill_colour: [1.0, 0.85, 0.0, 0.25],
+            sub_highlight_edge_colour: [1.0, 0.85, 0.0, 1.0],
             sub_highlight_edge_width_px: 2.0,
             sub_highlight_vertex_size_px: 10.0,
         }
@@ -622,8 +622,8 @@ pub enum GroundPlaneMode {
     ShadowOnly,
     /// Procedural checkerboard tile pattern.
     Tile,
-    /// Flat solid color.
-    SolidColor,
+    /// Flat solid colour.
+    SolidColour,
 }
 
 /// Ground plane configuration for the viewport.
@@ -636,12 +636,12 @@ pub struct GroundPlane {
     pub mode: GroundPlaneMode,
     /// World-space Z coordinate of the ground plane. Default: `0.0`.
     pub height: f32,
-    /// Ground color for `Tile` and `SolidColor` modes. Default: `[0.3, 0.3, 0.3, 1.0]`.
-    pub color: [f32; 4],
+    /// Ground colour for `Tile` and `SolidColour` modes. Default: `[0.3, 0.3, 0.3, 1.0]`.
+    pub colour: [f32; 4],
     /// Checker tile size in world units (`Tile` mode). Default: `1.0`.
     pub tile_size: f32,
-    /// Shadow tint color (`ShadowOnly` mode). Default: `[0.0, 0.0, 0.0, 1.0]`.
-    pub shadow_color: [f32; 4],
+    /// Shadow tint colour (`ShadowOnly` mode). Default: `[0.0, 0.0, 0.0, 1.0]`.
+    pub shadow_colour: [f32; 4],
     /// Maximum shadow opacity (`ShadowOnly` mode). `0.0` = transparent, `1.0` = fully opaque. Default: `0.5`.
     pub shadow_opacity: f32,
 }
@@ -651,9 +651,9 @@ impl Default for GroundPlane {
         Self {
             mode: GroundPlaneMode::None,
             height: 0.0,
-            color: [0.3, 0.3, 0.3, 1.0],
+            colour: [0.3, 0.3, 0.3, 1.0],
             tile_size: 1.0,
-            shadow_color: [0.0, 0.0, 0.0, 1.0],
+            shadow_colour: [0.0, 0.0, 0.0, 1.0],
             shadow_opacity: 0.5,
         }
     }
@@ -670,7 +670,7 @@ pub struct EnvironmentMap {
     pub rotation: f32,
     /// Whether to render the environment as a visible skybox background.
     /// When false, IBL still contributes lighting but the background uses
-    /// `ViewportFrame::background_color`. Default: true.
+    /// `ViewportFrame::background_colour`. Default: true.
     pub show_skybox: bool,
 }
 

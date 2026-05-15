@@ -5,7 +5,7 @@
 //! Layout (Z-up, 2x2 grid in X-Z plane at Y=0):
 //!   Back-left   (-3, 0, +3):  Plane (two-sided) : Percy photo
 //!   Back-right  (+3, 0, +3):  UV sphere : procedural checkerboard
-//!   Front-left  (-3, 0, -3):  Cube : procedural color-gradient per face
+//!   Front-left  (-3, 0, -3):  Cube : procedural colour-gradient per face
 //!   Front-right (+3, 0, -3):  Torus : procedural stripe pattern
 //!
 //! The Percy photo is stored as pre-converted raw RGBA bytes alongside this
@@ -109,7 +109,7 @@ impl App {
             },
         );
 
-        // --- Color-gradient on a cube ---
+        // --- Colour-gradient on a cube ---
         let gradient = make_gradient(256);
         let gradient_tex = res
             .upload_texture(&self.device, &self.queue, 256, 256, &gradient)
@@ -171,7 +171,7 @@ pub(crate) fn controls_textures(_app: &mut App, ui: &mut egui::Ui) {
     ui.label("UV-mapped image textures on four primitives:");
     ui.label("  Back-left:  plane : Percy photo");
     ui.label("  Left:    sphere : procedural checkerboard");
-    ui.label("  Right:   cube : procedural color gradient");
+    ui.label("  Right:   cube : procedural colour gradient");
     ui.label("  Front:   torus : procedural stripes");
     ui.separator();
     ui.label("Textures are uploaded as raw RGBA via upload_texture().");
@@ -189,8 +189,8 @@ fn make_checkerboard(size: usize, cells: usize, a: [u8; 4], b: [u8; 4]) -> Vec<u
         for col in 0..size {
             let cx = col * cells / size;
             let cy = row * cells / size;
-            let color = if (cx + cy) % 2 == 0 { a } else { b };
-            out.extend_from_slice(&color);
+            let colour = if (cx + cy) % 2 == 0 { a } else { b };
+            out.extend_from_slice(&colour);
         }
     }
     out
@@ -217,9 +217,9 @@ fn make_stripes(size: usize, count: usize, a: [u8; 4], b: [u8; 4]) -> Vec<u8> {
     let mut out = Vec::with_capacity(size * size * 4);
     for row in 0..size {
         let band = row * count / size;
-        let color = if band % 2 == 0 { a } else { b };
+        let colour = if band % 2 == 0 { a } else { b };
         for _ in 0..size {
-            out.extend_from_slice(&color);
+            out.extend_from_slice(&colour);
         }
     }
     out

@@ -37,13 +37,13 @@ pub enum LightKind {
     },
 }
 
-/// A single light source with color and intensity.
+/// A single light source with colour and intensity.
 #[derive(Clone, Debug)]
 pub struct LightSource {
     /// The type and geometric parameters of this light.
     pub kind: LightKind,
-    /// RGB light color in linear 0..1. Default [1.0, 1.0, 1.0].
-    pub color: [f32; 3],
+    /// RGB light colour in linear 0..1. Default [1.0, 1.0, 1.0].
+    pub colour: [f32; 3],
     /// Intensity multiplier. Default 1.0.
     pub intensity: f32,
 }
@@ -56,7 +56,7 @@ impl Default for LightSource {
                 // ~65° elevation: mostly overhead, slight front-right bias.
                 direction: [0.4, 0.3, 1.5],
             },
-            color: [1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0],
             intensity: 1.0,
         }
     }
@@ -85,10 +85,10 @@ pub struct LightingSettings {
     pub shadow_bias: f32,
     /// Whether shadow maps are computed and sampled. Default: true.
     pub shadows_enabled: bool,
-    /// Sky color for hemisphere ambient. Default [0.8, 0.9, 1.0].
-    pub sky_color: [f32; 3],
-    /// Ground color for hemisphere ambient. Default [0.3, 0.2, 0.1].
-    pub ground_color: [f32; 3],
+    /// Sky colour for hemisphere ambient. Default [0.8, 0.9, 1.0].
+    pub sky_colour: [f32; 3],
+    /// Ground colour for hemisphere ambient. Default [0.3, 0.2, 0.1].
+    pub ground_colour: [f32; 3],
     /// Hemisphere ambient intensity. 0.0 = disabled. Default 0.0.
     pub hemisphere_intensity: f32,
     /// Override the shadow frustum half-extent (world units). None = auto (20.0).
@@ -115,8 +115,8 @@ impl Default for LightingSettings {
             lights: vec![LightSource::default()],
             shadow_bias: 0.0001,
             shadows_enabled: true,
-            sky_color: [0.8, 0.9, 1.0],
-            ground_color: [0.5, 0.55, 0.6],
+            sky_colour: [0.8, 0.9, 1.0],
+            ground_colour: [0.5, 0.55, 0.6],
             hemisphere_intensity: 0.5,
             shadow_extent_override: None,
             shadow_cascade_count: 4,

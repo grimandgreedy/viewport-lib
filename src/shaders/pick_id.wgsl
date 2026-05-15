@@ -82,7 +82,7 @@ fn clip_volume_test(p: vec3<f32>) -> bool {
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
-    // Other vertex attributes (normal, color, uv, tangent) are present in the
+    // Other vertex attributes (normal, colour, uv, tangent) are present in the
     // buffer but ignored : the 64-byte stride handles them automatically.
 };
 

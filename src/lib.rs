@@ -121,7 +121,7 @@ pub use scene::traits::{RenderMode, ViewportObject};
 
 pub use geometry::bvh::PickAccelerator;
 pub use geometry::implicit::{
-    ImplicitRenderOptions, march_implicit_surface, march_implicit_surface_color,
+    ImplicitRenderOptions, march_implicit_surface, march_implicit_surface_colour,
 };
 pub use geometry::isoline::{IsolineItem, extract_isolines};
 pub use geometry::marching_cubes::{VolumeData, extract_isosurface};
@@ -200,8 +200,8 @@ pub use quantities::{
 
 #[allow(deprecated)]
 pub use resources::ClipVolumeUniform;
-pub use resources::colormap_data::{
-    export_paraview_xml_colormap, lerp_colormap_lut, parse_paraview_xml_colormap,
+pub use resources::colourmap_data::{
+    export_paraview_xml_colourmap, lerp_colourmap_lut, parse_paraview_xml_colourmap,
 };
 pub use resources::mesh_store::MeshId;
 pub use resources::sparse_volume::SparseVolumeGridData;
@@ -210,8 +210,8 @@ pub use resources::volume_mesh::{
     CELL_SENTINEL, TET_SENTINEL, VolumeMeshData, extract_clipped_volume_faces,
 };
 pub use resources::{
-    AttributeData, AttributeKind, AttributeRef, BuiltinColormap, BuiltinMatcap, CLIP_VOLUME_MAX,
-    CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColormapId, ComputeFilterResult, FontError,
+    AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
+    CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, ComputeFilterResult, FontError,
     FontHandle, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode,
     ImplicitPrimitive, LightUniform, LightsUniform, MatcapId, MeshData, ProjectedTetId,
     SingleLightUniform, ViewportGpuResources, VolumeGpuId, VolumeId, lerp_attributes,

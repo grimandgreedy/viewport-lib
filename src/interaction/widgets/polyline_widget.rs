@@ -28,12 +28,12 @@ use super::{WidgetContext, WidgetResult, ctx_ray, handle_world_radius, ray_point
 pub struct PolylineWidget {
     /// Control point positions in world space.
     pub points: Vec<glam::Vec3>,
-    /// RGBA color for the line segments.
-    pub color: [f32; 4],
+    /// RGBA colour for the line segments.
+    pub colour: [f32; 4],
     /// Line width in pixels.
     pub line_width: f32,
-    /// RGBA color for the drag handles.
-    pub handle_color: [f32; 4],
+    /// RGBA colour for the drag handles.
+    pub handle_colour: [f32; 4],
     /// Index of the currently hovered control point.
     pub hovered_point: Option<usize>,
     /// Index of the point actively being dragged.
@@ -55,9 +55,9 @@ impl PolylineWidget {
         }
         Self {
             points,
-            color: [0.9, 0.5, 0.1, 1.0],
+            colour: [0.9, 0.5, 0.1, 1.0],
             line_width: 2.0,
-            handle_color: [0.0; 4],
+            handle_colour: [0.0; 4],
             hovered_point: None,
             active_point: None,
             drag_plane_normal: glam::Vec3::Y,
@@ -176,7 +176,7 @@ impl PolylineWidget {
         PolylineItem {
             positions: self.points.iter().map(|p| p.to_array()).collect(),
             strip_lengths: if n > 0 { vec![n] } else { vec![] },
-            default_color: self.color,
+            default_colour: self.colour,
             line_width: self.line_width,
             id,
             ..PolylineItem::default()
@@ -212,8 +212,8 @@ impl PolylineWidget {
             scalar_range: Some((0.0, 1.0)),
             glyph_type: GlyphType::Sphere,
             id: id_base,
-            default_color: self.handle_color,
-            use_default_color: self.handle_color[3] > 0.0,
+            default_colour: self.handle_colour,
+            use_default_colour: self.handle_colour[3] > 0.0,
             ..GlyphItem::default()
         }
     }

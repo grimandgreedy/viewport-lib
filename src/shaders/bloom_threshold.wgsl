@@ -30,12 +30,12 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let color = textureSample(input_texture, input_sampler, in.uv).rgb;
+    let colour = textureSample(input_texture, input_sampler, in.uv).rgb;
     // Relative luminance (Rec.709).
-    let lum = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let lum = dot(colour, vec3<f32>(0.2126, 0.7152, 0.0722));
     // Soft knee: how much the pixel exceeds the threshold.
     let brightness = max(lum - params.threshold, 0.0);
     // Re-colour by the original hue but scaled to the above-threshold portion.
-    let out_color = color * (brightness / max(lum, 0.001)) * params.intensity;
-    return vec4<f32>(out_color, 1.0);
+    let out_colour = colour * (brightness / max(lum, 0.001)) * params.intensity;
+    return vec4<f32>(out_colour, 1.0);
 }

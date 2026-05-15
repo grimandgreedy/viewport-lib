@@ -1,13 +1,13 @@
 // Dynamic resolution upscale pass.
 //
-// Bilinear-samples the scaled intermediate color texture and writes it to
+// Bilinear-samples the scaled intermediate colour texture and writes it to
 // the native-resolution surface. The pipeline is compiled for the surface's
-// target_format so no manual color-space conversion is required.
+// target_format so no manual colour-space conversion is required.
 //
-// Group 0, binding 0 : intermediate color texture (at render_scale resolution)
+// Group 0, binding 0 : intermediate colour texture (at render_scale resolution)
 // Group 0, binding 1 : linear-clamp sampler
 
-@group(0) @binding(0) var t_color: texture_2d<f32>;
+@group(0) @binding(0) var t_colour: texture_2d<f32>;
 @group(0) @binding(1) var s_linear: sampler;
 
 struct VertexOut {
@@ -28,5 +28,5 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    return textureSample(t_color, s_linear, in.uv);
+    return textureSample(t_colour, s_linear, in.uv);
 }

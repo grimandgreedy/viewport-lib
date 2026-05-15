@@ -4,7 +4,7 @@
 //! the same three-sphere SDF scene rendered three ways:
 //!
 //! - **Merged blobs** : sphere-marching with smooth-min (smin), producing a
-//!   single organic fused shape. Color is blended between the three spheres.
+//!   single organic fused shape. Colour is blended between the three spheres.
 //! - **Separate spheres** : sphere-marching with plain min(), so the three
 //!   spheres stay distinct with sharp junctions.
 //! - **Marching cubes** : the same smin SDF sampled onto a 64³ grid and
@@ -22,7 +22,7 @@ use viewport_lib::{
     Camera, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode,
     ImplicitPrimitive, LightKind, LightSource, LightingSettings, Material, SceneRenderItem,
     VolumeData, extract_isosurface,
-    geometry::implicit::{ImplicitRenderOptions, march_implicit_surface_color},
+    geometry::implicit::{ImplicitRenderOptions, march_implicit_surface_colour},
     primitives,
 };
 
@@ -57,8 +57,8 @@ fn blob_sdf(p: Vec3) -> f32 {
     smin(smin(d0, d1, 0.9), d2, 0.9)
 }
 
-/// Per-point color for the blob SDF (proximity-weighted blend of three hues).
-fn blob_color(p: Vec3) -> [u8; 4] {
+/// Per-point colour for the blob SDF (proximity-weighted blend of three hues).
+fn blob_colour(p: Vec3) -> [u8; 4] {
     let d0 = (p - Vec3::new(-1.8, 0.0, 0.0)).length() - 1.3;
     let d1 = (p - Vec3::new(1.8, 0.0, 0.0)).length() - 1.3;
     let d2 = (p - Vec3::new(0.0, 1.8, 0.0)).length() - 1.3;
@@ -297,7 +297,7 @@ impl App {
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 4.5)).to_cols_array_2d();
             item.material = {
-                let mut m = Material::from_color([0.25, 0.55, 1.0]);
+                let mut m = Material::from_colour([0.25, 0.55, 1.0]);
                 m.roughness = 0.35;
                 m
             };
@@ -311,7 +311,7 @@ impl App {
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -3.5)).to_cols_array_2d();
             item.material = {
-                let mut m = Material::from_color([1.0, 0.48, 0.12]);
+                let mut m = Material::from_colour([1.0, 0.48, 0.12]);
                 m.roughness = 0.35;
                 m
             };
@@ -325,7 +325,7 @@ impl App {
                 item.mesh_id = mc_id;
                 item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
                 item.material = {
-                    let mut m = Material::from_color([0.80, 0.75, 0.70]);
+                    let mut m = Material::from_colour([0.80, 0.75, 0.70]);
                     m.roughness = 0.5;
                     m
                 };
@@ -371,22 +371,22 @@ impl App {
         let cam = &self.camera;
         let mut img = match self.is_state.sdf_variant {
             IsSdfVariant::Blobs => {
-                march_implicit_surface_color(cam, &opts, |p| (blob_sdf(p), blob_color(p)))
+                march_implicit_surface_colour(cam, &opts, |p| (blob_sdf(p), blob_colour(p)))
             }
-            IsSdfVariant::SeparateSpheres => march_implicit_surface_color(cam, &opts, |p| {
+            IsSdfVariant::SeparateSpheres => march_implicit_surface_colour(cam, &opts, |p| {
                 let d0 = (p - Vec3::new(-1.8, 0.0, 0.0)).length() - 1.3;
                 let d1 = (p - Vec3::new(1.8, 0.0, 0.0)).length() - 1.3;
                 let d2 = (p - Vec3::new(0.0, 1.8, 0.0)).length() - 1.3;
                 let d = d0.min(d1).min(d2);
-                // Each sphere keeps its own flat color.
-                let color = if d0 <= d1 && d0 <= d2 {
+                // Each sphere keeps its own flat colour.
+                let colour = if d0 <= d1 && d0 <= d2 {
                     [230u8, 90, 65, 255] // red-orange
                 } else if d1 <= d2 {
                     [65, 140, 255, 255] // blue
                 } else {
                     [65, 218, 115, 255] // green
                 };
-                (d, color)
+                (d, colour)
             }),
             IsSdfVariant::MarchingCubes
             | IsSdfVariant::GpuImplicit
@@ -412,9 +412,9 @@ impl App {
             return;
         }
 
-        // Centers and radius matching blob_sdf / blob_color.
+        // Centers and radius matching blob_sdf / blob_colour.
         const CENTERS: [[f32; 3]; 3] = [[-1.8, 0.0, 0.0], [1.8, 0.0, 0.0], [0.0, 1.8, 0.0]];
-        const COLORS: [[f32; 4]; 3] = [
+        const COLOURS: [[f32; 4]; 3] = [
             [0.90, 0.35, 0.25, 1.0], // red-orange
             [0.25, 0.55, 1.00, 1.0], // blue
             [0.25, 0.85, 0.45, 1.0], // green
@@ -430,7 +430,7 @@ impl App {
             prim.params[1] = CENTERS[i][1];
             prim.params[2] = CENTERS[i][2];
             prim.params[3] = 1.3;
-            prim.color = COLORS[i];
+            prim.colour = COLOURS[i];
             primitives.push(prim);
         }
 
@@ -457,7 +457,7 @@ impl App {
             return;
         };
 
-        let mut mat = Material::from_color([0.75, 0.80, 0.85]);
+        let mut mat = Material::from_colour([0.75, 0.80, 0.85]);
         mat.roughness = 0.4;
 
         fd.scene.gpu_mc_jobs.push(GpuMarchingCubesJob {
@@ -478,20 +478,20 @@ impl App {
                     kind: LightKind::Directional {
                         direction: [0.4, 0.7, 0.9],
                     },
-                    color: [1.0, 0.97, 0.93],
+                    colour: [1.0, 0.97, 0.93],
                     intensity: 1.4,
                 },
                 LightSource {
                     kind: LightKind::Directional {
                         direction: [-0.3, 0.2, -0.5],
                     },
-                    color: [0.5, 0.6, 0.9],
+                    colour: [0.5, 0.6, 0.9],
                     intensity: 0.3,
                 },
             ],
             hemisphere_intensity: 0.45,
-            sky_color: [0.50, 0.60, 0.80],
-            ground_color: [0.25, 0.25, 0.35],
+            sky_colour: [0.50, 0.60, 0.80],
+            ground_colour: [0.25, 0.25, 0.35],
             // Higher bias for the marching-cubes variant: smooth vertex normals on
             // faceted geometry cause shadow-terminator artifacts at the default 0.0001.
             shadow_bias: 0.003,

@@ -8,7 +8,7 @@
 //   is drawn. Depth compare = Always so the ring always renders on top.
 //
 // Group 0: Camera bind group (same layout as mesh.wgsl, bindings 0–7).
-// Group 1: OutlineUniform (model matrix, outline color, pixel_offset).
+// Group 1: OutlineUniform (model matrix, outline colour, pixel_offset).
 
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -26,7 +26,7 @@ struct ClipPlanes {
 
 struct OutlineUniform {
     model: mat4x4<f32>,
-    color: vec4<f32>,
+    colour: vec4<f32>,
     pixel_offset: f32,
     _pad0: f32,
     _pad1: f32,
@@ -66,7 +66,7 @@ struct ClipVolumeUB {
 struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) normal:   vec3<f32>,
-    @location(2) color:    vec4<f32>,
+    @location(2) colour:    vec4<f32>,
     @location(3) uv:       vec2<f32>,
 };
 
@@ -111,5 +111,5 @@ fn vs_main(in: VertexIn) -> @builtin(position) vec4<f32> {
 
 @fragment
 fn fs_main() -> @location(0) vec4<f32> {
-    return outline.color;
+    return outline.colour;
 }

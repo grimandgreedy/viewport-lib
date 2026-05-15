@@ -11,7 +11,7 @@
 // Each instance is an ellipsoid defined by a pre-computed TRS model matrix. The
 // normal matrix (inverse transpose of the 3x3 rotation-scale block) is also uploaded
 // per-instance for correct shading on the anisotropically-scaled ellipsoid surface.
-// Color is looked up from the LUT using either a per-instance scalar attribute or a
+// Colour is looked up from the LUT using either a per-instance scalar attribute or a
 // sign-derived value (tension/compression).
 
 struct Camera {
@@ -123,7 +123,7 @@ struct VertexIn {
     // We only use position (location 0) and normal (location 1).
     @location(0) position: vec3<f32>,
     @location(1) normal:   vec3<f32>,
-    @location(2) color:    vec4<f32>,   // unused -- here to match buffer stride
+    @location(2) colour:    vec4<f32>,   // unused -- here to match buffer stride
     @location(3) uv:       vec2<f32>,   // unused
     @location(4) tangent:  vec4<f32>,   // unused
     @builtin(instance_index) instance_index: u32,
@@ -131,7 +131,7 @@ struct VertexIn {
 
 struct VertexOut {
     @builtin(position) clip_pos:  vec4<f32>,
-    @location(0)       color:     vec4<f32>,
+    @location(0)       colour:     vec4<f32>,
     @location(1)       world_pos: vec3<f32>,
     @location(2)       world_nrm: vec3<f32>,
 };
@@ -160,7 +160,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     let range  = tg_uniform.scalar_max - tg_uniform.scalar_min;
     let t      = select(0.0, (scalar - tg_uniform.scalar_min) / range, range > 0.0);
     let u      = clamp(t, 0.0, 1.0);
-    out.color = textureSampleLevel(lut_texture, lut_sampler, vec2<f32>(u, 0.5), 0.0);
+    out.colour = textureSampleLevel(lut_texture, lut_sampler, vec2<f32>(u, 0.5), 0.0);
 
     return out;
 }
@@ -183,5 +183,5 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let diffuse   = 0.8 * n_dot_l;
     let shading   = ambient + diffuse;
 
-    return vec4<f32>(in.color.rgb * shading, in.color.a);
+    return vec4<f32>(in.colour.rgb * shading, in.colour.a);
 }

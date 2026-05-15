@@ -11,7 +11,7 @@
 // At strip endpoints (has_prev=0 or has_next=0), a square cap is used instead.
 //
 // Group 0: Camera uniform + ClipPlanes + ClipVolume (matching camera_bgl layout).
-// Group 1: PolylineUniform (line_width, scalar mapping, viewport dims, color)
+// Group 1: PolylineUniform (line_width, scalar mapping, viewport dims, colour)
 //          + LUT texture (256×1 Rgba8Unorm)
 //          + LUT sampler.
 //
@@ -24,11 +24,11 @@
 //   location  5 : scalar_b          f32    scalar at B
 //   location  6 : has_prev          u32    1 = interior join at A, 0 = square cap
 //   location  7 : has_next          u32    1 = interior join at B, 0 = square cap
-//   location  8 : color_a           vec4   direct RGBA at A
-//   location  9 : color_b           vec4   direct RGBA at B
+//   location  8 : colour_a           vec4   direct RGBA at A
+//   location  9 : colour_b           vec4   direct RGBA at B
 //   location 10 : radius_a          f32    line width in px at A
 //   location 11 : radius_b          f32    line width in px at B
-//   location 12 : use_direct_color  u32    1 = use color_a/b, 0 = LUT / default
+//   location 12 : use_direct_colour  u32    1 = use colour_a/b, 0 = LUT / default
 
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -46,7 +46,7 @@ struct ClipPlanes {
 
 // Polyline per-item uniform : 48 bytes.
 struct PolylineUniform {
-    default_color:   vec4<f32>,  // offset  0 : 16 bytes
+    default_colour:   vec4<f32>,  // offset  0 : 16 bytes
     line_width:      f32,        // offset 16 :  4 bytes (screen pixels)
     scalar_min:      f32,        // offset 20 :  4 bytes
     scalar_max:      f32,        // offset 24 :  4 bytes
@@ -125,16 +125,16 @@ struct SegmentIn {
     @location(5)  scalar_b:         f32,
     @location(6)  has_prev:         u32,
     @location(7)  has_next:         u32,
-    @location(8)  color_a:          vec4<f32>,
-    @location(9)  color_b:          vec4<f32>,
+    @location(8)  colour_a:          vec4<f32>,
+    @location(9)  colour_b:          vec4<f32>,
     @location(10) radius_a:         f32,
     @location(11) radius_b:         f32,
-    @location(12) use_direct_color: u32,
+    @location(12) use_direct_colour: u32,
 };
 
 struct VertexOut {
     @builtin(position) clip_pos:  vec4<f32>,
-    @location(0)       color:     vec4<f32>,
+    @location(0)       colour:     vec4<f32>,
     @location(1)       world_pos: vec3<f32>,
 };
 
@@ -237,16 +237,16 @@ fn vs_main(
     out.clip_pos  = clip_pos;
     out.world_pos = pos;
 
-    // Color priority: direct RGBA > scalar LUT > default_color.
-    if seg.use_direct_color != 0u {
-        out.color = select(seg.color_a, seg.color_b, use_b);
+    // Colour priority: direct RGBA > scalar LUT > default_colour.
+    if seg.use_direct_colour != 0u {
+        out.colour = select(seg.colour_a, seg.colour_b, use_b);
     } else if pl_uniform.has_scalar != 0u {
         let range = pl_uniform.scalar_max - pl_uniform.scalar_min;
         let t = select(0.0f, (scalar - pl_uniform.scalar_min) / range, range > 0.0f);
         let u = clamp(t, 0.0f, 1.0f);
-        out.color = textureSampleLevel(lut_texture, lut_sampler, vec2<f32>(u, 0.5f), 0.0f);
+        out.colour = textureSampleLevel(lut_texture, lut_sampler, vec2<f32>(u, 0.5f), 0.0f);
     } else {
-        out.color = pl_uniform.default_color;
+        out.colour = pl_uniform.default_colour;
     }
 
     return out;
@@ -262,7 +262,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         }
     }
     if !clip_volume_test(in.world_pos) { discard; }
-    return in.color;
+    return in.colour;
 }
 
 // Clip-exempt variant : used for clip object overlays (box/sphere/cylinder wireframes).
@@ -270,5 +270,5 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 // clip volume is positioned, even when multiple clips are active.
 @fragment
 fn fs_main_no_clip(in: VertexOut) -> @location(0) vec4<f32> {
-    return in.color;
+    return in.colour;
 }

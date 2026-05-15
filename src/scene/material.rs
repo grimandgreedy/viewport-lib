@@ -69,7 +69,7 @@ pub enum BackfacePattern {
 /// # use viewport_lib::{PatternConfig, BackfacePattern};
 /// let cfg = PatternConfig {
 ///     pattern: BackfacePattern::Hatching,
-///     color: [1.0, 0.5, 0.0],
+///     colour: [1.0, 0.5, 0.0],
 ///     ..Default::default()
 /// };
 /// ```
@@ -78,8 +78,8 @@ pub enum BackfacePattern {
 pub struct PatternConfig {
     /// Which procedural pattern to draw on back faces.
     pub pattern: BackfacePattern,
-    /// RGB foreground color for the pattern (linear 0..1).
-    pub color: [f32; 3],
+    /// RGB foreground colour for the pattern (linear 0..1).
+    pub colour: [f32; 3],
     /// Number of pattern cells across the object's longest bounding-box dimension.
     ///
     /// Default 20.0. Increase for finer detail, decrease for coarser.
@@ -90,7 +90,7 @@ impl Default for PatternConfig {
     fn default() -> Self {
         Self {
             pattern: BackfacePattern::Checker,
-            color: [1.0, 0.5, 0.0],
+            colour: [1.0, 0.5, 0.0],
             scale: 20.0,
         }
     }
@@ -99,8 +99,8 @@ impl Default for PatternConfig {
 /// Controls how back faces of a mesh are rendered.
 ///
 /// Use [`BackfacePolicy::Cull`] (the default) to hide back faces, [`BackfacePolicy::Identical`]
-/// to show them with the same shading as front faces, or [`BackfacePolicy::DifferentColor`]
-/// to shade back faces in a distinct color : useful for spotting mesh orientation errors or
+/// to show them with the same shading as front faces, or [`BackfacePolicy::DifferentColour`]
+/// to shade back faces in a distinct colour : useful for spotting mesh orientation errors or
 /// highlighting the interior of open surfaces.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -109,15 +109,15 @@ pub enum BackfacePolicy {
     Cull,
     /// Back faces are visible and shaded identically to front faces.
     Identical,
-    /// Back faces are visible and shaded in the given RGB color (linear 0..1).
+    /// Back faces are visible and shaded in the given RGB colour (linear 0..1).
     ///
     /// Front faces receive normal shading; back faces receive Blinn-Phong shading
-    /// with the supplied color and the same ambient/diffuse/specular coefficients.
+    /// with the supplied colour and the same ambient/diffuse/specular coefficients.
     /// The normal is flipped so lighting is computed from the back-face perspective.
-    DifferentColor([f32; 3]),
+    DifferentColour([f32; 3]),
     /// Back faces are visible and tinted darker by the given factor (0.0..1.0).
     ///
-    /// The base color is multiplied by `(1.0 - factor)`, so `Tint(0.3)` means
+    /// The base colour is multiplied by `(1.0 - factor)`, so `Tint(0.3)` means
     /// back faces are 30% darker. The normal is flipped for correct lighting.
     Tint(f32),
     /// Back faces are rendered with a procedural pattern scaled to the object's size.
@@ -140,14 +140,14 @@ impl Default for BackfacePolicy {
 /// Each `SceneRenderItem` now has its own `Material`, enabling per-object visual distinction.
 ///
 /// This struct is `#[non_exhaustive]`: construct via [`Material::default`],
-/// [`Material::from_color`], or spread syntax (`..Default::default()`). This allows new
+/// [`Material::from_colour`], or spread syntax (`..Default::default()`). This allows new
 /// fields to be added in future phases without breaking downstream code.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Material {
-    /// Base diffuse color [r, g, b] in linear 0..1 range. Default [0.7, 0.7, 0.7].
-    pub base_color: [f32; 3],
+    /// Base diffuse colour [r, g, b] in linear 0..1 range. Default [0.7, 0.7, 0.7].
+    pub base_colour: [f32; 3],
     /// Ambient light coefficient. Default 0.15.
     pub ambient: f32,
     /// Diffuse light coefficient. Default 0.75.
@@ -184,7 +184,7 @@ pub struct Material {
     ///
     /// Obtain a `MatcapId` from [`ViewportGpuResources::builtin_matcap_id`] or
     /// [`ViewportGpuResources::upload_matcap`].  Blendable matcaps (alpha-channel)
-    /// tint the result with `base_color`; static matcaps override color entirely.
+    /// tint the result with `base_colour`; static matcaps override colour entirely.
     pub matcap_id: Option<crate::resources::MatcapId>,
     /// UV parameterization visualization. When set, replaces albedo/lighting with a
     /// procedural pattern in UV space : useful for inspecting parameterization quality.
@@ -194,13 +194,13 @@ pub struct Material {
     /// Back-face rendering policy. Default [`BackfacePolicy::Cull`] (back faces hidden).
     ///
     /// Use [`BackfacePolicy::Identical`] for single-sided geometry like planes and open
-    /// surfaces. Use [`BackfacePolicy::DifferentColor`] to highlight back faces in a
-    /// distinct color : helpful for diagnosing mesh orientation errors.
+    /// surfaces. Use [`BackfacePolicy::DifferentColour`] to highlight back faces in a
+    /// distinct colour : helpful for diagnosing mesh orientation errors.
     pub backface_policy: BackfacePolicy,
-    /// Skip all lighting and output the raw surface color directly. Default `false`.
+    /// Skip all lighting and output the raw surface colour directly. Default `false`.
     ///
     /// When `true`, the fragment shader bypasses Blinn-Phong, PBR, and matcap shading
-    /// and returns the base color (or colormap value) unchanged. Useful for 2D chart
+    /// and returns the base colour (or colourmap value) unchanged. Useful for 2D chart
     /// overlays, pre-lit data, and flat UI geometry.
     pub unlit: bool,
 }
@@ -208,7 +208,7 @@ pub struct Material {
 impl Default for Material {
     fn default() -> Self {
         Self {
-            base_color: [0.7, 0.7, 0.7],
+            base_colour: [0.7, 0.7, 0.7],
             ambient: 0.15,
             diffuse: 0.75,
             specular: 0.4,
@@ -234,10 +234,10 @@ impl Material {
         !matches!(self.backface_policy, BackfacePolicy::Cull)
     }
 
-    /// Construct from a plain color, all other parameters at their defaults.
-    pub fn from_color(color: [f32; 3]) -> Self {
+    /// Construct from a plain colour, all other parameters at their defaults.
+    pub fn from_colour(colour: [f32; 3]) -> Self {
         Self {
-            base_color: color,
+            base_colour: colour,
             ..Default::default()
         }
     }
@@ -249,9 +249,9 @@ impl Material {
     ///
     /// All other parameters take their defaults. Enable post-processing
     /// (`PostProcessSettings::enabled = true`) for correct HDR tone mapping.
-    pub fn pbr(base_color: [f32; 3], metallic: f32, roughness: f32) -> Self {
+    pub fn pbr(base_colour: [f32; 3], metallic: f32, roughness: f32) -> Self {
         Self {
-            base_color,
+            base_colour,
             use_pbr: true,
             metallic,
             roughness,
@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn default_values() {
         let m = Material::default();
-        assert!((m.base_color[0] - 0.7).abs() < 1e-6);
+        assert!((m.base_colour[0] - 0.7).abs() < 1e-6);
         assert!((m.ambient - 0.15).abs() < 1e-6);
         assert!((m.diffuse - 0.75).abs() < 1e-6);
         assert!((m.opacity - 1.0).abs() < 1e-6);
@@ -280,11 +280,11 @@ mod tests {
     }
 
     #[test]
-    fn from_color_sets_base_color() {
-        let m = Material::from_color([1.0, 0.0, 0.5]);
-        assert!((m.base_color[0] - 1.0).abs() < 1e-6);
-        assert!((m.base_color[1]).abs() < 1e-6);
-        assert!((m.base_color[2] - 0.5).abs() < 1e-6);
+    fn from_colour_sets_base_colour() {
+        let m = Material::from_colour([1.0, 0.0, 0.5]);
+        assert!((m.base_colour[0] - 1.0).abs() < 1e-6);
+        assert!((m.base_colour[1]).abs() < 1e-6);
+        assert!((m.base_colour[2] - 0.5).abs() < 1e-6);
         // Other fields should be defaults
         assert!((m.ambient - 0.15).abs() < 1e-6);
     }
@@ -295,7 +295,7 @@ mod tests {
         assert!(m.use_pbr);
         assert!((m.metallic - 0.9).abs() < 1e-6);
         assert!((m.roughness - 0.3).abs() < 1e-6);
-        assert!((m.base_color[0] - 0.8).abs() < 1e-6);
+        assert!((m.base_colour[0] - 0.8).abs() < 1e-6);
     }
 
     #[test]
@@ -314,9 +314,9 @@ mod tests {
     }
 
     #[test]
-    fn is_two_sided_different_color() {
+    fn is_two_sided_different_colour() {
         let m = Material {
-            backface_policy: BackfacePolicy::DifferentColor([1.0, 0.0, 0.0]),
+            backface_policy: BackfacePolicy::DifferentColour([1.0, 0.0, 0.0]),
             ..Default::default()
         };
         assert!(m.is_two_sided());
@@ -336,7 +336,7 @@ mod tests {
         let m = Material {
             backface_policy: BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Hatching,
-                color: [0.5, 0.5, 0.5],
+                colour: [0.5, 0.5, 0.5],
                 ..Default::default()
             }),
             ..Default::default()

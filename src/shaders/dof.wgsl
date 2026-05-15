@@ -2,7 +2,7 @@
 //
 // Reads the HDR scene texture and the depth buffer. For each pixel, computes
 // a circle of confusion (CoC) radius based on how far the pixel's depth is
-// from the focal plane, then gathers the HDR color by sampling a Vogel disc
+// from the focal plane, then gathers the HDR colour by sampling a Vogel disc
 // of that radius. Near and far regions both blur; pixels inside focal_range
 // of focal_distance receive no blur.
 
@@ -87,7 +87,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return textureSample(hdr_texture, hdr_sampler, in.uv);
     }
 
-    // Gather HDR color with a Vogel disc kernel of radius coc_pixels.
+    // Gather HDR colour with a Vogel disc kernel of radius coc_pixels.
     // Use 16 samples; enough for smooth-looking bokeh at modest radii.
     let num_samples: u32 = 16u;
     let inv_w = 1.0 / params.viewport_width;
@@ -95,12 +95,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Per-pixel rotation based on screen position to break up the disc pattern.
     let rotation = fract(sin(dot(in.uv, vec2<f32>(127.1, 311.7))) * 43758.5453) * 6.28318;
 
-    var color_sum = vec3<f32>(0.0);
+    var colour_sum = vec3<f32>(0.0);
     for (var i: u32 = 0u; i < num_samples; i = i + 1u) {
         let offset = vogel_disc(i, num_samples, rotation) * coc_pixels;
         let sample_uv = in.uv + vec2<f32>(offset.x * inv_w, offset.y * inv_h);
-        color_sum = color_sum + textureSample(hdr_texture, hdr_sampler, sample_uv).rgb;
+        colour_sum = colour_sum + textureSample(hdr_texture, hdr_sampler, sample_uv).rgb;
     }
-    let color = color_sum / f32(num_samples);
-    return vec4<f32>(color, 1.0);
+    let colour = colour_sum / f32(num_samples);
+    return vec4<f32>(colour, 1.0);
 }

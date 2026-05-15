@@ -78,17 +78,17 @@ struct Object {
     model: glam::Mat4,
     snapshot: glam::Mat4,
     mesh: MeshId,
-    color: [f32; 3],
+    colour: [f32; 3],
 }
 
 impl Object {
-    fn new(pos: glam::Vec3, mesh: MeshId, color: [f32; 3]) -> Self {
+    fn new(pos: glam::Vec3, mesh: MeshId, colour: [f32; 3]) -> Self {
         let model = glam::Mat4::from_translation(pos);
         Self {
             model,
             snapshot: model,
             mesh,
-            color,
+            colour,
         }
     }
 
@@ -562,7 +562,7 @@ impl eframe::App for App {
                             let mut item = SceneRenderItem::default();
                             item.mesh_id = obj.mesh;
                             item.model = obj.model.to_cols_array_2d();
-                            item.material = Material::from_color(obj.color);
+                            item.material = Material::from_colour(obj.colour);
                             item
                         })
                         .collect()
@@ -702,7 +702,7 @@ impl eframe::App for App {
                             let mut item = SceneRenderItem::default();
                             item.mesh_id = obj.mesh;
                             item.model = obj.model.to_cols_array_2d();
-                            item.material = Material::from_color(obj.color);
+                            item.material = Material::from_colour(obj.colour);
                             item.selected = self.selection.contains(i as u64);
                             // pick_id is 1-indexed so 0 can mean "no hit".
                             item.pick_id = PickId((i as u64) + 1);

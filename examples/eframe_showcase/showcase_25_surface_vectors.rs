@@ -15,7 +15,7 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BackfacePolicy, BuiltinColormap, ColormapId, GlyphItem, LightingSettings, MeshData, MeshId,
+    BackfacePolicy, BuiltinColourmap, ColourmapId, GlyphItem, LightingSettings, MeshData, MeshId,
     SceneRenderItem,
     quantities::{edge_one_form_to_glyphs, face_intrinsic_to_glyphs, vertex_intrinsic_to_glyphs},
 };
@@ -61,8 +61,8 @@ pub(crate) struct SvState {
     pub face_vecs: Vec<[f32; 2]>,
     /// Per-directed-edge one-form values (plane / edge mode).
     pub edge_vals: Vec<f32>,
-    /// Rainbow colormap ID fetched at build time.
-    pub rainbow_id: Option<ColormapId>,
+    /// Rainbow colourmap ID fetched at build time.
+    pub rainbow_id: Option<ColourmapId>,
 }
 
 impl Default for SvState {
@@ -122,7 +122,7 @@ impl App {
         self.sv_state.rainbow_id = Some(
             renderer
                 .resources()
-                .builtin_colormap_id(BuiltinColormap::Rainbow),
+                .builtin_colourmap_id(BuiltinColourmap::Rainbow),
         );
 
         self.sv_state.built = true;
@@ -236,7 +236,7 @@ impl App {
                 self.sv_state.scale,
             ),
         };
-        item.colormap_id = self.sv_state.rainbow_id;
+        item.colourmap_id = self.sv_state.rainbow_id;
         item.unlit = true;
         item
     }
@@ -245,8 +245,8 @@ impl App {
     pub(crate) fn sv_lighting() -> LightingSettings {
         LightingSettings {
             hemisphere_intensity: 0.5,
-            sky_color: [1.0, 1.0, 1.0],
-            ground_color: [1.0, 1.0, 1.0],
+            sky_colour: [1.0, 1.0, 1.0],
+            ground_colour: [1.0, 1.0, 1.0],
             ..LightingSettings::default()
         }
     }

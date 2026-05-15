@@ -1,7 +1,7 @@
 // sprite_outline_mask.wgsl : renders selected sprite billboards as solid
 // quads into the R8 outline mask texture.  Uses the same bind group layout
 // and vertex transform as sprite.wgsl but outputs a flat mask value instead
-// of textured/colored fragments.
+// of textured/coloured fragments.
 //
 // Group 0: Camera (view_proj, view matrix for cam_right/cam_up, viewport dims).
 // Group 1: SpriteUniform + texture + sampler + instance storage buffer
@@ -34,7 +34,7 @@ struct SpriteUniform {
 };
 
 struct SpriteInstance {
-    color:    vec4<f32>,
+    colour:    vec4<f32>,
     size:     f32,
     rotation: f32,
     _pad0:    f32,

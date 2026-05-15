@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use eframe::egui;
 use viewport_lib::{
-    Action, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap, ButtonState, Camera,
-    CameraAnimator, CameraFrame, CellSelectionInfo, ClipObject, ColormapId, FrameData,
+    Action, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, ButtonState, Camera,
+    CameraAnimator, CameraFrame, CellSelectionInfo, ClipObject, ColourmapId, FrameData,
     GaussianSplatItem, GizmoAxis, GizmoInfo, GizmoMode, GlyphItem, GlyphType, GpuImplicitItem,
     GpuImplicitOptions, GpuMarchingCubesJob, GroundPlane, GroundPlaneMode, ImageAnchor,
     ImplicitBlendMode, ImplicitPrimitive, LightKind, LightSource, LightingSettings, ManipResult,
@@ -70,7 +70,7 @@ mod showcase_41_sprites;
 mod showcase_42_gaussian_splats;
 mod viewport_callback;
 
-const BG_COLOR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
+const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -660,9 +660,9 @@ impl eframe::App for App {
 
         // ---- Central panel: 3-D viewport ----
         let panel_bg = if self.mode == ShowcaseMode::SceneGraph {
-            showcase_02_scene_graph::background_color(self.sg_state.bg_cycle)
+            showcase_02_scene_graph::background_colour(self.sg_state.bg_cycle)
         } else {
-            BG_COLOR
+            BG_COLOUR
         };
         egui::CentralPanel::default()
             .frame(
@@ -1998,7 +1998,7 @@ impl App {
         // deep clone of the 1M-item Vec. Set by the Performance arm below; None for all others.
         let mut perf_arc: Option<std::sync::Arc<[SceneRenderItem]>> = None;
 
-        let (scene_items, bg_color, lighting, scene_gen, sel_gen) = match self.mode {
+        let (scene_items, bg_colour, lighting, scene_gen, sel_gen) = match self.mode {
             ShowcaseMode::Basic => {
                 let items = self.basic_scene_items();
 
@@ -2016,11 +2016,11 @@ impl App {
                 let lighting = LightingSettings {
                     lights,
                     hemisphere_intensity: 0.25,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [1.0, 1.0, 1.0],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
-                (items, Some(BG_COLOR), lighting, 0u64, 0u64)
+                (items, Some(BG_COLOUR), lighting, 0u64, 0u64)
             }
 
             ShowcaseMode::SceneGraph => {
@@ -2028,11 +2028,11 @@ impl App {
                     .sg_state
                     .scene
                     .collect_render_items(&self.sg_state.selection);
-                let bg = showcase_02_scene_graph::background_color(self.sg_state.bg_cycle);
+                let bg = showcase_02_scene_graph::background_colour(self.sg_state.bg_cycle);
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [1.0, 1.0, 1.0],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
                 scene_graph_outline = !self.sg_state.selection.is_empty();
@@ -2062,11 +2062,11 @@ impl App {
                 perf_outline = !self.perf_state.selection.is_empty();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [1.0, 1.0, 1.0],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
-                (vec![], Some(BG_COLOR), lighting, sg, ss)
+                (vec![], Some(BG_COLOUR), lighting, sg, ss)
             }
 
             ShowcaseMode::Interaction => {
@@ -2079,11 +2079,11 @@ impl App {
                 let ss = self.interact_state.selection.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [1.0, 1.0, 1.0],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
-                (items, Some(BG_COLOR), lighting, sg, ss)
+                (items, Some(BG_COLOUR), lighting, sg, ss)
             }
 
             ShowcaseMode::MaterialsVisibility => {
@@ -2102,11 +2102,11 @@ impl App {
                 let ss = self.materials_visibility_state.selection.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [1.0, 1.0, 1.0],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
-                (items, Some(BG_COLOR), lighting, sg, ss)
+                (items, Some(BG_COLOUR), lighting, sg, ss)
             }
 
             ShowcaseMode::PostProcess => {
@@ -2124,7 +2124,7 @@ impl App {
                             position: [3.0, 3.0, 3.0],
                             range: 15.0,
                         },
-                        color: [1.0, 0.9, 0.7],
+                        colour: [1.0, 0.9, 0.7],
                         intensity: 2.0,
                         ..LightSource::default()
                     });
@@ -2138,12 +2138,12 @@ impl App {
                         ShadowFilter::Pcf
                     },
                     hemisphere_intensity: 0.5,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [1.0, 1.0, 1.0],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
                 let sg = self.pp_state.scene.version();
-                (items, Some(BG_COLOR), lighting, sg, 0)
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
 
             ShowcaseMode::NormalMaps => {
@@ -2165,19 +2165,19 @@ impl App {
                                 position: [3.0, 3.0, 3.0],
                                 range: 15.0,
                             },
-                            color: [1.0, 0.97, 0.93],
+                            colour: [1.0, 0.97, 0.93],
                             intensity: 2.0,
                             ..LightSource::default()
                         },
                     ],
                     shadows_enabled: true,
                     hemisphere_intensity: 0.4,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [1.0, 1.0, 1.0],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
                 let sg = self.nm_state.scene.version();
-                (items, Some(BG_COLOR), lighting, sg, 0)
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
 
             ShowcaseMode::Shadows => {
@@ -2198,12 +2198,12 @@ impl App {
                         ShadowFilter::Pcf
                     },
                     hemisphere_intensity: 0.5,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [1.0, 1.0, 1.0],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
                 let sg = self.shd_state.scene.version();
-                (items, Some(BG_COLOR), lighting, sg, 0)
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
 
             ShowcaseMode::Annotation => {
@@ -2211,11 +2211,11 @@ impl App {
                 let sg = self.ann_state.scene.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [1.0, 1.0, 1.0],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
-                (items, Some(BG_COLOR), lighting, sg, 0)
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
 
             ShowcaseMode::CameraTools => {
@@ -2223,11 +2223,11 @@ impl App {
                 let sg = self.ct_state.scene.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [1.0, 1.0, 1.0],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
-                (items, Some(BG_COLOR), lighting, sg, 0)
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
 
             ShowcaseMode::Lights => {
@@ -2245,12 +2245,12 @@ impl App {
                     } else {
                         0.0
                     },
-                    sky_color: self.lights_state.sky_color,
-                    ground_color: self.lights_state.ground_color,
+                    sky_colour: self.lights_state.sky_colour,
+                    ground_colour: self.lights_state.ground_colour,
                     ..LightingSettings::default()
                 };
                 let sg = self.lights_state.scene.version();
-                (items, Some(BG_COLOR), lighting, sg, 0)
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
 
             ShowcaseMode::MultiViewport => {
@@ -2258,14 +2258,14 @@ impl App {
             }
             ShowcaseMode::Isolines => {
                 let mut items = self.iso_state.scene.collect_render_items(&Selection::new());
-                // Apply scalar coloring or flat grey depending on toggle.
-                if self.iso_state.show_surface_color {
+                // Apply scalar colouring or flat grey depending on toggle.
+                if self.iso_state.show_surface_colour {
                     for item in items.iter_mut() {
                         item.active_attribute = Some(AttributeRef {
                             name: "wave".to_string(),
                             kind: AttributeKind::Vertex,
                         });
-                        item.colormap_id = Some(ColormapId(BuiltinColormap::Coolwarm as usize));
+                        item.colourmap_id = Some(ColourmapId(BuiltinColourmap::Coolwarm as usize));
                         item.material.backface_policy = BackfacePolicy::Identical;
                     }
                 } else {
@@ -2276,26 +2276,26 @@ impl App {
                 let sg = self.iso_state.scene.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [1.0, 1.0, 1.0],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
-                (items, Some(BG_COLOR), lighting, sg, 0)
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
 
             ShowcaseMode::PointClouds => {
                 let lighting = App::pc_lighting();
-                (App::pc_surface_items(), Some(BG_COLOR), lighting, 0, 0)
+                (App::pc_surface_items(), Some(BG_COLOUR), lighting, 0, 0)
             }
 
             ShowcaseMode::Streamlines => {
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [1.0, 1.0, 1.0],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
-                (vec![], Some(BG_COLOR), lighting, 0, 0)
+                (vec![], Some(BG_COLOUR), lighting, 0, 0)
             }
 
             ShowcaseMode::Volume => {
@@ -2308,11 +2308,11 @@ impl App {
                     };
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.6,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [0.8, 0.8, 0.8],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [0.8, 0.8, 0.8],
                     ..LightingSettings::default()
                 };
-                (surface_items, Some(BG_COLOR), lighting, 0, 0)
+                (surface_items, Some(BG_COLOUR), lighting, 0, 0)
             }
 
             ShowcaseMode::ClipVolumes => {
@@ -2340,11 +2340,11 @@ impl App {
                         ..LightSource::default()
                     }],
                     hemisphere_intensity: 0.4,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [0.8, 0.8, 0.8],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [0.8, 0.8, 0.8],
                     ..LightingSettings::default()
                 };
-                (items, Some(BG_COLOR), lighting, sg, 0)
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
 
             ShowcaseMode::ScalarFields => {
@@ -2353,7 +2353,7 @@ impl App {
                     .scalar_state
                     .scene
                     .collect_render_items(&self.scalar_state.selection);
-                let colormap_id = viewport_lib::ColormapId(self.scalar_state.colormap as usize);
+                let colourmap_id = viewport_lib::ColourmapId(self.scalar_state.colourmap as usize);
                 let active_node_id = self.scalar_state.node_ids[self.scalar_state.active_object];
                 let wave_node_id = self.scalar_state.node_ids[1];
                 if let Some(item) = items
@@ -2364,13 +2364,13 @@ impl App {
                         name: ATTR_NAMES[self.scalar_state.active_object].to_string(),
                         kind: viewport_lib::AttributeKind::Vertex,
                     });
-                    item.colormap_id = Some(colormap_id);
+                    item.colourmap_id = Some(colourmap_id);
                     item.scalar_range = if self.scalar_state.range_auto {
                         None
                     } else {
                         Some(self.scalar_state.range)
                     };
-                    item.nan_color = if self.scalar_state.nan_on {
+                    item.nan_colour = if self.scalar_state.nan_on {
                         Some([0.85, 0.1, 0.85, 1.0])
                     } else {
                         None
@@ -2385,13 +2385,13 @@ impl App {
                 let sg = self.scalar_state.scene.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [1.0, 1.0, 1.0],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
                 (
                     items,
-                    Some(BG_COLOR),
+                    Some(BG_COLOUR),
                     lighting,
                     sg,
                     self.scalar_state.selection.version(),
@@ -2408,11 +2408,11 @@ impl App {
                 // need minimal settings for the framework.
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [1.0, 1.0, 1.0],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
-                (items, Some(BG_COLOR), lighting, sg, 0)
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
 
             ShowcaseMode::Textures => {
@@ -2427,11 +2427,11 @@ impl App {
                 let sg = self.texture_state.scene.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 1.5,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [0.8, 0.8, 0.8],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [0.8, 0.8, 0.8],
                     ..LightingSettings::default()
                 };
-                (items, Some(BG_COLOR), lighting, sg, 0)
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
 
             ShowcaseMode::ParamVis => {
@@ -2442,11 +2442,11 @@ impl App {
                 let sg = self.param_vis_state.scene.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [1.0, 1.0, 1.0],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
-                (items, Some(BG_COLOR), lighting, sg, 0)
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
 
             ShowcaseMode::GroundPlane => {
@@ -2462,11 +2462,11 @@ impl App {
                     }],
                     shadows_enabled: true,
                     hemisphere_intensity: 0.3,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [0.3, 0.3, 0.3],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [0.3, 0.3, 0.3],
                     ..LightingSettings::default()
                 };
-                (items, Some(BG_COLOR), lighting, sg, 0)
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
 
             ShowcaseMode::FaceAttributes => {
@@ -2474,7 +2474,7 @@ impl App {
                     .face_state
                     .scene
                     .collect_render_items(&Selection::new());
-                let colormap_id = ColormapId(self.face_state.colormap as usize);
+                let colourmap_id = ColourmapId(self.face_state.colourmap as usize);
 
                 // Node 0: Vertex attribute (interpolated)
                 // scalar_range left as None : renderer auto-detects from attribute_ranges.
@@ -2486,7 +2486,7 @@ impl App {
                         name: "scalar".to_string(),
                         kind: AttributeKind::Vertex,
                     });
-                    item.colormap_id = Some(colormap_id);
+                    item.colourmap_id = Some(colourmap_id);
                 }
 
                 // Node 1: Face attribute (flat per-triangle)
@@ -2499,17 +2499,17 @@ impl App {
                         name: "scalar".to_string(),
                         kind: AttributeKind::Face,
                     });
-                    item.colormap_id = Some(colormap_id);
+                    item.colourmap_id = Some(colourmap_id);
                 }
 
-                // Node 2: FaceColor attribute (direct RGBA, no colormap)
+                // Node 2: FaceColour attribute (direct RGBA, no colourmap)
                 if let Some(item) = items
                     .iter_mut()
                     .find(|i| i.pick_id == PickId(self.face_state.node_ids[2]))
                 {
                     item.active_attribute = Some(AttributeRef {
-                        name: "color".to_string(),
-                        kind: AttributeKind::FaceColor,
+                        name: "colour".to_string(),
+                        kind: AttributeKind::FaceColour,
                     });
                     item.material.opacity = self.face_state.opacity;
                 }
@@ -2517,17 +2517,17 @@ impl App {
                 let sg = self.face_state.scene.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.4,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [1.0, 1.0, 1.0],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
-                (items, Some(BG_COLOR), lighting, sg, 0)
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
 
             ShowcaseMode::BackfacePolicy => {
                 let items = self.sa_scene_items();
                 let sg = self.sa_state.scene.version();
-                (items, Some(BG_COLOR), App::sa_lighting(), sg, 0)
+                (items, Some(BG_COLOUR), App::sa_lighting(), sg, 0)
             }
 
             ShowcaseMode::SurfaceVectors => {
@@ -2536,7 +2536,7 @@ impl App {
                 } else {
                     vec![]
                 };
-                (surface_item, Some(BG_COLOR), App::sv_lighting(), 0, 0)
+                (surface_item, Some(BG_COLOUR), App::sv_lighting(), 0, 0)
             }
 
             ShowcaseMode::VolumeMesh => {
@@ -2584,10 +2584,10 @@ impl App {
                         }
                     }
                 }
-                // Rebuild PT meshes when the scalar field or colormap changes.
+                // Rebuild PT meshes when the scalar field or colourmap changes.
                 let pt_needs_rebuild = self.vm_state.built
                     && (self.vm_state.field != self.vm_state.pt_field
-                        || self.vm_state.colormap != self.vm_state.pt_colormap);
+                        || self.vm_state.colourmap != self.vm_state.pt_colourmap);
                 if pt_needs_rebuild {
                     if let Some(rs) = frame.wgpu_render_state() {
                         let mut guard = rs.renderer.write();
@@ -2598,30 +2598,30 @@ impl App {
                                 renderer,
                                 &rs.device,
                                 self.vm_state.field,
-                                self.vm_state.colormap,
+                                self.vm_state.colourmap,
                             );
                             self.vm_state.pt_field = self.vm_state.field;
-                            self.vm_state.pt_colormap = self.vm_state.colormap;
+                            self.vm_state.pt_colourmap = self.vm_state.colourmap;
                         }
                     }
                 }
 
                 let items = self.vm_scene_items();
-                (items, Some(BG_COLOR), App::vm_lighting(), 0, 0)
+                (items, Some(BG_COLOUR), App::vm_lighting(), 0, 0)
             }
 
             ShowcaseMode::Auxiliary => {
                 let items = self.aux_state.scene.collect_render_items(&Selection::new());
-                (items, Some(BG_COLOR), App::aux_lighting(), 0, 0)
+                (items, Some(BG_COLOUR), App::aux_lighting(), 0, 0)
             }
 
             ShowcaseMode::CurveNetworkQuantities => {
-                (vec![], Some(BG_COLOR), LightingSettings::default(), 0, 0)
+                (vec![], Some(BG_COLOUR), LightingSettings::default(), 0, 0)
             }
 
             ShowcaseMode::DepthCompositeImages => (
                 self.dc_scene_items(),
-                Some(BG_COLOR),
+                Some(BG_COLOUR),
                 App::dc_lighting(),
                 0,
                 0,
@@ -2629,7 +2629,7 @@ impl App {
 
             ShowcaseMode::ImplicitSurface => (
                 self.implicit_scene_items(),
-                Some(BG_COLOR),
+                Some(BG_COLOUR),
                 App::implicit_lighting(),
                 self.mode_gen,
                 0,
@@ -2637,7 +2637,7 @@ impl App {
 
             ShowcaseMode::SparseVolumeGrid => (
                 self.svg_scene_items(),
-                Some(BG_COLOR),
+                Some(BG_COLOUR),
                 App::svg_lighting(),
                 self.mode_gen,
                 0,
@@ -2647,7 +2647,7 @@ impl App {
                 let (items, glyphs, pcs) = self.eq_scene_items();
                 eq_glyphs = glyphs;
                 eq_pcs = pcs;
-                (items, Some(BG_COLOR), LightingSettings::default(), 0, 0)
+                (items, Some(BG_COLOUR), LightingSettings::default(), 0, 0)
             }
 
             ShowcaseMode::PickLevels => {
@@ -2663,7 +2663,7 @@ impl App {
                     tvm_item.visible = true;
                     tvm_item.pick_id = PickId(11);
                     tvm_item.selected = self.pl_state.selection.contains(11);
-                    tvm_item.material = viewport_lib::Material::from_color([0.8, 0.45, 0.2]);
+                    tvm_item.material = viewport_lib::Material::from_colour([0.8, 0.45, 0.2]);
                     items.push(tvm_item);
                 }
                 let sg = self.pl_state.scene.version();
@@ -2685,13 +2685,13 @@ impl App {
                         },
                     ],
                     hemisphere_intensity: 0.7,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [0.8, 0.8, 0.8],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [0.8, 0.8, 0.8],
                     ..LightingSettings::default()
                 };
                 (
                     items,
-                    Some(BG_COLOR),
+                    Some(BG_COLOUR),
                     lighting,
                     sg,
                     self.pl_state.selection.version(),
@@ -2703,16 +2703,16 @@ impl App {
                 let sg = self.lbl_state.scene.version();
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [1.0, 1.0, 1.0],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
-                (items, Some(BG_COLOR), lighting, sg, 0)
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
 
             ShowcaseMode::Overlay => (
                 Vec::new(),
-                Some(BG_COLOR),
+                Some(BG_COLOUR),
                 LightingSettings::default(),
                 0,
                 0,
@@ -2776,54 +2776,54 @@ impl App {
                 let items = showcase_36_playback_runtime::pb_scene_items(self);
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [1.0, 1.0, 1.0],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [1.0, 1.0, 1.0],
                     ..LightingSettings::default()
                 };
                 let sg = self.pb_state.scene.version();
-                (items, Some(BG_COLOR), lighting, sg, 0)
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
 
             ShowcaseMode::ProbeWidgets => {
                 let items = self.pw_state.scene.collect_render_items(&Selection::new());
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.6,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [0.8, 0.8, 0.8],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [0.8, 0.8, 0.8],
                     ..LightingSettings::default()
                 };
                 let sg = self.pw_state.scene.version();
-                (items, Some(BG_COLOR), lighting, sg, 0)
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
 
             ShowcaseMode::SurfaceLIC => {
                 let items = self.lic_state.scene.collect_render_items(&Selection::new());
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.5,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [0.7, 0.7, 0.7],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [0.7, 0.7, 0.7],
                     ..LightingSettings::default()
                 };
                 let sg = self.lic_state.scene.version();
-                (items, Some(BG_COLOR), lighting, sg, 0)
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
 
             ShowcaseMode::TensorGlyphs => {
                 let lighting = LightingSettings {
                     hemisphere_intensity: 0.6,
-                    sky_color: [1.0, 1.0, 1.0],
-                    ground_color: [0.8, 0.8, 0.8],
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [0.8, 0.8, 0.8],
                     ..LightingSettings::default()
                 };
                 let items = showcase_39_tensor_glyphs::beam_scene_items(self);
-                (items, Some(BG_COLOR), lighting, 0, 0)
+                (items, Some(BG_COLOUR), lighting, 0, 0)
             }
 
             ShowcaseMode::VertexWarp => {
                 let items = showcase_40_vertex_warp::warp_scene_items(self);
                 (
                     items,
-                    Some(BG_COLOR),
+                    Some(BG_COLOUR),
                     showcase_40_vertex_warp::warp_lighting(),
                     0,
                     0,
@@ -2834,7 +2834,7 @@ impl App {
                 let items = showcase_41_sprites::sprite_scene_items(self);
                 (
                     items,
-                    Some(BG_COLOR),
+                    Some(BG_COLOUR),
                     showcase_41_sprites::sprite_lighting(),
                     0,
                     0,
@@ -2842,7 +2842,7 @@ impl App {
             }
 
             ShowcaseMode::GaussianSplats => {
-                (vec![], Some(BG_COLOR), LightingSettings::default(), 0, 0)
+                (vec![], Some(BG_COLOUR), LightingSettings::default(), 0, 0)
             }
         };
 
@@ -2910,7 +2910,7 @@ impl App {
         }
         fd.viewport.show_grid = false;
         fd.viewport.show_axes_indicator = true;
-        fd.viewport.background_color = bg_color;
+        fd.viewport.background_colour = bg_colour;
 
         // Ground plane (Showcase 23).
         if self.mode == ShowcaseMode::GroundPlane {
@@ -2920,12 +2920,12 @@ impl App {
                     GpMode::None => GroundPlaneMode::None,
                     GpMode::ShadowOnly => GroundPlaneMode::ShadowOnly,
                     GpMode::Tile => GroundPlaneMode::Tile,
-                    GpMode::SolidColor => GroundPlaneMode::SolidColor,
+                    GpMode::SolidColour => GroundPlaneMode::SolidColour,
                 },
                 height: self.gp_state.height,
-                color: self.gp_state.color,
+                colour: self.gp_state.colour,
                 tile_size: self.gp_state.tile_size,
-                shadow_color: self.gp_state.shadow_color,
+                shadow_colour: self.gp_state.shadow_colour,
                 shadow_opacity: self.gp_state.shadow_opacity,
             };
         }
@@ -2972,7 +2972,7 @@ impl App {
             fd.interaction.outline_width_px = scene_graph_outline_width;
         }
         if self.mode == ShowcaseMode::PickLevels {
-            fd.interaction.outline_color = [1.0, 0.85, 0.0, 1.0];
+            fd.interaction.outline_colour = [1.0, 0.85, 0.0, 1.0];
         }
         fd.interaction.xray_selected = adv_xray;
         fd.scene.generation = scene_gen;
@@ -3085,7 +3085,7 @@ impl App {
                 let mut pc = PointCloudItem::default();
                 pc.positions = self.pl_state.pc_positions.clone();
                 pc.point_size = 18.0;
-                pc.default_color = [0.5, 0.8, 1.0, 1.0];
+                pc.default_colour = [0.5, 0.8, 1.0, 1.0];
                 pc.id = 100;
                 pc.selected = self.pl_state.selection.contains(100);
                 fd.scene.point_clouds.push(pc);
@@ -3222,8 +3222,8 @@ impl App {
                     .with_polylines(polyline_lookup)
                     .with_curve_families(curve_family_lookup),
                 );
-                fd.interaction.sub_highlight_face_fill_color = [1.0, 0.85, 0.0, 0.25];
-                fd.interaction.sub_highlight_edge_color = [1.0, 0.85, 0.0, 1.0];
+                fd.interaction.sub_highlight_face_fill_colour = [1.0, 0.85, 0.0, 0.25];
+                fd.interaction.sub_highlight_edge_colour = [1.0, 0.85, 0.0, 1.0];
                 fd.interaction.sub_highlight_edge_width_px = 5.0;
                 fd.interaction.sub_highlight_vertex_size_px = 14.0;
             }
@@ -3233,7 +3233,7 @@ impl App {
                     let mut marker = PointCloudItem::default();
                     marker.positions = vec![marker_pos.to_array()];
                     marker.point_size = 16.0;
-                    marker.default_color = [1.0, 0.35, 0.0, 1.0];
+                    marker.default_colour = [1.0, 0.35, 0.0, 1.0];
                     fd.scene.point_clouds.push(marker);
                 }
             }
@@ -3264,7 +3264,7 @@ impl App {
                 let mut pl = PolylineItem::default();
                 pl.positions = self.pl_state.polyline_positions.clone();
                 pl.strip_lengths = self.pl_state.polyline_strip_lengths.clone();
-                pl.default_color = [0.2, 0.85, 0.35, 1.0];
+                pl.default_colour = [0.2, 0.85, 0.35, 1.0];
                 pl.line_width = 3.0;
                 pl.id = 30;
                 pl.selected = self.pl_state.selection.contains(30);
@@ -3278,8 +3278,8 @@ impl App {
                 g.vectors = vec![[0.0, 0.0, 1.0]; n];
                 g.scale = 0.8;
                 g.scale_by_magnitude = false;
-                g.use_default_color = true;
-                g.default_color = [0.75, 0.1, 1.0, 1.0];
+                g.use_default_colour = true;
+                g.default_colour = [0.75, 0.1, 1.0, 1.0];
                 g.glyph_type = GlyphType::Arrow;
                 g.id = 31;
                 g.selected = self.pl_state.selection.contains(31);
@@ -3292,7 +3292,7 @@ impl App {
                 tg.eigenvalues = self.pl_state.tensor_glyph_eigenvalues.clone();
                 tg.eigenvectors = self.pl_state.tensor_glyph_eigenvectors.clone();
                 tg.scale = 0.5;
-                tg.colormap_id = Some(ColormapId(BuiltinColormap::Coolwarm as usize));
+                tg.colourmap_id = Some(ColourmapId(BuiltinColourmap::Coolwarm as usize));
                 tg.id = 32;
                 tg.selected = self.pl_state.selection.contains(32);
                 fd.scene.tensor_glyphs.push(tg);
@@ -3302,8 +3302,8 @@ impl App {
                 let mut s = SpriteItem::default();
                 s.positions = self.pl_state.sprite_positions.clone();
                 s.sizes = self.pl_state.sprite_sizes.clone();
-                s.colors = self.pl_state.sprite_colors.clone();
-                s.default_color = [1.0, 0.90, 0.20, 1.0];
+                s.colours = self.pl_state.sprite_colours.clone();
+                s.default_colour = [1.0, 0.90, 0.20, 1.0];
                 s.default_size = 28.0;
                 s.depth_write = true;
                 s.id = 33;
@@ -3314,8 +3314,8 @@ impl App {
                 let mut s = SpriteItem::default();
                 s.positions = self.pl_state.xo_sprite_positions.clone();
                 s.sizes = self.pl_state.xo_sprite_sizes.clone();
-                s.colors = self.pl_state.xo_sprite_colors.clone();
-                s.default_color = [0.5, 0.5, 1.0, 1.0];
+                s.colours = self.pl_state.xo_sprite_colours.clone();
+                s.default_colour = [0.5, 0.5, 1.0, 1.0];
                 s.default_size = 30.0;
                 s.depth_write = true;
                 s.id = 34;
@@ -3328,7 +3328,7 @@ impl App {
                 st.positions = self.pl_state.streamtube_positions.clone();
                 st.strip_lengths = self.pl_state.streamtube_strip_lengths.clone();
                 st.radius = 0.12;
-                st.color = [0.3, 0.8, 0.55, 1.0];
+                st.colour = [0.3, 0.8, 0.55, 1.0];
                 st.id = 40;
                 st.selected = self.pl_state.selection.contains(40);
                 fd.scene.streamtube_items.push(st);
@@ -3339,7 +3339,7 @@ impl App {
                 tb.positions = self.pl_state.tube_positions.clone();
                 tb.strip_lengths = self.pl_state.tube_strip_lengths.clone();
                 tb.radius = 0.15;
-                tb.color = [0.85, 0.4, 0.2, 1.0];
+                tb.colour = [0.85, 0.4, 0.2, 1.0];
                 tb.id = 41;
                 tb.selected = self.pl_state.selection.contains(41);
                 fd.scene.tube_items.push(tb);
@@ -3350,12 +3350,12 @@ impl App {
                 rb.positions = self.pl_state.ribbon_positions.clone();
                 rb.strip_lengths = self.pl_state.ribbon_strip_lengths.clone();
                 rb.width = 0.4;
-                rb.color = [0.6, 0.3, 0.9, 1.0];
+                rb.colour = [0.6, 0.3, 0.9, 1.0];
                 rb.id = 42;
                 rb.selected = self.pl_state.selection.contains(42);
                 fd.scene.ribbon_items.push(rb);
             }
-            // Volume surface slice (pick_id=51): plane mesh colored by the same volume.
+            // Volume surface slice (pick_id=51): plane mesh coloured by the same volume.
             // Plane mesh is a 3.6x3.6 XZ quad; model places it at (0, 1, -4) and tilts it
             // 60 degrees around X so the plane makes a 30 degree angle with the XY plane.
             if let (Some(vol_id), Some(mesh_id)) =
@@ -3402,7 +3402,7 @@ impl App {
             // GPU implicit (pick_id=53): two smooth-blended spheres at (13, 0, 0) / (15, 0, 0).
             {
                 let centers: [[f32; 3]; 2] = [[13.0, 0.0, 0.0], [15.0, 0.0, 0.0]];
-                let colors: [[f32; 4]; 2] = [[0.9, 0.4, 0.2, 1.0], [0.2, 0.5, 1.0, 1.0]];
+                let colours: [[f32; 4]; 2] = [[0.9, 0.4, 0.2, 1.0], [0.2, 0.5, 1.0, 1.0]];
                 let mut item = GpuImplicitItem::default();
                 for i in 0..2 {
                     let mut prim = ImplicitPrimitive::zeroed();
@@ -3412,7 +3412,7 @@ impl App {
                     prim.params[1] = centers[i][1];
                     prim.params[2] = centers[i][2];
                     prim.params[3] = 1.2; // radius
-                    prim.color = colors[i];
+                    prim.colour = colours[i];
                     item.primitives.push(prim);
                 }
                 item.blend_mode = ImplicitBlendMode::SmoothUnion;
@@ -3428,7 +3428,7 @@ impl App {
             }
             // GPU marching cubes (pick_id=54): gyroid surface centered near (13, 0, -5).
             if let Some(mc_vol_id) = self.pl_state.mc_volume_id {
-                let mut mat = viewport_lib::Material::from_color([0.5, 0.8, 0.55]);
+                let mut mat = viewport_lib::Material::from_colour([0.5, 0.8, 0.55]);
                 mat.roughness = 0.4;
                 fd.scene.gpu_mc_jobs.push(GpuMarchingCubesJob {
                     volume_id: mc_vol_id,
@@ -3515,7 +3515,7 @@ impl App {
             iso_item.indices = self.iso_state.indices.clone();
             iso_item.scalars = self.iso_state.scalars.clone();
             iso_item.isovalues = isovalues;
-            iso_item.color = self.iso_state.line_color;
+            iso_item.colour = self.iso_state.line_colour;
             iso_item.line_width = self.iso_state.line_width;
             iso_item.depth_bias = self.iso_state.depth_bias;
             fd.scene.isolines.push(iso_item);
@@ -3621,7 +3621,7 @@ impl App {
                 pc.positions = self.ovl_state.cloud_positions.clone();
                 pc.scalars = self.ovl_state.cloud_scalars.clone();
                 pc.scalar_range = Some((-1.5, 1.5));
-                pc.colormap_id = Some(ColormapId(self.ovl_state.colormap as usize));
+                pc.colourmap_id = Some(ColourmapId(self.ovl_state.colourmap as usize));
                 pc.point_size = 4.0;
                 fd.scene.point_clouds.push(pc);
             }
@@ -3748,7 +3748,7 @@ impl App {
             if !unsel.is_empty() {
                 let mut pc = PointCloudItem::default();
                 pc.positions = unsel;
-                pc.default_color = [0.5, 0.7, 1.0, 1.0];
+                pc.default_colour = [0.5, 0.7, 1.0, 1.0];
                 pc.gaussian = true;
                 pc.point_size = 8.0;
                 fd.scene.point_clouds.push(pc);
@@ -3756,7 +3756,7 @@ impl App {
             if !sel.is_empty() {
                 let mut pc = PointCloudItem::default();
                 pc.positions = sel;
-                pc.default_color = [1.0, 0.55, 0.1, 1.0];
+                pc.default_colour = [1.0, 0.55, 0.1, 1.0];
                 pc.gaussian = true;
                 pc.point_size = 14.0;
                 fd.scene.point_clouds.push(pc);

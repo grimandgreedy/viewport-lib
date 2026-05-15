@@ -34,8 +34,8 @@ pub trait ViewportObject {
     }
     /// Whether this object should be rendered.
     fn is_visible(&self) -> bool;
-    /// RGB color in linear 0..1 range.
-    fn color(&self) -> glam::Vec3;
+    /// RGB colour in linear 0..1 range.
+    fn colour(&self) -> glam::Vec3;
     /// Whether to render per-vertex normal visualization.
     fn show_normals(&self) -> bool {
         false
@@ -48,13 +48,13 @@ pub trait ViewportObject {
     fn transparency(&self) -> f32 {
         1.0
     }
-    /// Material for this object. Default derives from `color()`.
+    /// Material for this object. Default derives from `colour()`.
     ///
     /// Override to provide per-object ambient, diffuse, specular, shininess,
     /// opacity, or texture parameters. The default implementation wraps
-    /// `self.color()` in a [`Material::from_color`] call so existing
+    /// `self.colour()` in a [`Material::from_colour`] call so existing
     /// implementations continue to work without any changes.
     fn material(&self) -> Material {
-        Material::from_color(self.color().into())
+        Material::from_colour(self.colour().into())
     }
 }

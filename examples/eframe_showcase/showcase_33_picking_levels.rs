@@ -99,7 +99,7 @@ pub(crate) struct PlHitInfo {
 // ---------------------------------------------------------------------------
 
 /// Build `GaussianSplatData` for the picking demo: N small spherical splats,
-/// colored from teal to orange across the set.
+/// coloured from teal to orange across the set.
 fn make_pl_splat_data(positions: &[[f32; 3]]) -> GaussianSplatData {
     const SH0_C: f32 = 0.28209479177;
     let n = positions.len();
@@ -327,14 +327,14 @@ pub(crate) struct PlState {
     pub sprite_positions: Vec<[f32; 3]>,
     /// Per-instance sizes for the sprite arc.
     pub sprite_sizes: Vec<f32>,
-    /// Per-instance colors for the sprite arc.
-    pub sprite_colors: Vec<[f32; 4]>,
+    /// Per-instance colours for the sprite arc.
+    pub sprite_colours: Vec<[f32; 4]>,
     /// Positions for the noughts-and-crosses sprite set (pick_id=34).
     pub xo_sprite_positions: Vec<[f32; 3]>,
     /// Per-instance sizes for the noughts-and-crosses set.
     pub xo_sprite_sizes: Vec<f32>,
-    /// Per-instance colors for the noughts-and-crosses set.
-    pub xo_sprite_colors: Vec<[f32; 4]>,
+    /// Per-instance colours for the noughts-and-crosses set.
+    pub xo_sprite_colours: Vec<[f32; 4]>,
     /// Positions for the streamtube set (pick_id=40).
     pub streamtube_positions: Vec<[f32; 3]>,
     /// Strip lengths for the streamtube set.
@@ -394,10 +394,10 @@ impl Default for PlState {
             tensor_glyph_eigenvectors: Vec::new(),
             sprite_positions: Vec::new(),
             sprite_sizes: Vec::new(),
-            sprite_colors: Vec::new(),
+            sprite_colours: Vec::new(),
             xo_sprite_positions: Vec::new(),
             xo_sprite_sizes: Vec::new(),
-            xo_sprite_colors: Vec::new(),
+            xo_sprite_colours: Vec::new(),
             streamtube_positions: Vec::new(),
             streamtube_strip_lengths: Vec::new(),
             tube_positions: Vec::new(),
@@ -491,9 +491,9 @@ impl App {
             ),
         ];
 
-        for (name, mesh_id, pos, color) in configs {
+        for (name, mesh_id, pos, colour) in configs {
             let transform = glam::Mat4::from_translation(*pos);
-            let mat = Material::from_color(*color);
+            let mat = Material::from_colour(*colour);
             let node_id = self
                 .pl_state
                 .scene
@@ -618,7 +618,7 @@ impl App {
         // boundary surface (for LDR rendering without the HDR/OIT path).
         renderer
             .resources_mut()
-            .ensure_colormaps_initialized(&self.device, &self.queue);
+            .ensure_colourmaps_initialized(&self.device, &self.queue);
         let tet_data = make_pl_tvm_tet_data();
         let tvm_tet_id = renderer
             .resources_mut()
@@ -626,7 +626,7 @@ impl App {
                 &self.device,
                 &tet_data,
                 "scalar",
-                viewport_lib::ColormapId(0),
+                viewport_lib::ColourmapId(0),
             )
             .ok()
             .map(|(id, _, _)| id);
@@ -698,7 +698,7 @@ impl App {
         self.pl_state.tensor_glyph_eigenvectors = vec![id_basis, rot45, rot30, rot60];
 
         // --- Sprites: 6 in a row at z=6 (pick_id=33) ---
-        // Sprites arranged in an arc with graduated sizes and colors so the
+        // Sprites arranged in an arc with graduated sizes and colours so the
         // group reads as a connected sequence rather than isolated dots.
         {
             let n = 8;
@@ -708,7 +708,7 @@ impl App {
             let arc_sweep = std::f32::consts::PI * 0.5;
             let mut positions = Vec::with_capacity(n);
             let mut sizes = Vec::with_capacity(n);
-            let mut colors = Vec::with_capacity(n);
+            let mut colours = Vec::with_capacity(n);
             for i in 0..n {
                 let t = i as f32 / (n - 1) as f32;
                 let angle = arc_start + arc_sweep * t;
@@ -720,11 +720,11 @@ impl App {
                 // Small to large along the arc.
                 sizes.push(14.0 + 22.0 * t);
                 // Yellow -> orange gradient.
-                colors.push([1.0, 0.95 - 0.5 * t, 0.15 + 0.1 * t, 1.0]);
+                colours.push([1.0, 0.95 - 0.5 * t, 0.15 + 0.1 * t, 1.0]);
             }
             self.pl_state.sprite_positions = positions;
             self.pl_state.sprite_sizes = sizes;
-            self.pl_state.sprite_colors = colors;
+            self.pl_state.sprite_colours = colours;
         }
 
         // --- Noughts and crosses sprites: alternating + and O at z=-6 (pick_id=34) ---
@@ -735,21 +735,21 @@ impl App {
             let x_step = 2.0_f32;
             let mut positions = Vec::with_capacity(n);
             let mut sizes = Vec::with_capacity(n);
-            let mut colors = Vec::with_capacity(n);
+            let mut colours = Vec::with_capacity(n);
             for i in 0..n {
                 positions.push([x_start + x_step * i as f32, 0.0, -6.0]);
                 // Alternate between small and large.
                 sizes.push(if i % 2 == 0 { 20.0 } else { 40.0 });
                 // Alternate cyan and magenta.
                 if i % 2 == 0 {
-                    colors.push([0.2, 0.9, 0.9, 1.0]);
+                    colours.push([0.2, 0.9, 0.9, 1.0]);
                 } else {
-                    colors.push([0.9, 0.2, 0.9, 1.0]);
+                    colours.push([0.9, 0.2, 0.9, 1.0]);
                 }
             }
             self.pl_state.xo_sprite_positions = positions;
             self.pl_state.xo_sprite_sizes = sizes;
-            self.pl_state.xo_sprite_colors = colors;
+            self.pl_state.xo_sprite_colours = colours;
         }
 
         // --- Streamtube: 2 spiraling strips above the scene (pick_id=40) ---

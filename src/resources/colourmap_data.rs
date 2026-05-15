@@ -1,4 +1,4 @@
-/// Built-in colormap LUT data (256 RGBA samples each).
+/// Built-in colourmap LUT data (256 RGBA samples each).
 ///
 /// Each function returns a `[[u8; 4]; 256]` array suitable for uploading to a
 /// 256×1 GPU texture.  All values are in linear (non-sRGB) space to match the
@@ -36,7 +36,7 @@ pub fn greyscale_rgba() -> [[u8; 4]; 256] {
 // Viridis: Smith 2015 polynomial approximation
 // ---------------------------------------------------------------------------
 
-/// Viridis colormap : perceptually uniform, colorblind-friendly.
+/// Viridis colourmap : perceptually uniform, colourblind-friendly.
 ///
 /// Uses the Smith 2015 polynomial approximation.
 pub fn viridis_rgba() -> [[u8; 4]; 256] {
@@ -67,9 +67,9 @@ pub fn viridis_rgba() -> [[u8; 4]; 256] {
 // Plasma: polynomial approximation
 // ---------------------------------------------------------------------------
 
-/// Plasma colormap : perceptually uniform, colorblind-friendly.
+/// Plasma colourmap : perceptually uniform, colourblind-friendly.
 ///
-/// Uses a polynomial approximation of the Matplotlib plasma colormap.
+/// Uses a polynomial approximation of the Matplotlib plasma colourmap.
 pub fn plasma_rgba() -> [[u8; 4]; 256] {
     let mut lut = [[0u8; 4]; 256];
     for i in 0..256 {
@@ -97,7 +97,7 @@ pub fn plasma_rgba() -> [[u8; 4]; 256] {
 // Coolwarm: diverging blue -> white -> red (cubic Hermite)
 // ---------------------------------------------------------------------------
 
-/// Diverging coolwarm colormap: blue at t=0, white at t=0.5, red at t=1.
+/// Diverging coolwarm colourmap: blue at t=0, white at t=0.5, red at t=1.
 pub fn coolwarm_rgba() -> [[u8; 4]; 256] {
     let mut lut = [[0u8; 4]; 256];
 
@@ -135,7 +135,7 @@ pub fn coolwarm_rgba() -> [[u8; 4]; 256] {
 // Rainbow: HSV hue sweep 240° (blue) -> 0° (red) at full saturation/value
 // ---------------------------------------------------------------------------
 
-/// Rainbow colormap: HSV hue sweep from 240° (blue) at t=0 to 0° (red) at t=1.
+/// Rainbow colourmap: HSV hue sweep from 240° (blue) at t=0 to 0° (red) at t=1.
 pub fn rainbow_rgba() -> [[u8; 4]; 256] {
     let mut lut = [[0u8; 4]; 256];
     for i in 0..256 {
@@ -173,7 +173,7 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
 // Magma: exact 256-sample LUT sampled from matplotlib
 // ---------------------------------------------------------------------------
 
-/// Magma colormap : perceptually uniform. Black/purple -> orange -> near-white.
+/// Magma colourmap : perceptually uniform. Black/purple -> orange -> near-white.
 pub fn magma_rgba() -> [[u8; 4]; 256] {
     [
         [0, 0, 4, 255],
@@ -439,7 +439,7 @@ pub fn magma_rgba() -> [[u8; 4]; 256] {
 // Inferno: exact 256-sample LUT sampled from matplotlib
 // ---------------------------------------------------------------------------
 
-/// Inferno colormap : perceptually uniform. Black -> deep red -> orange -> light yellow.
+/// Inferno colourmap : perceptually uniform. Black -> deep red -> orange -> light yellow.
 pub fn inferno_rgba() -> [[u8; 4]; 256] {
     [
         [0, 0, 4, 255],
@@ -705,7 +705,7 @@ pub fn inferno_rgba() -> [[u8; 4]; 256] {
 // Turbo: exact 256-sample LUT sampled from matplotlib
 // ---------------------------------------------------------------------------
 
-/// Turbo colormap (Google 2019) : improved rainbow. Deep purple -> cyan -> green -> yellow -> red.
+/// Turbo colourmap (Google 2019) : improved rainbow. Deep purple -> cyan -> green -> yellow -> red.
 pub fn turbo_rgba() -> [[u8; 4]; 256] {
     [
         [48, 18, 59, 255],
@@ -971,7 +971,7 @@ pub fn turbo_rgba() -> [[u8; 4]; 256] {
 // Jet: exact 256-sample LUT sampled from matplotlib
 // ---------------------------------------------------------------------------
 
-/// Jet colormap : classic blue-cyan-green-yellow-red. Not perceptually uniform.
+/// Jet colourmap : classic blue-cyan-green-yellow-red. Not perceptually uniform.
 pub fn jet_rgba() -> [[u8; 4]; 256] {
     [
         [0, 0, 128, 255],
@@ -1237,7 +1237,7 @@ pub fn jet_rgba() -> [[u8; 4]; 256] {
 // RdBu (reversed): exact 256-sample LUT sampled from matplotlib
 // ---------------------------------------------------------------------------
 
-/// RdBu diverging colormap (red -> white -> blue, reversed so blue is at t=0).
+/// RdBu diverging colourmap (red -> white -> blue, reversed so blue is at t=0).
 /// Suitable for signed quantities (negative = blue, zero = white, positive = red).
 pub fn rdbu_r_rgba() -> [[u8; 4]; 256] {
     [
@@ -1501,7 +1501,7 @@ pub fn rdbu_r_rgba() -> [[u8; 4]; 256] {
 }
 
 // ---------------------------------------------------------------------------
-// Custom colormap LUT generation
+// Custom colourmap LUT generation
 // ---------------------------------------------------------------------------
 
 /// Linearly interpolate between colour stops to produce a 256-sample LUT.
@@ -1512,7 +1512,7 @@ pub fn rdbu_r_rgba() -> [[u8; 4]; 256] {
 /// stop colour fills `t > stops.last().0`.
 ///
 /// Returns a `[[u8; 4]; 256]` suitable for uploading to a 256×1 GPU texture.
-pub fn lerp_colormap_lut(stops: &[(f32, [u8; 4])]) -> [[u8; 4]; 256] {
+pub fn lerp_colourmap_lut(stops: &[(f32, [u8; 4])]) -> [[u8; 4]; 256] {
     let mut lut = [[0u8; 4]; 256];
     if stops.is_empty() {
         return lut;
@@ -1558,21 +1558,21 @@ pub fn lerp_colormap_lut(stops: &[(f32, [u8; 4])]) -> [[u8; 4]; 256] {
     lut
 }
 
-/// Parse a ParaView XML colormap file.
+/// Parse a ParaView XML colourmap file.
 ///
 /// Supports the standard format:
 /// ```xml
-/// <ColorMaps>
-///   <ColorMap name="MyMap" space="RGB">
+/// <ColourMaps>
+///   <ColourMap name="MyMap" space="RGB">
 ///     <Point x="0.0" r="0.0" g="0.0" b="0.0" o="1.0"/>
 ///     <Point x="1.0" r="1.0" g="1.0" b="1.0" o="1.0"/>
-///   </ColorMap>
-/// </ColorMaps>
+///   </ColourMap>
+/// </ColourMaps>
 /// ```
 ///
 /// Returns a list of `(name, stops)` pairs, where each stop is `(position_0_1, [r, g, b, a])`.
 /// Uses simple string parsing without any XML library dependency.
-pub fn parse_paraview_xml_colormap(xml: &str) -> Vec<(String, Vec<(f32, [u8; 4])>)> {
+pub fn parse_paraview_xml_colourmap(xml: &str) -> Vec<(String, Vec<(f32, [u8; 4])>)> {
     let mut result = Vec::new();
     let mut current_name: Option<String> = None;
     let mut current_stops: Vec<(f32, [u8; 4])> = Vec::new();
@@ -1580,11 +1580,11 @@ pub fn parse_paraview_xml_colormap(xml: &str) -> Vec<(String, Vec<(f32, [u8; 4])
     for line in xml.lines() {
         let trimmed = line.trim();
 
-        if trimmed.starts_with("<ColorMap") {
+        if trimmed.starts_with("<ColourMap") {
             // Extract name attribute.
             current_name = attr_value(trimmed, "name").map(|s| s.to_string());
             current_stops.clear();
-        } else if trimmed.starts_with("</ColorMap>") {
+        } else if trimmed.starts_with("</ColourMap>") {
             if let Some(name) = current_name.take() {
                 if !current_stops.is_empty() {
                     result.push((name, current_stops.clone()));
@@ -1617,11 +1617,11 @@ pub fn parse_paraview_xml_colormap(xml: &str) -> Vec<(String, Vec<(f32, [u8; 4])
     result
 }
 
-/// Serialize a colormap to the ParaView XML colormap format.
-pub fn export_paraview_xml_colormap(name: &str, stops: &[(f32, [u8; 4])]) -> String {
+/// Serialize a colourmap to the ParaView XML colourmap format.
+pub fn export_paraview_xml_colourmap(name: &str, stops: &[(f32, [u8; 4])]) -> String {
     let mut out = String::new();
-    out.push_str("<ColorMaps>\n");
-    out.push_str(&format!("  <ColorMap name=\"{}\" space=\"RGB\">\n", name));
+    out.push_str("<ColourMaps>\n");
+    out.push_str(&format!("  <ColourMap name=\"{}\" space=\"RGB\">\n", name));
     for &(pos, rgba) in stops {
         let r = rgba[0] as f32 / 255.0;
         let g = rgba[1] as f32 / 255.0;
@@ -1632,8 +1632,8 @@ pub fn export_paraview_xml_colormap(name: &str, stops: &[(f32, [u8; 4])]) -> Str
             pos, r, g, b, o
         ));
     }
-    out.push_str("  </ColorMap>\n");
-    out.push_str("</ColorMaps>\n");
+    out.push_str("  </ColourMap>\n");
+    out.push_str("</ColourMaps>\n");
     out
 }
 

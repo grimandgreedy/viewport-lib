@@ -13,7 +13,7 @@ use std::f32::consts::PI;
 // Vertex type (matches axes_overlay.wgsl)
 // ---------------------------------------------------------------------------
 
-/// A 2D vertex for the axes indicator overlay (position in NDC + RGBA color).
+/// A 2D vertex for the axes indicator overlay (position in NDC + RGBA colour).
 ///
 /// Matches the layout expected by `axes_overlay.wgsl` at shader locations 0 and 1.
 #[repr(C)]
@@ -21,12 +21,12 @@ use std::f32::consts::PI;
 pub(crate) struct AxesVertex {
     /// 2D position in Normalized Device Coordinates (X right, Y up, range -1..1).
     pub(crate) position: [f32; 2],
-    /// RGBA color in linear 0..1.
-    pub(crate) color: [f32; 4],
+    /// RGBA colour in linear 0..1.
+    pub(crate) colour: [f32; 4],
 }
 
 impl AxesVertex {
-    /// wgpu vertex buffer layout matching shader locations 0 (position) and 1 (color).
+    /// wgpu vertex buffer layout matching shader locations 0 (position) and 1 (colour).
     pub(crate) fn buffer_layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<AxesVertex>() as wgpu::BufferAddress,
@@ -60,10 +60,10 @@ pub struct AxisView {
     pub axis_index: usize,
 }
 
-// Colors (same as the original egui version).
-const X_COLOR: [f32; 4] = [0.878, 0.322, 0.322, 1.0]; // #e05252
-const Y_COLOR: [f32; 4] = [0.361, 0.722, 0.361, 1.0]; // #5cb85c
-const Z_COLOR: [f32; 4] = [0.290, 0.620, 1.000, 1.0]; // #4a9eff
+// Colours (same as the original egui version).
+const X_COLOUR: [f32; 4] = [0.878, 0.322, 0.322, 1.0]; // #e05252
+const Y_COLOUR: [f32; 4] = [0.361, 0.722, 0.361, 1.0]; // #5cb85c
+const Z_COLOUR: [f32; 4] = [0.290, 0.620, 1.000, 1.0]; // #4a9eff
 
 // Layout parameters (pixels, converted to NDC during generation).
 const ORIGIN_OFFSET: f32 = 40.0;
@@ -109,7 +109,7 @@ pub(crate) fn build_axes_geometry(
     };
 
     let axes_world = [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z];
-    let colors = [X_COLOR, Y_COLOR, Z_COLOR];
+    let colours = [X_COLOUR, Y_COLOUR, Z_COLOUR];
     let offsets: [(f32, f32); 3] = [
         project(glam::Vec3::X),
         project(glam::Vec3::Y),
@@ -126,7 +126,7 @@ pub(crate) fn build_axes_geometry(
 
     for &i in &order {
         let (dx, dy) = offsets[i];
-        let color = colors[i];
+        let colour = colours[i];
         let tip_x = ox + dx;
         let tip_y = oy + dy;
 
@@ -146,18 +146,18 @@ pub(crate) fn build_axes_geometry(
             [ox - px_, oy - py_],
             [tip_x - px_, tip_y - py_],
             [tip_x + px_, tip_y + py_],
-            color,
+            colour,
         );
 
         // --- Circle background (filled) ---
-        let bg_color = [color[0] * 0.33, color[1] * 0.33, color[2] * 0.33, 0.7];
+        let bg_colour = [colour[0] * 0.33, colour[1] * 0.33, colour[2] * 0.33, 0.7];
         let cr_x = px_to_ndc_x(CIRCLE_RADIUS);
         let cr_y = px_to_ndc_y(CIRCLE_RADIUS);
-        push_circle_filled(&mut verts, tip_x, tip_y, cr_x, cr_y, bg_color);
+        push_circle_filled(&mut verts, tip_x, tip_y, cr_x, cr_y, bg_colour);
 
         // --- Circle outline (ring) ---
         let ring_inner = 0.82; // inner radius as fraction of outer
-        push_circle_ring(&mut verts, tip_x, tip_y, cr_x, cr_y, ring_inner, color);
+        push_circle_ring(&mut verts, tip_x, tip_y, cr_x, cr_y, ring_inner, colour);
 
         // --- Letter glyph ---
         let glyph_hw = px_to_ndc_x(4.5); // half-width of letter
@@ -166,13 +166,13 @@ pub(crate) fn build_axes_geometry(
         let glw_y = px_to_ndc_y(0.8);
         match i {
             0 => push_letter_x(
-                &mut verts, tip_x, tip_y, glyph_hw, glyph_hh, glw_x, glw_y, color,
+                &mut verts, tip_x, tip_y, glyph_hw, glyph_hh, glw_x, glw_y, colour,
             ),
             1 => push_letter_y(
-                &mut verts, tip_x, tip_y, glyph_hw, glyph_hh, glw_x, glw_y, color,
+                &mut verts, tip_x, tip_y, glyph_hw, glyph_hh, glw_x, glw_y, colour,
             ),
             2 => push_letter_z(
-                &mut verts, tip_x, tip_y, glyph_hw, glyph_hh, glw_x, glw_y, color,
+                &mut verts, tip_x, tip_y, glyph_hw, glyph_hh, glw_x, glw_y, colour,
             ),
             _ => {}
         }
@@ -269,13 +269,13 @@ fn push_quad(
     b: [f32; 2],
     c: [f32; 2],
     d: [f32; 2],
-    color: [f32; 4],
+    colour: [f32; 4],
 ) {
     // Two triangles: ABC, ACD
     for &pos in &[a, b, c, a, c, d] {
         verts.push(AxesVertex {
             position: pos,
-            color,
+            colour,
         });
     }
 }
@@ -286,7 +286,7 @@ fn push_circle_filled(
     cy: f32,
     rx: f32,
     ry: f32,
-    color: [f32; 4],
+    colour: [f32; 4],
 ) {
     let step = 2.0 * PI / CIRCLE_SEGMENTS as f32;
     for i in 0..CIRCLE_SEGMENTS {
@@ -294,15 +294,15 @@ fn push_circle_filled(
         let a1 = step * (i + 1) as f32;
         verts.push(AxesVertex {
             position: [cx, cy],
-            color,
+            colour,
         });
         verts.push(AxesVertex {
             position: [cx + rx * a0.cos(), cy + ry * a0.sin()],
-            color,
+            colour,
         });
         verts.push(AxesVertex {
             position: [cx + rx * a1.cos(), cy + ry * a1.sin()],
-            color,
+            colour,
         });
     }
 }
@@ -314,7 +314,7 @@ fn push_circle_ring(
     rx: f32,
     ry: f32,
     inner_frac: f32,
-    color: [f32; 4],
+    colour: [f32; 4],
 ) {
     let step = 2.0 * PI / CIRCLE_SEGMENTS as f32;
     let irx = rx * inner_frac;
@@ -332,7 +332,7 @@ fn push_circle_ring(
         for &pos in &[o0, i0, o1, o1, i0, i1] {
             verts.push(AxesVertex {
                 position: pos,
-                color,
+                colour,
             });
         }
     }
@@ -347,12 +347,12 @@ fn push_letter_x(
     hh: f32,
     lw_x: f32,
     lw_y: f32,
-    color: [f32; 4],
+    colour: [f32; 4],
 ) {
     // Diagonal \: top-left to bottom-right
-    push_line_segment(verts, cx - hw, cy + hh, cx + hw, cy - hh, lw_x, lw_y, color);
+    push_line_segment(verts, cx - hw, cy + hh, cx + hw, cy - hh, lw_x, lw_y, colour);
     // Diagonal /: bottom-left to top-right
-    push_line_segment(verts, cx - hw, cy - hh, cx + hw, cy + hh, lw_x, lw_y, color);
+    push_line_segment(verts, cx - hw, cy - hh, cx + hw, cy + hh, lw_x, lw_y, colour);
 }
 
 /// Draw letter "Y": two strokes from top meeting at center, one vertical down.
@@ -364,14 +364,14 @@ fn push_letter_y(
     hh: f32,
     lw_x: f32,
     lw_y: f32,
-    color: [f32; 4],
+    colour: [f32; 4],
 ) {
     // Top-left to center.
-    push_line_segment(verts, cx - hw, cy + hh, cx, cy, lw_x, lw_y, color);
+    push_line_segment(verts, cx - hw, cy + hh, cx, cy, lw_x, lw_y, colour);
     // Top-right to center.
-    push_line_segment(verts, cx + hw, cy + hh, cx, cy, lw_x, lw_y, color);
+    push_line_segment(verts, cx + hw, cy + hh, cx, cy, lw_x, lw_y, colour);
     // Center to bottom.
-    push_line_segment(verts, cx, cy, cx, cy - hh, lw_x, lw_y, color);
+    push_line_segment(verts, cx, cy, cx, cy - hh, lw_x, lw_y, colour);
 }
 
 /// Draw letter "Z": top horizontal, diagonal, bottom horizontal.
@@ -383,14 +383,14 @@ fn push_letter_z(
     hh: f32,
     lw_x: f32,
     lw_y: f32,
-    color: [f32; 4],
+    colour: [f32; 4],
 ) {
     // Top horizontal.
-    push_line_segment(verts, cx - hw, cy + hh, cx + hw, cy + hh, lw_x, lw_y, color);
+    push_line_segment(verts, cx - hw, cy + hh, cx + hw, cy + hh, lw_x, lw_y, colour);
     // Diagonal: top-right to bottom-left.
-    push_line_segment(verts, cx + hw, cy + hh, cx - hw, cy - hh, lw_x, lw_y, color);
+    push_line_segment(verts, cx + hw, cy + hh, cx - hw, cy - hh, lw_x, lw_y, colour);
     // Bottom horizontal.
-    push_line_segment(verts, cx - hw, cy - hh, cx + hw, cy - hh, lw_x, lw_y, color);
+    push_line_segment(verts, cx - hw, cy - hh, cx + hw, cy - hh, lw_x, lw_y, colour);
 }
 
 /// Push a line segment as a thin quad (2 triangles, 6 vertices).
@@ -402,7 +402,7 @@ fn push_line_segment(
     y1: f32,
     lw_x: f32,
     lw_y: f32,
-    color: [f32; 4],
+    colour: [f32; 4],
 ) {
     let dx = x1 - x0;
     let dy = y1 - y0;
@@ -417,6 +417,6 @@ fn push_line_segment(
         [x0 - px, y0 - py],
         [x1 - px, y1 - py],
         [x1 + px, y1 + py],
-        color,
+        colour,
     );
 }

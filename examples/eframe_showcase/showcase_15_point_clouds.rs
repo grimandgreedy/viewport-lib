@@ -4,16 +4,16 @@
 //! for particle and vector-field data. No mesh upload or Scene graph is needed;
 //! items are submitted directly to `SceneFrame` each frame.
 //!
-//! **Point cloud sub-mode:** 20 000-point cloud on a noisy sphere shell, colored
-//! by radial distance via a selectable colormap.
+//! **Point cloud sub-mode:** 20 000-point cloud on a noisy sphere shell, coloured
+//! by radial distance via a selectable colourmap.
 //!
 //! **Vector field sub-mode:** 5x5x5 grid of arrow glyphs representing an outward-
-//! diverging vector field, with magnitude-driven scaling and colormap coloring.
+//! diverging vector field, with magnitude-driven scaling and colourmap colouring.
 
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BuiltinColormap, ColormapId, GlyphItem, GlyphType, LightingSettings, PointCloudItem,
+    BuiltinColourmap, ColourmapId, GlyphItem, GlyphType, LightingSettings, PointCloudItem,
     SceneRenderItem,
 };
 
@@ -37,7 +37,7 @@ pub(crate) struct PointCloudsState {
     pub built: bool,
     pub sub_mode: PcSubMode,
     pub point_size: f32,
-    pub colormap: BuiltinColormap,
+    pub colourmap: BuiltinColourmap,
     pub scalar_range_manual: bool,
     pub scalar_range: (f32, f32),
     pub glyph_type: GlyphType,
@@ -58,7 +58,7 @@ impl Default for PointCloudsState {
             built: false,
             sub_mode: PcSubMode::PointCloud,
             point_size: 4.0,
-            colormap: BuiltinColormap::Viridis,
+            colourmap: BuiltinColourmap::Viridis,
             scalar_range_manual: false,
             scalar_range: (2.6, 3.4),
             glyph_type: GlyphType::Arrow,
@@ -104,7 +104,7 @@ impl App {
     /// Build a `PointCloudItem` from cached data and current control state.
     pub(crate) fn make_pc_point_cloud_item(&self) -> PointCloudItem {
         let s = &self.pc_state;
-        let colormap_id = Some(ColormapId(s.colormap as usize));
+        let colourmap_id = Some(ColourmapId(s.colourmap as usize));
         let scalar_range = if s.scalar_range_manual {
             Some(s.scalar_range)
         } else {
@@ -114,7 +114,7 @@ impl App {
         item.positions = s.cloud_positions.clone();
         item.scalars = s.cloud_scalars.clone();
         item.scalar_range = scalar_range;
-        item.colormap_id = colormap_id;
+        item.colourmap_id = colourmap_id;
         item.point_size = s.point_size;
         item
     }
@@ -122,7 +122,7 @@ impl App {
     /// Build a `GlyphItem` from cached data and current control state.
     pub(crate) fn make_pc_glyph_item(&self) -> GlyphItem {
         let s = &self.pc_state;
-        let colormap_id = Some(ColormapId(s.colormap as usize));
+        let colourmap_id = Some(ColourmapId(s.colourmap as usize));
         let scalar_range = if s.scalar_range_manual {
             Some(s.scalar_range)
         } else {
@@ -134,7 +134,7 @@ impl App {
         item.scale = s.glyph_scale;
         item.scale_by_magnitude = s.glyph_magnitude_scale;
         item.scalar_range = scalar_range;
-        item.colormap_id = colormap_id;
+        item.colourmap_id = colourmap_id;
         item.glyph_type = s.glyph_type;
         item
     }
@@ -142,7 +142,7 @@ impl App {
     /// Build a `PointCloudItem` rendering points in point-gaussian mode with radius driven by scalars.
     pub(crate) fn make_pc_gaussian_item(&self) -> PointCloudItem {
         let s = &self.pc_state;
-        let colormap_id = Some(ColormapId(s.colormap as usize));
+        let colourmap_id = Some(ColourmapId(s.colourmap as usize));
         let scalar_range = if s.scalar_range_manual {
             Some(s.scalar_range)
         } else {
@@ -152,7 +152,7 @@ impl App {
         item.positions = s.cloud_positions.clone();
         item.scalars = s.cloud_scalars.clone();
         item.scalar_range = scalar_range;
-        item.colormap_id = colormap_id;
+        item.colourmap_id = colourmap_id;
         // Use radius_scalars to drive the point-gaussian radius from the same scalar field.
         item.radius_scalars = s.cloud_scalars.clone();
         item.radius_scalar_range = scalar_range;
@@ -165,8 +165,8 @@ impl App {
     pub(crate) fn pc_lighting() -> LightingSettings {
         LightingSettings {
             hemisphere_intensity: 0.5,
-            sky_color: [1.0, 1.0, 1.0],
-            ground_color: [1.0, 1.0, 1.0],
+            sky_colour: [1.0, 1.0, 1.0],
+            ground_colour: [1.0, 1.0, 1.0],
             ..LightingSettings::default()
         }
     }
@@ -208,21 +208,21 @@ pub(crate) fn controls_point_clouds(app: &mut App, ui: &mut egui::Ui) {
     });
 
     ui.separator();
-    ui.label("Colormap:");
+    ui.label("Colourmap:");
     for (preset, label) in [
-        (BuiltinColormap::Viridis, "Viridis"),
-        (BuiltinColormap::Plasma, "Plasma"),
-        (BuiltinColormap::Magma, "Magma"),
-        (BuiltinColormap::Inferno, "Inferno"),
-        (BuiltinColormap::Turbo, "Turbo"),
-        (BuiltinColormap::Greyscale, "Greyscale"),
-        (BuiltinColormap::Coolwarm, "Coolwarm"),
-        (BuiltinColormap::RdBu, "RdBu"),
-        (BuiltinColormap::Rainbow, "Rainbow"),
-        (BuiltinColormap::Jet, "Jet"),
+        (BuiltinColourmap::Viridis, "Viridis"),
+        (BuiltinColourmap::Plasma, "Plasma"),
+        (BuiltinColourmap::Magma, "Magma"),
+        (BuiltinColourmap::Inferno, "Inferno"),
+        (BuiltinColourmap::Turbo, "Turbo"),
+        (BuiltinColourmap::Greyscale, "Greyscale"),
+        (BuiltinColourmap::Coolwarm, "Coolwarm"),
+        (BuiltinColourmap::RdBu, "RdBu"),
+        (BuiltinColourmap::Rainbow, "Rainbow"),
+        (BuiltinColourmap::Jet, "Jet"),
     ] {
-        if ui.radio(s.colormap == preset, label).clicked() {
-            s.colormap = preset;
+        if ui.radio(s.colourmap == preset, label).clicked() {
+            s.colourmap = preset;
         }
     }
 
@@ -293,7 +293,7 @@ pub(crate) fn controls_point_clouds(app: &mut App, ui: &mut egui::Ui) {
                         .range(0.5..=40.0),
                 );
             });
-            ui.label("Points are colored by the same scalar field (radial distance).");
+            ui.label("Points are coloured by the same scalar field (radial distance).");
             ui.label("Radius scales with scalar: inner shell = small, outer = large.");
         }
     }
@@ -306,7 +306,7 @@ pub(crate) fn controls_point_clouds(app: &mut App, ui: &mut egui::Ui) {
 /// Generate `count` points distributed on a noisy sphere shell.
 ///
 /// Returns `(positions, scalars)` where each scalar is the radial distance of
-/// that point: useful for demonstrating colormap coloring.
+/// that point: useful for demonstrating colourmap colouring.
 fn make_point_cloud(count: usize) -> (Vec<[f32; 3]>, Vec<f32>) {
     use std::f32::consts::TAU;
 

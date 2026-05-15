@@ -2,7 +2,7 @@
 // volume into the R8 outline mask texture. Uses the same bind group layout as
 // volume.wgsl so we can reuse the per-volume VolumeGpuData bind group directly.
 //
-// The fragment shader runs a simplified ray march: no color, no lighting, just
+// The fragment shader runs a simplified ray march: no colour, no lighting, just
 // detects whether any visible voxel exists along the ray. Writes solid white
 // where the volume is visible; discards otherwise.
 //
@@ -37,9 +37,9 @@ struct VolumeUniform {
     threshold_max:   f32,
     enable_shading:  u32,
     num_clip_planes: u32,
-    use_nan_color:   u32,
+    use_nan_colour:   u32,
     _pad0:           u32,
-    nan_color:       vec4<f32>,
+    nan_colour:       vec4<f32>,
     clip_planes:     array<vec4<f32>, 6>,
 };
 
@@ -75,9 +75,9 @@ struct ClipVolumeUB {
 @group(1) @binding(0) var<uniform> volume: VolumeUniform;
 @group(1) @binding(1) var volume_tex: texture_3d<f32>;
 @group(1) @binding(2) var volume_nearest_sampler: sampler;
-// Bindings 3-5 (color LUT, opacity LUT, LUT sampler) are declared to match the
+// Bindings 3-5 (colour LUT, opacity LUT, LUT sampler) are declared to match the
 // volume bind group layout but are not sampled in this shader.
-@group(1) @binding(3) var color_lut: texture_2d<f32>;
+@group(1) @binding(3) var colour_lut: texture_2d<f32>;
 @group(1) @binding(4) var opacity_lut: texture_2d<f32>;
 @group(1) @binding(5) var lut_sampler: sampler;
 
@@ -290,7 +290,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Simplified ray march: detect the first visible voxel and write to the mask.
-    // No color, no lighting -- just a visibility test.
+    // No colour, no lighting -- just a visibility test.
     let step = volume.step_size;
     let max_steps = 256u;
     var t = t_near;
@@ -302,8 +302,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
         // Skip NaN samples.
         if raw_scalar != raw_scalar {
-            if volume.use_nan_color != 0u {
-                // NaN voxel with nan_color enabled counts as visible.
+            if volume.use_nan_colour != 0u {
+                // NaN voxel with nan_colour enabled counts as visible.
                 return vec4<f32>(1.0, 0.0, 0.0, 1.0);
             }
             t = t + step;

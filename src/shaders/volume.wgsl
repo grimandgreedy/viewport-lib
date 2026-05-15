@@ -6,7 +6,7 @@
 //          binding 0: VolumeUniform (per-volume parameters)
 //          binding 1: 3D scalar texture (R32Float, non-filterable)
 //          binding 2: nearest sampler for 3D texture (non-filtering)
-//          binding 3: color LUT texture (256x1, Rgba8Unorm)
+//          binding 3: colour LUT texture (256x1, Rgba8Unorm)
 //          binding 4: opacity LUT texture (256x1, R8Unorm)
 //          binding 5: linear sampler for LUT textures (filtering)
 //
@@ -40,9 +40,9 @@ struct VolumeUniform {
     threshold_max:   f32,  // raw scalar value; samples above are discarded
     enable_shading:  u32,
     num_clip_planes: u32,
-    use_nan_color:   u32,  // 1 = render NaN voxels with nan_color; 0 = skip them
+    use_nan_colour:   u32,  // 1 = render NaN voxels with nan_colour; 0 = skip them
     _pad0:           u32,
-    nan_color:       vec4<f32>,  // RGBA color for NaN voxels (used when use_nan_color == 1)
+    nan_colour:       vec4<f32>,  // RGBA colour for NaN voxels (used when use_nan_colour == 1)
     clip_planes:     array<vec4<f32>, 6>,  // normal.xyz + distance
 };
 
@@ -104,7 +104,7 @@ fn clip_volume_test(p: vec3<f32>) -> bool {
 @group(1) @binding(0) var<uniform> volume: VolumeUniform;
 @group(1) @binding(1) var volume_tex: texture_3d<f32>;
 @group(1) @binding(2) var volume_nearest_sampler: sampler;
-@group(1) @binding(3) var color_lut: texture_2d<f32>;
+@group(1) @binding(3) var colour_lut: texture_2d<f32>;
 @group(1) @binding(4) var opacity_lut: texture_2d<f32>;
 @group(1) @binding(5) var lut_sampler: sampler;
 
@@ -376,7 +376,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let scalar_range = volume.scalar_max - volume.scalar_min;
     let inv_scalar_range = select(1.0 / scalar_range, 1.0, abs(scalar_range) < 1e-10);
 
-    var color_accum = vec3<f32>(0.0);
+    var colour_accum = vec3<f32>(0.0);
     var alpha_accum = 0.0;
     var t = t_near;
 
@@ -393,17 +393,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Detect NaN using the IEEE 754 property: NaN != NaN.
         let is_nan = raw_scalar != raw_scalar;
         if is_nan {
-            if volume.use_nan_color != 0u {
-                // Composite NaN voxel with the configured NaN color.
-                let nan_alpha = volume.nan_color.a * volume.opacity_scale;
+            if volume.use_nan_colour != 0u {
+                // Composite NaN voxel with the configured NaN colour.
+                let nan_alpha = volume.nan_colour.a * volume.opacity_scale;
                 let w = (1.0 - alpha_accum) * nan_alpha;
-                color_accum = color_accum + volume.nan_color.rgb * w;
+                colour_accum = colour_accum + volume.nan_colour.rgb * w;
                 alpha_accum = alpha_accum + w;
                 if alpha_accum > 0.99 {
                     break;
                 }
             }
-            // If use_nan_color == 0, skip NaN samples (discard).
+            // If use_nan_colour == 0, skip NaN samples (discard).
             t = t + step;
             continue;
         }
@@ -417,15 +417,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Normalize to [0,1].
         let normalized = clamp((raw_scalar - volume.scalar_min) * inv_scalar_range, 0.0, 1.0);
 
-        // Sample color LUT (256x1 Rgba8Unorm texture, sample at u=normalized).
+        // Sample colour LUT (256x1 Rgba8Unorm texture, sample at u=normalized).
         let lut_coord = vec2<f32>(normalized, 0.5);
-        let sample_color = textureSampleLevel(color_lut, lut_sampler, lut_coord, 0.0).rgb;
+        let sample_colour = textureSampleLevel(colour_lut, lut_sampler, lut_coord, 0.0).rgb;
 
         // Sample opacity LUT (256x1 R8Unorm texture).
         let sample_opacity = textureSampleLevel(opacity_lut, lut_sampler, lut_coord, 0.0).r
                              * volume.opacity_scale;
 
-        var final_color = sample_color;
+        var final_colour = sample_colour;
 
         // Optional gradient-based Phong shading.
         if volume.enable_shading != 0u {
@@ -450,13 +450,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 let ndotl = max(abs(dot(world_normal, light_dir)), 0.0);
                 let ambient = 0.5;
                 let diffuse = 0.6;
-                final_color = sample_color * (ambient + diffuse * ndotl);
+                final_colour = sample_colour * (ambient + diffuse * ndotl);
             }
         }
 
         // Front-to-back compositing.
         let w = (1.0 - alpha_accum) * sample_opacity;
-        color_accum = color_accum + final_color * w;
+        colour_accum = colour_accum + final_colour * w;
         alpha_accum = alpha_accum + w;
 
         // Early termination.
@@ -471,5 +471,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    return vec4<f32>(color_accum, alpha_accum);
+    return vec4<f32>(colour_accum, alpha_accum);
 }

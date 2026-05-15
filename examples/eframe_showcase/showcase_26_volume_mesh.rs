@@ -4,8 +4,8 @@
 //!
 //! A 3×3×3 structured grid of cells is visualised via its extracted boundary.
 //! Interior faces shared by two cells are discarded automatically by
-//! [`upload_volume_mesh_data`]. Per-cell scalars and colors are remapped to the
-//! boundary faces so the existing Phase 2 face-coloring path applies colormaps
+//! [`upload_volume_mesh_data`]. Per-cell scalars and colours are remapped to the
+//! boundary faces so the existing Phase 2 face-colouring path applies colourmaps
 //! cell-by-cell with no new GPU work.
 //!
 //! ## Two modes
@@ -27,8 +27,8 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap, CELL_SENTINEL, ClipObject,
-    ClipShape, ColormapId, LightingSettings, ProjectedTetId, SceneRenderItem,
+    AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, CELL_SENTINEL, ClipObject,
+    ClipShape, ColourmapId, LightingSettings, ProjectedTetId, SceneRenderItem,
     TransparentVolumeMeshItem, ViewportRenderer, VolumeMeshData, VolumeMeshItem,
 };
 
@@ -45,7 +45,7 @@ pub(crate) struct VmState {
     pub tet_box_item: Option<VolumeMeshItem>,
     pub pyramid_item: Option<VolumeMeshItem>,
     pub wedge_item: Option<VolumeMeshItem>,
-    pub colormap: BuiltinColormap,
+    pub colourmap: BuiltinColourmap,
     pub field: VmField,
     pub wireframe: bool,
     pub clip_on: bool,
@@ -69,8 +69,8 @@ pub(crate) struct VmState {
     pub density: f32,
     /// Scalar field last used for the PT upload; triggers a rebuild when it differs from field.
     pub pt_field: VmField,
-    /// Colormap last used for the PT upload; triggers a rebuild when it differs from colormap.
-    pub pt_colormap: BuiltinColormap,
+    /// Colourmap last used for the PT upload; triggers a rebuild when it differs from colourmap.
+    pub pt_colourmap: BuiltinColourmap,
 }
 
 impl Default for VmState {
@@ -84,7 +84,7 @@ impl Default for VmState {
             tet_box_item: None,
             pyramid_item: None,
             wedge_item: None,
-            colormap: BuiltinColormap::Viridis,
+            colourmap: BuiltinColourmap::Viridis,
             field: VmField::Latitude,
             wireframe: false,
             clip_on: true,
@@ -101,18 +101,18 @@ impl Default for VmState {
             transparent: false,
             density: 0.5,
             pt_field: VmField::Latitude,
-            pt_colormap: BuiltinColormap::Viridis,
+            pt_colourmap: BuiltinColourmap::Viridis,
         }
     }
 }
 
 /// Map a VmField to the VolumeMeshData scalar attribute name used for projected-tet rendering.
-/// DirectColor has no scalar attribute; falls back to "radial".
+/// DirectColour has no scalar attribute; falls back to "radial".
 pub(crate) fn vm_pt_scalar_attr(field: VmField) -> &'static str {
     match field {
         VmField::Latitude => "latitude",
         VmField::Longitude => "longitude",
-        VmField::Radial | VmField::DirectColor => "radial",
+        VmField::Radial | VmField::DirectColour => "radial",
     }
 }
 
@@ -162,8 +162,8 @@ pub(crate) enum VmField {
     Longitude,
     /// Cell colour by original radial distance before sphere projection.
     Radial,
-    /// Direct per-cell RGBA colour (no colormap).
-    DirectColor,
+    /// Direct per-cell RGBA colour (no colourmap).
+    DirectColour,
 }
 
 // ---------------------------------------------------------------------------
@@ -172,7 +172,7 @@ pub(crate) enum VmField {
 //   vm_mode:         VmMode
 //   vm_tet_index:    usize
 //   vm_hex_index:    usize
-//   vm_colormap:     BuiltinColormap
+//   vm_colourmap:     BuiltinColourmap
 //   vm_field:        VmField
 // ---------------------------------------------------------------------------
 
@@ -297,7 +297,7 @@ fn build_hex_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
     let mut lat_scalars: Vec<f32> = Vec::with_capacity(n);
     let mut lon_scalars: Vec<f32> = Vec::with_capacity(n);
     let mut radial_scalars: Vec<f32> = Vec::with_capacity(n);
-    let mut direct_colors: Vec<[f32; 4]> = Vec::with_capacity(n);
+    let mut direct_colours: Vec<[f32; 4]> = Vec::with_capacity(n);
 
     for iz in 0..GRID_N {
         for iy in 0..GRID_N {
@@ -334,7 +334,7 @@ fn build_hex_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
 
                 // Direct colour: hue from longitude sector, saturation by latitude
                 let sat = 0.5 + 0.5 * (py / SPHERE_R).abs();
-                direct_colors.push(hsv_to_rgba(lon, sat, 0.9));
+                direct_colours.push(hsv_to_rgba(lon, sat, 0.9));
             }
         }
     }
@@ -348,7 +348,7 @@ fn build_hex_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
         .insert("longitude".to_string(), lon_scalars);
     data.cell_scalars
         .insert("radial".to_string(), radial_scalars);
-    data.cell_colors.insert("direct".to_string(), direct_colors);
+    data.cell_colours.insert("direct".to_string(), direct_colours);
     data
 }
 
@@ -376,7 +376,7 @@ fn build_tet_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
     let mut lat_scalars: Vec<f32> = Vec::with_capacity(n);
     let mut lon_scalars: Vec<f32> = Vec::with_capacity(n);
     let mut radial_scalars: Vec<f32> = Vec::with_capacity(n);
-    let mut direct_colors: Vec<[f32; 4]> = Vec::with_capacity(n);
+    let mut direct_colours: Vec<[f32; 4]> = Vec::with_capacity(n);
 
     for iz in 0..GRID_N {
         for iy in 0..GRID_N {
@@ -400,7 +400,7 @@ fn build_tet_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
                 let lat = py / SPHERE_R * 0.5 + 0.5;
                 let lon = (cz).atan2(cx) / std::f32::consts::TAU + 0.5;
                 let sat = 0.5 + 0.5 * (py / SPHERE_R).abs();
-                let color = hsv_to_rgba(lon, sat, 0.85);
+                let colour = hsv_to_rgba(lon, sat, 0.85);
 
                 for tet in &TET_LOCAL {
                     cells.push([
@@ -416,7 +416,7 @@ fn build_tet_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
                     lat_scalars.push(lat);
                     lon_scalars.push(lon);
                     radial_scalars.push(raw_len);
-                    direct_colors.push(color);
+                    direct_colours.push(colour);
                 }
             }
         }
@@ -431,7 +431,7 @@ fn build_tet_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
         .insert("longitude".to_string(), lon_scalars);
     data.cell_scalars
         .insert("radial".to_string(), radial_scalars);
-    data.cell_colors.insert("direct".to_string(), direct_colors);
+    data.cell_colours.insert("direct".to_string(), direct_colours);
     data
 }
 
@@ -468,7 +468,7 @@ fn build_tet_mesh_n(n: usize, positions: &[[f32; 3]]) -> VolumeMeshData {
     let mut lat_scalars: Vec<f32> = Vec::with_capacity(total_cells);
     let mut lon_scalars: Vec<f32> = Vec::with_capacity(total_cells);
     let mut radial_scalars: Vec<f32> = Vec::with_capacity(total_cells);
-    let mut direct_colors: Vec<[f32; 4]> = Vec::with_capacity(total_cells);
+    let mut direct_colours: Vec<[f32; 4]> = Vec::with_capacity(total_cells);
 
     for iz in 0..n {
         for iy in 0..n {
@@ -501,7 +501,7 @@ fn build_tet_mesh_n(n: usize, positions: &[[f32; 3]]) -> VolumeMeshData {
 
                 let lat = cy / raw_len * 0.5 + 0.5;
                 let lon = cz.atan2(cx) / std::f32::consts::TAU + 0.5;
-                let color = hsv_to_rgba(lon, 0.8, 0.85);
+                let colour = hsv_to_rgba(lon, 0.8, 0.85);
 
                 for tet in &TET_LOCAL {
                     cells.push([
@@ -517,7 +517,7 @@ fn build_tet_mesh_n(n: usize, positions: &[[f32; 3]]) -> VolumeMeshData {
                     lat_scalars.push(lat);
                     lon_scalars.push(lon);
                     radial_scalars.push(raw_len);
-                    direct_colors.push(color);
+                    direct_colours.push(colour);
                 }
             }
         }
@@ -532,7 +532,7 @@ fn build_tet_mesh_n(n: usize, positions: &[[f32; 3]]) -> VolumeMeshData {
         .insert("longitude".to_string(), lon_scalars);
     data.cell_scalars
         .insert("radial".to_string(), radial_scalars);
-    data.cell_colors.insert("direct".to_string(), direct_colors);
+    data.cell_colours.insert("direct".to_string(), direct_colours);
     data
 }
 
@@ -555,7 +555,7 @@ fn build_pyramid_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
     let mut lat_scalars: Vec<f32> = Vec::with_capacity(n_cells);
     let mut lon_scalars: Vec<f32> = Vec::with_capacity(n_cells);
     let mut radial_scalars: Vec<f32> = Vec::with_capacity(n_cells);
-    let mut direct_colors: Vec<[f32; 4]> = Vec::with_capacity(n_cells);
+    let mut direct_colours: Vec<[f32; 4]> = Vec::with_capacity(n_cells);
 
     for iz in 0..GRID_N {
         for iy in 0..GRID_N {
@@ -591,7 +591,7 @@ fn build_pyramid_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
                 let lat = py / SPHERE_R * 0.5 + 0.5;
                 let lon = rcz.atan2(rcx) / std::f32::consts::TAU + 0.5;
                 let sat = 0.5 + 0.5 * (py / SPHERE_R).abs();
-                let color = hsv_to_rgba(lon, sat, 0.88);
+                let colour = hsv_to_rgba(lon, sat, 0.88);
 
                 // 6 pyramids: one per hex face.  Base quad winding matches the
                 // hex face table so outward normals face away from the cube.
@@ -606,7 +606,7 @@ fn build_pyramid_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
                     lat_scalars.push(lat);
                     lon_scalars.push(lon);
                     radial_scalars.push(raw_len);
-                    direct_colors.push(color);
+                    direct_colours.push(colour);
                 }
             }
         }
@@ -619,7 +619,7 @@ fn build_pyramid_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
         .insert("longitude".to_string(), lon_scalars);
     data.cell_scalars
         .insert("radial".to_string(), radial_scalars);
-    data.cell_colors.insert("direct".to_string(), direct_colors);
+    data.cell_colours.insert("direct".to_string(), direct_colours);
     data
 }
 
@@ -640,7 +640,7 @@ fn build_wedge_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
     let mut lat_scalars: Vec<f32> = Vec::with_capacity(n_cells);
     let mut lon_scalars: Vec<f32> = Vec::with_capacity(n_cells);
     let mut radial_scalars: Vec<f32> = Vec::with_capacity(n_cells);
-    let mut direct_colors: Vec<[f32; 4]> = Vec::with_capacity(n_cells);
+    let mut direct_colours: Vec<[f32; 4]> = Vec::with_capacity(n_cells);
 
     for iz in 0..GRID_N {
         for iy in 0..GRID_N {
@@ -665,13 +665,13 @@ fn build_wedge_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
                 let lat = py / SPHERE_R * 0.5 + 0.5;
                 let lon = rcz.atan2(rcx) / std::f32::consts::TAU + 0.5;
                 let sat = 0.5 + 0.5 * (py / SPHERE_R).abs();
-                let color = hsv_to_rgba(lon, sat, 0.87);
+                let colour = hsv_to_rgba(lon, sat, 0.87);
 
                 for _ in 0..2 {
                     lat_scalars.push(lat);
                     lon_scalars.push(lon);
                     radial_scalars.push(raw_len);
-                    direct_colors.push(color);
+                    direct_colours.push(colour);
                 }
             }
         }
@@ -684,7 +684,7 @@ fn build_wedge_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
         .insert("longitude".to_string(), lon_scalars);
     data.cell_scalars
         .insert("radial".to_string(), radial_scalars);
-    data.cell_colors.insert("direct".to_string(), direct_colors);
+    data.cell_colours.insert("direct".to_string(), direct_colours);
     data
 }
 
@@ -738,10 +738,10 @@ impl App {
         let wedge_data = build_wedge_mesh(&positions);
         self.vm_state.wedge_item = Some(upload(&wedge_data));
 
-        // Colormaps must be ready before the PT bind group is created.
+        // Colourmaps must be ready before the PT bind group is created.
         renderer
             .resources_mut()
-            .ensure_colormaps_initialized(&self.device, &self.queue);
+            .ensure_colourmaps_initialized(&self.device, &self.queue);
 
         // Upload projected-tet meshes for each cell type.
         // Hex and Pyramid use cube_sphere positions so the transparent sphere shape
@@ -749,12 +749,12 @@ impl App {
         // sphere projection puts all vertices on the sphere surface, collapsing tet
         // volumes to zero.
         let attr = vm_pt_scalar_attr(self.vm_state.field);
-        let colormap_id = ColormapId(self.vm_state.colormap as usize);
+        let colourmap_id = ColourmapId(self.vm_state.colourmap as usize);
 
         let mut pt_upload = |data: &VolumeMeshData| -> Option<ProjectedTetId> {
             renderer
                 .resources_mut()
-                .upload_projected_tet_mesh(&self.device, data, attr, colormap_id)
+                .upload_projected_tet_mesh(&self.device, data, attr, colourmap_id)
                 .ok()
                 .map(|(id, _, _)| id)
         };
@@ -844,32 +844,32 @@ impl App {
         };
         let Some(item) = active else { return vec![] };
 
-        let (active_attribute, colormap_id) = match self.vm_state.field {
+        let (active_attribute, colourmap_id) = match self.vm_state.field {
             VmField::Latitude => (
                 Some(AttributeRef {
                     name: "latitude".to_string(),
                     kind: AttributeKind::Face,
                 }),
-                Some(ColormapId(self.vm_state.colormap as usize)),
+                Some(ColourmapId(self.vm_state.colourmap as usize)),
             ),
             VmField::Longitude => (
                 Some(AttributeRef {
                     name: "longitude".to_string(),
                     kind: AttributeKind::Face,
                 }),
-                Some(ColormapId(self.vm_state.colormap as usize)),
+                Some(ColourmapId(self.vm_state.colourmap as usize)),
             ),
             VmField::Radial => (
                 Some(AttributeRef {
                     name: "radial".to_string(),
                     kind: AttributeKind::Face,
                 }),
-                Some(ColormapId(self.vm_state.colormap as usize)),
+                Some(ColourmapId(self.vm_state.colourmap as usize)),
             ),
-            VmField::DirectColor => (
+            VmField::DirectColour => (
                 Some(AttributeRef {
                     name: "direct".to_string(),
-                    kind: AttributeKind::FaceColor,
+                    kind: AttributeKind::FaceColour,
                 }),
                 None,
             ),
@@ -877,7 +877,7 @@ impl App {
 
         let mut render_item = item.to_render_item();
         render_item.active_attribute = active_attribute;
-        render_item.colormap_id = colormap_id;
+        render_item.colourmap_id = colourmap_id;
         vec![render_item]
     }
 
@@ -893,9 +893,9 @@ impl App {
         }
     }
 
-    /// Rebuild all projected-tet meshes with a new scalar field and colormap.
+    /// Rebuild all projected-tet meshes with a new scalar field and colourmap.
     ///
-    /// Called when the user changes `vm_field` or `vm_colormap` while transparent
+    /// Called when the user changes `vm_field` or `vm_colourmap` while transparent
     /// mode has been used at least once. Each mode keeps its own PT slot so switching
     /// cell type doesn't re-upload.
     pub(crate) fn rebuild_pt_meshes(
@@ -903,10 +903,10 @@ impl App {
         renderer: &mut ViewportRenderer,
         device: &wgpu::Device,
         field: VmField,
-        colormap: BuiltinColormap,
+        colourmap: BuiltinColourmap,
     ) {
         let attr = vm_pt_scalar_attr(field);
-        let colormap_id = ColormapId(colormap as usize);
+        let colourmap_id = ColourmapId(colourmap as usize);
 
         for mode in [
             VmMode::Hex,
@@ -931,7 +931,7 @@ impl App {
                     id,
                     &data,
                     attr,
-                    colormap_id,
+                    colourmap_id,
                 );
             }
         }
@@ -971,11 +971,11 @@ impl App {
         clip.shape = ClipShape::Plane {
             normal,
             distance: self.vm_state.clip_offset,
-            cap_color: None,
+            cap_colour: None,
             display_center: None,
         };
-        clip.color = None;
-        clip.edge_color = Some([0.75, 0.85, 1.0, 1.0]);
+        clip.colour = None;
+        clip.edge_colour = Some([0.75, 0.85, 1.0, 1.0]);
         // In transparent mode, no opaque CPU-clipped mesh is drawn, so the GPU
         // clip plane must be active to cull the projected-tet fragments.
         // In opaque mode, CPU extraction already handles clipping and enabling
@@ -989,8 +989,8 @@ impl App {
     pub(crate) fn vm_lighting() -> LightingSettings {
         LightingSettings {
             hemisphere_intensity: 0.3,
-            sky_color: [1.0, 1.0, 1.0],
-            ground_color: [0.3, 0.3, 0.4],
+            sky_colour: [1.0, 1.0, 1.0],
+            ground_colour: [0.3, 0.3, 0.4],
             ..LightingSettings::default()
         }
     }
@@ -1021,27 +1021,27 @@ pub(crate) fn controls_volume_mesh(app: &mut App, ui: &mut egui::Ui) {
         (VmField::Latitude, "Latitude (scalar)"),
         (VmField::Longitude, "Longitude (scalar)"),
         (VmField::Radial, "Radial distance (scalar)"),
-        (VmField::DirectColor, "Direct cell colors (RGBA)"),
+        (VmField::DirectColour, "Direct cell colours (RGBA)"),
     ] {
         ui.radio_value(&mut app.vm_state.field, field, label);
     }
 
-    if !matches!(app.vm_state.field, VmField::DirectColor) {
+    if !matches!(app.vm_state.field, VmField::DirectColour) {
         ui.separator();
-        ui.label("Colormap:");
+        ui.label("Colourmap:");
         ui.horizontal_wrapped(|ui| {
             for cm in [
-                BuiltinColormap::Viridis,
-                BuiltinColormap::Plasma,
-                BuiltinColormap::Magma,
-                BuiltinColormap::Inferno,
-                BuiltinColormap::Turbo,
-                BuiltinColormap::Coolwarm,
-                BuiltinColormap::RdBu,
-                BuiltinColormap::Rainbow,
-                BuiltinColormap::Jet,
+                BuiltinColourmap::Viridis,
+                BuiltinColourmap::Plasma,
+                BuiltinColourmap::Magma,
+                BuiltinColourmap::Inferno,
+                BuiltinColourmap::Turbo,
+                BuiltinColourmap::Coolwarm,
+                BuiltinColourmap::RdBu,
+                BuiltinColourmap::Rainbow,
+                BuiltinColourmap::Jet,
             ] {
-                ui.radio_value(&mut app.vm_state.colormap, cm, format!("{cm:?}"));
+                ui.radio_value(&mut app.vm_state.colourmap, cm, format!("{cm:?}"));
             }
         });
     }

@@ -14,8 +14,8 @@ pub enum ClipShape {
         normal: [f32; 3],
         /// Signed distance from origin along `normal`.
         distance: f32,
-        /// Cap fill color override. `None` = use the clipped mesh's base_color.
-        cap_color: Option<[f32; 4]>,
+        /// Cap fill colour override. `None` = use the clipped mesh's base_colour.
+        cap_colour: Option<[f32; 4]>,
         /// World-space point on the plane used to position the overlay quad.
         ///
         /// When `None`, the renderer falls back to `normal * (-distance)`, which is
@@ -60,9 +60,9 @@ pub enum ClipShape {
 /// active clip objects apply cumulatively (AND semantics). Entries beyond the limit
 /// are silently ignored.
 ///
-/// Set `color` to `Some(rgba)` to have the renderer draw the clip boundary automatically.
+/// Set `colour` to `Some(rgba)` to have the renderer draw the clip boundary automatically.
 /// For planes this produces a semi-transparent fill quad + border; for box/sphere, a
-/// wireframe outline. Leave `color` as `None` for silent clipping with no visual.
+/// wireframe outline. Leave `colour` as `None` for silent clipping with no visual.
 ///
 /// The `hovered` and `active` flags are written by `ClipPlaneController` and read by
 /// the renderer to vary the plane overlay appearance (brighter when hovered, tinted when active).
@@ -71,14 +71,14 @@ pub enum ClipShape {
 pub struct ClipObject {
     /// The clipping shape (plane, box, or sphere).
     pub shape: ClipShape,
-    /// RGBA fill color for the plane quad. `None` = no fill drawn.
+    /// RGBA fill colour for the plane quad. `None` = no fill drawn.
     ///
-    /// When both `color` and `edge_color` are `None`, no visual is drawn at all.
-    pub color: Option<[f32; 4]>,
-    /// RGBA color for the plane border edge. `None` = derive from `color` (original behaviour).
+    /// When both `colour` and `edge_colour` are `None`, no visual is drawn at all.
+    pub colour: Option<[f32; 4]>,
+    /// RGBA colour for the plane border edge. `None` = derive from `colour` (original behaviour).
     ///
     /// Set independently to show a visible edge while keeping the fill transparent.
-    pub edge_color: Option<[f32; 4]>,
+    pub edge_colour: Option<[f32; 4]>,
     /// Whether this object clips rendered geometry via the GPU clip-plane uniform.
     ///
     /// Set to `false` to produce only a visual indicator without affecting geometry.
@@ -100,11 +100,11 @@ impl Default for ClipObject {
             shape: ClipShape::Plane {
                 normal: [0.0, 0.0, 1.0],
                 distance: 0.0,
-                cap_color: None,
+                cap_colour: None,
                 display_center: None,
             },
-            color: None,
-            edge_color: None,
+            colour: None,
+            edge_colour: None,
             clip_geometry: true,
             enabled: true,
             extent: 4.5,
@@ -121,7 +121,7 @@ impl ClipObject {
             shape: ClipShape::Plane {
                 normal,
                 distance,
-                cap_color: None,
+                cap_colour: None,
                 display_center: None,
             },
             ..Default::default()

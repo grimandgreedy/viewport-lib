@@ -3,12 +3,12 @@
 // ---------------------------------------------------------------------------
 
 pub(crate) struct OvlState {
-    pub colormap: viewport_lib::BuiltinColormap,
+    pub colourmap: viewport_lib::BuiltinColourmap,
     pub bar_orientation: viewport_lib::ScalarBarOrientation,
     pub bar_anchor: viewport_lib::ScalarBarAnchor,
     pub tick_count: u32,
     pub bar_size: f32,
-    pub bg_color: [f32; 4],
+    pub bg_colour: [f32; 4],
     pub show_ruler: bool,
     pub show_labels: bool,
     pub cloud_positions: Vec<[f32; 3]>,
@@ -19,12 +19,12 @@ pub(crate) struct OvlState {
 impl Default for OvlState {
     fn default() -> Self {
         Self {
-            colormap: viewport_lib::BuiltinColormap::Viridis,
+            colourmap: viewport_lib::BuiltinColourmap::Viridis,
             bar_orientation: viewport_lib::ScalarBarOrientation::Vertical,
             bar_anchor: viewport_lib::ScalarBarAnchor::BottomRight,
             tick_count: 5,
             bar_size: 200.0,
-            bg_color: [0.0, 0.0, 0.0, 0.63],
+            bg_colour: [0.0, 0.0, 0.0, 0.63],
             show_ruler: true,
             show_labels: true,
             cloud_positions: Vec::new(),
@@ -39,21 +39,21 @@ impl Default for OvlState {
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BuiltinColormap, ColormapId, LabelAnchor, LabelItem, RulerItem, ScalarBarAnchor, ScalarBarItem,
+    BuiltinColourmap, ColourmapId, LabelAnchor, LabelItem, RulerItem, ScalarBarAnchor, ScalarBarItem,
     ScalarBarOrientation,
 };
 
-const ALL_COLORMAPS: &[(BuiltinColormap, &str)] = &[
-    (BuiltinColormap::Viridis, "Viridis"),
-    (BuiltinColormap::Plasma, "Plasma"),
-    (BuiltinColormap::Turbo, "Turbo"),
-    (BuiltinColormap::Inferno, "Inferno"),
-    (BuiltinColormap::Magma, "Magma"),
-    (BuiltinColormap::Greyscale, "Greyscale"),
-    (BuiltinColormap::Coolwarm, "Coolwarm"),
-    (BuiltinColormap::Rainbow, "Rainbow"),
-    (BuiltinColormap::Jet, "Jet"),
-    (BuiltinColormap::RdBu, "RdBu"),
+const ALL_COLOURMAPS: &[(BuiltinColourmap, &str)] = &[
+    (BuiltinColourmap::Viridis, "Viridis"),
+    (BuiltinColourmap::Plasma, "Plasma"),
+    (BuiltinColourmap::Turbo, "Turbo"),
+    (BuiltinColourmap::Inferno, "Inferno"),
+    (BuiltinColourmap::Magma, "Magma"),
+    (BuiltinColourmap::Greyscale, "Greyscale"),
+    (BuiltinColourmap::Coolwarm, "Coolwarm"),
+    (BuiltinColourmap::Rainbow, "Rainbow"),
+    (BuiltinColourmap::Jet, "Jet"),
+    (BuiltinColourmap::RdBu, "RdBu"),
 ];
 
 // ---------------------------------------------------------------------------
@@ -61,17 +61,17 @@ const ALL_COLORMAPS: &[(BuiltinColormap, &str)] = &[
 // ---------------------------------------------------------------------------
 
 pub(crate) fn controls_overlay(app: &mut App, ui: &mut egui::Ui) {
-    ui.label("Colormap:");
-    let selected_name = ALL_COLORMAPS
+    ui.label("Colourmap:");
+    let selected_name = ALL_COLOURMAPS
         .iter()
-        .find(|(c, _)| *c == app.ovl_state.colormap)
+        .find(|(c, _)| *c == app.ovl_state.colourmap)
         .map(|(_, n)| *n)
         .unwrap_or("Unknown");
-    egui::ComboBox::from_id_salt("ovl_colormap")
+    egui::ComboBox::from_id_salt("ovl_colourmap")
         .selected_text(selected_name)
         .show_ui(ui, |ui| {
-            for (cmap, name) in ALL_COLORMAPS {
-                ui.selectable_value(&mut app.ovl_state.colormap, *cmap, *name);
+            for (cmap, name) in ALL_COLOURMAPS {
+                ui.selectable_value(&mut app.ovl_state.colourmap, *cmap, *name);
             }
         });
 
@@ -123,17 +123,17 @@ pub(crate) fn controls_overlay(app: &mut App, ui: &mut egui::Ui) {
     ui.separator();
     ui.label("Background colour:");
     let mut rgb = [
-        app.ovl_state.bg_color[0],
-        app.ovl_state.bg_color[1],
-        app.ovl_state.bg_color[2],
+        app.ovl_state.bg_colour[0],
+        app.ovl_state.bg_colour[1],
+        app.ovl_state.bg_colour[2],
     ];
     if ui.color_edit_button_rgb(&mut rgb).changed() {
-        app.ovl_state.bg_color[0] = rgb[0];
-        app.ovl_state.bg_color[1] = rgb[1];
-        app.ovl_state.bg_color[2] = rgb[2];
+        app.ovl_state.bg_colour[0] = rgb[0];
+        app.ovl_state.bg_colour[1] = rgb[1];
+        app.ovl_state.bg_colour[2] = rgb[2];
     }
     ui.label("Background opacity:");
-    ui.add(egui::Slider::new(&mut app.ovl_state.bg_color[3], 0.0..=1.0));
+    ui.add(egui::Slider::new(&mut app.ovl_state.bg_colour[3], 0.0..=1.0));
 
     ui.separator();
     ui.checkbox(&mut app.ovl_state.show_ruler, "Show ruler");
@@ -171,10 +171,10 @@ pub(crate) fn build_ovl_cloud() -> (Vec<[f32; 3]>, Vec<f32>) {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn build_overlay_frame(app: &App) -> (Vec<LabelItem>, ScalarBarItem, Option<RulerItem>) {
-    let colormap_id = ColormapId(app.ovl_state.colormap as usize);
+    let colourmap_id = ColourmapId(app.ovl_state.colourmap as usize);
 
     let bar = ScalarBarItem {
-        colormap_id,
+        colourmap_id,
         scalar_min: -1.5,
         scalar_max: 1.5,
         title: Some("Height (m)".into()),
@@ -182,13 +182,13 @@ pub(crate) fn build_overlay_frame(app: &App) -> (Vec<LabelItem>, ScalarBarItem, 
         orientation: app.ovl_state.bar_orientation,
         tick_count: app.ovl_state.tick_count,
         bar_length_px: app.ovl_state.bar_size,
-        background_color: app.ovl_state.bg_color,
+        background_colour: app.ovl_state.bg_colour,
         ..ScalarBarItem::default()
     };
 
     let mut labels = Vec::new();
     if app.ovl_state.show_labels {
-        for (text, pos, color) in [
+        for (text, pos, colour) in [
             (
                 "Peak +1.5 m",
                 [1.57_f32, 0.0, 1.5_f32],
@@ -200,11 +200,11 @@ pub(crate) fn build_overlay_frame(app: &App) -> (Vec<LabelItem>, ScalarBarItem, 
             labels.push(LabelItem {
                 world_anchor: Some(pos),
                 text: text.into(),
-                color,
+                colour,
                 leader_line: true,
-                leader_color: [color[0], color[1], color[2], 0.7],
+                leader_colour: [colour[0], colour[1], colour[2], 0.7],
                 background: true,
-                background_color: [0.0, 0.0, 0.0, 0.5],
+                background_colour: [0.0, 0.0, 0.0, 0.5],
                 border_radius: 4.0,
                 padding: 4.0,
                 anchor_align: LabelAnchor::Leading,
@@ -217,8 +217,8 @@ pub(crate) fn build_overlay_frame(app: &App) -> (Vec<LabelItem>, ScalarBarItem, 
         Some(RulerItem {
             start: [1.57, 0.0, 0.0],
             end: [-1.57, 3.14, 0.0],
-            color: [1.0, 0.85, 0.2, 1.0],
-            label_color: [1.0, 0.85, 0.2, 1.0],
+            colour: [1.0, 0.85, 0.2, 1.0],
+            label_colour: [1.0, 0.85, 0.2, 1.0],
             label_format: Some("{:.2} m".into()),
             end_caps: true,
             ..RulerItem::default()

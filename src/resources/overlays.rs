@@ -1,9 +1,9 @@
 use super::*;
 
 impl ViewportGpuResources {
-    /// Re-upload the gizmo mesh with updated hover highlight colors.
+    /// Re-upload the gizmo mesh with updated hover highlight colours.
     ///
-    /// Called each frame when the hovered axis changes to brighten the appropriate axis color.
+    /// Called each frame when the hovered axis changes to brighten the appropriate axis colour.
     /// The gizmo mesh is small (~300 vertices), so re-uploading every frame is acceptable.
     pub fn update_gizmo_mesh(
         &mut self,
@@ -64,11 +64,11 @@ impl ViewportGpuResources {
     ) {
         use bytemuck::cast_slice;
 
-        let (vertices, color): (Vec<OverlayVertex>, [f32; 4]) = match overlay {
+        let (vertices, colour): (Vec<OverlayVertex>, [f32; 4]) = match overlay {
             crate::interaction::snap::ConstraintOverlay::AxisLine {
                 origin,
                 direction,
-                color,
+                colour,
             } => (
                 vec![
                     OverlayVertex {
@@ -78,13 +78,13 @@ impl ViewportGpuResources {
                         position: (*origin + *direction).to_array(),
                     },
                 ],
-                *color,
+                *colour,
             ),
             crate::interaction::snap::ConstraintOverlay::Plane {
                 origin,
                 axis_a,
                 axis_b,
-                color,
+                colour,
             } => (
                 vec![
                     OverlayVertex {
@@ -100,7 +100,7 @@ impl ViewportGpuResources {
                         position: (*origin + *axis_b).to_array(),
                     },
                 ],
-                *color,
+                *colour,
             ),
         };
         let indices: Vec<u32> = (0..vertices.len() as u32).collect();
@@ -131,7 +131,7 @@ impl ViewportGpuResources {
 
         let uniform_data = OverlayUniform {
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            color,
+            colour,
         };
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("constraint_overlay_ubuf"),
@@ -227,7 +227,7 @@ impl ViewportGpuResources {
 
         let uniform_data = OverlayUniform {
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            color: overlay.fill_color,
+            colour: overlay.fill_colour,
         };
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("clip_plane_fill_ubuf"),
@@ -356,7 +356,7 @@ impl ViewportGpuResources {
 
         let uniform_data = OverlayUniform {
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            color: overlay.border_color,
+            colour: overlay.border_colour,
         };
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("clip_plane_line_ubuf"),
@@ -390,12 +390,12 @@ impl ViewportGpuResources {
 
     /// Upload cap geometry (cross-section fill) as transient overlay buffers.
     ///
-    /// Uses the overlay pipeline (position-only vertices + flat color uniform).
+    /// Uses the overlay pipeline (position-only vertices + flat colour uniform).
     pub(crate) fn upload_cap_geometry(
         &self,
         device: &wgpu::Device,
         cap: &crate::geometry::cap_geometry::CapMesh,
-        color: [f32; 4],
+        colour: [f32; 4],
     ) -> (
         wgpu::Buffer,
         wgpu::Buffer,
@@ -437,7 +437,7 @@ impl ViewportGpuResources {
 
         let uniform_data = OverlayUniform {
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            color,
+            colour,
         };
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cap_ubuf"),

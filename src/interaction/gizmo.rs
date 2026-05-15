@@ -413,63 +413,63 @@ fn ray_segment_t(
 // Gizmo mesh generation (mode-aware)
 // ---------------------------------------------------------------------------
 
-/// Vertex type reused from resources module (position, normal, color).
+/// Vertex type reused from resources module (position, normal, colour).
 pub use crate::resources::Vertex;
 
-/// Axis color definitions (per UI-SPEC).
+/// Axis colour definitions (per UI-SPEC).
 /// X = red, Y = green, Z = blue; brightened variants for hover.
-const X_COLOR: [f32; 4] = [0.878, 0.322, 0.322, 1.0]; // #e05252
-const Y_COLOR: [f32; 4] = [0.361, 0.722, 0.361, 1.0]; // #5cb85c
-const Z_COLOR: [f32; 4] = [0.290, 0.620, 1.0, 1.0]; // #4a9eff
+const X_COLOUR: [f32; 4] = [0.878, 0.322, 0.322, 1.0]; // #e05252
+const Y_COLOUR: [f32; 4] = [0.361, 0.722, 0.361, 1.0]; // #5cb85c
+const Z_COLOUR: [f32; 4] = [0.290, 0.620, 1.0, 1.0]; // #4a9eff
 
-const X_COLOR_HOV: [f32; 4] = [1.0, 0.518, 0.518, 1.0]; // X * 1.3 clamped
-const Y_COLOR_HOV: [f32; 4] = [0.469, 0.938, 0.469, 1.0]; // Y * 1.3 clamped
-const Z_COLOR_HOV: [f32; 4] = [0.377, 0.806, 1.0, 1.0]; // Z * 1.3 clamped
+const X_COLOUR_HOV: [f32; 4] = [1.0, 0.518, 0.518, 1.0]; // X * 1.3 clamped
+const Y_COLOUR_HOV: [f32; 4] = [0.469, 0.938, 0.469, 1.0]; // Y * 1.3 clamped
+const Z_COLOUR_HOV: [f32; 4] = [0.377, 0.806, 1.0, 1.0]; // Z * 1.3 clamped
 
-const SCREEN_COLOR: [f32; 4] = [0.9, 0.9, 0.9, 0.6];
-const SCREEN_COLOR_HOV: [f32; 4] = [1.0, 1.0, 1.0, 0.8];
+const SCREEN_COLOUR: [f32; 4] = [0.9, 0.9, 0.9, 0.6];
+const SCREEN_COLOUR_HOV: [f32; 4] = [1.0, 1.0, 1.0, 0.8];
 const PLANE_ALPHA: f32 = 0.3;
 const PLANE_ALPHA_HOV: f32 = 0.5;
 
-/// Select the base or hover color for an axis based on whether it's hovered.
-fn axis_color(axis: GizmoAxis, hovered: GizmoAxis) -> [f32; 4] {
+/// Select the base or hover colour for an axis based on whether it's hovered.
+fn axis_colour(axis: GizmoAxis, hovered: GizmoAxis) -> [f32; 4] {
     let is_hovered = axis == hovered;
     match axis {
         GizmoAxis::X => {
             if is_hovered {
-                X_COLOR_HOV
+                X_COLOUR_HOV
             } else {
-                X_COLOR
+                X_COLOUR
             }
         }
         GizmoAxis::Y => {
             if is_hovered {
-                Y_COLOR_HOV
+                Y_COLOUR_HOV
             } else {
-                Y_COLOR
+                Y_COLOUR
             }
         }
         GizmoAxis::Z => {
             if is_hovered {
-                Z_COLOR_HOV
+                Z_COLOUR_HOV
             } else {
-                Z_COLOR
+                Z_COLOUR
             }
         }
         GizmoAxis::Screen => {
             if is_hovered {
-                SCREEN_COLOR_HOV
+                SCREEN_COLOUR_HOV
             } else {
-                SCREEN_COLOR
+                SCREEN_COLOUR
             }
         }
         _ => [1.0; 4],
     }
 }
 
-/// Get the color for a plane handle, blending the two axis colors.
+/// Get the colour for a plane handle, blending the two axis colours.
 /// On hover, RGB is brightened by 1.3× (clamped) in addition to the alpha bump.
-fn plane_color(axis: GizmoAxis, hovered: GizmoAxis) -> [f32; 4] {
+fn plane_colour(axis: GizmoAxis, hovered: GizmoAxis) -> [f32; 4] {
     let is_hovered = axis == hovered;
     let alpha = if is_hovered {
         PLANE_ALPHA_HOV
@@ -478,9 +478,9 @@ fn plane_color(axis: GizmoAxis, hovered: GizmoAxis) -> [f32; 4] {
     };
     let brightness = if is_hovered { 1.3 } else { 1.0 };
     let (c1, c2) = match axis {
-        GizmoAxis::XY => (X_COLOR, Y_COLOR),
-        GizmoAxis::XZ => (X_COLOR, Z_COLOR),
-        GizmoAxis::YZ => (Y_COLOR, Z_COLOR),
+        GizmoAxis::XY => (X_COLOUR, Y_COLOUR),
+        GizmoAxis::XZ => (X_COLOUR, Z_COLOUR),
+        GizmoAxis::YZ => (Y_COLOUR, Z_COLOUR),
         _ => return [1.0, 1.0, 1.0, alpha],
     };
     [
@@ -566,7 +566,7 @@ fn build_arrows(
     for (axis, raw_dir, raw_up) in &base_axes {
         let axis_dir = orientation * *raw_dir;
         let up_hint = orientation * *raw_up;
-        let color = axis_color(*axis, hovered);
+        let colour = axis_colour(*axis, hovered);
 
         let tangent = if axis_dir.abs().dot(orientation * glam::Vec3::Y) > 0.9 {
             axis_dir.cross(up_hint).normalize()
@@ -588,14 +588,14 @@ fn build_arrows(
             vertices.push(Vertex {
                 position: (shaft_bottom + radial * SHAFT_RADIUS).to_array(),
                 normal: radial.to_array(),
-                color,
+                colour,
                 uv: [0.0, 0.0],
                 tangent: [0.0, 0.0, 0.0, 1.0],
             });
             vertices.push(Vertex {
                 position: (shaft_top + radial * SHAFT_RADIUS).to_array(),
                 normal: radial.to_array(),
-                color,
+                colour,
                 uv: [0.0, 0.0],
                 tangent: [0.0, 0.0, 0.0, 1.0],
             });
@@ -616,7 +616,7 @@ fn build_arrows(
         vertices.push(Vertex {
             position: shaft_bottom.to_array(),
             normal: (-axis_dir).to_array(),
-            color,
+            colour,
             uv: [0.0, 0.0],
             tangent: [0.0, 0.0, 0.0, 1.0],
         });
@@ -631,11 +631,11 @@ fn build_arrows(
         let tip_base = shaft_top;
         if cube_tips {
             build_cube_tip(
-                vertices, indices, tip_base, axis_dir, tangent, bitangent, color,
+                vertices, indices, tip_base, axis_dir, tangent, bitangent, colour,
             );
         } else {
             build_cone_tip(
-                vertices, indices, tip_base, axis_dir, tangent, bitangent, color,
+                vertices, indices, tip_base, axis_dir, tangent, bitangent, colour,
             );
         }
     }
@@ -649,7 +649,7 @@ fn build_cone_tip(
     axis_dir: glam::Vec3,
     tangent: glam::Vec3,
     bitangent: glam::Vec3,
-    color: [f32; 4],
+    colour: [f32; 4],
 ) {
     let cone_tip = base_center + axis_dir * CONE_LENGTH;
     let cone_base_start = vertices.len() as u32;
@@ -661,7 +661,7 @@ fn build_cone_tip(
         vertices.push(Vertex {
             position: (base_center + radial * CONE_RADIUS).to_array(),
             normal: (-axis_dir).to_array(),
-            color,
+            colour,
             uv: [0.0, 0.0],
             tangent: [0.0, 0.0, 0.0, 1.0],
         });
@@ -672,7 +672,7 @@ fn build_cone_tip(
     vertices.push(Vertex {
         position: base_center.to_array(),
         normal: (-axis_dir).to_array(),
-        color,
+        colour,
         uv: [0.0, 0.0],
         tangent: [0.0, 0.0, 0.0, 1.0],
     });
@@ -686,7 +686,7 @@ fn build_cone_tip(
     vertices.push(Vertex {
         position: cone_tip.to_array(),
         normal: axis_dir.to_array(),
-        color,
+        colour,
         uv: [0.0, 0.0],
         tangent: [0.0, 0.0, 0.0, 1.0],
     });
@@ -704,7 +704,7 @@ fn build_cube_tip(
     axis_dir: glam::Vec3,
     tangent: glam::Vec3,
     bitangent: glam::Vec3,
-    color: [f32; 4],
+    colour: [f32; 4],
 ) {
     let cube_center = center + axis_dir * CUBE_HALF;
     let h = CUBE_HALF;
@@ -737,7 +737,7 @@ fn build_cube_tip(
             vertices.push(Vertex {
                 position: corners[ci].to_array(),
                 normal: normal.to_array(),
-                color,
+                colour,
                 uv: [0.0, 0.0],
                 tangent: [0.0, 0.0, 0.0, 1.0],
             });
@@ -767,7 +767,7 @@ fn build_plane_quads(
         let b = orientation * *dir_b;
         let n = orientation * *normal_dir;
         let center = a * plane_offset + b * plane_offset;
-        let color = plane_color(*axis, hovered);
+        let colour = plane_colour(*axis, hovered);
 
         let base = vertices.len() as u32;
         let corners = [
@@ -780,7 +780,7 @@ fn build_plane_quads(
             vertices.push(Vertex {
                 position: c.to_array(),
                 normal: n.to_array(),
-                color,
+                colour,
                 uv: [0.0, 0.0],
                 tangent: [0.0, 0.0, 0.0, 1.0],
             });
@@ -794,7 +794,7 @@ fn build_plane_quads(
 /// Build a small center square for screen-space translate.
 fn build_screen_handle(vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>, hovered: GizmoAxis) {
     let size = 0.08_f32;
-    let color = axis_color(GizmoAxis::Screen, hovered);
+    let colour = axis_colour(GizmoAxis::Screen, hovered);
     let base = vertices.len() as u32;
 
     // Small quad in XY plane at the origin. The gizmo uniform will orient it
@@ -809,7 +809,7 @@ fn build_screen_handle(vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>, hover
         vertices.push(Vertex {
             position: c.to_array(),
             normal: [0.0, 0.0, 1.0],
-            color,
+            colour,
             uv: [0.0, 0.0],
             tangent: [0.0, 0.0, 0.0, 1.0],
         });
@@ -838,7 +838,7 @@ fn build_rotation_rings(
 
     for (axis, raw_dir) in &axis_data {
         let axis_dir = orientation * *raw_dir;
-        let color = axis_color(*axis, hovered);
+        let colour = axis_colour(*axis, hovered);
 
         // Build two perpendicular vectors in the plane of the ring.
         let (ring_u, ring_v) = perpendicular_pair(axis_dir);
@@ -864,7 +864,7 @@ fn build_rotation_rings(
                 vertices.push(Vertex {
                     position: pos.to_array(),
                     normal: normal.to_array(),
-                    color,
+                    colour,
                     uv: [0.0, 0.0],
                     tangent: [0.0, 0.0, 0.0, 1.0],
                 });

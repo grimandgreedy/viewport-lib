@@ -16,9 +16,9 @@ struct Lights {
     shadow_bias: f32,
     shadows_enabled: u32,
     _pad: u32,
-    sky_color: vec3<f32>,
+    sky_colour: vec3<f32>,
     hemisphere_intensity: f32,
-    ground_color: vec3<f32>,
+    ground_colour: vec3<f32>,
     _pad2: f32,
     // We only need the IBL fields at the end, but must declare the full
     // struct so offsets are correct. Use a flat array for the lights block.
@@ -76,6 +76,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let theta = asin(clamp(d.y, -1.0, 1.0));
     let uv = vec2<f32>(0.5 + phi / (2.0 * PI), 0.5 - theta / PI);
 
-    let color = textureSampleLevel(skybox_texture, ibl_sampler, uv, 0.0).rgb;
-    return vec4<f32>(color * lights_uniform.ibl_intensity, 1.0);
+    let colour = textureSampleLevel(skybox_texture, ibl_sampler, uv, 0.0).rgb;
+    return vec4<f32>(colour * lights_uniform.ibl_intensity, 1.0);
 }

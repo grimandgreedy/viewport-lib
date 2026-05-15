@@ -40,7 +40,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let dim = vec2<f32>(textureDimensions(input_texture));
     let texel = 1.0 / dim;
 
-    var color = vec3<f32>(0.0);
+    var colour = vec3<f32>(0.0);
     for (var i: i32 = 0; i < 9; i = i + 1) {
         let offset = f32(i - 4);
         var uv_off: vec2<f32>;
@@ -49,7 +49,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         } else {
             uv_off = vec2<f32>(0.0, texel.y * offset);
         }
-        color = color + textureSample(input_texture, input_sampler, in.uv + uv_off).rgb * WEIGHTS[i];
+        colour = colour + textureSample(input_texture, input_sampler, in.uv + uv_off).rgb * WEIGHTS[i];
     }
-    return vec4<f32>(color, 1.0);
+    return vec4<f32>(colour, 1.0);
 }

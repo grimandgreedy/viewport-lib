@@ -10,16 +10,16 @@
     - Implicit surfaces, marching-cubes surfaces, image slices, surface slices, and screen images now participate in the unified picking API and can show object-level selection outlines.
     - Streamtubes, tubes, and ribbons can now highlight selected segments and strips in the same style as polylines.
     - Transparent volume meshes can now show object-level selection outlines.
-- Tone mapping now defaults to Khronos Neutral instead of ACES. This keeps ordinary SDR colors closer to how they looked in the older LDR path, while still preserving HDR highlight compression. ACES remains available for scenes that want a stronger filmic look.
+- Tone mapping now defaults to Khronos Neutral instead of ACES. This keeps ordinary SDR colours closer to how they looked in the older LDR path, while still preserving HDR highlight compression. ACES remains available for scenes that want a stronger filmic look.
 - Post-processing types now live in a dedicated module, without changing existing import paths.
 - Transparent volume meshes require the HDR/post-processing path. This was already true in practice and is now called out clearly in the API documentation.
 
 ### Fixes
 - Vector glyphs were often very dark. The shaft used one-sided lighting, so back-facing faces only got ambient (0.2 brightness); and the hardcoded light direction was nearly vertical, leaving horizontal vector fields dim everywhere. Glyphs now use two-sided diffuse so the full shaft is lit, and they read from the scene light settings instead of a fixed direction.
-- Meshes with scalar colormap attributes could show a dot of the wrong color at scalar extremes: a blue dot at the peak of a red mound, or a red dot at the trough of a blue one. The colormap sampler was configured for tiling rather than clamping, so values at the top or bottom of the scalar range wrapped around to the opposite end of the colormap.
+- Meshes with scalar colourmap attributes could show a dot of the wrong colour at scalar extremes: a blue dot at the peak of a red mound, or a red dot at the trough of a blue one. The colourmap sampler was configured for tiling rather than clamping, so values at the top or bottom of the scalar range wrapped around to the opposite end of the colourmap.
 - Selection highlights for streamtubes, tubes, and ribbons are now visible and complete. Selected segments could disappear inside the rendered surface, and selected control points could fail to show at all.
 - HDR callback rendering now uses physical pixel resolution on HiDPI and Retina displays. This fixes validation errors caused by mismatched attachment sizes.
-- Tone-mapped output was too bright in HDR mode. The swapchain was being gamma-corrected twice, and the Khronos Neutral operator was not matching the real algorithm closely enough. Colors in the normal SDR range now stay much closer to the old LDR look.
+- Tone-mapped output was too bright in HDR mode. The swapchain was being gamma-corrected twice, and the Khronos Neutral operator was not matching the real algorithm closely enough. Colours in the normal SDR range now stay much closer to the old LDR look.
 - Screen images with per-pixel depth now render correctly in HDR scenes. Previously they could disappear entirely.
 - Unified picking now returns mesh vertex hits correctly when the pick mask asks for both cells and vertices at once.
 - The viewport background could turn black in HDR mode when any sub-object highlight was active. Depth is now preserved correctly through the highlight pass.
@@ -45,7 +45,7 @@
     - Polylines now support click and box-selection picking for nodes, segments, and strips.
     - Streamtubes, tubes, and ribbons now support click and box-selection picking for segments and strips.
 - Selection highlight extensions:
-    - Gaussian splat sets now show an object-level outline when selected. The outline traces the screen-space silhouette of the whole cloud and updates naturally as the camera moves. Color, opacity, and width follow the same per-frame outline controls that already apply to mesh outlines.
+    - Gaussian splat sets now show an object-level outline when selected. The outline traces the screen-space silhouette of the whole cloud and updates naturally as the camera moves. Colour, opacity, and width follow the same per-frame outline controls that already apply to mesh outlines.
     - Selecting an individual Gaussian splat now shows a point marker at that splat's position.
     - Point clouds now show an object-level outline when selected. Set `PointCloudItem::selected = true` to enable it. The outline wraps the screen-space silhouette of the cloud using the same pipeline as the Gaussian splat outline.
     - Raw `SceneRenderItem` objects submitted outside the scene graph (e.g. the TVM boundary mesh) now support the outline highlight. Set `SceneRenderItem::selected = true` on the item; no renderer changes are needed since the outline pass already processes the full surface submission.
@@ -99,8 +99,8 @@
 ## [0.13.1]
 
 ### Features
-- Sprite rendering: place camera-facing textured billboards in 3D space via `SpriteItem`. Per-sprite controls include position, color, size, rotation, and UV rect. Size can be screen-space (pixels, constant on screen regardless of distance) or world-space (expands along the camera right/up vectors so sprites scale with distance). Set `depth_write` to false for additive particle effects that composite correctly against opaque geometry, or true for opaque markers. Use `uv_rects` to sample subregions of an atlas texture and cycle frames each tick for sprite-sheet animation. Particle simulation stays in host code; push positions and per-particle colors/sizes each frame.
-- `VolumeSurfaceSliceItem`: samples a 3D volume on an arbitrary surface mesh and colors each fragment by the volume scalar at that world position. Unlike `ImageSliceItem`, the slice surface is not restricted to axis-aligned quads -- any mesh produced by `upload_mesh_data` works: flat planes, disks, saddle surfaces, paraboloids, or imported geometry. Fragments whose world position falls outside the volume bounding box are discarded automatically. Push a `VolumeSurfaceSliceItem` into `SceneFrame::volume_surface_slices` each frame, referencing the mesh by `MeshId` and the volume by `VolumeId`.
+- Sprite rendering: place camera-facing textured billboards in 3D space via `SpriteItem`. Per-sprite controls include position, colour, size, rotation, and UV rect. Size can be screen-space (pixels, constant on screen regardless of distance) or world-space (expands along the camera right/up vectors so sprites scale with distance). Set `depth_write` to false for additive particle effects that composite correctly against opaque geometry, or true for opaque markers. Use `uv_rects` to sample subregions of an atlas texture and cycle frames each tick for sprite-sheet animation. Particle simulation stays in host code; push positions and per-particle colours/sizes each frame.
+- `VolumeSurfaceSliceItem`: samples a 3D volume on an arbitrary surface mesh and colours each fragment by the volume scalar at that world position. Unlike `ImageSliceItem`, the slice surface is not restricted to axis-aligned quads -- any mesh produced by `upload_mesh_data` works: flat planes, disks, saddle surfaces, paraboloids, or imported geometry. Fragments whose world position falls outside the volume bounding box are discarded automatically. Push a `VolumeSurfaceSliceItem` into `SceneFrame::volume_surface_slices` each frame, referencing the mesh by `MeshId` and the volume by `VolumeId`.
 - `prepare_callback` / `paint_callback`: unified entry points for the eframe `CallbackTrait` model. Call `prepare_callback` from `CallbackTrait::prepare` and `paint_callback` from `CallbackTrait::paint` instead of managing separate `prepare`, `prepare_ldr_dyn_res`, and `prepare_hdr_callback` calls manually. The methods dispatch internally based on whether `post_process.enabled` is set, so OIT, EDL, and tone-mapping are active in eframe apps without extra code in the callback.
 - `TransparentVolumeMeshItem` gains `threshold_min` and `threshold_max` fields. Tetrahedra whose scalar value falls outside the range are discarded by the shader without re-uploading geometry. Set both fields to the same raw scalar units used at upload time. Defaults to no clipping (all tets rendered).
 - `ViewportGpuResources::replace_sparse_volume_grid_data`: replaces a previously uploaded sparse voxel grid in place without allocating a new mesh slot. Use this for per-interaction updates such as voxel painting to avoid leaking GPU memory. Mirrors the existing `replace_clipped_volume_mesh_data` pattern.
@@ -119,19 +119,19 @@
   - `PolylineWidget`: an ordered sequence of N draggable waypoints connected by straight segments. Add or remove points programmatically via `add_point` and `remove_point`. With `ctx.double_clicked` set, double-clicking a segment inserts a new point at the projected position and double-clicking a handle removes it (minimum two points enforced).
   - `BoxWidget` now supports rotation: a `rotation` quaternion field orients the box as an OBB. Three arc handles (one per world axis) appear around the box; drag an arc to spin the box around that axis. `obb()` returns the full oriented geometry; `contains_point` tests membership in local box space. `wireframe_item` and `handle_glyphs` reflect the current orientation automatically.
 - `WidgetContext` gains a `double_clicked` field for passing framework double-click events to widgets that support structural editing (currently `PolylineWidget`). Set it from `egui::Response::double_clicked()` or the equivalent in other frameworks; leave it `false` if not needed.
-- Ribbon representation: visualize flow paths as flat swept strips. Push a `RibbonItem` into `SceneFrame::ribbon_items` with concatenated positions and per-strip lengths. Width can be uniform or driven per-point via `width_attribute`. An optional `twist_attribute` orients the ribbon face normal at each point, useful for showing material frame rotation along fibers or vortex filaments. Scalar coloring via a colormap is supported the same way as polylines and tubes.
+- Ribbon representation: visualize flow paths as flat swept strips. Push a `RibbonItem` into `SceneFrame::ribbon_items` with concatenated positions and per-strip lengths. Width can be uniform or driven per-point via `width_attribute`. An optional `twist_attribute` orients the ribbon face normal at each point, useful for showing material frame rotation along fibers or vortex filaments. Scalar colouring via a colourmap is supported the same way as polylines and tubes.
 - GPU vertex warp: set `warp_attribute` and `warp_scale` on any `SceneRenderItem` to displace vertex positions in the vertex shader by a named per-vertex vector attribute. The displacement is applied in local space before the model transform, so the scale is in mesh units. Use this for interactive deformation previews or for animating a scalar-driven surface morphing without re-uploading geometry each frame.
 - `SplineWidget`: an interactive N-point Catmull-Rom spline in world space. Drag any control point to reshape the curve. Call `polyline_item` to get the sampled curve as a `PolylineItem` for rendering, and `handle_glyphs` for the draggable sphere handles. Call `sampled_positions` directly to read the evaluated spline output at configurable resolution.
 - Keyframe camera animation: build a `CameraTrack` from any number of timed `CameraTarget` keyframes and call `interpolate_camera` each frame to get a smoothly interpolated position, distance, and orientation. Position and distance use Catmull-Rom interpolation; orientation uses spherical interpolation between adjacent keyframes. Add keyframes in any order; the track sorts them automatically.
 - `TurntableController`: continuously orbits the camera around its current center point at a configurable angular velocity and elevation. Call `from_camera` to initialize from the current view, then call `update` with the frame delta each frame. Distance and center are unchanged; only the orientation advances.
 - Depth of field: blurs geometry outside a configurable focal band. Set `PostProcessSettings::dof_enabled` and tune `dof_focal_distance`, `dof_focal_range`, and `dof_max_blur_radius` to control which depth band stays sharp and how much out-of-focus geometry blurs. Requires the HDR render path.
 - SSAO for point clouds: when SSAO is enabled, point cloud billboard fragments use a depth-cavity test instead of hemisphere sampling. Pixels between clusters are darkened relative to their depth difference from neighbors, giving separation cues without the noise artifacts that hemisphere SSAO produces on flat billboards.
-- Tensor glyph rendering: visualize second-order symmetric tensors as instanced ellipsoids. Push a `TensorGlyphItem` into `SceneFrame::tensor_glyphs` each frame with per-point eigenvalues and eigenvectors; each glyph is scaled anisotropically along its principal axes and colored by a scalar attribute or by a diverging colormap via `ColormapId`.
-- Gaussian splat point clouds: set `PointCloudItem::gaussian` to render points as soft radial splats with alpha falling off from the center. Per-point radius can now be driven by a scalar field via `radius_scalars` and `radius_range`, mapping data values to a pixel-radius interval independent of the scalar colormap.
-- `TubeItem`: swept tube geometry with configurable cross-section resolution (`sides`), optional per-point radius, and per-vertex scalar coloring via a colormap. Use this instead of `StreamtubeItem` when you need scalar-colored tubes or finer/coarser geometry.
-- `ImageSliceItem`: renders a single axis-aligned cross-section of an uploaded volume as a flat textured quad. Faster than full ray-marching for inspecting individual slices. Set `axis`, `offset` (normalized position along the axis), `bbox_min`/`bbox_max`, and an optional colormap LUT. The quad dimensions follow the bounding box, so non-cubic volumes produce the correct rectangular slice.
-- `GlyphItem` now accepts a `default_color` and `use_default_color` flag to render glyphs in a fixed RGBA color instead of the scalar LUT. When enabled, the per-instance scalar acts as a brightness multiplier and lighting is skipped, producing flat unlit glyphs.
-- `LineProbeWidget`, `SphereWidget`, and `BoxWidget` now expose a `handle_color` field. Set it to any RGBA color to override the default viridis-mapped coloring on the drag handles.
+- Tensor glyph rendering: visualize second-order symmetric tensors as instanced ellipsoids. Push a `TensorGlyphItem` into `SceneFrame::tensor_glyphs` each frame with per-point eigenvalues and eigenvectors; each glyph is scaled anisotropically along its principal axes and coloured by a scalar attribute or by a diverging colourmap via `ColourmapId`.
+- Gaussian splat point clouds: set `PointCloudItem::gaussian` to render points as soft radial splats with alpha falling off from the center. Per-point radius can now be driven by a scalar field via `radius_scalars` and `radius_range`, mapping data values to a pixel-radius interval independent of the scalar colourmap.
+- `TubeItem`: swept tube geometry with configurable cross-section resolution (`sides`), optional per-point radius, and per-vertex scalar colouring via a colourmap. Use this instead of `StreamtubeItem` when you need scalar-coloured tubes or finer/coarser geometry.
+- `ImageSliceItem`: renders a single axis-aligned cross-section of an uploaded volume as a flat textured quad. Faster than full ray-marching for inspecting individual slices. Set `axis`, `offset` (normalized position along the axis), `bbox_min`/`bbox_max`, and an optional colourmap LUT. The quad dimensions follow the bounding box, so non-cubic volumes produce the correct rectangular slice.
+- `GlyphItem` now accepts a `default_colour` and `use_default_colour` flag to render glyphs in a fixed RGBA colour instead of the scalar LUT. When enabled, the per-instance scalar acts as a brightness multiplier and lighting is skipped, producing flat unlit glyphs.
+- `LineProbeWidget`, `SphereWidget`, and `BoxWidget` now expose a `handle_colour` field. Set it to any RGBA colour to override the default viridis-mapped colouring on the drag handles.
 
 ### Fixes
 - Clicking a probe widget handle near its edge could fail to start the drag even when the handle was visually highlighted. The hover state from the previous frame is now preserved on the click frame so edge clicks register reliably.
@@ -140,10 +140,10 @@
 ## [0.12.3]
 
 ### Features
-- Transparent unstructured volume rendering: render all cells of a `VolumeMeshData` semi-transparently with interior scalar colormapping. Upload once with `upload_projected_tet_mesh` and reference each frame via `TransparentVolumeMeshItem` in `SceneFrame`. The density setting controls how opaque the volume appears per unit of ray path length. Supports hex, tet, pyramid, and wedge cells; works with clip planes and composites correctly against opaque geometry.
+- Transparent unstructured volume rendering: render all cells of a `VolumeMeshData` semi-transparently with interior scalar colourmapping. Upload once with `upload_projected_tet_mesh` and reference each frame via `TransparentVolumeMeshItem` in `SceneFrame`. The density setting controls how opaque the volume appears per unit of ray path length. Supports hex, tet, pyramid, and wedge cells; works with clip planes and composites correctly against opaque geometry.
 - Surface Line Integral Convolution (LIC): visualizes tangential vector fields on mesh surfaces as directional streamline patterns. Flow vectors are uploaded as per-vertex attributes on the mesh and referenced by name each frame. The advection uses a viewport-sized per-pixel noise texture so contrast is consistent regardless of zoom level or surface scale. Three controls: number of advection steps (streak length), step size in pixels, and modulation strength.
 - Eye-Dome Lighting (EDL): depth-discontinuity shading in the tone-map composite. Pixels near depth edges are darkened in proportion to the local depth change, sharpening silhouettes and improving depth separation in point cloud and volume renders. Tunable radius and strength.
-- Unlit material mode: set `Material::unlit` to skip all lighting and output raw base color directly. Works on both the direct and instanced draw paths.
+- Unlit material mode: set `Material::unlit` to skip all lighting and output raw base colour directly. Works on both the direct and instanced draw paths.
 - `aabb_wireframe_polyline`: builds the 12 edges of an AABB as a polyline item ready to push into a scene frame.
 - Interactive 3D probe and region widgets in `interaction::widgets`:
   - `LineProbeWidget`: two draggable endpoints in world space. Exposes the current segment geometry each frame.
@@ -159,7 +159,7 @@
 
 ### Fixes
 - Fix EDL depth linearization
-- Dense transparent geometry revealing the background: when enough transparent layers overlapped at a pixel, the OIT composite step incorrectly discarded those pixels, showing the background rather than the accumulated color. The bug was harmless for typical surface transparency (few stacked layers) but visible with volumetric rendering at higher density settings.
+- Dense transparent geometry revealing the background: when enough transparent layers overlapped at a pixel, the OIT composite step incorrectly discarded those pixels, showing the background rather than the accumulated colour. The bug was harmless for typical surface transparency (few stacked layers) but visible with volumetric rendering at higher density settings.
 
 ## [0.12.2]
 
@@ -178,13 +178,13 @@
 
 
 ### Features
-- `PatternConfig`: new struct carrying pattern, color, and `scale` (cells across the object's longest world-space bounding-box dimension, default 8.0). Pattern density is now object-relative -- a `scale` of 8.0 produces 8 cells across the object regardless of mesh units or physical size.
+- `PatternConfig`: new struct carrying pattern, colour, and `scale` (cells across the object's longest world-space bounding-box dimension, default 8.0). Pattern density is now object-relative -- a `scale` of 8.0 produces 8 cells across the object regardless of mesh units or physical size.
 - Volume mesh filled clip: clipping a `VolumeMeshData` now produces real interior cross-sections instead of an open shell. Boundary faces on the kept side are preserved; intersected cells contribute CPU-generated section polygons coloured by per-cell scalar or direct-colour data. Supports multiple simultaneous clip planes via the same `[nx, ny, nz, d]` encoding used by `ClipPlanesUniform`.
   - New `ViewportGpuResources` methods: `upload_clipped_volume_mesh_data` and `replace_clipped_volume_mesh_data` for per-frame GPU slot management.
-- `VolumeMeshData` now supports pyramid (5-vertex) and wedge/triangular-prism (6-vertex) cells in addition to tets and hexes. Both cell types participate fully in boundary extraction, clipping, and per-cell scalar/color attribute remapping.
+- `VolumeMeshData` now supports pyramid (5-vertex) and wedge/triangular-prism (6-vertex) cells in addition to tets and hexes. Both cell types participate fully in boundary extraction, clipping, and per-cell scalar/colour attribute remapping.
 - New `VolumeMeshData` push helpers: `push_tet`, `push_pyramid`, `push_wedge`, `push_hex`. Each method fills sentinel slots automatically, removing the footgun of manually padding the 8-slot cell array.
 - `ClipObject`: two new fields:
-  - `edge_color: Option<[f32; 4]>` - independent RGBA colour for the plane border edge. When set, the edge uses this colour instead of deriving from `color`, allowing a visible outline with a fully transparent fill.
+  - `edge_colour: Option<[f32; 4]>` - independent RGBA colour for the plane border edge. When set, the edge uses this colour instead of deriving from `colour`, allowing a visible outline with a fully transparent fill.
   - `clip_geometry: bool` - when `false`, the object renders its visual indicator but does not contribute to the GPU clip-plane uniform. Default: `true`. Allows a decorative plane edge with no effect on rendered geometry.
 
 ### Fixes
@@ -192,7 +192,7 @@
 - Scroll unit handling: all eframe examples now pass `ScrollUnits::Lines` for mouse wheel events and `ScrollUnits::Pixels` for trackpad events by reading `egui::MouseWheelUnit` from the `MouseWheel` event. Previously all eframe examples hardcoded `ScrollUnits::Pixels`, causing mouse wheel zoom to bypass the `PIXELS_PER_LINE` scaling and feel incorrect.
 - iced example: removed manual `* 28.0` line-to-pixel conversion; the library now applies the scaling internally via `ScrollUnits::Lines`.
 - Added `ScrollUnits::Pages` variant (one unit = viewport height in pixels) to cover `egui::MouseWheelUnit::Page` and equivalent page-scroll events from other frameworks.
-- Clip plane overlay: the border edge previously used a hardcoded alpha (0.6) that ignored `color[3]`, so setting fill opacity to zero still rendered a visible edge. The fill quad is now skipped entirely when `color` is `None`, and the border falls back through `edge_color -> color -> white`.
+- Clip plane overlay: the border edge previously used a hardcoded alpha (0.6) that ignored `colour[3]`, so setting fill opacity to zero still rendered a visible edge. The fill quad is now skipped entirely when `colour` is `None`, and the border falls back through `edge_colour -> colour -> white`.
 - Volume mesh latitude scalar: the center cell of a sphere mesh had its centroid exactly at the origin, producing a `NaN` latitude value that was invisible on the boundary surface but appeared as a hole in CPU-generated section faces. The centroid length is now clamped to `1e-6` before normalization.
 
 ## [0.12.0]
@@ -230,7 +230,7 @@
 - `OverlayFrame`: new frame section for renderer-native semantic overlays (labels, scalar bars, rulers, images)
 - Font atlas with bundled default font and `FontHandle` for user-supplied TTF fonts
 - `LabelItem`: native text labels anchored to world-space or screen-space positions. Supports setting position, connecting line, text and bg colour, padding and border radius, offset, opacity, max width (px), z order and font (family and size).
-- `ScalarBarItem`: native colour-legend overlay. References an uploaded `ColormapId` and renders a gradient strip with evenly-spaced tick labels and an optional title directly in the overlay pass. Supports both vertical and horizontal orientations, all four viewport corner anchors, configurable dimensions, margin, tick count, font, and label colour.
+- `ScalarBarItem`: native colour-legend overlay. References an uploaded `ColourmapId` and renders a gradient strip with evenly-spaced tick labels and an optional title directly in the overlay pass. Supports both vertical and horizontal orientations, all four viewport corner anchors, configurable dimensions, margin, tick count, font, and label colour.
 - `RulerItem`: two-point measurement overlay. Renders a line between two world-space endpoints with a distance label at the segment midpoint. The line is clipped to the viewport boundary when one endpoint pans off-screen sideways and is only culled when an endpoint goes behind the camera. End caps are only drawn at endpoints within the viewport. Supports configurable line width, end caps, label format string (e.g. `"{:.2} m"`), font, font size, line colour, and label colour.
 - Pick pipeline: removed back-face culling so two-sided meshes are pickable from both sides
 
@@ -258,7 +258,7 @@
   - Face fill: translucent triangle overlay with polygon-offset depth bias (no z-fighting)
   - Edge outlines: billboard line segments with clip-space depth nudge
   - Vertex/point sprites: billboard disc sprites
-  - Style parameters on `InteractionFrame`: `sub_highlight_face_fill_color`, `sub_highlight_edge_color`, `sub_highlight_edge_width_px`, `sub_highlight_vertex_size_px`
+  - Style parameters on `InteractionFrame`: `sub_highlight_face_fill_colour`, `sub_highlight_edge_colour`, `sub_highlight_edge_width_px`, `sub_highlight_vertex_size_px`
   - Generation-counter dirty tracking: GPU buffers are only rebuilt when the selection version changes
   - Works on both the HDR (`render`/`render_viewport`) and LDR (`prepare` + `paint`/`paint_to`) render paths
 
@@ -285,14 +285,14 @@
 ## [0.8.7]
 
 ### Features
-- `SparseVolumeGridData`: sparse voxel grid type with per-cell and per-node scalar/color quantities
+- `SparseVolumeGridData`: sparse voxel grid type with per-cell and per-node scalar/colour quantities
 - Add `Edge`, `Halfedge`, and `Corner` attribute kinds: per-edge scalars averaged to vertices for smooth rendering.
   - Pick probing also extended to `Edge`, `Halfedge`, and `Corner` attributes
 - Add `PointCloudItem::radii` and `PointCloudItem::transparencies`: per-point size and opacity overrides
 - Add the ability to add glyphs at given vertexes.
 
 ### Fixes
-- Fix plasma and viridis colormap polynomial
+- Fix plasma and viridis colourmap polynomial
 - Fix `tests/clip_volume.rs` and `tests/headless.rs` which used the old `ClipPlane` and `ClipVolume`
 
 ### Example updates
@@ -314,7 +314,7 @@
 
 ## [0.8.4]
 
-- Curve network quantity system: `PolylineItem` now supports per-edge scalars, per-node/edge direct RGBA colors, per-node radius variation, and node/edge vector arrows
+- Curve network quantity system: `PolylineItem` now supports per-edge scalars, per-node/edge direct RGBA colours, per-node radius variation, and node/edge vector arrows
 - Vector arrows for polylines are auto-generated as `GlyphItem` instances in the render loop -- no manual setup required
 - New public helpers `polyline_node_vectors_to_glyphs` and `polyline_edge_vectors_to_glyphs` in the `quantities` module
 - `PointCloudItem` and `PolylineItem` now derive `Clone`
@@ -322,7 +322,7 @@
 ## [0.8.3]
 
 - Major fix to for cap filling. Added loop calculation so that necessary cap filling is identified when the clip plane passes through verticies -- e.g., for a sphere, torus, cone, etc.
-- Added `Tint(f32)` backface policy: darkens the object's base color by a factor without specifying an explicit color
+- Added `Tint(f32)` backface policy: darkens the object's base colour by a factor without specifying an explicit colour
 - Added `Pattern` backface policy with four procedural patterns: Checker, Hatching, Crosshatch, Stripes
 - Fix normal generation: added check back to the main render loop
 - Added scene building helpers (`SceneNode` construction utilities)
@@ -354,7 +354,7 @@ Material and surface rendering improvements from brimcraft
 
 - UV coordinates on sphere, cube, plane, and torus primitives
 - Matcap shading with built-in matcaps
-- Per-face and per-face-color attributes with flat rendering
+- Per-face and per-face-colour attributes with flat rendering
 
 ## [0.6.0]
 

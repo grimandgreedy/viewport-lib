@@ -158,12 +158,12 @@ impl App {
 
         spheres
             .iter()
-            .map(|(pos, color)| {
+            .map(|(pos, colour)| {
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = self.dc_state.mesh_id;
                 item.model = glam::Mat4::from_translation(*pos).to_cols_array_2d();
                 item.material = {
-                    let mut m = Material::from_color(*color);
+                    let mut m = Material::from_colour(*colour);
                     m.roughness = 0.3;
                     m
                 };
@@ -195,13 +195,13 @@ impl App {
                 kind: LightKind::Directional {
                     direction: [-0.4, -0.7, -1.0],
                 },
-                color: [1.0, 0.97, 0.93],
+                colour: [1.0, 0.97, 0.93],
                 intensity: 2.2,
             }],
             hemisphere_intensity: 0.45,
             // Darker sky so the coloured overlay stands out.
-            sky_color: [0.08, 0.10, 0.18],
-            ground_color: [0.15, 0.15, 0.20],
+            sky_colour: [0.08, 0.10, 0.18],
+            ground_colour: [0.15, 0.15, 0.20],
             ..LightingSettings::default()
         }
     }

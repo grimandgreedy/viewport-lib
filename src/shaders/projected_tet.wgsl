@@ -7,7 +7,7 @@
 // (same targets as mesh_oit.wgsl).
 //
 // Group 0: Camera uniform (shared camera_bind_group_layout, only bindings 0 and 4 used).
-// Group 1: PT uniforms + tet storage buffer + colormap LUT + sampler.
+// Group 1: PT uniforms + tet storage buffer + colourmap LUT + sampler.
 //
 // Opaque-surface clipping: the OIT render pass loads the opaque depth buffer and
 // uses LessEqual depth compare without depth writes, so the hardware depth test
@@ -62,8 +62,8 @@ struct OitOut {
 // Group 1: projected-tet specific.
 @group(1) @binding(0) var<uniform>        uniforms:         PtUniforms;
 @group(1) @binding(1) var<storage, read>  tets:             array<GpuTet>;
-@group(1) @binding(2) var                 colormap_lut:     texture_2d<f32>;
-@group(1) @binding(3) var                 colormap_sampler: sampler;
+@group(1) @binding(2) var                 colourmap_lut:     texture_2d<f32>;
+@group(1) @binding(3) var                 colourmap_sampler: sampler;
 
 struct VsOut {
     @builtin(position)              clip_pos: vec4<f32>,
@@ -241,7 +241,7 @@ fn fs_main(in: VsOut) -> OitOut {
     // Beer-Lambert opacity.
     let alpha = 1.0 - exp(-uniforms.density * thickness);
 
-    // Map scalar to [0,1] and sample colormap LUT.
+    // Map scalar to [0,1] and sample colourmap LUT.
     let scalar = in.v0.w;
 
     // Threshold: discard tets outside [threshold_min, threshold_max].
@@ -252,13 +252,13 @@ fn fs_main(in: VsOut) -> OitOut {
         (scalar - uniforms.scalar_min) / max(uniforms.scalar_max - uniforms.scalar_min, 1e-10),
         0.0, 1.0,
     );
-    let color = textureSample(colormap_lut, colormap_sampler, vec2<f32>(t_scalar, 0.5));
+    let colour = textureSample(colourmap_lut, colourmap_sampler, vec2<f32>(t_scalar, 0.5));
 
     // Weighted-blended OIT (same formula as mesh_oit.wgsl).
     let depth = in.clip_pos.z;
     let w = alpha * max(1e-2, 1.0 - depth);
     var out: OitOut;
-    out.accum  = vec4<f32>(color.rgb * alpha * w, alpha * w);
+    out.accum  = vec4<f32>(colour.rgb * alpha * w, alpha * w);
     out.reveal = alpha;
     return out;
 }

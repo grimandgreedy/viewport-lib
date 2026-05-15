@@ -45,10 +45,10 @@ pub struct BoxWidget {
     pub half_extents: glam::Vec3,
     /// Orientation of the box (rotates the local axes).
     pub rotation: glam::Quat,
-    /// RGBA color for the wireframe outline.
-    pub color: [f32; 4],
-    /// RGBA color for the drag handles. When set (non-zero alpha), overrides the default LUT coloring.
-    pub handle_color: [f32; 4],
+    /// RGBA colour for the wireframe outline.
+    pub colour: [f32; 4],
+    /// RGBA colour for the drag handles. When set (non-zero alpha), overrides the default LUT colouring.
+    pub handle_colour: [f32; 4],
 
     hovered_handle: Option<BoxHandle>,
     active_handle: Option<BoxHandle>,
@@ -64,8 +64,8 @@ impl BoxWidget {
             center,
             half_extents: half_extents.max(glam::Vec3::splat(0.01)),
             rotation: glam::Quat::IDENTITY,
-            color: [0.3, 0.8, 0.4, 1.0],
-            handle_color: [0.0; 4],
+            colour: [0.3, 0.8, 0.4, 1.0],
+            handle_colour: [0.0; 4],
             hovered_handle: None,
             active_handle: None,
             drag_plane_normal: glam::Vec3::Z,
@@ -258,7 +258,7 @@ impl BoxWidget {
                 p(-h.x, h.y, h.z),
             ],
             strip_lengths: vec![5, 5, 2, 2, 2, 2],
-            default_color: self.color,
+            default_colour: self.colour,
             id,
             ..PolylineItem::default()
         }
@@ -267,22 +267,22 @@ impl BoxWidget {
     /// Build a `PolylineItem` containing three rotation arcs (one per world axis).
     ///
     /// Each arc is a full circle at radius `arc_radius()` around the box center.
-    /// Arc colors: X = red, Y = green, Z = blue (semi-transparent).
+    /// Arc colours: X = red, Y = green, Z = blue (semi-transparent).
     pub fn rotation_arcs_item(&self, id: u64) -> PolylineItem {
         const STEPS: usize = 48;
         let c = self.center;
         let r = self.arc_radius();
-        let arc_colors = [
+        let arc_colours = [
             [0.9_f32, 0.2, 0.2, 0.7], // X: red
             [0.2, 0.9, 0.2, 0.7],     // Y: green
             [0.2, 0.4, 1.0, 0.7],     // Z: blue
         ];
 
         // All three arcs concatenated into one PolylineItem for a single draw call.
-        // Use the overall widget color -- the showcase can override with separate items if needed.
+        // Use the overall widget colour -- the showcase can override with separate items if needed.
         let mut positions: Vec<[f32; 3]> = Vec::with_capacity((STEPS + 1) * 3);
         let mut strip_lengths: Vec<u32> = Vec::new();
-        let _ = arc_colors; // color varies per strip, but PolylineItem has a single color; we use widget color
+        let _ = arc_colours; // colour varies per strip, but PolylineItem has a single colour; we use widget colour
 
         for axis_idx in 0..3_usize {
             let axis = Self::world_rotation_axis(axis_idx);
@@ -298,7 +298,7 @@ impl BoxWidget {
         PolylineItem {
             positions,
             strip_lengths,
-            default_color: self.color,
+            default_colour: self.colour,
             line_width: 1.2,
             id,
             ..PolylineItem::default()
@@ -354,8 +354,8 @@ impl BoxWidget {
             scalar_range: Some((0.0, 1.0)),
             glyph_type: GlyphType::Sphere,
             id: id_base,
-            default_color: self.handle_color,
-            use_default_color: self.handle_color[3] > 0.0,
+            default_colour: self.handle_colour,
+            use_default_colour: self.handle_colour[3] > 0.0,
             ..GlyphItem::default()
         }
     }

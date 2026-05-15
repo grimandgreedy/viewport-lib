@@ -11,12 +11,12 @@ use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
 pub struct SplineWidget {
     /// Control point positions.
     pub points: Vec<glam::Vec3>,
-    /// Color of the spline curve.
-    pub color: [f32; 4],
+    /// Colour of the spline curve.
+    pub colour: [f32; 4],
     /// Width of the spline curve in pixels.
     pub line_width: f32,
-    /// Color of the control point handles.
-    pub handle_color: [f32; 4],
+    /// Colour of the control point handles.
+    pub handle_colour: [f32; 4],
     /// Number of samples between each pair of adjacent control points.
     pub resolution: u32,
     hovered_point: Option<usize>,
@@ -30,9 +30,9 @@ impl SplineWidget {
     pub fn new(points: Vec<glam::Vec3>) -> Self {
         Self {
             points,
-            color: [0.4, 0.8, 1.0, 1.0],
+            colour: [0.4, 0.8, 1.0, 1.0],
             line_width: 2.0,
-            handle_color: [1.0, 0.8, 0.2, 1.0],
+            handle_colour: [1.0, 0.8, 0.2, 1.0],
             resolution: 16,
             hovered_point: None,
             active_point: None,
@@ -107,7 +107,7 @@ impl SplineWidget {
         PolylineItem {
             positions: sampled,
             strip_lengths: if n > 0 { vec![n] } else { vec![] },
-            default_color: self.color,
+            default_colour: self.colour,
             line_width: self.line_width,
             id,
             ..PolylineItem::default()
@@ -116,7 +116,7 @@ impl SplineWidget {
 
     /// Build a `GlyphItem` with sphere handles for each control point.
     ///
-    /// Hovered and active handles are brightened via `use_default_color` and `default_color`.
+    /// Hovered and active handles are brightened via `use_default_colour` and `default_colour`.
     /// For per-handle highlight, call with a separate GlyphItem for the active handle.
     pub fn handle_glyphs(&self, id_base: u64, ctx: &WidgetContext) -> GlyphItem {
         let ref_pos = self.points.first().copied().unwrap_or(glam::Vec3::ZERO);
@@ -125,8 +125,8 @@ impl SplineWidget {
             positions: self.points.iter().map(|p| p.to_array()).collect(),
             glyph_type: GlyphType::Sphere,
             scale: radius,
-            use_default_color: true,
-            default_color: self.handle_color,
+            use_default_colour: true,
+            default_colour: self.handle_colour,
             id: id_base,
             ..GlyphItem::default()
         }

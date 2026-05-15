@@ -156,7 +156,7 @@ mod tests {
                 CELL_SENTINEL,
             ]],
             cell_scalars: HashMap::new(),
-            cell_colors: HashMap::new(),
+            cell_colours: HashMap::new(),
         };
         let cell_vectors = vec![[1.0, 0.0, 0.0]];
         let item = volume_mesh_cell_vectors_to_glyphs(&data, &cell_vectors, 1.0);
@@ -173,7 +173,7 @@ mod tests {
             positions: vec![],
             cells: vec![],
             cell_scalars: HashMap::new(),
-            cell_colors: HashMap::new(),
+            cell_colours: HashMap::new(),
         };
         let item = volume_mesh_cell_vectors_to_glyphs(&data, &[], 1.0);
         assert!(item.positions.is_empty());

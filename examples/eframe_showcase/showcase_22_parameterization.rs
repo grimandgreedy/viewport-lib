@@ -99,12 +99,12 @@ impl App {
                        z: f32,
                        base_idx: usize,
                        node_ids: &mut [NodeId; 16],
-                       color: [f32; 3],
+                       colour: [f32; 3],
                        two_sided: bool| {
             for (col, (mode, label)) in MODES.iter().enumerate() {
                 let mesh_id = upload_mesh(renderer, mesh_data);
                 let mat = {
-                    let mut m = Material::pbr(color, 0.0, 0.4);
+                    let mut m = Material::pbr(colour, 0.0, 0.4);
                     m.param_vis = Some(ParamVis { mode: *mode, scale });
                     m.backface_policy = if two_sided {
                         BackfacePolicy::Identical
@@ -218,10 +218,10 @@ fn update_param_vis_materials(app: &mut App) {
         (IDX_CUBE, [0.72, 0.65, 0.55], false),
         (IDX_PLANE, [0.65, 0.65, 0.80], true),
     ];
-    for (base_idx, color, two_sided) in rows {
+    for (base_idx, colour, two_sided) in rows {
         for (col, (mode, _)) in MODES.iter().enumerate() {
             let mat = {
-                let mut m = Material::pbr(color, 0.0, 0.4);
+                let mut m = Material::pbr(colour, 0.0, 0.4);
                 m.param_vis = if s.on {
                     Some(ParamVis {
                         mode: *mode,

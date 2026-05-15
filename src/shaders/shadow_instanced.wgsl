@@ -10,7 +10,7 @@ struct Light {
 
 struct InstanceData {
     model: mat4x4<f32>,
-    color: vec4<f32>,
+    colour: vec4<f32>,
     selected: u32,
     wireframe: u32,
     ambient: f32,

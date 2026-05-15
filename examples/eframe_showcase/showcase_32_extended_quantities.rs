@@ -16,7 +16,7 @@
 use crate::{App, MeshId};
 use eframe::egui;
 use viewport_lib::{
-    AttributeData, AttributeKind, AttributeRef, BuiltinColormap, CELL_SENTINEL, ColormapId,
+    AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, CELL_SENTINEL, ColourmapId,
     GlyphItem, PointCloudItem, SceneRenderItem, ViewportRenderer, VolumeMeshData,
     volume_mesh_cell_vectors_to_glyphs, volume_mesh_vertex_vectors_to_glyphs,
 };
@@ -174,7 +174,7 @@ pub(crate) struct EqState {
     pub pc_radii: Vec<f32>,
     pub pc_transp: Vec<f32>,
     pub pc_bg_mesh_id: MeshId,
-    pub colormap: BuiltinColormap,
+    pub colourmap: BuiltinColourmap,
 }
 
 impl Default for EqState {
@@ -190,7 +190,7 @@ impl Default for EqState {
             pc_radii: Vec::new(),
             pc_transp: Vec::new(),
             pc_bg_mesh_id: MeshId::from_index(0),
-            colormap: BuiltinColormap::Viridis,
+            colourmap: BuiltinColourmap::Viridis,
         }
     }
 }
@@ -279,17 +279,17 @@ pub(crate) fn controls_eq(app: &mut App, ui: &mut egui::Ui) {
             ui.label("Centre/Right: Halfedge & Corner : repeating 3-colour triangle pattern");
             ui.label("(corner 0=purple, 1=teal, 2=yellow; discontinuous across edges)");
             ui.separator();
-            ui.label("Colormap:");
+            ui.label("Colourmap:");
             for cm in [
-                BuiltinColormap::Viridis,
-                BuiltinColormap::Plasma,
-                BuiltinColormap::Coolwarm,
+                BuiltinColourmap::Viridis,
+                BuiltinColourmap::Plasma,
+                BuiltinColourmap::Coolwarm,
             ] {
                 if ui
-                    .radio(app.eq_state.colormap == cm, format!("{cm:?}"))
+                    .radio(app.eq_state.colourmap == cm, format!("{cm:?}"))
                     .clicked()
                 {
-                    app.eq_state.colormap = cm;
+                    app.eq_state.colourmap = cm;
                 }
             }
         }
@@ -314,7 +314,7 @@ impl App {
 
         match self.eq_state.sub_mode {
             EqSubMode::EdgeCornerScalars => {
-                let cm_id = Some(ColormapId(self.eq_state.colormap as usize));
+                let cm_id = Some(ColourmapId(self.eq_state.colourmap as usize));
                 let offsets = [-5.0f32, 0.0, 5.0];
                 let names = ["edge_z", "halfedge_z", "corner_z"];
                 let kinds = [
@@ -331,7 +331,7 @@ impl App {
                         name: names[i].into(),
                         kind: kinds[i],
                     });
-                    item.colormap_id = cm_id;
+                    item.colourmap_id = cm_id;
                     item.visible = true;
                     scene_items.push(item);
                 }
@@ -350,7 +350,7 @@ impl App {
                 );
                 vg.scalars = vec![0.15; vg.positions.len()];
                 vg.scalar_range = Some((0.0, 1.0));
-                vg.colormap_id = Some(ColormapId(BuiltinColormap::Viridis as usize));
+                vg.colourmap_id = Some(ColourmapId(BuiltinColourmap::Viridis as usize));
                 glyph_items.push(vg);
                 // Cell vectors: orange (Plasma at 0.65).  Use Plasma to guarantee a
                 // warm hue clearly distinct from the blue vertex arrows.
@@ -358,7 +358,7 @@ impl App {
                 let mut cg = volume_mesh_cell_vectors_to_glyphs(&self.eq_state.vm_data, &cv, 1.5);
                 cg.scalars = vec![0.65; cg.positions.len()];
                 cg.scalar_range = Some((0.0, 1.0));
-                cg.colormap_id = Some(ColormapId(BuiltinColormap::Plasma as usize));
+                cg.colourmap_id = Some(ColourmapId(BuiltinColourmap::Plasma as usize));
                 glyph_items.push(cg);
             }
             EqSubMode::PointCloudRadiusTransparency => {

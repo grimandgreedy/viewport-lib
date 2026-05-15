@@ -1,4 +1,4 @@
-// Sprite shader: textured billboards with per-instance color, size, rotation, and UV rect.
+// Sprite shader: textured billboards with per-instance colour, size, rotation, and UV rect.
 //
 // Group 0: Camera uniform (binding 0), ClipPlanes (binding 4), ClipVolume (binding 6).
 // Group 1: SpriteUniform (binding 0), sprite texture (binding 1), sampler (binding 2),
@@ -58,7 +58,7 @@ struct ClipVolumeUB {
 // Per-batch uniform (80 bytes):
 //   model:       mat4x4<f32>  (64 bytes at offset  0)
 //   world_space: u32          ( 4 bytes at offset 64) -- 0 = screen pixels, 1 = world units
-//   has_texture: u32          ( 4 bytes at offset 68) -- 0 = solid color, 1 = sample texture
+//   has_texture: u32          ( 4 bytes at offset 68) -- 0 = solid colour, 1 = sample texture
 //   _pad0/1:     u32, u32     ( 8 bytes at offset 72)
 struct SpriteUniform {
     model:       mat4x4<f32>,
@@ -69,13 +69,13 @@ struct SpriteUniform {
 };
 
 // Per-sprite instance data (48 bytes):
-//   color:    vec4<f32>  (16 bytes at offset  0)
+//   colour:    vec4<f32>  (16 bytes at offset  0)
 //   size:     f32        ( 4 bytes at offset 16)
 //   rotation: f32        ( 4 bytes at offset 20) -- radians, CCW around camera-forward axis
 //   _pad0/1:  f32, f32   ( 8 bytes at offset 24) -- alignment before uv_rect
 //   uv_rect:  vec4<f32>  (16 bytes at offset 32) -- [u0, v0, u1, v1]
 struct SpriteInstance {
-    color:    vec4<f32>,
+    colour:    vec4<f32>,
     size:     f32,
     rotation: f32,
     _pad0:    f32,
@@ -126,7 +126,7 @@ struct VertexIn {
 
 struct VertexOut {
     @builtin(position) clip_pos:  vec4<f32>,
-    @location(0)       color:     vec4<f32>,
+    @location(0)       colour:     vec4<f32>,
     @location(1)       world_pos: vec3<f32>,
     @location(2)       uv:        vec2<f32>,
 };
@@ -187,7 +187,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     }
 
     out.world_pos = world_pos;
-    out.color     = inst.color;
+    out.colour     = inst.colour;
 
     // Map corner [-1, 1] to the per-instance UV rect [u0, v0] -> [u1, v1].
     let u  = mix(inst.uv_rect.x, inst.uv_rect.z, (corner.x + 1.0) * 0.5);
@@ -207,11 +207,11 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
     if !clip_volume_test(in.world_pos) { discard; }
 
-    var color = in.color;
+    var colour = in.colour;
     if sprite_ub.has_texture != 0u {
-        color = color * textureSample(sprite_texture, sprite_sampler, in.uv);
+        colour = colour * textureSample(sprite_texture, sprite_sampler, in.uv);
     }
     // Discard fully transparent fragments.
-    if color.a <= 0.001 { discard; }
-    return color;
+    if colour.a <= 0.001 { discard; }
+    return colour;
 }

@@ -1,5 +1,5 @@
-/// Built-in colormap LUT data.
-pub mod colormap_data;
+/// Built-in colourmap LUT data.
+pub mod colourmap_data;
 /// Dynamic resolution intermediate render target.
 pub(crate) mod dyn_res;
 /// IBL precomputation and environment map upload.
@@ -44,8 +44,8 @@ pub use self::sparse_volume::SparseVolumeGridData;
 #[allow(deprecated)]
 pub use self::types::ClipVolumeUniform;
 pub use self::types::{
-    AttributeData, AttributeKind, AttributeRef, BuiltinColormap, BuiltinMatcap, CLIP_VOLUME_MAX,
-    CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColormapId, GpuMesh, GpuTexture,
+    AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
+    CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, GpuMesh, GpuTexture,
     LightUniform, LightsUniform, MatcapId, MeshData, OverlayVertex, PointCloudGpuData,
     PolylineGpuData, ProjectedTetId, ScreenImageGpuData, SingleLightUniform, Vertex,
     ViewportGpuResources, VolumeGpuData, VolumeId,

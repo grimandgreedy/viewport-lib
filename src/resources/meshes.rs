@@ -24,7 +24,7 @@ impl ViewportGpuResources {
             &self.fallback_lut_view,
             &self.fallback_scalar_buf,
             &self.fallback_texture.view,
-            &self.fallback_face_color_buf,
+            &self.fallback_face_colour_buf,
             &self.fallback_warp_buf,
             vertices,
             indices,
@@ -34,7 +34,7 @@ impl ViewportGpuResources {
 
     /// Upload a `MeshData` (from the geometry primitives module) directly.
     ///
-    /// Converts positions/normals/indices to the GPU `Vertex` layout (white color)
+    /// Converts positions/normals/indices to the GPU `Vertex` layout (white colour)
     /// and creates a normal visualization line buffer (light blue #a0c4ff, length 0.1).
     /// Returns the `MeshId`.
     ///
@@ -78,7 +78,7 @@ impl ViewportGpuResources {
                 Vertex {
                     position: *p,
                     normal: *n,
-                    color: [1.0, 1.0, 1.0, 1.0],
+                    colour: [1.0, 1.0, 1.0, 1.0],
                     uv,
                     tangent,
                 }
@@ -98,7 +98,7 @@ impl ViewportGpuResources {
             &self.fallback_lut_view,
             &self.fallback_scalar_buf,
             &self.fallback_texture.view,
-            &self.fallback_face_color_buf,
+            &self.fallback_face_colour_buf,
             &self.fallback_warp_buf,
             &vertices,
             &data.indices,
@@ -106,7 +106,7 @@ impl ViewportGpuResources {
         );
         mesh.cpu_positions = Some(data.positions.clone());
         mesh.cpu_indices = Some(data.indices.clone());
-        let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_color_bufs, vector_attr_bufs) =
+        let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_colour_bufs, vector_attr_bufs) =
             Self::upload_attributes(
                 device,
                 &data.attributes,
@@ -120,7 +120,7 @@ impl ViewportGpuResources {
         mesh.attribute_ranges = attr_ranges;
         mesh.face_vertex_buffer = face_vbuf;
         mesh.face_attribute_buffers = face_attr_bufs;
-        mesh.face_color_buffers = face_color_bufs;
+        mesh.face_colour_buffers = face_colour_bufs;
         mesh.vector_attribute_buffers = vector_attr_bufs;
         self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
             + data.indices.len() * std::mem::size_of::<u32>())
@@ -178,7 +178,7 @@ impl ViewportGpuResources {
     ///
     /// The vertex count must match the original upload exactly. Use this for deforming meshes
     /// where topology is stable across frames: the index buffer, edge buffer, and bind groups
-    /// are all reused. Color, UVs, and tangents are written as defaults (white, zero, [0,0,0,1]).
+    /// are all reused. Colour, UVs, and tangents are written as defaults (white, zero, [0,0,0,1]).
     ///
     /// The normal line visualization buffer is also updated in place if it was created at upload time.
     ///
@@ -226,7 +226,7 @@ impl ViewportGpuResources {
             .map(|(p, n)| Vertex {
                 position: *p,
                 normal: *n,
-                color: [1.0, 1.0, 1.0, 1.0],
+                colour: [1.0, 1.0, 1.0, 1.0],
                 uv: [0.0, 0.0],
                 tangent: [0.0, 0.0, 0.0, 1.0],
             })
@@ -240,7 +240,7 @@ impl ViewportGpuResources {
             .is_some();
         let normal_line_verts: Option<Vec<Vertex>> = if has_normal_lines {
             let normal_length = 0.1_f32;
-            let normal_color = [0.627_f32, 0.769, 1.0, 1.0];
+            let normal_colour = [0.627_f32, 0.769, 1.0, 1.0];
             let mut verts = Vec::with_capacity(positions.len() * 2);
             for (p, n) in positions.iter().zip(normals.iter()) {
                 let tip = [
@@ -251,14 +251,14 @@ impl ViewportGpuResources {
                 verts.push(Vertex {
                     position: *p,
                     normal: *n,
-                    color: normal_color,
+                    colour: normal_colour,
                     uv: [0.0, 0.0],
                     tangent: [0.0, 0.0, 0.0, 1.0],
                 });
                 verts.push(Vertex {
                     position: tip,
                     normal: *n,
-                    color: normal_color,
+                    colour: normal_colour,
                     uv: [0.0, 0.0],
                     tangent: [0.0, 0.0, 0.0, 1.0],
                 });
@@ -340,7 +340,7 @@ impl ViewportGpuResources {
                 Vertex {
                     position: *p,
                     normal: *n,
-                    color: [1.0, 1.0, 1.0, 1.0],
+                    colour: [1.0, 1.0, 1.0, 1.0],
                     uv,
                     tangent,
                 }
@@ -403,7 +403,7 @@ impl ViewportGpuResources {
             &self.fallback_lut_view,
             &self.fallback_scalar_buf,
             &self.fallback_texture.view,
-            &self.fallback_face_color_buf,
+            &self.fallback_face_colour_buf,
             &self.fallback_warp_buf,
             &vertices,
             &data.indices,
@@ -411,7 +411,7 @@ impl ViewportGpuResources {
         );
         new_mesh.cpu_positions = Some(data.positions.clone());
         new_mesh.cpu_indices = Some(data.indices.clone());
-        let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_color_bufs, vector_attr_bufs) =
+        let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_colour_bufs, vector_attr_bufs) =
             Self::upload_attributes(
                 device,
                 &data.attributes,
@@ -425,7 +425,7 @@ impl ViewportGpuResources {
         new_mesh.attribute_ranges = attr_ranges;
         new_mesh.face_vertex_buffer = face_vbuf;
         new_mesh.face_attribute_buffers = face_attr_bufs;
-        new_mesh.face_color_buffers = face_color_bufs;
+        new_mesh.face_colour_buffers = face_colour_bufs;
         new_mesh.vector_attribute_buffers = vector_attr_bufs;
         self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
             + data.indices.len() * std::mem::size_of::<u32>())
@@ -461,8 +461,8 @@ impl ViewportGpuResources {
     /// the result via [`upload_mesh_data`](Self::upload_mesh_data).
     ///
     /// Interior faces (shared by two cells) are discarded; only boundary faces (belonging
-    /// to exactly one cell) are kept. Per-cell scalar and color attributes are remapped to
-    /// per-face attributes so the Phase 2 face-coloring path handles them automatically.
+    /// to exactly one cell) are kept. Per-cell scalar and colour attributes are remapped to
+    /// per-face attributes so the Phase 2 face-colouring path handles them automatically.
     ///
     /// Returns the `MeshId`, identical to what [`upload_mesh_data`](Self::upload_mesh_data)
     /// would return. Reference cell attributes via
@@ -537,7 +537,7 @@ impl ViewportGpuResources {
     /// the result via [`upload_mesh_data`](Self::upload_mesh_data).
     ///
     /// Only quad faces not shared between two active cells are kept.  Per-cell
-    /// scalars and colors are remapped to per-face attributes, and per-node
+    /// scalars and colours are remapped to per-face attributes, and per-node
     /// scalars are averaged over the 4 quad corners to produce per-face scalars.
     ///
     /// Returns the `MeshId`.  Reference cell and node attributes via
@@ -551,16 +551,16 @@ impl ViewportGpuResources {
         self.upload_mesh_data(device, &mesh_data)
     }
 
-    /// Upload per-vertex, per-cell, per-face scalar, and per-face color attributes to GPU buffers.
+    /// Upload per-vertex, per-cell, per-face scalar, and per-face colour attributes to GPU buffers.
     ///
     /// Returns `(attribute_buffers, attribute_ranges, face_vertex_buffer, face_attribute_buffers,
-    /// face_color_buffers)`.
+    /// face_colour_buffers)`.
     ///
     /// - `attribute_buffers`: per-vertex storage buffers for `Vertex` and `Cell` kinds.
     /// - `attribute_ranges`: `(min, max)` per attribute name (all scalar kinds).
-    /// - `face_vertex_buffer`: non-indexed 3N-vertex buffer (built once if any `Face`/`FaceColor` attr exists).
+    /// - `face_vertex_buffer`: non-indexed 3N-vertex buffer (built once if any `Face`/`FaceColour` attr exists).
     /// - `face_attribute_buffers`: per-face scalar storage buffers (3N `f32` entries, replicated).
-    /// - `face_color_buffers`: per-face color storage buffers (3N `[f32;4]` entries, replicated).
+    /// - `face_colour_buffers`: per-face colour storage buffers (3N `[f32;4]` entries, replicated).
     fn upload_attributes(
         device: &wgpu::Device,
         attributes: &std::collections::HashMap<String, AttributeData>,
@@ -583,7 +583,7 @@ impl ViewportGpuResources {
             std::collections::HashMap::new();
         let mut vector_attr_bufs: std::collections::HashMap<String, wgpu::Buffer> =
             std::collections::HashMap::new();
-        let mut face_color_bufs: std::collections::HashMap<String, wgpu::Buffer> =
+        let mut face_colour_bufs: std::collections::HashMap<String, wgpu::Buffer> =
             std::collections::HashMap::new();
         let mut face_vbuf: Option<wgpu::Buffer> = None;
 
@@ -616,7 +616,7 @@ impl ViewportGpuResources {
                     ranges.insert(name.clone(), (min, max));
                 }
                 AttributeData::Face(f) => {
-                    // Build the shared face vertex buffer on first Face/FaceColor attribute.
+                    // Build the shared face vertex buffer on first Face/FaceColour attribute.
                     if face_vbuf.is_none() {
                         face_vbuf = Some(Self::build_face_vertex_buffer(
                             device, positions, normals, indices, uvs, tangents,
@@ -636,20 +636,20 @@ impl ViewportGpuResources {
                     face_attr_bufs.insert(name.clone(), buf);
                     ranges.insert(name.clone(), (min, max));
                 }
-                AttributeData::FaceColor(colors) => {
-                    // Build the shared face vertex buffer on first Face/FaceColor attribute.
+                AttributeData::FaceColour(colours) => {
+                    // Build the shared face vertex buffer on first Face/FaceColour attribute.
                     if face_vbuf.is_none() {
                         face_vbuf = Some(Self::build_face_vertex_buffer(
                             device, positions, normals, indices, uvs, tangents,
                         ));
                     }
-                    let expanded = Self::expand_face_colors_to_3n(colors, n_tris);
+                    let expanded = Self::expand_face_colours_to_3n(colours, n_tris);
                     if expanded.is_empty() {
                         continue;
                     }
                     let byte_len = std::mem::size_of::<[f32; 4]>() * expanded.len();
                     let buf = device.create_buffer(&wgpu::BufferDescriptor {
-                        label: Some(&format!("face_color_{name}")),
+                        label: Some(&format!("face_colour_{name}")),
                         size: byte_len as u64,
                         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                         mapped_at_creation: true,
@@ -659,7 +659,7 @@ impl ViewportGpuResources {
                         view.copy_from_slice(bytemuck::cast_slice(&expanded));
                     }
                     buf.unmap();
-                    face_color_bufs.insert(name.clone(), buf);
+                    face_colour_bufs.insert(name.clone(), buf);
                 }
                 AttributeData::Edge(e) => {
                     // Average edge values to vertex values (each edge's scalar is
@@ -727,7 +727,7 @@ impl ViewportGpuResources {
             ranges,
             face_vbuf,
             face_attr_bufs,
-            face_color_bufs,
+            face_colour_bufs,
             vector_attr_bufs,
         )
     }
@@ -770,7 +770,7 @@ impl ViewportGpuResources {
                 verts.push(Vertex {
                     position: positions.get(vi).copied().unwrap_or([0.0, 0.0, 0.0]),
                     normal: normals.get(vi).copied().unwrap_or([0.0, 1.0, 0.0]),
-                    color: [1.0, 1.0, 1.0, 1.0],
+                    colour: [1.0, 1.0, 1.0, 1.0],
                     uv,
                     tangent,
                 });
@@ -802,11 +802,11 @@ impl ViewportGpuResources {
         out
     }
 
-    /// Expand N face RGBA colors to 3N by repeating each color three times.
-    fn expand_face_colors_to_3n(colors: &[[f32; 4]], n_tris: usize) -> Vec<[f32; 4]> {
+    /// Expand N face RGBA colours to 3N by repeating each colour three times.
+    fn expand_face_colours_to_3n(colours: &[[f32; 4]], n_tris: usize) -> Vec<[f32; 4]> {
         let mut out = Vec::with_capacity(n_tris * 3);
         for i in 0..n_tris {
-            let c = colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]);
+            let c = colours.get(i).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]);
             out.push(c);
             out.push(c);
             out.push(c);
@@ -1074,7 +1074,7 @@ impl ViewportGpuResources {
 
     /// Build per-vertex normal visualization lines from mesh data.
     fn build_normal_lines(data: &MeshData) -> Vec<Vertex> {
-        let normal_color = [0.627_f32, 0.769, 1.0, 1.0];
+        let normal_colour = [0.627_f32, 0.769, 1.0, 1.0];
         let normal_length = 0.1_f32;
         let mut normal_line_verts: Vec<Vertex> = Vec::with_capacity(data.positions.len() * 2);
         for (p, n) in data.positions.iter().zip(data.normals.iter()) {
@@ -1086,14 +1086,14 @@ impl ViewportGpuResources {
             normal_line_verts.push(Vertex {
                 position: *p,
                 normal: *n,
-                color: normal_color,
+                colour: normal_colour,
                 uv: [0.0, 0.0],
                 tangent: [0.0, 0.0, 0.0, 1.0],
             });
             normal_line_verts.push(Vertex {
                 position: tip,
                 normal: *n,
-                color: normal_color,
+                colour: normal_colour,
                 uv: [0.0, 0.0],
                 tangent: [0.0, 0.0, 0.0, 1.0],
             });
@@ -1112,7 +1112,7 @@ impl ViewportGpuResources {
         fallback_lut_view: &wgpu::TextureView,
         fallback_scalar_buf: &wgpu::Buffer,
         fallback_matcap_view: &wgpu::TextureView,
-        fallback_face_color_buf: &wgpu::Buffer,
+        fallback_face_colour_buf: &wgpu::Buffer,
         fallback_warp_buf: &wgpu::Buffer,
         vertices: &[Vertex],
         indices: &[u32],
@@ -1128,7 +1128,7 @@ impl ViewportGpuResources {
             fallback_lut_view,
             fallback_scalar_buf,
             fallback_matcap_view,
-            fallback_face_color_buf,
+            fallback_face_colour_buf,
             fallback_warp_buf,
             vertices,
             indices,
@@ -1147,7 +1147,7 @@ impl ViewportGpuResources {
         fallback_lut_view: &wgpu::TextureView,
         fallback_scalar_buf: &wgpu::Buffer,
         fallback_matcap_view: &wgpu::TextureView,
-        fallback_face_color_buf: &wgpu::Buffer,
+        fallback_face_colour_buf: &wgpu::Buffer,
         fallback_warp_buf: &wgpu::Buffer,
         vertices: &[Vertex],
         indices: &[u32],
@@ -1202,7 +1202,7 @@ impl ViewportGpuResources {
         let identity = glam::Mat4::IDENTITY.to_cols_array_2d();
         let object_uniform = ObjectUniform {
             model: identity,
-            color: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0],
             selected: 0,
             wireframe: 0,
             ambient: 0.15,
@@ -1219,16 +1219,16 @@ impl ViewportGpuResources {
             scalar_min: 0.0,
             scalar_max: 1.0,
             _pad_scalar: 0,
-            nan_color: [0.0, 0.0, 0.0, 0.0],
-            use_nan_color: 0,
+            nan_colour: [0.0, 0.0, 0.0, 0.0],
+            use_nan_colour: 0,
             use_matcap: 0,
             matcap_blendable: 0,
             unlit: 0,
-            use_face_color: 0,
+            use_face_colour: 0,
             uv_vis_mode: 0,
             uv_vis_scale: 8.0,
             backface_policy: 0,
-            backface_color: [0.0; 4],
+            backface_colour: [0.0; 4],
             has_warp: 0,
             warp_scale: 1.0,
             _pad_warp: [0; 2],
@@ -1283,7 +1283,7 @@ impl ViewportGpuResources {
                 },
                 wgpu::BindGroupEntry {
                     binding: 8,
-                    resource: fallback_face_color_buf.as_entire_binding(),
+                    resource: fallback_face_colour_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 9,
@@ -1298,7 +1298,7 @@ impl ViewportGpuResources {
 
         let normal_override_uniform = ObjectUniform {
             model: identity,
-            color: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0],
             selected: 0,
             wireframe: 0,
             ambient: 0.15,
@@ -1315,16 +1315,16 @@ impl ViewportGpuResources {
             scalar_min: 0.0,
             scalar_max: 1.0,
             _pad_scalar: 0,
-            nan_color: [0.0, 0.0, 0.0, 0.0],
-            use_nan_color: 0,
+            nan_colour: [0.0, 0.0, 0.0, 0.0],
+            use_nan_colour: 0,
             use_matcap: 0,
             matcap_blendable: 0,
             unlit: 0,
-            use_face_color: 0,
+            use_face_colour: 0,
             uv_vis_mode: 0,
             uv_vis_scale: 8.0,
             backface_policy: 0,
-            backface_color: [0.0; 4],
+            backface_colour: [0.0; 4],
             has_warp: 0,
             warp_scale: 1.0,
             _pad_warp: [0; 2],
@@ -1379,7 +1379,7 @@ impl ViewportGpuResources {
                 },
                 wgpu::BindGroupEntry {
                     binding: 8,
-                    resource: fallback_face_color_buf.as_entire_binding(),
+                    resource: fallback_face_colour_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 9,
@@ -1445,7 +1445,7 @@ impl ViewportGpuResources {
             attribute_ranges: std::collections::HashMap::new(),
             face_vertex_buffer: None,
             face_attribute_buffers: std::collections::HashMap::new(),
-            face_color_buffers: std::collections::HashMap::new(),
+            face_colour_buffers: std::collections::HashMap::new(),
             vector_attribute_buffers: std::collections::HashMap::new(),
         }
     }
@@ -1488,7 +1488,7 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
-                // binding 2: colormap texture (256x1 D2, same format as all other LUT textures)
+                // binding 2: colourmap texture (256x1 D2, same format as all other LUT textures)
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -1499,7 +1499,7 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
-                // binding 3: colormap sampler (linear clamp)
+                // binding 3: colourmap sampler (linear clamp)
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -1528,22 +1528,22 @@ impl ViewportGpuResources {
         device: &wgpu::Device,
         data: &crate::resources::volume_mesh::VolumeMeshData,
         scalar_attribute: &str,
-        colormap_id: ColormapId,
+        colourmap_id: ColourmapId,
     ) -> crate::error::ViewportResult<(ProjectedTetId, f32, f32)> {
         self.ensure_pt_bind_group_layout(device);
 
         let (pending, scalar_range, uniform_buffer) =
             Self::decompose_into_chunks(device, data, scalar_attribute);
 
-        // Build bind groups: one per chunk, all sharing the same uniform buffer + colormap.
+        // Build bind groups: one per chunk, all sharing the same uniform buffer + colourmap.
         let chunks = {
             let bgl = self
                 .pt_bind_group_layout
                 .as_ref()
                 .expect("pt_bind_group_layout must exist after ensure_pt_bind_group_layout");
             let lut_view = self
-                .colormap_views
-                .get(colormap_id.0)
+                .colourmap_views
+                .get(colourmap_id.0)
                 .unwrap_or(&self.fallback_lut_view);
             let lut_sampler = &self.material_sampler;
             pending
@@ -1589,10 +1589,10 @@ impl ViewportGpuResources {
         Ok((id, scalar_range.0, scalar_range.1))
     }
 
-    /// Replace the tet buffer and colormap for an existing projected-tet mesh in-place.
+    /// Replace the tet buffer and colourmap for an existing projected-tet mesh in-place.
     ///
     /// Rebuilds the tet buffer with the new scalar attribute and recreates the bind
-    /// group with the new colormap LUT. The uniform buffer (density, scalar range) is
+    /// group with the new colourmap LUT. The uniform buffer (density, scalar range) is
     /// updated to reflect the new scalar range; the existing GPU buffer is reused.
     pub fn replace_projected_tet_mesh(
         &mut self,
@@ -1600,7 +1600,7 @@ impl ViewportGpuResources {
         id: ProjectedTetId,
         data: &crate::resources::volume_mesh::VolumeMeshData,
         scalar_attribute: &str,
-        colormap_id: ColormapId,
+        colourmap_id: ColourmapId,
     ) -> crate::error::ViewportResult<()> {
         self.ensure_pt_bind_group_layout(device);
 
@@ -1614,8 +1614,8 @@ impl ViewportGpuResources {
                 .as_ref()
                 .expect("pt_bind_group_layout must exist after ensure_pt_bind_group_layout");
             let lut_view = self
-                .colormap_views
-                .get(colormap_id.0)
+                .colourmap_views
+                .get(colourmap_id.0)
                 .unwrap_or(&self.fallback_lut_view);
             let lut_sampler = &self.material_sampler;
             let uniform_buf = &self.projected_tet_store[id.0].uniform_buffer;

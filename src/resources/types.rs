@@ -11,22 +11,22 @@
 // Scalar attribute types
 // ---------------------------------------------------------------------------
 
-/// Identifies a colormap (LUT) uploaded to the GPU.
+/// Identifies a colourmap (LUT) uploaded to the GPU.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ColormapId(pub usize);
+pub struct ColourmapId(pub usize);
 
 /// Identifies a matcap texture uploaded to the GPU.
 ///
 /// Obtained from [`ViewportGpuResources::upload_matcap`] or
 /// [`ViewportGpuResources::builtin_matcap_id`].
 /// The `blendable` flag controls whether the alpha channel tints the base
-/// geometry color (`true`) or the matcap fully replaces the object color (`false`).
+/// geometry colour (`true`) or the matcap fully replaces the object colour (`false`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MatcapId {
     /// Index into the GPU matcap texture store.
     pub(crate) index: usize,
-    /// Whether the alpha channel blends with base geometry color.
+    /// Whether the alpha channel blends with base geometry colour.
     pub blendable: bool,
 }
 
@@ -40,7 +40,7 @@ pub enum BuiltinMatcap {
     Clay = 0,
     /// Peach tone with wide soft specular, skin-like.  Blendable.
     Wax = 1,
-    /// Vivid hue-cycling sphere, colorful.  Blendable.
+    /// Vivid hue-cycling sphere, colourful.  Blendable.
     Candy = 2,
     /// Neutral gray Lambertian shading.  Blendable.
     Flat = 3,
@@ -72,11 +72,11 @@ pub enum AttributeKind {
     /// One value per triangle (cell). Averaged to vertices at upload time.
     Cell,
     /// One value per triangle. NOT averaged : rendered flat via vertex duplication.
-    /// Colormapped through the active LUT just like `Vertex`.
+    /// Colourmapped through the active LUT just like `Vertex`.
     Face,
-    /// One RGBA color per triangle. NOT averaged : rendered flat via vertex duplication.
-    /// Bypasses the colormap; the per-face color is used directly.
-    FaceColor,
+    /// One RGBA colour per triangle. NOT averaged : rendered flat via vertex duplication.
+    /// Bypasses the colourmap; the per-face colour is used directly.
+    FaceColour,
     /// One value per directed triangle edge. `values[3*t + k]` is the scalar on the
     /// k-th edge of triangle `t` (edge from vertex `k` to vertex `(k+1)%3`).
     /// Averaged to the two endpoint vertices for rendering.
@@ -110,7 +110,7 @@ pub enum AttributeData {
     /// One `f32` per triangle. Not averaged; stored in a non-indexed expanded buffer.
     Face(Vec<f32>),
     /// One `[r, g, b, a]` per triangle. Not averaged; stored in a non-indexed expanded buffer.
-    FaceColor(Vec<[f32; 4]>),
+    FaceColour(Vec<[f32; 4]>),
     /// One `f32` per directed triangle edge. `values[3*t + k]` = k-th edge of triangle `t`.
     /// Averaged to the two endpoint vertices for rendering.
     Edge(Vec<f32>),
@@ -125,12 +125,12 @@ pub enum AttributeData {
     VertexVector(Vec<[f32; 3]>),
 }
 
-/// Built-in colormap presets.
+/// Built-in colourmap presets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BuiltinColormap {
-    /// Viridis : perceptually uniform, colorblind-friendly (purple -> teal -> yellow).
+pub enum BuiltinColourmap {
+    /// Viridis : perceptually uniform, colourblind-friendly (purple -> teal -> yellow).
     Viridis = 0,
-    /// Plasma : perceptually uniform, colorblind-friendly (blue -> pink -> yellow).
+    /// Plasma : perceptually uniform, colourblind-friendly (blue -> pink -> yellow).
     Plasma = 1,
     /// Greyscale : linear black->white.
     Greyscale = 2,
@@ -197,12 +197,12 @@ impl MeshData {
 // Vertex and uniform structs (bytemuck::Pod for GPU buffer casting)
 // ---------------------------------------------------------------------------
 
-/// Per-vertex data: position, normal, base color, UV coordinates, tangent.
+/// Per-vertex data: position, normal, base colour, UV coordinates, tangent.
 ///
 /// Layout (64 bytes, 4-byte aligned):
 /// - position: [f32; 3]  : offset  0, 12 bytes
 /// - normal:   [f32; 3]  : offset 12, 12 bytes
-/// - color:    [f32; 4]  : offset 24, 16 bytes
+/// - colour:    [f32; 4]  : offset 24, 16 bytes
 /// - uv:       [f32; 2]  : offset 40,  8 bytes
 /// - tangent:  [f32; 4]  : offset 48, 16 bytes  (xyz=tangent direction, w=handedness ±1)
 ///
@@ -215,8 +215,8 @@ pub struct Vertex {
     pub position: [f32; 3],
     /// Vertex normal in local space (shader location 1).
     pub normal: [f32; 3],
-    /// Vertex color RGBA in linear 0..1 (shader location 2).
-    pub color: [f32; 4],
+    /// Vertex colour RGBA in linear 0..1 (shader location 2).
+    pub colour: [f32; 4],
     /// UV texture coordinates (shader location 3).
     pub uv: [f32; 2],
     /// Tangent vector [tx, ty, tz, handedness] (shader location 4). `w` is ±1.
@@ -242,7 +242,7 @@ impl Vertex {
                     shader_location: 1,
                     format: wgpu::VertexFormat::Float32x3,
                 },
-                // location 2: color (vec4f) : offset 24
+                // location 2: colour (vec4f) : offset 24
                 wgpu::VertexAttribute {
                     offset: 24,
                     shader_location: 2,
@@ -298,7 +298,7 @@ pub struct CameraUniform {
 /// - light_view_proj:  `[[f32; 4]; 4]` = 64 bytes  (shadow matrix; only used for `lights[0]`)
 /// - pos_or_dir:        `[f32; 3]`     = 12 bytes  (direction for directional, position for point/spot)
 /// - light_type:        u32            =  4 bytes  (0=directional, 1=point, 2=spot)
-/// - color:             `[f32; 3]`     = 12 bytes
+/// - colour:             `[f32; 3]`     = 12 bytes
 /// - intensity:         f32        =  4 bytes
 /// - range:             f32        =  4 bytes
 /// - inner_angle:       f32        =  4 bytes
@@ -319,8 +319,8 @@ pub struct SingleLightUniform {
     pub pos_or_dir: [f32; 3], // 12 bytes, offset  64
     /// Light type discriminant: 0=directional, 1=point, 2=spot.
     pub light_type: u32, //  4 bytes, offset  76
-    /// Linear RGB color of the light emission.
-    pub color: [f32; 3], // 12 bytes, offset  80
+    /// Linear RGB colour of the light emission.
+    pub colour: [f32; 3], // 12 bytes, offset  80
     /// Luminous intensity multiplier.
     pub intensity: f32, //  4 bytes, offset  92
     /// Maximum attenuation range (world units) for point/spot lights.
@@ -344,9 +344,9 @@ pub struct SingleLightUniform {
 /// - shadow_bias:          f32            =  4 bytes
 /// - shadows_enabled:      u32            =  4 bytes
 /// - _pad:                 u32            =  4 bytes (align header to 16)
-/// - sky_color:            `[f32; 3]`     = 12 bytes
+/// - sky_colour:            `[f32; 3]`     = 12 bytes
 /// - hemisphere_intensity: f32            =  4 bytes
-/// - ground_color:         `[f32; 3]`     = 12 bytes
+/// - ground_colour:         `[f32; 3]`     = 12 bytes
 /// - _pad2:                f32            =  4 bytes (align to 16)
 /// - lights:               [SingleLightUniform; 8] = 8 * 144 = 1152 bytes
 /// Total: 16 + 16 + 16 + 1152 = 1200 bytes
@@ -361,12 +361,12 @@ pub struct LightsUniform {
     pub shadows_enabled: u32, //  4 bytes
     /// Alignment padding.
     pub _pad: u32, //  4 bytes
-    /// Sky hemisphere color for ambient contribution.
-    pub sky_color: [f32; 3], // 12 bytes
+    /// Sky hemisphere colour for ambient contribution.
+    pub sky_colour: [f32; 3], // 12 bytes
     /// Hemisphere ambient intensity multiplier.
     pub hemisphere_intensity: f32, //  4 bytes
-    /// Ground hemisphere color for ambient contribution.
-    pub ground_color: [f32; 3], // 12 bytes
+    /// Ground hemisphere colour for ambient contribution.
+    pub ground_colour: [f32; 3], // 12 bytes
     /// Alignment padding.
     pub _pad2: f32, //  4 bytes
     /// Per-light parameters (up to 8 lights).
@@ -377,7 +377,7 @@ pub struct LightsUniform {
     pub ibl_intensity: f32, // 4 bytes
     /// IBL Y-axis rotation in radians.
     pub ibl_rotation: f32, // 4 bytes
-    /// 1 = show skybox background, 0 = use background color.
+    /// 1 = show skybox background, 0 = use background colour.
     pub show_skybox: u32, // 4 bytes
 }
 
@@ -388,7 +388,7 @@ pub type LightUniform = LightsUniform;
 ///
 /// Layout (208 bytes, 16-byte aligned):
 /// - model:           [[f32;4];4] = 64 bytes  offset   0
-/// - color:            [f32;4]   = 16 bytes  offset  64  (base_color.xyz + opacity)
+/// - colour:            [f32;4]   = 16 bytes  offset  64  (base_colour.xyz + opacity)
 /// - selected:          u32      =  4 bytes  offset  80
 /// - wireframe:         u32      =  4 bytes  offset  84
 /// - ambient:           f32      =  4 bytes  offset  88
@@ -405,22 +405,22 @@ pub type LightUniform = LightsUniform;
 /// - scalar_min:        f32      =  4 bytes  offset 132
 /// - scalar_max:        f32      =  4 bytes  offset 136
 /// - _pad_scalar:       u32      =  4 bytes  offset 140
-/// - nan_color:        [f32;4]   = 16 bytes  offset 144
-/// - use_nan_color:     u32      =  4 bytes  offset 160
+/// - nan_colour:        [f32;4]   = 16 bytes  offset 144
+/// - use_nan_colour:     u32      =  4 bytes  offset 160
 /// - use_matcap:        u32      =  4 bytes  offset 164
 /// - matcap_blendable:  u32      =  4 bytes  offset 168
 /// - _pad2:             u32      =  4 bytes  offset 172
-/// - use_face_color:    u32      =  4 bytes  offset 176
+/// - use_face_colour:    u32      =  4 bytes  offset 176
 /// - uv_vis_mode:       u32      =  4 bytes  offset 180  (0=off 1=checker 2=grid 3=localcheck 4=localrad)
 /// - uv_vis_scale:      f32      =  4 bytes  offset 184
-/// - backface_policy:   u32      =  4 bytes  offset 188  (0=Cull 1=Identical 2=DifferentColor)
-/// - backface_color:   [f32;4]   = 16 bytes  offset 192
+/// - backface_policy:   u32      =  4 bytes  offset 188  (0=Cull 1=Identical 2=DifferentColour)
+/// - backface_colour:   [f32;4]   = 16 bytes  offset 192
 /// Total: 208 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ObjectUniform {
     pub(crate) model: [[f32; 4]; 4],     //  64 bytes, offset   0
-    pub(crate) color: [f32; 4],          //  16 bytes, offset  64
+    pub(crate) colour: [f32; 4],          //  16 bytes, offset  64
     pub(crate) selected: u32,            //   4 bytes, offset  80
     pub(crate) wireframe: u32,           //   4 bytes, offset  84
     pub(crate) ambient: f32,             //   4 bytes, offset  88
@@ -437,16 +437,16 @@ pub(crate) struct ObjectUniform {
     pub(crate) scalar_min: f32,          //   4 bytes, offset 132
     pub(crate) scalar_max: f32,          //   4 bytes, offset 136
     pub(crate) _pad_scalar: u32,         //   4 bytes, offset 140
-    pub(crate) nan_color: [f32; 4],      //  16 bytes, offset 144
-    pub(crate) use_nan_color: u32,       //   4 bytes, offset 160
+    pub(crate) nan_colour: [f32; 4],      //  16 bytes, offset 144
+    pub(crate) use_nan_colour: u32,       //   4 bytes, offset 160
     pub(crate) use_matcap: u32,          //   4 bytes, offset 164
     pub(crate) matcap_blendable: u32,    //   4 bytes, offset 168
     pub(crate) unlit: u32,               //   4 bytes, offset 172
-    pub(crate) use_face_color: u32,      //   4 bytes, offset 176
+    pub(crate) use_face_colour: u32,      //   4 bytes, offset 176
     pub(crate) uv_vis_mode: u32,         //   4 bytes, offset 180
     pub(crate) uv_vis_scale: f32,        //   4 bytes, offset 184
-    pub(crate) backface_policy: u32, //   4 bytes, offset 188  (0=Cull 1=Identical 2=DifferentColor)
-    pub(crate) backface_color: [f32; 4], //  16 bytes, offset 192
+    pub(crate) backface_policy: u32, //   4 bytes, offset 188  (0=Cull 1=Identical 2=DifferentColour)
+    pub(crate) backface_colour: [f32; 4], //  16 bytes, offset 192
     pub(crate) has_warp: u32,        //   4 bytes, offset 208
     pub(crate) warp_scale: f32,      //   4 bytes, offset 212
     pub(crate) _pad_warp: [u32; 2],  //   8 bytes, offset 216
@@ -461,7 +461,7 @@ const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 224);
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct InstanceData {
     pub(crate) model: [[f32; 4]; 4], //  64 bytes, offset   0
-    pub(crate) color: [f32; 4],      //  16 bytes, offset  64
+    pub(crate) colour: [f32; 4],      //  16 bytes, offset  64
     pub(crate) selected: u32,        //   4 bytes, offset  80
     pub(crate) wireframe: u32,       //   4 bytes, offset  84
     pub(crate) ambient: f32,         //   4 bytes, offset  88
@@ -807,7 +807,7 @@ unsafe impl bytemuck::Pod for ClipVolumeUniform {}
 ///
 /// Layout (96 bytes):
 /// - model:        [[f32;4];4] = 64 bytes
-/// - color:         [f32;4]   = 16 bytes  (outline RGBA)
+/// - colour:         [f32;4]   = 16 bytes  (outline RGBA)
 /// - pixel_offset:  f32       =  4 bytes  (outline ring width in pixels)
 /// - _pad:          [f32;3]   = 12 bytes
 /// Total: 96 bytes
@@ -815,7 +815,7 @@ unsafe impl bytemuck::Pod for ClipVolumeUniform {}
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct OutlineUniform {
     pub(crate) model: [[f32; 4]; 4], //  64 bytes
-    pub(crate) color: [f32; 4],      //  16 bytes
+    pub(crate) colour: [f32; 4],      //  16 bytes
     pub(crate) pixel_offset: f32,    //   4 bytes
     pub(crate) _pad: [f32; 3],       //  12 bytes
 }
@@ -880,7 +880,7 @@ pub(crate) struct ScreenRectOutlineBuffers {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct OutlineEdgeUniform {
-    pub(crate) color: [f32; 4], // 16 bytes
+    pub(crate) colour: [f32; 4], // 16 bytes
     pub(crate) radius: f32,     //  4 bytes
     pub(crate) viewport_w: f32, //  4 bytes
     pub(crate) viewport_h: f32, //  4 bytes
@@ -893,8 +893,8 @@ pub(crate) struct OutlineEdgeUniform {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct SubHighlightUniform {
-    pub(crate) fill_color: [f32; 4], // 16 bytes
-    pub(crate) edge_color: [f32; 4], // 16 bytes
+    pub(crate) fill_colour: [f32; 4], // 16 bytes
+    pub(crate) edge_colour: [f32; 4], // 16 bytes
     pub(crate) edge_width: f32,      //  4 bytes (pixels)
     pub(crate) vertex_size: f32,     //  4 bytes (pixels)
     pub(crate) viewport_width: f32,  //  4 bytes
@@ -937,7 +937,7 @@ pub(crate) struct ToneMapUniform {
     pub(crate) edl_enabled: u32,
     pub(crate) edl_radius: f32,
     pub(crate) edl_strength: f32,
-    pub(crate) background_color: [f32; 4],
+    pub(crate) background_colour: [f32; 4],
     pub(crate) near_plane: f32,
     pub(crate) far_plane: f32,
     pub(crate) lic_enabled: u32,
@@ -1017,10 +1017,10 @@ pub(crate) struct ContactShadowUniform {
     pub(crate) params: [f32; 4],         // 16 bytes: [max_distance, steps, thickness, pad]
 }
 
-/// Per-vertex data for overlay rendering: position only (no normal/color in vertex).
+/// Per-vertex data for overlay rendering: position only (no normal/colour in vertex).
 ///
-/// Color is provided via the OverlayUniform rather than per-vertex to keep
-/// the buffer minimal : all vertices of a single overlay quad share the same color.
+/// Colour is provided via the OverlayUniform rather than per-vertex to keep
+/// the buffer minimal : all vertices of a single overlay quad share the same colour.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct OverlayVertex {
@@ -1043,12 +1043,12 @@ impl OverlayVertex {
     }
 }
 
-/// Per-overlay uniform: model matrix and RGBA color with alpha for transparency.
+/// Per-overlay uniform: model matrix and RGBA colour with alpha for transparency.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct OverlayUniform {
     pub(crate) model: [[f32; 4]; 4],
-    pub(crate) color: [f32; 4], // RGBA with alpha for transparency
+    pub(crate) colour: [f32; 4], // RGBA with alpha for transparency
 }
 
 /// Per-vertex data for overlay text and solid screen-space quads (labels, backgrounds, leader lines).
@@ -1063,7 +1063,7 @@ pub(crate) struct OverlayTextVertex {
     /// Atlas UV coordinates.  Ignored when `use_texture` is 0.
     pub uv: [f32; 2],
     /// RGBA tint colour.
-    pub color: [f32; 4],
+    pub colour: [f32; 4],
     /// 1.0 = sample glyph atlas alpha, 0.0 = solid colour.
     pub use_texture: f32,
     pub _pad: f32,
@@ -1088,7 +1088,7 @@ impl OverlayTextVertex {
                     shader_location: 1,
                     format: wgpu::VertexFormat::Float32x2,
                 },
-                // location 2: color vec4f
+                // location 2: colour vec4f
                 wgpu::VertexAttribute {
                     offset: 16,
                     shader_location: 2,
@@ -1127,8 +1127,8 @@ pub(crate) struct GroundPlaneUniform {
     pub cam_back: [f32; 4],       // offset  96, 16 bytes
     pub eye_pos: [f32; 3],        // offset 112, 12 bytes
     pub height: f32,              // offset 124,  4 bytes
-    pub color: [f32; 4],          // offset 128, 16 bytes
-    pub shadow_color: [f32; 4],   // offset 144, 16 bytes
+    pub colour: [f32; 4],          // offset 128, 16 bytes
+    pub shadow_colour: [f32; 4],   // offset 144, 16 bytes
     pub light_vp: [[f32; 4]; 4],  // offset 160, 64 bytes
     pub tan_half_fov: f32,        // offset 224,  4 bytes
     pub aspect: f32,              // offset 228,  4 bytes
@@ -1142,7 +1142,7 @@ pub(crate) struct GroundPlaneUniform {
 /// Uniform buffer layout for the full-screen analytical grid shader.
 ///
 /// Contains all data needed by `grid.wgsl`: camera matrices for ray unprojection,
-/// eye position, grid plane height, spacing for minor/major lines, and RGBA colors.
+/// eye position, grid plane height, spacing for minor/major lines, and RGBA colours.
 /// Total size: 192 bytes (fits in one 256-byte UBO slot).
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -1171,10 +1171,10 @@ pub(crate) struct GridUniform {
     /// XZ origin used to keep `hit.xz - snap_origin` small for f32 precision.
     /// Set to `floor(eye.xz / spacing_major) * spacing_major` each frame.
     pub snap_origin: [f32; 2], // offset 152,  8 bytes
-    /// RGBA color for minor grid lines.
-    pub color_minor: [f32; 4], // offset 160, 16 bytes
-    /// RGBA color for major grid lines.
-    pub color_major: [f32; 4], // offset 176, 16 bytes
+    /// RGBA colour for minor grid lines.
+    pub colour_minor: [f32; 4], // offset 160, 16 bytes
+    /// RGBA colour for major grid lines.
+    pub colour_major: [f32; 4], // offset 176, 16 bytes
                                // Total: 192 bytes
 }
 
@@ -1230,12 +1230,12 @@ pub struct GpuMesh {
     /// Scalar range `(min, max)` per attribute, computed at upload time.
     pub attribute_ranges: std::collections::HashMap<String, (f32, f32)>,
     /// Non-indexed vertex buffer containing 3×N expanded vertices for face-attribute rendering.
-    /// `None` if no `Face` or `FaceColor` attributes exist for this mesh.
+    /// `None` if no `Face` or `FaceColour` attributes exist for this mesh.
     pub face_vertex_buffer: Option<wgpu::Buffer>,
     /// Named face scalar buffers: 3N `f32` entries (value replicated for all 3 vertices of each tri).
     pub face_attribute_buffers: std::collections::HashMap<String, wgpu::Buffer>,
-    /// Named face color buffers: 3N `[f32; 4]` entries (color replicated for all 3 vertices of each tri).
-    pub face_color_buffers: std::collections::HashMap<String, wgpu::Buffer>,
+    /// Named face colour buffers: 3N `[f32; 4]` entries (colour replicated for all 3 vertices of each tri).
+    pub face_colour_buffers: std::collections::HashMap<String, wgpu::Buffer>,
     /// Per-vertex vector attribute buffers: flat `array<f32>` with 3 values per vertex.
     /// Uploaded from `AttributeData::VertexVector`; used by the Surface LIC surface pass.
     pub vector_attribute_buffers: std::collections::HashMap<String, wgpu::Buffer>,
@@ -1269,16 +1269,16 @@ pub(crate) struct GlyphBaseMesh {
 /// Per-frame GPU data for one point cloud item, created in `prepare()`.
 pub struct PointCloudGpuData {
     /// Vertex buffer: one entry per point, packed as `[position: vec3, _pad: f32]` (16 bytes).
-    /// The shader reads color/scalar from storage buffers indexed by `vertex_index`.
+    /// The shader reads colour/scalar from storage buffers indexed by `vertex_index`.
     pub(crate) vertex_buffer: wgpu::Buffer,
     /// Number of points (= draw count).
     pub(crate) point_count: u32,
-    /// Bind group (group 1): uniform + LUT + sampler + scalar + color + radius + transparency.
+    /// Bind group (group 1): uniform + LUT + sampler + scalar + colour + radius + transparency.
     pub(crate) bind_group: wgpu::BindGroup,
     // Keep the buffers alive for the lifetime of this struct.
     pub(crate) _uniform_buf: wgpu::Buffer,
     pub(crate) _scalar_buf: wgpu::Buffer,
-    pub(crate) _color_buf: wgpu::Buffer,
+    pub(crate) _colour_buf: wgpu::Buffer,
     pub(crate) _radius_buf: wgpu::Buffer,
     pub(crate) _transparency_buf: wgpu::Buffer,
 }
@@ -1491,7 +1491,7 @@ pub struct StreamtubeGpuData {
     pub(crate) index_buffer: wgpu::Buffer,
     /// Number of indices to draw.
     pub(crate) index_count: u32,
-    /// Bind group (group 1): tube uniform (color, radius).
+    /// Bind group (group 1): tube uniform (colour, radius).
     pub(crate) uniform_bind_group: wgpu::BindGroup,
     // Keep uniform buffer alive.
     pub(crate) _uniform_buf: wgpu::Buffer,
@@ -1499,7 +1499,7 @@ pub struct StreamtubeGpuData {
 
 /// Per-frame GPU data for one volume item, created in `prepare()`.
 pub struct VolumeGpuData {
-    /// Bind group (group 1): volume uniform + 3D texture + sampler + color LUT + opacity LUT.
+    /// Bind group (group 1): volume uniform + 3D texture + sampler + colour LUT + opacity LUT.
     pub(crate) bind_group: wgpu::BindGroup,
     /// Vertex buffer for the unit cube bounding box proxy.
     pub(crate) vertex_buffer: wgpu::Buffer,
@@ -1552,7 +1552,7 @@ pub(crate) struct ProjectedTetChunk {
     pub tet_buffer: wgpu::Buffer,
     /// Number of tetrahedra in this chunk (= instanced draw count).
     pub tet_count: u32,
-    /// Bind group: shared uniform + this chunk's tet buffer + colormap + sampler.
+    /// Bind group: shared uniform + this chunk's tet buffer + colourmap + sampler.
     pub bind_group: wgpu::BindGroup,
 }
 
@@ -1671,13 +1671,13 @@ pub(crate) struct ViewportHdrState {
     pub fxaa_view: wgpu::TextureView,
 
     // --- SSAA (allocated when ssaa_factor > 1) ---
-    /// Supersampled color render target. `None` when ssaa_factor == 1.
-    pub ssaa_color_texture: Option<wgpu::Texture>,
-    pub ssaa_color_view: Option<wgpu::TextureView>,
+    /// Supersampled colour render target. `None` when ssaa_factor == 1.
+    pub ssaa_colour_texture: Option<wgpu::Texture>,
+    pub ssaa_colour_view: Option<wgpu::TextureView>,
     /// Supersampled depth render target. `None` when ssaa_factor == 1.
     pub ssaa_depth_texture: Option<wgpu::Texture>,
     pub ssaa_depth_view: Option<wgpu::TextureView>,
-    /// Bind group for the SSAA resolve pass (reads ssaa_color_texture). `None` when ssaa_factor == 1.
+    /// Bind group for the SSAA resolve pass (reads ssaa_colour_texture). `None` when ssaa_factor == 1.
     pub ssaa_resolve_bind_group: Option<wgpu::BindGroup>,
     /// Uniform buffer holding the ssaa_factor value for the resolve shader.
     pub ssaa_uniform_buf: Option<wgpu::Buffer>,
@@ -1697,11 +1697,11 @@ pub(crate) struct ViewportHdrState {
     pub outline_mask_texture: wgpu::Texture,
     pub outline_mask_view: wgpu::TextureView,
     /// RGBA output of the edge-detection pass (composited onto the main target).
-    pub outline_color_texture: wgpu::Texture,
-    pub outline_color_view: wgpu::TextureView,
+    pub outline_colour_texture: wgpu::Texture,
+    pub outline_colour_view: wgpu::TextureView,
     pub outline_depth_texture: wgpu::Texture,
     pub outline_depth_view: wgpu::TextureView,
-    /// Bind group for the edge-detection pass (reads mask, writes to color).
+    /// Bind group for the edge-detection pass (reads mask, writes to colour).
     pub outline_edge_bind_group: wgpu::BindGroup,
     /// Uniform buffer for the edge-detection pass parameters.
     pub outline_edge_uniform_buf: wgpu::Buffer,
@@ -1742,7 +1742,7 @@ pub(crate) struct ViewportHdrState {
 
 /// A render pipeline compiled for both the LDR swapchain format and the HDR
 /// intermediate format (`Rgba16Float`). Used for pipelines that draw into the
-/// primary scene color attachment, which may be either format depending on
+/// primary scene colour attachment, which may be either format depending on
 /// whether post-processing is active.
 pub(crate) struct DualPipeline {
     pub ldr: wgpu::RenderPipeline,
@@ -1837,7 +1837,7 @@ pub struct ViewportGpuResources {
     pub grid_bind_group: wgpu::BindGroup,
     /// Bind group layout for the grid uniform (stored so per-viewport grid bind groups can be created).
     pub(crate) grid_bind_group_layout: wgpu::BindGroupLayout,
-    /// Bind group layout for overlay uniforms (group 1: model + color uniform).
+    /// Bind group layout for overlay uniforms (group 1: model + colour uniform).
     pub overlay_bind_group_layout: wgpu::BindGroupLayout,
 
     // --- Constraint guide lines ---
@@ -1872,7 +1872,7 @@ pub struct ViewportGpuResources {
     pub(crate) fallback_ao_map_view: wgpu::TextureView,
     /// Shared linear-repeat sampler for material textures.
     pub(crate) material_sampler: wgpu::Sampler,
-    /// Shared linear-clamp sampler for colormap LUT lookups.
+    /// Shared linear-clamp sampler for colourmap LUT lookups.
     pub(crate) lut_sampler: wgpu::Sampler,
     /// Cache of material bind groups keyed by (albedo_id, normal_map_id, ao_map_id).
     /// u64::MAX sentinel = use fallback texture for that slot.
@@ -1938,8 +1938,8 @@ pub struct ViewportGpuResources {
     pub(crate) tensor_glyph_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
     // --- Outline offscreen resources (lazily created) ---
     /// Offscreen RGBA texture the outline stencil pass renders into.
-    pub(crate) outline_color_texture: Option<wgpu::Texture>,
-    pub(crate) outline_color_view: Option<wgpu::TextureView>,
+    pub(crate) outline_colour_texture: Option<wgpu::Texture>,
+    pub(crate) outline_colour_view: Option<wgpu::TextureView>,
     /// Depth+stencil texture for the offscreen outline pass.
     pub(crate) outline_depth_texture: Option<wgpu::Texture>,
     pub(crate) outline_depth_view: Option<wgpu::TextureView>,
@@ -2034,7 +2034,7 @@ pub struct ViewportGpuResources {
     pub(crate) ssao_blur_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- Post-processing (HDR, bloom, SSAO) ---
-    /// HDR intermediate color texture (Rgba16Float, viewport-sized).
+    /// HDR intermediate colour texture (Rgba16Float, viewport-sized).
     pub(crate) hdr_texture: Option<wgpu::Texture>,
     pub(crate) hdr_view: Option<wgpu::TextureView>,
     /// HDR depth+stencil texture (Depth24PlusStencil8, viewport-sized, single-sample).
@@ -2144,13 +2144,13 @@ pub struct ViewportGpuResources {
     /// HDR overlay pipeline (TriangleList, Rgba16Float, alpha blending) for cap fill in HDR path.
     pub(crate) hdr_overlay_pipeline: Option<wgpu::RenderPipeline>,
 
-    // --- Colormap / LUT resources ---
-    /// Uploaded colormap GPU textures. Index = ColormapId value.
-    pub(crate) colormap_textures: Vec<wgpu::Texture>,
-    /// Views into colormap_textures. Index = ColormapId value.
-    pub(crate) colormap_views: Vec<wgpu::TextureView>,
-    /// CPU-side copy of each colormap for egui scalar bar rendering. Index = ColormapId value.
-    pub(crate) colormaps_cpu: Vec<[[u8; 4]; 256]>,
+    // --- Colourmap / LUT resources ---
+    /// Uploaded colourmap GPU textures. Index = ColourmapId value.
+    pub(crate) colourmap_textures: Vec<wgpu::Texture>,
+    /// Views into colourmap_textures. Index = ColourmapId value.
+    pub(crate) colourmap_views: Vec<wgpu::TextureView>,
+    /// CPU-side copy of each colourmap for egui scalar bar rendering. Index = ColourmapId value.
+    pub(crate) colourmaps_cpu: Vec<[[u8; 4]; 256]>,
     /// Fallback 1×1 LUT texture (bound when has_attribute=0; content irrelevant to the shader).
     #[allow(dead_code)]
     pub(crate) fallback_lut_texture: wgpu::Texture,
@@ -2158,15 +2158,15 @@ pub struct ViewportGpuResources {
     pub(crate) fallback_lut_view: wgpu::TextureView,
     /// Fallback 4-byte zero storage buffer (bound when no scalar attribute is active).
     pub(crate) fallback_scalar_buf: wgpu::Buffer,
-    /// Fallback 16-byte zero storage buffer (bound to binding 8 when no face color attribute is active).
-    pub(crate) fallback_face_color_buf: wgpu::Buffer,
+    /// Fallback 16-byte zero storage buffer (bound to binding 8 when no face colour attribute is active).
+    pub(crate) fallback_face_colour_buf: wgpu::Buffer,
     /// Fallback 12-byte zero storage buffer (bound to binding 9 when no warp attribute is active).
     pub(crate) fallback_warp_buf: wgpu::Buffer,
-    /// IDs of built-in preset colormaps, in BuiltinColormap discriminant order.
-    /// `None` until `ensure_colormaps_initialized()` has been called.
-    pub(crate) builtin_colormap_ids: Option<[ColormapId; 10]>,
-    /// Whether built-in colormaps have been uploaded to the GPU.
-    pub(crate) colormaps_initialized: bool,
+    /// IDs of built-in preset colourmaps, in BuiltinColourmap discriminant order.
+    /// `None` until `ensure_colourmaps_initialized()` has been called.
+    pub(crate) builtin_colourmap_ids: Option<[ColourmapId; 10]>,
+    /// Whether built-in colourmaps have been uploaded to the GPU.
+    pub(crate) colourmaps_initialized: bool,
 
     // --- Gaussian splat pipelines (lazily created) ---
     /// Gaussian splat render pipeline. None until first splat set is submitted.
@@ -2286,7 +2286,7 @@ pub struct ViewportGpuResources {
     /// Weighted-blended reveal (transmittance) texture (R8Unorm, viewport-sized).
     pub(crate) oit_reveal_texture: Option<wgpu::Texture>,
     pub(crate) oit_reveal_view: Option<wgpu::TextureView>,
-    /// OIT mesh pipeline (non-instanced, mesh_oit.wgsl, two color targets).
+    /// OIT mesh pipeline (non-instanced, mesh_oit.wgsl, two colour targets).
     pub(crate) oit_pipeline: Option<wgpu::RenderPipeline>,
     /// OIT instanced mesh pipeline (mesh_instanced_oit.wgsl / mesh_instanced with OIT targets).
     pub(crate) oit_instanced_pipeline: Option<wgpu::RenderPipeline>,
@@ -2304,7 +2304,7 @@ pub struct ViewportGpuResources {
     // --- Phase 6: Projected tetrahedra transparent volume rendering (lazily created) ---
     /// Render pipeline for the projected tetrahedra pass. None until first item submitted.
     pub(crate) pt_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for group 1 of the PT pipeline (uniforms + tet buffer + colormap).
+    /// Bind group layout for group 1 of the PT pipeline (uniforms + tet buffer + colourmap).
     pub(crate) pt_bind_group_layout: Option<wgpu::BindGroupLayout>,
     /// Uploaded projected-tet meshes. Index = ProjectedTetId value.
     pub(crate) projected_tet_store: Vec<GpuProjectedTetMesh>,
@@ -2402,10 +2402,10 @@ pub struct ViewportGpuResources {
     pub(crate) pick_camera_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- Sub-object highlight (lazily created) ---
-    /// Translucent face fill pipeline — HDR path (Rgba16Float color target).
+    /// Translucent face fill pipeline — HDR path (Rgba16Float colour target).
     /// `None` until the first frame that has `sub_selection.is_some()`.
     pub(crate) sub_highlight_fill_pipeline: Option<wgpu::RenderPipeline>,
-    /// Depth-nudged billboard edge-line pipeline — HDR path (Rgba16Float color target).
+    /// Depth-nudged billboard edge-line pipeline — HDR path (Rgba16Float colour target).
     /// `None` until the first frame that has `sub_selection.is_some()`.
     pub(crate) sub_highlight_edge_pipeline: Option<wgpu::RenderPipeline>,
     /// Billboard sprite pipeline for vertex/point highlights — HDR path (Rgba16Float).
@@ -2433,7 +2433,7 @@ pub struct ViewportGpuResources {
     pub(crate) overlay_text_sampler: Option<wgpu::Sampler>,
 
     // --- Dynamic resolution render target (lazily created) ---
-    // Upscale pipeline: renders the scaled intermediate color texture to the surface.
+    // Upscale pipeline: renders the scaled intermediate colour texture to the surface.
     // No depth attachment; used by render_frame_internal which controls its own encoder.
     pub(crate) dyn_res_upscale_pipeline: Option<wgpu::RenderPipeline>,
     // Depth-stencil compatible variant for use inside eframe's paint render pass,

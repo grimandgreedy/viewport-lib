@@ -41,10 +41,10 @@ pub struct CylinderWidget {
     pub end: glam::Vec3,
     /// Cylinder radius in world units.
     pub radius: f32,
-    /// RGBA color for the wireframe outline.
-    pub color: [f32; 4],
-    /// RGBA color for the drag handles. Non-zero alpha overrides LUT coloring.
-    pub handle_color: [f32; 4],
+    /// RGBA colour for the wireframe outline.
+    pub colour: [f32; 4],
+    /// RGBA colour for the drag handles. Non-zero alpha overrides LUT colouring.
+    pub handle_colour: [f32; 4],
 
     hovered_handle: Option<CylinderHandle>,
     active_handle: Option<CylinderHandle>,
@@ -60,8 +60,8 @@ impl CylinderWidget {
             start,
             end,
             radius: radius.max(0.01),
-            color: [0.4, 0.9, 0.5, 1.0],
-            handle_color: [0.0; 4],
+            colour: [0.4, 0.9, 0.5, 1.0],
+            handle_colour: [0.0; 4],
             hovered_handle: None,
             active_handle: None,
             drag_plane_normal: glam::Vec3::Z,
@@ -196,7 +196,7 @@ impl CylinderWidget {
         PolylineItem {
             positions,
             strip_lengths,
-            default_color: self.color,
+            default_colour: self.colour,
             line_width: 1.5,
             id,
             ..PolylineItem::default()
@@ -234,8 +234,8 @@ impl CylinderWidget {
             scalar_range: Some((0.0, 1.0)),
             glyph_type: GlyphType::Sphere,
             id: id_base,
-            default_color: self.handle_color,
-            use_default_color: self.handle_color[3] > 0.0,
+            default_colour: self.handle_colour,
+            use_default_colour: self.handle_colour[3] > 0.0,
             ..GlyphItem::default()
         }
     }

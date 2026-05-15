@@ -5,9 +5,9 @@
 /// that the fragment shader sampling `uv = (nx * 0.5 + 0.5, -ny * 0.5 + 0.5)`
 /// produces the intuitively correct bright-at-top orientation.
 ///
-/// Blendable matcaps use the alpha channel to blend with the base geometry color:
-///   `output = matcap.rgb + matcap.a * base_color`
-/// Static matcaps ignore alpha and override the color entirely.
+/// Blendable matcaps use the alpha channel to blend with the base geometry colour:
+///   `output = matcap.rgb + matcap.a * base_colour`
+/// Static matcaps ignore alpha and override the colour entirely.
 
 const SIZE: usize = 256;
 
@@ -80,7 +80,7 @@ fn generate<F: Fn(f32, f32, f32) -> [u8; 4]>(f: F) -> Vec<u8> {
 /// Clay : warm orange-brown, RGBA blendable.
 ///
 /// A single warm directional light from upper-left plus a cool fill from the right.
-/// Alpha encodes how strongly the matcap tints the underlying geometry color.
+/// Alpha encodes how strongly the matcap tints the underlying geometry colour.
 pub fn clay() -> Vec<u8> {
     // Main light: warm, upper-left
     let (mlx, mly, mlz) = {
@@ -98,7 +98,7 @@ pub fn clay() -> Vec<u8> {
         srgb_to_linear(0.47),
         srgb_to_linear(0.26),
     ];
-    let fill_color = [
+    let fill_colour = [
         srgb_to_linear(0.45),
         srgb_to_linear(0.58),
         srgb_to_linear(0.72),
@@ -110,10 +110,10 @@ pub fn clay() -> Vec<u8> {
         let s = specular(nx, ny, nz, mlx, mly, mlz, 18.0) * 0.25;
         let ambient = 0.18;
 
-        let r = base[0] * (ambient + d * 0.75) + fill_color[0] * fd + s;
-        let g = base[1] * (ambient + d * 0.75) + fill_color[1] * fd + s;
-        let b = base[2] * (ambient + d * 0.75) + fill_color[2] * fd + s;
-        // Alpha: blend weight : tints base geometry color at ~60 %
+        let r = base[0] * (ambient + d * 0.75) + fill_colour[0] * fd + s;
+        let g = base[1] * (ambient + d * 0.75) + fill_colour[1] * fd + s;
+        let b = base[2] * (ambient + d * 0.75) + fill_colour[2] * fd + s;
+        // Alpha: blend weight : tints base geometry colour at ~60 %
         let a = 0.58_f32;
         [to_u8(r), to_u8(g), to_u8(b), to_u8(a)]
     })
@@ -144,10 +144,10 @@ pub fn wax() -> Vec<u8> {
     })
 }
 
-/// Candy : vivid colorful gradient, RGBA blendable.
+/// Candy : vivid colourful gradient, RGBA blendable.
 ///
 /// Cycles through hue as a function of the upper hemisphere angle, giving
-/// a rainbow-sphere appearance that blends with geometry color.
+/// a rainbow-sphere appearance that blends with geometry colour.
 pub fn candy() -> Vec<u8> {
     let (lx, ly, lz) = {
         let len = (0.0f32 * 0.0 + 1.0 * 1.0 + 0.6 * 0.6).sqrt();
@@ -188,7 +188,7 @@ pub fn candy() -> Vec<u8> {
 
 /// Flat : neutral gray Lambertian, RGBA blendable.
 ///
-/// Simple diffuse-only shading, no specular, no color contribution.  The alpha
+/// Simple diffuse-only shading, no specular, no colour contribution.  The alpha
 /// channel controls how strongly the lighting gradient blends onto geometry.
 pub fn flat() -> Vec<u8> {
     let (lx, ly, lz) = (0.0_f32, 1.0, 0.0);

@@ -112,9 +112,9 @@ impl FrameData {
         }
     }
 
-    /// Set the viewport background clear color.
-    pub fn with_background(mut self, color: [f32; 4]) -> Self {
-        self.viewport.background_color = Some(color);
+    /// Set the viewport background clear colour.
+    pub fn with_background(mut self, colour: [f32; 4]) -> Self {
+        self.viewport.background_colour = Some(colour);
         self
     }
 
@@ -303,7 +303,7 @@ macro_rules! emit_draw_calls {
                                 matches!(
                                     a.kind,
                                     crate::resources::AttributeKind::Face
-                                        | crate::resources::AttributeKind::FaceColor
+                                        | crate::resources::AttributeKind::FaceColour
                                         | crate::resources::AttributeKind::Halfedge
                                         | crate::resources::AttributeKind::Corner
                                 )
@@ -363,7 +363,7 @@ macro_rules! emit_draw_calls {
                             matches!(
                                 a.kind,
                                 crate::resources::AttributeKind::Face
-                                    | crate::resources::AttributeKind::FaceColor
+                                    | crate::resources::AttributeKind::FaceColour
                                     | crate::resources::AttributeKind::Halfedge
                                     | crate::resources::AttributeKind::Corner
                             )
@@ -666,7 +666,7 @@ macro_rules! emit_scivis_draw_calls {
             }
         }
 
-        // General tube pass (Phase 3.3 : uses same streamtube pipeline, per-vertex color).
+        // General tube pass (Phase 3.3 : uses same streamtube pipeline, per-vertex colour).
         if !$tube_gpu_data.is_empty() {
             if let Some(ref dual) = resources.streamtube_pipeline {
                 render_pass.set_pipeline(dual.for_format(_is_hdr));

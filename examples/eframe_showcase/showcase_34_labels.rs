@@ -15,8 +15,8 @@ struct GearboxPart {
     pos: [f32; 3],
     explode_y: f32,
     size: [f32; 3],
-    color: [f32; 3],
-    label_color: [f32; 4],
+    colour: [f32; 3],
+    label_colour: [f32; 4],
 }
 
 const PARTS: &[GearboxPart] = &[
@@ -26,8 +26,8 @@ const PARTS: &[GearboxPart] = &[
         pos: [0.0, 0.0, 0.0],
         explode_y: 4.5,
         size: [3.0, 0.4, 2.5],
-        color: [0.55, 0.58, 0.62],
-        label_color: [0.75, 0.78, 0.82, 1.0],
+        colour: [0.55, 0.58, 0.62],
+        label_colour: [0.75, 0.78, 0.82, 1.0],
     },
     GearboxPart {
         name: "Lower Casing",
@@ -35,8 +35,8 @@ const PARTS: &[GearboxPart] = &[
         pos: [0.0, 0.0, 0.0],
         explode_y: -4.5,
         size: [3.0, 0.4, 2.5],
-        color: [0.50, 0.53, 0.57],
-        label_color: [0.75, 0.78, 0.82, 1.0],
+        colour: [0.50, 0.53, 0.57],
+        label_colour: [0.75, 0.78, 0.82, 1.0],
     },
     GearboxPart {
         name: "Gasket",
@@ -44,8 +44,8 @@ const PARTS: &[GearboxPart] = &[
         pos: [0.0, 0.0, 0.0],
         explode_y: 3.0,
         size: [2.8, 0.06, 2.3],
-        color: [0.15, 0.15, 0.15],
-        label_color: [0.6, 0.6, 0.6, 1.0],
+        colour: [0.15, 0.15, 0.15],
+        label_colour: [0.6, 0.6, 0.6, 1.0],
     },
     GearboxPart {
         name: "Input Shaft",
@@ -53,8 +53,8 @@ const PARTS: &[GearboxPart] = &[
         pos: [-0.8, 0.0, 0.0],
         explode_y: 0.0,
         size: [0.25, 3.5, 0.25],
-        color: [0.7, 0.72, 0.75],
-        label_color: [1.0, 0.85, 0.4, 1.0],
+        colour: [0.7, 0.72, 0.75],
+        label_colour: [1.0, 0.85, 0.4, 1.0],
     },
     GearboxPart {
         name: "Output Shaft",
@@ -62,8 +62,8 @@ const PARTS: &[GearboxPart] = &[
         pos: [0.8, 0.0, 0.0],
         explode_y: 0.0,
         size: [0.25, 3.5, 0.25],
-        color: [0.65, 0.67, 0.70],
-        label_color: [1.0, 0.85, 0.4, 1.0],
+        colour: [0.65, 0.67, 0.70],
+        label_colour: [1.0, 0.85, 0.4, 1.0],
     },
     GearboxPart {
         name: "Pinion (Z=16)",
@@ -71,8 +71,8 @@ const PARTS: &[GearboxPart] = &[
         pos: [-0.8, 0.4, 0.0],
         explode_y: 1.8,
         size: [0.6, 0.3, 0.6],
-        color: [0.9, 0.75, 0.2],
-        label_color: [1.0, 0.9, 0.3, 1.0],
+        colour: [0.9, 0.75, 0.2],
+        label_colour: [1.0, 0.9, 0.3, 1.0],
     },
     GearboxPart {
         name: "Spur Gear (Z=56)",
@@ -80,8 +80,8 @@ const PARTS: &[GearboxPart] = &[
         pos: [0.8, 0.4, 0.0],
         explode_y: 1.8,
         size: [1.2, 0.3, 1.2],
-        color: [0.85, 0.70, 0.15],
-        label_color: [1.0, 0.9, 0.3, 1.0],
+        colour: [0.85, 0.70, 0.15],
+        label_colour: [1.0, 0.9, 0.3, 1.0],
     },
     GearboxPart {
         name: "Idler Gear (Z=24)",
@@ -89,8 +89,8 @@ const PARTS: &[GearboxPart] = &[
         pos: [0.0, -0.3, 0.0],
         explode_y: -1.8,
         size: [0.8, 0.25, 0.8],
-        color: [0.80, 0.65, 0.10],
-        label_color: [1.0, 0.9, 0.3, 1.0],
+        colour: [0.80, 0.65, 0.10],
+        label_colour: [1.0, 0.9, 0.3, 1.0],
     },
     GearboxPart {
         name: "Bearing A",
@@ -98,8 +98,8 @@ const PARTS: &[GearboxPart] = &[
         pos: [-0.8, 1.2, 0.0],
         explode_y: 2.5,
         size: [0.45, 0.18, 0.45],
-        color: [0.3, 0.65, 0.9],
-        label_color: [0.4, 0.75, 1.0, 1.0],
+        colour: [0.3, 0.65, 0.9],
+        label_colour: [0.4, 0.75, 1.0, 1.0],
     },
     GearboxPart {
         name: "Bearing B",
@@ -107,8 +107,8 @@ const PARTS: &[GearboxPart] = &[
         pos: [0.8, 1.2, 0.0],
         explode_y: 2.5,
         size: [0.45, 0.18, 0.45],
-        color: [0.3, 0.65, 0.9],
-        label_color: [0.4, 0.75, 1.0, 1.0],
+        colour: [0.3, 0.65, 0.9],
+        label_colour: [0.4, 0.75, 1.0, 1.0],
     },
     GearboxPart {
         name: "Mounting Flange",
@@ -116,8 +116,8 @@ const PARTS: &[GearboxPart] = &[
         pos: [0.0, -1.6, 0.0],
         explode_y: -6.0,
         size: [3.4, 0.2, 2.8],
-        color: [0.45, 0.48, 0.52],
-        label_color: [0.7, 0.7, 0.75, 1.0],
+        colour: [0.45, 0.48, 0.52],
+        label_colour: [0.7, 0.7, 0.75, 1.0],
     },
 ];
 
@@ -171,21 +171,21 @@ impl App {
                 part.name,
                 Some(id),
                 glam::Mat4::from_translation(glam::Vec3::from(exploded_pos)),
-                Material::from_color(part.color),
+                Material::from_colour(part.colour),
             );
 
             self.lbl_state.labels.push(LabelItem {
                 world_anchor: Some(exploded_pos),
                 text: format!("{}: {}", part.name, part.detail),
-                color: part.label_color,
+                colour: part.label_colour,
                 font_size: 12.0,
                 leader_line: true,
                 background: true,
-                background_color: [0.05, 0.05, 0.1, 0.75],
-                leader_color: [
-                    part.label_color[0],
-                    part.label_color[1],
-                    part.label_color[2],
+                background_colour: [0.05, 0.05, 0.1, 0.75],
+                leader_colour: [
+                    part.label_colour[0],
+                    part.label_colour[1],
+                    part.label_colour[2],
                     0.35,
                 ],
                 z_order: 0,
@@ -208,10 +208,10 @@ impl App {
             out.push(LabelItem {
                 screen_anchor: Some([cx, 36.0]),
                 text: "Gearbox Assembly: Exploded View".into(),
-                color: [1.0, 1.0, 1.0, 1.0],
+                colour: [1.0, 1.0, 1.0, 1.0],
                 font_size: 48.0,
                 background: true,
-                background_color: [0.1, 0.1, 0.2, 0.0],
+                background_colour: [0.1, 0.1, 0.2, 0.0],
                 border_radius: 4.0,
                 anchor_align: LabelAnchor::Center,
                 z_order: 200,
@@ -222,10 +222,10 @@ impl App {
             out.push(LabelItem {
                 screen_anchor: Some([cx, vp_h - 24.0]),
                 text: "Grey=Casing  Gold=Gears  Blue=Bearings  Yellow=Shafts".into(),
-                color: [0.8, 0.8, 0.8, 1.0],
+                colour: [0.8, 0.8, 0.8, 1.0],
                 font_size: 11.0,
                 background: true,
-                background_color: [0.0, 0.0, 0.0, 0.65],
+                background_colour: [0.0, 0.0, 0.0, 0.65],
                 border_radius: 3.0,
                 anchor_align: LabelAnchor::Center,
                 z_order: 200,
@@ -243,14 +243,14 @@ impl App {
         // =================================================================
 
         let col = 16.0; // left margin
-        let heading_color = [0.6, 0.7, 0.8, 1.0];
+        let heading_colour = [0.6, 0.7, 0.8, 1.0];
 
         // Helper: section heading.
         let heading = |y: f32, text: &str| -> LabelItem {
             LabelItem {
                 screen_anchor: Some([col, y]),
                 text: text.into(),
-                color: heading_color,
+                colour: heading_colour,
                 font_size: 11.0,
                 z_order: 100,
                 ..Default::default()
@@ -272,10 +272,10 @@ impl App {
             out.push(LabelItem {
                 screen_anchor: Some([col + 90.0, y + i as f32 * 20.0]),
                 text: format!("{} aligned", name),
-                color: [0.9, 0.95, 1.0, 1.0],
+                colour: [0.9, 0.95, 1.0, 1.0],
                 font_size: 12.0,
                 background: true,
-                background_color: demo_bg,
+                background_colour: demo_bg,
                 anchor_align: *align,
                 z_order: 100,
                 ..Default::default()
@@ -290,10 +290,10 @@ impl App {
             out.push(LabelItem {
                 screen_anchor: Some([col + i as f32 * 65.0, y]),
                 text: format!("{:.0}%", opacity * 100.0),
-                color: [1.0, 0.8, 0.3, 1.0],
+                colour: [1.0, 0.8, 0.3, 1.0],
                 font_size: 13.0,
                 background: true,
-                background_color: demo_bg,
+                background_colour: demo_bg,
                 opacity: *opacity,
                 z_order: 100,
                 ..Default::default()
@@ -316,10 +316,10 @@ impl App {
             out.push(LabelItem {
                 screen_anchor: Some([col + i as f32 * 65.0, y]),
                 text: (*desc).into(),
-                color: [0.6, 1.0, 0.7, 1.0],
+                colour: [0.6, 1.0, 0.7, 1.0],
                 font_size: 11.0,
                 background: true,
-                background_color: demo_bg,
+                background_colour: demo_bg,
                 offset: *off,
                 z_order: 100,
                 ..Default::default()
@@ -339,10 +339,10 @@ impl App {
             out.push(LabelItem {
                 screen_anchor: Some([col, y + i as f32 * 55.0]),
                 text: label_text,
-                color: [1.0, 0.7, 0.9, 1.0],
+                colour: [1.0, 0.7, 0.9, 1.0],
                 font_size: 11.0,
                 background: true,
-                background_color: demo_bg,
+                background_colour: demo_bg,
                 max_width: *max_w,
                 z_order: 100,
                 ..Default::default()
@@ -357,10 +357,10 @@ impl App {
             out.push(LabelItem {
                 screen_anchor: Some([col + i as f32 * 65.0, y]),
                 text: format!("{:.0}px", radius),
-                color: [0.8, 0.85, 1.0, 1.0],
+                colour: [0.8, 0.85, 1.0, 1.0],
                 font_size: 12.0,
                 background: true,
-                background_color: [0.15, 0.15, 0.3, 0.8],
+                background_colour: [0.15, 0.15, 0.3, 0.8],
                 border_radius: *radius,
                 z_order: 100,
                 ..Default::default()
@@ -375,10 +375,10 @@ impl App {
             out.push(LabelItem {
                 screen_anchor: Some([col + i as f32 * 72.0, y]),
                 text: format!("{:.0}px", pad),
-                color: [0.9, 1.0, 0.8, 1.0],
+                colour: [0.9, 1.0, 0.8, 1.0],
                 font_size: 12.0,
                 background: true,
-                background_color: [0.15, 0.3, 0.15, 0.8],
+                background_colour: [0.15, 0.3, 0.15, 0.8],
                 padding: *pad,
                 z_order: 100,
                 ..Default::default()
@@ -393,10 +393,10 @@ impl App {
             out.push(LabelItem {
                 screen_anchor: Some([col + i as f32 * 65.0, y]),
                 text: format!("{:.0}px", size),
-                color: [1.0, 1.0, 1.0, 1.0],
+                colour: [1.0, 1.0, 1.0, 1.0],
                 font_size: *size,
                 background: true,
-                background_color: demo_bg,
+                background_colour: demo_bg,
                 z_order: 100,
                 ..Default::default()
             });
@@ -409,10 +409,10 @@ impl App {
         out.push(LabelItem {
             screen_anchor: Some([col, y]),
             text: "z=98 (back)".into(),
-            color: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0],
             font_size: 12.0,
             background: true,
-            background_color: [0.6, 0.15, 0.15, 0.9],
+            background_colour: [0.6, 0.15, 0.15, 0.9],
             border_radius: 3.0,
             z_order: 98,
             ..Default::default()
@@ -420,10 +420,10 @@ impl App {
         out.push(LabelItem {
             screen_anchor: Some([col + 45.0, y + 6.0]),
             text: "z=99 (mid)".into(),
-            color: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0],
             font_size: 12.0,
             background: true,
-            background_color: [0.15, 0.5, 0.15, 0.9],
+            background_colour: [0.15, 0.5, 0.15, 0.9],
             border_radius: 3.0,
             z_order: 99,
             ..Default::default()
@@ -431,10 +431,10 @@ impl App {
         out.push(LabelItem {
             screen_anchor: Some([col + 90.0, y + 12.0]),
             text: "z=100 (front)".into(),
-            color: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0],
             font_size: 12.0,
             background: true,
-            background_color: [0.15, 0.15, 0.6, 0.9],
+            background_colour: [0.15, 0.15, 0.6, 0.9],
             border_radius: 3.0,
             z_order: 100,
             ..Default::default()

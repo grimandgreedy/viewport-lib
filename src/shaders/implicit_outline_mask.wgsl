@@ -35,7 +35,7 @@ struct ImplicitPrimitive {
     _pad1:   f32,
     params0: vec4<f32>,
     params1: vec4<f32>,
-    color:   vec4<f32>,
+    colour:   vec4<f32>,
 };
 
 struct ImplicitUniform {

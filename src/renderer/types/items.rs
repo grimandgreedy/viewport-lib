@@ -1,4 +1,4 @@
-use crate::resources::ColormapId;
+use crate::resources::ColourmapId;
 use crate::scene::material::Material;
 
 // ---------------------------------------------------------------------------
@@ -40,16 +40,16 @@ pub struct SceneRenderItem {
     pub visible: bool,
     /// Whether to render per-vertex normal visualization lines for this object.
     pub show_normals: bool,
-    /// Per-object material (color, shading coefficients, opacity, texture).
+    /// Per-object material (colour, shading coefficients, opacity, texture).
     pub material: Material,
     /// Named scalar attribute to colour by. `None` = use material base colour.
     pub active_attribute: Option<crate::resources::AttributeRef>,
     /// Explicit scalar range `(min, max)`. `None` = use auto-range computed at upload time.
     pub scalar_range: Option<(f32, f32)>,
-    /// Colormap to use for scalar colouring. Ignored when `active_attribute` is `None`.
-    pub colormap_id: Option<crate::resources::ColormapId>,
-    /// RGBA color for NaN scalar values. `None` = discard (fully transparent).
-    pub nan_color: Option<[f32; 4]>,
+    /// Colourmap to use for scalar colouring. Ignored when `active_attribute` is `None`.
+    pub colourmap_id: Option<crate::resources::ColourmapId>,
+    /// RGBA colour for NaN scalar values. `None` = discard (fully transparent).
+    pub nan_colour: Option<[f32; 4]>,
     /// GPU pick identifier for this surface. [`PickId::NONE`] = not pickable.
     ///
     /// The renderer only includes surfaces with a nonzero pick ID in the GPU
@@ -82,8 +82,8 @@ impl Default for SceneRenderItem {
             material: Material::default(),
             active_attribute: None,
             scalar_range: None,
-            colormap_id: None,
-            nan_color: None,
+            colourmap_id: None,
+            nan_colour: None,
             pick_id: PickId::NONE,
             render_as_wireframe: false,
             warp_attribute: None,
@@ -130,12 +130,12 @@ pub struct VolumeMeshItem {
     pub visible: bool,
     /// Per-object material.
     pub material: crate::scene::material::Material,
-    /// Named scalar or color attribute to colour by.
+    /// Named scalar or colour attribute to colour by.
     pub active_attribute: Option<crate::resources::AttributeRef>,
     /// Explicit scalar range `(min, max)`. `None` = auto-range from upload.
     pub scalar_range: Option<(f32, f32)>,
-    /// Colormap for scalar colouring.
-    pub colormap_id: Option<ColormapId>,
+    /// Colourmap for scalar colouring.
+    pub colourmap_id: Option<ColourmapId>,
     /// GPU pick identifier. [`PickId::NONE`] = not pickable.
     pub pick_id: PickId,
     /// Render as wireframe regardless of global setting. Default: false.
@@ -155,7 +155,7 @@ impl VolumeMeshItem {
             material: crate::scene::material::Material::default(),
             active_attribute: None,
             scalar_range: None,
-            colormap_id: None,
+            colourmap_id: None,
             pick_id: PickId::NONE,
             render_as_wireframe: false,
         }
@@ -174,7 +174,7 @@ impl VolumeMeshItem {
             material: self.material.clone(),
             active_attribute: self.active_attribute.clone(),
             scalar_range: self.scalar_range,
-            colormap_id: self.colormap_id,
+            colourmap_id: self.colourmap_id,
             pick_id: self.pick_id,
             render_as_wireframe: self.render_as_wireframe,
             ..SceneRenderItem::default()
@@ -222,18 +222,18 @@ pub enum PointRenderMode {
 pub struct PointCloudItem {
     /// World-space positions (one vec3 per point).
     pub positions: Vec<[f32; 3]>,
-    /// Optional per-point RGBA colors in linear `[0,1]`. If empty, uses `default_color`.
-    pub colors: Vec<[f32; 4]>,
-    /// Optional per-point scalar values for LUT coloring. If non-empty, overrides `colors`.
+    /// Optional per-point RGBA colours in linear `[0,1]`. If empty, uses `default_colour`.
+    pub colours: Vec<[f32; 4]>,
+    /// Optional per-point scalar values for LUT colouring. If non-empty, overrides `colours`.
     pub scalars: Vec<f32>,
     /// Scalar range for LUT mapping. None = auto from min/max of `scalars`.
     pub scalar_range: Option<(f32, f32)>,
-    /// Colormap for scalar coloring. None = use default builtin (viridis).
-    pub colormap_id: Option<ColormapId>,
+    /// Colourmap for scalar colouring. None = use default builtin (viridis).
+    pub colourmap_id: Option<ColourmapId>,
     /// Screen-space point size in pixels. Default: 4.0.
     pub point_size: f32,
-    /// Fallback color when neither `colors` nor `scalars` are provided.
-    pub default_color: [f32; 4],
+    /// Fallback colour when neither `colours` nor `scalars` are provided.
+    pub default_colour: [f32; 4],
     /// World-space model matrix. Default: identity.
     pub model: [[f32; 4]; 4],
     /// Render mode. Default: ScreenSpaceCircle.
@@ -267,12 +267,12 @@ impl Default for PointCloudItem {
     fn default() -> Self {
         Self {
             positions: Vec::new(),
-            colors: Vec::new(),
+            colours: Vec::new(),
             scalars: Vec::new(),
             scalar_range: None,
-            colormap_id: None,
+            colourmap_id: None,
             point_size: 4.0,
-            default_color: [1.0, 1.0, 1.0, 1.0],
+            default_colour: [1.0, 1.0, 1.0, 1.0],
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             render_mode: PointRenderMode::ScreenSpaceCircle,
             id: 0,
@@ -313,18 +313,18 @@ pub struct GlyphItem {
     pub scale_by_magnitude: bool,
     /// Clamp magnitude range for scaling. None = no clamping.
     pub magnitude_clamp: Option<(f32, f32)>,
-    /// Optional per-instance scalar values for LUT coloring. Empty = color by magnitude.
+    /// Optional per-instance scalar values for LUT colouring. Empty = colour by magnitude.
     pub scalars: Vec<f32>,
     /// Scalar range for LUT mapping. None = auto from data.
     pub scalar_range: Option<(f32, f32)>,
-    /// Colormap for scalar coloring. None = use default builtin (viridis).
-    pub colormap_id: Option<ColormapId>,
-    /// Fallback RGBA color used when `use_default_color` is true. Default: transparent (unused).
-    pub default_color: [f32; 4],
-    /// When true, glyphs are colored by `default_color` (with per-instance scalar as brightness)
+    /// Colourmap for scalar colouring. None = use default builtin (viridis).
+    pub colourmap_id: Option<ColourmapId>,
+    /// Fallback RGBA colour used when `use_default_colour` is true. Default: transparent (unused).
+    pub default_colour: [f32; 4],
+    /// When true, glyphs are coloured by `default_colour` (with per-instance scalar as brightness)
     /// instead of the LUT. Default: false.
-    pub use_default_color: bool,
-    /// Skip lighting and return raw LUT color directly. Default: false.
+    pub use_default_colour: bool,
+    /// Skip lighting and return raw LUT colour directly. Default: false.
     pub unlit: bool,
     /// Glyph shape. Default: Arrow.
     pub glyph_type: GlyphType,
@@ -348,9 +348,9 @@ impl Default for GlyphItem {
             magnitude_clamp: None,
             scalars: Vec::new(),
             scalar_range: None,
-            colormap_id: None,
-            default_color: [0.0; 4],
-            use_default_color: false,
+            colourmap_id: None,
+            default_colour: [0.0; 4],
+            use_default_colour: false,
             unlit: false,
             glyph_type: GlyphType::Arrow,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
@@ -363,7 +363,7 @@ impl Default for GlyphItem {
 /// A set of instanced tensor glyphs for stress/strain visualization.
 ///
 /// Each instance is an ellipsoid at `positions[i]`, scaled anisotropically by the
-/// absolute eigenvalues along the eigenvector axes. Color comes from `color_attribute`
+/// absolute eigenvalues along the eigenvector axes. Colour comes from `colour_attribute`
 /// if provided, otherwise from the sign of the first (dominant) eigenvalue.
 #[derive(Clone)]
 #[non_exhaustive]
@@ -378,13 +378,13 @@ pub struct TensorGlyphItem {
     pub eigenvectors: Vec<[[f32; 3]; 3]>,
     /// Global scale factor applied to all instances. Default: 1.0.
     pub scale: f32,
-    /// Optional per-instance scalar values for LUT coloring.
-    /// When `None`, colors by sign of `eigenvalues[i][0]`: positive -> upper LUT, negative -> lower LUT.
-    pub color_attribute: Option<Vec<f32>>,
+    /// Optional per-instance scalar values for LUT colouring.
+    /// When `None`, colours by sign of `eigenvalues[i][0]`: positive -> upper LUT, negative -> lower LUT.
+    pub colour_attribute: Option<Vec<f32>>,
     /// Scalar range for LUT mapping. `None` = auto from data.
     pub scalar_range: Option<(f32, f32)>,
-    /// Colormap for scalar coloring. `None` = viridis. For sign coloring, a diverging map works best.
-    pub colormap_id: Option<ColormapId>,
+    /// Colourmap for scalar colouring. `None` = viridis. For sign colouring, a diverging map works best.
+    pub colourmap_id: Option<ColourmapId>,
     /// World-space model matrix. Default: identity.
     pub model: [[f32; 4]; 4],
     /// Unique ID for picking. 0 = not pickable.
@@ -400,9 +400,9 @@ impl Default for TensorGlyphItem {
             eigenvalues: Vec::new(),
             eigenvectors: Vec::new(),
             scale: 1.0,
-            color_attribute: None,
+            colour_attribute: None,
             scalar_range: None,
-            colormap_id: None,
+            colourmap_id: None,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             id: 0,
             selected: false,
@@ -438,10 +438,10 @@ pub struct VolumeItem {
     /// Must match the data passed to `upload_volume` for `volume_id`.
     /// `None` disables voxel-level picking regardless of `pick_id`.
     pub volume_data: Option<std::sync::Arc<crate::geometry::marching_cubes::VolumeData>>,
-    /// Color transfer function LUT. `None` = use default builtin (viridis).
-    pub color_lut: Option<ColormapId>,
+    /// Colour transfer function LUT. `None` = use default builtin (viridis).
+    pub colour_lut: Option<ColourmapId>,
     /// Opacity transfer function LUT. `None` = linear ramp (0 at min, 1 at max).
-    pub opacity_lut: Option<ColormapId>,
+    pub opacity_lut: Option<ColourmapId>,
     /// Scalar range for normalization [min, max].
     pub scalar_range: (f32, f32),
     /// World-space bounding box minimum corner.
@@ -462,10 +462,10 @@ pub struct VolumeItem {
     /// Upper scalar threshold. Samples above this value are discarded.
     /// Default: same as scalar_range.1 (no clipping).
     pub threshold_max: f32,
-    /// Color and opacity to use for NaN scalar samples. `None` = skip NaN samples entirely
+    /// Colour and opacity to use for NaN scalar samples. `None` = skip NaN samples entirely
     /// (same as current behaviour: discard). `Some([r, g, b, a])` = render NaN voxels with
-    /// this fixed RGBA color instead of sampling the transfer function.
-    pub nan_color: Option<[f32; 4]>,
+    /// this fixed RGBA colour instead of sampling the transfer function.
+    pub nan_colour: Option<[f32; 4]>,
     /// When true, the renderer draws a wireframe outline around the volume AABB.
     /// Default: false.
     pub selected: bool,
@@ -477,7 +477,7 @@ impl Default for VolumeItem {
             volume_id: crate::resources::VolumeId(0),
             pick_id: 0,
             volume_data: None,
-            color_lut: None,
+            colour_lut: None,
             opacity_lut: None,
             scalar_range: (0.0, 1.0),
             bbox_min: [0.0, 0.0, 0.0],
@@ -488,7 +488,7 @@ impl Default for VolumeItem {
             opacity_scale: 1.0,
             threshold_min: 0.0,
             threshold_max: 1.0,
-            nan_color: None,
+            nan_colour: None,
             selected: false,
         }
     }
@@ -501,14 +501,14 @@ impl Default for VolumeItem {
 ///
 /// # Curve network quantities
 ///
-/// In addition to the existing per-node scalar path (`scalars`/`colormap_id`), this
+/// In addition to the existing per-node scalar path (`scalars`/`colourmap_id`), this
 /// item supports several curve-network quantities:
 ///
 /// - **Per-edge scalars** (`edge_scalars`): one value per segment; rendered as a flat
-///   constant color per edge (both endpoints share the same LUT value).
-/// - **Per-node colors** (`node_colors`): direct RGBA per node; takes priority over
-///   scalar-driven coloring.
-/// - **Per-edge colors** (`edge_colors`): direct RGBA per segment; takes priority over
+///   constant colour per edge (both endpoints share the same LUT value).
+/// - **Per-node colours** (`node_colours`): direct RGBA per node; takes priority over
+///   scalar-driven colouring.
+/// - **Per-edge colours** (`edge_colours`): direct RGBA per segment; takes priority over
 ///   edge scalars.
 /// - **Per-node radius** (`node_radii`): per-node line width in pixels; overrides the
 ///   global `line_width`.
@@ -517,37 +517,37 @@ impl Default for VolumeItem {
 /// - **Edge vectors** (`edge_vectors`): world-space 3-D arrows at each segment midpoint,
 ///   also rendered as `GlyphItem` arrows.
 ///
-/// Color priority per segment: `node_colors`/`edge_colors` (direct) > `edge_scalars` >
-/// `scalars` (per-node) > `default_color`.
+/// Colour priority per segment: `node_colours`/`edge_colours` (direct) > `edge_scalars` >
+/// `scalars` (per-node) > `default_colour`.
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct PolylineItem {
     /// World-space positions for all streamlines, concatenated.
     pub positions: Vec<[f32; 3]>,
-    /// Per-node scalar values (same length as `positions`). Empty = no scalar coloring.
+    /// Per-node scalar values (same length as `positions`). Empty = no scalar colouring.
     pub scalars: Vec<f32>,
     /// Number of vertices per individual streamline strip.
     pub strip_lengths: Vec<u32>,
     /// Scalar range for LUT mapping. None = auto from min/max of `scalars` or `edge_scalars`.
     pub scalar_range: Option<(f32, f32)>,
-    /// Colormap for scalar coloring. None = viridis.
-    pub colormap_id: Option<ColormapId>,
-    /// Fallback color when no scalar or direct-color data is provided.
-    pub default_color: [f32; 4],
+    /// Colourmap for scalar colouring. None = viridis.
+    pub colourmap_id: Option<ColourmapId>,
+    /// Fallback colour when no scalar or direct-colour data is provided.
+    pub default_colour: [f32; 4],
     /// Global line width in pixels. Used when `node_radii` is empty.
     pub line_width: f32,
     /// Unique ID for identification. 0 = not pickable.
     pub id: u64,
-    /// Per-node direct RGBA colors. Length must match `positions`. Empty = not used.
-    /// Takes priority over scalar-driven coloring when non-empty.
-    pub node_colors: Vec<[f32; 4]>,
+    /// Per-node direct RGBA colours. Length must match `positions`. Empty = not used.
+    /// Takes priority over scalar-driven colouring when non-empty.
+    pub node_colours: Vec<[f32; 4]>,
     /// Per-edge scalar values. Length = total segment count across all strips (sum of
     /// `strip_lengths[i] - 1`). Used when `scalars` is empty; both endpoints of each
-    /// segment share the same LUT value (flat constant color per edge).
+    /// segment share the same LUT value (flat constant colour per edge).
     pub edge_scalars: Vec<f32>,
-    /// Per-edge direct RGBA colors. Length = total segment count. Takes priority over
+    /// Per-edge direct RGBA colours. Length = total segment count. Takes priority over
     /// `edge_scalars` when non-empty.
-    pub edge_colors: Vec<[f32; 4]>,
+    pub edge_colours: Vec<[f32; 4]>,
     /// Per-node line width in pixels. Length must match `positions`. When non-empty,
     /// overrides the global `line_width`; adjacent endpoints are linearly interpolated
     /// along each segment.
@@ -573,13 +573,13 @@ impl Default for PolylineItem {
             scalars: Vec::new(),
             strip_lengths: Vec::new(),
             scalar_range: None,
-            colormap_id: None,
-            default_color: [0.9, 0.92, 0.96, 1.0],
+            colourmap_id: None,
+            default_colour: [0.9, 0.92, 0.96, 1.0],
             line_width: 2.0,
             id: 0,
-            node_colors: Vec::new(),
+            node_colours: Vec::new(),
             edge_scalars: Vec::new(),
-            edge_colors: Vec::new(),
+            edge_colours: Vec::new(),
             node_radii: Vec::new(),
             node_vectors: Vec::new(),
             edge_vectors: Vec::new(),
@@ -592,8 +592,8 @@ impl Default for PolylineItem {
 /// Build a `PolylineItem` that draws the 12 edges of an axis-aligned bounding box.
 ///
 /// Produces 6 strips: bottom face loop (5 pts), top face loop (5 pts), and
-/// 4 vertical edges (2 pts each). Pass `color` as RGBA in linear space.
-pub fn aabb_wireframe_polyline(aabb: &crate::scene::aabb::Aabb, color: [f32; 4]) -> PolylineItem {
+/// 4 vertical edges (2 pts each). Pass `colour` as RGBA in linear space.
+pub fn aabb_wireframe_polyline(aabb: &crate::scene::aabb::Aabb, colour: [f32; 4]) -> PolylineItem {
     let mn = aabb.min;
     let mx = aabb.max;
     PolylineItem {
@@ -621,7 +621,7 @@ pub fn aabb_wireframe_polyline(aabb: &crate::scene::aabb::Aabb, color: [f32; 4])
             [mn.x, mx.y, mx.z],
         ],
         strip_lengths: vec![5, 5, 2, 2, 2, 2],
-        default_color: color,
+        default_colour: colour,
         ..Default::default()
     }
 }
@@ -648,7 +648,7 @@ pub struct StreamtubeItem {
     /// Tube radius in world-space units.  Default: `0.05`.
     pub radius: f32,
     /// RGBA colour for all tube segments in this item.  Default: opaque white.
-    pub color: [f32; 4],
+    pub colour: [f32; 4],
     /// Unique ID (reserved for future picking support).  Default: `0`.
     pub id: u64,
     /// Whether this streamtube set is selected at object level. Default: false.
@@ -661,7 +661,7 @@ impl Default for StreamtubeItem {
             positions: Vec::new(),
             strip_lengths: Vec::new(),
             radius: 0.05,
-            color: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0],
             id: 0,
             selected: false,
         }
@@ -673,10 +673,10 @@ impl Default for StreamtubeItem {
 // ---------------------------------------------------------------------------
 
 /// A general tube item: polyline strips swept into a tube mesh with per-point radius
-/// and scalar colormap support.
+/// and scalar colourmap support.
 ///
 /// Similar to `StreamtubeItem` but with configurable cross-section resolution,
-/// optional per-point radius from a separate attribute, and per-vertex scalar coloring.
+/// optional per-point radius from a separate attribute, and per-vertex scalar colouring.
 /// The CPU sweep generates a full connected mesh submitted to the streamtube pipeline.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
@@ -692,14 +692,14 @@ pub struct TubeItem {
     pub radius_attribute: Option<Vec<f32>>,
     /// Number of sides in the tube cross-section. Default: 8.
     pub sides: u32,
-    /// Optional per-point scalar values for LUT coloring. If empty, uses `color`.
+    /// Optional per-point scalar values for LUT colouring. If empty, uses `colour`.
     pub scalars: Vec<f32>,
     /// Scalar range for LUT mapping. `None` = auto from data min/max.
     pub scalar_range: Option<(f32, f32)>,
-    /// Colormap for scalar coloring. `None` = default builtin (viridis).
-    pub colormap_id: Option<crate::resources::ColormapId>,
-    /// Flat RGBA color used when `scalars` is empty.  Default: opaque white.
-    pub color: [f32; 4],
+    /// Colourmap for scalar colouring. `None` = default builtin (viridis).
+    pub colourmap_id: Option<crate::resources::ColourmapId>,
+    /// Flat RGBA colour used when `scalars` is empty.  Default: opaque white.
+    pub colour: [f32; 4],
     /// Unique ID (reserved for picking). Default: 0.
     pub id: u64,
     /// Whether this tube set is selected at object level. Default: false.
@@ -716,8 +716,8 @@ impl Default for TubeItem {
             sides: 8,
             scalars: Vec::new(),
             scalar_range: None,
-            colormap_id: None,
-            color: [1.0, 1.0, 1.0, 1.0],
+            colourmap_id: None,
+            colour: [1.0, 1.0, 1.0, 1.0],
             id: 0,
             selected: false,
         }
@@ -748,14 +748,14 @@ pub struct RibbonItem {
     /// When set, the ribbon is aligned with the projection of this vector onto
     /// the plane perpendicular to the local tangent.
     pub twist_attribute: Option<Vec<[f32; 3]>>,
-    /// Optional per-point scalar values for LUT coloring. Empty = use `color`.
+    /// Optional per-point scalar values for LUT colouring. Empty = use `colour`.
     pub scalars: Vec<f32>,
     /// Scalar range for LUT mapping. `None` = auto from data min/max.
     pub scalar_range: Option<(f32, f32)>,
-    /// Colormap for scalar coloring. `None` = default builtin (viridis).
-    pub colormap_id: Option<crate::resources::ColormapId>,
-    /// Flat RGBA color used when `scalars` is empty. Default: opaque white.
-    pub color: [f32; 4],
+    /// Colourmap for scalar colouring. `None` = default builtin (viridis).
+    pub colourmap_id: Option<crate::resources::ColourmapId>,
+    /// Flat RGBA colour used when `scalars` is empty. Default: opaque white.
+    pub colour: [f32; 4],
     /// Unique ID (reserved for picking). Default: 0.
     pub id: u64,
     /// Whether this ribbon set is selected at object level. Default: false.
@@ -772,8 +772,8 @@ impl Default for RibbonItem {
             twist_attribute: None,
             scalars: Vec::new(),
             scalar_range: None,
-            colormap_id: None,
-            color: [1.0, 1.0, 1.0, 1.0],
+            colourmap_id: None,
+            colour: [1.0, 1.0, 1.0, 1.0],
             id: 0,
             selected: false,
         }
@@ -797,7 +797,7 @@ pub enum SliceAxis {
 }
 
 /// A 2D image slice item: renders one axis-aligned cross-section of an uploaded volume
-/// as a flat colored quad.
+/// as a flat coloured quad.
 ///
 /// Faster and simpler than full volume ray-marching. Use it to inspect individual
 /// slices of a structured grid without the depth ambiguity of ray-marching.
@@ -814,10 +814,10 @@ pub struct ImageSliceItem {
     pub bbox_min: [f32; 3],
     /// World-space bounding box maximum corner of the volume.
     pub bbox_max: [f32; 3],
-    /// Scalar range for colormap mapping `[min, max]`. Default: `(0.0, 1.0)`.
+    /// Scalar range for colourmap mapping `[min, max]`. Default: `(0.0, 1.0)`.
     pub scalar_range: (f32, f32),
-    /// Color LUT. `None` = default builtin (viridis).
-    pub color_lut: Option<crate::resources::ColormapId>,
+    /// Colour LUT. `None` = default builtin (viridis).
+    pub colour_lut: Option<crate::resources::ColourmapId>,
     /// Overall opacity of the slice quad. Default: `1.0`.
     pub opacity: f32,
     /// Pick ID for unified selection API. `0` = not selectable.
@@ -835,7 +835,7 @@ impl Default for ImageSliceItem {
             bbox_min: [0.0, 0.0, 0.0],
             bbox_max: [1.0, 1.0, 1.0],
             scalar_range: (0.0, 1.0),
-            color_lut: None,
+            colour_lut: None,
             opacity: 1.0,
             id: 0,
             selected: false,
@@ -850,7 +850,7 @@ impl Default for ImageSliceItem {
 /// A volume slice sampled on an arbitrary surface mesh.
 ///
 /// Unlike [`ImageSliceItem`] which is restricted to axis-aligned flat quads,
-/// this item renders any uploaded mesh and colors each fragment by the volume
+/// this item renders any uploaded mesh and colours each fragment by the volume
 /// scalar at that world-space position. The slice surface can be a flat plane,
 /// a disk, a saddle, a paraboloid -- any shape that can be expressed as a mesh.
 ///
@@ -871,10 +871,10 @@ pub struct VolumeSurfaceSliceItem {
     pub bbox_min: [f32; 3],
     /// World-space bounding box maximum corner of the volume.
     pub bbox_max: [f32; 3],
-    /// Scalar range for colormap mapping `[min, max]`. Default: `(0.0, 1.0)`.
+    /// Scalar range for colourmap mapping `[min, max]`. Default: `(0.0, 1.0)`.
     pub scalar_range: (f32, f32),
-    /// Color LUT. `None` = default builtin (viridis).
-    pub color_lut: Option<crate::resources::ColormapId>,
+    /// Colour LUT. `None` = default builtin (viridis).
+    pub colour_lut: Option<crate::resources::ColourmapId>,
     /// Overall opacity of the slice. Default: `1.0`.
     pub opacity: f32,
     /// World-space model matrix for the slice mesh. Default: identity.
@@ -893,7 +893,7 @@ impl Default for VolumeSurfaceSliceItem {
             bbox_min: [0.0, 0.0, 0.0],
             bbox_max: [1.0, 1.0, 1.0],
             scalar_range: (0.0, 1.0),
-            color_lut: None,
+            colour_lut: None,
             opacity: 1.0,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             id: 0,
@@ -930,8 +930,8 @@ pub struct CameraFrustumItem {
     pub near: f32,
     /// Far clip distance (world units).
     pub far: f32,
-    /// RGBA line color. Default: `[0.8, 0.8, 0.9, 1.0]` (light blue-grey).
-    pub color: [f32; 4],
+    /// RGBA line colour. Default: `[0.8, 0.8, 0.9, 1.0]` (light blue-grey).
+    pub colour: [f32; 4],
     /// Screen-space line width in pixels. Default: `2.0`.
     pub line_width: f32,
     /// If `Some(d)`, draw a closed quad at depth `d` (world units) inside the frustum.
@@ -947,7 +947,7 @@ impl Default for CameraFrustumItem {
             aspect: 16.0 / 9.0,
             near: 0.1,
             far: 10.0,
-            color: [0.8, 0.8, 0.9, 1.0],
+            colour: [0.8, 0.8, 0.9, 1.0],
             line_width: 2.0,
             image_plane_depth: None,
         }
@@ -1010,7 +1010,7 @@ impl CameraFrustumItem {
         PolylineItem {
             positions,
             strip_lengths,
-            default_color: self.color,
+            default_colour: self.colour,
             line_width: self.line_width,
             ..PolylineItem::default()
         }
@@ -1291,13 +1291,13 @@ pub enum SpriteSizeMode {
 /// A batch of instanced billboard sprites rendered as camera-facing textured quads.
 ///
 /// Each instance is one billboard at a world-space position. All instances in the batch share
-/// one texture (or render as solid-color quads when `texture_id` is `None`). Per-instance
-/// color, size, rotation, and atlas UV rect are specified via parallel `Vec` fields; empty
+/// one texture (or render as solid-colour quads when `texture_id` is `None`). Per-instance
+/// colour, size, rotation, and atlas UV rect are specified via parallel `Vec` fields; empty
 /// vecs fall back to the batch defaults.
 ///
 /// # Particle effects
 ///
-/// Submit a new `SpriteItem` each frame with updated `positions` and `colors` to animate
+/// Submit a new `SpriteItem` each frame with updated `positions` and `colours` to animate
 /// CPU-simulated particle effects. The host application owns simulation state (velocity,
 /// lifetime, emission); the renderer only handles drawing.
 ///
@@ -1309,13 +1309,13 @@ pub enum SpriteSizeMode {
 #[derive(Clone)]
 pub struct SpriteItem {
     /// Texture ID from [`ViewportGpuResources::upload_texture`].
-    /// `None` renders solid-color quads using `colors` / `default_color` only.
+    /// `None` renders solid-colour quads using `colours` / `default_colour` only.
     pub texture_id: Option<u64>,
     /// World-space positions, one per sprite instance.
     pub positions: Vec<[f32; 3]>,
-    /// Per-instance RGBA color tints. Empty = use `default_color` for all.
+    /// Per-instance RGBA colour tints. Empty = use `default_colour` for all.
     /// Multiplied with the texture sample (or used directly when `texture_id` is `None`).
-    pub colors: Vec<[f32; 4]>,
+    pub colours: Vec<[f32; 4]>,
     /// Per-instance sizes. Empty = use `default_size` for all.
     /// Interpretation depends on `size_mode`.
     pub sizes: Vec<f32>,
@@ -1325,8 +1325,8 @@ pub struct SpriteItem {
     /// Per-instance UV rects `[u0, v0, u1, v1]` selecting atlas sub-regions.
     /// Empty = full texture `[0.0, 0.0, 1.0, 1.0]` for all.
     pub uv_rects: Vec<[f32; 4]>,
-    /// Fallback RGBA color tint used when `colors` is empty. Default: opaque white.
-    pub default_color: [f32; 4],
+    /// Fallback RGBA colour tint used when `colours` is empty. Default: opaque white.
+    pub default_colour: [f32; 4],
     /// Default size when `sizes` is empty. Pixels (ScreenSpace) or world units (WorldSpace).
     pub default_size: f32,
     /// Whether sizes are in screen-space pixels or world-space units.
@@ -1352,11 +1352,11 @@ impl Default for SpriteItem {
         Self {
             texture_id: None,
             positions: Vec::new(),
-            colors: Vec::new(),
+            colours: Vec::new(),
             sizes: Vec::new(),
             rotations: Vec::new(),
             uv_rects: Vec::new(),
-            default_color: [1.0, 1.0, 1.0, 1.0],
+            default_colour: [1.0, 1.0, 1.0, 1.0],
             default_size: 32.0,
             size_mode: SpriteSizeMode::ScreenSpace,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
@@ -1411,7 +1411,7 @@ pub struct GaussianSplatData {
     /// Opacity per splat in [0, 1].
     pub opacities: Vec<f32>,
     /// SH coefficients. Length must equal `positions.len() * sh_degree.coeff_count()`.
-    /// For ShDegree::Zero these are [r, g, b] base colors per splat.
+    /// For ShDegree::Zero these are [r, g, b] base colours per splat.
     pub sh_coefficients: Vec<f32>,
     /// SH degree for this splat set.
     pub sh_degree: ShDegree,

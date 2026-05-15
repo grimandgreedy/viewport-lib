@@ -61,11 +61,11 @@ impl ViewportGpuResources {
         //   offset  52: scalar_b          f32
         //   offset  56: has_prev          u32   : 1 = prev_pos is valid (interior join at A), 0 = square cap
         //   offset  60: has_next          u32   : 1 = next_pos is valid (interior join at B), 0 = square cap
-        //   offset  64: color_a           vec4  : direct RGBA at segment start
-        //   offset  80: color_b           vec4  : direct RGBA at segment end
+        //   offset  64: colour_a           vec4  : direct RGBA at segment start
+        //   offset  80: colour_b           vec4  : direct RGBA at segment end
         //   offset  96: radius_a          f32   : line width in px at A (= line_width when node_radii is empty)
         //   offset 100: radius_b          f32   : line width in px at B
-        //   offset 104: use_direct_color  u32   : 1 = use color_a/b, 0 = use scalar LUT / default
+        //   offset 104: use_direct_colour  u32   : 1 = use colour_a/b, 0 = use scalar LUT / default
         //   offset 108: _pad              u32
         let pl_instance_layout = wgpu::VertexBufferLayout {
             array_stride: 112,
@@ -115,12 +115,12 @@ impl ViewportGpuResources {
                     offset: 64,
                     shader_location: 8,
                     format: wgpu::VertexFormat::Float32x4,
-                }, // color_a
+                }, // colour_a
                 wgpu::VertexAttribute {
                     offset: 80,
                     shader_location: 9,
                     format: wgpu::VertexFormat::Float32x4,
-                }, // color_b
+                }, // colour_b
                 wgpu::VertexAttribute {
                     offset: 96,
                     shader_location: 10,
@@ -135,7 +135,7 @@ impl ViewportGpuResources {
                     offset: 104,
                     shader_location: 12,
                     format: wgpu::VertexFormat::Uint32,
-                }, // use_direct_color
+                }, // use_direct_colour
             ],
         };
 
@@ -193,7 +193,7 @@ impl ViewportGpuResources {
     /// suitable for the screen-space thick-line pipeline with miter joints.
     ///
     /// Each consecutive pair of points in a strip becomes one 112-byte instance
-    /// containing miter geometry, scalar coloring, direct RGBA colors, and per-vertex
+    /// containing miter geometry, scalar colouring, direct RGBA colours, and per-vertex
     /// radii. See the comment in `ensure_polyline_pipeline` for the full layout.
     ///
     /// `viewport_size` is `[width_px, height_px]` and is baked into the per-item
@@ -217,16 +217,16 @@ impl ViewportGpuResources {
             scalar_b: f32,         // offset  52
             has_prev: u32,         // offset  56
             has_next: u32,         // offset  60
-            color_a: [f32; 4],     // offset  64
-            color_b: [f32; 4],     // offset  80
+            colour_a: [f32; 4],     // offset  64
+            colour_b: [f32; 4],     // offset  80
             radius_a: f32,         // offset  96
             radius_b: f32,         // offset 100
-            use_direct_color: u32, // offset 104
+            use_direct_colour: u32, // offset 104
             _pad: u32,             // offset 108
         }
 
-        // Determine which color/scalar/radius source to use per segment.
-        let use_direct = !item.node_colors.is_empty() || !item.edge_colors.is_empty();
+        // Determine which colour/scalar/radius source to use per segment.
+        let use_direct = !item.node_colours.is_empty() || !item.edge_colours.is_empty();
         let use_edge_scalars = item.scalars.is_empty() && !item.edge_scalars.is_empty();
         let use_node_radii = !item.node_radii.is_empty();
 
@@ -271,15 +271,15 @@ impl ViewportGpuResources {
                     )
                 };
 
-                // Direct color: node_colors (per-endpoint) > edge_colors (per-segment)
-                let (color_a, color_b) = if !item.node_colors.is_empty() {
+                // Direct colour: node_colours (per-endpoint) > edge_colours (per-segment)
+                let (colour_a, colour_b) = if !item.node_colours.is_empty() {
                     (
-                        item.node_colors.get(i).copied().unwrap_or([1.0; 4]),
-                        item.node_colors.get(j).copied().unwrap_or([1.0; 4]),
+                        item.node_colours.get(i).copied().unwrap_or([1.0; 4]),
+                        item.node_colours.get(j).copied().unwrap_or([1.0; 4]),
                     )
-                } else if !item.edge_colors.is_empty() {
+                } else if !item.edge_colours.is_empty() {
                     let c = item
-                        .edge_colors
+                        .edge_colours
                         .get(seg_idx_global)
                         .copied()
                         .unwrap_or([1.0; 4]);
@@ -315,11 +315,11 @@ impl ViewportGpuResources {
                     scalar_b,
                     has_prev: has_prev as u32,
                     has_next: has_next as u32,
-                    color_a,
-                    color_b,
+                    colour_a,
+                    colour_b,
                     radius_a,
                     radius_b,
-                    use_direct_color: use_direct as u32,
+                    use_direct_colour: use_direct as u32,
                     _pad: 0,
                 });
 
@@ -364,7 +364,7 @@ impl ViewportGpuResources {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct PolylineUniform {
-            default_color: [f32; 4], // offset  0
+            default_colour: [f32; 4], // offset  0
             line_width: f32,         // offset 16
             scalar_min: f32,         // offset 20
             scalar_max: f32,         // offset 24
@@ -374,7 +374,7 @@ impl ViewportGpuResources {
             _pad: [f32; 2],          // offset 40  (total 48 bytes)
         }
         let uniform_data = PolylineUniform {
-            default_color: item.default_color,
+            default_colour: item.default_colour,
             line_width: item.line_width,
             scalar_min,
             scalar_max,
@@ -392,12 +392,12 @@ impl ViewportGpuResources {
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
         let lut_view = self
-            .builtin_colormap_ids
+            .builtin_colourmap_ids
             .and_then(|ids| {
                 let preset_id = item
-                    .colormap_id
-                    .unwrap_or(ids[crate::resources::BuiltinColormap::Viridis as usize]);
-                self.colormap_views.get(preset_id.0)
+                    .colourmap_id
+                    .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
+                self.colourmap_views.get(preset_id.0)
             })
             .unwrap_or(&self.fallback_lut_view);
 

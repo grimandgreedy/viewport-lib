@@ -28,14 +28,14 @@
 //! - **Node distance / elevation**: `node_scalars["distance"]` : distance from
 //!   the grid centre for the sphere/shell; normalised elevation for terrain.
 //!   Averaged over 4 quad corner nodes per face.
-//! - **Cell hue**: `cell_colors["hue"]` : direct RGBA from the azimuthal angle
-//!   of each cell centre, no colormap.
+//! - **Cell hue**: `cell_colours["hue"]` : direct RGBA from the azimuthal angle
+//!   of each cell centre, no colourmap.
 
 use crate::App;
 use eframe::egui;
 use std::f32::consts::PI;
 use viewport_lib::{
-    AttributeKind, AttributeRef, BuiltinColormap, ColormapId, LightingSettings, MeshId,
+    AttributeKind, AttributeRef, BuiltinColourmap, ColourmapId, LightingSettings, MeshId,
     SceneRenderItem, SparseVolumeGridData, ViewportRenderer,
 };
 
@@ -50,7 +50,7 @@ const PAINT_N: usize = 5;
 /// The ray-picking code in `handle_svg_paint_click` must use the same value.
 const PAINT_OFFSET: [f32; 3] = [18.0, 0.0, 0.0];
 
-/// Preset swatch colors shown in the controls panel (linear RGBA).
+/// Preset swatch colours shown in the controls panel (linear RGBA).
 const PAINT_SWATCHES: &[([f32; 4], &str)] = &[
     ([1.00, 1.00, 1.00, 1.0], "White"),
     ([0.90, 0.20, 0.20, 1.0], "Red"),
@@ -75,7 +75,7 @@ pub(crate) enum SvgField {
     /// `node_scalars["distance"]`: distance from grid centre (sphere / shell)
     /// or normalised elevation (terrain), averaged over 4 corner nodes.
     NodeDistance,
-    /// `cell_colors["hue"]`: direct RGBA from azimuthal angle, no colormap.
+    /// `cell_colours["hue"]`: direct RGBA from azimuthal angle, no colourmap.
     CellHue,
 }
 
@@ -165,7 +165,7 @@ fn build_sphere_grid() -> SparseVolumeGridData {
     data.active_cells = active_cells;
     data.cell_scalars.insert("height".to_string(), cell_heights);
     data.node_scalars.insert("distance".to_string(), node_dist);
-    data.cell_colors.insert("hue".to_string(), cell_hues);
+    data.cell_colours.insert("hue".to_string(), cell_hues);
     data
 }
 
@@ -224,7 +224,7 @@ fn build_hollow_shell() -> SparseVolumeGridData {
     data.active_cells = active_cells;
     data.cell_scalars.insert("height".to_string(), cell_heights);
     data.node_scalars.insert("distance".to_string(), node_dist);
-    data.cell_colors.insert("hue".to_string(), cell_hues);
+    data.cell_colours.insert("hue".to_string(), cell_hues);
     data
 }
 
@@ -288,7 +288,7 @@ fn build_terrain() -> SparseVolumeGridData {
     data.active_cells = active_cells;
     data.cell_scalars.insert("height".to_string(), cell_heights);
     data.node_scalars.insert("distance".to_string(), node_elev);
-    data.cell_colors.insert("hue".to_string(), cell_hues);
+    data.cell_colours.insert("hue".to_string(), cell_hues);
     data
 }
 
@@ -297,16 +297,16 @@ fn build_terrain() -> SparseVolumeGridData {
 // ---------------------------------------------------------------------------
 
 /// Build a fully-dense PAINT_N^3 voxel cube with all cells white.
-/// Cell colors are stored in `cell_colors["paint"]` and updated on each click.
+/// Cell colours are stored in `cell_colours["paint"]` and updated on each click.
 fn build_paint_grid() -> SparseVolumeGridData {
     let n = PAINT_N;
     let mut active_cells = Vec::with_capacity(n * n * n);
-    let mut colors = Vec::with_capacity(n * n * n);
+    let mut colours = Vec::with_capacity(n * n * n);
     for k in 0..n {
         for j in 0..n {
             for i in 0..n {
                 active_cells.push([i as u32, j as u32, k as u32]);
-                colors.push([1.0f32, 1.0, 1.0, 1.0]);
+                colours.push([1.0f32, 1.0, 1.0, 1.0]);
             }
         }
     }
@@ -315,7 +315,7 @@ fn build_paint_grid() -> SparseVolumeGridData {
     data.origin = [-(n as f32) / 2.0; 3];
     data.cell_size = 1.0;
     data.active_cells = active_cells;
-    data.cell_colors.insert("paint".to_string(), colors);
+    data.cell_colours.insert("paint".to_string(), colours);
     data
 }
 
@@ -348,13 +348,13 @@ pub(crate) struct SvgState {
     pub mesh_id: MeshId,
     pub shell_id: MeshId,
     pub terrain_id: MeshId,
-    pub colormap: BuiltinColormap,
+    pub colourmap: BuiltinColourmap,
     pub field: SvgField,
     // Paint grid state
     pub paint_mesh_id: MeshId,
     pub paint_data: SparseVolumeGridData,
-    /// Currently selected paint color (linear RGBA).
-    pub paint_color: [f32; 4],
+    /// Currently selected paint colour (linear RGBA).
+    pub paint_colour: [f32; 4],
     /// Set to true when a cell is painted; cleared after the GPU upload.
     pub paint_dirty: bool,
 }
@@ -366,11 +366,11 @@ impl Default for SvgState {
             mesh_id: MeshId::from_index(0),
             shell_id: MeshId::from_index(0),
             terrain_id: MeshId::from_index(0),
-            colormap: BuiltinColormap::Viridis,
+            colourmap: BuiltinColourmap::Viridis,
             field: SvgField::CellHeight,
             paint_mesh_id: MeshId::from_index(0),
             paint_data: SparseVolumeGridData::default(),
-            paint_color: PAINT_SWATCHES[1].0, // red
+            paint_colour: PAINT_SWATCHES[1].0, // red
             paint_dirty: false,
         }
     }
@@ -417,25 +417,25 @@ impl App {
             return vec![];
         }
 
-        let (active_attribute, colormap_id) = match self.svg_state.field {
+        let (active_attribute, colourmap_id) = match self.svg_state.field {
             SvgField::CellHeight => (
                 Some(AttributeRef {
                     name: "height".to_string(),
                     kind: AttributeKind::Face,
                 }),
-                Some(ColormapId(self.svg_state.colormap as usize)),
+                Some(ColourmapId(self.svg_state.colourmap as usize)),
             ),
             SvgField::NodeDistance => (
                 Some(AttributeRef {
                     name: "distance".to_string(),
                     kind: AttributeKind::Face,
                 }),
-                Some(ColormapId(self.svg_state.colormap as usize)),
+                Some(ColourmapId(self.svg_state.colourmap as usize)),
             ),
             SvgField::CellHue => (
                 Some(AttributeRef {
                     name: "hue".to_string(),
-                    kind: AttributeKind::FaceColor,
+                    kind: AttributeKind::FaceColour,
                 }),
                 None,
             ),
@@ -453,19 +453,19 @@ impl App {
             item.mesh_id = mesh_id;
             item.model = model;
             item.active_attribute = active_attribute.clone();
-            item.colormap_id = colormap_id;
+            item.colourmap_id = colourmap_id;
             item
         })
         .collect();
 
-        // Paint grid: always uses cell_colors["paint"], independent of the
+        // Paint grid: always uses cell_colours["paint"], independent of the
         // attribute selector above.
         let mut paint = SceneRenderItem::default();
         paint.mesh_id = self.svg_state.paint_mesh_id;
         paint.model = translate(PAINT_OFFSET[0], PAINT_OFFSET[1], PAINT_OFFSET[2]);
         paint.active_attribute = Some(AttributeRef {
             name: "paint".to_string(),
-            kind: AttributeKind::FaceColor,
+            kind: AttributeKind::FaceColour,
         });
         items.push(paint);
 
@@ -505,13 +505,13 @@ impl App {
         }
 
         if let Some(idx) = best_idx {
-            let colors = self
+            let colours = self
                 .svg_state
                 .paint_data
-                .cell_colors
+                .cell_colours
                 .get_mut("paint")
                 .unwrap();
-            colors[idx] = self.svg_state.paint_color;
+            colours[idx] = self.svg_state.paint_colour;
             self.svg_state.paint_dirty = true;
         }
     }
@@ -523,8 +523,8 @@ impl App {
             // hotspots.  Sky and ground are both near-white so top and bottom
             // faces are equally readable.
             hemisphere_intensity: 0.9,
-            sky_color: [1.0, 1.0, 1.0],
-            ground_color: [0.85, 0.85, 0.9],
+            sky_colour: [1.0, 1.0, 1.0],
+            ground_colour: [0.85, 0.85, 0.9],
             lights: vec![],
             shadows_enabled: false,
             ..LightingSettings::default()
@@ -540,11 +540,11 @@ pub(crate) fn controls_sparse_volume_grid(app: &mut App, ui: &mut egui::Ui) {
     // --- Paint grid ---
     ui.label(egui::RichText::new("Voxel paint (right grid)").strong());
     ui.label("Click a voxel to paint it.");
-    ui.label("Color:");
+    ui.label("Colour:");
     ui.horizontal_wrapped(|ui| {
-        for &(color, label) in PAINT_SWATCHES {
-            let selected = app.svg_state.paint_color == color;
-            let [r, g, b, _] = color;
+        for &(colour, label) in PAINT_SWATCHES {
+            let selected = app.svg_state.paint_colour == colour;
+            let [r, g, b, _] = colour;
             let fill =
                 egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8);
             let stroke = if selected {
@@ -557,7 +557,7 @@ pub(crate) fn controls_sparse_volume_grid(app: &mut App, ui: &mut egui::Ui) {
                 .fill(fill)
                 .stroke(stroke);
             if ui.add(btn).on_hover_text(label).clicked() {
-                app.svg_state.paint_color = color;
+                app.svg_state.paint_colour = colour;
             }
         }
     });
@@ -566,13 +566,13 @@ pub(crate) fn controls_sparse_volume_grid(app: &mut App, ui: &mut egui::Ui) {
         .on_hover_text("Reset all voxels to white")
         .clicked()
     {
-        let colors = app
+        let colours = app
             .svg_state
             .paint_data
-            .cell_colors
+            .cell_colours
             .get_mut("paint")
             .unwrap();
-        for c in colors.iter_mut() {
+        for c in colours.iter_mut() {
             *c = [1.0, 1.0, 1.0, 1.0];
         }
         app.svg_state.paint_dirty = true;
@@ -586,27 +586,27 @@ pub(crate) fn controls_sparse_volume_grid(app: &mut App, ui: &mut egui::Ui) {
             SvgField::NodeDistance,
             "Node distance / elevation (node_scalars)",
         ),
-        (SvgField::CellHue, "Cell hue (cell_colors, direct RGBA)"),
+        (SvgField::CellHue, "Cell hue (cell_colours, direct RGBA)"),
     ] {
         ui.radio_value(&mut app.svg_state.field, field, label);
     }
 
     if app.svg_state.field != SvgField::CellHue {
         ui.separator();
-        ui.label("Colormap:");
+        ui.label("Colourmap:");
         ui.horizontal_wrapped(|ui| {
             for cm in [
-                BuiltinColormap::Viridis,
-                BuiltinColormap::Plasma,
-                BuiltinColormap::Magma,
-                BuiltinColormap::Inferno,
-                BuiltinColormap::Turbo,
-                BuiltinColormap::Coolwarm,
-                BuiltinColormap::RdBu,
-                BuiltinColormap::Rainbow,
-                BuiltinColormap::Jet,
+                BuiltinColourmap::Viridis,
+                BuiltinColourmap::Plasma,
+                BuiltinColourmap::Magma,
+                BuiltinColourmap::Inferno,
+                BuiltinColourmap::Turbo,
+                BuiltinColourmap::Coolwarm,
+                BuiltinColourmap::RdBu,
+                BuiltinColourmap::Rainbow,
+                BuiltinColourmap::Jet,
             ] {
-                ui.radio_value(&mut app.svg_state.colormap, cm, format!("{cm:?}"));
+                ui.radio_value(&mut app.svg_state.colourmap, cm, format!("{cm:?}"));
             }
         });
     }

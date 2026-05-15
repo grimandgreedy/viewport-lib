@@ -34,8 +34,8 @@ pub struct Layer {
     pub visible: bool,
     /// When true, nodes on this layer render but cannot appear selected.
     pub locked: bool,
-    /// Display color for this layer (RGBA, each component 0.0–1.0).
-    pub color: [f32; 4],
+    /// Display colour for this layer (RGBA, each component 0.0–1.0).
+    pub colour: [f32; 4],
     /// Sort order for layer display. Lower values appear first.
     pub order: u32,
 }
@@ -94,7 +94,7 @@ impl SceneNode {
         self.mesh_id
     }
 
-    /// Material parameters (color, shading, opacity, texture) for this node.
+    /// Material parameters (colour, shading, opacity, texture) for this node.
     pub fn material(&self) -> &Material {
         &self.material
     }
@@ -166,8 +166,8 @@ impl ViewportObject for SceneNode {
         self.visible
     }
 
-    fn color(&self) -> glam::Vec3 {
-        glam::Vec3::from(self.material.base_color)
+    fn colour(&self) -> glam::Vec3 {
+        glam::Vec3::from(self.material.base_colour)
     }
 
     fn show_normals(&self) -> bool {
@@ -222,7 +222,7 @@ impl Scene {
                 name: "Default".to_string(),
                 visible: true,
                 locked: false,
-                color: [1.0, 1.0, 1.0, 1.0],
+                colour: [1.0, 1.0, 1.0, 1.0],
                 order: 0,
             }],
             next_id: 1,
@@ -460,7 +460,7 @@ impl Scene {
             name: name.to_string(),
             visible: true,
             locked: false,
-            color: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0],
             order,
         });
         self.version = self.version.wrapping_add(1);
@@ -499,10 +499,10 @@ impl Scene {
         self.version = self.version.wrapping_add(1);
     }
 
-    /// Set layer display color.
-    pub fn set_layer_color(&mut self, id: LayerId, color: [f32; 4]) {
+    /// Set layer display colour.
+    pub fn set_layer_colour(&mut self, id: LayerId, colour: [f32; 4]) {
         if let Some(layer) = self.layers.iter_mut().find(|l| l.id == id) {
-            layer.color = color;
+            layer.colour = colour;
         }
         self.version = self.version.wrapping_add(1);
     }
@@ -683,8 +683,8 @@ impl Scene {
                 material: node.material,
                 active_attribute: None,
                 scalar_range: None,
-                colormap_id: None,
-                nan_color: None,
+                colourmap_id: None,
+                nan_colour: None,
                 pick_id: PickId(node.id),
                 render_as_wireframe: false,
                 warp_attribute: None,
@@ -753,8 +753,8 @@ impl Scene {
                 material: node.material,
                 active_attribute: None,
                 scalar_range: None,
-                colormap_id: None,
-                nan_color: None,
+                colourmap_id: None,
+                nan_colour: None,
                 pick_id: PickId(node.id),
                 render_as_wireframe: false,
                 warp_attribute: None,
@@ -993,7 +993,7 @@ mod tests {
         let _ = visible_id; // suppress unused warning
     }
 
-    // --- Layer lock/color/order tests ---
+    // --- Layer lock/colour/order tests ---
 
     #[test]
     fn test_layer_locked_field_default_false() {
@@ -1004,13 +1004,13 @@ mod tests {
     }
 
     #[test]
-    fn test_add_layer_has_locked_false_color_white_and_order() {
+    fn test_add_layer_has_locked_false_colour_white_and_order() {
         let mut scene = Scene::new();
         let layer_id = scene.add_layer("Test");
         let layers = scene.layers();
         let layer = layers.iter().find(|l| l.id == layer_id).unwrap();
         assert!(!layer.locked);
-        assert_eq!(layer.color, [1.0, 1.0, 1.0, 1.0]);
+        assert_eq!(layer.colour, [1.0, 1.0, 1.0, 1.0]);
         assert!(layer.order > 0); // non-default layer has order >= 1
     }
 
@@ -1025,13 +1025,13 @@ mod tests {
     }
 
     #[test]
-    fn test_set_layer_color() {
+    fn test_set_layer_colour() {
         let mut scene = Scene::new();
-        let layer_id = scene.add_layer("Colored");
-        scene.set_layer_color(layer_id, [1.0, 0.0, 0.0, 1.0]);
+        let layer_id = scene.add_layer("Coloured");
+        scene.set_layer_colour(layer_id, [1.0, 0.0, 0.0, 1.0]);
         let layers = scene.layers();
         let layer = layers.iter().find(|l| l.id == layer_id).unwrap();
-        assert_eq!(layer.color, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(layer.colour, [1.0, 0.0, 0.0, 1.0]);
     }
 
     #[test]

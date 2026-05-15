@@ -63,7 +63,7 @@ impl App {
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(-2.5, -1.5, 0.0)),
             {
-                let mut mat = Material::from_color([0.2, 0.4, 0.9]);
+                let mut mat = Material::from_colour([0.2, 0.4, 0.9]);
                 mat.specular = 0.9;
                 mat.shininess = 128.0;
                 mat
@@ -76,7 +76,7 @@ impl App {
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(-2.5, 1.5, 0.0)),
             {
-                let mut mat = Material::from_color([0.2, 0.7, 0.3]);
+                let mut mat = Material::from_colour([0.2, 0.7, 0.3]);
                 mat.specular = 0.05;
                 mat.diffuse = 0.95;
                 mat.shininess = 4.0;
@@ -93,7 +93,7 @@ impl App {
                 glam::Quat::IDENTITY,
                 glam::Vec3::new(0.0, 3.5, 0.25),
             ),
-            Material::from_color([0.55, 0.55, 0.55]),
+            Material::from_colour([0.55, 0.55, 0.55]),
         );
 
         let m = self.upload_box(renderer);
@@ -101,7 +101,7 @@ impl App {
             "Hidden Magenta (x-ray target)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 5.5, 0.0)),
-            Material::from_color([0.9, 0.3, 0.7]),
+            Material::from_colour([0.9, 0.3, 0.7]),
         );
 
         self.materials_visibility_state.built = true;

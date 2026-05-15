@@ -4,8 +4,8 @@
 //! lattice) into a standard [`MeshData`] by extracting boundary faces (quad faces
 //! not shared between two active cells) and computing area-weighted vertex normals.
 //!
-//! Per-cell scalar and color attributes are remapped to per-face attributes so the
-//! existing Phase 2 face-rendering path handles coloring without any new GPU
+//! Per-cell scalar and colour attributes are remapped to per-face attributes so the
+//! existing Phase 2 face-rendering path handles colouring without any new GPU
 //! infrastructure.  Per-node scalars are averaged over the four quad corner nodes
 //! to produce per-face scalars on the same path.
 //!
@@ -64,7 +64,7 @@ const FACE_CORNERS: [[[u32; 3]; 4]; 6] = [
 ///
 /// # Attribute conventions
 ///
-/// - `cell_scalars` / `cell_colors`: one entry per element of `active_cells`
+/// - `cell_scalars` / `cell_colours`: one entry per element of `active_cells`
 ///   (parallel arrays).
 /// - `node_scalars`: dense array indexed by
 ///   `nk * (W * H) + nj * W + ni` where `W = max_i + 2`, `H = max_j + 2`
@@ -106,10 +106,10 @@ pub struct SparseVolumeGridData {
     /// `AttributeKind::Face` values.
     pub node_scalars: HashMap<String, Vec<f32>>,
 
-    /// Named per-cell RGBA color attributes (one `[f32; 4]` per active cell,
-    /// parallel to `active_cells`).  Remapped to `AttributeKind::FaceColor`
+    /// Named per-cell RGBA colour attributes (one `[f32; 4]` per active cell,
+    /// parallel to `active_cells`).  Remapped to `AttributeKind::FaceColour`
     /// during extraction.
-    pub cell_colors: HashMap<String, Vec<[f32; 4]>>,
+    pub cell_colours: HashMap<String, Vec<[f32; 4]>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -285,16 +285,16 @@ pub(crate) fn extract_sparse_boundary(data: &SparseVolumeGridData) -> MeshData {
         attributes.insert(name.clone(), AttributeData::Face(face_scalars));
     }
 
-    // Cell colors: one RGBA per quad -> one per triangle (two per quad).
-    for (name, cell_vals) in &data.cell_colors {
-        let face_colors: Vec<[f32; 4]> = boundary_quads
+    // Cell colours: one RGBA per quad -> one per triangle (two per quad).
+    for (name, cell_vals) in &data.cell_colours {
+        let face_colours: Vec<[f32; 4]> = boundary_quads
             .iter()
             .flat_map(|q| {
                 let c = cell_vals.get(q.cell_idx).copied().unwrap_or([1.0; 4]);
                 [c, c] // two triangles per quad
             })
             .collect();
-        attributes.insert(name.clone(), AttributeData::FaceColor(face_colors));
+        attributes.insert(name.clone(), AttributeData::FaceColour(face_colours));
     }
 
     // Node scalars: average the 4 quad corner values -> one per triangle.
@@ -455,19 +455,19 @@ mod tests {
     }
 
     #[test]
-    fn cell_color_remaps_to_face_color_attribute() {
+    fn cell_colour_remaps_to_face_colour_attribute() {
         let mut data = two_adjacent_cells();
-        data.cell_colors.insert(
+        data.cell_colours.insert(
             "label".to_string(),
             vec![[1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]],
         );
         let mesh = extract_sparse_boundary(&data);
         match mesh.attributes.get("label") {
-            Some(AttributeData::FaceColor(colors)) => {
+            Some(AttributeData::FaceColour(colours)) => {
                 // 20 boundary triangles
-                assert_eq!(colors.len(), 20, "20 boundary triangles");
+                assert_eq!(colours.len(), 20, "20 boundary triangles");
             }
-            other => panic!("expected FaceColor attribute, got {other:?}"),
+            other => panic!("expected FaceColour attribute, got {other:?}"),
         }
     }
 

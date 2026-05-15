@@ -1,7 +1,7 @@
 use super::*;
 
 impl ViewportGpuResources {
-    /// Create or recreate the offscreen outline color + depth/stencil textures and
+    /// Create or recreate the offscreen outline colour + depth/stencil textures and
     /// the fullscreen composite pipeline used to blit the outline onto the main pass.
     /// No-op if the size hasn't changed and resources already exist.
     #[allow(dead_code)]
@@ -9,14 +9,14 @@ impl ViewportGpuResources {
         let w = w.max(1);
         let h = h.max(1);
 
-        if self.outline_target_size == [w, h] && self.outline_color_texture.is_some() {
+        if self.outline_target_size == [w, h] && self.outline_colour_texture.is_some() {
             return;
         }
         self.outline_target_size = [w, h];
 
-        // Offscreen RGBA color texture (transparent clear).
-        let color_tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("outline_color_texture"),
+        // Offscreen RGBA colour texture (transparent clear).
+        let colour_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("outline_colour_texture"),
             size: wgpu::Extent3d {
                 width: w,
                 height: h,
@@ -29,7 +29,7 @@ impl ViewportGpuResources {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let color_view = color_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let colour_view = colour_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Depth+stencil texture for the stencil outline passes.
         let depth_tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -85,7 +85,7 @@ impl ViewportGpuResources {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&color_view),
+                    resource: wgpu::BindingResource::TextureView(&colour_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -204,8 +204,8 @@ impl ViewportGpuResources {
             cache: None,
         });
 
-        self.outline_color_texture = Some(color_tex);
-        self.outline_color_view = Some(color_view);
+        self.outline_colour_texture = Some(colour_tex);
+        self.outline_colour_view = Some(colour_view);
         self.outline_depth_texture = Some(depth_tex);
         self.outline_depth_view = Some(depth_view);
         // HDR-format variant for compositing onto the Rgba16Float HDR texture.
@@ -2118,7 +2118,7 @@ impl ViewportGpuResources {
         });
         let fxaa_view = fxaa_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Outline offscreen : mask (R8), color (target_format), and depth.
+        // Outline offscreen : mask (R8), colour (target_format), and depth.
         let outline_mask_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("outline_mask_texture"),
             size: wgpu::Extent3d {
@@ -2135,8 +2135,8 @@ impl ViewportGpuResources {
         });
         let outline_mask_view =
             outline_mask_tex.create_view(&wgpu::TextureViewDescriptor::default());
-        let outline_color_tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("outline_color_texture"),
+        let outline_colour_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("outline_colour_texture"),
             size: wgpu::Extent3d {
                 width: w,
                 height: h,
@@ -2149,8 +2149,8 @@ impl ViewportGpuResources {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let outline_color_view =
-            outline_color_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let outline_colour_view =
+            outline_colour_tex.create_view(&wgpu::TextureViewDescriptor::default());
         let outline_depth_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("outline_depth_texture"),
             size: wgpu::Extent3d {
@@ -2557,7 +2557,7 @@ impl ViewportGpuResources {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&outline_color_view),
+                    resource: wgpu::BindingResource::TextureView(&outline_colour_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -2619,8 +2619,8 @@ impl ViewportGpuResources {
 
         // --- SSAA targets (allocated when ssaa_factor > 1) ---
         let (
-            ssaa_color_texture,
-            ssaa_color_view,
+            ssaa_colour_texture,
+            ssaa_colour_view,
             ssaa_depth_texture,
             ssaa_depth_view,
             ssaa_resolve_bind_group,
@@ -2628,15 +2628,15 @@ impl ViewportGpuResources {
         ) = if ssaa_factor > 1 {
             let sw = w * ssaa_factor;
             let sh = h * ssaa_factor;
-            let ssaa_color_tex = make_tex(
-                "ssaa_color_texture",
+            let ssaa_colour_tex = make_tex(
+                "ssaa_colour_texture",
                 wgpu::TextureFormat::Rgba16Float,
                 sw,
                 sh,
                 wgpu::TextureUsages::empty(),
             );
-            let ssaa_color_view =
-                ssaa_color_tex.create_view(&wgpu::TextureViewDescriptor::default());
+            let ssaa_colour_view =
+                ssaa_colour_tex.create_view(&wgpu::TextureViewDescriptor::default());
             let ssaa_depth_tex = make_tex(
                 "ssaa_depth_texture",
                 wgpu::TextureFormat::Depth24PlusStencil8,
@@ -2677,7 +2677,7 @@ impl ViewportGpuResources {
                     entries: &[
                         wgpu::BindGroupEntry {
                             binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&ssaa_color_view),
+                            resource: wgpu::BindingResource::TextureView(&ssaa_colour_view),
                         },
                         wgpu::BindGroupEntry {
                             binding: 1,
@@ -2695,8 +2695,8 @@ impl ViewportGpuResources {
             };
 
             (
-                Some(ssaa_color_tex),
-                Some(ssaa_color_view),
+                Some(ssaa_colour_tex),
+                Some(ssaa_colour_view),
                 Some(ssaa_depth_tex),
                 Some(ssaa_depth_view),
                 ssaa_resolve_bg,
@@ -2835,8 +2835,8 @@ impl ViewportGpuResources {
             contact_shadow_view: cs_view,
             fxaa_texture: fxaa_tex,
             fxaa_view,
-            ssaa_color_texture,
-            ssaa_color_view,
+            ssaa_colour_texture,
+            ssaa_colour_view,
             ssaa_depth_texture,
             ssaa_depth_view,
             ssaa_resolve_bind_group,
@@ -2850,8 +2850,8 @@ impl ViewportGpuResources {
             oit_size: [0, 0],
             outline_mask_texture: outline_mask_tex,
             outline_mask_view,
-            outline_color_texture: outline_color_tex,
-            outline_color_view,
+            outline_colour_texture: outline_colour_tex,
+            outline_colour_view,
             outline_depth_texture: outline_depth_tex,
             outline_depth_view,
             outline_edge_bind_group,

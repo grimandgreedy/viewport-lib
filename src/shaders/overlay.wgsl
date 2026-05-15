@@ -1,7 +1,7 @@
 // Overlay shader for semi-transparent quads and line overlays.
 //
 // Group 0: Camera uniform (view-projection matrix).
-// Group 1: Overlay uniform (model matrix + RGBA color with alpha for transparency).
+// Group 1: Overlay uniform (model matrix + RGBA colour with alpha for transparency).
 
 struct CameraUniform {
     view_proj: mat4x4<f32>,
@@ -10,7 +10,7 @@ struct CameraUniform {
 
 struct OverlayUniform {
     model: mat4x4<f32>,
-    color: vec4<f32>,  // RGBA with alpha for transparency
+    colour: vec4<f32>,  // RGBA with alpha for transparency
 };
 @group(1) @binding(0) var<uniform> overlay: OverlayUniform;
 
@@ -20,18 +20,18 @@ struct VertexInput {
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) frag_color: vec4<f32>,
+    @location(0) frag_colour: vec4<f32>,
 };
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     out.clip_position = camera.view_proj * overlay.model * vec4<f32>(in.position, 1.0);
-    out.frag_color = overlay.color;
+    out.frag_colour = overlay.colour;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return in.frag_color;
+    return in.frag_colour;
 }

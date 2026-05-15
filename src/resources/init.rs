@@ -213,7 +213,7 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
-                // binding 5: LUT (colormap) texture (256×1 Rgba8Unorm, FRAGMENT, filterable)
+                // binding 5: LUT (colourmap) texture (256×1 Rgba8Unorm, FRAGMENT, filterable)
                 wgpu::BindGroupLayoutEntry {
                     binding: 5,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -246,7 +246,7 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
-                // binding 8: per-face color storage buffer (VERTEX | FRAGMENT, read-only)
+                // binding 8: per-face colour storage buffer (VERTEX | FRAGMENT, read-only)
                 wgpu::BindGroupLayoutEntry {
                     binding: 8,
                     visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
@@ -972,7 +972,7 @@ impl ViewportGpuResources {
         });
 
         // ------------------------------------------------------------------
-        // Overlay bind group layout (group 1: model + color uniform)
+        // Overlay bind group layout (group 1: model + colour uniform)
         // ------------------------------------------------------------------
         let overlay_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("overlay_bgl"),
@@ -1199,7 +1199,7 @@ impl ViewportGpuResources {
         // Full-screen ray-march approach (same as grid).  The fragment shader
         // intersects the camera ray with a horizontal plane at a configurable
         // Z height, then renders one of four modes: None (skipped), ShadowOnly,
-        // Tile, SolidColor.  Uses @builtin(frag_depth) for depth occlusion.
+        // Tile, SolidColour.  Uses @builtin(frag_depth) for depth occlusion.
         // ------------------------------------------------------------------
         let ground_plane_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ground_plane_shader"),
@@ -1404,7 +1404,7 @@ impl ViewportGpuResources {
             ..Default::default()
         });
 
-        // Clamp-to-edge sampler for colormap LUT lookups (prevents wrap artifact at scalar extremes).
+        // Clamp-to-edge sampler for colourmap LUT lookups (prevents wrap artifact at scalar extremes).
         let lut_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("lut_sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -1515,7 +1515,7 @@ impl ViewportGpuResources {
         };
 
         // ------------------------------------------------------------------
-        // Colormap / LUT fallback resources
+        // Colourmap / LUT fallback resources
         // ------------------------------------------------------------------
         let fallback_lut_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("fallback_lut_texture"),
@@ -1549,17 +1549,17 @@ impl ViewportGpuResources {
         }
         fallback_scalar_buf.unmap();
 
-        let fallback_face_color_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("fallback_face_color_buf"),
+        let fallback_face_colour_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("fallback_face_colour_buf"),
             size: 16, // one vec4<f32>
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         {
-            let mut view = fallback_face_color_buf.slice(..).get_mapped_range_mut();
+            let mut view = fallback_face_colour_buf.slice(..).get_mapped_range_mut();
             view.copy_from_slice(&[0u8; 16]);
         }
-        fallback_face_color_buf.unmap();
+        fallback_face_colour_buf.unmap();
 
         let fallback_warp_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fallback_warp_buf"),
@@ -1590,7 +1590,7 @@ impl ViewportGpuResources {
             &fallback_lut_view,
             &fallback_scalar_buf,
             &fallback_texture.view,
-            &fallback_face_color_buf,
+            &fallback_face_colour_buf,
             &fallback_warp_buf,
             &cube_verts,
             &cube_indices,
@@ -1786,7 +1786,7 @@ impl ViewportGpuResources {
             });
 
         // Edge-detection pipeline: fullscreen pass that reads the R8 mask and
-        // outputs an anti-aliased outline ring to the outline color texture.
+        // outputs an anti-aliased outline ring to the outline colour texture.
         let outline_edge_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("outline_edge_shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/outline_edge.wgsl").into()),
@@ -2031,8 +2031,8 @@ impl ViewportGpuResources {
             volume_outline_mask_pipeline: None,
             glyph_outline_mask_pipeline: None,
             tensor_glyph_outline_mask_pipeline: None,
-            outline_color_texture: None,
-            outline_color_view: None,
+            outline_colour_texture: None,
+            outline_colour_view: None,
             outline_depth_texture: None,
             outline_depth_view: None,
             outline_target_size: [0, 0],
@@ -2139,16 +2139,16 @@ impl ViewportGpuResources {
             hdr_solid_instanced_pipeline: None,
             hdr_transparent_instanced_pipeline: None,
             hdr_overlay_pipeline: None,
-            colormap_textures: Vec::new(),
-            colormap_views: Vec::new(),
-            colormaps_cpu: Vec::new(),
+            colourmap_textures: Vec::new(),
+            colourmap_views: Vec::new(),
+            colourmaps_cpu: Vec::new(),
             fallback_lut_texture,
             fallback_lut_view,
             fallback_scalar_buf,
-            fallback_face_color_buf,
+            fallback_face_colour_buf,
             fallback_warp_buf,
-            builtin_colormap_ids: None,
-            colormaps_initialized: false,
+            builtin_colourmap_ids: None,
+            colourmaps_initialized: false,
             gaussian_splat_pipeline: None,
             gaussian_splat_bgl: None,
             gaussian_splat_depth_pipeline: None,

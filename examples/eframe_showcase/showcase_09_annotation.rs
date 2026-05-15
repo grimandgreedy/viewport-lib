@@ -38,7 +38,7 @@ impl App {
         self.ann_state.scene = Scene::new();
 
         let mut place_marker =
-            |renderer: &mut ViewportRenderer, pos: glam::Vec3, color: [f32; 3]| {
+            |renderer: &mut ViewportRenderer, pos: glam::Vec3, colour: [f32; 3]| {
                 let mesh = make_box_with_uvs(0.3, 0.3, 0.3);
                 let id = renderer
                     .resources_mut()
@@ -48,7 +48,7 @@ impl App {
                     "Marker",
                     Some(id),
                     glam::Mat4::from_translation(pos),
-                    Material::from_color(color),
+                    Material::from_colour(colour),
                 );
             };
 
@@ -61,14 +61,14 @@ impl App {
             LabelItem {
                 world_anchor: Some([0.0, 0.0, 0.0]),
                 text: "Origin (0,0,0)".into(),
-                color: [1.0, 1.0, 1.0, 1.0],
+                colour: [1.0, 1.0, 1.0, 1.0],
                 background: true,
                 ..Default::default()
             },
             LabelItem {
                 world_anchor: Some([2.0, 3.0, 0.0]),
                 text: "Peak Pressure: 101.3 kPa".into(),
-                color: [1.0, 0.9, 0.1, 1.0],
+                colour: [1.0, 0.9, 0.1, 1.0],
                 leader_line: true,
                 background: true,
                 ..Default::default()
@@ -76,14 +76,14 @@ impl App {
             LabelItem {
                 world_anchor: Some([-3.0, 2.0, 0.0]),
                 text: "Outlet".into(),
-                color: [0.4, 0.8, 1.0, 1.0],
+                colour: [0.4, 0.8, 1.0, 1.0],
                 background: true,
                 ..Default::default()
             },
             LabelItem {
                 world_anchor: Some([0.0, 300.0, 0.0]),
                 text: "Behind camera (clipped)".into(),
-                color: [1.0, 0.0, 0.0, 1.0],
+                colour: [1.0, 0.0, 0.0, 1.0],
                 background: true,
                 ..Default::default()
             },

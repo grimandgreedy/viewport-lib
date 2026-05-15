@@ -37,7 +37,7 @@ pub struct ImplicitPrimitive {
     pub params: [f32; 8],
     /// Linear RGBA colour for this primitive.
     /// Colours are blended by proximity weight at the hit point.
-    pub color: [f32; 4],
+    pub colour: [f32; 4],
 }
 
 /// How multiple primitives are combined into a single SDF.
@@ -89,7 +89,7 @@ impl Default for GpuImplicitOptions {
 /// prim.kind   = 1;  // sphere
 /// prim.blend  = 0.9;
 /// prim.params = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0];  // center=origin, radius=1
-/// prim.color  = [1.0, 0.5, 0.2, 1.0];
+/// prim.colour  = [1.0, 0.5, 0.2, 1.0];
 ///
 /// let mut item = GpuImplicitItem::default();
 /// item.primitives    = vec![prim];

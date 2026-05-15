@@ -218,8 +218,8 @@ impl ViewportGpuResources {
             mag_clamp_min: f32,
             mag_clamp_max: f32,
             has_mag_clamp: u32,
-            default_color: [f32; 4],
-            use_default_color: u32,
+            default_colour: [f32; 4],
+            use_default_colour: u32,
             unlit: u32,
             _pad: [u32; 2],
         }
@@ -232,8 +232,8 @@ impl ViewportGpuResources {
             mag_clamp_min,
             mag_clamp_max,
             has_mag_clamp,
-            default_color: item.default_color,
-            use_default_color: if item.default_color[3] > 0.0 && item.use_default_color {
+            default_colour: item.default_colour,
+            use_default_colour: if item.default_colour[3] > 0.0 && item.use_default_colour {
                 1
             } else {
                 0
@@ -250,12 +250,12 @@ impl ViewportGpuResources {
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
         let lut_view = self
-            .builtin_colormap_ids
+            .builtin_colourmap_ids
             .and_then(|ids| {
                 let preset_id = item
-                    .colormap_id
-                    .unwrap_or(ids[crate::resources::BuiltinColormap::Viridis as usize]);
-                self.colormap_views.get(preset_id.0)
+                    .colourmap_id
+                    .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
+                self.colourmap_views.get(preset_id.0)
             })
             .unwrap_or(&self.fallback_lut_view);
 
@@ -526,15 +526,15 @@ impl ViewportGpuResources {
         let outer_model = glam::Mat4::from_cols_array_2d(&item.model);
 
         // Determine scalars for LUT lookup.
-        let has_scalars = item.color_attribute.is_some();
-        let (scalar_min, scalar_max) = if let Some(ref scalars) = item.color_attribute {
+        let has_scalars = item.colour_attribute.is_some();
+        let (scalar_min, scalar_max) = if let Some(ref scalars) = item.colour_attribute {
             item.scalar_range.unwrap_or_else(|| {
                 let mn = scalars.iter().cloned().fold(f32::INFINITY, f32::min);
                 let mx = scalars.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
                 (mn, mx)
             })
         } else {
-            // Sign coloring: map [-1, 1] so LUT midpoint = neutral.
+            // Sign colouring: map [-1, 1] so LUT midpoint = neutral.
             item.scalar_range.unwrap_or((-1.0, 1.0))
         };
 
@@ -576,7 +576,7 @@ impl ViewportGpuResources {
 
                 // Scalar for LUT.
                 let scalar = if has_scalars {
-                    item.color_attribute
+                    item.colour_attribute
                         .as_ref()
                         .and_then(|sc| sc.get(i))
                         .copied()
@@ -638,12 +638,12 @@ impl ViewportGpuResources {
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
         let lut_view = self
-            .builtin_colormap_ids
+            .builtin_colourmap_ids
             .and_then(|ids| {
                 let preset_id = item
-                    .colormap_id
-                    .unwrap_or(ids[crate::resources::BuiltinColormap::Viridis as usize]);
-                self.colormap_views.get(preset_id.0)
+                    .colourmap_id
+                    .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
+                self.colourmap_views.get(preset_id.0)
             })
             .unwrap_or(&self.fallback_lut_view);
 

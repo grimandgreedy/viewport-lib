@@ -42,7 +42,7 @@ fn clip_objects_construct_and_assign() {
     obj.shape = ClipShape::Plane {
         normal: [0.0, 1.0, 0.0],
         distance: -5.0,
-        cap_color: None,
+        cap_colour: None,
         display_center: None,
     };
     frame.effects.clip_objects.push(obj);

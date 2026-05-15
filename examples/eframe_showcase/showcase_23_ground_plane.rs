@@ -4,7 +4,7 @@
 //!   - None       : plane disabled (zero overhead)
 //!   - ShadowOnly : invisible plane that receives and displays shadows
 //!   - Tile       : procedural checkerboard
-//!   - SolidColor : flat-colored plane
+//!   - SolidColour : flat-coloured plane
 //!
 //! Layout: three spheres at y = -3, 0, +3 (along X-axis), floating at Z = 1.5
 //! above a ground plane at Z = 0.
@@ -22,9 +22,9 @@ pub(crate) struct GroundPlaneState {
     pub built: bool,
     pub mode: GpMode,
     pub height: f32,
-    pub color: [f32; 4],
+    pub colour: [f32; 4],
     pub tile_size: f32,
-    pub shadow_color: [f32; 4],
+    pub shadow_colour: [f32; 4],
     pub shadow_opacity: f32,
 }
 
@@ -35,9 +35,9 @@ impl Default for GroundPlaneState {
             built: false,
             mode: GpMode::Tile,
             height: 0.0,
-            color: [0.3, 0.3, 0.3, 1.0],
+            colour: [0.3, 0.3, 0.3, 1.0],
             tile_size: 1.0,
-            shadow_color: [0.0, 0.0, 0.0, 1.0],
+            shadow_colour: [0.0, 0.0, 0.0, 1.0],
             shadow_opacity: 0.5,
         }
     }
@@ -64,8 +64,8 @@ impl App {
             (3.5, "Right", [0.3, 0.4, 0.8]),
         ];
 
-        for (x, name, color) in positions {
-            let mut mat = Material::from_color(color);
+        for (x, name, colour) in positions {
+            let mut mat = Material::from_colour(colour);
             mat.roughness = 0.5;
             mat.metallic = 0.1;
             self.gp_state.scene.add_named(
@@ -93,7 +93,7 @@ pub(crate) fn controls_ground_plane(app: &mut App, ui: &mut egui::Ui) {
             ("None", GpMode::None),
             ("ShadowOnly", GpMode::ShadowOnly),
             ("Tile", GpMode::Tile),
-            ("SolidColor", GpMode::SolidColor),
+            ("SolidColour", GpMode::SolidColour),
         ] {
             if ui.selectable_label(s.mode == mode, label).clicked() {
                 s.mode = mode;
@@ -108,20 +108,20 @@ pub(crate) fn controls_ground_plane(app: &mut App, ui: &mut egui::Ui) {
     match s.mode {
         GpMode::Tile => {
             ui.separator();
-            ui.label("Tile color:");
-            ui.color_edit_button_rgba_unmultiplied(&mut s.color);
+            ui.label("Tile colour:");
+            ui.color_edit_button_rgba_unmultiplied(&mut s.colour);
             ui.label("Tile size:");
             ui.add(egui::Slider::new(&mut s.tile_size, 0.1..=5.0).step_by(0.1));
         }
-        GpMode::SolidColor => {
+        GpMode::SolidColour => {
             ui.separator();
-            ui.label("Surface color:");
-            ui.color_edit_button_rgba_unmultiplied(&mut s.color);
+            ui.label("Surface colour:");
+            ui.color_edit_button_rgba_unmultiplied(&mut s.colour);
         }
         GpMode::ShadowOnly => {
             ui.separator();
-            ui.label("Shadow color:");
-            ui.color_edit_button_rgba_unmultiplied(&mut s.shadow_color);
+            ui.label("Shadow colour:");
+            ui.color_edit_button_rgba_unmultiplied(&mut s.shadow_colour);
             ui.label("Shadow opacity:");
             ui.add(egui::Slider::new(&mut s.shadow_opacity, 0.0..=1.0).step_by(0.05));
         }
@@ -140,5 +140,5 @@ pub(crate) enum GpMode {
     None,
     ShadowOnly,
     Tile,
-    SolidColor,
+    SolidColour,
 }

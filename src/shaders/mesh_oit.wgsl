@@ -1,12 +1,12 @@
 // OIT (order-independent transparency) mesh shader : McGuire & Bavoil weighted blended.
 //
 // Identical to mesh.wgsl except for the fragment output: instead of writing a
-// single RGBA color to the HDR target, this shader writes to two targets:
+// single RGBA colour to the HDR target, this shader writes to two targets:
 //   @location(0) accum  : Rgba16Float accumulation buffer
 //   @location(1) reveal : R8Unorm   reveal (transmittance) buffer
 //
 // The weighted-blended OIT formula is applied after computing the fully-lit
-// color (same Blinn-Phong / Cook-Torrance path as mesh.wgsl).
+// colour (same Blinn-Phong / Cook-Torrance path as mesh.wgsl).
 //
 // Group 0: Camera uniform, shadow atlas, lights, clip planes, shadow info (unchanged).
 // Group 1: Object uniform, albedo texture, sampler, normal map, AO map, LUT, scalar buffer.
@@ -24,7 +24,7 @@ struct SingleLight {
     light_view_proj: mat4x4<f32>,
     pos_or_dir: vec3<f32>,
     light_type: u32,
-    color: vec3<f32>,
+    colour: vec3<f32>,
     intensity: f32,
     range: f32,
     inner_angle: f32,
@@ -38,9 +38,9 @@ struct Lights {
     shadow_bias: f32,
     shadows_enabled: u32,
     _pad: u32,
-    sky_color: vec3<f32>,
+    sky_colour: vec3<f32>,
     hemisphere_intensity: f32,
-    ground_color: vec3<f32>,
+    ground_colour: vec3<f32>,
     _pad2: f32,
     lights: array<SingleLight, 8>,
     ibl_enabled: u32,
@@ -69,7 +69,7 @@ struct ShadowAtlas {
 
 struct Object {
     model: mat4x4<f32>,
-    color: vec4<f32>,
+    colour: vec4<f32>,
     selected: u32,
     wireframe: u32,
     ambient: f32,
@@ -86,16 +86,16 @@ struct Object {
     scalar_min: f32,
     scalar_max: f32,
     _pad_scalar: u32,
-    nan_color: vec4<f32>,    // offset 144
-    use_nan_color: u32,      // offset 160
+    nan_colour: vec4<f32>,    // offset 144
+    use_nan_colour: u32,      // offset 160
     use_matcap: u32,         // offset 164
     matcap_blendable: u32,   // offset 168
     unlit: u32,              // offset 172
-    use_face_color: u32,     // offset 176
+    use_face_colour: u32,     // offset 176
     uv_vis_mode: u32,           // offset 180 : 0=off 1=checker 2=grid 3=localcheck 4=localrad
     uv_vis_scale: f32,          // offset 184 : tile frequency multiplier
-    backface_policy: u32,       // offset 188 : 0=Cull 1=Identical 2=DiffColor 3=Tint 4..7=Pattern
-    backface_color: vec4<f32>,  // offset 192
+    backface_policy: u32,       // offset 188 : 0=Cull 1=Identical 2=DiffColour 3=Tint 4..7=Pattern
+    backface_colour: vec4<f32>,  // offset 192
     has_warp: u32,              // offset 208
     warp_scale: f32,            // offset 212
     _pad_warp0: u32,            // offset 216
@@ -172,14 +172,14 @@ fn clip_volume_test(p: vec3<f32>) -> bool {
 @group(1) @binding(4) var ao_map: texture_2d<f32>;
 @group(1) @binding(5) var lut_texture: texture_2d<f32>;
 @group(1) @binding(6) var<storage, read> scalar_buffer: array<f32>;
-@group(1) @binding(8) var<storage, read> face_color_buffer: array<vec4<f32>>;
+@group(1) @binding(8) var<storage, read> face_colour_buffer: array<vec4<f32>>;
 @group(1) @binding(9) var<storage, read> warp_buffer: array<f32>;
 @group(1) @binding(10) var lut_sampler: sampler;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) normal:   vec3<f32>,
-    @location(2) color:    vec4<f32>,
+    @location(2) colour:    vec4<f32>,
     @location(3) uv:       vec2<f32>,
     @location(4) tangent:  vec4<f32>,
     @builtin(vertex_index) vertex_index: u32,
@@ -187,14 +187,14 @@ struct VertexIn {
 
 struct VertexOut {
     @builtin(position) clip_pos: vec4<f32>,
-    @location(0) color:          vec4<f32>,
+    @location(0) colour:          vec4<f32>,
     @location(1) world_normal:   vec3<f32>,
     @location(2) world_pos:      vec3<f32>,
     @location(3) uv:             vec2<f32>,
     @location(4) world_tangent:  vec4<f32>,
     @location(5) scalar_val:     f32,
     @location(6) is_nan_scalar:  f32,
-    @location(7) face_color:     vec4<f32>,
+    @location(7) face_colour:     vec4<f32>,
 };
 
 struct OitOut {
@@ -215,7 +215,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     }
     let world_pos = object.model * vec4<f32>(local_pos, 1.0);
     out.clip_pos = camera.view_proj * world_pos;
-    out.color = in.color;
+    out.colour = in.colour;
     out.world_pos = world_pos.xyz;
     let model3 = mat3x3<f32>(
         object.model[0].xyz,
@@ -234,12 +234,12 @@ fn vs_main(in: VertexIn) -> VertexOut {
     let sv_bits = bitcast<u32>(raw_scalar);
     let sv_is_nan = has_attr && (sv_bits & 0x7F800000u) == 0x7F800000u && (sv_bits & 0x007FFFFFu) != 0u;
     out.is_nan_scalar = select(0.0, 1.0, sv_is_nan);
-    let fc_len = arrayLength(&face_color_buffer);
+    let fc_len = arrayLength(&face_colour_buffer);
     let fc_idx = min(idx, select(0u, fc_len - 1u, fc_len > 0u));
-    out.face_color = select(
+    out.face_colour = select(
         vec4<f32>(1.0),
-        face_color_buffer[fc_idx],
-        object.use_face_color != 0u && fc_len > 0u,
+        face_colour_buffer[fc_idx],
+        object.use_face_colour != 0u && fc_len > 0u,
     );
     return out;
 }
@@ -388,7 +388,7 @@ fn sample_brdf_lut(NdotV: f32, roughness: f32) -> vec2<f32> {
 fn F_Schlick_roughness(cos_theta: f32, F0: vec3<f32>, roughness: f32) -> vec3<f32> {
     return F0 + (max(vec3<f32>(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
-fn ibl_ambient(N: vec3<f32>, V: vec3<f32>, base_color: vec3<f32>, metallic: f32,
+fn ibl_ambient(N: vec3<f32>, V: vec3<f32>, base_colour: vec3<f32>, metallic: f32,
                roughness: f32, F0: vec3<f32>, ao: f32, intensity: f32, rotation: f32) -> vec3<f32> {
     let NdotV = max(dot(N, V), 0.001);
     let F = F_Schlick_roughness(NdotV, F0, roughness);
@@ -397,12 +397,12 @@ fn ibl_ambient(N: vec3<f32>, V: vec3<f32>, base_color: vec3<f32>, metallic: f32,
     let R = reflect(-V, N);
     let prefiltered = sample_ibl_prefiltered(R, roughness, rotation);
     let brdf = sample_brdf_lut(NdotV, roughness);
-    return (kD * irradiance * base_color + prefiltered * (F * brdf.x + brdf.y)) * ao * intensity;
+    return (kD * irradiance * base_colour + prefiltered * (F * brdf.x + brdf.y)) * ao * intensity;
 }
 
 fn pbr_light_contrib(
     N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, radiance: vec3<f32>,
-    base_color: vec3<f32>, metallic: f32, roughness: f32, F0: vec3<f32>,
+    base_colour: vec3<f32>, metallic: f32, roughness: f32, F0: vec3<f32>,
 ) -> vec3<f32> {
     let H = normalize(L + V);
     let NdotL = max(dot(N, L), 0.0);
@@ -416,12 +416,12 @@ fn pbr_light_contrib(
     let kS = F;
     let kD = (vec3<f32>(1.0) - kS) * (1.0 - metallic);
     let specular = (D * G * F) / (4.0 * NdotV * NdotL + 0.001);
-    return (kD * base_color / 3.14159265 + specular) * radiance * NdotL;
+    return (kD * base_colour / 3.14159265 + specular) * radiance * NdotL;
 }
 
-// UV parameterization visualization : procedural RGB color from UV coordinates.
+// UV parameterization visualization : procedural RGB colour from UV coordinates.
 // Matches the implementation in mesh.wgsl exactly.
-fn param_vis_color(uv: vec2<f32>, mode: u32, scale: f32) -> vec3<f32> {
+fn param_vis_colour(uv: vec2<f32>, mode: u32, scale: f32) -> vec3<f32> {
     let col_a      = vec3<f32>(0.85, 0.85, 0.85);
     let col_b      = vec3<f32>(0.2,  0.2,  0.2);
     let line_col   = vec3<f32>(0.1,  0.1,  0.1);
@@ -463,23 +463,23 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
     if !clip_volume_test(in.world_pos) { discard; }
 
     // Sample texture if one is assigned.
-    var tex_color = vec4<f32>(1.0);
+    var tex_colour = vec4<f32>(1.0);
     if object.has_texture == 1u {
-        tex_color = textureSample(obj_texture, obj_sampler, in.uv);
+        tex_colour = textureSample(obj_texture, obj_sampler, in.uv);
     }
-    let obj_color = vec4<f32>(
-        object.color.rgb * in.color.rgb * tex_color.rgb,
-        object.color.a   * in.color.a   * tex_color.a,
+    let obj_colour = vec4<f32>(
+        object.colour.rgb * in.colour.rgb * tex_colour.rgb,
+        object.colour.a   * in.colour.a   * tex_colour.a,
     );
-    var base_color = obj_color.rgb;
+    var base_colour = obj_colour.rgb;
 
-    // Per-face RGBA color: use directly, bypassing all lighting and colormap logic.
-    if object.use_face_color != 0u {
-        var fc = in.face_color;
+    // Per-face RGBA colour: use directly, bypassing all lighting and colourmap logic.
+    if object.use_face_colour != 0u {
+        var fc = in.face_colour;
         if object.selected != 0u {
             fc = mix(fc, vec4<f32>(1.0, 0.55, 0.1, 1.0), 0.35);
         }
-        let alpha = fc.a * object.color.a;
+        let alpha = fc.a * object.colour.a;
         let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
         var oit_out: OitOut;
         oit_out.accum  = vec4<f32>(fc.rgb * alpha, alpha) * w;
@@ -490,14 +490,14 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
     // Scalar attribute colour override.
     if object.has_attribute != 0u {
         if in.is_nan_scalar > 0.5 {
-            if object.use_nan_color == 0u {
+            if object.use_nan_colour == 0u {
                 discard;
             }
-            let alpha = object.nan_color.a;
+            let alpha = object.nan_colour.a;
             let z = in.clip_pos.z;
             let w = alpha * max(1e-2, min(3e3, 10.0 / (1e-5 + pow(z / 5.0, 2.0) + pow(z / 200.0, 6.0))));
             var nan_out: OitOut;
-            nan_out.accum  = vec4<f32>(object.nan_color.rgb * alpha * w, alpha * w);
+            nan_out.accum  = vec4<f32>(object.nan_colour.rgb * alpha * w, alpha * w);
             nan_out.reveal = alpha;
             return nan_out;
         }
@@ -507,13 +507,13 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
             select(0.0, (raw - object.scalar_min) / range, range > 0.0001),
             0.0, 1.0,
         );
-        base_color = textureSampleLevel(lut_texture, lut_sampler, vec2<f32>(t, 0.5), 0.0).rgb;
+        base_colour = textureSampleLevel(lut_texture, lut_sampler, vec2<f32>(t, 0.5), 0.0).rgb;
     }
 
     // UV parameterization visualization: procedural pattern replaces all lighting.
     if object.uv_vis_mode != 0u {
-        let vis   = param_vis_color(in.uv, object.uv_vis_mode, object.uv_vis_scale);
-        let alpha = obj_color.a;
+        let vis   = param_vis_colour(in.uv, object.uv_vis_mode, object.uv_vis_scale);
+        let alpha = obj_colour.a;
         let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
         var oit_out: OitOut;
         oit_out.accum  = vec4<f32>(vis * alpha, alpha) * w;
@@ -521,12 +521,12 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
         return oit_out;
     }
 
-    // Unlit: skip all lighting, return raw color directly through OIT.
+    // Unlit: skip all lighting, return raw colour directly through OIT.
     if object.unlit != 0u {
-        let alpha = obj_color.a;
+        let alpha = obj_colour.a;
         let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
         var oit_out: OitOut;
-        oit_out.accum  = vec4<f32>(base_color * alpha, alpha) * w;
+        oit_out.accum  = vec4<f32>(base_colour * alpha, alpha) * w;
         oit_out.reveal = alpha;
         return oit_out;
     }
@@ -546,18 +546,18 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
         N = normalize(in.world_normal);
     }
 
-    // Back-face policy handling: flip normal and optionally override color for back faces.
-    // 0=Cull, 1=Identical, 2=DifferentColor, 3=Tint, 4=Checker, 5=Hatching, 6=Crosshatch, 7=Stripes.
+    // Back-face policy handling: flip normal and optionally override colour for back faces.
+    // 0=Cull, 1=Identical, 2=DifferentColour, 3=Tint, 4=Checker, 5=Hatching, 6=Crosshatch, 7=Stripes.
     if !is_front && object.backface_policy >= 2u {
         N = -N;
         if object.backface_policy == 2u {
-            base_color = object.backface_color.rgb;
+            base_colour = object.backface_colour.rgb;
         } else if object.backface_policy == 3u {
-            base_color = base_color * (1.0 - object.backface_color.r);
+            base_colour = base_colour * (1.0 - object.backface_colour.r);
         } else {
-            let pattern_color = object.backface_color.rgb;
+            let pattern_colour = object.backface_colour.rgb;
             let pattern_type = object.backface_policy - 4u;
-            let wp = in.world_pos * object.backface_color.w;
+            let wp = in.world_pos * object.backface_colour.w;
             var use_pattern = false;
             if pattern_type == 0u {
                 // Checker: alternating squares in world XZ.
@@ -573,7 +573,7 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
                 // Stripes: horizontal lines in world Z.
                 use_pattern = fract(wp.z * 0.5) < 0.4;
             }
-            base_color = select(base_color, pattern_color, use_pattern);
+            base_colour = select(base_colour, pattern_colour, use_pattern);
         }
     }
 
@@ -590,7 +590,7 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
     if object.use_pbr != 0u {
         let metallic  = clamp(object.metallic,  0.0, 1.0);
         let roughness = max(object.roughness, 0.04);
-        let F0 = mix(vec3<f32>(0.04), base_color, metallic);
+        let F0 = mix(vec3<f32>(0.04), base_colour, metallic);
         var Lo = vec3<f32>(0.0);
         for (var i = 0u; i < lights_uniform.count; i++) {
             let l = lights_uniform.lights[i];
@@ -598,13 +598,13 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
             var radiance: vec3<f32>;
             if l.light_type == 0u {
                 L = normalize(l.pos_or_dir);
-                radiance = l.color * l.intensity;
+                radiance = l.colour * l.intensity;
             } else if l.light_type == 1u {
                 let to_light = l.pos_or_dir - in.world_pos;
                 let dist = length(to_light);
                 L = to_light / max(dist, 0.0001);
                 let falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-                radiance = l.color * l.intensity * falloff * falloff;
+                radiance = l.colour * l.intensity * falloff * falloff;
             } else {
                 let to_light = l.pos_or_dir - in.world_pos;
                 let dist = length(to_light);
@@ -618,25 +618,25 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
                     (cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001),
                     0.0, 1.0,
                 );
-                radiance = l.color * l.intensity * dist_falloff * dist_falloff * cone_att;
+                radiance = l.colour * l.intensity * dist_falloff * dist_falloff * cone_att;
             }
             // Transparent surfaces do not cast/receive shadows (no CSM sampling).
-            Lo += pbr_light_contrib(N, V, L, radiance, base_color, metallic, roughness, F0);
+            Lo += pbr_light_contrib(N, V, L, radiance, base_colour, metallic, roughness, F0);
         }
         var ambient: vec3<f32>;
         if lights_uniform.ibl_enabled != 0u {
-            ambient = ibl_ambient(N, V, base_color, metallic, roughness, F0,
+            ambient = ibl_ambient(N, V, base_colour, metallic, roughness, F0,
                                   ao_factor, lights_uniform.ibl_intensity,
                                   lights_uniform.ibl_rotation);
         } else {
             let hemi_t = clamp(in.world_normal.y * 0.5 + 0.5, 0.0, 1.0);
-            let hemi_color = mix(lights_uniform.ground_color, lights_uniform.sky_color, hemi_t);
-            let ambient_scale = vec3<f32>(object.ambient) + hemi_color * lights_uniform.hemisphere_intensity;
-            ambient = ambient_scale * (base_color * (1.0 - metallic) + F0 * metallic) * ao_factor;
+            let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
+            let ambient_scale = vec3<f32>(object.ambient) + hemi_colour * lights_uniform.hemisphere_intensity;
+            ambient = ambient_scale * (base_colour * (1.0 - metallic) + F0 * metallic) * ao_factor;
         }
         final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     } else {
-        var total_color_contrib = vec3<f32>(0.0);
+        var total_colour_contrib = vec3<f32>(0.0);
         for (var i = 0u; i < lights_uniform.count; i++) {
             let l = lights_uniform.lights[i];
             var light_dir: vec3<f32>;
@@ -671,21 +671,21 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
             let diffuse_contrib  = object.diffuse  * n_dot_l * l.intensity * attenuation;
             let specular_contrib = object.specular * pow(n_dot_h, object.shininess)
                                  * l.intensity * attenuation;
-            total_color_contrib += (diffuse_contrib + specular_contrib) * l.color;
+            total_colour_contrib += (diffuse_contrib + specular_contrib) * l.colour;
         }
         let ambient_contrib = object.ambient;
         let hemi_t = clamp(in.world_normal.y * 0.5 + 0.5, 0.0, 1.0);
-        let hemi_color = mix(lights_uniform.ground_color, lights_uniform.sky_color, hemi_t);
-        let hemi_ambient = hemi_color * lights_uniform.hemisphere_intensity;
-        let lit_rgb = base_color * (ambient_contrib + hemi_ambient) * ao_factor
-                    + base_color * total_color_contrib;
+        let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
+        let hemi_ambient = hemi_colour * lights_uniform.hemisphere_intensity;
+        let lit_rgb = base_colour * (ambient_contrib + hemi_ambient) * ao_factor
+                    + base_colour * total_colour_contrib;
         final_rgb = clamp(lit_rgb * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
     // ---------------------------------------------------------------------------
     // McGuire & Bavoil weighted blended OIT output.
     // ---------------------------------------------------------------------------
-    let alpha = obj_color.a;
+    let alpha = obj_colour.a;
     let z = in.clip_pos.z;  // NDC depth 0..1
     let w = alpha * max(1e-2, min(3e3, 10.0 / (1e-5 + pow(z / 5.0, 2.0) + pow(z / 200.0, 6.0))));
 

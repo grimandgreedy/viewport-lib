@@ -225,7 +225,7 @@ impl ViewportGpuResources {
                     verts.push(Vertex {
                         position: world_pos.to_array(),
                         normal: normal.to_array(),
-                        color: [1.0, 1.0, 1.0, 1.0], // overridden by uniform in shader
+                        colour: [1.0, 1.0, 1.0, 1.0], // overridden by uniform in shader
                         uv: [0.0, 0.0],
                         tangent: [1.0, 0.0, 0.0, 1.0],
                     });
@@ -259,7 +259,7 @@ impl ViewportGpuResources {
                 verts.push(Vertex {
                     position: pts[n_rings - 1].to_array(),
                     normal: tangent.to_array(),
-                    color: [1.0, 1.0, 1.0, 1.0],
+                    colour: [1.0, 1.0, 1.0, 1.0],
                     uv: [0.0, 0.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
                 });
@@ -279,7 +279,7 @@ impl ViewportGpuResources {
                 verts.push(Vertex {
                     position: pts[0].to_array(),
                     normal: tangent.to_array(),
-                    color: [1.0, 1.0, 1.0, 1.0],
+                    colour: [1.0, 1.0, 1.0, 1.0],
                     uv: [0.0, 0.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
                 });
@@ -318,19 +318,19 @@ impl ViewportGpuResources {
 
         let index_count = indices.len() as u32;
 
-        // Uniform buffer: color + radius + use_vertex_color flag.
+        // Uniform buffer: colour + radius + use_vertex_colour flag.
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct StreamtubeUniform {
-            color: [f32; 4],
+            colour: [f32; 4],
             radius: f32,
-            use_vertex_color: u32,
+            use_vertex_colour: u32,
             _pad: [f32; 6],
         }
         let uniform_data = StreamtubeUniform {
-            color: item.color,
+            colour: item.colour,
             radius,
-            use_vertex_color: 0,
+            use_vertex_colour: 0,
             _pad: [0.0; 6],
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -370,8 +370,8 @@ impl ViewportGpuResources {
     /// Upload one [`TubeItem`] to the GPU and return draw data.
     ///
     /// Generates a connected tube mesh CPU-side using a parallel-transport frame.
-    /// Scalar values are baked into per-vertex colors using the CPU-side colormap copy.
-    /// Uses the same streamtube pipeline; sets `use_vertex_color=1` when scalars are present.
+    /// Scalar values are baked into per-vertex colours using the CPU-side colourmap copy.
+    /// Uses the same streamtube pipeline; sets `use_vertex_colour=1` when scalars are present.
     pub(crate) fn upload_tube(
         &mut self,
         device: &wgpu::Device,
@@ -380,16 +380,16 @@ impl ViewportGpuResources {
     ) -> StreamtubeGpuData {
         let sides = (item.sides.max(3)) as usize;
 
-        // Resolve scalar-to-color mapping upfront if scalars are provided.
-        let (use_vertex_color, lut_rgba): (u32, Option<[[u8; 4]; 256]>) =
+        // Resolve scalar-to-colour mapping upfront if scalars are provided.
+        let (use_vertex_colour, lut_rgba): (u32, Option<[[u8; 4]; 256]>) =
             if !item.scalars.is_empty() {
                 let lut = self
-                    .builtin_colormap_ids
+                    .builtin_colourmap_ids
                     .and_then(|ids| {
                         let preset_id = item
-                            .colormap_id
-                            .unwrap_or(ids[crate::resources::BuiltinColormap::Viridis as usize]);
-                        self.colormaps_cpu.get(preset_id.0).copied()
+                            .colourmap_id
+                            .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
+                        self.colourmaps_cpu.get(preset_id.0).copied()
                     })
                     .unwrap_or([[128u8; 4]; 256]);
                 (1, Some(lut))
@@ -409,8 +409,8 @@ impl ViewportGpuResources {
         });
         let scalar_range = (scalar_max - scalar_min).max(f32::EPSILON);
 
-        // Helper: map a scalar value to an RGBA f32 color from the LUT.
-        let scalar_to_color = |idx: usize| -> [f32; 4] {
+        // Helper: map a scalar value to an RGBA f32 colour from the LUT.
+        let scalar_to_colour = |idx: usize| -> [f32; 4] {
             if let Some(ref lut) = lut_rgba {
                 let s = *item.scalars.get(idx).unwrap_or(&0.0);
                 let t = ((s - scalar_min) / scalar_range).clamp(0.0, 1.0);
@@ -423,7 +423,7 @@ impl ViewportGpuResources {
                     c[3] as f32 / 255.0,
                 ]
             } else {
-                item.color
+                item.colour
             }
         };
 
@@ -491,7 +491,7 @@ impl ViewportGpuResources {
                     .unwrap_or(item.radius)
                     .max(f32::EPSILON);
 
-                let vertex_color = scalar_to_color(pts_scalar_start + k);
+                let vertex_colour = scalar_to_colour(pts_scalar_start + k);
 
                 for s in 0..sides {
                     let theta = 2.0 * std::f32::consts::PI * (s as f32) / (sides as f32);
@@ -503,7 +503,7 @@ impl ViewportGpuResources {
                     verts.push(Vertex {
                         position: world_pos.to_array(),
                         normal: normal.to_array(),
-                        color: vertex_color,
+                        colour: vertex_colour,
                         uv: [0.0, 0.0],
                         tangent: [1.0, 0.0, 0.0, 1.0],
                     });
@@ -529,12 +529,12 @@ impl ViewportGpuResources {
             {
                 let last_ring = ring_base + ((n_rings - 1) * sides) as u32;
                 let tangent = (pts[n_rings - 1] - pts[n_rings - 2]).normalize_or_zero();
-                let cap_color = scalar_to_color(pts_scalar_start + n_rings - 1);
+                let cap_colour = scalar_to_colour(pts_scalar_start + n_rings - 1);
                 let cap_center_idx = verts.len() as u32;
                 verts.push(Vertex {
                     position: pts[n_rings - 1].to_array(),
                     normal: tangent.to_array(),
-                    color: cap_color,
+                    colour: cap_colour,
                     uv: [0.0, 0.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
                 });
@@ -549,12 +549,12 @@ impl ViewportGpuResources {
             // Start cap.
             {
                 let tangent = (pts[0] - pts[1]).normalize_or_zero();
-                let cap_color = scalar_to_color(pts_scalar_start);
+                let cap_colour = scalar_to_colour(pts_scalar_start);
                 let cap_center_idx = verts.len() as u32;
                 verts.push(Vertex {
                     position: pts[0].to_array(),
                     normal: tangent.to_array(),
-                    color: cap_color,
+                    colour: cap_colour,
                     uv: [0.0, 0.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
                 });
@@ -596,15 +596,15 @@ impl ViewportGpuResources {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct TubeUniform {
-            color: [f32; 4],
+            colour: [f32; 4],
             radius: f32,
-            use_vertex_color: u32,
+            use_vertex_colour: u32,
             _pad: [f32; 6],
         }
         let uniform_data = TubeUniform {
-            color: item.color,
+            colour: item.colour,
             radius: item.radius.max(f32::EPSILON),
-            use_vertex_color,
+            use_vertex_colour,
             _pad: [0.0; 6],
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -652,16 +652,16 @@ impl ViewportGpuResources {
         queue: &wgpu::Queue,
         item: &crate::renderer::RibbonItem,
     ) -> StreamtubeGpuData {
-        // Resolve LUT for scalar coloring.
-        let (use_vertex_color, lut_rgba): (u32, Option<[[u8; 4]; 256]>) =
+        // Resolve LUT for scalar colouring.
+        let (use_vertex_colour, lut_rgba): (u32, Option<[[u8; 4]; 256]>) =
             if !item.scalars.is_empty() {
                 let lut = self
-                    .builtin_colormap_ids
+                    .builtin_colourmap_ids
                     .and_then(|ids| {
                         let preset_id = item
-                            .colormap_id
-                            .unwrap_or(ids[crate::resources::BuiltinColormap::Viridis as usize]);
-                        self.colormaps_cpu.get(preset_id.0).copied()
+                            .colourmap_id
+                            .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
+                        self.colourmaps_cpu.get(preset_id.0).copied()
                     })
                     .unwrap_or([[128u8; 4]; 256]);
                 (1, Some(lut))
@@ -681,7 +681,7 @@ impl ViewportGpuResources {
         });
         let scalar_range = (scalar_max - scalar_min).max(f32::EPSILON);
 
-        let scalar_to_color = |idx: usize| -> [f32; 4] {
+        let scalar_to_colour = |idx: usize| -> [f32; 4] {
             if let Some(ref lut) = lut_rgba {
                 let s = *item.scalars.get(idx).unwrap_or(&0.0);
                 let t = ((s - scalar_min) / scalar_range).clamp(0.0, 1.0);
@@ -694,7 +694,7 @@ impl ViewportGpuResources {
                     c[3] as f32 / 255.0,
                 ]
             } else {
-                item.color
+                item.colour
             }
         };
 
@@ -772,13 +772,13 @@ impl ViewportGpuResources {
                     .and_then(|wa| wa.get(pts_start + k).copied())
                     .unwrap_or(item.width)
                     * 0.5;
-                let color = scalar_to_color(pts_start + k);
+                let colour = scalar_to_colour(pts_start + k);
 
                 // Left edge vertex.
                 verts.push(Vertex {
                     position: (pt + lateral * half_w).to_array(),
                     normal: normal.to_array(),
-                    color,
+                    colour,
                     uv: [0.0, 0.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
                 });
@@ -786,7 +786,7 @@ impl ViewportGpuResources {
                 verts.push(Vertex {
                     position: (pt - lateral * half_w).to_array(),
                     normal: normal.to_array(),
-                    color,
+                    colour,
                     uv: [1.0, 0.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
                 });
@@ -836,15 +836,15 @@ impl ViewportGpuResources {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct RibbonUniform {
-            color: [f32; 4],
+            colour: [f32; 4],
             radius: f32,
-            use_vertex_color: u32,
+            use_vertex_colour: u32,
             _pad: [f32; 6],
         }
         let uniform_data = RibbonUniform {
-            color: item.color,
+            colour: item.colour,
             radius: item.width * 0.5,
-            use_vertex_color,
+            use_vertex_colour,
             _pad: [0.0; 6],
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {

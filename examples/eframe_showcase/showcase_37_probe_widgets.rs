@@ -59,39 +59,39 @@ pub(crate) struct ProbeWidgetState {
 
 impl ProbeWidgetState {
     pub fn new() -> Self {
-        let handle_color = [0.1, 1.0, 0.2, 1.0];
+        let handle_colour = [0.1, 1.0, 0.2, 1.0];
 
         let mut probe = LineProbeWidget::new(
             glam::Vec3::new(-2.0, 0.0, 0.0),
             glam::Vec3::new(2.0, 0.0, 0.0),
         );
         probe.line_width = 3.0;
-        probe.color = [1.0, 0.9, 0.1, 1.0];
-        probe.handle_color = handle_color;
+        probe.colour = [1.0, 0.9, 0.1, 1.0];
+        probe.handle_colour = handle_colour;
 
         let mut sphere = SphereWidget::new(glam::Vec3::ZERO, 2.0);
-        sphere.color = [1.0, 0.9, 0.1, 0.15];
-        sphere.handle_color = handle_color;
+        sphere.colour = [1.0, 0.9, 0.1, 0.15];
+        sphere.handle_colour = handle_colour;
 
         let mut bw = BoxWidget::new(glam::Vec3::ZERO, glam::Vec3::splat(2.0));
-        bw.color = [1.0, 0.9, 0.1, 1.0];
-        bw.handle_color = handle_color;
+        bw.colour = [1.0, 0.9, 0.1, 1.0];
+        bw.handle_colour = handle_colour;
 
         let mut plane = PlaneWidget::new(glam::Vec3::ZERO, glam::Vec3::Z);
-        plane.color = [0.4, 0.8, 1.0, 1.0];
-        plane.handle_color = handle_color;
+        plane.colour = [0.4, 0.8, 1.0, 1.0];
+        plane.handle_colour = handle_colour;
 
         let mut disk = DiskWidget::new(glam::Vec3::ZERO, glam::Vec3::Z, 2.0);
-        disk.color = [1.0, 0.7, 0.2, 1.0];
-        disk.handle_color = handle_color;
+        disk.colour = [1.0, 0.7, 0.2, 1.0];
+        disk.handle_colour = handle_colour;
 
         let mut cylinder = CylinderWidget::new(
             glam::Vec3::new(0.0, -2.0, 0.0),
             glam::Vec3::new(0.0, 2.0, 0.0),
             1.5,
         );
-        cylinder.color = [0.5, 1.0, 0.5, 1.0];
-        cylinder.handle_color = handle_color;
+        cylinder.colour = [0.5, 1.0, 0.5, 1.0];
+        cylinder.handle_colour = handle_colour;
 
         let mut polyline = PolylineWidget::new(vec![
             glam::Vec3::new(-2.0, 0.0, 0.5),
@@ -99,8 +99,8 @@ impl ProbeWidgetState {
             glam::Vec3::new(0.5, -1.5, 0.5),
             glam::Vec3::new(2.0, 0.0, 0.5),
         ]);
-        polyline.color = [1.0, 0.5, 0.2, 1.0];
-        polyline.handle_color = handle_color;
+        polyline.colour = [1.0, 0.5, 0.2, 1.0];
+        polyline.handle_colour = handle_colour;
 
         let cloud_positions = generate_cloud(CLOUD_N);
         let selected = vec![false; CLOUD_N];

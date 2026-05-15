@@ -6,15 +6,15 @@
 //          + ClipPlanes uniform (up to 6 half-space clipping planes)
 //          + ShadowAtlas uniform (unused here, but layout must match camera_bgl).
 // Group 1: PointCloud uniform (model matrix, point_size, scalar mapping params,
-//          default_color, has_scalars, has_colors)
+//          default_colour, has_scalars, has_colours)
 //          + LUT texture (256x1, Rgba8Unorm)
 //          + LUT sampler
 //          + scalar storage buffer (f32 per point)
-//          + color storage buffer (vec4 per point)
+//          + colour storage buffer (vec4 per point)
 //
 // Vertex input: position vec3 (location 0).
 //
-// The shader reads per-point color or scalar data from storage buffers,
+// The shader reads per-point colour or scalar data from storage buffers,
 // mapping through the LUT when has_scalars != 0.
 
 struct Camera {
@@ -35,12 +35,12 @@ struct ClipPlanes {
 // Point cloud per-item uniform : 128 bytes.
 struct PointCloudUniform {
     model:            mat4x4<f32>,   // 64 bytes
-    default_color:    vec4<f32>,     // 16 bytes
+    default_colour:    vec4<f32>,     // 16 bytes
     point_size:       f32,           //  4 bytes
     has_scalars:      u32,           //  4 bytes (1 = use scalar buffer + LUT)
     scalar_min:       f32,           //  4 bytes
     scalar_max:       f32,           //  4 bytes
-    has_colors:       u32,           //  4 bytes (1 = use color buffer)
+    has_colours:       u32,           //  4 bytes (1 = use colour buffer)
     has_radius:       u32,           //  4 bytes (1 = per-point radius from radius_buffer)
     has_transparency: u32,           //  4 bytes (1 = per-point alpha from transparency_buffer)
     gaussian:         u32,           //  4 bytes (1 = gaussian splat falloff; implies circle clip)
@@ -110,7 +110,7 @@ fn clip_volume_test(p: vec3<f32>) -> bool {
 @group(1) @binding(1) var                     lut_texture:          texture_2d<f32>;
 @group(1) @binding(2) var                     lut_sampler:          sampler;
 @group(1) @binding(3) var<storage, read>      scalar_buffer:        array<f32>;
-@group(1) @binding(4) var<storage, read>      color_buffer:         array<vec4<f32>>;
+@group(1) @binding(4) var<storage, read>      colour_buffer:         array<vec4<f32>>;
 @group(1) @binding(5) var<storage, read>      radius_buffer:        array<f32>;
 @group(1) @binding(6) var<storage, read>      transparency_buffer:  array<f32>;
 
@@ -125,7 +125,7 @@ struct VertexIn {
 
 struct VertexOut {
     @builtin(position) clip_pos:  vec4<f32>,
-    @location(0)       color:     vec4<f32>,
+    @location(0)       colour:     vec4<f32>,
     @location(1)       world_pos: vec3<f32>,
     @location(2)       uv:        vec2<f32>,
 };
@@ -149,7 +149,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     let world_pos = (pc_uniform.model * vec4<f32>(in.position, 1.0)).xyz;
     let center    = camera.view_proj * vec4<f32>(world_pos, 1.0);
 
-    // Determine color : indexed by instance (= point index), not vertex.
+    // Determine colour : indexed by instance (= point index), not vertex.
     let idx = in.instance_index;
 
     // Expand to a screen-space quad. corner is in [-1,1]^2, mapped to pixels via
@@ -174,23 +174,23 @@ fn vs_main(in: VertexIn) -> VertexOut {
         let range = pc_uniform.scalar_max - pc_uniform.scalar_min;
         let t     = select(0.0, (raw - pc_uniform.scalar_min) / range, range > 0.0);
         let u     = clamp(t, 0.0, 1.0);
-        out.color = textureSampleLevel(lut_texture, lut_sampler, vec2<f32>(u, 0.5), 0.0);
-    } else if pc_uniform.has_colors != 0u {
-        out.color = color_buffer[idx];
+        out.colour = textureSampleLevel(lut_texture, lut_sampler, vec2<f32>(u, 0.5), 0.0);
+    } else if pc_uniform.has_colours != 0u {
+        out.colour = colour_buffer[idx];
     } else {
-        out.color = pc_uniform.default_color;
+        out.colour = pc_uniform.default_colour;
     }
 
     // Apply per-point transparency (multiplies the alpha channel).
     if pc_uniform.has_transparency != 0u {
-        out.color.a = out.color.a * clamp(transparency_buffer[idx], 0.0, 1.0);
+        out.colour.a = out.colour.a * clamp(transparency_buffer[idx], 0.0, 1.0);
     }
 
-    // Apply global opacity: default_color.a acts as a uniform opacity multiplier
-    // for all color modes (scalar LUT, per-point color, and solid color).
-    // For solid color mode it is already baked into default_color.a above.
-    if pc_uniform.has_scalars != 0u || pc_uniform.has_colors != 0u {
-        out.color.a = out.color.a * pc_uniform.default_color.a;
+    // Apply global opacity: default_colour.a acts as a uniform opacity multiplier
+    // for all colour modes (scalar LUT, per-point colour, and solid colour).
+    // For solid colour mode it is already baked into default_colour.a above.
+    if pc_uniform.has_scalars != 0u || pc_uniform.has_colours != 0u {
+        out.colour.a = out.colour.a * pc_uniform.default_colour.a;
     }
 
     return out;
@@ -211,11 +211,11 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let d2 = dot(in.uv, in.uv);
     if d2 > 1.0 { discard; }
 
-    var color = in.color;
+    var colour = in.colour;
 
     if pc_uniform.gaussian != 0u {
         // Soft Gaussian splat: alpha falls off as exp(-3*d²).
-        color.a = color.a * exp(-3.0 * d2);
+        colour.a = colour.a * exp(-3.0 * d2);
     } else if pc_uniform.render_mode == 1u {
         // Sphere shading: reconstruct a hemisphere normal from the billboard UV.
         // uv.xy lie in [-1,1]; z is the front-facing hemisphere depth.
@@ -233,9 +233,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let specular = pow(max(dot(n, h), 0.0), 32.0) * 0.4;
 
         let brightness = ambient + (1.0 - ambient) * diffuse + specular;
-        color = vec4<f32>(color.rgb * brightness, color.a);
+        colour = vec4<f32>(colour.rgb * brightness, colour.a);
     }
     // render_mode == 0 (ScreenSpaceCircle): flat disc, no shading beyond the circle clip above.
 
-    return color;
+    return colour;
 }

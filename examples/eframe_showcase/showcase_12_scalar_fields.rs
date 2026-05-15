@@ -1,4 +1,4 @@
-//! Showcase 12: Scalar Fields & Colormaps : build and controls.
+//! Showcase 12: Scalar Fields & Colourmaps : build and controls.
 //!
 //! Three objects each carrying a different procedural scalar attribute:
 //!   Object 0 : Sphere,    attribute "height"   (world Z of each vertex, 0..1 range)
@@ -8,7 +8,7 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    AttributeData, BuiltinColormap, Material, MeshData, MeshId, NodeId, ScalarBarAnchor,
+    AttributeData, BuiltinColourmap, Material, MeshData, MeshId, NodeId, ScalarBarAnchor,
     ScalarBarItem, ScalarBarOrientation, Selection, ViewportRenderer, scene::Scene,
 };
 
@@ -20,7 +20,7 @@ pub(crate) struct ScalarFieldsState {
     pub built: bool,
     pub scene: Scene,
     pub selection: Selection,
-    pub colormap: BuiltinColormap,
+    pub colourmap: BuiltinColourmap,
     pub range_auto: bool,
     pub range: (f32, f32),
     pub nan_on: bool,
@@ -40,7 +40,7 @@ impl Default for ScalarFieldsState {
             built: false,
             scene: Scene::new(),
             selection: Selection::new(),
-            colormap: BuiltinColormap::Viridis,
+            colourmap: BuiltinColourmap::Viridis,
             range_auto: true,
             range: (0.0, 1.0),
             nan_on: false,
@@ -111,7 +111,7 @@ impl App {
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(-6.0, 0.0, 0.0)),
             {
-                let mut m = Material::from_color([0.8, 0.8, 0.8]);
+                let mut m = Material::from_colour([0.8, 0.8, 0.8]);
                 m.roughness = 0.5;
                 m
             },
@@ -131,7 +131,7 @@ impl App {
             self.scalar_state
                 .scene
                 .add_named("Wave Grid", Some(wave_id), glam::Mat4::IDENTITY, {
-                    let mut m = Material::from_color([0.8, 0.8, 0.8]);
+                    let mut m = Material::from_colour([0.8, 0.8, 0.8]);
                     m.roughness = 0.5;
                     m
                 });
@@ -151,7 +151,7 @@ impl App {
             Some(box_id),
             glam::Mat4::from_translation(glam::Vec3::new(6.0, 0.0, 0.0)),
             {
-                let mut m = Material::from_color([0.8, 0.8, 0.8]);
+                let mut m = Material::from_colour([0.8, 0.8, 0.8]);
                 m.roughness = 0.5;
                 m
             },
@@ -189,7 +189,7 @@ impl App {
         };
 
         ScalarBarItem {
-            colormap_id: viewport_lib::ColormapId(s.colormap as usize),
+            colourmap_id: viewport_lib::ColourmapId(s.colourmap as usize),
             scalar_min,
             scalar_max,
             anchor: s.bar_anchor,
@@ -227,16 +227,16 @@ pub(crate) fn controls_scalar_fields(app: &mut App, ui: &mut egui::Ui) {
     let s = &mut app.scalar_state;
 
     ui.separator();
-    ui.label("Colormap:");
+    ui.label("Colourmap:");
     for (preset, label) in [
-        (BuiltinColormap::Viridis, "Viridis"),
-        (BuiltinColormap::Plasma, "Plasma"),
-        (BuiltinColormap::Greyscale, "Greyscale"),
-        (BuiltinColormap::Coolwarm, "Coolwarm"),
-        (BuiltinColormap::Rainbow, "Rainbow"),
+        (BuiltinColourmap::Viridis, "Viridis"),
+        (BuiltinColourmap::Plasma, "Plasma"),
+        (BuiltinColourmap::Greyscale, "Greyscale"),
+        (BuiltinColourmap::Coolwarm, "Coolwarm"),
+        (BuiltinColourmap::Rainbow, "Rainbow"),
     ] {
-        if ui.radio(s.colormap == preset, label).clicked() {
-            s.colormap = preset;
+        if ui.radio(s.colourmap == preset, label).clicked() {
+            s.colourmap = preset;
         }
     }
 
@@ -264,7 +264,7 @@ pub(crate) fn controls_scalar_fields(app: &mut App, ui: &mut egui::Ui) {
     }
 
     ui.separator();
-    ui.checkbox(&mut s.nan_on, "Show NaN color (purple)");
+    ui.checkbox(&mut s.nan_on, "Show NaN colour (purple)");
     ui.label("(box object: values < threshold set to NaN)");
 
     ui.separator();
@@ -350,7 +350,7 @@ fn make_wave_grid(cols: u32, rows: u32, size: f32) -> (MeshData, Vec<f32>) {
 }
 
 /// Build a box mesh (cuboid) with per-vertex "distance" scalar.
-/// Values below 0.4 (normalized) are set to NaN to demonstrate `nan_color`.
+/// Values below 0.4 (normalized) are set to NaN to demonstrate `nan_colour`.
 fn make_box_with_distance_scalar() -> (MeshData, Vec<f32>) {
     let mut mesh = viewport_lib::primitives::cuboid(2.5, 2.5, 2.5);
     let scalars: Vec<f32> = mesh

@@ -2,9 +2,9 @@
 //!
 //! Converts volumetric cell connectivity into a standard [`MeshData`] by
 //! extracting boundary faces (faces shared by exactly one cell) and computing
-//! area-weighted vertex normals. Per-cell scalar and color attributes are
+//! area-weighted vertex normals. Per-cell scalar and colour attributes are
 //! remapped to per-face attributes so the existing Phase 2 face-rendering path
-//! handles coloring without any new GPU infrastructure.
+//! handles colouring without any new GPU infrastructure.
 //!
 //! # Cell conventions
 //!
@@ -79,11 +79,11 @@ pub struct VolumeMeshData {
     /// can be visualised via [`AttributeKind::Face`](super::types::AttributeKind::Face).
     pub cell_scalars: HashMap<String, Vec<f32>>,
 
-    /// Named per-cell RGBA color attributes (one `[f32; 4]` per cell).
+    /// Named per-cell RGBA colour attributes (one `[f32; 4]` per cell).
     ///
-    /// Automatically remapped to boundary face colors during upload, rendered
-    /// via [`AttributeKind::FaceColor`](super::types::AttributeKind::FaceColor).
-    pub cell_colors: HashMap<String, Vec<[f32; 4]>>,
+    /// Automatically remapped to boundary face colours during upload, rendered
+    /// via [`AttributeKind::FaceColour`](super::types::AttributeKind::FaceColour).
+    pub cell_colours: HashMap<String, Vec<[f32; 4]>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -545,12 +545,12 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u3
         attributes.insert(name.clone(), AttributeData::Face(face_scalars));
     }
 
-    for (name, cell_vals) in &data.cell_colors {
-        let face_colors: Vec<[f32; 4]> = boundary
+    for (name, cell_vals) in &data.cell_colours {
+        let face_colours: Vec<[f32; 4]> = boundary
             .iter()
             .map(|(ci, _, _)| cell_vals.get(*ci).copied().unwrap_or([1.0; 4]))
             .collect();
-        attributes.insert(name.clone(), AttributeData::FaceColor(face_colors));
+        attributes.insert(name.clone(), AttributeData::FaceColour(face_colours));
     }
 
     let face_to_cell: Vec<u32> = boundary.iter().map(|(ci, _, _)| *ci as u32).collect();
@@ -584,7 +584,7 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u3
 //
 // This is not a generic clip overlay.  The renderer's cap-fill system generates
 // a flat polygon on each clip plane independently of the underlying geometry.
-// For volume meshes that is wrong: it produces a slab with no per-cell color
+// For volume meshes that is wrong: it produces a slab with no per-cell colour
 // information.  `extract_clipped_volume_faces` replaces the cap-fill role for
 // volume meshes entirely.  Callers must disable cap-fill when using this path.
 //
@@ -627,9 +627,9 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u3
 //
 // ## Attribute propagation
 //
-// Section triangles inherit the owning cell's `cell_scalars` and `cell_colors`
+// Section triangles inherit the owning cell's `cell_scalars` and `cell_colours`
 // values exactly as boundary triangles do.  The output `MeshData` uses the same
-// `AttributeKind::Face` / `AttributeKind::FaceColor` paths, so colormaps work
+// `AttributeKind::Face` / `AttributeKind::FaceColour` paths, so colourmaps work
 // with no changes to the renderer.
 //
 // ## Output type
@@ -658,7 +658,7 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u3
 ///   planes, then triangulated).
 ///
 /// Section face normals point toward the kept side (matching the cutting plane
-/// normal).  Per-cell scalar and color attributes are propagated to section
+/// normal).  Per-cell scalar and colour attributes are propagated to section
 /// triangles identically to boundary triangles.
 ///
 /// # Renderer contract
@@ -1167,12 +1167,12 @@ pub fn extract_clipped_volume_faces(
             .collect();
         attributes.insert(name.clone(), AttributeData::Face(face_scalars));
     }
-    for (name, cell_vals) in &data.cell_colors {
-        let face_colors: Vec<[f32; 4]> = indexed_tris
+    for (name, cell_vals) in &data.cell_colours {
+        let face_colours: Vec<[f32; 4]> = indexed_tris
             .iter()
             .map(|(ci, _)| cell_vals.get(*ci).copied().unwrap_or([1.0; 4]))
             .collect();
-        attributes.insert(name.clone(), AttributeData::FaceColor(face_colors));
+        attributes.insert(name.clone(), AttributeData::FaceColour(face_colours));
     }
 
     let face_to_cell: Vec<u32> = indexed_tris.iter().map(|(ci, _)| *ci as u32).collect();
@@ -1838,18 +1838,18 @@ mod tests {
     }
 
     #[test]
-    fn cell_color_remaps_to_face_color_attribute() {
+    fn cell_colour_remaps_to_face_colour_attribute() {
         let mut data = two_tets_sharing_face();
-        data.cell_colors.insert(
+        data.cell_colours.insert(
             "label".to_string(),
             vec![[1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]],
         );
         let (mesh, _) = extract_boundary_faces(&data);
         match mesh.attributes.get("label") {
-            Some(AttributeData::FaceColor(colors)) => {
-                assert_eq!(colors.len(), 6, "6 boundary faces");
+            Some(AttributeData::FaceColour(colours)) => {
+                assert_eq!(colours.len(), 6, "6 boundary faces");
             }
-            other => panic!("expected FaceColor attribute, got {other:?}"),
+            other => panic!("expected FaceColour attribute, got {other:?}"),
         }
     }
 
@@ -2002,26 +2002,26 @@ mod tests {
         }
     }
 
-    /// Cell color attributes must be remapped onto section triangles as
-    /// `AttributeKind::FaceColor`, with one entry per output triangle.
+    /// Cell colour attributes must be remapped onto section triangles as
+    /// `AttributeKind::FaceColour`, with one entry per output triangle.
     #[test]
-    fn cell_color_propagates_to_section_faces() {
+    fn cell_colour_propagates_to_section_faces() {
         let mut data = structured_tet_grid(3);
         let n_cells = data.cells.len();
-        let color = [1.0_f32, 0.0, 0.5, 1.0];
-        data.cell_colors
-            .insert("label".to_string(), vec![color; n_cells]);
+        let colour = [1.0_f32, 0.0, 0.5, 1.0];
+        data.cell_colours
+            .insert("label".to_string(), vec![colour; n_cells]);
         let plane = [0.0_f32, 1.0, 0.0, -1.5];
         let (mesh, _) = extract_clipped_volume_faces(&data, &[plane]);
         match mesh.attributes.get("label") {
-            Some(AttributeData::FaceColor(colors)) => {
+            Some(AttributeData::FaceColour(colours)) => {
                 let n_tris = mesh.indices.len() / 3;
-                assert_eq!(colors.len(), n_tris, "one color per output triangle");
-                for &c in colors {
-                    assert_eq!(c, color, "color must equal the owning cell's value");
+                assert_eq!(colours.len(), n_tris, "one colour per output triangle");
+                for &c in colours {
+                    assert_eq!(c, colour, "colour must equal the owning cell's value");
                 }
             }
-            other => panic!("expected FaceColor attribute on clipped mesh, got {other:?}"),
+            other => panic!("expected FaceColour attribute on clipped mesh, got {other:?}"),
         }
     }
 

@@ -134,20 +134,20 @@ impl AppState {
 
     /// Build the scene items (a small grid of coloured cubes). Shared across all viewports.
     fn build_scene(&self) -> SceneFrame {
-        let positions_colors: &[([f32; 3], [f32; 4])] = &[
+        let positions_colours: &[([f32; 3], [f32; 4])] = &[
             ([-2.0, -2.0, 0.0], [0.9, 0.3, 0.3, 1.0]),
             ([2.0, -2.0, 0.0], [0.3, 0.9, 0.3, 1.0]),
             ([-2.0, 2.0, 0.0], [0.3, 0.3, 0.9, 1.0]),
             ([2.0, 2.0, 0.0], [0.9, 0.9, 0.3, 1.0]),
             ([0.0, 0.0, 2.0], [0.9, 0.5, 0.1, 1.0]),
         ];
-        let items: Vec<SceneRenderItem> = positions_colors
+        let items: Vec<SceneRenderItem> = positions_colours
             .iter()
-            .map(|&(pos, color)| {
+            .map(|&(pos, colour)| {
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = self.mesh_id;
                 item.model = glam::Mat4::from_translation(glam::Vec3::from(pos)).to_cols_array_2d();
-                item.material.base_color = [color[0], color[1], color[2]];
+                item.material.base_colour = [colour[0], colour[1], colour[2]];
                 item
             })
             .collect();

@@ -1,9 +1,9 @@
 //! Showcase 11: Lights : build and controls.
 //!
 //! A flat ground plane plus a 3x3 grid of white spheres : neutral surfaces that make
-//! light color, cone angle, and attenuation directly visible.
+//! light colour, cone angle, and attenuation directly visible.
 //! One additional sphere in the corner uses `Material::unlit` to show the raw base
-//! color without any lighting contribution.
+//! colour without any lighting contribution.
 
 use crate::App;
 use crate::geometry::make_box_with_uvs;
@@ -20,8 +20,8 @@ pub(crate) struct LightsState {
     pub sources: Vec<LightSource>,
     pub hemi_on: bool,
     pub hemi_intensity: f32,
-    pub sky_color: [f32; 3],
-    pub ground_color: [f32; 3],
+    pub sky_colour: [f32; 3],
+    pub ground_colour: [f32; 3],
     pub edl_enabled: bool,
     pub edl_radius: f32,
     pub edl_strength: f32,
@@ -36,8 +36,8 @@ impl Default for LightsState {
             sources: vec![LightSource::default()],
             hemi_on: true,
             hemi_intensity: 1.0,
-            sky_color: [1.0, 1.0, 1.0],
-            ground_color: [1.0, 1.0, 1.0],
+            sky_colour: [1.0, 1.0, 1.0],
+            ground_colour: [1.0, 1.0, 1.0],
             edl_enabled: false,
             edl_radius: 1.0,
             edl_strength: 1.0,
@@ -66,7 +66,7 @@ impl App {
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.05)),
             {
-                let mut m = Material::from_color([0.45, 0.45, 0.48]);
+                let mut m = Material::from_colour([0.45, 0.45, 0.48]);
                 m.roughness = 0.9;
                 m
             },
@@ -90,7 +90,7 @@ impl App {
                     Some(sphere_id),
                     glam::Mat4::from_translation(glam::Vec3::new(x, y, z)),
                     {
-                        let mut m = Material::from_color([0.92, 0.92, 0.92]);
+                        let mut m = Material::from_colour([0.92, 0.92, 0.92]);
                         m.roughness = 0.35;
                         m
                     },
@@ -98,25 +98,25 @@ impl App {
             }
         }
 
-        // Unlit sphere in the corner : shows the raw base color regardless of scene
-        // lighting. A lit sphere of the same color sits beside it for comparison.
+        // Unlit sphere in the corner : shows the raw base colour regardless of scene
+        // lighting. A lit sphere of the same colour sits beside it for comparison.
         // Visibility is controlled at frame time via the toggle, not by rebuilding.
         self.lights_state.scene.add_named(
             "Unlit Sphere",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(6.0, -6.0, 0.6)),
             {
-                let mut m = Material::from_color([0.2, 0.7, 1.0]);
+                let mut m = Material::from_colour([0.2, 0.7, 1.0]);
                 m.unlit = true;
                 m
             },
         );
         self.lights_state.scene.add_named(
-            "Lit Sphere (same color)",
+            "Lit Sphere (same colour)",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(6.0, -2.0, 0.6)),
             {
-                let mut m = Material::from_color([0.2, 0.7, 1.0]);
+                let mut m = Material::from_colour([0.2, 0.7, 1.0]);
                 m.roughness = 0.35;
                 m
             },
@@ -140,7 +140,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                 kind: LightKind::Directional {
                     direction: [0.4, 0.3, 1.5],
                 },
-                color: [1.0, 1.0, 1.0],
+                colour: [1.0, 1.0, 1.0],
                 intensity: 1.0,
             });
         }
@@ -150,7 +150,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                     position: [0.0, 3.0, 3.0],
                     range: 15.0,
                 },
-                color: [1.0, 0.9, 0.7],
+                colour: [1.0, 0.9, 0.7],
                 intensity: 2.0,
             });
         }
@@ -163,7 +163,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                     inner_angle: 0.25,
                     outer_angle: 0.45,
                 },
-                color: [0.8, 0.95, 1.0],
+                colour: [0.8, 0.95, 1.0],
                 intensity: 3.0,
             });
         }
@@ -192,12 +192,12 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                     .show(ui, |ui| {
                         let src = &mut app.lights_state.sources[i];
 
-                        // Color
+                        // Colour
                         ui.horizontal(|ui| {
-                            ui.label("Color:");
-                            let mut c = src.color;
+                            ui.label("Colour:");
+                            let mut c = src.colour;
                             if ui.color_edit_button_rgb(&mut c).changed() {
-                                src.color = c;
+                                src.colour = c;
                             }
                         });
 
@@ -313,11 +313,11 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
         );
         ui.horizontal(|ui| {
             ui.label("Sky:");
-            ui.color_edit_button_rgb(&mut app.lights_state.sky_color);
+            ui.color_edit_button_rgb(&mut app.lights_state.sky_colour);
         });
         ui.horizontal(|ui| {
             ui.label("Ground:");
-            ui.color_edit_button_rgb(&mut app.lights_state.ground_color);
+            ui.color_edit_button_rgb(&mut app.lights_state.ground_colour);
         });
     }
 
