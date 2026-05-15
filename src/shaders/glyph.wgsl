@@ -1,7 +1,7 @@
 // Glyph (instanced vector field) shader for the 3D viewport.
 //
 // Group 0: Camera uniform (view-projection, eye position) : same layout as mesh.wgsl.
-//          + shadow/light uniforms (present in layout, not all used here)
+//          binding 3: Lights uniform (directional lights + hemisphere ambient).
 //          + ClipPlanes uniform (binding 4).
 // Group 1: Glyph uniform (global_scale, scale_by_magnitude, scalar mapping params, ...)
 //          + LUT texture + sampler.
@@ -42,7 +42,8 @@ struct GlyphUniform {
     // offset 32 : 16-byte aligned, safe for vec4.
     default_color:      vec4<f32>,  // 16 bytes
     use_default_color:  u32,        //  4 bytes (1 = color by default_color instead of LUT)
-    _pad0: u32, _pad1: u32, _pad2: u32, // 12 bytes : total 64 bytes
+    unlit:              u32,        //  4 bytes (1 = skip lighting, return raw color)
+    _pad1: u32, _pad2: u32,        //  8 bytes : total 64 bytes
 };
 
 // Per-instance data : 32 bytes.
@@ -78,9 +79,35 @@ struct ClipVolumeUB {
     volumes: array<ClipVolumeEntry, 4>,
 };
 
-@group(0) @binding(0) var<uniform>       camera:     Camera;
-@group(0) @binding(4) var<uniform>       clip_planes: ClipPlanes;
-@group(0) @binding(6) var<uniform>       clip_volume: ClipVolumeUB;
+struct SingleLight {
+    light_view_proj: mat4x4<f32>,
+    pos_or_dir:      vec3<f32>,
+    light_type:      u32,
+    color:           vec3<f32>,
+    intensity:       f32,
+    range:           f32,
+    inner_angle:     f32,
+    outer_angle:     f32,
+    spot_direction:  vec3<f32>,
+    _pad:            vec2<f32>,
+};
+
+struct Lights {
+    count:                u32,
+    hemisphere_intensity: f32,
+    _pad0:                u32,
+    _pad1:                u32,
+    sky_color:            vec3<f32>,
+    _pad2:                f32,
+    ground_color:         vec3<f32>,
+    _pad3:                f32,
+    lights:               array<SingleLight, 8>,
+};
+
+@group(0) @binding(0) var<uniform> camera:      Camera;
+@group(0) @binding(3) var<uniform> lights:      Lights;
+@group(0) @binding(4) var<uniform> clip_planes: ClipPlanes;
+@group(0) @binding(6) var<uniform> clip_volume: ClipVolumeUB;
 
 fn clip_volume_test(p: vec3<f32>) -> bool {
     for (var i = 0u; i < clip_volume.count; i = i + 1u) {
@@ -193,7 +220,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     out.clip_pos  = camera.view_proj * vec4<f32>(world_pos, 1.0);
     out.world_pos = world_pos;
     out.world_nrm = world_nrm;
-    out.unlit     = select(0.0, 1.0, glyph_uniform.use_default_color != 0u);
+    out.unlit     = select(0.0, 1.0, glyph_uniform.use_default_color != 0u || glyph_uniform.unlit != 0u);
 
     // Determine color.
     if glyph_uniform.use_default_color != 0u {
@@ -233,12 +260,25 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         return in.color;
     }
 
-    // Simple diffuse lighting with a fixed directional light.
-    let light_dir = normalize(vec3<f32>(0.3, 1.0, 0.5));
-    let n_dot_l   = max(dot(in.world_nrm, light_dir), 0.0);
-    let ambient   = 0.2;
-    let diffuse   = 0.8 * n_dot_l;
-    let shading   = ambient + diffuse;
+    // Diffuse shading from scene directional lights.
+    // abs(n_dot_l) gives two-sided lighting so back faces of the shaft are not
+    // dark -- glyphs are small instanced objects viewed from any direction.
+    let n = normalize(in.world_nrm);
 
-    return vec4<f32>(in.color.rgb * shading, in.color.a);
+    var light_dir: vec3<f32>;
+    var light_rgb: vec3<f32>;
+    if lights.count > 0u && lights.lights[0].light_type == 0u {
+        light_dir = normalize(-lights.lights[0].pos_or_dir);
+        light_rgb = lights.lights[0].color * lights.lights[0].intensity;
+    } else {
+        light_dir = normalize(vec3<f32>(0.3, 1.0, 0.5));
+        light_rgb = vec3<f32>(1.0);
+    }
+
+    let n_dot_l = abs(dot(n, light_dir));
+    let ambient = 0.2;
+    let diffuse = 0.8 * n_dot_l;
+    let shading = ambient + diffuse;
+
+    return vec4<f32>(in.color.rgb * light_rgb * shading, in.color.a);
 }
