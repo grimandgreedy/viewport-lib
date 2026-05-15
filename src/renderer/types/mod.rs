@@ -4,7 +4,6 @@
 //! that take raw `wgpu` types. GUI framework adapters (e.g. the egui
 //! `CallbackTrait` impl in the application crate) delegate to these methods.
 
-
 /// Minimum scene item count to activate the instanced draw path.
 /// Use instancing for any scene with more than 1 object. The per-object path
 /// writes uniforms into a per-mesh buffer, so two scene nodes sharing the same
@@ -23,7 +22,6 @@ pub(crate) struct InstancedBatch {
     pub instance_count: u32,
     pub is_transparent: bool,
 }
-
 
 mod clip;
 mod frame;
@@ -541,14 +539,17 @@ macro_rules! emit_outline_composite {
         let resources = $resources;
         let render_pass = $render_pass;
         if let Some(slot) = $vp_slot {
-            if !slot.outline_object_buffers.is_empty() || !slot.splat_outline_buffers.is_empty()
+            if !slot.outline_object_buffers.is_empty()
+                || !slot.splat_outline_buffers.is_empty()
                 || !slot.volume_outline_indices.is_empty()
                 || !slot.glyph_outline_indices.is_empty()
                 || !slot.tensor_glyph_outline_indices.is_empty()
                 || !slot.sprite_outline_indices.is_empty()
             {
                 let composite_bg = slot.hdr.as_ref().map(|h| &h.outline_composite_bind_group);
-                let pipeline = resources.outline_composite_pipeline_msaa.as_ref()
+                let pipeline = resources
+                    .outline_composite_pipeline_msaa
+                    .as_ref()
                     .or(resources.outline_composite_pipeline_single.as_ref());
                 if let (Some(pipeline), Some(bg)) = (pipeline, composite_bg) {
                     render_pass.set_pipeline(pipeline);
@@ -612,9 +613,15 @@ macro_rules! emit_scivis_draw_calls {
                     continue;
                 }
                 let pipeline = if pl.skip_clip {
-                    resources.polyline_no_clip_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                    resources
+                        .polyline_no_clip_pipeline
+                        .as_ref()
+                        .map(|d| d.for_format(_is_hdr))
                 } else {
-                    resources.polyline_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                    resources
+                        .polyline_pipeline
+                        .as_ref()
+                        .map(|d| d.for_format(_is_hdr))
                 };
                 if let Some(pipeline) = pipeline {
                     render_pass.set_pipeline(pipeline);
@@ -750,8 +757,14 @@ macro_rules! emit_scivis_draw_calls {
             if let Some(ref dual) = resources.sprite_pipeline_depth_write {
                 let mut set = false;
                 for sprite in $sprite_gpu_data.iter() {
-                    if !sprite.depth_write { continue; }
-                    if !set { render_pass.set_pipeline(dual.for_format(_is_hdr)); render_pass.set_bind_group(0, camera_bg, &[]); set = true; }
+                    if !sprite.depth_write {
+                        continue;
+                    }
+                    if !set {
+                        render_pass.set_pipeline(dual.for_format(_is_hdr));
+                        render_pass.set_bind_group(0, camera_bg, &[]);
+                        set = true;
+                    }
                     render_pass.set_bind_group(1, &sprite.bind_group, &[]);
                     render_pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
                     render_pass.draw(0..6, 0..sprite.sprite_count);
@@ -761,8 +774,14 @@ macro_rules! emit_scivis_draw_calls {
             if let Some(ref dual) = resources.sprite_pipeline {
                 let mut set = false;
                 for sprite in $sprite_gpu_data.iter() {
-                    if sprite.depth_write { continue; }
-                    if !set { render_pass.set_pipeline(dual.for_format(_is_hdr)); render_pass.set_bind_group(0, camera_bg, &[]); set = true; }
+                    if sprite.depth_write {
+                        continue;
+                    }
+                    if !set {
+                        render_pass.set_pipeline(dual.for_format(_is_hdr));
+                        render_pass.set_bind_group(0, camera_bg, &[]);
+                        set = true;
+                    }
                     render_pass.set_bind_group(1, &sprite.bind_group, &[]);
                     render_pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
                     render_pass.draw(0..6, 0..sprite.sprite_count);

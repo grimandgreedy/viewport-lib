@@ -113,12 +113,16 @@ pub use camera::turntable::TurntableController;
 pub use camera::view_preset::ViewPreset;
 
 pub use scene::aabb::Aabb;
-pub use scene::material::{BackfacePattern, BackfacePolicy, Material, ParamVis, ParamVisMode, PatternConfig};
+pub use scene::material::{
+    BackfacePattern, BackfacePolicy, Material, ParamVis, ParamVisMode, PatternConfig,
+};
 pub use scene::scene::{Group, GroupId, Layer, LayerId, Scene, SceneNode};
 pub use scene::traits::{RenderMode, ViewportObject};
 
 pub use geometry::bvh::PickAccelerator;
-pub use geometry::implicit::{ImplicitRenderOptions, march_implicit_surface, march_implicit_surface_color};
+pub use geometry::implicit::{
+    ImplicitRenderOptions, march_implicit_surface, march_implicit_surface_color,
+};
 pub use geometry::isoline::{IsolineItem, extract_isolines};
 pub use geometry::marching_cubes::{VolumeData, extract_isosurface};
 
@@ -153,19 +157,21 @@ pub use interaction::clip_plane::{
     ClipPlaneSessionKind, hit_test_normal_handle, hit_test_plane_quad, plane_from_axis_preset,
     project_drag_onto_normal, ray_plane_intersection, snap_plane_distance,
 };
+pub use interaction::pick_mask::PickMask;
 pub use interaction::picking::{
-    GpuPickHit, PickHit, ProbeBinding, RectPickResult, pick_rect,
-    pick_scene_accelerated_with_probe_cpu, pick_scene_nodes_with_probe_cpu, pick_scene_with_probe_cpu,
-    nearest_vertex_on_hit, pick_gaussian_splat_cpu, pick_gaussian_splat_rect,
-    pick_point_cloud_cpu, pick_volume_cpu, pick_volume_rect,
-    pick_transparent_volume_mesh_cpu, pick_transparent_volume_mesh_rect,
-    voxel_world_aabb,
+    GpuPickHit, PickHit, ProbeBinding, RectPickResult, nearest_vertex_on_hit,
+    pick_gaussian_splat_cpu, pick_gaussian_splat_rect, pick_point_cloud_cpu, pick_rect,
+    pick_scene_accelerated_with_probe_cpu, pick_scene_nodes_with_probe_cpu,
+    pick_scene_with_probe_cpu, pick_transparent_volume_mesh_cpu, pick_transparent_volume_mesh_rect,
+    pick_volume_cpu, pick_volume_rect, voxel_world_aabb,
 };
 pub use interaction::selection::{NodeId, Selection};
 pub use interaction::snap::{ConstraintOverlay, SnapConfig};
-pub use interaction::pick_mask::PickMask;
 pub use interaction::sub_object;
-pub use interaction::sub_object::{CellSelectionInfo, PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef, VolumeSelectionInfo};
+pub use interaction::sub_object::{
+    CellSelectionInfo, PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef,
+    VolumeSelectionInfo,
+};
 
 pub use widgets::axes_indicator::AxisView;
 
@@ -173,43 +179,40 @@ pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::{FrameStats, PerformancePolicy, QualityPreset, RuntimeMode};
 pub use renderer::{
     CameraFrame, CameraFrustumItem, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
-    EffectsFrame, EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane,
-    TensorGlyphItem,
-    GroundPlaneMode, ImageAnchor, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
+    EffectsFrame, EnvironmentMap, FilterMode, FrameData, GaussianSplatData, GaussianSplatId,
+    GaussianSplatItem, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode, ImageAnchor,
+    ImageSliceItem, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
     LightingSettings, LoadingBarAnchor, LoadingBarItem, OverlayFrame, OverlayImageItem, PickId,
-    PointCloudItem, PointRenderMode,
-    aabb_wireframe_polyline, PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBarAnchor, ScalarBarItem,
-    ScalarBarOrientation, SceneEffects,
-    RibbonItem, SceneFrame, SceneRenderItem, ScreenImageItem, VolumeMeshItem,
-    GaussianSplatData, GaussianSplatId, GaussianSplatItem, ShDegree,
-    ImageSliceItem, SliceAxis, ShadowFilter, SpriteItem, SpriteSizeMode, StreamtubeItem,
-    SurfaceLICConfig, SurfaceLICItem, SurfaceSubmission, ToneMapping, TubeItem,
-    TransparentVolumeMeshItem, VolumeSurfaceSliceItem,
-    PickRectResult,
-    ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer, VolumeItem,
+    PickRectResult, PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings,
+    RenderCamera, RibbonItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
+    SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, SliceAxis,
+    SpriteItem, SpriteSizeMode, StreamtubeItem, SurfaceLICConfig, SurfaceLICItem,
+    SurfaceSubmission, TensorGlyphItem, ToneMapping, TransparentVolumeMeshItem, TubeItem,
+    ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer, VolumeItem, VolumeMeshItem,
+    VolumeSurfaceSliceItem, aabb_wireframe_polyline,
 };
 
 pub use quantities::{
-    edge_one_form_to_glyphs, face_intrinsic_to_glyphs,
-    polyline_edge_vectors_to_glyphs, polyline_node_vectors_to_glyphs,
-    vertex_intrinsic_to_glyphs,
+    edge_one_form_to_glyphs, face_intrinsic_to_glyphs, polyline_edge_vectors_to_glyphs,
+    polyline_node_vectors_to_glyphs, vertex_intrinsic_to_glyphs,
     volume_mesh_cell_vectors_to_glyphs, volume_mesh_vertex_vectors_to_glyphs,
 };
 
+#[allow(deprecated)]
+pub use resources::ClipVolumeUniform;
 pub use resources::colormap_data::{
     export_paraview_xml_colormap, lerp_colormap_lut, parse_paraview_xml_colormap,
 };
 pub use resources::mesh_store::MeshId;
 pub use resources::sparse_volume::SparseVolumeGridData;
 #[allow(deprecated)]
-pub use resources::volume_mesh::{CELL_SENTINEL, TET_SENTINEL, VolumeMeshData, extract_clipped_volume_faces};
-#[allow(deprecated)]
-pub use resources::ClipVolumeUniform;
+pub use resources::volume_mesh::{
+    CELL_SENTINEL, TET_SENTINEL, VolumeMeshData, extract_clipped_volume_faces,
+};
 pub use resources::{
-    AttributeData, AttributeKind, AttributeRef, BuiltinColormap, BuiltinMatcap, CameraUniform,
-    ClipVolumeEntry, ClipVolumesUniform, CLIP_VOLUME_MAX,
-    ColormapId, ComputeFilterResult, FontError, FontHandle, GpuImplicitItem,
-    GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive, LightUniform,
-    LightsUniform, MatcapId, MeshData, ProjectedTetId, SingleLightUniform, ViewportGpuResources,
-    VolumeGpuId, VolumeId, lerp_attributes,
+    AttributeData, AttributeKind, AttributeRef, BuiltinColormap, BuiltinMatcap, CLIP_VOLUME_MAX,
+    CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColormapId, ComputeFilterResult, FontError,
+    FontHandle, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode,
+    ImplicitPrimitive, LightUniform, LightsUniform, MatcapId, MeshData, ProjectedTetId,
+    SingleLightUniform, ViewportGpuResources, VolumeGpuId, VolumeId, lerp_attributes,
 };

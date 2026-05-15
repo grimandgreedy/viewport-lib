@@ -221,10 +221,9 @@ impl ViewportGpuResources {
         if self.volume_outline_mask_pipeline.is_some() {
             return;
         }
-        let bgl = self
-            .volume_bgl
-            .as_ref()
-            .expect("ensure_volume_pipeline must be called before ensure_volume_outline_mask_pipeline");
+        let bgl = self.volume_bgl.as_ref().expect(
+            "ensure_volume_pipeline must be called before ensure_volume_outline_mask_pipeline",
+        );
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("volume_outline_mask_shader"),
@@ -250,8 +249,8 @@ impl ViewportGpuResources {
             attributes: &vert_attrs,
         };
 
-        self.volume_outline_mask_pipeline =
-            Some(device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        self.volume_outline_mask_pipeline = Some(device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
                 label: Some("volume_outline_mask_pipeline"),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
@@ -289,7 +288,8 @@ impl ViewportGpuResources {
                 },
                 multiview: None,
                 cache: None,
-            }));
+            },
+        ));
     }
 
     /// Ensure the unit cube vertex + index buffers for volume bounding box proxy exist.
@@ -443,9 +443,11 @@ impl ViewportGpuResources {
             if num_clip >= 6 {
                 break;
             }
-            if let crate::renderer::ClipShape::Plane { normal, distance, .. } = obj.shape {
-                clip_plane_data[num_clip as usize] =
-                    [normal[0], normal[1], normal[2], distance];
+            if let crate::renderer::ClipShape::Plane {
+                normal, distance, ..
+            } = obj.shape
+            {
+                clip_plane_data[num_clip as usize] = [normal[0], normal[1], normal[2], distance];
                 num_clip += 1;
             }
         }

@@ -1293,11 +1293,7 @@ mod tests {
     fn plane_all_y_zero() {
         let m = plane(5.0, 3.0);
         for (i, p) in m.positions.iter().enumerate() {
-            assert!(
-                p[1].abs() < 1e-6,
-                "plane vertex[{i}] has Y = {}",
-                p[1]
-            );
+            assert!(p[1].abs() < 1e-6, "plane vertex[{i}] has Y = {}", p[1]);
         }
     }
 
@@ -1473,8 +1469,16 @@ mod tests {
     #[test]
     fn arrow_total_height_is_one() {
         let m = arrow(0.1, 0.3, 0.3, 12);
-        let min_y = m.positions.iter().map(|p| p[1]).fold(f32::INFINITY, f32::min);
-        let max_y = m.positions.iter().map(|p| p[1]).fold(f32::NEG_INFINITY, f32::max);
+        let min_y = m
+            .positions
+            .iter()
+            .map(|p| p[1])
+            .fold(f32::INFINITY, f32::min);
+        let max_y = m
+            .positions
+            .iter()
+            .map(|p| p[1])
+            .fold(f32::NEG_INFINITY, f32::max);
         assert!(
             ((max_y - min_y) - 1.0).abs() < 1e-4,
             "arrow total height = {}, expected 1.0",
@@ -1537,8 +1541,16 @@ mod tests {
         let m = frustum(std::f32::consts::FRAC_PI_4, 1.5, 0.1, 10.0);
         let near_z = -0.1f32;
         let far_z = -10.0f32;
-        let near_verts: Vec<_> = m.positions.iter().filter(|p| (p[2] - near_z).abs() < 1e-3).collect();
-        let far_verts: Vec<_> = m.positions.iter().filter(|p| (p[2] - far_z).abs() < 1e-3).collect();
+        let near_verts: Vec<_> = m
+            .positions
+            .iter()
+            .filter(|p| (p[2] - near_z).abs() < 1e-3)
+            .collect();
+        let far_verts: Vec<_> = m
+            .positions
+            .iter()
+            .filter(|p| (p[2] - far_z).abs() < 1e-3)
+            .collect();
         assert!(!near_verts.is_empty());
         assert!(!far_verts.is_empty());
         let near_w = near_verts.iter().map(|p| p[0].abs()).fold(0.0f32, f32::max);

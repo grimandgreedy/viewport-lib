@@ -11,33 +11,33 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{BackfacePolicy, Material, ViewportRenderer, scene::Scene};
+use viewport_lib::{Material, ViewportRenderer, scene::Scene};
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
 pub(crate) struct GroundPlaneState {
-    pub scene:          Scene,
-    pub built:          bool,
-    pub mode:           GpMode,
-    pub height:         f32,
-    pub color:          [f32; 4],
-    pub tile_size:      f32,
-    pub shadow_color:   [f32; 4],
+    pub scene: Scene,
+    pub built: bool,
+    pub mode: GpMode,
+    pub height: f32,
+    pub color: [f32; 4],
+    pub tile_size: f32,
+    pub shadow_color: [f32; 4],
     pub shadow_opacity: f32,
 }
 
 impl Default for GroundPlaneState {
     fn default() -> Self {
         Self {
-            scene:          Scene::new(),
-            built:          false,
-            mode:           GpMode::Tile,
-            height:         0.0,
-            color:          [0.3, 0.3, 0.3, 1.0],
-            tile_size:      1.0,
-            shadow_color:   [0.0, 0.0, 0.0, 1.0],
+            scene: Scene::new(),
+            built: false,
+            mode: GpMode::Tile,
+            height: 0.0,
+            color: [0.3, 0.3, 0.3, 1.0],
+            tile_size: 1.0,
+            shadow_color: [0.0, 0.0, 0.0, 1.0],
             shadow_opacity: 0.5,
         }
     }
@@ -68,7 +68,6 @@ impl App {
             let mut mat = Material::from_color(color);
             mat.roughness = 0.5;
             mat.metallic = 0.1;
-            mat.backface_policy = BackfacePolicy::Identical;
             self.gp_state.scene.add_named(
                 name,
                 Some(sphere_id),

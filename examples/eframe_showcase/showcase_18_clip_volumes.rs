@@ -11,8 +11,8 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BuiltinColormap, ClipObject, ColormapId, Gizmo, Material, VolumeId, VolumeItem,
-    ViewportRenderer, scene::Scene,
+    BuiltinColormap, ClipObject, ColormapId, Gizmo, Material, ViewportRenderer, VolumeId,
+    VolumeItem, scene::Scene,
 };
 
 // ---------------------------------------------------------------------------
@@ -32,10 +32,27 @@ pub(crate) enum SceneMode {
 // ---------------------------------------------------------------------------
 
 pub(crate) enum ActiveClip {
-    Plane { elevation: f32, azimuth: f32, distance: f32 },
-    Box { center: [f32; 3], half_extents: [f32; 3], yaw: f32 },
-    Sphere { center: [f32; 3], radius: f32 },
-    Cylinder { center: [f32; 3], axis_yaw: f32, axis_pitch: f32, radius: f32, half_length: f32 },
+    Plane {
+        elevation: f32,
+        azimuth: f32,
+        distance: f32,
+    },
+    Box {
+        center: [f32; 3],
+        half_extents: [f32; 3],
+        yaw: f32,
+    },
+    Sphere {
+        center: [f32; 3],
+        radius: f32,
+    },
+    Cylinder {
+        center: [f32; 3],
+        axis_yaw: f32,
+        axis_pitch: f32,
+        radius: f32,
+        half_length: f32,
+    },
 }
 
 impl ActiveClip {
@@ -54,33 +71,35 @@ impl ActiveClip {
 // ---------------------------------------------------------------------------
 
 pub(crate) struct ClipVolState {
-    pub scene:             Scene,
-    pub built:             bool,
-    pub scene_mode:        SceneMode,
-    pub volume_id:         Option<VolumeId>,
-    pub clips:             Vec<ActiveClip>,
-    pub show_overlay:      bool,
+    pub scene: Scene,
+    pub built: bool,
+    pub scene_mode: SceneMode,
+    pub volume_id: Option<VolumeId>,
+    pub clips: Vec<ActiveClip>,
+    pub show_overlay: bool,
     /// Gizmo retained for main.rs compatibility (not used for clip editing).
-    pub gizmo:             Gizmo,
-    pub gizmo_center:      Option<glam::Vec3>,
-    pub gizmo_scale:       f32,
+    pub gizmo: Gizmo,
+    pub gizmo_center: Option<glam::Vec3>,
+    pub gizmo_scale: f32,
     pub gizmo_drag_active: bool,
 }
 
 impl Default for ClipVolState {
     fn default() -> Self {
         Self {
-            scene:             Scene::new(),
-            built:             false,
-            scene_mode:        SceneMode::Mesh,
-            volume_id:         None,
-            clips:             vec![
-                ActiveClip::Plane { elevation: 0.0, azimuth: 0.0, distance: 0.0 },
-            ],
-            show_overlay:      true,
-            gizmo:             Gizmo::new(),
-            gizmo_center:      None,
-            gizmo_scale:       1.0,
+            scene: Scene::new(),
+            built: false,
+            scene_mode: SceneMode::Mesh,
+            volume_id: None,
+            clips: vec![ActiveClip::Plane {
+                elevation: 0.0,
+                azimuth: 0.0,
+                distance: 0.0,
+            }],
+            show_overlay: true,
+            gizmo: Gizmo::new(),
+            gizmo_center: None,
+            gizmo_scale: 1.0,
             gizmo_drag_active: false,
         }
     }
@@ -104,17 +123,14 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &torus_mesh)
             .expect("clipvol torus mesh");
-        self.clipvol_state.scene.add_named(
-            "Torus",
-            Some(torus_id),
-            glam::Mat4::IDENTITY,
-            {
+        self.clipvol_state
+            .scene
+            .add_named("Torus", Some(torus_id), glam::Mat4::IDENTITY, {
                 let mut m = Material::from_color([0.82, 0.42, 0.18]);
                 m.roughness = 0.35;
                 m.metallic = 0.15;
                 m
-            },
-        );
+            });
 
         // Capsule standing upright through the torus hole.
         // Torus hole radius = major - minor = 2.2 - 0.65 = 1.55; capsule radius 0.75 fits easily.
@@ -123,25 +139,25 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &capsule_mesh)
             .expect("clipvol capsule mesh");
-        self.clipvol_state.scene.add_named(
-            "Capsule",
-            Some(capsule_id),
-            glam::Mat4::IDENTITY,
-            {
+        self.clipvol_state
+            .scene
+            .add_named("Capsule", Some(capsule_id), glam::Mat4::IDENTITY, {
                 let mut m = Material::from_color([0.28, 0.58, 0.92]);
                 m.roughness = 0.25;
                 m.metallic = 0.35;
                 m
-            },
-        );
+            });
 
         // Volume: a density field approximating the same torus + capsule shapes.
         // The field is 64³ in normalized [-1,1]³ space mapped to ±3.5 world units,
         // so the volume torus ring sits at the same radius as the mesh torus.
         let vol_data = build_clipvol_volume();
-        let vol_id = renderer
-            .resources_mut()
-            .upload_volume(&self.device, &self.queue, &vol_data, [64, 64, 64]);
+        let vol_id = renderer.resources_mut().upload_volume(
+            &self.device,
+            &self.queue,
+            &vol_data,
+            [64, 64, 64],
+        );
         self.clipvol_state.volume_id = Some(vol_id);
 
         self.clipvol_state.built = true;
@@ -196,24 +212,31 @@ pub(crate) fn controls_clipvol(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Add clip:");
     ui.horizontal(|ui| {
         if ui.button("+ Plane").clicked() {
-            s.clips.push(ActiveClip::Plane { elevation: 0.0, azimuth: 0.0, distance: 0.0 });
+            s.clips.push(ActiveClip::Plane {
+                elevation: 0.0,
+                azimuth: 0.0,
+                distance: 0.0,
+            });
         }
         if ui.button("+ Box").clicked() {
             s.clips.push(ActiveClip::Box {
-                center:       [0.0; 3],
+                center: [0.0; 3],
                 half_extents: [2.5, 2.5, 2.5],
-                yaw:          0.0,
+                yaw: 0.0,
             });
         }
         if ui.button("+ Sphere").clicked() {
-            s.clips.push(ActiveClip::Sphere { center: [0.0; 3], radius: 2.8 });
+            s.clips.push(ActiveClip::Sphere {
+                center: [0.0; 3],
+                radius: 2.8,
+            });
         }
         if ui.button("+ Cylinder").clicked() {
             s.clips.push(ActiveClip::Cylinder {
-                center:     [0.0; 3],
-                axis_yaw:   0.0,
+                center: [0.0; 3],
+                axis_yaw: 0.0,
                 axis_pitch: 0.0,
-                radius:     1.5,
+                radius: 1.5,
                 half_length: 3.0,
             });
         }
@@ -239,16 +262,30 @@ pub(crate) fn controls_clipvol(app: &mut App, ui: &mut egui::Ui) {
         });
 
         match clip {
-            ActiveClip::Plane { elevation, azimuth, distance } => {
+            ActiveClip::Plane {
+                elevation,
+                azimuth,
+                distance,
+            } => {
                 controls_plane(ui, elevation, azimuth, distance);
             }
-            ActiveClip::Box { center, half_extents, yaw } => {
+            ActiveClip::Box {
+                center,
+                half_extents,
+                yaw,
+            } => {
                 controls_box(ui, center, half_extents, yaw);
             }
             ActiveClip::Sphere { center, radius } => {
                 controls_sphere(ui, center, radius);
             }
-            ActiveClip::Cylinder { center, axis_yaw, axis_pitch, radius, half_length } => {
+            ActiveClip::Cylinder {
+                center,
+                axis_yaw,
+                axis_pitch,
+                radius,
+                half_length,
+            } => {
                 controls_cylinder(ui, center, axis_yaw, axis_pitch, radius, half_length);
             }
         }
@@ -269,30 +306,46 @@ fn plane_normal(elevation: f32, azimuth: f32) -> [f32; 3] {
     [saz * cel, sel, caz * cel]
 }
 
-fn controls_plane(
-    ui: &mut egui::Ui,
-    elevation: &mut f32,
-    azimuth: &mut f32,
-    distance: &mut f32,
-) {
+fn controls_plane(ui: &mut egui::Ui, elevation: &mut f32, azimuth: &mut f32, distance: &mut f32) {
     ui.label("Axis preset:");
     ui.horizontal(|ui| {
         // X: az=90,el=0 -> [sin90*cos0, sin0, cos90*cos0] = [1,0,0]
-        if ui.button("X").clicked() { *azimuth = 90.0; *elevation = 0.0; }
+        if ui.button("X").clicked() {
+            *azimuth = 90.0;
+            *elevation = 0.0;
+        }
         // Y: el=90 -> [0,1,0]
-        if ui.button("Y").clicked() { *azimuth = 0.0; *elevation = 90.0; }
+        if ui.button("Y").clicked() {
+            *azimuth = 0.0;
+            *elevation = 90.0;
+        }
         // Z: az=0,el=0 -> [0,0,1]
-        if ui.button("Z").clicked() { *azimuth = 0.0; *elevation = 0.0; }
+        if ui.button("Z").clicked() {
+            *azimuth = 0.0;
+            *elevation = 0.0;
+        }
     });
     ui.label("Elevation:");
-    ui.add(egui::Slider::new(elevation, -89.0..=89.0).suffix("°").step_by(1.0));
+    ui.add(
+        egui::Slider::new(elevation, -89.0..=89.0)
+            .suffix("°")
+            .step_by(1.0),
+    );
     ui.label("Azimuth:");
-    ui.add(egui::Slider::new(azimuth, -180.0..=180.0).suffix("°").step_by(1.0));
+    ui.add(
+        egui::Slider::new(azimuth, -180.0..=180.0)
+            .suffix("°")
+            .step_by(1.0),
+    );
     ui.label("Offset:");
     ui.add(egui::Slider::new(distance, -6.0..=6.0).step_by(0.05));
     if ui.button("Flip Normal").clicked() {
         *elevation = -*elevation;
-        *azimuth = if *azimuth >= 0.0 { *azimuth - 180.0 } else { *azimuth + 180.0 };
+        *azimuth = if *azimuth >= 0.0 {
+            *azimuth - 180.0
+        } else {
+            *azimuth + 180.0
+        };
         *distance = -*distance;
     }
 }
@@ -305,18 +358,33 @@ fn controls_box(
 ) {
     ui.label("Center:");
     ui.horizontal(|ui| {
-        ui.label("X:"); ui.add(egui::DragValue::new(&mut center[0]).speed(0.05));
-        ui.label("Y:"); ui.add(egui::DragValue::new(&mut center[1]).speed(0.05));
-        ui.label("Z:"); ui.add(egui::DragValue::new(&mut center[2]).speed(0.05));
+        ui.label("X:");
+        ui.add(egui::DragValue::new(&mut center[0]).speed(0.05));
+        ui.label("Y:");
+        ui.add(egui::DragValue::new(&mut center[1]).speed(0.05));
+        ui.label("Z:");
+        ui.add(egui::DragValue::new(&mut center[2]).speed(0.05));
     });
     ui.label("Half-extents:");
     ui.horizontal(|ui| {
         ui.label("X:");
-        ui.add(egui::DragValue::new(&mut half_extents[0]).speed(0.05).range(0.1..=10.0));
+        ui.add(
+            egui::DragValue::new(&mut half_extents[0])
+                .speed(0.05)
+                .range(0.1..=10.0),
+        );
         ui.label("Y:");
-        ui.add(egui::DragValue::new(&mut half_extents[1]).speed(0.05).range(0.1..=10.0));
+        ui.add(
+            egui::DragValue::new(&mut half_extents[1])
+                .speed(0.05)
+                .range(0.1..=10.0),
+        );
         ui.label("Z:");
-        ui.add(egui::DragValue::new(&mut half_extents[2]).speed(0.05).range(0.1..=10.0));
+        ui.add(
+            egui::DragValue::new(&mut half_extents[2])
+                .speed(0.05)
+                .range(0.1..=10.0),
+        );
     });
     ui.label("Yaw:");
     ui.add(egui::Slider::new(yaw, -180.0..=180.0).suffix("°"));
@@ -325,9 +393,12 @@ fn controls_box(
 fn controls_sphere(ui: &mut egui::Ui, center: &mut [f32; 3], radius: &mut f32) {
     ui.label("Center:");
     ui.horizontal(|ui| {
-        ui.label("X:"); ui.add(egui::DragValue::new(&mut center[0]).speed(0.05));
-        ui.label("Y:"); ui.add(egui::DragValue::new(&mut center[1]).speed(0.05));
-        ui.label("Z:"); ui.add(egui::DragValue::new(&mut center[2]).speed(0.05));
+        ui.label("X:");
+        ui.add(egui::DragValue::new(&mut center[0]).speed(0.05));
+        ui.label("Y:");
+        ui.add(egui::DragValue::new(&mut center[1]).speed(0.05));
+        ui.label("Z:");
+        ui.add(egui::DragValue::new(&mut center[2]).speed(0.05));
     });
     ui.label("Radius:");
     ui.add(egui::Slider::new(radius, 0.5..=8.0).step_by(0.1));
@@ -343,9 +414,12 @@ fn controls_cylinder(
 ) {
     ui.label("Center:");
     ui.horizontal(|ui| {
-        ui.label("X:"); ui.add(egui::DragValue::new(&mut center[0]).speed(0.05));
-        ui.label("Y:"); ui.add(egui::DragValue::new(&mut center[1]).speed(0.05));
-        ui.label("Z:"); ui.add(egui::DragValue::new(&mut center[2]).speed(0.05));
+        ui.label("X:");
+        ui.add(egui::DragValue::new(&mut center[0]).speed(0.05));
+        ui.label("Y:");
+        ui.add(egui::DragValue::new(&mut center[1]).speed(0.05));
+        ui.label("Z:");
+        ui.add(egui::DragValue::new(&mut center[2]).speed(0.05));
     });
     ui.label("Axis (yaw / pitch):");
     ui.horizontal(|ui| {
@@ -384,37 +458,62 @@ impl App {
     /// Build `ClipObject`s for all active clips.
     pub(crate) fn make_clip_objects(&self) -> Vec<ClipObject> {
         let s = &self.clipvol_state;
-        let overlay: Option<[f32; 4]> = if s.show_overlay { Some([0.45, 0.82, 1.0, 1.0]) } else { None };
-        let plane_overlay: Option<[f32; 4]> = if s.show_overlay { Some([0.45, 0.82, 1.0, 0.5]) } else { None };
+        let overlay: Option<[f32; 4]> = if s.show_overlay {
+            Some([0.45, 0.82, 1.0, 1.0])
+        } else {
+            None
+        };
+        let plane_overlay: Option<[f32; 4]> = if s.show_overlay {
+            Some([0.45, 0.82, 1.0, 0.5])
+        } else {
+            None
+        };
 
-        s.clips.iter().map(|clip| match clip {
-            ActiveClip::Plane { elevation, azimuth, distance } => {
-                let normal = plane_normal(*elevation, *azimuth);
-                let mut co = ClipObject::plane(normal, *distance);
-                co.color = plane_overlay;
-                co
-            }
-            ActiveClip::Box { center, half_extents, yaw } => {
-                let yaw_rad = yaw.to_radians();
-                let (sin_y, cos_y) = yaw_rad.sin_cos();
-                let orient = [[cos_y, sin_y, 0.0], [-sin_y, cos_y, 0.0], [0.0, 0.0, 1.0]];
-                let mut co = ClipObject::box_shape(*center, *half_extents, orient);
-                co.color = overlay;
-                co
-            }
-            ActiveClip::Sphere { center, radius } => {
-                let mut co = ClipObject::sphere(*center, *radius);
-                co.color = overlay;
-                co
-            }
-            ActiveClip::Cylinder { center, axis_yaw, axis_pitch, radius, half_length } => {
-                let (sy, cy) = axis_yaw.to_radians().sin_cos();
-                let (sp, cp) = axis_pitch.to_radians().sin_cos();
-                let axis = [cp * cy, cp * sy, sp];
-                let mut co = ClipObject::cylinder(*center, axis, *radius, *half_length);
-                co.color = overlay;
-                co
-            }
-        }).collect()
+        s.clips
+            .iter()
+            .map(|clip| match clip {
+                ActiveClip::Plane {
+                    elevation,
+                    azimuth,
+                    distance,
+                } => {
+                    let normal = plane_normal(*elevation, *azimuth);
+                    let mut co = ClipObject::plane(normal, *distance);
+                    co.color = plane_overlay;
+                    co
+                }
+                ActiveClip::Box {
+                    center,
+                    half_extents,
+                    yaw,
+                } => {
+                    let yaw_rad = yaw.to_radians();
+                    let (sin_y, cos_y) = yaw_rad.sin_cos();
+                    let orient = [[cos_y, sin_y, 0.0], [-sin_y, cos_y, 0.0], [0.0, 0.0, 1.0]];
+                    let mut co = ClipObject::box_shape(*center, *half_extents, orient);
+                    co.color = overlay;
+                    co
+                }
+                ActiveClip::Sphere { center, radius } => {
+                    let mut co = ClipObject::sphere(*center, *radius);
+                    co.color = overlay;
+                    co
+                }
+                ActiveClip::Cylinder {
+                    center,
+                    axis_yaw,
+                    axis_pitch,
+                    radius,
+                    half_length,
+                } => {
+                    let (sy, cy) = axis_yaw.to_radians().sin_cos();
+                    let (sp, cp) = axis_pitch.to_radians().sin_cos();
+                    let axis = [cp * cy, cp * sy, sp];
+                    let mut co = ClipObject::cylinder(*center, axis, *radius, *half_length);
+                    co.color = overlay;
+                    co
+                }
+            })
+            .collect()
     }
 }

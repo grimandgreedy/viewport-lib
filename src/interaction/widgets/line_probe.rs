@@ -119,7 +119,11 @@ impl LineProbeWidget {
             }
         }
 
-        if updated { WidgetResult::Updated } else { WidgetResult::None }
+        if updated {
+            WidgetResult::Updated
+        } else {
+            WidgetResult::None
+        }
     }
 
     /// Build the `PolylineItem` for the line segment between the two endpoints.
@@ -183,7 +187,11 @@ impl LineProbeWidget {
     }
 
     fn set_endpoint(&mut self, ep: usize, pos: glam::Vec3) {
-        if ep == 0 { self.start = pos; } else { self.end = pos; }
+        if ep == 0 {
+            self.start = pos;
+        } else {
+            self.end = pos;
+        }
     }
 
     fn hit_test(

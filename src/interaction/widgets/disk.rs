@@ -5,7 +5,10 @@ use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
 
-use super::{WidgetContext, WidgetResult, any_perpendicular, any_perpendicular_pair, ctx_ray, handle_world_radius, ray_point_dist};
+use super::{
+    WidgetContext, WidgetResult, any_perpendicular, any_perpendicular_pair, ctx_ray,
+    handle_world_radius, ray_point_dist,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum DiskHandle {
@@ -56,7 +59,11 @@ impl DiskWidget {
     /// `normal` is normalized internally; if zero, defaults to `Vec3::Z`.
     pub fn new(center: glam::Vec3, normal: glam::Vec3, radius: f32) -> Self {
         let len = normal.length();
-        let normal = if len > 1e-6 { normal / len } else { glam::Vec3::Z };
+        let normal = if len > 1e-6 {
+            normal / len
+        } else {
+            glam::Vec3::Z
+        };
         Self {
             center,
             normal,
@@ -142,7 +149,11 @@ impl DiskWidget {
             }
         }
 
-        if updated { WidgetResult::Updated } else { WidgetResult::None }
+        if updated {
+            WidgetResult::Updated
+        } else {
+            WidgetResult::None
+        }
     }
 
     /// Build a `PolylineItem` for the wireframe circle and normal indicator.
@@ -185,7 +196,11 @@ impl DiskWidget {
         let rr = handle_world_radius(rh, &ctx.camera, ctx.viewport_size.y, 8.0);
 
         let scalar = |h: DiskHandle| {
-            if self.hovered_handle == Some(h) || self.active_handle == Some(h) { 1.0_f32 } else { 0.2 }
+            if self.hovered_handle == Some(h) || self.active_handle == Some(h) {
+                1.0_f32
+            } else {
+                0.2
+            }
         };
 
         GlyphItem {

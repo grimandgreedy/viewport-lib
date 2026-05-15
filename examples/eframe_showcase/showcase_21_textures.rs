@@ -25,16 +25,16 @@ const PERCY_RGBA: &[u8] = include_bytes!("percy.rgba");
 // ---------------------------------------------------------------------------
 
 pub(crate) struct TextureState {
-    pub scene:      Scene,
-    pub built:      bool,
+    pub scene: Scene,
+    pub built: bool,
     pub plane_node: NodeId,
 }
 
 impl Default for TextureState {
     fn default() -> Self {
         Self {
-            scene:      Scene::new(),
-            built:      false,
+            scene: Scene::new(),
+            built: false,
             plane_node: 0,
         }
     }
@@ -61,7 +61,10 @@ impl App {
             )
             .expect("percy texture upload");
 
-        let plane = viewport_lib::geometry::primitives::plane(4.5, 4.5 * PERCY_HEIGHT as f32 / PERCY_WIDTH as f32);
+        let plane = viewport_lib::geometry::primitives::plane(
+            4.5,
+            4.5 * PERCY_HEIGHT as f32 / PERCY_WIDTH as f32,
+        );
         let plane_id = res
             .upload_mesh_data(&self.device, &plane)
             .expect("plane mesh upload");

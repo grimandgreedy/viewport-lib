@@ -1,6 +1,6 @@
 //! Gizmo math helpers for showcases 4 and 18.
 
-use viewport_lib::{Gizmo, GizmoSpace, selection::Selection, scene::Scene};
+use viewport_lib::{Gizmo, GizmoSpace, scene::Scene, selection::Selection};
 
 use crate::App;
 
@@ -10,11 +10,7 @@ use crate::App;
 
 /// Return the world-space orientation quaternion for a gizmo given its space
 /// setting and the current selection.
-pub(crate) fn gizmo_orientation(
-    gizmo: &Gizmo,
-    selection: &Selection,
-    scene: &Scene,
-) -> glam::Quat {
+pub(crate) fn gizmo_orientation(gizmo: &Gizmo, selection: &Selection, scene: &Scene) -> glam::Quat {
     match gizmo.space {
         GizmoSpace::World => glam::Quat::IDENTITY,
         GizmoSpace::Local => selection

@@ -34,43 +34,43 @@ pub(crate) enum PcSubMode {
 // ---------------------------------------------------------------------------
 
 pub(crate) struct PointCloudsState {
-    pub built:                bool,
-    pub sub_mode:             PcSubMode,
-    pub point_size:           f32,
-    pub colormap:             BuiltinColormap,
-    pub scalar_range_manual:  bool,
-    pub scalar_range:         (f32, f32),
-    pub glyph_type:           GlyphType,
-    pub glyph_scale:          f32,
+    pub built: bool,
+    pub sub_mode: PcSubMode,
+    pub point_size: f32,
+    pub colormap: BuiltinColormap,
+    pub scalar_range_manual: bool,
+    pub scalar_range: (f32, f32),
+    pub glyph_type: GlyphType,
+    pub glyph_scale: f32,
     pub glyph_magnitude_scale: bool,
-    pub cloud_positions:      Vec<[f32; 3]>,
-    pub cloud_scalars:        Vec<f32>,
-    pub field_positions:      Vec<[f32; 3]>,
-    pub field_vectors:        Vec<[f32; 3]>,
-    pub gaussian_radius_min:  f32,
-    pub gaussian_radius_max:  f32,
-    pub ssao_enabled:         bool,
+    pub cloud_positions: Vec<[f32; 3]>,
+    pub cloud_scalars: Vec<f32>,
+    pub field_positions: Vec<[f32; 3]>,
+    pub field_vectors: Vec<[f32; 3]>,
+    pub gaussian_radius_min: f32,
+    pub gaussian_radius_max: f32,
+    pub ssao_enabled: bool,
 }
 
 impl Default for PointCloudsState {
     fn default() -> Self {
         Self {
-            built:                false,
-            sub_mode:             PcSubMode::PointCloud,
-            point_size:           4.0,
-            colormap:             BuiltinColormap::Viridis,
-            scalar_range_manual:  false,
-            scalar_range:         (2.6, 3.4),
-            glyph_type:           GlyphType::Arrow,
-            glyph_scale:          1.0,
+            built: false,
+            sub_mode: PcSubMode::PointCloud,
+            point_size: 4.0,
+            colormap: BuiltinColormap::Viridis,
+            scalar_range_manual: false,
+            scalar_range: (2.6, 3.4),
+            glyph_type: GlyphType::Arrow,
+            glyph_scale: 1.0,
             glyph_magnitude_scale: true,
-            cloud_positions:      Vec::new(),
-            cloud_scalars:        Vec::new(),
-            field_positions:      Vec::new(),
-            field_vectors:        Vec::new(),
-            gaussian_radius_min:  2.0,
-            gaussian_radius_max:  12.0,
-            ssao_enabled:         false,
+            cloud_positions: Vec::new(),
+            cloud_scalars: Vec::new(),
+            field_positions: Vec::new(),
+            field_vectors: Vec::new(),
+            gaussian_radius_min: 2.0,
+            gaussian_radius_max: 12.0,
+            ssao_enabled: false,
         }
     }
 }
@@ -105,7 +105,11 @@ impl App {
     pub(crate) fn make_pc_point_cloud_item(&self) -> PointCloudItem {
         let s = &self.pc_state;
         let colormap_id = Some(ColormapId(s.colormap as usize));
-        let scalar_range = if s.scalar_range_manual { Some(s.scalar_range) } else { None };
+        let scalar_range = if s.scalar_range_manual {
+            Some(s.scalar_range)
+        } else {
+            None
+        };
         let mut item = PointCloudItem::default();
         item.positions = s.cloud_positions.clone();
         item.scalars = s.cloud_scalars.clone();
@@ -119,7 +123,11 @@ impl App {
     pub(crate) fn make_pc_glyph_item(&self) -> GlyphItem {
         let s = &self.pc_state;
         let colormap_id = Some(ColormapId(s.colormap as usize));
-        let scalar_range = if s.scalar_range_manual { Some(s.scalar_range) } else { None };
+        let scalar_range = if s.scalar_range_manual {
+            Some(s.scalar_range)
+        } else {
+            None
+        };
         let mut item = GlyphItem::default();
         item.positions = s.field_positions.clone();
         item.vectors = s.field_vectors.clone();
@@ -135,7 +143,11 @@ impl App {
     pub(crate) fn make_pc_gaussian_item(&self) -> PointCloudItem {
         let s = &self.pc_state;
         let colormap_id = Some(ColormapId(s.colormap as usize));
-        let scalar_range = if s.scalar_range_manual { Some(s.scalar_range) } else { None };
+        let scalar_range = if s.scalar_range_manual {
+            Some(s.scalar_range)
+        } else {
+            None
+        };
         let mut item = PointCloudItem::default();
         item.positions = s.cloud_positions.clone();
         item.scalars = s.cloud_scalars.clone();
@@ -254,10 +266,7 @@ pub(crate) fn controls_point_clouds(app: &mut App, ui: &mut egui::Ui) {
                 {
                     s.glyph_type = GlyphType::Sphere;
                 }
-                if ui
-                    .radio(s.glyph_type == GlyphType::Cube, "Cube")
-                    .clicked()
-                {
+                if ui.radio(s.glyph_type == GlyphType::Cube, "Cube").clicked() {
                     s.glyph_type = GlyphType::Cube;
                 }
             });

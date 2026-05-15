@@ -9,27 +9,27 @@ use viewport_lib::{Material, ViewportRenderer, scene::Scene, selection::Selectio
 // ---------------------------------------------------------------------------
 
 pub(crate) struct SgState {
-    pub scene:           Scene,
-    pub selection:       Selection,
-    pub material_cycle:  usize,
-    pub bg_cycle:        usize,
-    pub outline_width:   f32,
-    pub layer_b:         Option<viewport_lib::scene::LayerId>,
+    pub scene: Scene,
+    pub selection: Selection,
+    pub material_cycle: usize,
+    pub bg_cycle: usize,
+    pub outline_width: f32,
+    pub layer_b: Option<viewport_lib::scene::LayerId>,
     pub layer_b_visible: bool,
-    pub built:           bool,
+    pub built: bool,
 }
 
 impl Default for SgState {
     fn default() -> Self {
         Self {
-            scene:           Scene::new(),
-            selection:       Selection::new(),
-            material_cycle:  0,
-            bg_cycle:        0,
-            outline_width:   4.0,
-            layer_b:         None,
+            scene: Scene::new(),
+            selection: Selection::new(),
+            material_cycle: 0,
+            bg_cycle: 0,
+            outline_width: 4.0,
+            layer_b: None,
             layer_b_visible: true,
-            built:           false,
+            built: false,
         }
     }
 }
@@ -62,9 +62,14 @@ impl App {
             let transform = glam::Mat4::from_translation(glam::Vec3::from(*pos));
             let mat = Material::from_color(*color);
             let name = format!("Box {}", i + 1);
-            let id = self.sg_state.scene.add_named(&name, Some(mesh), transform, mat);
+            let id = self
+                .sg_state
+                .scene
+                .add_named(&name, Some(mesh), transform, mat);
             if i >= 2 {
-                self.sg_state.scene.set_layer(id, self.sg_state.layer_b.unwrap());
+                self.sg_state
+                    .scene
+                    .set_layer(id, self.sg_state.layer_b.unwrap());
             }
         }
 

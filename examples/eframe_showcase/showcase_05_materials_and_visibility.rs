@@ -1,4 +1,4 @@
-//! Showcase 5: Advanced Rendering : build and controls.
+//! Showcase 5: Materials and Visibility: build and controls.
 
 use crate::App;
 use eframe::egui;
@@ -8,24 +8,24 @@ use viewport_lib::{Material, Selection, ViewportRenderer, scene::Scene};
 // State
 // ---------------------------------------------------------------------------
 
-pub(crate) struct AdvancedState {
-    pub built:        bool,
-    pub scene:        Scene,
-    pub selection:    Selection,
+pub(crate) struct MaterialsVisibilityState {
+    pub built: bool,
+    pub scene: Scene,
+    pub selection: Selection,
     pub clip_enabled: bool,
-    pub outline_on:   bool,
-    pub xray_on:      bool,
+    pub outline_on: bool,
+    pub xray_on: bool,
 }
 
-impl Default for AdvancedState {
+impl Default for MaterialsVisibilityState {
     fn default() -> Self {
         Self {
-            built:        false,
-            scene:        Scene::new(),
-            selection:    Selection::new(),
+            built: false,
+            scene: Scene::new(),
+            selection: Selection::new(),
             clip_enabled: false,
-            outline_on:   true,
-            xray_on:      false,
+            outline_on: true,
+            xray_on: false,
         }
     }
 }
@@ -35,22 +35,22 @@ impl Default for AdvancedState {
 // ---------------------------------------------------------------------------
 
 impl App {
-    /// Build the scene for Showcase 5 (PBR vs Blinn-Phong, clip planes, outlines, x-ray).
-    pub(crate) fn build_adv_scene(&mut self, renderer: &mut ViewportRenderer) {
-        self.adv_state.scene = Scene::new();
-        self.adv_state.selection.clear();
+    /// Build the scene for Showcase 5 (materials, clipping, outlines, x-ray).
+    pub(crate) fn build_materials_visibility_scene(&mut self, renderer: &mut ViewportRenderer) {
+        self.materials_visibility_state.scene = Scene::new();
+        self.materials_visibility_state.selection.clear();
 
         let m = self.upload_box(renderer);
-        let id = self.adv_state.scene.add_named(
+        let id = self.materials_visibility_state.scene.add_named(
             "Gold (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(2.5, -1.5, 0.0)),
             Material::pbr([1.0, 0.78, 0.2], 0.95, 0.05),
         );
-        self.adv_state.selection.select_one(id);
+        self.materials_visibility_state.selection.select_one(id);
 
         let m = self.upload_box(renderer);
-        self.adv_state.scene.add_named(
+        self.materials_visibility_state.scene.add_named(
             "Brushed Steel (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(2.5, 1.5, 0.0)),
@@ -58,7 +58,7 @@ impl App {
         );
 
         let m = self.upload_box(renderer);
-        self.adv_state.scene.add_named(
+        self.materials_visibility_state.scene.add_named(
             "Shiny Blue (Blinn-Phong)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(-2.5, -1.5, 0.0)),
@@ -71,7 +71,7 @@ impl App {
         );
 
         let m = self.upload_box(renderer);
-        self.adv_state.scene.add_named(
+        self.materials_visibility_state.scene.add_named(
             "Matte Green (Blinn-Phong)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(-2.5, 1.5, 0.0)),
@@ -85,7 +85,7 @@ impl App {
         );
 
         let m = self.upload_box(renderer);
-        self.adv_state.scene.add_named(
+        self.materials_visibility_state.scene.add_named(
             "Wall (occluder)",
             Some(m),
             glam::Mat4::from_scale_rotation_translation(
@@ -97,14 +97,14 @@ impl App {
         );
 
         let m = self.upload_box(renderer);
-        self.adv_state.scene.add_named(
+        self.materials_visibility_state.scene.add_named(
             "Hidden Magenta (x-ray target)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 5.5, 0.0)),
             Material::from_color([0.9, 0.3, 0.7]),
         );
 
-        self.adv_state.built = true;
+        self.materials_visibility_state.built = true;
     }
 }
 
@@ -112,21 +112,30 @@ impl App {
 // Controls
 // ---------------------------------------------------------------------------
 
-pub(crate) fn controls_advanced(app: &mut App, ui: &mut egui::Ui) {
-    let sel = app.adv_state.selection.len();
+pub(crate) fn controls_materials_visibility(app: &mut App, ui: &mut egui::Ui) {
+    let sel = app.materials_visibility_state.selection.len();
     ui.label(format!("Selected: {sel}"));
     ui.separator();
 
-    ui.checkbox(&mut app.adv_state.clip_enabled, "Clip plane (x < 0)");
-    ui.checkbox(&mut app.adv_state.outline_on, "Selection outline");
-    ui.checkbox(&mut app.adv_state.xray_on, "X-ray selected");
+    ui.checkbox(
+        &mut app.materials_visibility_state.clip_enabled,
+        "Clip plane (x < 0)",
+    );
+    ui.checkbox(
+        &mut app.materials_visibility_state.outline_on,
+        "Selection outline",
+    );
+    ui.checkbox(
+        &mut app.materials_visibility_state.xray_on,
+        "X-ray selected",
+    );
 
     ui.separator();
 
     if ui.button("Cycle Selection (Tab)").clicked() {
-        let walk = app.adv_state.scene.walk_depth_first();
+        let walk = app.materials_visibility_state.scene.walk_depth_first();
         if !walk.is_empty() {
-            let current = app.adv_state.selection.primary();
+            let current = app.materials_visibility_state.selection.primary();
             let next_idx = match current {
                 Some(id) => {
                     let pos = walk.iter().position(|(nid, _)| *nid == id);
@@ -134,11 +143,13 @@ pub(crate) fn controls_advanced(app: &mut App, ui: &mut egui::Ui) {
                 }
                 None => 0,
             };
-            app.adv_state.selection.select_one(walk[next_idx].0);
+            app.materials_visibility_state
+                .selection
+                .select_one(walk[next_idx].0);
         }
     }
 
     if ui.button("Clear Selection").clicked() {
-        app.adv_state.selection.clear();
+        app.materials_visibility_state.selection.clear();
     }
 }

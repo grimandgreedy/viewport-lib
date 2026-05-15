@@ -107,7 +107,7 @@ fn main() -> eframe::Result {
                     let mut s = item(m_frustum, cx[2], rz[3], [0.30, 0.65, 0.90]);
                     s.model = (glam::Mat4::from_translation(glam::Vec3::new(cx[2], 0.0, rz[3]))
                         * glam::Mat4::from_rotation_x(std::f32::consts::PI))
-                        .to_cols_array_2d();
+                    .to_cols_array_2d();
                     s
                 },
                 item(m_arrow, cx[3], rz[3], [0.90, 0.25, 0.30]),
@@ -134,8 +134,7 @@ impl App {
                 distance: 28.0,
                 // Z-up: compose a 30° azimuth around Z with a ~57° tilt from vertical.
                 // orientation * Y ≈ world Z (screen up), orientation * Z points from center to eye.
-                orientation: glam::Quat::from_rotation_z(0.5)
-                    * glam::Quat::from_rotation_x(1.0),
+                orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
                 ..Camera::default()
             },
             controller: OrbitCameraController::viewport_primitives(),

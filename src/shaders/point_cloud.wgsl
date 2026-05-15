@@ -32,7 +32,7 @@ struct ClipPlanes {
     viewport_height: f32,
 };
 
-// Point cloud per-item uniform : 112 bytes.
+// Point cloud per-item uniform : 128 bytes.
 struct PointCloudUniform {
     model:            mat4x4<f32>,   // 64 bytes
     default_color:    vec4<f32>,     // 16 bytes
@@ -43,7 +43,11 @@ struct PointCloudUniform {
     has_colors:       u32,           //  4 bytes (1 = use color buffer)
     has_radius:       u32,           //  4 bytes (1 = per-point radius from radius_buffer)
     has_transparency: u32,           //  4 bytes (1 = per-point alpha from transparency_buffer)
-    gaussian:         u32,           //  4 bytes (1 = point-gaussian falloff in fragment shader)
+    gaussian:         u32,           //  4 bytes (1 = gaussian splat falloff; implies circle clip)
+    render_mode:      u32,           //  4 bytes (0 = ScreenSpaceCircle, 1 = Sphere)
+    _pad0:            u32,           //  4 bytes padding
+    _pad1:            u32,           //  4 bytes padding
+    _pad2:            u32,           //  4 bytes padding
 };
 
 struct ClipVolumeEntry {
@@ -202,11 +206,36 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         }
     }
     if !clip_volume_test(in.world_pos) { discard; }
+
+    // All modes clip to a circle. uv is in [-1,1]^2; d2=1 is the quad edge.
+    let d2 = dot(in.uv, in.uv);
+    if d2 > 1.0 { discard; }
+
     var color = in.color;
+
     if pc_uniform.gaussian != 0u {
-        let d2 = dot(in.uv, in.uv); // d² in [0, 1] at quad edge
-        if d2 > 1.0 { discard; }
+        // Soft Gaussian splat: alpha falls off as exp(-3*d²).
         color.a = color.a * exp(-3.0 * d2);
+    } else if pc_uniform.render_mode == 1u {
+        // Sphere shading: reconstruct a hemisphere normal from the billboard UV.
+        // uv.xy lie in [-1,1]; z is the front-facing hemisphere depth.
+        let nz  = sqrt(1.0 - d2); // always >= 0 since d2 <= 1
+        let n   = vec3<f32>(in.uv.x, in.uv.y, nz); // already unit length (d2+nz²=1)
+
+        // Fixed view-space light direction (upper-left, slightly in front).
+        let light = normalize(vec3<f32>(-0.4, 0.6, 1.0));
+
+        let ambient  = 0.25;
+        let diffuse  = max(dot(n, light), 0.0);
+
+        // Blinn-Phong specular: half-vector between light and view direction (0,0,1).
+        let h        = normalize(light + vec3<f32>(0.0, 0.0, 1.0));
+        let specular = pow(max(dot(n, h), 0.0), 32.0) * 0.4;
+
+        let brightness = ambient + (1.0 - ambient) * diffuse + specular;
+        color = vec4<f32>(color.rgb * brightness, color.a);
     }
+    // render_mode == 0 (ScreenSpaceCircle): flat disc, no shading beyond the circle clip above.
+
     return color;
 }

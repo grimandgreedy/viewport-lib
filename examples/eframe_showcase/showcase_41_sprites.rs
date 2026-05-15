@@ -17,12 +17,12 @@
 //!     from a 4x4 atlas texture (128x128 px, 16 cells of 32x32). All sprites
 //!     cycle through the same frame to show flip-book animation.
 
+use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    LightKind, LightSource, LightingSettings,
-    MeshId, PolylineItem, SceneRenderItem, SpriteItem, SpriteSizeMode, ViewportRenderer, primitives,
+    LightKind, LightSource, LightingSettings, MeshId, PolylineItem, SceneRenderItem, SpriteItem,
+    SpriteSizeMode, ViewportRenderer, primitives,
 };
-use crate::App;
 
 // ---------------------------------------------------------------------------
 // State
@@ -100,7 +100,7 @@ impl Default for SpriteState {
                 Ring {
                     spin: 0.0,
                     spin_rate: 0.7,
-                    spin_axis: [0.0, 1.0, 0.0],  // equatorial (XZ plane)
+                    spin_axis: [0.0, 1.0, 0.0], // equatorial (XZ plane)
                     radius: 3.0,
                     color: [0.35, 0.75, 1.0],
                     life: 5.0,
@@ -111,10 +111,10 @@ impl Default for SpriteState {
                 Ring {
                     spin: 0.0,
                     spin_rate: -0.5,
-                    spin_axis: [1.0, 0.0, 0.0],  // polar (YZ plane)
+                    spin_axis: [1.0, 0.0, 0.0], // polar (YZ plane)
                     radius: 3.0,
                     color: [1.0, 0.5, 0.15],
-                    life: 2.5,        // staggered so they don't expire together
+                    life: 2.5, // staggered so they don't expire together
                     max_life: 5.0,
                     particle_phases: Vec::new(),
                     particle_perturb: Vec::new(),
@@ -145,13 +145,17 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         let (w, h) = (32u32, 32u32);
         let cx = w as f32 / 2.0;
         let cy = h as f32 / 2.0;
-        let pixels: Vec<u8> = (0..h).flat_map(|y| (0..w).flat_map(move |x| {
-            let dx = (x as f32 - cx).abs() / cx;
-            let dy = (y as f32 - cy).abs() / cy;
-            let dist = dx + dy;
-            let a = ((1.0 - dist).max(0.0).powi(2) * 255.0) as u8;
-            [255u8, 200, 80, a]
-        })).collect();
+        let pixels: Vec<u8> = (0..h)
+            .flat_map(|y| {
+                (0..w).flat_map(move |x| {
+                    let dx = (x as f32 - cx).abs() / cx;
+                    let dy = (y as f32 - cy).abs() / cy;
+                    let dist = dx + dy;
+                    let a = ((1.0 - dist).max(0.0).powi(2) * 255.0) as u8;
+                    [255u8, 200, 80, a]
+                })
+            })
+            .collect();
         renderer
             .resources_mut()
             .upload_texture(&app.device, &app.queue, w, h, &pixels)
@@ -165,13 +169,17 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         let (w, h) = (32u32, 32u32);
         let cx = w as f32 / 2.0;
         let cy = h as f32 / 2.0;
-        let pixels: Vec<u8> = (0..h).flat_map(|y| (0..w).flat_map(move |x| {
-            let dx = x as f32 - cx;
-            let dy = y as f32 - cy;
-            let r = (dx * dx + dy * dy).sqrt() / cx;
-            let a = ((1.0 - r * r).max(0.0) * 255.0) as u8;
-            [255u8, 255, 255, a]
-        })).collect();
+        let pixels: Vec<u8> = (0..h)
+            .flat_map(|y| {
+                (0..w).flat_map(move |x| {
+                    let dx = x as f32 - cx;
+                    let dy = y as f32 - cy;
+                    let r = (dx * dx + dy * dy).sqrt() / cx;
+                    let a = ((1.0 - r * r).max(0.0) * 255.0) as u8;
+                    [255u8, 255, 255, a]
+                })
+            })
+            .collect();
         renderer
             .resources_mut()
             .upload_texture(&app.device, &app.queue, w, h, &pixels)
@@ -182,7 +190,9 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
     let n_particles: usize = 200;
     let mut seed = 0xc0ffee_u64;
     let mut lcg = move || -> f32 {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         ((seed >> 33) as f32) / (u32::MAX as f32)
     };
 
@@ -195,7 +205,7 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
             let jitter = (lcg() - 0.5) * 0.08 * std::f32::consts::TAU / n_particles as f32;
             ring.particle_phases.push(base + jitter);
             let radial = (lcg() - 0.5) * 0.25;
-            let axial  = (lcg() - 0.5) * 0.20;
+            let axial = (lcg() - 0.5) * 0.20;
             ring.particle_perturb.push([radial, axial]);
         }
     }
@@ -218,7 +228,7 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
                     let px = ox + lx;
                     let py = oy + ly;
                     let i = ((py * aw + px) * 4) as usize;
-                    pixels[i]     = r;
+                    pixels[i] = r;
                     pixels[i + 1] = g;
                     pixels[i + 2] = b;
                     pixels[i + 3] = a;
@@ -231,11 +241,13 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
             .expect("atlas tex")
     };
 
-    let atlas_positions: Vec<[f32; 3]> = (0..9_i32).map(|i| {
-        let x = (i % 3 - 1) as f32 * 3.0;
-        let y = (i / 3 - 1) as f32 * 3.0;
-        [x, y, 0.0]
-    }).collect();
+    let atlas_positions: Vec<[f32; 3]> = (0..9_i32)
+        .map(|i| {
+            let x = (i % 3 - 1) as f32 * 3.0;
+            let y = (i / 3 - 1) as f32 * 3.0;
+            [x, y, 0.0]
+        })
+        .collect();
 
     app.sprite_state.sphere_id = sphere_id;
     app.sprite_state.sprite_tex = sprite_tex;
@@ -276,12 +288,19 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
     let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
     let h6 = h * 6.0;
     let x = c * (1.0 - (h6 % 2.0 - 1.0).abs());
-    let (r1, g1, b1) = if h6 < 1.0      { (c, x, 0.0) }
-        else if h6 < 2.0 { (x, c, 0.0) }
-        else if h6 < 3.0 { (0.0, c, x) }
-        else if h6 < 4.0 { (0.0, x, c) }
-        else if h6 < 5.0 { (x, 0.0, c) }
-        else              { (c, 0.0, x) };
+    let (r1, g1, b1) = if h6 < 1.0 {
+        (c, x, 0.0)
+    } else if h6 < 2.0 {
+        (x, c, 0.0)
+    } else if h6 < 3.0 {
+        (0.0, c, x)
+    } else if h6 < 4.0 {
+        (0.0, x, c)
+    } else if h6 < 5.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
     let m = l - c / 2.0;
     let to_u8 = |v: f32| ((v + m) * 255.0).clamp(0.0, 255.0) as u8;
     (to_u8(r1), to_u8(g1), to_u8(b1))
@@ -290,33 +309,45 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
 fn spawn_burst(count: usize) -> Vec<Particle> {
     let mut seed = 0x4d595df4u64;
     let mut rand_f = move || -> f32 {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         ((seed >> 33) as f32) / (u32::MAX as f32)
     };
-    (0..count).map(|_| {
-        let theta = rand_f() * std::f32::consts::TAU;
-        let phi   = rand_f() * std::f32::consts::PI;
-        let speed = 1.5 + rand_f() * 2.5;
-        let life  = 0.5 + rand_f() * 1.5;
-        Particle {
-            pos: [0.0, 0.0, 0.0],
-            vel: [phi.sin() * theta.cos() * speed,
-                  phi.sin() * theta.sin() * speed,
-                  phi.cos() * speed],
-            life,
-            max_life: life,
-        }
-    }).collect()
+    (0..count)
+        .map(|_| {
+            let theta = rand_f() * std::f32::consts::TAU;
+            let phi = rand_f() * std::f32::consts::PI;
+            let speed = 1.5 + rand_f() * 2.5;
+            let life = 0.5 + rand_f() * 1.5;
+            Particle {
+                pos: [0.0, 0.0, 0.0],
+                vel: [
+                    phi.sin() * theta.cos() * speed,
+                    phi.sin() * theta.sin() * speed,
+                    phi.cos() * speed,
+                ],
+                life,
+                max_life: life,
+            }
+        })
+        .collect()
 }
 
 fn icosphere_sample_positions(n: usize, radius: f32) -> Vec<[f32; 3]> {
     let golden = std::f32::consts::PI * (3.0 - 5_f32.sqrt());
-    (0..n).map(|i| {
-        let y = 1.0 - (i as f32 / (n - 1) as f32) * 2.0;
-        let r = (1.0 - y * y).sqrt();
-        let theta = golden * i as f32;
-        [r * theta.cos() * radius, y * radius, r * theta.sin() * radius]
-    }).collect()
+    (0..n)
+        .map(|i| {
+            let y = 1.0 - (i as f32 / (n - 1) as f32) * 2.0;
+            let r = (1.0 - y * y).sqrt();
+            let theta = golden * i as f32;
+            [
+                r * theta.cos() * radius,
+                y * radius,
+                r * theta.sin() * radius,
+            ]
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -326,9 +357,21 @@ fn icosphere_sample_positions(n: usize, radius: f32) -> Vec<[f32; 3]> {
 pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Sub-mode:");
     ui.horizontal(|ui| {
-        ui.selectable_value(&mut app.sprite_state.sub_mode, SpriteSubMode::Placed,    "Placed");
-        ui.selectable_value(&mut app.sprite_state.sub_mode, SpriteSubMode::Particles, "Particles");
-        ui.selectable_value(&mut app.sprite_state.sub_mode, SpriteSubMode::Atlas,     "Atlas");
+        ui.selectable_value(
+            &mut app.sprite_state.sub_mode,
+            SpriteSubMode::Placed,
+            "Placed",
+        );
+        ui.selectable_value(
+            &mut app.sprite_state.sub_mode,
+            SpriteSubMode::Particles,
+            "Particles",
+        );
+        ui.selectable_value(
+            &mut app.sprite_state.sub_mode,
+            SpriteSubMode::Atlas,
+            "Atlas",
+        );
     });
     ui.separator();
 
@@ -357,10 +400,11 @@ pub(crate) fn update_sprites(app: &mut App, dt: f32) {
     match app.sprite_state.sub_mode {
         SpriteSubMode::Particles => {
             // Simulate burst particles.
-            let mut seed = 0xdeadbeef_u64
-                .wrapping_add(app.sprite_state.particles.len() as u64);
+            let mut seed = 0xdeadbeef_u64.wrapping_add(app.sprite_state.particles.len() as u64);
             let mut rand_f = move || -> f32 {
-                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 ((seed >> 33) as f32) / (u32::MAX as f32)
             };
             for p in &mut app.sprite_state.particles {
@@ -371,12 +415,14 @@ pub(crate) fn update_sprites(app: &mut App, dt: f32) {
                 p.life -= dt;
                 if p.life <= 0.0 {
                     let theta = rand_f() * std::f32::consts::TAU;
-                    let phi   = rand_f() * std::f32::consts::PI;
+                    let phi = rand_f() * std::f32::consts::PI;
                     let speed = 1.5 + rand_f() * 2.5;
                     p.pos = [0.0, 0.0, 0.0];
-                    p.vel = [phi.sin() * theta.cos() * speed,
-                             phi.sin() * theta.sin() * speed,
-                             phi.cos() * speed];
+                    p.vel = [
+                        phi.sin() * theta.cos() * speed,
+                        phi.sin() * theta.sin() * speed,
+                        phi.cos() * speed,
+                    ];
                     p.max_life = 0.5 + rand_f() * 1.5;
                     p.life = p.max_life;
                 }
@@ -394,8 +440,7 @@ pub(crate) fn update_sprites(app: &mut App, dt: f32) {
         SpriteSubMode::Atlas => {
             app.sprite_state.atlas_time += dt;
             let fps = 10.0_f32;
-            app.sprite_state.atlas_frame =
-                (app.sprite_state.atlas_time * fps) as u32 % 16;
+            app.sprite_state.atlas_frame = (app.sprite_state.atlas_time * fps) as u32 % 16;
         }
         _ => {}
     }
@@ -457,7 +502,9 @@ pub(crate) fn ring_polylines(app: &App) -> Vec<PolylineItem> {
     if !app.sprite_state.built || app.sprite_state.sub_mode != SpriteSubMode::Particles {
         return vec![];
     }
-    app.sprite_state.rings.iter()
+    app.sprite_state
+        .rings
+        .iter()
         .map(|r| ring_polyline(r, 64))
         .collect()
 }
@@ -488,10 +535,12 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
 
             // Burst particles from the origin.
             {
-                let positions: Vec<[f32; 3]> = app.sprite_state.particles.iter()
-                    .map(|p| p.pos)
-                    .collect();
-                let colors: Vec<[f32; 4]> = app.sprite_state.particles.iter()
+                let positions: Vec<[f32; 3]> =
+                    app.sprite_state.particles.iter().map(|p| p.pos).collect();
+                let colors: Vec<[f32; 4]> = app
+                    .sprite_state
+                    .particles
+                    .iter()
                     .map(|p| {
                         let t = (p.life / p.max_life).clamp(0.0, 1.0);
                         [1.0, 0.6 * t + 0.2, 0.1, t * t]
@@ -519,8 +568,8 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
 
                 let n = ring.particle_phases.len();
                 let mut positions = Vec::with_capacity(n);
-                let mut colors    = Vec::with_capacity(n);
-                let mut sizes     = Vec::with_capacity(n);
+                let mut colors = Vec::with_capacity(n);
+                let mut sizes = Vec::with_capacity(n);
 
                 for i in 0..n {
                     let phase = ring.particle_phases[i];
@@ -529,16 +578,14 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
 
                     // Position on (or near) the ring.
                     let r = ring.radius + rad_off;
-                    let pos = u * (angle.cos() * r)
-                            + v * (angle.sin() * r)
-                            + axis * ax_off;
+                    let pos = u * (angle.cos() * r) + v * (angle.sin() * r) + axis * ax_off;
                     positions.push([pos.x, pos.y, pos.z]);
 
                     // Ouroboros gradient: phase=0 is the head (bright, large),
                     // phase=TAU is the tail (dim, small) just behind the head.
                     let t = phase / std::f32::consts::TAU;
                     let alpha = (1.0 - t).powf(1.4) * 0.90 + 0.05;
-                    let size  = 6.0 + (1.0 - t) * 14.0;  // head=20, tail=6
+                    let size = 6.0 + (1.0 - t) * 14.0; // head=20, tail=6
 
                     let [r, g, b] = ring.color;
                     colors.push([r, g, b, alpha]);
@@ -605,13 +652,13 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
 
 pub(crate) fn sprite_lighting() -> LightingSettings {
     LightingSettings {
-        lights: vec![
-            LightSource {
-                kind: LightKind::Directional { direction: [0.4, 0.7, 0.6] },
-                color: [1.0, 1.0, 1.0],
-                intensity: 0.8,
+        lights: vec![LightSource {
+            kind: LightKind::Directional {
+                direction: [0.4, 0.7, 0.6],
             },
-        ],
+            color: [1.0, 1.0, 1.0],
+            intensity: 0.8,
+        }],
         shadows_enabled: false,
         hemisphere_intensity: 0.4,
         sky_color: [0.85, 0.9, 1.0],

@@ -12,9 +12,7 @@ use std::collections::VecDeque;
 use eframe::egui;
 use viewport_lib::{
     BackfacePolicy, FrameStats, Material, MeshData, MeshId, PerformancePolicy, QualityPreset,
-    RuntimeMode, SceneRenderItem, ViewportRenderer,
-    scene::Scene,
-    selection::Selection,
+    RuntimeMode, SceneRenderItem, ViewportRenderer, scene::Scene, selection::Selection,
 };
 
 use crate::App;
@@ -30,12 +28,7 @@ pub(crate) const GRID_RESOLUTIONS: &[(usize, &str)] = &[
     (300, "300x300"),
 ];
 
-pub(crate) const GRID_LAYERS: &[(usize, &str)] = &[
-    (1, "1 (2D)"),
-    (3, "3"),
-    (5, "5"),
-    (10, "10"),
-];
+pub(crate) const GRID_LAYERS: &[(usize, &str)] = &[(1, "1 (2D)"), (3, "3"), (5, "5"), (10, "10")];
 
 pub(crate) const INSTANCE_COUNTS: &[(usize, &str)] = &[
     (100, "100"),
@@ -50,43 +43,43 @@ pub(crate) const INSTANCE_COUNTS: &[(usize, &str)] = &[
 // ---------------------------------------------------------------------------
 
 pub(crate) struct PbState {
-    pub built:               bool,
-    pub mode:                RuntimeMode,
-    pub policy:              PerformancePolicy,
+    pub built: bool,
+    pub mode: RuntimeMode,
+    pub policy: PerformancePolicy,
     pub manual_render_scale: f32,
-    pub grid_resolution:     usize,
+    pub grid_resolution: usize,
     pub last_grid_resolution: usize,
-    pub grid_layers:         usize,
-    pub last_grid_layers:    usize,
-    pub instance_count:      usize,
-    pub time:                f32,
-    pub mesh_id:             Option<MeshId>,
-    pub static_mesh_id:      Option<MeshId>,
-    pub scene:               Scene,
-    pub last_stats:          FrameStats,
-    pub stats_history:       VecDeque<f32>,
-    pub upload_ms:           f32,
+    pub grid_layers: usize,
+    pub last_grid_layers: usize,
+    pub instance_count: usize,
+    pub time: f32,
+    pub mesh_id: Option<MeshId>,
+    pub static_mesh_id: Option<MeshId>,
+    pub scene: Scene,
+    pub last_stats: FrameStats,
+    pub stats_history: VecDeque<f32>,
+    pub upload_ms: f32,
 }
 
 impl Default for PbState {
     fn default() -> Self {
         Self {
-            built:                false,
-            mode:                 RuntimeMode::Interactive,
-            policy:               PerformancePolicy::default(),
-            manual_render_scale:  1.0,
-            grid_resolution:      50,
+            built: false,
+            mode: RuntimeMode::Interactive,
+            policy: PerformancePolicy::default(),
+            manual_render_scale: 1.0,
+            grid_resolution: 50,
             last_grid_resolution: 0,
-            grid_layers:          1,
-            last_grid_layers:     0,
-            instance_count:       1000,
-            time:                 0.0,
-            mesh_id:              None,
-            static_mesh_id:       None,
-            scene:                Scene::new(),
-            last_stats:           FrameStats::default(),
-            stats_history:        VecDeque::new(),
-            upload_ms:            0.0,
+            grid_layers: 1,
+            last_grid_layers: 0,
+            instance_count: 1000,
+            time: 0.0,
+            mesh_id: None,
+            static_mesh_id: None,
+            scene: Scene::new(),
+            last_stats: FrameStats::default(),
+            stats_history: VecDeque::new(),
+            upload_ms: 0.0,
         }
     }
 }
@@ -273,7 +266,10 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
             }
             for fps in [60.0_f32, 30.0, 15.0] {
                 if ui
-                    .radio(app.pb_state.policy.target_fps == Some(fps), format!("{fps:.0}"))
+                    .radio(
+                        app.pb_state.policy.target_fps == Some(fps),
+                        format!("{fps:.0}"),
+                    )
                     .clicked()
                 {
                     app.pb_state.policy.target_fps = Some(fps);
@@ -329,7 +325,10 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
                 ("Low", Some(QualityPreset::Low)),
                 ("Custom", None),
             ] {
-                if ui.radio(app.pb_state.policy.preset == value, label).clicked() {
+                if ui
+                    .radio(app.pb_state.policy.preset == value, label)
+                    .clicked()
+                {
                     app.pb_state.policy.preset = value;
                 }
             }
@@ -367,7 +366,10 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
         // frame time and quality controls will have little visible effect.
         ui.label("Grid (upload load):");
         for &(res, label) in GRID_RESOLUTIONS {
-            if ui.radio(app.pb_state.grid_resolution == res, label).clicked() {
+            if ui
+                .radio(app.pb_state.grid_resolution == res, label)
+                .clicked()
+            {
                 app.pb_state.grid_resolution = res;
             }
         }
@@ -375,7 +377,10 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
         // Layers stacks multiple NxN sheets to multiply upload cost.
         ui.label("Layers:");
         for &(layers, label) in GRID_LAYERS {
-            if ui.radio(app.pb_state.grid_layers == layers, label).clicked() {
+            if ui
+                .radio(app.pb_state.grid_layers == layers, label)
+                .clicked()
+            {
                 app.pb_state.grid_layers = layers;
             }
         }
@@ -385,7 +390,10 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
         let old_count = app.pb_state.instance_count;
         ui.label("Instances (render load):");
         for &(count, label) in INSTANCE_COUNTS {
-            if ui.radio(app.pb_state.instance_count == count, label).clicked() {
+            if ui
+                .radio(app.pb_state.instance_count == count, label)
+                .clicked()
+            {
                 app.pb_state.instance_count = count;
             }
         }
@@ -465,13 +473,11 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
             ui.label(format!("scale: {:.2}", s.render_scale));
             let bar_w = 60.0_f32;
             let bar_h = 10.0_f32;
-            let (rect, _) =
-                ui.allocate_exact_size(egui::vec2(bar_w, bar_h), egui::Sense::empty());
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(bar_w, bar_h), egui::Sense::empty());
             let painter = ui.painter();
             painter.rect_filled(rect, 2.0, egui::Color32::from_gray(40));
             let fill_w = (bar_w * s.render_scale).min(bar_w);
-            let fill_rect =
-                egui::Rect::from_min_size(rect.min, egui::vec2(fill_w, bar_h));
+            let fill_rect = egui::Rect::from_min_size(rect.min, egui::vec2(fill_w, bar_h));
             painter.rect_filled(fill_rect, 2.0, egui::Color32::from_rgb(70, 160, 70));
         });
 
@@ -483,8 +489,7 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
             } else {
                 egui::Color32::from_gray(90)
             };
-            let (rect, _) =
-                ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::empty());
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::empty());
             ui.painter().circle_filled(rect.center(), 5.0, color);
         });
 
@@ -530,7 +535,11 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
 
         // Sparkline: last 60 frames of total_frame_ms.
         ui.label("Frame time (60f):");
-        draw_sparkline(ui, &app.pb_state.stats_history, app.pb_state.policy.target_fps);
+        draw_sparkline(
+            ui,
+            &app.pb_state.stats_history,
+            app.pb_state.policy.target_fps,
+        );
     });
 }
 
@@ -538,11 +547,7 @@ pub(crate) fn controls_pb(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Fram
 // Sparkline
 // ---------------------------------------------------------------------------
 
-fn draw_sparkline(
-    ui: &mut egui::Ui,
-    history: &VecDeque<f32>,
-    target_fps: Option<f32>,
-) {
+fn draw_sparkline(ui: &mut egui::Ui, history: &VecDeque<f32>, target_fps: Option<f32>) {
     let w = 200.0_f32;
     let h = 50.0_f32;
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::empty());
@@ -551,11 +556,16 @@ fn draw_sparkline(
     painter.rect_filled(rect, 2.0, egui::Color32::from_gray(22));
 
     let budget_ms = target_fps.map(|fps| 1000.0 / fps).unwrap_or(f32::INFINITY);
-    let max_ms = history
-        .iter()
-        .cloned()
-        .fold(1.0_f32, f32::max)
-        .max(if budget_ms < f32::INFINITY { budget_ms * 1.2 } else { 50.0 });
+    let max_ms =
+        history
+            .iter()
+            .cloned()
+            .fold(1.0_f32, f32::max)
+            .max(if budget_ms < f32::INFINITY {
+                budget_ms * 1.2
+            } else {
+                50.0
+            });
 
     let to_y = |v: f32| rect.bottom() - (v / max_ms).clamp(0.0, 1.0) * rect.height();
 

@@ -447,9 +447,9 @@ pub(crate) struct ObjectUniform {
     pub(crate) uv_vis_scale: f32,        //   4 bytes, offset 184
     pub(crate) backface_policy: u32, //   4 bytes, offset 188  (0=Cull 1=Identical 2=DifferentColor)
     pub(crate) backface_color: [f32; 4], //  16 bytes, offset 192
-    pub(crate) has_warp: u32,            //   4 bytes, offset 208
-    pub(crate) warp_scale: f32,          //   4 bytes, offset 212
-    pub(crate) _pad_warp: [u32; 2],      //   8 bytes, offset 216
+    pub(crate) has_warp: u32,        //   4 bytes, offset 208
+    pub(crate) warp_scale: f32,      //   4 bytes, offset 212
+    pub(crate) _pad_warp: [u32; 2],  //   8 bytes, offset 216
 }
 
 const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 224);
@@ -710,7 +710,10 @@ pub struct ClipVolumesUniform {
 ///
 /// Deprecated in favour of [`ClipVolumesUniform`], which supports up to
 /// [`CLIP_VOLUME_MAX`] simultaneous box/sphere clip volumes.
-#[deprecated(since = "0.9.0", note = "use ClipVolumesUniform and ClipVolumeEntry instead")]
+#[deprecated(
+    since = "0.9.0",
+    note = "use ClipVolumesUniform and ClipVolumeEntry instead"
+)]
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct ClipVolumeUniform {
@@ -757,7 +760,10 @@ impl ClipVolumeUniform {
     ///
     /// Deprecated: construct a [`ClipVolumeEntry`] via [`ClipVolumeEntry::from_box`]
     /// or [`ClipVolumeEntry::from_sphere`] instead.
-    #[deprecated(since = "0.9.0", note = "use ClipVolumeEntry::from_box / from_sphere instead")]
+    #[deprecated(
+        since = "0.9.0",
+        note = "use ClipVolumeEntry::from_box / from_sphere instead"
+    )]
     pub fn from_clip_shape(shape: &crate::renderer::ClipShape) -> Self {
         let mut u: Self = bytemuck::Zeroable::zeroed();
         match shape {
@@ -821,7 +827,6 @@ pub(crate) struct OutlineObjectBuffers {
     pub mask_bind_group: wgpu::BindGroup,
 }
 
-
 /// Per-item uniform for the Gaussian splat outline mask pass (96 bytes).
 ///
 /// Padded to 96 bytes so it matches `OutlineUniform` in size. Both structs
@@ -831,11 +836,11 @@ pub(crate) struct OutlineObjectBuffers {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct SplatOutlineMaskUniform {
-    pub(crate) model:        [[f32; 4]; 4], // 64 bytes
-    pub(crate) viewport_w:   f32,           //  4 bytes
-    pub(crate) viewport_h:   f32,           //  4 bytes
-    pub(crate) pixel_radius: f32,           //  4 bytes
-    pub(crate) _pad:         [f32; 5],      // 20 bytes  (total: 96)
+    pub(crate) model: [[f32; 4]; 4], // 64 bytes
+    pub(crate) viewport_w: f32,      //  4 bytes
+    pub(crate) viewport_h: f32,      //  4 bytes
+    pub(crate) pixel_radius: f32,    //  4 bytes
+    pub(crate) _pad: [f32; 5],       // 20 bytes  (total: 96)
 }
 
 /// Per-frame GPU buffers for one selected Gaussian splat set's outline mask draw.
@@ -875,11 +880,11 @@ pub(crate) struct ScreenRectOutlineBuffers {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct OutlineEdgeUniform {
-    pub(crate) color: [f32; 4],      // 16 bytes
-    pub(crate) radius: f32,          //  4 bytes
-    pub(crate) viewport_w: f32,      //  4 bytes
-    pub(crate) viewport_h: f32,      //  4 bytes
-    pub(crate) _pad: f32,            //  4 bytes
+    pub(crate) color: [f32; 4], // 16 bytes
+    pub(crate) radius: f32,     //  4 bytes
+    pub(crate) viewport_w: f32, //  4 bytes
+    pub(crate) viewport_h: f32, //  4 bytes
+    pub(crate) _pad: f32,       //  4 bytes
 }
 
 /// Per-frame uniform for the sub-object highlight pass (48 bytes).
@@ -888,13 +893,13 @@ pub(crate) struct OutlineEdgeUniform {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct SubHighlightUniform {
-    pub(crate) fill_color:      [f32; 4], // 16 bytes
-    pub(crate) edge_color:      [f32; 4], // 16 bytes
-    pub(crate) edge_width:      f32,      //  4 bytes (pixels)
-    pub(crate) vertex_size:     f32,      //  4 bytes (pixels)
-    pub(crate) viewport_width:  f32,      //  4 bytes
-    pub(crate) viewport_height: f32,      //  4 bytes
-    // total 48 bytes — no padding required
+    pub(crate) fill_color: [f32; 4], // 16 bytes
+    pub(crate) edge_color: [f32; 4], // 16 bytes
+    pub(crate) edge_width: f32,      //  4 bytes (pixels)
+    pub(crate) vertex_size: f32,     //  4 bytes (pixels)
+    pub(crate) viewport_width: f32,  //  4 bytes
+    pub(crate) viewport_height: f32, //  4 bytes
+                                     // total 48 bytes — no padding required
 }
 
 /// GPU buffers for one frame of sub-object highlight rendering.
@@ -904,20 +909,20 @@ pub(crate) struct SubHighlightUniform {
 /// [`SubHighlightUniform`] buffer bound at group 1.
 pub(crate) struct SubHighlightGpuData {
     // Face fill : flat triangle vertex list (xyz f32, 12 bytes each, non-indexed).
-    pub(crate) fill_vertex_buf:   wgpu::Buffer,
+    pub(crate) fill_vertex_buf: wgpu::Buffer,
     pub(crate) fill_vertex_count: u32,
     // Edge lines : segment instances (pos_a xyz + pos_b xyz, 24 bytes each).
-    pub(crate) edge_vertex_buf:    wgpu::Buffer,
+    pub(crate) edge_vertex_buf: wgpu::Buffer,
     pub(crate) edge_segment_count: u32,
     // Vertex / point sprites : positions (xyz padded to 16 bytes).
-    pub(crate) sprite_vertex_buf:  wgpu::Buffer,
+    pub(crate) sprite_vertex_buf: wgpu::Buffer,
     pub(crate) sprite_point_count: u32,
     // Shared uniform buffer.
-    pub(crate) _uniform_buf:       wgpu::Buffer,
+    pub(crate) _uniform_buf: wgpu::Buffer,
     // Per-pass bind groups (group 1: SubHighlightUniform).
-    pub(crate) fill_bind_group:    wgpu::BindGroup,
-    pub(crate) edge_bind_group:    wgpu::BindGroup,
-    pub(crate) sprite_bind_group:  wgpu::BindGroup,
+    pub(crate) fill_bind_group: wgpu::BindGroup,
+    pub(crate) edge_bind_group: wgpu::BindGroup,
+    pub(crate) sprite_bind_group: wgpu::BindGroup,
 }
 
 /// Tone mapping uniform.
@@ -966,14 +971,14 @@ pub(crate) struct SsaoUniform {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct DofUniform {
-    pub(crate) focal_distance:  f32,
-    pub(crate) focal_range:     f32,
+    pub(crate) focal_distance: f32,
+    pub(crate) focal_range: f32,
     pub(crate) max_blur_radius: f32,
-    pub(crate) near_plane:      f32,
-    pub(crate) far_plane:       f32,
-    pub(crate) viewport_width:  f32,
+    pub(crate) near_plane: f32,
+    pub(crate) far_plane: f32,
+    pub(crate) viewport_width: f32,
     pub(crate) viewport_height: f32,
-    pub(crate) _pad:            f32,
+    pub(crate) _pad: f32,
 }
 
 /// Shadow atlas uniform (416 bytes, bound at group 0 binding 5).
@@ -1999,7 +2004,8 @@ pub struct ViewportGpuResources {
     /// Per-texture-key bind groups for the cull pipelines.
     /// Keyed by (albedo_id, normal_map_id, ao_map_id); invalidated when
     /// `visibility_index_buf` is resized.
-    pub(crate) instance_cull_bind_groups: std::collections::HashMap<(u64, u64, u64), wgpu::BindGroup>,
+    pub(crate) instance_cull_bind_groups:
+        std::collections::HashMap<(u64, u64, u64), wgpu::BindGroup>,
     /// HDR-pass solid instanced pipeline using `vs_main_cull` (indirect draw path).
     pub(crate) hdr_solid_instanced_cull_pipeline: Option<wgpu::RenderPipeline>,
     /// OIT-pass transparent instanced pipeline using `vs_main_cull` (indirect draw path).
@@ -2357,17 +2363,17 @@ pub struct ViewportGpuResources {
     pub(crate) implicit_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
 
     // --- Phase 17: GPU marching cubes (lazily created) ---
-    pub(crate) mc_classify_pipeline:     Option<wgpu::ComputePipeline>,
-    pub(crate) mc_prefix_sum_pipeline:   Option<wgpu::ComputePipeline>,
-    pub(crate) mc_generate_pipeline:     Option<wgpu::ComputePipeline>,
-    pub(crate) mc_surface_pipeline:      Option<DualPipeline>,
-    pub(crate) mc_classify_bgl:          Option<wgpu::BindGroupLayout>,
-    pub(crate) mc_prefix_sum_bgl:        Option<wgpu::BindGroupLayout>,
-    pub(crate) mc_generate_bgl:          Option<wgpu::BindGroupLayout>,
-    pub(crate) mc_render_bgl:            Option<wgpu::BindGroupLayout>,
-    pub(crate) mc_case_count_buf:        Option<wgpu::Buffer>,
-    pub(crate) mc_case_table_buf:        Option<wgpu::Buffer>,
-    pub(crate) mc_volumes:               Vec<crate::resources::gpu_marching_cubes::McVolumeGpuData>,
+    pub(crate) mc_classify_pipeline: Option<wgpu::ComputePipeline>,
+    pub(crate) mc_prefix_sum_pipeline: Option<wgpu::ComputePipeline>,
+    pub(crate) mc_generate_pipeline: Option<wgpu::ComputePipeline>,
+    pub(crate) mc_surface_pipeline: Option<DualPipeline>,
+    pub(crate) mc_classify_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) mc_prefix_sum_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) mc_generate_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) mc_render_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) mc_case_count_buf: Option<wgpu::Buffer>,
+    pub(crate) mc_case_table_buf: Option<wgpu::Buffer>,
+    pub(crate) mc_volumes: Vec<crate::resources::gpu_marching_cubes::McVolumeGpuData>,
     /// Outline mask pipeline for MC surfaces (stride-24 vertex buffer, draw_indirect). None until first selected item.
     pub(crate) mc_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
 

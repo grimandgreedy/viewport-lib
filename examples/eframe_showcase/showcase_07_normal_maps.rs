@@ -18,26 +18,26 @@ use viewport_lib::{BackfacePolicy, Material, NodeId, ViewportRenderer, scene::Sc
 // ---------------------------------------------------------------------------
 
 pub(crate) struct NormalMapsState {
-    pub built:        bool,
-    pub scene:        Scene,
+    pub built: bool,
+    pub scene: Scene,
     /// (node_id, normal_map_id, ao_map_id) for every mapped object.
     pub mapped_nodes: Vec<(NodeId, u64, u64)>,
-    pub normal_on:    bool,
-    pub ao_on:        bool,
+    pub normal_on: bool,
+    pub ao_on: bool,
     pub clip_enabled: bool,
-    pub cap_fill:     bool,
+    pub cap_fill: bool,
 }
 
 impl Default for NormalMapsState {
     fn default() -> Self {
         Self {
-            built:        false,
-            scene:        Scene::new(),
+            built: false,
+            scene: Scene::new(),
             mapped_nodes: Vec::new(),
-            normal_on:    true,
-            ao_on:        true,
+            normal_on: true,
+            ao_on: true,
             clip_enabled: false,
-            cap_fill:     true,
+            cap_fill: true,
         }
     }
 }
@@ -118,7 +118,8 @@ impl App {
                 mat
             },
         );
-        self.nm_state.mapped_nodes
+        self.nm_state
+            .mapped_nodes
             .push((ground_node, tile_nm_id, tile_ao_id));
 
         // Brick sphere : left.
@@ -134,7 +135,8 @@ impl App {
                 mat
             },
         );
-        self.nm_state.mapped_nodes
+        self.nm_state
+            .mapped_nodes
             .push((sphere_node, brick_nm_id, brick_ao_id));
 
         // Tile cube : right.
@@ -149,7 +151,8 @@ impl App {
                 mat
             },
         );
-        self.nm_state.mapped_nodes
+        self.nm_state
+            .mapped_nodes
             .push((cube_node, tile_nm_id, tile_ao_id));
 
         // Brick wall panel : behind.
@@ -164,7 +167,8 @@ impl App {
                 mat
             },
         );
-        self.nm_state.mapped_nodes
+        self.nm_state
+            .mapped_nodes
             .push((wall_node, brick_nm_id, brick_ao_id));
 
         // Plain sphere for comparison : separate mesh upload to avoid per-object
@@ -198,7 +202,10 @@ impl App {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn controls_normal_maps(app: &mut App, ui: &mut egui::Ui) {
-    if ui.checkbox(&mut app.nm_state.normal_on, "Normal map").changed() {
+    if ui
+        .checkbox(&mut app.nm_state.normal_on, "Normal map")
+        .changed()
+    {
         let on = app.nm_state.normal_on;
         for &(node_id, nm_id, _) in &app.nm_state.mapped_nodes.clone() {
             if let Some(node) = app.nm_state.scene.node(node_id) {

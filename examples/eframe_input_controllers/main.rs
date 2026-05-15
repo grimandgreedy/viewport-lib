@@ -19,11 +19,11 @@ use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 use viewport_lib::{
-    Action, ButtonState, Camera, CameraFrame, FrameData, Gizmo, GizmoAxis, GizmoInfo,
-    GizmoMode, InteractionFrame, KeyCode, LightingSettings, ManipResult, ManipulationContext,
+    Action, ButtonState, Camera, CameraFrame, FrameData, Gizmo, GizmoAxis, GizmoInfo, GizmoMode,
+    InteractionFrame, KeyCode, LightingSettings, ManipResult, ManipulationContext,
     ManipulationController, ManipulationKind, Material, MeshId, OrbitCameraController, PickId,
-    PivotMode, SceneFrame, SceneRenderItem, ScrollUnits, Selection, ViewportContext,
-    ViewportEvent, ViewportRenderer, gizmo_center_for_pivot, primitives,
+    PivotMode, SceneFrame, SceneRenderItem, ScrollUnits, Selection, ViewportContext, ViewportEvent,
+    ViewportRenderer, gizmo_center_for_pivot, primitives,
 };
 
 fn main() -> eframe::Result {
@@ -457,10 +457,7 @@ impl eframe::App for App {
                             // Cmd+[/] are consumed for mode switching above; don't
                             // also forward them as pivot-cycle keys to the controller.
                             if cmd
-                                && matches!(
-                                    key,
-                                    egui::Key::OpenBracket | egui::Key::CloseBracket
-                                )
+                                && matches!(key, egui::Key::OpenBracket | egui::Key::CloseBracket)
                             {
                                 continue;
                             }
@@ -769,13 +766,25 @@ impl eframe::App for App {
                     };
                     let axis_label = match ms.axis {
                         Some(GizmoAxis::X) => {
-                            if ms.exclude_axis { " (YZ)" } else { " (X)" }
+                            if ms.exclude_axis {
+                                " (YZ)"
+                            } else {
+                                " (X)"
+                            }
                         }
                         Some(GizmoAxis::Y) => {
-                            if ms.exclude_axis { " (XZ)" } else { " (Y)" }
+                            if ms.exclude_axis {
+                                " (XZ)"
+                            } else {
+                                " (Y)"
+                            }
                         }
                         Some(GizmoAxis::Z) => {
-                            if ms.exclude_axis { " (XY)" } else { " (Z)" }
+                            if ms.exclude_axis {
+                                " (XY)"
+                            } else {
+                                " (Z)"
+                            }
                         }
                         _ => "",
                     };
@@ -785,15 +794,11 @@ impl eframe::App for App {
                         format!("{kind_label}{axis_label}")
                     };
                     let font = egui::FontId::proportional(14.0);
-                    let galley = ui.painter().layout_no_wrap(
-                        text,
-                        font,
-                        egui::Color32::WHITE,
-                    );
-                    let pos = egui::pos2(
-                        rect.center().x - galley.size().x / 2.0,
-                        rect.max.y - 30.0,
-                    );
+                    let galley = ui
+                        .painter()
+                        .layout_no_wrap(text, font, egui::Color32::WHITE);
+                    let pos =
+                        egui::pos2(rect.center().x - galley.size().x / 2.0, rect.max.y - 30.0);
                     let bg = egui::Rect::from_min_size(
                         pos - egui::vec2(6.0, 3.0),
                         galley.size() + egui::vec2(12.0, 6.0),

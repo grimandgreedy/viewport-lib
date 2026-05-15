@@ -770,10 +770,8 @@ pub fn pick_volume_cpu(
     // Starting grid cell. Nudge the fractional position slightly inside to
     // avoid landing exactly on a boundary and mis-classifying the first cell.
     let eps = 1e-4_f32;
-    let frac = ((p_entry - bbox_min) / extent).clamp(
-        glam::Vec3::splat(eps),
-        glam::Vec3::splat(1.0 - eps),
-    );
+    let frac =
+        ((p_entry - bbox_min) / extent).clamp(glam::Vec3::splat(eps), glam::Vec3::splat(1.0 - eps));
     let mut ix = (frac.x * nx as f32).floor() as i32;
     let mut iy = (frac.y * ny as f32).floor() as i32;
     let mut iz = (frac.z * nz as f32).floor() as i32;
@@ -787,9 +785,21 @@ pub fn pick_volume_cpu(
     let step_z: i32 = if local_dir.z >= 0.0 { 1 } else { -1 };
 
     // t increment to traverse one cell in each axis.
-    let td_x = if local_dir.x.abs() > 1e-12 { cell.x / local_dir.x.abs() } else { f32::INFINITY };
-    let td_y = if local_dir.y.abs() > 1e-12 { cell.y / local_dir.y.abs() } else { f32::INFINITY };
-    let td_z = if local_dir.z.abs() > 1e-12 { cell.z / local_dir.z.abs() } else { f32::INFINITY };
+    let td_x = if local_dir.x.abs() > 1e-12 {
+        cell.x / local_dir.x.abs()
+    } else {
+        f32::INFINITY
+    };
+    let td_y = if local_dir.y.abs() > 1e-12 {
+        cell.y / local_dir.y.abs()
+    } else {
+        f32::INFINITY
+    };
+    let td_z = if local_dir.z.abs() > 1e-12 {
+        cell.z / local_dir.z.abs()
+    } else {
+        f32::INFINITY
+    };
 
     // t to the next axis-aligned boundary ahead of p_entry in each axis.
     let next_bx = bbox_min.x + (if step_x > 0 { ix + 1 } else { ix }) as f32 * cell.x;
@@ -918,8 +928,8 @@ pub fn voxel_world_aabb(
     let bbox_max = glam::Vec3::from(item.bbox_max);
     let cell = (bbox_max - bbox_min) / glam::Vec3::new(nx as f32, ny as f32, nz as f32);
 
-    let local_lo = bbox_min
-        + glam::Vec3::new(ix as f32 * cell.x, iy as f32 * cell.y, iz as f32 * cell.z);
+    let local_lo =
+        bbox_min + glam::Vec3::new(ix as f32 * cell.x, iy as f32 * cell.y, iz as f32 * cell.z);
     let local_hi = local_lo + cell;
 
     let model = glam::Mat4::from_cols_array_2d(&item.model);
@@ -1044,7 +1054,11 @@ pub fn nearest_vertex_on_hit(
         return None;
     }
     // parry3d may return a backface index offset by n_tri; normalise.
-    let face = if face_raw >= n_tri { face_raw - n_tri } else { face_raw };
+    let face = if face_raw >= n_tri {
+        face_raw - n_tri
+    } else {
+        face_raw
+    };
     if face * 3 + 2 >= indices.len() {
         return None;
     }
@@ -1059,9 +1073,12 @@ pub fn nearest_vertex_on_hit(
             let p = model.transform_point3(glam::Vec3::from(positions[i]));
             (i, p.distance(hit.world_pos))
         })
-        .fold((vi[0], f32::MAX), |acc, (i, d)| {
-            if d < acc.1 { (i, d) } else { acc }
-        });
+        .fold(
+            (vi[0], f32::MAX),
+            |acc, (i, d)| {
+                if d < acc.1 { (i, d) } else { acc }
+            },
+        );
     Some(SubObjectRef::Vertex(best_vi as u32))
 }
 
@@ -1177,26 +1194,40 @@ const VM_TET_FACES: [[usize; 3]; 4] = [[1, 2, 3], [0, 3, 2], [0, 1, 3], [0, 2, 1
 
 // Hex: 6 quad faces, each split into 2 triangles (12 total).
 const VM_HEX_TRIS: [[usize; 3]; 12] = [
-    [0, 1, 2], [0, 2, 3], // bottom [0,1,2,3]
-    [4, 7, 6], [4, 6, 5], // top    [4,7,6,5]
-    [0, 4, 5], [0, 5, 1], // front  [0,4,5,1]
-    [2, 6, 7], [2, 7, 3], // back   [2,6,7,3]
-    [0, 3, 7], [0, 7, 4], // left   [0,3,7,4]
-    [1, 5, 6], [1, 6, 2], // right  [1,5,6,2]
+    [0, 1, 2],
+    [0, 2, 3], // bottom [0,1,2,3]
+    [4, 7, 6],
+    [4, 6, 5], // top    [4,7,6,5]
+    [0, 4, 5],
+    [0, 5, 1], // front  [0,4,5,1]
+    [2, 6, 7],
+    [2, 7, 3], // back   [2,6,7,3]
+    [0, 3, 7],
+    [0, 7, 4], // left   [0,3,7,4]
+    [1, 5, 6],
+    [1, 6, 2], // right  [1,5,6,2]
 ];
 
 // Pyramid: quad base split into 2 + 4 triangular sides = 6 triangles.
 const VM_PYRAMID_TRIS: [[usize; 3]; 6] = [
-    [0, 1, 2], [0, 2, 3], // base quad [0,1,2,3]
-    [0, 4, 1], [1, 4, 2], [2, 4, 3], [3, 4, 0], // sides
+    [0, 1, 2],
+    [0, 2, 3], // base quad [0,1,2,3]
+    [0, 4, 1],
+    [1, 4, 2],
+    [2, 4, 3],
+    [3, 4, 0], // sides
 ];
 
 // Wedge: 2 tri ends + 3 quad sides (each split) = 2 + 6 = 8 triangles.
 const VM_WEDGE_TRIS: [[usize; 3]; 8] = [
-    [0, 2, 1], [3, 4, 5], // tri ends
-    [0, 1, 4], [0, 4, 3], // side [0,1,4,3]
-    [1, 2, 5], [1, 5, 4], // side [1,2,5,4]
-    [2, 0, 3], [2, 3, 5], // side [2,0,3,5]
+    [0, 2, 1],
+    [3, 4, 5], // tri ends
+    [0, 1, 4],
+    [0, 4, 3], // side [0,1,4,3]
+    [1, 2, 5],
+    [1, 5, 4], // side [1,2,5,4]
+    [2, 0, 3],
+    [2, 3, 5], // side [2,0,3,5]
 ];
 
 /// Ray-cast pick against a transparent volume mesh.
@@ -1242,7 +1273,8 @@ pub fn pick_transparent_volume_mesh_cpu(
             &VM_HEX_TRIS
         };
         for tri in tris {
-            if let Some(t) = ray_tri_mt_ds(local_origin, local_dir, p(tri[0]), p(tri[1]), p(tri[2])) {
+            if let Some(t) = ray_tri_mt_ds(local_origin, local_dir, p(tri[0]), p(tri[1]), p(tri[2]))
+            {
                 if t < best_t {
                     best_t = t;
                     best_cell = Some(cell_idx as u32);
@@ -1311,10 +1343,7 @@ pub fn pick_volume_rect(
             for ix in 0..nx {
                 let flat = ix + iy * nx + iz * nx * ny;
                 let scalar = volume.data[flat as usize];
-                if scalar.is_nan()
-                    || scalar < item.threshold_min
-                    || scalar > item.threshold_max
-                {
+                if scalar.is_nan() || scalar < item.threshold_min || scalar > item.threshold_max {
                     continue;
                 }
                 let local_center = bbox_min
@@ -2060,10 +2089,7 @@ mod tests {
         }
     }
 
-    fn make_volume_data(
-        dims: [u32; 3],
-        fill: f32,
-    ) -> crate::geometry::marching_cubes::VolumeData {
+    fn make_volume_data(dims: [u32; 3], fill: f32) -> crate::geometry::marching_cubes::VolumeData {
         let n = (dims[0] * dims[1] * dims[2]) as usize;
         crate::geometry::marching_cubes::VolumeData {
             data: vec![fill; n],
@@ -2138,7 +2164,10 @@ mod tests {
             &item,
             &volume,
         );
-        assert!(hit.is_none(), "expected no hit when all scalars below threshold");
+        assert!(
+            hit.is_none(),
+            "expected no hit when all scalars below threshold"
+        );
     }
 
     #[test]
@@ -2200,14 +2229,11 @@ mod tests {
         volume.data[9] = 0.8;
 
         let dir = glam::Vec3::new(1.0, 0.0, 0.001).normalize();
-        let hit = super::pick_volume_cpu(
-            glam::Vec3::new(-1.0, 0.5, 0.5),
-            dir,
-            1,
-            &item,
-            &volume,
+        let hit = super::pick_volume_cpu(glam::Vec3::new(-1.0, 0.5, 0.5), dir, 1, &item, &volume);
+        assert!(
+            hit.is_some(),
+            "DDA must reach the last voxel without skipping"
         );
-        assert!(hit.is_some(), "DDA must reach the last voxel without skipping");
         let flat = hit.unwrap().sub_object.unwrap().index();
         assert_eq!(flat, 9, "expected ix=9 (flat=9), got flat={flat}");
     }
@@ -2229,8 +2255,14 @@ mod tests {
 
         // Voxel (1,2,3) = flat 1 + 2*4 + 3*16 = 57: occupies [1,2,3]->[2,3,4].
         let (lo, hi) = super::voxel_world_aabb(57, &volume, &item);
-        assert!((lo - glam::Vec3::new(1.0, 2.0, 3.0)).length() < 1e-5, "lo={lo:?}");
-        assert!((hi - glam::Vec3::new(2.0, 3.0, 4.0)).length() < 1e-5, "hi={hi:?}");
+        assert!(
+            (lo - glam::Vec3::new(1.0, 2.0, 3.0)).length() < 1e-5,
+            "lo={lo:?}"
+        );
+        assert!(
+            (hi - glam::Vec3::new(2.0, 3.0, 4.0)).length() < 1e-5,
+            "hi={hi:?}"
+        );
     }
 
     #[test]

@@ -2,49 +2,49 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
-    CameraAnimator, Easing, Gizmo, GizmoMode, GizmoSpace, ManipulationController, Material,
-    NodeId, ViewPreset, ViewportRenderer, selection::Selection, scene::Scene,
-};
 use std::collections::HashMap;
+use viewport_lib::{
+    CameraAnimator, Easing, Gizmo, GizmoMode, GizmoSpace, ManipulationController, Material, NodeId,
+    ViewPreset, ViewportRenderer, scene::Scene, selection::Selection,
+};
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
 pub(crate) struct InteractState {
-    pub scene:                Scene,
-    pub selection:            Selection,
-    pub animator:             CameraAnimator,
-    pub gizmo:                Gizmo,
-    pub manip:                ManipulationController,
-    pub transforms_snapshot:  HashMap<NodeId, glam::Mat4>,
-    pub left_held:            bool,
-    pub built:                bool,
-    pub gizmo_center:         Option<glam::Vec3>,
-    pub gizmo_scale:          f32,
-    pub spline:               viewport_lib::SplineWidget,
+    pub scene: Scene,
+    pub selection: Selection,
+    pub animator: CameraAnimator,
+    pub gizmo: Gizmo,
+    pub manip: ManipulationController,
+    pub transforms_snapshot: HashMap<NodeId, glam::Mat4>,
+    pub left_held: bool,
+    pub built: bool,
+    pub gizmo_center: Option<glam::Vec3>,
+    pub gizmo_scale: f32,
+    pub spline: viewport_lib::SplineWidget,
     pub last_cursor_viewport: glam::Vec2,
 }
 
 impl Default for InteractState {
     fn default() -> Self {
         Self {
-            scene:                Scene::new(),
-            selection:            Selection::new(),
-            animator:             CameraAnimator::with_default_damping(),
-            gizmo:                Gizmo::new(),
-            manip:                ManipulationController::new(),
-            transforms_snapshot:  HashMap::new(),
-            left_held:            false,
-            built:                false,
-            gizmo_center:         None,
-            gizmo_scale:          1.0,
-            spline:               viewport_lib::SplineWidget::new(vec![
+            scene: Scene::new(),
+            selection: Selection::new(),
+            animator: CameraAnimator::with_default_damping(),
+            gizmo: Gizmo::new(),
+            manip: ManipulationController::new(),
+            transforms_snapshot: HashMap::new(),
+            left_held: false,
+            built: false,
+            gizmo_center: None,
+            gizmo_scale: 1.0,
+            spline: viewport_lib::SplineWidget::new(vec![
                 glam::Vec3::new(-2.0, 0.0, 1.5),
-                glam::Vec3::new(-0.5,  1.5, 1.5),
-                glam::Vec3::new( 0.5, -1.5, 1.5),
-                glam::Vec3::new( 2.0,  0.0, 1.5),
+                glam::Vec3::new(-0.5, 1.5, 1.5),
+                glam::Vec3::new(0.5, -1.5, 1.5),
+                glam::Vec3::new(2.0, 0.0, 1.5),
             ]),
             last_cursor_viewport: glam::Vec2::ZERO,
         }
@@ -81,7 +81,8 @@ impl App {
             let transform = glam::Mat4::from_translation(glam::Vec3::from(*pos));
             let mat = Material::from_color(*color);
             let id = self
-                .interact_state.scene
+                .interact_state
+                .scene
                 .add_named(name, Some(mesh), transform, mat);
             if i == 0 {
                 self.interact_state.selection.select_one(id);
@@ -140,7 +141,13 @@ impl App {
         let to_pivot = glam::Mat4::from_translation(-center);
         let from_pivot = glam::Mat4::from_translation(center);
 
-        for id in self.interact_state.selection.iter().copied().collect::<Vec<_>>() {
+        for id in self
+            .interact_state
+            .selection
+            .iter()
+            .copied()
+            .collect::<Vec<_>>()
+        {
             if let Some(node) = self.interact_state.scene.node(id) {
                 let cur = node.local_transform();
                 let new_t = translate_mat * from_pivot * rot_mat * scale_mat * to_pivot * cur;
@@ -153,16 +160,29 @@ impl App {
     /// Snapshot the current local transforms of all selected nodes.
     pub(crate) fn save_interact_snapshots(&mut self) {
         self.interact_state.transforms_snapshot.clear();
-        for id in self.interact_state.selection.iter().copied().collect::<Vec<_>>() {
+        for id in self
+            .interact_state
+            .selection
+            .iter()
+            .copied()
+            .collect::<Vec<_>>()
+        {
             if let Some(node) = self.interact_state.scene.node(id) {
-                self.interact_state.transforms_snapshot.insert(id, node.local_transform());
+                self.interact_state
+                    .transforms_snapshot
+                    .insert(id, node.local_transform());
             }
         }
     }
 
     /// Restore local transforms from the last snapshot (used by Cancel / ConstraintChanged).
     pub(crate) fn restore_interact_snapshots(&mut self) {
-        let ids: Vec<_> = self.interact_state.transforms_snapshot.keys().copied().collect();
+        let ids: Vec<_> = self
+            .interact_state
+            .transforms_snapshot
+            .keys()
+            .copied()
+            .collect();
         for id in ids {
             if let Some(&t) = self.interact_state.transforms_snapshot.get(&id) {
                 self.interact_state.scene.set_local_transform(id, t);
@@ -179,7 +199,8 @@ impl App {
         let iter_nodes: Vec<_> = if !self.interact_state.selection.is_empty() {
             self.interact_state.selection.iter().copied().collect()
         } else {
-            self.interact_state.scene
+            self.interact_state
+                .scene
                 .walk_depth_first()
                 .iter()
                 .map(|(id, _)| *id)

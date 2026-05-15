@@ -38,36 +38,36 @@ pub(crate) enum VolumeMode {
 // ---------------------------------------------------------------------------
 
 pub(crate) struct VolumeState {
-    pub built:          bool,
-    pub volume_id:      Option<VolumeId>,
+    pub built: bool,
+    pub volume_id: Option<VolumeId>,
     pub iso_mesh_index: Option<MeshId>,
     /// CPU-side field kept for re-extraction on isovalue change.
-    pub field:          VolumeData,
-    pub mode:           VolumeMode,
-    pub isovalue:       f32,
-    pub color_lut:      BuiltinColormap,
-    pub opacity_scale:  f32,
-    pub threshold:      (f32, f32),
-    pub step_scale:     f32,
-    pub shading:        bool,
-    pub nan_on:         bool,
-    pub iso_material:   Material,
+    pub field: VolumeData,
+    pub mode: VolumeMode,
+    pub isovalue: f32,
+    pub color_lut: BuiltinColormap,
+    pub opacity_scale: f32,
+    pub threshold: (f32, f32),
+    pub step_scale: f32,
+    pub shading: bool,
+    pub nan_on: bool,
+    pub iso_material: Material,
     /// Whether to overlay an image slice on the volume scene.
-    pub show_slice:     bool,
+    pub show_slice: bool,
     /// Axis for the image slice (0=X, 1=Y, 2=Z).
-    pub slice_axis:     u32,
+    pub slice_axis: u32,
     /// Normalized [0,1] position of the slice along the axis.
-    pub slice_offset:   f32,
+    pub slice_offset: f32,
     /// Colormap for the image slice LUT.
-    pub slice_lut:      BuiltinColormap,
+    pub slice_lut: BuiltinColormap,
     /// Opacity of the image slice quad.
-    pub slice_opacity:  f32,
+    pub slice_opacity: f32,
     /// Whether to overlay a volume surface slice.
     pub show_surface_slice: bool,
     /// Uploaded saddle mesh used as the slice surface.
     pub surface_slice_mesh_id: Option<MeshId>,
     /// Colormap for the surface slice LUT.
-    pub surface_slice_lut:     BuiltinColormap,
+    pub surface_slice_lut: BuiltinColormap,
     /// Opacity of the surface slice.
     pub surface_slice_opacity: f32,
 }
@@ -77,32 +77,32 @@ impl Default for VolumeState {
         let mut iso_material = Material::from_color([0.6, 0.8, 1.0]);
         iso_material.roughness = 0.4;
         Self {
-            built:          false,
-            volume_id:      None,
+            built: false,
+            volume_id: None,
             iso_mesh_index: None,
             field: VolumeData {
-                data:    Vec::new(),
-                dims:    [1, 1, 1],
-                origin:  [0.0; 3],
+                data: Vec::new(),
+                dims: [1, 1, 1],
+                origin: [0.0; 3],
                 spacing: [1.0; 3],
             },
-            mode:          VolumeMode::VolumeOnly,
-            isovalue:      0.35,
-            color_lut:     BuiltinColormap::Viridis,
+            mode: VolumeMode::VolumeOnly,
+            isovalue: 0.35,
+            color_lut: BuiltinColormap::Viridis,
             opacity_scale: 1.0,
-            threshold:     (0.05, 1.0),
-            step_scale:    1.0,
-            shading:       true,
-            nan_on:        false,
+            threshold: (0.05, 1.0),
+            step_scale: 1.0,
+            shading: true,
+            nan_on: false,
             iso_material,
-            show_slice:    true,
-            slice_axis:    2,
-            slice_offset:  0.5,
-            slice_lut:     BuiltinColormap::Viridis,
+            show_slice: true,
+            slice_axis: 2,
+            slice_offset: 0.5,
+            slice_lut: BuiltinColormap::Viridis,
             slice_opacity: 0.65,
-            show_surface_slice:    false,
+            show_surface_slice: false,
             surface_slice_mesh_id: None,
-            surface_slice_lut:     BuiltinColormap::Turbo,
+            surface_slice_lut: BuiltinColormap::Turbo,
             surface_slice_opacity: 1.0,
         }
     }
@@ -153,9 +153,12 @@ impl App {
         }
         if let Some(idx) = self.vol_state.iso_mesh_index {
             // Overwrite the existing slot.
-            let _ = renderer
-                .resources_mut()
-                .replace_mesh_data(&self.device, &self.queue, idx, &iso_mesh);
+            let _ = renderer.resources_mut().replace_mesh_data(
+                &self.device,
+                &self.queue,
+                idx,
+                &iso_mesh,
+            );
         } else {
             // Allocate a new slot.
             if let Ok(idx) = renderer
@@ -184,7 +187,11 @@ impl App {
         item.threshold_max = s.threshold.1;
         item.step_scale = s.step_scale;
         item.enable_shading = s.shading;
-        item.nan_color = if s.nan_on { Some([0.9, 0.1, 0.9, 0.8]) } else { None };
+        item.nan_color = if s.nan_on {
+            Some([0.9, 0.1, 0.9, 0.8])
+        } else {
+            None
+        };
         // Centre the volume around the world origin.
         item.bbox_min = [-3.2, -3.2, -3.2];
         item.bbox_max = [3.2, 3.2, 3.2];
@@ -213,12 +220,18 @@ impl App {
     }
 
     /// Upload a saddle-shaped mesh for the surface slice demo if not already done.
-    pub(crate) fn ensure_surface_slice_mesh(&mut self, renderer: &mut viewport_lib::ViewportRenderer) {
+    pub(crate) fn ensure_surface_slice_mesh(
+        &mut self,
+        renderer: &mut viewport_lib::ViewportRenderer,
+    ) {
         if self.vol_state.surface_slice_mesh_id.is_some() {
             return;
         }
         let mesh = make_saddle_mesh(32);
-        if let Ok(id) = renderer.resources_mut().upload_mesh_data(&self.device, &mesh) {
+        if let Ok(id) = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &mesh)
+        {
             self.vol_state.surface_slice_mesh_id = Some(id);
         }
     }
@@ -263,10 +276,16 @@ pub(crate) fn controls_volume(app: &mut App, ui: &mut egui::Ui, frame: &eframe::
 
     ui.label("Render mode:");
     ui.horizontal(|ui| {
-        if ui.radio(s.mode == VolumeMode::VolumeOnly, "Volume").clicked() {
+        if ui
+            .radio(s.mode == VolumeMode::VolumeOnly, "Volume")
+            .clicked()
+        {
             s.mode = VolumeMode::VolumeOnly;
         }
-        if ui.radio(s.mode == VolumeMode::IsosurfaceOnly, "Isosurface").clicked() {
+        if ui
+            .radio(s.mode == VolumeMode::IsosurfaceOnly, "Isosurface")
+            .clicked()
+        {
             s.mode = VolumeMode::IsosurfaceOnly;
         }
         if ui.radio(s.mode == VolumeMode::Both, "Both").clicked() {
@@ -362,7 +381,10 @@ pub(crate) fn controls_volume(app: &mut App, ui: &mut egui::Ui, frame: &eframe::
     if s.mode != VolumeMode::VolumeOnly {
         ui.separator();
         ui.label("Isosurface colour:");
-        if ui.color_edit_button_rgb(&mut s.iso_material.base_color).changed() {}
+        if ui
+            .color_edit_button_rgb(&mut s.iso_material.base_color)
+            .changed()
+        {}
         ui.label("Roughness:");
         ui.add(egui::Slider::new(&mut s.iso_material.roughness, 0.0..=1.0).step_by(0.05));
         ui.label("Metallic:");

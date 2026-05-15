@@ -15,35 +15,35 @@ use viewport_lib::{AttributeData, Material, MeshData, MeshId, ViewportRenderer, 
 // ---------------------------------------------------------------------------
 
 pub(crate) struct IsolinesState {
-    pub built:              bool,
-    pub scene:              Scene,
-    pub mesh_index:         MeshId,
-    pub positions:          Vec<[f32; 3]>,
-    pub indices:            Vec<u32>,
-    pub scalars:            Vec<f32>,
-    pub grid_resolution:    u32,
-    pub contour_count:      usize,
-    pub line_color:         [f32; 4],
-    pub line_width:         f32,
+    pub built: bool,
+    pub scene: Scene,
+    pub mesh_index: MeshId,
+    pub positions: Vec<[f32; 3]>,
+    pub indices: Vec<u32>,
+    pub scalars: Vec<f32>,
+    pub grid_resolution: u32,
+    pub contour_count: usize,
+    pub line_color: [f32; 4],
+    pub line_width: f32,
     pub show_surface_color: bool,
-    pub depth_bias:         f32,
+    pub depth_bias: f32,
 }
 
 impl Default for IsolinesState {
     fn default() -> Self {
         Self {
-            built:              false,
-            scene:              Scene::new(),
-            mesh_index:         MeshId::from_index(0),
-            positions:          Vec::new(),
-            indices:            Vec::new(),
-            scalars:            Vec::new(),
-            grid_resolution:    128,
-            contour_count:      8,
-            line_color:         [0.0, 0.0, 0.0, 1.0],
-            line_width:         1.5,
+            built: false,
+            scene: Scene::new(),
+            mesh_index: MeshId::from_index(0),
+            positions: Vec::new(),
+            indices: Vec::new(),
+            scalars: Vec::new(),
+            grid_resolution: 128,
+            contour_count: 8,
+            line_color: [0.0, 0.0, 0.0, 1.0],
+            line_width: 1.5,
             show_surface_color: true,
-            depth_bias:         0.005,
+            depth_bias: 0.005,
         }
     }
 }
@@ -71,7 +71,8 @@ impl App {
             .expect("iso wave mesh");
         self.iso_state.mesh_index = mesh_id;
 
-        self.iso_state.scene
+        self.iso_state
+            .scene
             .add_named("Wave Grid", Some(mesh_id), glam::Mat4::IDENTITY, {
                 let mut m = Material::from_color([0.6, 0.65, 0.7]);
                 m.roughness = 0.6;
@@ -127,7 +128,10 @@ pub(crate) fn controls_isolines(app: &mut App, ui: &mut egui::Ui) {
 
     ui.separator();
 
-    ui.checkbox(&mut app.iso_state.show_surface_color, "Surface scalar coloring");
+    ui.checkbox(
+        &mut app.iso_state.show_surface_color,
+        "Surface scalar coloring",
+    );
     ui.label("(grey when off, wave-colored when on)");
 
     ui.separator();

@@ -554,13 +554,7 @@ mod tests {
 
         // Clip at X=0 through the center (same as showcase_07).
         let model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.0));
-        let cap = generate_cap_mesh(
-            &positions,
-            &indices,
-            &model,
-            glam::Vec3::X,
-            0.0,
-        );
+        let cap = generate_cap_mesh(&positions, &indices, &model, glam::Vec3::X, 0.0);
         assert!(cap.is_some(), "sphere cap mesh must be generated");
         let cap = cap.unwrap();
         assert!(cap.indices.len() >= 3);

@@ -62,9 +62,7 @@ impl ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sprite_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../shaders/sprite.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/sprite.wgsl").into()),
         });
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -89,7 +87,11 @@ impl ViewportGpuResources {
         let sample_count = self.sample_count;
         let make_sprite = |fmt: wgpu::TextureFormat, depth_write: bool| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(if depth_write { "sprite_pipeline_depth_write" } else { "sprite_pipeline" }),
+                label: Some(if depth_write {
+                    "sprite_pipeline_depth_write"
+                } else {
+                    "sprite_pipeline"
+                }),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
@@ -170,19 +172,31 @@ impl ViewportGpuResources {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct GpuSpriteInstance {
-            color:    [f32; 4],
-            size:     f32,
+            color: [f32; 4],
+            size: f32,
             rotation: f32,
-            _pad0:    f32,
-            _pad1:    f32,
-            uv_rect:  [f32; 4],
+            _pad0: f32,
+            _pad1: f32,
+            uv_rect: [f32; 4],
         }
 
         let instances: Vec<GpuSpriteInstance> = (0..item.positions.len())
             .map(|i| GpuSpriteInstance {
-                color: if i < item.colors.len() { item.colors[i] } else { item.default_color },
-                size: if i < item.sizes.len() { item.sizes[i] } else { item.default_size },
-                rotation: if i < item.rotations.len() { item.rotations[i] } else { 0.0 },
+                color: if i < item.colors.len() {
+                    item.colors[i]
+                } else {
+                    item.default_color
+                },
+                size: if i < item.sizes.len() {
+                    item.sizes[i]
+                } else {
+                    item.default_size
+                },
+                rotation: if i < item.rotations.len() {
+                    item.rotations[i]
+                } else {
+                    0.0
+                },
                 _pad0: 0.0,
                 _pad1: 0.0,
                 uv_rect: if i < item.uv_rects.len() {
@@ -206,11 +220,11 @@ impl ViewportGpuResources {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct SpriteUniformData {
-            model:       [[f32; 4]; 4],
+            model: [[f32; 4]; 4],
             world_space: u32,
             has_texture: u32,
-            _pad0:       u32,
-            _pad1:       u32,
+            _pad0: u32,
+            _pad1: u32,
         }
 
         let (texture_view, has_texture): (&wgpu::TextureView, u32) =
@@ -226,9 +240,7 @@ impl ViewportGpuResources {
 
         let uniform_data = SpriteUniformData {
             model: item.model,
-            world_space: if item.size_mode
-                == crate::renderer::SpriteSizeMode::WorldSpace
-            {
+            world_space: if item.size_mode == crate::renderer::SpriteSizeMode::WorldSpace {
                 1
             } else {
                 0
@@ -320,8 +332,8 @@ impl ViewportGpuResources {
             attributes: &vert_attrs,
         }];
 
-        self.sprite_outline_mask_pipeline = Some(
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        self.sprite_outline_mask_pipeline = Some(device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
                 label: Some("sprite_outline_mask_pipeline"),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
@@ -359,7 +371,7 @@ impl ViewportGpuResources {
                 },
                 multiview: None,
                 cache: None,
-            }),
-        );
+            },
+        ));
     }
 }

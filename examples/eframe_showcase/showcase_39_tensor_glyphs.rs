@@ -19,12 +19,12 @@
 //! This rotation of the principal axes is invisible to a scalar stress field
 //! but immediately readable from the tensor glyphs.
 
+use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap, ColormapId, FrameData,
-    MeshId, SceneRenderItem, TensorGlyphItem, ViewportRenderer, VolumeMeshData,
+    AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap, ColormapId, FrameData, MeshId,
+    SceneRenderItem, TensorGlyphItem, ViewportRenderer, VolumeMeshData,
 };
-use crate::App;
 
 // ---------------------------------------------------------------------------
 // Beam geometry constants
@@ -37,9 +37,9 @@ const NY: usize = 14;
 /// Cells through the beam width (Z direction).
 const NZ: usize = 4;
 
-const BEAM_HALF_L: f32 = 4.0;  // X: -4 to +4
-const BEAM_HALF_H: f32 = 1.0;  // Y depth: 2.0 total
-const BEAM_HALF_W: f32 = 0.5;  // Z width: 1.0 total
+const BEAM_HALF_L: f32 = 4.0; // X: -4 to +4
+const BEAM_HALF_H: f32 = 1.0; // Y depth: 2.0 total
+const BEAM_HALF_W: f32 = 0.5; // Z width: 1.0 total
 
 /// Y center for the top (volume mesh) region.
 const Y_TOP: f32 = 3.5;
@@ -51,31 +51,31 @@ const Y_BOT: f32 = -3.5;
 // ---------------------------------------------------------------------------
 
 const GLYPH_COLORMAPS: &[(BuiltinColormap, &str)] = &[
-    (BuiltinColormap::RdBu,      "RdBu"),
-    (BuiltinColormap::Coolwarm,  "Coolwarm"),
-    (BuiltinColormap::Viridis,   "Viridis"),
-    (BuiltinColormap::Plasma,    "Plasma"),
-    (BuiltinColormap::Turbo,     "Turbo"),
-    (BuiltinColormap::Inferno,   "Inferno"),
+    (BuiltinColormap::RdBu, "RdBu"),
+    (BuiltinColormap::Coolwarm, "Coolwarm"),
+    (BuiltinColormap::Viridis, "Viridis"),
+    (BuiltinColormap::Plasma, "Plasma"),
+    (BuiltinColormap::Turbo, "Turbo"),
+    (BuiltinColormap::Inferno, "Inferno"),
     (BuiltinColormap::Greyscale, "Greyscale"),
 ];
 
 #[derive(Debug, Clone)]
 pub(crate) struct TensorGlyphState {
-    pub built:    bool,
-    pub mesh_id:  Option<MeshId>,
-    pub scale:    f32,
-    pub density:  f32,
+    pub built: bool,
+    pub mesh_id: Option<MeshId>,
+    pub scale: f32,
+    pub density: f32,
     pub colormap: BuiltinColormap,
 }
 
 impl Default for TensorGlyphState {
     fn default() -> Self {
         Self {
-            built:    false,
-            mesh_id:  None,
-            scale:    0.45,
-            density:  1.0,
+            built: false,
+            mesh_id: None,
+            scale: 0.45,
+            density: 1.0,
             colormap: BuiltinColormap::RdBu,
         }
     }
@@ -93,8 +93,8 @@ impl Default for TensorGlyphState {
 ///
 /// Returns `(sigma_xx, tau_xy)` both normalized so the extremes are near +-1.
 fn beam_stress(cx: f32, cy_rel: f32) -> (f32, f32) {
-    let x_norm = cx / BEAM_HALF_L;             // -1 at left support, +1 at right support
-    let y_norm = cy_rel / BEAM_HALF_H;         // -1 at bottom, +1 at top
+    let x_norm = cx / BEAM_HALF_L; // -1 at left support, +1 at right support
+    let y_norm = cy_rel / BEAM_HALF_H; // -1 at bottom, +1 at top
 
     // Triangular bending moment: peaks at center, zero at supports.
     let moment = 1.0 - x_norm.abs();
@@ -126,9 +126,9 @@ fn von_mises(sigma_xx: f32, tau_xy: f32) -> f32 {
 // ---------------------------------------------------------------------------
 
 fn stress_eigen(sigma_xx: f32, tau_xy: f32) -> ([f32; 3], [[f32; 3]; 3]) {
-    let mean  = sigma_xx * 0.5;
-    let half  = sigma_xx * 0.5;
-    let disc  = (half * half + tau_xy * tau_xy).sqrt();
+    let mean = sigma_xx * 0.5;
+    let half = sigma_xx * 0.5;
+    let disc = (half * half + tau_xy * tau_xy).sqrt();
 
     // Floor prevents zero eigenvalues (which occur at extreme fibers under pure
     // uniaxial stress where sigma_yy = 0). Without the floor those glyphs collapse
@@ -136,16 +136,24 @@ fn stress_eigen(sigma_xx: f32, tau_xy: f32) -> ([f32; 3], [[f32; 3]; 3]) {
     const FLOOR: f32 = 0.12;
     let lam1_raw = mean + disc;
     let lam2_raw = mean - disc;
-    let lam1 = if lam1_raw >= 0.0 { lam1_raw.max(FLOOR) } else { lam1_raw.min(-FLOOR) };
-    let lam2 = if lam2_raw >= 0.0 { lam2_raw.max(FLOOR) } else { lam2_raw.min(-FLOOR) };
-    let lam3 = 0.18f32;       // out-of-plane thickness -- enough to look 3-D
+    let lam1 = if lam1_raw >= 0.0 {
+        lam1_raw.max(FLOOR)
+    } else {
+        lam1_raw.min(-FLOOR)
+    };
+    let lam2 = if lam2_raw >= 0.0 {
+        lam2_raw.max(FLOOR)
+    } else {
+        lam2_raw.min(-FLOOR)
+    };
+    let lam3 = 0.18f32; // out-of-plane thickness -- enough to look 3-D
 
     // Rotation angle of principal axes in the xy-plane.
     let theta = 0.5 * tau_xy.atan2(half);
     let (s, c) = theta.sin_cos();
 
-    let e1 = [c,   s,   0.0]; // primary in-plane eigenvector
-    let e2 = [-s,  c,   0.0]; // secondary in-plane eigenvector
+    let e1 = [c, s, 0.0]; // primary in-plane eigenvector
+    let e2 = [-s, c, 0.0]; // secondary in-plane eigenvector
     let e3 = [0.0, 0.0, 1.0]; // out-of-plane
 
     ([lam1, lam2, lam3], [e1, e2, e3])
@@ -189,8 +197,7 @@ fn build_beam_mesh(y_center: f32) -> VolumeMeshData {
         for iz in 0..=NZ {
             for ix in 0..=NX {
                 let x = -BEAM_HALF_L + 2.0 * BEAM_HALF_L * ix as f32 / NX as f32;
-                let y = y_center
-                    + (-BEAM_HALF_H + 2.0 * BEAM_HALF_H * iy as f32 / NY as f32);
+                let y = y_center + (-BEAM_HALF_H + 2.0 * BEAM_HALF_H * iy as f32 / NY as f32);
                 let z = -BEAM_HALF_W + 2.0 * BEAM_HALF_W * iz as f32 / NZ as f32;
                 positions.push([x, y, z]);
             }
@@ -199,25 +206,25 @@ fn build_beam_mesh(y_center: f32) -> VolumeMeshData {
 
     // Hex cells and per-cell scalars.
     let n_cells = NX * NY * NZ;
-    let mut cells          = Vec::with_capacity(n_cells);
-    let mut vm_scalars     = Vec::with_capacity(n_cells);
-    let mut sigma_scalars  = Vec::with_capacity(n_cells);
+    let mut cells = Vec::with_capacity(n_cells);
+    let mut vm_scalars = Vec::with_capacity(n_cells);
+    let mut sigma_scalars = Vec::with_capacity(n_cells);
 
     for iy in 0..NY {
         for iz in 0..NZ {
             for ix in 0..NX {
                 cells.push([
-                    vid(ix,   iy,   iz),
-                    vid(ix+1, iy,   iz),
-                    vid(ix+1, iy,   iz+1),
-                    vid(ix,   iy,   iz+1),
-                    vid(ix,   iy+1, iz),
-                    vid(ix+1, iy+1, iz),
-                    vid(ix+1, iy+1, iz+1),
-                    vid(ix,   iy+1, iz+1),
+                    vid(ix, iy, iz),
+                    vid(ix + 1, iy, iz),
+                    vid(ix + 1, iy, iz + 1),
+                    vid(ix, iy, iz + 1),
+                    vid(ix, iy + 1, iz),
+                    vid(ix + 1, iy + 1, iz),
+                    vid(ix + 1, iy + 1, iz + 1),
+                    vid(ix, iy + 1, iz + 1),
                 ]);
 
-                let cx     = -BEAM_HALF_L + 2.0 * BEAM_HALF_L * (ix as f32 + 0.5) / NX as f32;
+                let cx = -BEAM_HALF_L + 2.0 * BEAM_HALF_L * (ix as f32 + 0.5) / NX as f32;
                 let cy_rel = -BEAM_HALF_H + 2.0 * BEAM_HALF_H * (iy as f32 + 0.5) / NY as f32;
 
                 let (sigma_xx, tau_xy) = beam_stress(cx, cy_rel);
@@ -229,9 +236,11 @@ fn build_beam_mesh(y_center: f32) -> VolumeMeshData {
 
     let mut data = VolumeMeshData::default();
     data.positions = positions;
-    data.cells     = cells;
-    data.cell_scalars.insert("von_mises".to_string(), vm_scalars);
-    data.cell_scalars.insert("sigma_xx".to_string(),  sigma_scalars);
+    data.cells = cells;
+    data.cell_scalars
+        .insert("von_mises".to_string(), vm_scalars);
+    data.cell_scalars
+        .insert("sigma_xx".to_string(), sigma_scalars);
     data
 }
 
@@ -262,10 +271,10 @@ pub(crate) fn submit_tensor_glyphs(app: &App, fd: &mut FrameData) {
     // ------------------------------------------------------------------
     {
         let n_max = GNX * GNY * GNZ;
-        let mut positions    = Vec::with_capacity(n_max);
-        let mut eigenvalues  = Vec::with_capacity(n_max);
+        let mut positions = Vec::with_capacity(n_max);
+        let mut eigenvalues = Vec::with_capacity(n_max);
         let mut eigenvectors = Vec::with_capacity(n_max);
-        let mut color_attr   = Vec::with_capacity(n_max);
+        let mut color_attr = Vec::with_capacity(n_max);
 
         // Stride-based subsampling over the fine glyph grid.
         // density=1.0 -> all GNX*GNY*GNZ glyphs, 0.5 -> every other, etc.
@@ -275,17 +284,19 @@ pub(crate) fn submit_tensor_glyphs(app: &App, fd: &mut FrameData) {
             for iz in 0..GNZ {
                 for ix in 0..GNX {
                     let linear = ix + GNX * (iz + GNZ * iy);
-                    if linear % stride != 0 { continue; }
+                    if linear % stride != 0 {
+                        continue;
+                    }
 
-                    let cx     = -BEAM_HALF_L + 2.0 * BEAM_HALF_L * (ix as f32 + 0.5) / GNX as f32;
+                    let cx = -BEAM_HALF_L + 2.0 * BEAM_HALF_L * (ix as f32 + 0.5) / GNX as f32;
                     let cy_rel = -BEAM_HALF_H + 2.0 * BEAM_HALF_H * (iy as f32 + 0.5) / GNY as f32;
-                    let cz     = -BEAM_HALF_W + 2.0 * BEAM_HALF_W * (iz as f32 + 0.5) / GNZ as f32;
+                    let cz = -BEAM_HALF_W + 2.0 * BEAM_HALF_W * (iz as f32 + 0.5) / GNZ as f32;
 
                     // Place glyph at the mirrored Y position below.
                     positions.push([cx, Y_BOT + cy_rel, cz]);
 
                     let (sigma_xx, tau_xy) = beam_stress(cx, cy_rel);
-                    let (evals, evecs)     = stress_eigen(sigma_xx, tau_xy);
+                    let (evals, evecs) = stress_eigen(sigma_xx, tau_xy);
                     eigenvalues.push(evals);
                     eigenvectors.push(evecs);
                     // Color by sigma_xx: tension = positive (warm), compression = negative (cool).
@@ -295,16 +306,15 @@ pub(crate) fn submit_tensor_glyphs(app: &App, fd: &mut FrameData) {
         }
 
         let mut item = TensorGlyphItem::default();
-        item.positions       = positions;
-        item.eigenvalues     = eigenvalues;
-        item.eigenvectors    = eigenvectors;
-        item.scale           = state.scale;
+        item.positions = positions;
+        item.eigenvalues = eigenvalues;
+        item.eigenvectors = eigenvectors;
+        item.scale = state.scale;
         item.color_attribute = Some(color_attr);
-        item.scalar_range    = Some((-1.2, 1.2));
-        item.colormap_id     = Some(ColormapId(state.colormap as usize));
+        item.scalar_range = Some((-1.2, 1.2));
+        item.colormap_id = Some(ColormapId(state.colormap as usize));
         fd.scene.tensor_glyphs.push(item);
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -313,7 +323,9 @@ pub(crate) fn submit_tensor_glyphs(app: &App, fd: &mut FrameData) {
 
 /// Build the surface render item for the beam (called from build_frame_data).
 pub(crate) fn beam_scene_items(app: &App) -> Vec<SceneRenderItem> {
-    let Some(mesh_id) = app.tg_state.mesh_id else { return vec![]; };
+    let Some(mesh_id) = app.tg_state.mesh_id else {
+        return vec![];
+    };
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.active_attribute = Some(AttributeRef {

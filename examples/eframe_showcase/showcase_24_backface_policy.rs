@@ -30,16 +30,16 @@ use viewport_lib::{
 // ---------------------------------------------------------------------------
 
 pub(crate) struct SaState {
-    pub scene:   Scene,
-    pub built:   bool,
+    pub scene: Scene,
+    pub built: bool,
     pub clip_on: bool,
 }
 
 impl Default for SaState {
     fn default() -> Self {
         Self {
-            scene:   Scene::new(),
-            built:   false,
+            scene: Scene::new(),
+            built: false,
             clip_on: true,
         }
     }
@@ -54,7 +54,10 @@ fn policies() -> Vec<(BackfacePolicy, &'static str)> {
     vec![
         (BackfacePolicy::Cull, "Cull"),
         (BackfacePolicy::Identical, "Identical"),
-        (BackfacePolicy::DifferentColor([1.0, 0.1, 0.1]), "DifferentColor"),
+        (
+            BackfacePolicy::DifferentColor([1.0, 0.1, 0.1]),
+            "DifferentColor",
+        ),
         (BackfacePolicy::Tint(0.4), "Tint"),
         (
             BackfacePolicy::Pattern(PatternConfig {
@@ -208,7 +211,8 @@ impl App {
     // -------------------------------------------------------------------------
 
     pub(crate) fn sa_scene_items(&mut self) -> Vec<SceneRenderItem> {
-        self.sa_state.scene
+        self.sa_state
+            .scene
             .collect_render_items(&viewport_lib::Selection::new())
     }
 
@@ -237,9 +241,13 @@ impl App {
         for (i, (_, label)) in policies.iter().enumerate() {
             let world_pos = glam::Vec3::new(col_x[i], 0.0, 6.3);
             let clip = proj * view * world_pos.extend(1.0);
-            if clip.w <= 0.0 { continue; }
+            if clip.w <= 0.0 {
+                continue;
+            }
             let ndc = glam::Vec3::new(clip.x, clip.y, clip.z) / clip.w;
-            if ndc.x.abs() > 1.0 || ndc.y.abs() > 1.0 { continue; }
+            if ndc.x.abs() > 1.0 || ndc.y.abs() > 1.0 {
+                continue;
+            }
             let screen = glam::Vec2::new(
                 (ndc.x * 0.5 + 0.5) * vp_size[0],
                 (1.0 - (ndc.y * 0.5 + 0.5)) * vp_size[1],
@@ -263,11 +271,11 @@ impl App {
     /// Draw row labels to the left of each object row using world-space projection.
     pub(crate) fn draw_sa_row_labels(&self, ui: &egui::Ui, rect: egui::Rect) {
         let rows: &[(&str, f32, f32)] = &[
-            ("Torus",   0.0, 4.5),
-            ("Sphere",  0.0, 1.5),
-            ("Cone",    0.0, -1.5),
-            ("Spring",  0.0, -4.5),
-            ("Sphere (inverted winding)",  1.5, -7.5),
+            ("Torus", 0.0, 4.5),
+            ("Sphere", 0.0, 1.5),
+            ("Cone", 0.0, -1.5),
+            ("Spring", 0.0, -4.5),
+            ("Sphere (inverted winding)", 1.5, -7.5),
         ];
 
         let policies = policies();
@@ -283,9 +291,13 @@ impl App {
         for (label, y, z) in rows {
             let world_pos = glam::Vec3::new(left_x, *y, *z);
             let clip = proj * view * world_pos.extend(1.0);
-            if clip.w <= 0.0 { continue; }
+            if clip.w <= 0.0 {
+                continue;
+            }
             let ndc = glam::Vec3::new(clip.x, clip.y, clip.z) / clip.w;
-            if ndc.x.abs() > 1.0 || ndc.y.abs() > 1.0 { continue; }
+            if ndc.x.abs() > 1.0 || ndc.y.abs() > 1.0 {
+                continue;
+            }
             let screen = glam::Vec2::new(
                 (ndc.x * 0.5 + 0.5) * vp_size[0],
                 (1.0 - (ndc.y * 0.5 + 0.5)) * vp_size[1],

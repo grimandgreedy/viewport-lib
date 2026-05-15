@@ -83,12 +83,16 @@ impl PolylineWidget {
             if self.hovered_point == Some(index) {
                 self.hovered_point = None;
             } else if let Some(h) = self.hovered_point {
-                if h > index { self.hovered_point = Some(h - 1); }
+                if h > index {
+                    self.hovered_point = Some(h - 1);
+                }
             }
             if self.active_point == Some(index) {
                 self.active_point = None;
             } else if let Some(a) = self.active_point {
-                if a > index { self.active_point = Some(a - 1); }
+                if a > index {
+                    self.active_point = Some(a - 1);
+                }
             }
         }
     }

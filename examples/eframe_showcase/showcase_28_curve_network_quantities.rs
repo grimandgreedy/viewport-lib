@@ -13,7 +13,7 @@
 use crate::App;
 use eframe::egui;
 use std::f32::consts::TAU;
-use viewport_lib::{ColormapId, BuiltinColormap, PolylineItem};
+use viewport_lib::{BuiltinColormap, ColormapId, PolylineItem};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CnqMode {
@@ -42,10 +42,10 @@ impl Default for CnqState {
 pub(crate) fn controls_cnq(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Quantity mode:");
     for (mode, label) in [
-        (CnqMode::EdgeScalar,  "Edge scalar (LUT coloring)"),
-        (CnqMode::NodeColor,   "Node color (direct RGBA)"),
-        (CnqMode::EdgeColor,   "Edge color (direct RGBA)"),
-        (CnqMode::NodeRadius,  "Node radius (varying width)"),
+        (CnqMode::EdgeScalar, "Edge scalar (LUT coloring)"),
+        (CnqMode::NodeColor, "Node color (direct RGBA)"),
+        (CnqMode::EdgeColor, "Edge color (direct RGBA)"),
+        (CnqMode::NodeRadius, "Node radius (varying width)"),
         (CnqMode::NodeVectors, "Node vectors (tangent arrows)"),
         (CnqMode::EdgeVectors, "Edge vectors (normal arrows)"),
     ] {
@@ -83,8 +83,8 @@ pub(crate) fn make_cnq_polyline_item(app: &App) -> PolylineItem {
 
         // Unnormalized tangent: d/dt of (r*cos t, r*sin t, h/turns*TAU * t)
         let tx = -radius * t.sin();
-        let ty =  radius * t.cos();
-        let tz =  height / (turns * TAU);
+        let ty = radius * t.cos();
+        let tz = height / (turns * TAU);
         let tlen = (tx * tx + ty * ty + tz * tz).sqrt().max(1e-7);
         tangents.push([tx / tlen, ty / tlen, tz / tlen]);
 

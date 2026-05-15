@@ -272,13 +272,14 @@ impl Camera {
     /// does not collapse and cause objects behind opaque surfaces to bleed
     /// through. Consumers do not need to adjust znear themselves.
     pub fn effective_znear(&self) -> f32 {
-        self.znear.unwrap_or_else(|| self.effective_zfar() / 10_000.0)
+        self.znear
+            .unwrap_or_else(|| self.effective_zfar() / 10_000.0)
     }
 
     /// Returns the projection matrix for the current camera state.
     pub fn proj_matrix(&self) -> glam::Mat4 {
         let effective_znear = self.effective_znear();
-        let effective_zfar  = self.effective_zfar();
+        let effective_zfar = self.effective_zfar();
         match self.projection {
             Projection::Perspective => {
                 glam::Mat4::perspective_rh(self.fov_y, self.aspect, effective_znear, effective_zfar)

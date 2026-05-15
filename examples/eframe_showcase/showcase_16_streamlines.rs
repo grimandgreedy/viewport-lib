@@ -8,7 +8,9 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{BuiltinColormap, ColormapId, PolylineItem, RibbonItem, StreamtubeItem, TubeItem};
+use viewport_lib::{
+    BuiltinColormap, ColormapId, PolylineItem, RibbonItem, StreamtubeItem, TubeItem,
+};
 
 // ---------------------------------------------------------------------------
 // Enum
@@ -28,44 +30,44 @@ pub(crate) enum StreamRenderMode {
 // ---------------------------------------------------------------------------
 
 pub(crate) struct StreamlinesState {
-    pub built:            bool,
-    pub use_tubes:        bool,
-    pub render_mode:      StreamRenderMode,
-    pub tube_radius:      f32,
-    pub line_width:       f32,
-    pub color_by_speed:   bool,
-    pub colormap:         BuiltinColormap,
+    pub built: bool,
+    pub use_tubes: bool,
+    pub render_mode: StreamRenderMode,
+    pub tube_radius: f32,
+    pub line_width: f32,
+    pub color_by_speed: bool,
+    pub colormap: BuiltinColormap,
     /// Flat RGBA color used when `color_by_speed` is false, and as tube color.
-    pub flat_color:       [f32; 4],
-    pub seed_count:       usize,
-    pub step_size:        f32,
+    pub flat_color: [f32; 4],
+    pub seed_count: usize,
+    pub step_size: f32,
     /// Cross-section resolution for GeneralTube mode (number of sides).
-    pub tube_sides:       u32,
+    pub tube_sides: u32,
     /// Half-width of the ribbon in Ribbon mode.
-    pub ribbon_width:     f32,
+    pub ribbon_width: f32,
     /// CPU-side streamline paths (one `Vec<[f32;3]>` per seed).
-    pub paths:            Vec<Vec<[f32; 3]>>,
+    pub paths: Vec<Vec<[f32; 3]>>,
     /// Per-vertex speed values parallel to `paths`.
-    pub scalars:          Vec<Vec<f32>>,
+    pub scalars: Vec<Vec<f32>>,
 }
 
 impl Default for StreamlinesState {
     fn default() -> Self {
         Self {
-            built:          false,
-            use_tubes:      false,
-            render_mode:    StreamRenderMode::Polylines,
-            tube_radius:    0.06,
-            line_width:     4.0,
+            built: false,
+            use_tubes: false,
+            render_mode: StreamRenderMode::Polylines,
+            tube_radius: 0.06,
+            line_width: 4.0,
             color_by_speed: true,
-            colormap:       BuiltinColormap::Viridis,
-            flat_color:     [0.4, 0.7, 1.0, 1.0],
-            seed_count:     32,
-            step_size:      0.08,
-            tube_sides:     8,
-            ribbon_width:   0.15,
-            paths:          Vec::new(),
-            scalars:        Vec::new(),
+            colormap: BuiltinColormap::Viridis,
+            flat_color: [0.4, 0.7, 1.0, 1.0],
+            seed_count: 32,
+            step_size: 0.08,
+            tube_sides: 8,
+            ribbon_width: 0.15,
+            paths: Vec::new(),
+            scalars: Vec::new(),
         }
     }
 }
@@ -80,10 +82,8 @@ impl App {
     /// Generates stream paths from the current seed count and integration step.
     /// The result is stored in `stream_state.paths` and `stream_state.scalars` (per-vertex speed).
     pub(crate) fn build_stream_scene(&mut self) {
-        let (paths, scalars) = integrate_streamlines(
-            self.stream_state.seed_count,
-            self.stream_state.step_size,
-        );
+        let (paths, scalars) =
+            integrate_streamlines(self.stream_state.seed_count, self.stream_state.step_size);
         self.stream_state.paths = paths;
         self.stream_state.scalars = scalars;
         self.stream_state.built = true;
@@ -167,19 +167,34 @@ pub(crate) fn controls_streamlines(app: &mut App, ui: &mut egui::Ui) {
 
     ui.label("Render mode:");
     ui.horizontal(|ui| {
-        if ui.radio(s.render_mode == StreamRenderMode::Polylines, "Polylines").clicked() {
+        if ui
+            .radio(s.render_mode == StreamRenderMode::Polylines, "Polylines")
+            .clicked()
+        {
             s.render_mode = StreamRenderMode::Polylines;
             s.use_tubes = false;
         }
-        if ui.radio(s.render_mode == StreamRenderMode::Streamtube, "Streamtube").clicked() {
+        if ui
+            .radio(s.render_mode == StreamRenderMode::Streamtube, "Streamtube")
+            .clicked()
+        {
             s.render_mode = StreamRenderMode::Streamtube;
             s.use_tubes = true;
         }
-        if ui.radio(s.render_mode == StreamRenderMode::GeneralTube, "General Tube").clicked() {
+        if ui
+            .radio(
+                s.render_mode == StreamRenderMode::GeneralTube,
+                "General Tube",
+            )
+            .clicked()
+        {
             s.render_mode = StreamRenderMode::GeneralTube;
             s.use_tubes = false;
         }
-        if ui.radio(s.render_mode == StreamRenderMode::Ribbon, "Ribbon").clicked() {
+        if ui
+            .radio(s.render_mode == StreamRenderMode::Ribbon, "Ribbon")
+            .clicked()
+        {
             s.render_mode = StreamRenderMode::Ribbon;
             s.use_tubes = false;
         }

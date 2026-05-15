@@ -3,33 +3,33 @@
 // ---------------------------------------------------------------------------
 
 pub(crate) struct OvlState {
-    pub colormap:        viewport_lib::BuiltinColormap,
+    pub colormap: viewport_lib::BuiltinColormap,
     pub bar_orientation: viewport_lib::ScalarBarOrientation,
-    pub bar_anchor:      viewport_lib::ScalarBarAnchor,
-    pub tick_count:      u32,
-    pub bar_size:        f32,
-    pub bg_color:        [f32; 4],
-    pub show_ruler:      bool,
-    pub show_labels:     bool,
+    pub bar_anchor: viewport_lib::ScalarBarAnchor,
+    pub tick_count: u32,
+    pub bar_size: f32,
+    pub bg_color: [f32; 4],
+    pub show_ruler: bool,
+    pub show_labels: bool,
     pub cloud_positions: Vec<[f32; 3]>,
-    pub cloud_scalars:   Vec<f32>,
-    pub cloud_built:     bool,
+    pub cloud_scalars: Vec<f32>,
+    pub cloud_built: bool,
 }
 
 impl Default for OvlState {
     fn default() -> Self {
         Self {
-            colormap:        viewport_lib::BuiltinColormap::Viridis,
+            colormap: viewport_lib::BuiltinColormap::Viridis,
             bar_orientation: viewport_lib::ScalarBarOrientation::Vertical,
-            bar_anchor:      viewport_lib::ScalarBarAnchor::BottomRight,
-            tick_count:      5,
-            bar_size:        200.0,
-            bg_color:        [0.0, 0.0, 0.0, 0.63],
-            show_ruler:      true,
-            show_labels:     true,
+            bar_anchor: viewport_lib::ScalarBarAnchor::BottomRight,
+            tick_count: 5,
+            bar_size: 200.0,
+            bg_color: [0.0, 0.0, 0.0, 0.63],
+            show_ruler: true,
+            show_labels: true,
             cloud_positions: Vec::new(),
-            cloud_scalars:   Vec::new(),
-            cloud_built:     false,
+            cloud_scalars: Vec::new(),
+            cloud_built: false,
         }
     }
 }
@@ -39,21 +39,21 @@ impl Default for OvlState {
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BuiltinColormap, ColormapId, LabelAnchor, LabelItem, RulerItem, ScalarBarAnchor,
-    ScalarBarItem, ScalarBarOrientation,
+    BuiltinColormap, ColormapId, LabelAnchor, LabelItem, RulerItem, ScalarBarAnchor, ScalarBarItem,
+    ScalarBarOrientation,
 };
 
 const ALL_COLORMAPS: &[(BuiltinColormap, &str)] = &[
-    (BuiltinColormap::Viridis,   "Viridis"),
-    (BuiltinColormap::Plasma,    "Plasma"),
-    (BuiltinColormap::Turbo,     "Turbo"),
-    (BuiltinColormap::Inferno,   "Inferno"),
-    (BuiltinColormap::Magma,     "Magma"),
+    (BuiltinColormap::Viridis, "Viridis"),
+    (BuiltinColormap::Plasma, "Plasma"),
+    (BuiltinColormap::Turbo, "Turbo"),
+    (BuiltinColormap::Inferno, "Inferno"),
+    (BuiltinColormap::Magma, "Magma"),
     (BuiltinColormap::Greyscale, "Greyscale"),
-    (BuiltinColormap::Coolwarm,  "Coolwarm"),
-    (BuiltinColormap::Rainbow,   "Rainbow"),
-    (BuiltinColormap::Jet,       "Jet"),
-    (BuiltinColormap::RdBu,      "RdBu"),
+    (BuiltinColormap::Coolwarm, "Coolwarm"),
+    (BuiltinColormap::Rainbow, "Rainbow"),
+    (BuiltinColormap::Jet, "Jet"),
+    (BuiltinColormap::RdBu, "RdBu"),
 ];
 
 // ---------------------------------------------------------------------------
@@ -104,7 +104,10 @@ pub(crate) fn controls_overlay(app: &mut App, ui: &mut egui::Ui) {
         ("Bottom-Left", ScalarBarAnchor::BottomLeft),
         ("Bottom-Right", ScalarBarAnchor::BottomRight),
     ] {
-        if ui.radio(app.ovl_state.bar_anchor == anchor, label).clicked() {
+        if ui
+            .radio(app.ovl_state.bar_anchor == anchor, label)
+            .clicked()
+        {
             app.ovl_state.bar_anchor = anchor;
         }
     }
@@ -119,7 +122,11 @@ pub(crate) fn controls_overlay(app: &mut App, ui: &mut egui::Ui) {
 
     ui.separator();
     ui.label("Background colour:");
-    let mut rgb = [app.ovl_state.bg_color[0], app.ovl_state.bg_color[1], app.ovl_state.bg_color[2]];
+    let mut rgb = [
+        app.ovl_state.bg_color[0],
+        app.ovl_state.bg_color[1],
+        app.ovl_state.bg_color[2],
+    ];
     if ui.color_edit_button_rgb(&mut rgb).changed() {
         app.ovl_state.bg_color[0] = rgb[0];
         app.ovl_state.bg_color[1] = rgb[1];
@@ -182,7 +189,11 @@ pub(crate) fn build_overlay_frame(app: &App) -> (Vec<LabelItem>, ScalarBarItem, 
     let mut labels = Vec::new();
     if app.ovl_state.show_labels {
         for (text, pos, color) in [
-            ("Peak +1.5 m", [1.57_f32, 0.0, 1.5_f32], [0.3_f32, 1.0, 0.5, 1.0_f32]),
+            (
+                "Peak +1.5 m",
+                [1.57_f32, 0.0, 1.5_f32],
+                [0.3_f32, 1.0, 0.5, 1.0_f32],
+            ),
             ("Trough -1.5 m", [-1.57, 3.14, -1.5], [1.0, 0.4, 0.3, 1.0]),
             ("Origin", [0.0, 0.0, 0.0], [0.9, 0.9, 0.9, 1.0]),
         ] {

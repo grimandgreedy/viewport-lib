@@ -17,8 +17,7 @@ use crate::App;
 use eframe::egui;
 use viewport_lib::{
     BoxWidget, CylinderWidget, DiskWidget, LineProbeWidget, PlaneWidget, PolylineWidget,
-    SphereWidget, WidgetContext, WidgetResult,
-    scene::Scene, ViewportRenderer,
+    SphereWidget, ViewportRenderer, WidgetContext, WidgetResult, scene::Scene,
 };
 
 const CLOUD_N: usize = 20000;
@@ -88,17 +87,17 @@ impl ProbeWidgetState {
 
         let mut cylinder = CylinderWidget::new(
             glam::Vec3::new(0.0, -2.0, 0.0),
-            glam::Vec3::new(0.0,  2.0, 0.0),
+            glam::Vec3::new(0.0, 2.0, 0.0),
             1.5,
         );
         cylinder.color = [0.5, 1.0, 0.5, 1.0];
         cylinder.handle_color = handle_color;
 
         let mut polyline = PolylineWidget::new(vec![
-            glam::Vec3::new(-2.0,  0.0,  0.5),
-            glam::Vec3::new(-0.5,  1.5,  0.5),
-            glam::Vec3::new( 0.5, -1.5,  0.5),
-            glam::Vec3::new( 2.0,  0.0,  0.5),
+            glam::Vec3::new(-2.0, 0.0, 0.5),
+            glam::Vec3::new(-0.5, 1.5, 0.5),
+            glam::Vec3::new(0.5, -1.5, 0.5),
+            glam::Vec3::new(2.0, 0.0, 0.5),
         ]);
         polyline.color = [1.0, 0.5, 0.2, 1.0];
         polyline.handle_color = handle_color;
@@ -182,7 +181,9 @@ impl ProbeWidgetState {
         let b = self.cylinder.end;
         let axis = b - a;
         let axis_len = axis.length();
-        if axis_len < 1e-6 { return; }
+        if axis_len < 1e-6 {
+            return;
+        }
         let axis_dir = axis / axis_len;
         let r = self.cylinder.radius;
         for (i, p) in self.cloud_positions.iter().enumerate() {
@@ -207,20 +208,25 @@ impl ProbeWidgetState {
     fn near_polyline_iter(&self) -> impl Iterator<Item = usize> + '_ {
         let pts = &self.polyline.points;
         let threshold = self.polyline_threshold;
-        self.cloud_positions.iter().enumerate().filter_map(move |(i, p)| {
-            let p = glam::Vec3::from(*p);
-            let near = pts.windows(2).any(|w| {
-                let a = w[0];
-                let b = w[1];
-                let seg = b - a;
-                let seg_len = seg.length();
-                if seg_len < 1e-6 { return (p - a).length() <= threshold; }
-                let dir = seg / seg_len;
-                let t = ((p - a).dot(dir)).clamp(0.0, seg_len);
-                (p - (a + dir * t)).length() <= threshold
-            });
-            if near { Some(i) } else { None }
-        })
+        self.cloud_positions
+            .iter()
+            .enumerate()
+            .filter_map(move |(i, p)| {
+                let p = glam::Vec3::from(*p);
+                let near = pts.windows(2).any(|w| {
+                    let a = w[0];
+                    let b = w[1];
+                    let seg = b - a;
+                    let seg_len = seg.length();
+                    if seg_len < 1e-6 {
+                        return (p - a).length() <= threshold;
+                    }
+                    let dir = seg / seg_len;
+                    let t = ((p - a).dot(dir)).clamp(0.0, seg_len);
+                    (p - (a + dir * t)).length() <= threshold
+                });
+                if near { Some(i) } else { None }
+            })
     }
 
     pub fn clear_selection(&mut self) {
@@ -246,11 +252,18 @@ impl ProbeWidgetState {
         let len = dir.length();
         let dir_n = if len > 1e-6 { dir / len } else { glam::Vec3::X };
         let threshold = self.line_threshold;
-        self.cloud_positions.iter().enumerate().filter_map(move |(i, p)| {
-            let p = glam::Vec3::from(*p);
-            let t = ((p - start).dot(dir_n)).clamp(0.0, len);
-            if (p - (start + dir_n * t)).length() <= threshold { Some(i) } else { None }
-        })
+        self.cloud_positions
+            .iter()
+            .enumerate()
+            .filter_map(move |(i, p)| {
+                let p = glam::Vec3::from(*p);
+                let t = ((p - start).dot(dir_n)).clamp(0.0, len);
+                if (p - (start + dir_n * t)).length() <= threshold {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
     }
 }
 
@@ -348,11 +361,20 @@ impl App {
                 let h = state.bw.half_extents;
                 let (_, _, rot) = state.bw.obb();
                 let (axis, angle) = rot.to_axis_angle();
-                ui.label(format!("Center:       [{:.2}, {:.2}, {:.2}]", c.x, c.y, c.z));
-                ui.label(format!("Half-extents: [{:.2}, {:.2}, {:.2}]", h.x, h.y, h.z));
+                ui.label(format!(
+                    "Center:       [{:.2}, {:.2}, {:.2}]",
+                    c.x, c.y, c.z
+                ));
+                ui.label(format!(
+                    "Half-extents: [{:.2}, {:.2}, {:.2}]",
+                    h.x, h.y, h.z
+                ));
                 ui.label(format!(
                     "Rotation:     {:.1} deg around [{:.2}, {:.2}, {:.2}]",
-                    angle.to_degrees(), axis.x, axis.y, axis.z
+                    angle.to_degrees(),
+                    axis.x,
+                    axis.y,
+                    axis.z
                 ));
                 ui.separator();
                 ui.label("Drag arc handles (outer circles) to rotate.");
@@ -377,7 +399,9 @@ impl App {
                 ui.label(format!("Radius: {:.3}", state.disk.radius));
                 ui.horizontal(|ui| {
                     ui.label("Half-thickness:");
-                    ui.add(egui::Slider::new(&mut state.disk_half_thickness, 0.05..=2.0).step_by(0.05));
+                    ui.add(
+                        egui::Slider::new(&mut state.disk_half_thickness, 0.05..=2.0).step_by(0.05),
+                    );
                 });
                 ui.separator();
                 selection_buttons(ui, state, PwSubMode::Disk);
@@ -399,7 +423,9 @@ impl App {
                 }
                 ui.horizontal(|ui| {
                     ui.label("Near-path radius:");
-                    ui.add(egui::Slider::new(&mut state.polyline_threshold, 0.05..=3.0).step_by(0.05));
+                    ui.add(
+                        egui::Slider::new(&mut state.polyline_threshold, 0.05..=3.0).step_by(0.05),
+                    );
                 });
                 ui.separator();
                 ui.label("Double-click a handle to remove it.");

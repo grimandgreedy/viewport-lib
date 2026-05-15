@@ -455,10 +455,7 @@ impl SceneFrame {
     /// // Every frame: zero-cost clone.
     /// SceneFrame::from_shared_items(Arc::clone(&self.items_arc), scene.version())
     /// ```
-    pub fn from_shared_items(
-        items: std::sync::Arc<[SceneRenderItem]>,
-        generation: u64,
-    ) -> Self {
+    pub fn from_shared_items(items: std::sync::Arc<[SceneRenderItem]>, generation: u64) -> Self {
         Self {
             generation,
             surfaces: SurfaceSubmission::Flat(items),
@@ -789,4 +786,3 @@ impl EffectsFrame {
         )
     }
 }
-

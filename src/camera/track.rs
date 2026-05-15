@@ -38,9 +38,7 @@ impl CameraTrack {
 
     /// Append a keyframe at `time` seconds, keeping the list sorted.
     pub fn push(&mut self, time: f64, target: CameraTarget) {
-        let pos = self
-            .keyframes
-            .partition_point(|(t, _)| *t <= time);
+        let pos = self.keyframes.partition_point(|(t, _)| *t <= time);
         self.keyframes.insert(pos, (time, target));
     }
 

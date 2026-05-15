@@ -446,4 +446,3 @@ pub struct OverlayFrame {
     /// Progress bar overlays (loading indicators, progress feedback).
     pub loading_bars: Vec<LoadingBarItem>,
 }
-

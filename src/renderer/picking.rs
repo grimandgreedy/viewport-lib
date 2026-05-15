@@ -156,14 +156,20 @@ fn ray_triangle(
     let e2 = v2 - v0;
     let h = ray_dir.cross(e2);
     let a = e1.dot(h);
-    if a.abs() < 1e-10 { return None; }
+    if a.abs() < 1e-10 {
+        return None;
+    }
     let f = 1.0 / a;
     let s = ray_orig - v0;
     let u = f * s.dot(h);
-    if u < 0.0 || u > 1.0 { return None; }
+    if u < 0.0 || u > 1.0 {
+        return None;
+    }
     let q = s.cross(e1);
     let v = f * ray_dir.dot(q);
-    if v < 0.0 || u + v > 1.0 { return None; }
+    if v < 0.0 || u + v > 1.0 {
+        return None;
+    }
     let t = f * e2.dot(q);
     if t > 0.0 { Some(t) } else { None }
 }
@@ -210,7 +216,11 @@ fn ribbon_lateral_frames(
             node_off += slen;
             continue;
         }
-        let ref_v = if t0.x.abs() < 0.9 { glam::Vec3::X } else { glam::Vec3::Y };
+        let ref_v = if t0.x.abs() < 0.9 {
+            glam::Vec3::X
+        } else {
+            glam::Vec3::Y
+        };
         let mut u = t0.cross(ref_v).normalize();
 
         for k in 0..slen {
@@ -274,24 +284,24 @@ fn eval_implicit_primitive(p: glam::Vec3, prim: &crate::resources::ImplicitPrimi
         2 => {
             // Box: center=params[0..3], half-extents=params[4..7]
             let center = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]);
-            let half   = glam::Vec3::new(prim.params[4], prim.params[5], prim.params[6]);
+            let half = glam::Vec3::new(prim.params[4], prim.params[5], prim.params[6]);
             let q = (p - center).abs() - half;
             q.max(glam::Vec3::ZERO).length() + q.x.max(q.y).max(q.z).min(0.0)
         }
         3 => {
             // Plane: normal=params[0..3], offset=params[3]
-            let n = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2])
-                .normalize_or_zero();
+            let n =
+                glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]).normalize_or_zero();
             p.dot(n) + prim.params[3]
         }
         4 => {
             // Capsule: a=params[0..3], radius=params[3], b=params[4..7]
-            let a  = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]);
-            let r  = prim.params[3];
-            let b  = glam::Vec3::new(prim.params[4], prim.params[5], prim.params[6]);
+            let a = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]);
+            let r = prim.params[3];
+            let b = glam::Vec3::new(prim.params[4], prim.params[5], prim.params[6]);
             let pa = p - a;
             let ba = b - a;
-            let h  = (pa.dot(ba) / ba.dot(ba).max(1e-10)).clamp(0.0, 1.0);
+            let h = (pa.dot(ba) / ba.dot(ba).max(1e-10)).clamp(0.0, 1.0);
             (pa - ba * h).length() - r
         }
         _ => f32::MAX,
@@ -320,7 +330,11 @@ fn eval_implicit_sdf(p: glam::Vec3, item: &GpuImplicitPickItem) -> f32 {
                 d = smin_implicit(d, pd, k);
             }
             ImplicitBlendMode::Intersection => {
-                if i == 0 { d = pd; } else { d = d.max(pd); }
+                if i == 0 {
+                    d = pd;
+                } else {
+                    d = d.max(pd);
+                }
             }
         }
     }
@@ -330,14 +344,14 @@ fn eval_implicit_sdf(p: glam::Vec3, item: &GpuImplicitPickItem) -> f32 {
 /// CPU ray-march against the implicit SDF. Returns `(toi, world_pos)` on hit.
 fn pick_implicit_sdf(
     ray_origin: glam::Vec3,
-    ray_dir:    glam::Vec3,
-    item:       &GpuImplicitPickItem,
+    ray_dir: glam::Vec3,
+    item: &GpuImplicitPickItem,
 ) -> Option<(f32, glam::Vec3)> {
     let max_steps = item.max_steps.min(512) as usize;
-    let scale     = item.step_scale.clamp(0.01, 1.0);
-    let hit_thr   = item.hit_threshold;
-    let max_dist  = item.max_distance;
-    let min_step  = hit_thr * 0.5;
+    let scale = item.step_scale.clamp(0.01, 1.0);
+    let hit_thr = item.hit_threshold;
+    let max_dist = item.max_distance;
+    let min_step = hit_thr * 0.5;
 
     let mut t = 0.0f32;
     for _ in 0..max_steps {
@@ -361,22 +375,34 @@ fn pick_implicit_sdf(
 /// Slab test: returns (t_enter, t_exit) for a ray vs axis-aligned box, or None.
 fn ray_aabb_slab(
     ray_orig: glam::Vec3,
-    ray_dir:  glam::Vec3,
+    ray_dir: glam::Vec3,
     bbox_min: glam::Vec3,
     bbox_max: glam::Vec3,
 ) -> Option<(f32, f32)> {
     // Avoid division by zero for axis-aligned rays.
     let inv = glam::Vec3::new(
-        if ray_dir.x.abs() > 1e-30 { 1.0 / ray_dir.x } else { f32::INFINITY * ray_dir.x.signum() },
-        if ray_dir.y.abs() > 1e-30 { 1.0 / ray_dir.y } else { f32::INFINITY * ray_dir.y.signum() },
-        if ray_dir.z.abs() > 1e-30 { 1.0 / ray_dir.z } else { f32::INFINITY * ray_dir.z.signum() },
+        if ray_dir.x.abs() > 1e-30 {
+            1.0 / ray_dir.x
+        } else {
+            f32::INFINITY * ray_dir.x.signum()
+        },
+        if ray_dir.y.abs() > 1e-30 {
+            1.0 / ray_dir.y
+        } else {
+            f32::INFINITY * ray_dir.y.signum()
+        },
+        if ray_dir.z.abs() > 1e-30 {
+            1.0 / ray_dir.z
+        } else {
+            f32::INFINITY * ray_dir.z.signum()
+        },
     );
     let t1 = (bbox_min - ray_orig) * inv;
     let t2 = (bbox_max - ray_orig) * inv;
     let tmin = t1.min(t2);
     let tmax = t1.max(t2);
     let t_enter = tmin.x.max(tmin.y).max(tmin.z);
-    let t_exit  = tmax.x.min(tmax.y).min(tmax.z);
+    let t_exit = tmax.x.min(tmax.y).min(tmax.z);
     if t_enter <= t_exit && t_exit >= 0.0 {
         Some((t_enter, t_exit))
     } else {
@@ -386,21 +412,23 @@ fn ray_aabb_slab(
 
 /// Bisect to refine the isovalue crossing between t_lo and t_hi (8 iterations).
 fn bisect_mc_crossing(
-    ray_orig:  glam::Vec3,
-    ray_dir:   glam::Vec3,
-    vol:       &crate::geometry::marching_cubes::VolumeData,
-    isovalue:  f32,
-    mut t_lo:  f32,
-    mut t_hi:  f32,
+    ray_orig: glam::Vec3,
+    ray_dir: glam::Vec3,
+    vol: &crate::geometry::marching_cubes::VolumeData,
+    isovalue: f32,
+    mut t_lo: f32,
+    mut t_hi: f32,
 ) -> f32 {
     let s0 = crate::geometry::marching_cubes::trilinear_sample(
-        vol, (ray_orig + ray_dir * t_lo).to_array(),
+        vol,
+        (ray_orig + ray_dir * t_lo).to_array(),
     ) - isovalue;
     let mut lo_sign = s0 < 0.0;
     for _ in 0..8 {
         let mid = (t_lo + t_hi) * 0.5;
         let s = crate::geometry::marching_cubes::trilinear_sample(
-            vol, (ray_orig + ray_dir * mid).to_array(),
+            vol,
+            (ray_orig + ray_dir * mid).to_array(),
         ) - isovalue;
         if (s < 0.0) == lo_sign {
             t_lo = mid;
@@ -418,17 +446,17 @@ fn bisect_mc_crossing(
 /// isovalue crossing to 8 bisection steps.
 fn pick_mc_volume(
     ray_orig: glam::Vec3,
-    ray_dir:  glam::Vec3,
-    item:     &GpuMcPickItem,
+    ray_dir: glam::Vec3,
+    item: &GpuMcPickItem,
 ) -> Option<(f32, glam::Vec3)> {
     use crate::geometry::marching_cubes::trilinear_sample;
 
-    let vol      = &item.volume_data;
+    let vol = &item.volume_data;
     let isovalue = item.isovalue;
     let [nx, ny, nz] = vol.dims;
-    let origin  = glam::Vec3::from(vol.origin);
+    let origin = glam::Vec3::from(vol.origin);
     let spacing = glam::Vec3::from(vol.spacing);
-    let extent  = spacing * glam::Vec3::new(nx as f32, ny as f32, nz as f32);
+    let extent = spacing * glam::Vec3::new(nx as f32, ny as f32, nz as f32);
 
     let (t_enter, t_exit) = ray_aabb_slab(ray_orig, ray_dir, origin, origin + extent)?;
     let t_start = t_enter.max(0.0);
@@ -438,7 +466,7 @@ fn pick_mc_volume(
 
     // Step at half the smallest cell spacing so we don't skip thin features.
     let step = spacing.min_element() * 0.5;
-    let mut t    = t_start;
+    let mut t = t_start;
     let mut prev = trilinear_sample(vol, (ray_orig + ray_dir * t).to_array()) - isovalue;
 
     loop {
@@ -518,8 +546,8 @@ impl ViewportRenderer {
     ) -> Option<crate::interaction::picking::PickHit> {
         use crate::interaction::pick_mask::PickMask;
         use crate::interaction::picking::{
-            screen_to_ray, pick_point_cloud_cpu, pick_gaussian_splat_cpu, pick_volume_cpu,
-            pick_transparent_volume_mesh_cpu, PickHit,
+            PickHit, pick_gaussian_splat_cpu, pick_point_cloud_cpu,
+            pick_transparent_volume_mesh_cpu, pick_volume_cpu, screen_to_ray,
         };
         use crate::interaction::sub_object::SubObjectRef;
         use parry3d::math::{Pose, Vector};
@@ -532,11 +560,11 @@ impl ViewportRenderer {
         let view_proj_inv = view_proj.inverse();
         let (ray_origin, ray_dir) = screen_to_ray(click_pos, viewport_size, view_proj_inv);
 
-        let wants_face   = mask.intersects(PickMask::FACE);
+        let wants_face = mask.intersects(PickMask::FACE);
         let wants_vertex = mask.intersects(PickMask::VERTEX);
-        let wants_cell   = mask.intersects(PickMask::CELL);
-        let wants_cloud  = mask.intersects(PickMask::CLOUD_POINT);
-        let wants_splat  = mask.intersects(PickMask::SPLAT);
+        let wants_cell = mask.intersects(PickMask::CELL);
+        let wants_cloud = mask.intersects(PickMask::CLOUD_POINT);
+        let wants_splat = mask.intersects(PickMask::SPLAT);
         let wants_object = mask.intersects(PickMask::OBJECT);
         let wants_mesh_sub = wants_face || wants_vertex || mask.intersects(PickMask::EDGE);
 
@@ -689,9 +717,9 @@ impl ViewportRenderer {
                                         let (best_vi, _) = vis
                                             .iter()
                                             .map(|&i| {
-                                                let p = model.transform_point3(
-                                                    glam::Vec3::from(positions[i]),
-                                                );
+                                                let p = model.transform_point3(glam::Vec3::from(
+                                                    positions[i],
+                                                ));
                                                 (i, p.distance(world_pos))
                                             })
                                             .fold((vis[0], f32::MAX), |acc, (i, d)| {
@@ -801,7 +829,9 @@ impl ViewportRenderer {
                 let Some(vol_data) = item.volume_data.as_deref() else {
                     continue;
                 };
-                if let Some(mut hit) = pick_volume_cpu(ray_origin, ray_dir, item.pick_id, item, vol_data) {
+                if let Some(mut hit) =
+                    pick_volume_cpu(ray_origin, ray_dir, item.pick_id, item, vol_data)
+                {
                     let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
                     if !wants_voxel {
                         hit.sub_object = None;
@@ -829,7 +859,9 @@ impl ViewportRenderer {
                 let mean_max_scale: f32 = if gpu_set.cpu_scales.is_empty() {
                     0.05
                 } else {
-                    gpu_set.cpu_scales.iter()
+                    gpu_set
+                        .cpu_scales
+                        .iter()
                         .map(|s| s[0].max(s[1]).max(s[2]))
                         .sum::<f32>()
                         / gpu_set.cpu_scales.len() as f32
@@ -894,9 +926,12 @@ impl ViewportRenderer {
                 }
                 let model = glam::Mat4::from_cols_array_2d(&item.model);
                 let full_len = if item.scale_by_magnitude && !item.vectors.is_empty() {
-                    let mean_mag = item.vectors.iter()
+                    let mean_mag = item
+                        .vectors
+                        .iter()
                         .map(|v| glam::Vec3::from(*v).length())
-                        .sum::<f32>() / item.vectors.len() as f32;
+                        .sum::<f32>()
+                        / item.vectors.len() as f32;
                     (mean_mag * item.scale).max(0.01)
                 } else {
                     item.scale.max(0.01)
@@ -905,23 +940,42 @@ impl ViewportRenderer {
                 // world_r = half-length. This prevents the hit circle from extending a full
                 // arrow-length behind the base when the arrow points away from the camera.
                 let has_vecs = item.vectors.len() == item.positions.len();
-                let midpoints: Vec<[f32; 3]> = item.positions.iter().enumerate().map(|(i, pos)| {
-                    if has_vecs {
-                        let p = glam::Vec3::from(*pos);
-                        let v = glam::Vec3::from(item.vectors[i]);
-                        let len = if item.scale_by_magnitude { v.length() * item.scale } else { item.scale };
-                        (p + v.normalize_or_zero() * len * 0.5).to_array()
-                    } else {
-                        *pos
-                    }
-                }).collect();
+                let midpoints: Vec<[f32; 3]> = item
+                    .positions
+                    .iter()
+                    .enumerate()
+                    .map(|(i, pos)| {
+                        if has_vecs {
+                            let p = glam::Vec3::from(*pos);
+                            let v = glam::Vec3::from(item.vectors[i]);
+                            let len = if item.scale_by_magnitude {
+                                v.length() * item.scale
+                            } else {
+                                item.scale
+                            };
+                            (p + v.normalize_or_zero() * len * 0.5).to_array()
+                        } else {
+                            *pos
+                        }
+                    })
+                    .collect();
                 let n = midpoints.len() as f32;
                 let centroid = model.transform_point3(
-                    midpoints.iter().map(|p| glam::Vec3::from(*p)).sum::<glam::Vec3>() / n
+                    midpoints
+                        .iter()
+                        .map(|p| glam::Vec3::from(*p))
+                        .sum::<glam::Vec3>()
+                        / n,
                 );
                 let radius_px = instance_radius_px(centroid, full_len * 0.5);
                 if let Some(mut hit) = pick_gaussian_splat_cpu(
-                    click_pos, item.id, &midpoints, model, view_proj, viewport_size, radius_px,
+                    click_pos,
+                    item.id,
+                    &midpoints,
+                    model,
+                    view_proj,
+                    viewport_size,
+                    radius_px,
                 ) {
                     // Report the base position, not the midpoint.
                     if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
@@ -949,7 +1003,9 @@ impl ViewportRenderer {
                 // is fully covered. Use the centroid of instance positions for an accurate
                 // pixel-size estimate (instances may be far from the model origin).
                 let world_r = if !item.eigenvalues.is_empty() {
-                    let max_ev = item.eigenvalues.iter()
+                    let max_ev = item
+                        .eigenvalues
+                        .iter()
                         .map(|ev| ev[0].abs().max(ev[1].abs()).max(ev[2].abs()))
                         .fold(0.0_f32, f32::max);
                     (max_ev * item.scale).max(0.01)
@@ -958,11 +1014,21 @@ impl ViewportRenderer {
                 };
                 let n = item.positions.len() as f32;
                 let centroid = model.transform_point3(
-                    item.positions.iter().map(|p| glam::Vec3::from(*p)).sum::<glam::Vec3>() / n
+                    item.positions
+                        .iter()
+                        .map(|p| glam::Vec3::from(*p))
+                        .sum::<glam::Vec3>()
+                        / n,
                 );
                 let radius_px = instance_radius_px(centroid, world_r);
                 if let Some(mut hit) = pick_gaussian_splat_cpu(
-                    click_pos, item.id, &item.positions, model, view_proj, viewport_size, radius_px,
+                    click_pos,
+                    item.id,
+                    &item.positions,
+                    model,
+                    view_proj,
+                    viewport_size,
+                    radius_px,
                 ) {
                     let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
                     if wants_instance {
@@ -987,13 +1053,23 @@ impl ViewportRenderer {
                     SpriteSizeMode::WorldSpace => {
                         let n = item.positions.len() as f32;
                         let centroid = model.transform_point3(
-                            item.positions.iter().map(|p| glam::Vec3::from(*p)).sum::<glam::Vec3>() / n
+                            item.positions
+                                .iter()
+                                .map(|p| glam::Vec3::from(*p))
+                                .sum::<glam::Vec3>()
+                                / n,
                         );
                         instance_radius_px(centroid, (item.default_size * 0.5).max(0.01))
                     }
                 };
                 if let Some(mut hit) = pick_gaussian_splat_cpu(
-                    click_pos, item.id, &item.positions, model, view_proj, viewport_size, radius_px,
+                    click_pos,
+                    item.id,
+                    &item.positions,
+                    model,
+                    view_proj,
+                    viewport_size,
+                    radius_px,
                 ) {
                     let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
                     if wants_instance {
@@ -1031,9 +1107,10 @@ impl ViewportRenderer {
                         // sub_object is already SubObjectRef::Point(node_index)
                     } else if wants_strip {
                         if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
-                            hit.sub_object = Some(SubObjectRef::Strip(
-                                strip_for_node(idx, &item.strip_lengths),
-                            ));
+                            hit.sub_object = Some(SubObjectRef::Strip(strip_for_node(
+                                idx,
+                                &item.strip_lengths,
+                            )));
                         }
                     } else {
                         hit.sub_object = None;
@@ -1068,7 +1145,10 @@ impl ViewportRenderer {
                 let sub_object = if wants_segment {
                     Some(SubObjectRef::Segment(seg_idx))
                 } else if wants_strip {
-                    Some(SubObjectRef::Strip(strip_for_segment(seg_idx, &item.strip_lengths)))
+                    Some(SubObjectRef::Strip(strip_for_segment(
+                        seg_idx,
+                        &item.strip_lengths,
+                    )))
                 } else {
                     None
                 };
@@ -1110,21 +1190,29 @@ impl ViewportRenderer {
             // POLY_NODE pass: nearest control point, promoted to Strip/Object as needed.
             if wants_poly_node || wants_strip || wants_object {
                 for item in &self.pick_streamtube_items {
-                    if item.id == 0 || item.positions.is_empty() { continue; }
+                    if item.id == 0 || item.positions.is_empty() {
+                        continue;
+                    }
                     let ref_pos = glam::Vec3::from(item.positions[0]);
                     let radius_px = world_r_to_px(ref_pos, item.radius.max(0.01)).max(8.0);
                     if let Some(mut hit) = pick_gaussian_splat_cpu(
-                        click_pos, item.id, &item.positions,
-                        glam::Mat4::IDENTITY, view_proj, viewport_size, radius_px,
+                        click_pos,
+                        item.id,
+                        &item.positions,
+                        glam::Mat4::IDENTITY,
+                        view_proj,
+                        viewport_size,
+                        radius_px,
                     ) {
                         let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
                         if wants_poly_node {
                             // sub_object is already SubObjectRef::Point(node_index)
                         } else if wants_strip {
                             if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
-                                hit.sub_object = Some(SubObjectRef::Strip(
-                                    strip_for_node(idx, &item.strip_lengths),
-                                ));
+                                hit.sub_object = Some(SubObjectRef::Strip(strip_for_node(
+                                    idx,
+                                    &item.strip_lengths,
+                                )));
                             }
                         } else {
                             hit.sub_object = None;
@@ -1133,26 +1221,36 @@ impl ViewportRenderer {
                     }
                 }
                 for item in &self.pick_tube_items {
-                    if item.id == 0 || item.positions.is_empty() { continue; }
+                    if item.id == 0 || item.positions.is_empty() {
+                        continue;
+                    }
                     let ref_pos = glam::Vec3::from(item.positions[0]);
-                    let max_r = item.radius_attribute.as_ref()
+                    let max_r = item
+                        .radius_attribute
+                        .as_ref()
                         .and_then(|ra| ra.iter().copied().reduce(f32::max))
                         .unwrap_or(0.0)
                         .max(item.radius)
                         .max(0.01);
                     let radius_px = world_r_to_px(ref_pos, max_r).max(8.0);
                     if let Some(mut hit) = pick_gaussian_splat_cpu(
-                        click_pos, item.id, &item.positions,
-                        glam::Mat4::IDENTITY, view_proj, viewport_size, radius_px,
+                        click_pos,
+                        item.id,
+                        &item.positions,
+                        glam::Mat4::IDENTITY,
+                        view_proj,
+                        viewport_size,
+                        radius_px,
                     ) {
                         let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
                         if wants_poly_node {
                             // sub_object is already SubObjectRef::Point(node_index)
                         } else if wants_strip {
                             if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
-                                hit.sub_object = Some(SubObjectRef::Strip(
-                                    strip_for_node(idx, &item.strip_lengths),
-                                ));
+                                hit.sub_object = Some(SubObjectRef::Strip(strip_for_node(
+                                    idx,
+                                    &item.strip_lengths,
+                                )));
                             }
                         } else {
                             hit.sub_object = None;
@@ -1161,21 +1259,29 @@ impl ViewportRenderer {
                     }
                 }
                 for item in &self.pick_ribbon_items {
-                    if item.id == 0 || item.positions.is_empty() { continue; }
+                    if item.id == 0 || item.positions.is_empty() {
+                        continue;
+                    }
                     let ref_pos = glam::Vec3::from(item.positions[0]);
                     let radius_px = world_r_to_px(ref_pos, item.width * 0.5).max(8.0);
                     if let Some(mut hit) = pick_gaussian_splat_cpu(
-                        click_pos, item.id, &item.positions,
-                        glam::Mat4::IDENTITY, view_proj, viewport_size, radius_px,
+                        click_pos,
+                        item.id,
+                        &item.positions,
+                        glam::Mat4::IDENTITY,
+                        view_proj,
+                        viewport_size,
+                        radius_px,
                     ) {
                         let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
                         if wants_poly_node {
                             // sub_object is already SubObjectRef::Point(node_index)
                         } else if wants_strip {
                             if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
-                                hit.sub_object = Some(SubObjectRef::Strip(
-                                    strip_for_node(idx, &item.strip_lengths),
-                                ));
+                                hit.sub_object = Some(SubObjectRef::Strip(strip_for_node(
+                                    idx,
+                                    &item.strip_lengths,
+                                )));
                             }
                         } else {
                             hit.sub_object = None;
@@ -1190,66 +1296,108 @@ impl ViewportRenderer {
                 // Streamtube: project each cylinder axis segment to screen and find the
                 // closest point along the full segment (not just the midpoint).
                 for item in &self.pick_streamtube_items {
-                    if item.id == 0 || item.positions.is_empty() { continue; }
+                    if item.id == 0 || item.positions.is_empty() {
+                        continue;
+                    }
                     let ref_pos = glam::Vec3::from(item.positions[0]);
                     let threshold_px = world_r_to_px(ref_pos, item.radius.max(0.01));
                     let Some((seg_idx, world_pos)) = pick_closest_polyline_segment(
-                        click_pos, viewport_size, view_proj,
-                        &item.positions, &item.strip_lengths, threshold_px,
-                    ) else { continue };
+                        click_pos,
+                        viewport_size,
+                        view_proj,
+                        &item.positions,
+                        &item.strip_lengths,
+                        threshold_px,
+                    ) else {
+                        continue;
+                    };
                     let toi = (world_pos - ray_origin).dot(ray_dir).max(0.0);
                     let sub_object = if wants_segment {
                         Some(SubObjectRef::Segment(seg_idx))
                     } else if wants_strip {
-                        Some(SubObjectRef::Strip(strip_for_segment(seg_idx, &item.strip_lengths)))
+                        Some(SubObjectRef::Strip(strip_for_segment(
+                            seg_idx,
+                            &item.strip_lengths,
+                        )))
                     } else {
                         None
                     };
                     #[allow(deprecated)]
-                    consider(toi, PickHit {
-                        id: item.id, sub_object, world_pos,
-                        normal: glam::Vec3::Y, triangle_index: u32::MAX,
-                        point_index: None, scalar_value: None,
-                    });
+                    consider(
+                        toi,
+                        PickHit {
+                            id: item.id,
+                            sub_object,
+                            world_pos,
+                            normal: glam::Vec3::Y,
+                            triangle_index: u32::MAX,
+                            point_index: None,
+                            scalar_value: None,
+                        },
+                    );
                 }
 
                 // Tube: same as streamtube; uses the conservative max of uniform and
                 // per-point radii for the screen-space threshold.
                 for item in &self.pick_tube_items {
-                    if item.id == 0 || item.positions.is_empty() { continue; }
+                    if item.id == 0 || item.positions.is_empty() {
+                        continue;
+                    }
                     let ref_pos = glam::Vec3::from(item.positions[0]);
-                    let max_r = item.radius_attribute.as_ref()
+                    let max_r = item
+                        .radius_attribute
+                        .as_ref()
                         .and_then(|ra| ra.iter().copied().reduce(f32::max))
                         .unwrap_or(0.0)
                         .max(item.radius)
                         .max(0.01);
                     let threshold_px = world_r_to_px(ref_pos, max_r);
                     let Some((seg_idx, world_pos)) = pick_closest_polyline_segment(
-                        click_pos, viewport_size, view_proj,
-                        &item.positions, &item.strip_lengths, threshold_px,
-                    ) else { continue };
+                        click_pos,
+                        viewport_size,
+                        view_proj,
+                        &item.positions,
+                        &item.strip_lengths,
+                        threshold_px,
+                    ) else {
+                        continue;
+                    };
                     let toi = (world_pos - ray_origin).dot(ray_dir).max(0.0);
                     let sub_object = if wants_segment {
                         Some(SubObjectRef::Segment(seg_idx))
                     } else if wants_strip {
-                        Some(SubObjectRef::Strip(strip_for_segment(seg_idx, &item.strip_lengths)))
+                        Some(SubObjectRef::Strip(strip_for_segment(
+                            seg_idx,
+                            &item.strip_lengths,
+                        )))
                     } else {
                         None
                     };
                     #[allow(deprecated)]
-                    consider(toi, PickHit {
-                        id: item.id, sub_object, world_pos,
-                        normal: glam::Vec3::Y, triangle_index: u32::MAX,
-                        point_index: None, scalar_value: None,
-                    });
+                    consider(
+                        toi,
+                        PickHit {
+                            id: item.id,
+                            sub_object,
+                            world_pos,
+                            normal: glam::Vec3::Y,
+                            triangle_index: u32::MAX,
+                            point_index: None,
+                            scalar_value: None,
+                        },
+                    );
                 }
 
                 // Ribbon: reconstruct the swept quad per segment (parallel-transport
                 // lateral frame) and test the ray against both triangles of each quad.
                 for item in &self.pick_ribbon_items {
-                    if item.id == 0 || item.positions.is_empty() { continue; }
+                    if item.id == 0 || item.positions.is_empty() {
+                        continue;
+                    }
                     let frames = ribbon_lateral_frames(
-                        &item.positions, &item.strip_lengths, item.width,
+                        &item.positions,
+                        &item.strip_lengths,
+                        item.width,
                         item.width_attribute.as_deref(),
                         item.twist_attribute.as_deref(),
                     );
@@ -1301,16 +1449,26 @@ impl ViewportRenderer {
                         let sub_object = if wants_segment {
                             Some(SubObjectRef::Segment(seg_idx))
                         } else if wants_strip {
-                            Some(SubObjectRef::Strip(strip_for_segment(seg_idx, &item.strip_lengths)))
+                            Some(SubObjectRef::Strip(strip_for_segment(
+                                seg_idx,
+                                &item.strip_lengths,
+                            )))
                         } else {
                             None
                         };
                         #[allow(deprecated)]
-                        consider(best_t, PickHit {
-                            id: item.id, sub_object, world_pos,
-                            normal: glam::Vec3::Y, triangle_index: u32::MAX,
-                            point_index: None, scalar_value: None,
-                        });
+                        consider(
+                            best_t,
+                            PickHit {
+                                id: item.id,
+                                sub_object,
+                                world_pos,
+                                normal: glam::Vec3::Y,
+                                triangle_index: u32::MAX,
+                                point_index: None,
+                                scalar_value: None,
+                            },
+                        );
                     }
                 }
             }
@@ -1320,7 +1478,9 @@ impl ViewportRenderer {
         if wants_object {
             // Image slice: axis-aligned quad ray intersection.
             for item in &self.pick_image_slice_items {
-                if item.id == 0 { continue; }
+                if item.id == 0 {
+                    continue;
+                }
                 let [bmin, bmax] = [item.bbox_min, item.bbox_max];
                 let t = item.offset;
                 // Plane normal and position along the axis.
@@ -1335,42 +1495,63 @@ impl ViewportRenderer {
                     n
                 };
                 let denom = plane_n.dot(ray_dir);
-                if denom.abs() < 1e-6 { continue; }
+                if denom.abs() < 1e-6 {
+                    continue;
+                }
                 let toi = (plane_pos - ray_origin[axis_idx]) / denom;
-                if toi <= 0.0 { continue; }
+                if toi <= 0.0 {
+                    continue;
+                }
                 let hit_pos = ray_origin + ray_dir * toi;
                 // Check that the hit is within the slice quad's other two dimensions.
-                let in_bounds = (0..3).filter(|&i| i != axis_idx).all(|i| {
-                    hit_pos[i] >= bmin[i] - 1e-4 && hit_pos[i] <= bmax[i] + 1e-4
-                });
+                let in_bounds = (0..3)
+                    .filter(|&i| i != axis_idx)
+                    .all(|i| hit_pos[i] >= bmin[i] - 1e-4 && hit_pos[i] <= bmax[i] + 1e-4);
                 if in_bounds {
                     #[allow(deprecated)]
-                    consider(toi, PickHit {
-                        id: item.id, sub_object: None, world_pos: hit_pos,
-                        normal: plane_n, triangle_index: u32::MAX,
-                        point_index: None, scalar_value: None,
-                    });
+                    consider(
+                        toi,
+                        PickHit {
+                            id: item.id,
+                            sub_object: None,
+                            world_pos: hit_pos,
+                            normal: plane_n,
+                            triangle_index: u32::MAX,
+                            point_index: None,
+                            scalar_value: None,
+                        },
+                    );
                 }
             }
 
             // Volume surface slice: ray/mesh intersection via mesh_store CPU data.
             for item in &self.pick_volume_surface_slice_items {
-                if item.id == 0 { continue; }
-                let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else { continue; };
+                if item.id == 0 {
+                    continue;
+                }
+                let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
+                    continue;
+                };
                 let (Some(positions), Some(indices)) = (&mesh.cpu_positions, &mesh.cpu_indices)
-                else { continue; };
+                else {
+                    continue;
+                };
                 let model = glam::Mat4::from_cols_array_2d(&item.model);
-                let verts: Vec<parry3d::math::Vector> = positions.iter()
+                let verts: Vec<parry3d::math::Vector> = positions
+                    .iter()
                     .map(|p| {
                         let wp = model.transform_point3(glam::Vec3::from(*p));
                         parry3d::math::Vector::new(wp.x, wp.y, wp.z)
                     })
                     .collect();
-                let tri_indices: Vec<[u32; 3]> = indices.chunks(3)
+                let tri_indices: Vec<[u32; 3]> = indices
+                    .chunks(3)
                     .filter(|c| c.len() == 3)
                     .map(|c| [c[0], c[1], c[2]])
                     .collect();
-                if tri_indices.is_empty() { continue; }
+                if tri_indices.is_empty() {
+                    continue;
+                }
                 let ray = parry3d::query::Ray::new(
                     parry3d::math::Vector::new(ray_origin.x, ray_origin.y, ray_origin.z),
                     parry3d::math::Vector::new(ray_dir.x, ray_dir.y, ray_dir.z),
@@ -1378,44 +1559,67 @@ impl ViewportRenderer {
                 if let Ok(trimesh) = parry3d::shape::TriMesh::new(verts, tri_indices) {
                     use parry3d::query::RayCast;
                     if let Some(hit) = trimesh.cast_ray_and_get_normal(
-                        &parry3d::math::Pose::identity(), &ray, f32::MAX, true,
+                        &parry3d::math::Pose::identity(),
+                        &ray,
+                        f32::MAX,
+                        true,
                     ) {
                         let world_pos = ray_origin + ray_dir * hit.time_of_impact;
                         let n = hit.normal;
                         #[allow(deprecated)]
-                        consider(hit.time_of_impact, PickHit {
-                            id: item.id, sub_object: None, world_pos,
-                            normal: glam::Vec3::new(n.x, n.y, n.z),
-                            triangle_index: u32::MAX,
-                            point_index: None, scalar_value: None,
-                        });
+                        consider(
+                            hit.time_of_impact,
+                            PickHit {
+                                id: item.id,
+                                sub_object: None,
+                                world_pos,
+                                normal: glam::Vec3::new(n.x, n.y, n.z),
+                                triangle_index: u32::MAX,
+                                point_index: None,
+                                scalar_value: None,
+                            },
+                        );
                     }
                 }
             }
 
             // Screen image: screen-space rect test. toi=0 so these win over any 3D hit.
             for item in &self.pick_screen_image_items {
-                if item.id == 0 || item.width == 0 || item.height == 0 { continue; }
+                if item.id == 0 || item.width == 0 || item.height == 0 {
+                    continue;
+                }
                 let img_w = item.width as f32 * item.scale;
                 let img_h = item.height as f32 * item.scale;
                 let (sx, sy) = match item.anchor {
-                    ImageAnchor::TopLeft     => (0.0, 0.0),
-                    ImageAnchor::TopRight    => (viewport_size.x - img_w, 0.0),
-                    ImageAnchor::BottomLeft  => (0.0, viewport_size.y - img_h),
+                    ImageAnchor::TopLeft => (0.0, 0.0),
+                    ImageAnchor::TopRight => (viewport_size.x - img_w, 0.0),
+                    ImageAnchor::BottomLeft => (0.0, viewport_size.y - img_h),
                     ImageAnchor::BottomRight => (viewport_size.x - img_w, viewport_size.y - img_h),
-                    ImageAnchor::Center      => ((viewport_size.x - img_w) * 0.5, (viewport_size.y - img_h) * 0.5),
+                    ImageAnchor::Center => (
+                        (viewport_size.x - img_w) * 0.5,
+                        (viewport_size.y - img_h) * 0.5,
+                    ),
                 };
-                if click_pos.x >= sx && click_pos.x <= sx + img_w
-                    && click_pos.y >= sy && click_pos.y <= sy + img_h
+                if click_pos.x >= sx
+                    && click_pos.x <= sx + img_w
+                    && click_pos.y >= sy
+                    && click_pos.y <= sy + img_h
                 {
                     // No meaningful 3D position; place the hit at the near-plane.
                     let world_pos = ray_origin + ray_dir * 0.001;
                     #[allow(deprecated)]
-                    consider(0.0, PickHit {
-                        id: item.id, sub_object: None, world_pos,
-                        normal: -ray_dir, triangle_index: u32::MAX,
-                        point_index: None, scalar_value: None,
-                    });
+                    consider(
+                        0.0,
+                        PickHit {
+                            id: item.id,
+                            sub_object: None,
+                            world_pos,
+                            normal: -ray_dir,
+                            triangle_index: u32::MAX,
+                            point_index: None,
+                            scalar_value: None,
+                        },
+                    );
                 }
             }
         }
@@ -1425,15 +1629,18 @@ impl ViewportRenderer {
             for item in &self.pick_implicit_items {
                 if let Some((toi, world_pos)) = pick_implicit_sdf(ray_origin, ray_dir, item) {
                     #[allow(deprecated)]
-                    consider(toi, PickHit {
-                        id: item.id,
-                        sub_object: None,
-                        world_pos,
-                        normal: glam::Vec3::Y,
-                        triangle_index: u32::MAX,
-                        point_index: None,
-                        scalar_value: None,
-                    });
+                    consider(
+                        toi,
+                        PickHit {
+                            id: item.id,
+                            sub_object: None,
+                            world_pos,
+                            normal: glam::Vec3::Y,
+                            triangle_index: u32::MAX,
+                            point_index: None,
+                            scalar_value: None,
+                        },
+                    );
                 }
             }
         }
@@ -1443,15 +1650,18 @@ impl ViewportRenderer {
             for item in &self.pick_mc_items {
                 if let Some((toi, world_pos)) = pick_mc_volume(ray_origin, ray_dir, item) {
                     #[allow(deprecated)]
-                    consider(toi, PickHit {
-                        id: item.id,
-                        sub_object: None,
-                        world_pos,
-                        normal: glam::Vec3::Y,
-                        triangle_index: u32::MAX,
-                        point_index: None,
-                        scalar_value: None,
-                    });
+                    consider(
+                        toi,
+                        PickHit {
+                            id: item.id,
+                            sub_object: None,
+                            world_pos,
+                            normal: glam::Vec3::Y,
+                            triangle_index: u32::MAX,
+                            point_index: None,
+                            scalar_value: None,
+                        },
+                    );
                 }
             }
         }
@@ -1491,11 +1701,11 @@ impl ViewportRenderer {
             return result;
         }
 
-        let wants_face   = mask.intersects(PickMask::FACE);
+        let wants_face = mask.intersects(PickMask::FACE);
         let wants_vertex = mask.intersects(PickMask::VERTEX);
-        let wants_cell   = mask.intersects(PickMask::CELL);
-        let wants_cloud  = mask.intersects(PickMask::CLOUD_POINT);
-        let wants_splat  = mask.intersects(PickMask::SPLAT);
+        let wants_cell = mask.intersects(PickMask::CELL);
+        let wants_cloud = mask.intersects(PickMask::CLOUD_POINT);
+        let wants_splat = mask.intersects(PickMask::SPLAT);
         let wants_object = mask.intersects(PickMask::OBJECT);
 
         // Build lookup for opaque volume mesh face_to_cell maps.
@@ -1531,8 +1741,7 @@ impl ViewportRenderer {
                 let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
                     continue;
                 };
-                let (Some(positions), Some(indices)) =
-                    (&mesh.cpu_positions, &mesh.cpu_indices)
+                let (Some(positions), Some(indices)) = (&mesh.cpu_positions, &mesh.cpu_indices)
                 else {
                     continue;
                 };
@@ -1549,10 +1758,7 @@ impl ViewportRenderer {
                         }
                         let [i0, i1, i2] =
                             [chunk[0] as usize, chunk[1] as usize, chunk[2] as usize];
-                        if i0 >= positions.len()
-                            || i1 >= positions.len()
-                            || i2 >= positions.len()
-                        {
+                        if i0 >= positions.len() || i1 >= positions.len() || i2 >= positions.len() {
                             continue;
                         }
                         let centroid = (glam::Vec3::from(positions[i0])
@@ -1561,7 +1767,9 @@ impl ViewportRenderer {
                             / 3.0;
                         if let Some((sx, sy)) = project(mvp, centroid) {
                             if in_rect(sx, sy) {
-                                result.elements.push((id, SubObjectRef::Face(tri_idx as u32)));
+                                result
+                                    .elements
+                                    .push((id, SubObjectRef::Face(tri_idx as u32)));
                                 item_hit = true;
                             }
                         }
@@ -1625,10 +1833,7 @@ impl ViewportRenderer {
                         }
                         let [i0, i1, i2] =
                             [chunk[0] as usize, chunk[1] as usize, chunk[2] as usize];
-                        if i0 >= positions.len()
-                            || i1 >= positions.len()
-                            || i2 >= positions.len()
-                        {
+                        if i0 >= positions.len() || i1 >= positions.len() || i2 >= positions.len() {
                             continue;
                         }
                         let centroid = (glam::Vec3::from(positions[i0])
@@ -1685,7 +1890,9 @@ impl ViewportRenderer {
                     if let Some((sx, sy)) = project(mvp, centroid) {
                         if in_rect(sx, sy) {
                             if wants_cell {
-                                result.elements.push((id, SubObjectRef::Cell(cell_idx as u32)));
+                                result
+                                    .elements
+                                    .push((id, SubObjectRef::Cell(cell_idx as u32)));
                             }
                             item_hit = true;
                         }
@@ -1713,7 +1920,9 @@ impl ViewportRenderer {
                     if let Some((sx, sy)) = project(mvp, glam::Vec3::from(*pos)) {
                         if in_rect(sx, sy) {
                             if wants_cloud {
-                                result.elements.push((id, SubObjectRef::Point(pt_idx as u32)));
+                                result
+                                    .elements
+                                    .push((id, SubObjectRef::Point(pt_idx as u32)));
                             }
                             item_hit = true;
                         }
@@ -1744,8 +1953,7 @@ impl ViewportRenderer {
                 let mvp = view_proj * model;
                 let bbox_min = glam::Vec3::from(item.bbox_min);
                 let bbox_max = glam::Vec3::from(item.bbox_max);
-                let cell = (bbox_max - bbox_min)
-                    / glam::Vec3::new(nx as f32, ny as f32, nz as f32);
+                let cell = (bbox_max - bbox_min) / glam::Vec3::new(nx as f32, ny as f32, nz as f32);
                 let id = item.pick_id;
                 let mut item_hit = false;
 
@@ -1761,15 +1969,18 @@ impl ViewportRenderer {
                                 continue;
                             }
                             let center = bbox_min
-                                + cell * glam::Vec3::new(
-                                    ix as f32 + 0.5,
-                                    iy as f32 + 0.5,
-                                    iz as f32 + 0.5,
-                                );
+                                + cell
+                                    * glam::Vec3::new(
+                                        ix as f32 + 0.5,
+                                        iy as f32 + 0.5,
+                                        iz as f32 + 0.5,
+                                    );
                             if let Some((sx, sy)) = project(mvp, center) {
                                 if in_rect(sx, sy) {
                                     if wants_voxel {
-                                        result.elements.push((id, SubObjectRef::Voxel(flat as u32)));
+                                        result
+                                            .elements
+                                            .push((id, SubObjectRef::Voxel(flat as u32)));
                                     }
                                     item_hit = true;
                                 }
@@ -1896,8 +2107,8 @@ impl ViewportRenderer {
 
         // 7. Polyline node / segment / strip / object rect picks.
         let wants_poly_node = mask.intersects(PickMask::POLY_NODE);
-        let wants_segment   = mask.intersects(PickMask::SEGMENT);
-        let wants_strip     = mask.intersects(PickMask::STRIP);
+        let wants_segment = mask.intersects(PickMask::SEGMENT);
+        let wants_strip = mask.intersects(PickMask::STRIP);
         if wants_poly_node || wants_segment || wants_strip || wants_object {
             for item in &self.pick_polyline_items {
                 if item.id == 0 || item.positions.is_empty() {
@@ -1914,7 +2125,9 @@ impl ViewportRenderer {
                             if in_rect(sx, sy) {
                                 item_hit = true;
                                 if wants_poly_node {
-                                    result.elements.push((id, SubObjectRef::Point(node_idx as u32)));
+                                    result
+                                        .elements
+                                        .push((id, SubObjectRef::Point(node_idx as u32)));
                                 } else if wants_strip {
                                     let s = strip_for_node(node_idx as u32, &item.strip_lengths);
                                     strips_hit.insert(s);
@@ -1937,7 +2150,8 @@ impl ViewportRenderer {
                                 if segment_in_rect(
                                     glam::Vec2::new(sax, say),
                                     glam::Vec2::new(sbx, sby),
-                                    rect_min, rect_max,
+                                    rect_min,
+                                    rect_max,
                                 ) {
                                     item_hit = true;
                                     if wants_segment {
@@ -1982,13 +2196,20 @@ impl ViewportRenderer {
             // Streamtube and tube: test both projected endpoints of each segment
             // with segment_in_rect instead of the midpoint projection heuristic.
             // POLY_NODE: also check each control point individually.
-            let st_tube_iter = self.pick_streamtube_items.iter()
+            let st_tube_iter = self
+                .pick_streamtube_items
+                .iter()
                 .map(|it| (it.id, it.positions.as_slice(), it.strip_lengths.as_slice()))
-                .chain(self.pick_tube_items.iter()
-                    .map(|it| (it.id, it.positions.as_slice(), it.strip_lengths.as_slice())));
+                .chain(
+                    self.pick_tube_items
+                        .iter()
+                        .map(|it| (it.id, it.positions.as_slice(), it.strip_lengths.as_slice())),
+                );
 
             for (id, positions, strip_lengths) in st_tube_iter {
-                if id == 0 || positions.is_empty() { continue; }
+                if id == 0 || positions.is_empty() {
+                    continue;
+                }
                 let mut item_hit = false;
                 let mut strips_hit = std::collections::HashSet::<u32>::new();
 
@@ -2031,12 +2252,12 @@ impl ViewportRenderer {
                             let pa = glam::Vec3::from(positions[node_off + j]);
                             let pb = glam::Vec3::from(positions[node_off + j + 1]);
                             let hit = match (project(view_proj, pa), project(view_proj, pb)) {
-                                (Some((ax, ay)), Some((bx, by))) => {
-                                    segment_in_rect(
-                                        glam::Vec2::new(ax, ay), glam::Vec2::new(bx, by),
-                                        rect_min, rect_max,
-                                    )
-                                }
+                                (Some((ax, ay)), Some((bx, by))) => segment_in_rect(
+                                    glam::Vec2::new(ax, ay),
+                                    glam::Vec2::new(bx, by),
+                                    rect_min,
+                                    rect_max,
+                                ),
                                 (Some((ax, ay)), None) => in_rect(ax, ay),
                                 (None, Some((bx, by))) => in_rect(bx, by),
                                 (None, None) => false,
@@ -2074,7 +2295,9 @@ impl ViewportRenderer {
             // the rect via the endpoint check inside segment_in_rect).
             // POLY_NODE: also check each control point individually.
             for item in &self.pick_ribbon_items {
-                if item.id == 0 || item.positions.is_empty() { continue; }
+                if item.id == 0 || item.positions.is_empty() {
+                    continue;
+                }
 
                 let single_r;
                 let strips_r: &[u32] = if item.strip_lengths.is_empty() {
@@ -2099,7 +2322,9 @@ impl ViewportRenderer {
                             if in_rect(sx, sy) {
                                 item_hit = true;
                                 if wants_poly_node {
-                                    result.elements.push((item.id, SubObjectRef::Point(ni as u32)));
+                                    result
+                                        .elements
+                                        .push((item.id, SubObjectRef::Point(ni as u32)));
                                 } else if wants_strip {
                                     let s = strip_for_node(ni as u32, &item.strip_lengths);
                                     strips_hit.insert(s);
@@ -2114,7 +2339,9 @@ impl ViewportRenderer {
                 // SEGMENT pass: quad edge tests using ribbon_lateral_frames.
                 if wants_segment || wants_strip || wants_object {
                     let frames = ribbon_lateral_frames(
-                        &item.positions, &item.strip_lengths, item.width,
+                        &item.positions,
+                        &item.strip_lengths,
+                        item.width,
                         item.width_attribute.as_deref(),
                         item.twist_attribute.as_deref(),
                     );
@@ -2154,7 +2381,9 @@ impl ViewportRenderer {
                             if hit {
                                 item_hit = true;
                                 if wants_segment {
-                                    result.elements.push((item.id, SubObjectRef::Segment(seg_idx)));
+                                    result
+                                        .elements
+                                        .push((item.id, SubObjectRef::Segment(seg_idx)));
                                 } else if wants_strip {
                                     let s = strip_for_segment(seg_idx, &item.strip_lengths);
                                     strips_hit.insert(s);
@@ -2183,30 +2412,46 @@ impl ViewportRenderer {
         if wants_object {
             // Image slice: project all 4 quad corners and check containment/edge intersection.
             for item in &self.pick_image_slice_items {
-                if item.id == 0 { continue; }
+                if item.id == 0 {
+                    continue;
+                }
                 let [bmin, bmax] = [item.bbox_min, item.bbox_max];
                 let t = item.offset;
                 let corners: [[f32; 3]; 4] = match item.axis {
                     SliceAxis::X => {
                         let x = bmin[0] + t * (bmax[0] - bmin[0]);
-                        [[x, bmin[1], bmin[2]], [x, bmax[1], bmin[2]],
-                         [x, bmax[1], bmax[2]], [x, bmin[1], bmax[2]]]
+                        [
+                            [x, bmin[1], bmin[2]],
+                            [x, bmax[1], bmin[2]],
+                            [x, bmax[1], bmax[2]],
+                            [x, bmin[1], bmax[2]],
+                        ]
                     }
                     SliceAxis::Y => {
                         let y = bmin[1] + t * (bmax[1] - bmin[1]);
-                        [[bmin[0], y, bmin[2]], [bmax[0], y, bmin[2]],
-                         [bmax[0], y, bmax[2]], [bmin[0], y, bmax[2]]]
+                        [
+                            [bmin[0], y, bmin[2]],
+                            [bmax[0], y, bmin[2]],
+                            [bmax[0], y, bmax[2]],
+                            [bmin[0], y, bmax[2]],
+                        ]
                     }
                     SliceAxis::Z => {
                         let z = bmin[2] + t * (bmax[2] - bmin[2]);
-                        [[bmin[0], bmin[1], z], [bmax[0], bmin[1], z],
-                         [bmax[0], bmax[1], z], [bmin[0], bmax[1], z]]
+                        [
+                            [bmin[0], bmin[1], z],
+                            [bmax[0], bmin[1], z],
+                            [bmax[0], bmax[1], z],
+                            [bmin[0], bmax[1], z],
+                        ]
                     }
                 };
-                let sc: Vec<Option<glam::Vec2>> = corners.iter().map(|&c| {
-                    project(view_proj, glam::Vec3::from(c))
-                        .map(|(x, y)| glam::Vec2::new(x, y))
-                }).collect();
+                let sc: Vec<Option<glam::Vec2>> = corners
+                    .iter()
+                    .map(|&c| {
+                        project(view_proj, glam::Vec3::from(c)).map(|(x, y)| glam::Vec2::new(x, y))
+                    })
+                    .collect();
                 let hit = sc.iter().any(|p| p.map_or(false, |p| in_rect(p.x, p.y)))
                     || (0..4).any(|i| {
                         let a = sc[i];
@@ -2225,9 +2470,15 @@ impl ViewportRenderer {
 
             // Volume surface slice: project each mesh vertex (with model transform) and check.
             for item in &self.pick_volume_surface_slice_items {
-                if item.id == 0 { continue; }
-                let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else { continue; };
-                let Some(positions) = &mesh.cpu_positions else { continue; };
+                if item.id == 0 {
+                    continue;
+                }
+                let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
+                    continue;
+                };
+                let Some(positions) = &mesh.cpu_positions else {
+                    continue;
+                };
                 let model = glam::Mat4::from_cols_array_2d(&item.model);
                 let hit = positions.iter().any(|&p| {
                     let wp = model.transform_point3(glam::Vec3::from(p));
@@ -2240,19 +2491,26 @@ impl ViewportRenderer {
 
             // Screen image: check if the image's screen rect overlaps the pick rect.
             for item in &self.pick_screen_image_items {
-                if item.id == 0 || item.width == 0 || item.height == 0 { continue; }
+                if item.id == 0 || item.width == 0 || item.height == 0 {
+                    continue;
+                }
                 let img_w = item.width as f32 * item.scale;
                 let img_h = item.height as f32 * item.scale;
                 let (sx, sy) = match item.anchor {
-                    ImageAnchor::TopLeft     => (0.0, 0.0),
-                    ImageAnchor::TopRight    => (viewport_size.x - img_w, 0.0),
-                    ImageAnchor::BottomLeft  => (0.0, viewport_size.y - img_h),
+                    ImageAnchor::TopLeft => (0.0, 0.0),
+                    ImageAnchor::TopRight => (viewport_size.x - img_w, 0.0),
+                    ImageAnchor::BottomLeft => (0.0, viewport_size.y - img_h),
                     ImageAnchor::BottomRight => (viewport_size.x - img_w, viewport_size.y - img_h),
-                    ImageAnchor::Center      => ((viewport_size.x - img_w) * 0.5, (viewport_size.y - img_h) * 0.5),
+                    ImageAnchor::Center => (
+                        (viewport_size.x - img_w) * 0.5,
+                        (viewport_size.y - img_h) * 0.5,
+                    ),
                 };
                 // Overlap: image rect [sx, sx+img_w] x [sy, sy+img_h] vs pick rect.
-                let overlap = sx <= rect_max.x && sx + img_w >= rect_min.x
-                    && sy <= rect_max.y && sy + img_h >= rect_min.y;
+                let overlap = sx <= rect_max.x
+                    && sx + img_w >= rect_min.x
+                    && sy <= rect_max.y
+                    && sy + img_h >= rect_min.y;
                 if overlap {
                     result.objects.push(item.id);
                 }
@@ -2323,10 +2581,10 @@ impl ViewportRenderer {
         // center projects into the pick rect, the item is a hit.
         if wants_object {
             for item in &self.pick_mc_items {
-                let vol      = &item.volume_data;
+                let vol = &item.volume_data;
                 let isovalue = item.isovalue;
                 let [nx, ny, nz] = vol.dims;
-                let origin  = glam::Vec3::from(vol.origin);
+                let origin = glam::Vec3::from(vol.origin);
                 let spacing = glam::Vec3::from(vol.spacing);
 
                 let mut hit = false;
@@ -2341,20 +2599,27 @@ impl ViewportRenderer {
                                 for dy in 0u32..=1 {
                                     for dx in 0u32..=1 {
                                         let s = vol.sample(ix + dx, iy + dy, iz + dz);
-                                        if s < isovalue { has_below = true; }
-                                        else            { has_above = true; }
-                                        if has_below && has_above { break 'corners; }
+                                        if s < isovalue {
+                                            has_below = true;
+                                        } else {
+                                            has_above = true;
+                                        }
+                                        if has_below && has_above {
+                                            break 'corners;
+                                        }
                                     }
                                 }
                             }
                             if !(has_below && has_above) {
                                 continue;
                             }
-                            let cell_center = origin + spacing * glam::Vec3::new(
-                                ix as f32 + 0.5,
-                                iy as f32 + 0.5,
-                                iz as f32 + 0.5,
-                            );
+                            let cell_center = origin
+                                + spacing
+                                    * glam::Vec3::new(
+                                        ix as f32 + 0.5,
+                                        iy as f32 + 0.5,
+                                        iz as f32 + 0.5,
+                                    );
                             if let Some((sx, sy)) = project(view_proj, cell_center) {
                                 if in_rect(sx, sy) {
                                     hit = true;
@@ -2626,11 +2891,7 @@ impl ViewportRenderer {
             // Draw each pickable item with its instance slot.
             // Instance index in the storage buffer = position in pick_instances vec.
             for (instance_slot, item) in pickable_items.iter().enumerate() {
-                let Some(mesh) = self
-                    .resources
-                    .mesh_store
-                    .get(item.mesh_id)
-                else {
+                let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
                     continue;
                 };
                 pick_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));

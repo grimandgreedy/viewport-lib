@@ -307,10 +307,7 @@ impl ViewportGpuResources {
         );
 
         {
-            let Some(mesh) = self
-                .mesh_store
-                .get(mesh_id)
-            else {
+            let Some(mesh) = self.mesh_store.get(mesh_id) else {
                 return;
             };
             if mesh.last_tex_key == key {
@@ -335,10 +332,7 @@ impl ViewportGpuResources {
             _ => &self.fallback_lut_view,
         };
 
-        let Some(mesh) = self
-            .mesh_store
-            .get_mut(mesh_id)
-        else {
+        let Some(mesh) = self.mesh_store.get_mut(mesh_id) else {
             return;
         };
 
@@ -346,7 +340,9 @@ impl ViewportGpuResources {
             Some(name) => {
                 let found_vertex = mesh.attribute_buffers.get(name);
                 let found_face = mesh.face_attribute_buffers.get(name);
-                found_vertex.or(found_face).unwrap_or(&self.fallback_scalar_buf)
+                found_vertex
+                    .or(found_face)
+                    .unwrap_or(&self.fallback_scalar_buf)
             }
             None => &self.fallback_scalar_buf,
         };
@@ -548,17 +544,15 @@ impl ViewportGpuResources {
             queue,
             &crate::resources::colormap_data::turbo_rgba(),
         );
-        let jet = self.upload_colormap(
-            device,
-            queue,
-            &crate::resources::colormap_data::jet_rgba(),
-        );
+        let jet = self.upload_colormap(device, queue, &crate::resources::colormap_data::jet_rgba());
         let rdbu = self.upload_colormap(
             device,
             queue,
             &crate::resources::colormap_data::rdbu_r_rgba(),
         );
-        self.builtin_colormap_ids = Some([viridis, plasma, greyscale, coolwarm, rainbow, magma, inferno, turbo, jet, rdbu]);
+        self.builtin_colormap_ids = Some([
+            viridis, plasma, greyscale, coolwarm, rainbow, magma, inferno, turbo, jet, rdbu,
+        ]);
         self.colormaps_initialized = true;
     }
 

@@ -9,9 +9,10 @@ mod viewport_callback;
 
 use eframe::egui;
 use viewport_lib::{
-    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, ManipResult, MeshId,
-    ManipulationContext, ManipulationController, Material, OrbitCameraController, SceneFrame,
-    SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
+    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, ManipResult,
+    ManipulationContext, ManipulationController, Material, MeshId, OrbitCameraController,
+    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer,
+    primitives,
 };
 
 fn main() -> eframe::Result {

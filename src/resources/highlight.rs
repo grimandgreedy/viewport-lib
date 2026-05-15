@@ -111,9 +111,16 @@ impl ViewportGpuResources {
                     depth_write_enabled: false,
                     depth_compare: wgpu::CompareFunction::LessEqual,
                     stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState { constant: -2, slope_scale: -1.0, clamp: 0.0 },
+                    bias: wgpu::DepthBiasState {
+                        constant: -2,
+                        slope_scale: -1.0,
+                        clamp: 0.0,
+                    },
                 }),
-                multisample: wgpu::MultisampleState { count: 1, ..Default::default() },
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
                 multiview: None,
                 cache: None,
             })
@@ -157,7 +164,10 @@ impl ViewportGpuResources {
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
-                multisample: wgpu::MultisampleState { count: 1, ..Default::default() },
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
                 multiview: None,
                 cache: None,
             })
@@ -200,23 +210,30 @@ impl ViewportGpuResources {
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
-                multisample: wgpu::MultisampleState { count: 1, ..Default::default() },
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
                 multiview: None,
                 cache: None,
             })
         };
 
         let ldr_fmt = self.target_format;
-        self.sub_highlight_fill_pipeline =
-            Some(make_fill("sub_highlight_fill_hdr", wgpu::TextureFormat::Rgba16Float));
-        self.sub_highlight_edge_pipeline =
-            Some(make_edge("sub_highlight_edge_hdr", wgpu::TextureFormat::Rgba16Float));
-        self.sub_highlight_sprite_pipeline =
-            Some(make_sprite("sub_highlight_sprite_hdr", wgpu::TextureFormat::Rgba16Float));
-        self.sub_highlight_fill_ldr_pipeline =
-            Some(make_fill("sub_highlight_fill_ldr", ldr_fmt));
-        self.sub_highlight_edge_ldr_pipeline =
-            Some(make_edge("sub_highlight_edge_ldr", ldr_fmt));
+        self.sub_highlight_fill_pipeline = Some(make_fill(
+            "sub_highlight_fill_hdr",
+            wgpu::TextureFormat::Rgba16Float,
+        ));
+        self.sub_highlight_edge_pipeline = Some(make_edge(
+            "sub_highlight_edge_hdr",
+            wgpu::TextureFormat::Rgba16Float,
+        ));
+        self.sub_highlight_sprite_pipeline = Some(make_sprite(
+            "sub_highlight_sprite_hdr",
+            wgpu::TextureFormat::Rgba16Float,
+        ));
+        self.sub_highlight_fill_ldr_pipeline = Some(make_fill("sub_highlight_fill_ldr", ldr_fmt));
+        self.sub_highlight_edge_ldr_pipeline = Some(make_edge("sub_highlight_edge_ldr", ldr_fmt));
         self.sub_highlight_sprite_ldr_pipeline =
             Some(make_sprite("sub_highlight_sprite_ldr", ldr_fmt));
         self.sub_highlight_bgl = Some(bgl);
@@ -254,183 +271,241 @@ impl ViewportGpuResources {
         let mut sprite_pos: Vec<[f32; 3]> = Vec::new();
 
         if let Some(sel) = sel {
-        for (node_id, sub_ref) in &sel.items {
-            let model = sel
-                .model_matrices
-                .get(node_id)
-                .copied()
-                .unwrap_or(glam::Mat4::IDENTITY);
+            for (node_id, sub_ref) in &sel.items {
+                let model = sel
+                    .model_matrices
+                    .get(node_id)
+                    .copied()
+                    .unwrap_or(glam::Mat4::IDENTITY);
 
-            let xform = |lp: [f32; 3]| -> [f32; 3] {
-                (model * glam::Vec4::new(lp[0], lp[1], lp[2], 1.0))
-                    .truncate()
-                    .to_array()
-            };
+                let xform = |lp: [f32; 3]| -> [f32; 3] {
+                    (model * glam::Vec4::new(lp[0], lp[1], lp[2], 1.0))
+                        .truncate()
+                        .to_array()
+                };
 
-            match sub_ref {
-                SubObjectRef::Face(i) => {
-                    if let Some((positions, indices)) = sel.mesh_lookup.get(node_id) {
-                        // parry3d encodes backface hits as face_idx + n_triangles.
-                        // Wrap to the canonical front-face index so both sides highlight.
-                        let n_tri = indices.len() / 3;
-                        let face_raw = *i as usize;
-                        let face = if face_raw >= n_tri { face_raw - n_tri } else { face_raw };
-                        let base = face * 3;
-                        if base + 2 < indices.len() {
-                            let ia = indices[base] as usize;
-                            let ib = indices[base + 1] as usize;
-                            let ic = indices[base + 2] as usize;
-                            if ia < positions.len() && ib < positions.len() && ic < positions.len()
-                            {
-                                let a = xform(positions[ia]);
-                                let b = xform(positions[ib]);
-                                let c = xform(positions[ic]);
-                                // Face fill: one triangle.
-                                fill_verts.extend_from_slice(&[a, b, c]);
-                                // Edge outline: three edges of the triangle.
-                                for (p0, p1) in [(a, b), (b, c), (c, a)] {
-                                    edge_data.extend_from_slice(&p0);
-                                    edge_data.extend_from_slice(&p1);
-                                }
-                            }
-                        }
-                    }
-                }
-                SubObjectRef::Vertex(v) => {
-                    if let Some((positions, _)) = sel.mesh_lookup.get(node_id) {
-                        if let Some(lp) = positions.get(*v as usize) {
-                            sprite_pos.push(xform(*lp));
-                        }
-                    }
-                }
-                SubObjectRef::Voxel(flat) => {
-                    if let Some(info) = sel.voxel_lookup.get(node_id) {
-                        let [nx, ny, nz] = info.dims;
-                        if nx == 0 || ny == 0 || nz == 0 {
-                            continue;
-                        }
-                        let flat = *flat;
-                        let ix = flat % nx;
-                        let iy = (flat / nx) % ny;
-                        let iz = flat / (nx * ny);
-                        let bbox_min = glam::Vec3::from(info.bbox_min);
-                        let bbox_max = glam::Vec3::from(info.bbox_max);
-                        let cell = (bbox_max - bbox_min)
-                            / glam::Vec3::new(nx as f32, ny as f32, nz as f32);
-                        let lo = bbox_min + cell * glam::Vec3::new(ix as f32, iy as f32, iz as f32);
-                        let hi = lo + cell;
-                        let m = glam::Mat4::from_cols_array_2d(&info.model);
-                        let xv = |lp: glam::Vec3| -> [f32; 3] {
-                            m.transform_point3(lp).to_array()
-                        };
-                        // 8 corners of the voxel AABB.
-                        let c = [
-                            xv(glam::Vec3::new(lo.x, lo.y, lo.z)),
-                            xv(glam::Vec3::new(hi.x, lo.y, lo.z)),
-                            xv(glam::Vec3::new(hi.x, hi.y, lo.z)),
-                            xv(glam::Vec3::new(lo.x, hi.y, lo.z)),
-                            xv(glam::Vec3::new(lo.x, lo.y, hi.z)),
-                            xv(glam::Vec3::new(hi.x, lo.y, hi.z)),
-                            xv(glam::Vec3::new(hi.x, hi.y, hi.z)),
-                            xv(glam::Vec3::new(lo.x, hi.y, hi.z)),
-                        ];
-                        // 12 edges of the cube.
-                        for (a, b) in [
-                            (0, 1), (1, 2), (2, 3), (3, 0), // bottom face
-                            (4, 5), (5, 6), (6, 7), (7, 4), // top face
-                            (0, 4), (1, 5), (2, 6), (3, 7), // verticals
-                        ] {
-                            edge_data.extend_from_slice(&c[a]);
-                            edge_data.extend_from_slice(&c[b]);
-                        }
-                    }
-                }
-                SubObjectRef::Cell(i) => {
-                    if let Some(info) = sel.cell_lookup.get(node_id) {
-                        if let Some(cell) = info.cells.get(*i as usize) {
-                            const S: u32 = u32::MAX; // CELL_SENTINEL
-                            let nv: usize = if cell[4] == S { 4 }
-                                else if cell[5] == S { 5 }
-                                else if cell[6] == S { 6 }
-                                else { 8 };
-                            let edges: &[(usize, usize)] = match nv {
-                                4 => &[(0,1),(1,2),(0,2),(0,3),(1,3),(2,3)],
-                                5 => &[(0,1),(1,2),(2,3),(3,0),(0,4),(1,4),(2,4),(3,4)],
-                                6 => &[(0,1),(1,2),(0,2),(3,4),(4,5),(3,5),(0,3),(1,4),(2,5)],
-                                _ => &[(0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),(0,4),(1,5),(2,6),(3,7)],
+                match sub_ref {
+                    SubObjectRef::Face(i) => {
+                        if let Some((positions, indices)) = sel.mesh_lookup.get(node_id) {
+                            // parry3d encodes backface hits as face_idx + n_triangles.
+                            // Wrap to the canonical front-face index so both sides highlight.
+                            let n_tri = indices.len() / 3;
+                            let face_raw = *i as usize;
+                            let face = if face_raw >= n_tri {
+                                face_raw - n_tri
+                            } else {
+                                face_raw
                             };
-                            for &(a, b) in edges {
-                                if let (Some(&pa), Some(&pb)) = (
-                                    info.positions.get(cell[a] as usize),
-                                    info.positions.get(cell[b] as usize),
-                                ) {
-                                    edge_data.extend_from_slice(&xform(pa));
-                                    edge_data.extend_from_slice(&xform(pb));
+                            let base = face * 3;
+                            if base + 2 < indices.len() {
+                                let ia = indices[base] as usize;
+                                let ib = indices[base + 1] as usize;
+                                let ic = indices[base + 2] as usize;
+                                if ia < positions.len()
+                                    && ib < positions.len()
+                                    && ic < positions.len()
+                                {
+                                    let a = xform(positions[ia]);
+                                    let b = xform(positions[ib]);
+                                    let c = xform(positions[ic]);
+                                    // Face fill: one triangle.
+                                    fill_verts.extend_from_slice(&[a, b, c]);
+                                    // Edge outline: three edges of the triangle.
+                                    for (p0, p1) in [(a, b), (b, c), (c, a)] {
+                                        edge_data.extend_from_slice(&p0);
+                                        edge_data.extend_from_slice(&p1);
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                SubObjectRef::Point(i) => {
-                    // Polyline node sprite. Falls back to curve_family_lookup for
-                    // streamtube/tube/ribbon picks, then point_positions for
-                    // point-cloud picks that share the same SubObjectRef variant.
-                    if let Some(info) = sel.polyline_lookup.get(node_id)
-                        .or_else(|| sel.curve_family_lookup.get(node_id))
-                    {
-                        if let Some(&pos) = info.positions.get(*i as usize) {
-                            sprite_pos.push(xform(pos));
-                        }
-                    } else if let Some(positions) = sel.point_positions.get(node_id) {
-                        if let Some(&pos) = positions.get(*i as usize) {
-                            sprite_pos.push(xform(pos));
+                    SubObjectRef::Vertex(v) => {
+                        if let Some((positions, _)) = sel.mesh_lookup.get(node_id) {
+                            if let Some(lp) = positions.get(*v as usize) {
+                                sprite_pos.push(xform(*lp));
+                            }
                         }
                     }
-                }
-                SubObjectRef::Segment(idx) => {
-                    // Polyline or curve-family segment edge. Recover the two endpoint
-                    // positions for the global segment index by walking strip_lengths.
-                    let info = sel.polyline_lookup.get(node_id)
-                        .or_else(|| sel.curve_family_lookup.get(node_id));
-                    if let Some(info) = info {
-                        if let Some((pa, pb)) =
-                            segment_endpoints(*idx, &info.positions, &info.strip_lengths)
+                    SubObjectRef::Voxel(flat) => {
+                        if let Some(info) = sel.voxel_lookup.get(node_id) {
+                            let [nx, ny, nz] = info.dims;
+                            if nx == 0 || ny == 0 || nz == 0 {
+                                continue;
+                            }
+                            let flat = *flat;
+                            let ix = flat % nx;
+                            let iy = (flat / nx) % ny;
+                            let iz = flat / (nx * ny);
+                            let bbox_min = glam::Vec3::from(info.bbox_min);
+                            let bbox_max = glam::Vec3::from(info.bbox_max);
+                            let cell = (bbox_max - bbox_min)
+                                / glam::Vec3::new(nx as f32, ny as f32, nz as f32);
+                            let lo =
+                                bbox_min + cell * glam::Vec3::new(ix as f32, iy as f32, iz as f32);
+                            let hi = lo + cell;
+                            let m = glam::Mat4::from_cols_array_2d(&info.model);
+                            let xv =
+                                |lp: glam::Vec3| -> [f32; 3] { m.transform_point3(lp).to_array() };
+                            // 8 corners of the voxel AABB.
+                            let c = [
+                                xv(glam::Vec3::new(lo.x, lo.y, lo.z)),
+                                xv(glam::Vec3::new(hi.x, lo.y, lo.z)),
+                                xv(glam::Vec3::new(hi.x, hi.y, lo.z)),
+                                xv(glam::Vec3::new(lo.x, hi.y, lo.z)),
+                                xv(glam::Vec3::new(lo.x, lo.y, hi.z)),
+                                xv(glam::Vec3::new(hi.x, lo.y, hi.z)),
+                                xv(glam::Vec3::new(hi.x, hi.y, hi.z)),
+                                xv(glam::Vec3::new(lo.x, hi.y, hi.z)),
+                            ];
+                            // 12 edges of the cube.
+                            for (a, b) in [
+                                (0, 1),
+                                (1, 2),
+                                (2, 3),
+                                (3, 0), // bottom face
+                                (4, 5),
+                                (5, 6),
+                                (6, 7),
+                                (7, 4), // top face
+                                (0, 4),
+                                (1, 5),
+                                (2, 6),
+                                (3, 7), // verticals
+                            ] {
+                                edge_data.extend_from_slice(&c[a]);
+                                edge_data.extend_from_slice(&c[b]);
+                            }
+                        }
+                    }
+                    SubObjectRef::Cell(i) => {
+                        if let Some(info) = sel.cell_lookup.get(node_id) {
+                            if let Some(cell) = info.cells.get(*i as usize) {
+                                const S: u32 = u32::MAX; // CELL_SENTINEL
+                                let nv: usize = if cell[4] == S {
+                                    4
+                                } else if cell[5] == S {
+                                    5
+                                } else if cell[6] == S {
+                                    6
+                                } else {
+                                    8
+                                };
+                                let edges: &[(usize, usize)] = match nv {
+                                    4 => &[(0, 1), (1, 2), (0, 2), (0, 3), (1, 3), (2, 3)],
+                                    5 => &[
+                                        (0, 1),
+                                        (1, 2),
+                                        (2, 3),
+                                        (3, 0),
+                                        (0, 4),
+                                        (1, 4),
+                                        (2, 4),
+                                        (3, 4),
+                                    ],
+                                    6 => &[
+                                        (0, 1),
+                                        (1, 2),
+                                        (0, 2),
+                                        (3, 4),
+                                        (4, 5),
+                                        (3, 5),
+                                        (0, 3),
+                                        (1, 4),
+                                        (2, 5),
+                                    ],
+                                    _ => &[
+                                        (0, 1),
+                                        (1, 2),
+                                        (2, 3),
+                                        (3, 0),
+                                        (4, 5),
+                                        (5, 6),
+                                        (6, 7),
+                                        (7, 4),
+                                        (0, 4),
+                                        (1, 5),
+                                        (2, 6),
+                                        (3, 7),
+                                    ],
+                                };
+                                for &(a, b) in edges {
+                                    if let (Some(&pa), Some(&pb)) = (
+                                        info.positions.get(cell[a] as usize),
+                                        info.positions.get(cell[b] as usize),
+                                    ) {
+                                        edge_data.extend_from_slice(&xform(pa));
+                                        edge_data.extend_from_slice(&xform(pb));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    SubObjectRef::Point(i) => {
+                        // Polyline node sprite. Falls back to curve_family_lookup for
+                        // streamtube/tube/ribbon picks, then point_positions for
+                        // point-cloud picks that share the same SubObjectRef variant.
+                        if let Some(info) = sel
+                            .polyline_lookup
+                            .get(node_id)
+                            .or_else(|| sel.curve_family_lookup.get(node_id))
                         {
-                            edge_data.extend_from_slice(&xform(pa));
-                            edge_data.extend_from_slice(&xform(pb));
+                            if let Some(&pos) = info.positions.get(*i as usize) {
+                                sprite_pos.push(xform(pos));
+                            }
+                        } else if let Some(positions) = sel.point_positions.get(node_id) {
+                            if let Some(&pos) = positions.get(*i as usize) {
+                                sprite_pos.push(xform(pos));
+                            }
                         }
                     }
-                }
-                SubObjectRef::Strip(s) => {
-                    // All segments in the strip rendered as edge lines.
-                    let info = sel.polyline_lookup.get(node_id)
-                        .or_else(|| sel.curve_family_lookup.get(node_id));
-                    if let Some(info) = info {
-                        let node_start: usize = info
-                            .strip_lengths
-                            .iter()
-                            .take(*s as usize)
-                            .map(|&l| l as usize)
-                            .sum();
-                        let strip_len = info
-                            .strip_lengths
-                            .get(*s as usize)
-                            .copied()
-                            .unwrap_or(info.positions.len() as u32)
-                            as usize;
-                        for j in node_start..node_start + strip_len.saturating_sub(1) {
-                            if let (Some(&pa), Some(&pb)) =
-                                (info.positions.get(j), info.positions.get(j + 1))
+                    SubObjectRef::Segment(idx) => {
+                        // Polyline or curve-family segment edge. Recover the two endpoint
+                        // positions for the global segment index by walking strip_lengths.
+                        let info = sel
+                            .polyline_lookup
+                            .get(node_id)
+                            .or_else(|| sel.curve_family_lookup.get(node_id));
+                        if let Some(info) = info {
+                            if let Some((pa, pb)) =
+                                segment_endpoints(*idx, &info.positions, &info.strip_lengths)
                             {
                                 edge_data.extend_from_slice(&xform(pa));
                                 edge_data.extend_from_slice(&xform(pb));
                             }
                         }
                     }
+                    SubObjectRef::Strip(s) => {
+                        // All segments in the strip rendered as edge lines.
+                        let info = sel
+                            .polyline_lookup
+                            .get(node_id)
+                            .or_else(|| sel.curve_family_lookup.get(node_id));
+                        if let Some(info) = info {
+                            let node_start: usize = info
+                                .strip_lengths
+                                .iter()
+                                .take(*s as usize)
+                                .map(|&l| l as usize)
+                                .sum();
+                            let strip_len = info
+                                .strip_lengths
+                                .get(*s as usize)
+                                .copied()
+                                .unwrap_or(info.positions.len() as u32)
+                                as usize;
+                            for j in node_start..node_start + strip_len.saturating_sub(1) {
+                                if let (Some(&pa), Some(&pb)) =
+                                    (info.positions.get(j), info.positions.get(j + 1))
+                                {
+                                    edge_data.extend_from_slice(&xform(pa));
+                                    edge_data.extend_from_slice(&xform(pb));
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
-        }
         } // end if let Some(sel)
 
         // Append any extra edge segments (e.g. volume AABB outlines from object-level selection).
@@ -494,17 +569,26 @@ impl ViewportGpuResources {
             let fill_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("sub_hl_fill_bg"),
                 layout: bgl,
-                entries: &[wgpu::BindGroupEntry { binding: 0, resource: binding.clone() }],
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: binding.clone(),
+                }],
             });
             let edge_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("sub_hl_edge_bg"),
                 layout: bgl,
-                entries: &[wgpu::BindGroupEntry { binding: 0, resource: binding.clone() }],
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: binding.clone(),
+                }],
             });
             let sprite_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("sub_hl_sprite_bg"),
                 layout: bgl,
-                entries: &[wgpu::BindGroupEntry { binding: 0, resource: binding }],
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: binding,
+                }],
             });
             (fill_bg, edge_bg, sprite_bg)
         }; // bgl borrow dropped here

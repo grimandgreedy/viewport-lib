@@ -388,9 +388,7 @@ impl ViewportRenderer {
         // and for any items with active scalar attributes or two-sided materials
         // (both bypass the instanced path).
         let has_scalar_items = scene_items.iter().any(|i| i.active_attribute.is_some());
-        let has_two_sided_items = scene_items
-            .iter()
-            .any(|i| i.material.is_two_sided());
+        let has_two_sided_items = scene_items.iter().any(|i| i.material.is_two_sided());
         let has_matcap_items = scene_items.iter().any(|i| i.material.matcap_id.is_some());
         let has_param_vis_items = scene_items.iter().any(|i| i.material.param_vis.is_some());
         let has_wireframe_items = scene_items.iter().any(|i| i.render_as_wireframe);
@@ -424,11 +422,7 @@ impl ViewportRenderer {
                     continue;
                 }
 
-                if resources
-                    .mesh_store
-                    .get(item.mesh_id)
-                    .is_none()
-                {
+                if resources.mesh_store.get(item.mesh_id).is_none() {
                     tracing::warn!(
                         mesh_index = item.mesh_id.index(),
                         "scene item mesh_index invalid, skipping"
@@ -438,15 +432,14 @@ impl ViewportRenderer {
                 let m = &item.material;
                 // Compute scalar attribute range.
                 let (has_attr, s_min, s_max) = if let Some(attr_ref) = &item.active_attribute {
-                    let range = item
-                        .scalar_range
-                        .or_else(|| {
-                            resources
-                                .mesh_store
-                                .get(item.mesh_id)
-                                .and_then(|mesh| mesh.attribute_ranges.get(&attr_ref.name).copied())
-                        })
-                        .unwrap_or((0.0, 1.0));
+                    let range =
+                        item.scalar_range
+                            .or_else(|| {
+                                resources.mesh_store.get(item.mesh_id).and_then(|mesh| {
+                                    mesh.attribute_ranges.get(&attr_ref.name).copied()
+                                })
+                            })
+                            .unwrap_or((0.0, 1.0));
                     (1u32, range.0, range.1)
                 } else {
                     (0u32, 0.0, 1.0)
@@ -455,7 +448,11 @@ impl ViewportRenderer {
                     model: item.model,
                     color: [m.base_color[0], m.base_color[1], m.base_color[2], m.opacity],
                     selected: if item.selected { 1 } else { 0 },
-                    wireframe: if frame.viewport.wireframe_mode || item.render_as_wireframe { 1 } else { 0 },
+                    wireframe: if frame.viewport.wireframe_mode || item.render_as_wireframe {
+                        1
+                    } else {
+                        0
+                    },
                     ambient: m.ambient,
                     diffuse: m.diffuse,
                     specular: m.specular,
@@ -558,10 +555,7 @@ impl ViewportRenderer {
 
                 // Write uniform data : use get() to read buffer references, then drop.
                 {
-                    let mesh = resources
-                        .mesh_store
-                        .get(item.mesh_id)
-                        .unwrap();
+                    let mesh = resources.mesh_store.get(item.mesh_id).unwrap();
                     queue.write_buffer(
                         &mesh.object_uniform_buf,
                         0,
@@ -607,16 +601,59 @@ impl ViewportRenderer {
                     label: Some("wireframe_item_bg"),
                     layout: &resources.object_bind_group_layout,
                     entries: &[
-                        wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&resources.fallback_texture.view) },
-                        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&resources.material_sampler) },
-                        wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&resources.fallback_normal_map_view) },
-                        wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&resources.fallback_ao_map_view) },
-                        wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&resources.fallback_lut_view) },
-                        wgpu::BindGroupEntry { binding: 6, resource: resources.fallback_scalar_buf.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(resources.fallback_matcap_view.as_ref().unwrap_or(&resources.fallback_texture.view)) },
-                        wgpu::BindGroupEntry { binding: 8, resource: resources.fallback_face_color_buf.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 9, resource: resources.fallback_warp_buf.as_entire_binding() },
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(
+                                &resources.fallback_texture.view,
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(&resources.material_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::TextureView(
+                                &resources.fallback_normal_map_view,
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::TextureView(
+                                &resources.fallback_ao_map_view,
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 5,
+                            resource: wgpu::BindingResource::TextureView(
+                                &resources.fallback_lut_view,
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 6,
+                            resource: resources.fallback_scalar_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 7,
+                            resource: wgpu::BindingResource::TextureView(
+                                resources
+                                    .fallback_matcap_view
+                                    .as_ref()
+                                    .unwrap_or(&resources.fallback_texture.view),
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 8,
+                            resource: resources.fallback_face_color_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 9,
+                            resource: resources.fallback_warp_buf.as_entire_binding(),
+                        },
                     ],
                 });
                 self.wireframe_uniform_bufs.push(buf);
@@ -649,14 +686,17 @@ impl ViewportRenderer {
             // that mix instanced and non-instanced items (e.g. one two-sided mesh +
             // many static boxes) to still hit the instanced batch cache on frames
             // where the filtered set is unchanged.
-            let instancable_count = scene_items.iter().filter(|item| {
-                item.visible
-                    && item.active_attribute.is_none()
-                    && !item.material.is_two_sided()
-                    && item.material.matcap_id.is_none()
-                    && item.material.param_vis.is_none()
-                    && resources.mesh_store.get(item.mesh_id).is_some()
-            }).count();
+            let instancable_count = scene_items
+                .iter()
+                .filter(|item| {
+                    item.visible
+                        && item.active_attribute.is_none()
+                        && !item.material.is_two_sided()
+                        && item.material.matcap_id.is_none()
+                        && item.material.param_vis.is_none()
+                        && resources.mesh_store.get(item.mesh_id).is_some()
+                })
+                .count();
             let cache_valid = instancable_count == self.last_instancable_count
                 && frame.scene.generation == self.last_scene_generation
                 && frame.interaction.selection_generation == self.last_selection_generation
@@ -672,10 +712,7 @@ impl ViewportRenderer {
                             && !item.material.is_two_sided()
                             && item.material.matcap_id.is_none()
                             && item.material.param_vis.is_none()
-                            && resources
-                                .mesh_store
-                                .get(item.mesh_id)
-                                .is_some()
+                            && resources.mesh_store.get(item.mesh_id).is_some()
                     })
                     .collect();
 
@@ -750,8 +787,7 @@ impl ViewportRenderer {
                                 .unwrap_or(0);
                             for item in batch_items {
                                 if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
-                                    let model =
-                                        glam::Mat4::from_cols_array_2d(&item.model);
+                                    let model = glam::Mat4::from_cols_array_2d(&item.model);
                                     let world_aabb = mesh.aabb.transformed(&model);
                                     all_aabbs.push(InstanceAabb {
                                         min: world_aabb.min.into(),
@@ -866,8 +902,7 @@ impl ViewportRenderer {
                 ) {
                     // Build the FrustumUniform from the current camera view-projection.
                     let vp_mat = frame.camera.render_camera.view_proj();
-                    let cpu_frustum =
-                        crate::camera::frustum::Frustum::from_view_proj(&vp_mat);
+                    let cpu_frustum = crate::camera::frustum::Frustum::from_view_proj(&vp_mat);
                     let frustum_uniform = crate::resources::FrustumUniform {
                         planes: std::array::from_fn(|i| crate::resources::FrustumPlane {
                             normal: cpu_frustum.planes[i].normal.into(),
@@ -900,29 +935,18 @@ impl ViewportRenderer {
                     // Copy indirect_args_buf to the CPU-readable staging buffer so the
                     // visible instance count can be read back next frame (one-frame lag).
                     let indirect_bytes = batch_count as u64 * 20;
-                    if self
-                        .indirect_readback_buf
-                        .as_ref()
-                        .map_or(0, |b| b.size())
-                        < indirect_bytes
+                    if self.indirect_readback_buf.as_ref().map_or(0, |b| b.size()) < indirect_bytes
                     {
                         self.indirect_readback_buf =
                             Some(device.create_buffer(&wgpu::BufferDescriptor {
                                 label: Some("indirect_readback_buf"),
                                 size: indirect_bytes,
-                                usage: wgpu::BufferUsages::COPY_DST
-                                    | wgpu::BufferUsages::MAP_READ,
+                                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                                 mapped_at_creation: false,
                             }));
                     }
                     if let Some(ref rb_buf) = self.indirect_readback_buf {
-                        encoder.copy_buffer_to_buffer(
-                            indirect_buf,
-                            0,
-                            rb_buf,
-                            0,
-                            indirect_bytes,
-                        );
+                        encoder.copy_buffer_to_buffer(indirect_buf, 0, rb_buf, 0, indirect_bytes);
                     }
                     queue.submit(std::iter::once(encoder.finish()));
                     self.indirect_readback_batch_count = batch_count;
@@ -1080,13 +1104,13 @@ impl ViewportRenderer {
                 self.implicit_gpu_data.push(gpu);
                 if item.id != 0 {
                     self.pick_implicit_items.push(GpuImplicitPickItem {
-                        id:            item.id,
-                        primitives:    item.primitives.clone(),
-                        blend_mode:    item.blend_mode,
-                        max_steps:     item.march_options.max_steps,
-                        step_scale:    item.march_options.step_scale,
+                        id: item.id,
+                        primitives: item.primitives.clone(),
+                        blend_mode: item.blend_mode,
+                        max_steps: item.march_options.max_steps,
+                        step_scale: item.march_options.step_scale,
                         hit_threshold: item.march_options.hit_threshold,
-                        max_distance:  item.march_options.max_distance,
+                        max_distance: item.march_options.max_distance,
                     });
                 }
             }
@@ -1099,14 +1123,13 @@ impl ViewportRenderer {
         self.pick_mc_items.clear();
         if !frame.scene.gpu_mc_jobs.is_empty() {
             resources.ensure_mc_pipelines(device);
-            self.mc_gpu_data =
-                resources.run_mc_jobs(device, queue, &frame.scene.gpu_mc_jobs);
+            self.mc_gpu_data = resources.run_mc_jobs(device, queue, &frame.scene.gpu_mc_jobs);
             for job in &frame.scene.gpu_mc_jobs {
                 if job.id != 0 {
                     if let Some(cpu_data) = &job.cpu_data {
                         self.pick_mc_items.push(GpuMcPickItem {
-                            id:          job.id,
-                            isovalue:    job.isovalue,
+                            id: job.id,
+                            isovalue: job.isovalue,
                             volume_data: cpu_data.clone(),
                         });
                     }
@@ -1242,7 +1265,10 @@ impl ViewportRenderer {
                 }
                 if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
                     // Verify the vector attribute buffer exists before committing to this item.
-                    if mesh.vector_attribute_buffers.contains_key(&item.vector_attribute) {
+                    if mesh
+                        .vector_attribute_buffers
+                        .contains_key(&item.vector_attribute)
+                    {
                         if let Some(bgl) = &resources.lic_surface_bgl {
                             use crate::resources::LicObjectUniform;
                             let model = item.model;
@@ -1259,12 +1285,10 @@ impl ViewportRenderer {
                             let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                                 label: Some("lic_surface_item_bg"),
                                 layout: bgl,
-                                entries: &[
-                                    wgpu::BindGroupEntry {
-                                        binding: 0,
-                                        resource: obj_buf.as_entire_binding(),
-                                    },
-                                ],
+                                entries: &[wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: obj_buf.as_entire_binding(),
+                                }],
                             });
                             self.lic_gpu_data.push(crate::resources::LicSurfaceGpuData {
                                 bind_group: bg,
@@ -1277,7 +1301,10 @@ impl ViewportRenderer {
                 }
             }
             // Write LicAdvectUniform to the per-viewport buffer.
-            if let Some(hdr) = self.viewport_slots[frame.camera.viewport_index].hdr.as_ref() {
+            if let Some(hdr) = self.viewport_slots[frame.camera.viewport_index]
+                .hdr
+                .as_ref()
+            {
                 if let Some(first) = frame.scene.lic_items.first() {
                     let [vw, vh] = hdr.size;
                     let u = crate::resources::LicAdvectUniform {
@@ -1333,10 +1360,7 @@ impl ViewportRenderer {
 
             if self.use_instancing {
                 for batch in &self.instanced_batches {
-                    if let Some(mesh) = resources
-                        .mesh_store
-                        .get(batch.mesh_id)
-                    {
+                    if let Some(mesh) = resources.mesh_store.get(batch.mesh_id) {
                         draw_calls += 1;
                         triangles += (mesh.index_count / 3) as u64 * batch.instance_count as u64;
                     }
@@ -1346,10 +1370,7 @@ impl ViewportRenderer {
                     if !item.visible {
                         continue;
                     }
-                    if let Some(mesh) = resources
-                        .mesh_store
-                        .get(item.mesh_id)
-                    {
+                    if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
                         draw_calls += 1;
                         triangles += (mesh.index_count / 3) as u64;
                     }
@@ -1448,10 +1469,9 @@ impl ViewportRenderer {
                             resources.shadow_vis_bufs[c].as_ref(),
                             resources.shadow_indirect_bufs[c].as_ref(),
                         ) {
-                            let cpu_frustum =
-                                crate::camera::frustum::Frustum::from_view_proj(
-                                    &cascade_view_projs[c],
-                                );
+                            let cpu_frustum = crate::camera::frustum::Frustum::from_view_proj(
+                                &cascade_view_projs[c],
+                            );
                             let frustum_uniform = crate::resources::FrustumUniform {
                                 planes: std::array::from_fn(|i| crate::resources::FrustumPlane {
                                     normal: cpu_frustum.planes[i].normal.into(),
@@ -1539,8 +1559,7 @@ impl ViewportRenderer {
                                 ),
                             );
 
-                            let Some(pipeline) =
-                                resources.shadow_instanced_cull_pipeline.as_ref()
+                            let Some(pipeline) = resources.shadow_instanced_cull_pipeline.as_ref()
                             else {
                                 continue;
                             };
@@ -1571,16 +1590,13 @@ impl ViewportRenderer {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
                                 };
-                                shadow_pass
-                                    .set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 shadow_pass.set_index_buffer(
                                     mesh.index_buffer.slice(..),
                                     wgpu::IndexFormat::Uint32,
                                 );
-                                shadow_pass.draw_indexed_indirect(
-                                    shadow_indirect_buf,
-                                    bi as u64 * 20,
-                                );
+                                shadow_pass
+                                    .draw_indexed_indirect(shadow_indirect_buf, bi as u64 * 20);
                                 shadow_draws += 1;
                             }
                         }
@@ -1635,10 +1651,7 @@ impl ViewportRenderer {
                                 if batch.is_transparent {
                                     continue;
                                 }
-                                let Some(mesh) = resources
-                                    .mesh_store
-                                    .get(batch.mesh_id)
-                                else {
+                                let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
                                 };
                                 shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
@@ -1693,10 +1706,7 @@ impl ViewportRenderer {
                             if item.material.opacity < 1.0 {
                                 continue;
                             }
-                            let Some(mesh) = resources
-                                .mesh_store
-                                .get(item.mesh_id)
-                            else {
+                            let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                                 continue;
                             };
 
@@ -2129,7 +2139,9 @@ impl ViewportRenderer {
                     let mean_max_scale: f32 = if gpu_set.cpu_scales.is_empty() {
                         0.05
                     } else {
-                        gpu_set.cpu_scales.iter()
+                        gpu_set
+                            .cpu_scales
+                            .iter()
                             .map(|s| s[0].max(s[1]).max(s[2]))
                             .sum::<f32>()
                             / gpu_set.cpu_scales.len() as f32
@@ -2141,10 +2153,18 @@ impl ViewportRenderer {
                     // to the view direction, avoiding the collapse when looking along X.
                     let model = glam::Mat4::from_cols_array_2d(&item.model);
                     let center_w = model.transform_point3(glam::Vec3::ZERO);
-                    let cam_right = frame.camera.render_camera.view.row(0).truncate().normalize();
-                    let p0_clip = view_proj * glam::Vec4::new(center_w.x, center_w.y, center_w.z, 1.0);
+                    let cam_right = frame
+                        .camera
+                        .render_camera
+                        .view
+                        .row(0)
+                        .truncate()
+                        .normalize();
+                    let p0_clip =
+                        view_proj * glam::Vec4::new(center_w.x, center_w.y, center_w.z, 1.0);
                     let p1_world = center_w + cam_right * world_radius;
-                    let p1_clip = view_proj * glam::Vec4::new(p1_world.x, p1_world.y, p1_world.z, 1.0);
+                    let p1_clip =
+                        view_proj * glam::Vec4::new(p1_world.x, p1_world.y, p1_world.z, 1.0);
                     let pixel_radius = if p0_clip.w.abs() > 1e-6 && p1_clip.w.abs() > 1e-6 {
                         let p0_ndc = glam::Vec2::new(p0_clip.x, p0_clip.y) / p0_clip.w;
                         let p1_ndc = glam::Vec2::new(p1_clip.x, p1_clip.y) / p1_clip.w;
@@ -2154,11 +2174,12 @@ impl ViewportRenderer {
                     };
                     let pixel_radius = pixel_radius.max(1.0);
 
-                    let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("splat_outline_pos_buf"),
-                        contents: bytemuck::cast_slice(gpu_set.cpu_positions.as_slice()),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
+                    let position_buf =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("splat_outline_pos_buf"),
+                            contents: bytemuck::cast_slice(gpu_set.cpu_positions.as_slice()),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        });
 
                     let uniform = SplatOutlineMaskUniform {
                         model: item.model,
@@ -2167,11 +2188,12 @@ impl ViewportRenderer {
                         pixel_radius,
                         _pad: [0.0; 5],
                     };
-                    let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("splat_outline_uniform_buf"),
-                        contents: bytemuck::cast_slice(&[uniform]),
-                        usage: wgpu::BufferUsages::UNIFORM,
-                    });
+                    let uniform_buf =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("splat_outline_uniform_buf"),
+                            contents: bytemuck::cast_slice(&[uniform]),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        });
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("splat_outline_bg"),
                         layout: &resources.outline_bind_group_layout,
@@ -2204,7 +2226,8 @@ impl ViewportRenderer {
                         .flat_map(|s| s.items.iter())
                         .filter_map(|(node_id, sub)| {
                             if *node_id == item.pick_id {
-                                if let crate::interaction::sub_object::SubObjectRef::Splat(i) = sub {
+                                if let crate::interaction::sub_object::SubObjectRef::Splat(i) = sub
+                                {
                                     return Some(*i);
                                 }
                             }
@@ -2216,7 +2239,13 @@ impl ViewportRenderer {
                     }
 
                     let model = glam::Mat4::from_cols_array_2d(&item.model);
-                    let cam_right = frame.camera.render_camera.view.row(0).truncate().normalize();
+                    let cam_right = frame
+                        .camera
+                        .render_camera
+                        .view
+                        .row(0)
+                        .truncate()
+                        .normalize();
 
                     let mut positions: Vec<[f32; 3]> = Vec::with_capacity(selected_indices.len());
                     let mut sizes: Vec<f32> = Vec::with_capacity(selected_indices.len());
@@ -2230,9 +2259,11 @@ impl ViewportRenderer {
                                 0.15
                             };
                             let center_w = model.transform_point3(glam::Vec3::from(pos));
-                            let p0_clip = view_proj * glam::Vec4::new(center_w.x, center_w.y, center_w.z, 1.0);
+                            let p0_clip = view_proj
+                                * glam::Vec4::new(center_w.x, center_w.y, center_w.z, 1.0);
                             let p1_world = center_w + cam_right * world_radius;
-                            let p1_clip = view_proj * glam::Vec4::new(p1_world.x, p1_world.y, p1_world.z, 1.0);
+                            let p1_clip = view_proj
+                                * glam::Vec4::new(p1_world.x, p1_world.y, p1_world.z, 1.0);
                             let px = if p0_clip.w.abs() > 1e-6 && p1_clip.w.abs() > 1e-6 {
                                 let p0_ndc = glam::Vec2::new(p0_clip.x, p0_clip.y) / p0_clip.w;
                                 let p1_ndc = glam::Vec2::new(p1_clip.x, p1_clip.y) / p1_clip.w;
@@ -2247,7 +2278,11 @@ impl ViewportRenderer {
                         continue;
                     }
 
-                    let pixel_radius = sizes.iter().cloned().fold(f32::NEG_INFINITY, f32::max).max(1.0);
+                    let pixel_radius = sizes
+                        .iter()
+                        .cloned()
+                        .fold(f32::NEG_INFINITY, f32::max)
+                        .max(1.0);
                     let uniform = SplatOutlineMaskUniform {
                         model: item.model,
                         viewport_w: vp_w,
@@ -2255,11 +2290,12 @@ impl ViewportRenderer {
                         pixel_radius,
                         _pad: [0.0; 5],
                     };
-                    let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("splat_sel_outline_uniform_buf"),
-                        contents: bytemuck::cast_slice(&[uniform]),
-                        usage: wgpu::BufferUsages::UNIFORM,
-                    });
+                    let uniform_buf =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("splat_sel_outline_uniform_buf"),
+                            contents: bytemuck::cast_slice(&[uniform]),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        });
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("splat_sel_outline_bg"),
                         layout: &resources.outline_bind_group_layout,
@@ -2268,11 +2304,12 @@ impl ViewportRenderer {
                             resource: uniform_buf.as_entire_binding(),
                         }],
                     });
-                    let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("splat_sel_outline_pos_buf"),
-                        contents: bytemuck::cast_slice(&positions),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
+                    let position_buf =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("splat_sel_outline_pos_buf"),
+                            contents: bytemuck::cast_slice(&positions),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        });
                     let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("splat_sel_outline_size_buf"),
                         contents: bytemuck::cast_slice(&sizes),
@@ -2296,11 +2333,12 @@ impl ViewportRenderer {
                 let pixel_radius = (item.point_size * 0.5).max(1.0);
                 if item.selected {
                     // Object-level: outline all points.
-                    let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("pc_outline_pos_buf"),
-                        contents: bytemuck::cast_slice(item.positions.as_slice()),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
+                    let position_buf =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("pc_outline_pos_buf"),
+                            contents: bytemuck::cast_slice(item.positions.as_slice()),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        });
                     let uniform = SplatOutlineMaskUniform {
                         model: item.model,
                         viewport_w: vp_w,
@@ -2308,11 +2346,12 @@ impl ViewportRenderer {
                         pixel_radius,
                         _pad: [0.0; 5],
                     };
-                    let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("pc_outline_uniform_buf"),
-                        contents: bytemuck::cast_slice(&[uniform]),
-                        usage: wgpu::BufferUsages::UNIFORM,
-                    });
+                    let uniform_buf =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("pc_outline_uniform_buf"),
+                            contents: bytemuck::cast_slice(&[uniform]),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        });
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("pc_outline_bg"),
                         layout: &self.resources.outline_bind_group_layout,
@@ -2343,7 +2382,8 @@ impl ViewportRenderer {
                         .flat_map(|s| s.items.iter())
                         .filter_map(|(node_id, sub)| {
                             if *node_id == item.id {
-                                if let crate::interaction::sub_object::SubObjectRef::Point(i) = sub {
+                                if let crate::interaction::sub_object::SubObjectRef::Point(i) = sub
+                                {
                                     return item.positions.get(*i as usize).copied();
                                 }
                             }
@@ -2361,11 +2401,12 @@ impl ViewportRenderer {
                         pixel_radius,
                         _pad: [0.0; 5],
                     };
-                    let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("pc_sel_outline_uniform_buf"),
-                        contents: bytemuck::cast_slice(&[uniform]),
-                        usage: wgpu::BufferUsages::UNIFORM,
-                    });
+                    let uniform_buf =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("pc_sel_outline_uniform_buf"),
+                            contents: bytemuck::cast_slice(&[uniform]),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        });
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("pc_sel_outline_bg"),
                         layout: &self.resources.outline_bind_group_layout,
@@ -2374,11 +2415,12 @@ impl ViewportRenderer {
                             resource: uniform_buf.as_entire_binding(),
                         }],
                     });
-                    let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("pc_sel_outline_pos_buf"),
-                        contents: bytemuck::cast_slice(&selected_positions),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
+                    let position_buf =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("pc_sel_outline_pos_buf"),
+                            contents: bytemuck::cast_slice(&selected_positions),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        });
                     let size_data = vec![pixel_radius; n];
                     let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("pc_sel_outline_size_buf"),
@@ -2414,7 +2456,10 @@ impl ViewportRenderer {
                             .flat_map(|s| s.items.iter())
                             .filter_map(|(node_id, sub)| {
                                 if *node_id == item.id {
-                                    if let crate::interaction::sub_object::SubObjectRef::Instance(i) = sub {
+                                    if let crate::interaction::sub_object::SubObjectRef::Instance(
+                                        i,
+                                    ) = sub
+                                    {
                                         return Some(*i);
                                     }
                                 }
@@ -2499,7 +2544,10 @@ impl ViewportRenderer {
                             .flat_map(|s| s.items.iter())
                             .filter_map(|(node_id, sub)| {
                                 if *node_id == item.id {
-                                    if let crate::interaction::sub_object::SubObjectRef::Instance(idx) = sub {
+                                    if let crate::interaction::sub_object::SubObjectRef::Instance(
+                                        idx,
+                                    ) = sub
+                                    {
                                         return Some(*idx);
                                     }
                                 }
@@ -2596,7 +2644,8 @@ impl ViewportRenderer {
                         continue;
                     }
                     if item.selected {
-                        self.resources.ensure_tensor_glyph_outline_mask_pipeline(device);
+                        self.resources
+                            .ensure_tensor_glyph_outline_mask_pipeline(device);
                         tensor_glyph_outline_indices.push((gpu_idx, None));
                     } else if item.id != 0 {
                         let instances: Vec<u32> = sub_sel
@@ -2604,7 +2653,10 @@ impl ViewportRenderer {
                             .flat_map(|s| s.items.iter())
                             .filter_map(|(node_id, sub)| {
                                 if *node_id == item.id {
-                                    if let crate::interaction::sub_object::SubObjectRef::Instance(i) = sub {
+                                    if let crate::interaction::sub_object::SubObjectRef::Instance(
+                                        i,
+                                    ) = sub
+                                    {
                                         return Some(*i);
                                     }
                                 }
@@ -2612,7 +2664,8 @@ impl ViewportRenderer {
                             })
                             .collect();
                         if !instances.is_empty() {
-                            self.resources.ensure_tensor_glyph_outline_mask_pipeline(device);
+                            self.resources
+                                .ensure_tensor_glyph_outline_mask_pipeline(device);
                             tensor_glyph_outline_indices.push((gpu_idx, Some(instances)));
                         }
                     }
@@ -2650,15 +2703,30 @@ impl ViewportRenderer {
                 let (v0, v1, v2, v3) = match item.axis {
                     SliceAxis::X => {
                         let x = bmin[0] + t * (bmax[0] - bmin[0]);
-                        ([x, bmin[1], bmin[2]], [x, bmax[1], bmin[2]], [x, bmax[1], bmax[2]], [x, bmin[1], bmax[2]])
+                        (
+                            [x, bmin[1], bmin[2]],
+                            [x, bmax[1], bmin[2]],
+                            [x, bmax[1], bmax[2]],
+                            [x, bmin[1], bmax[2]],
+                        )
                     }
                     SliceAxis::Y => {
                         let y = bmin[1] + t * (bmax[1] - bmin[1]);
-                        ([bmin[0], y, bmin[2]], [bmax[0], y, bmin[2]], [bmax[0], y, bmax[2]], [bmin[0], y, bmax[2]])
+                        (
+                            [bmin[0], y, bmin[2]],
+                            [bmax[0], y, bmin[2]],
+                            [bmax[0], y, bmax[2]],
+                            [bmin[0], y, bmax[2]],
+                        )
                     }
                     SliceAxis::Z => {
                         let z = bmin[2] + t * (bmax[2] - bmin[2]);
-                        ([bmin[0], bmin[1], z], [bmax[0], bmin[1], z], [bmax[0], bmax[1], z], [bmin[0], bmax[1], z])
+                        (
+                            [bmin[0], bmin[1], z],
+                            [bmax[0], bmin[1], z],
+                            [bmax[0], bmax[1], z],
+                            [bmin[0], bmax[1], z],
+                        )
                     }
                 };
                 let verts: [[f32; 3]; 4] = [v0, v1, v2, v3];
@@ -2706,11 +2774,13 @@ impl ViewportRenderer {
         }
 
         // Screen image outlines: compute NDC bounds and create outline buffers.
-        let mut screen_rect_outline_buffers: Vec<crate::resources::ScreenRectOutlineBuffers> = Vec::new();
+        let mut screen_rect_outline_buffers: Vec<crate::resources::ScreenRectOutlineBuffers> =
+            Vec::new();
         if frame.interaction.outline_selected
             && frame.scene.screen_images.iter().any(|i| i.selected)
         {
-            self.resources.ensure_screen_rect_outline_mask_pipeline(device);
+            self.resources
+                .ensure_screen_rect_outline_mask_pipeline(device);
             let [vp_w, vp_h] = frame.camera.viewport_size;
             if let Some(bgl) = self.resources.screen_rect_outline_bgl.as_ref() {
                 for item in &frame.scene.screen_images {
@@ -2721,24 +2791,33 @@ impl ViewportRenderer {
                     let img_w_ndc = 2.0 * item.width as f32 * item.scale / vp_w.max(1.0);
                     let img_h_ndc = 2.0 * item.height as f32 * item.scale / vp_h.max(1.0);
                     let (ndc_min_x, ndc_max_x, ndc_min_y, ndc_max_y) = match item.anchor {
-                        ImageAnchor::TopLeft    => (-1.0, -1.0 + img_w_ndc,  1.0 - img_h_ndc,  1.0),
-                        ImageAnchor::TopRight   => ( 1.0 - img_w_ndc,  1.0,  1.0 - img_h_ndc,  1.0),
+                        ImageAnchor::TopLeft => (-1.0, -1.0 + img_w_ndc, 1.0 - img_h_ndc, 1.0),
+                        ImageAnchor::TopRight => (1.0 - img_w_ndc, 1.0, 1.0 - img_h_ndc, 1.0),
                         ImageAnchor::BottomLeft => (-1.0, -1.0 + img_w_ndc, -1.0, -1.0 + img_h_ndc),
-                        ImageAnchor::BottomRight => (1.0 - img_w_ndc,  1.0, -1.0, -1.0 + img_h_ndc),
-                        _ => (-img_w_ndc * 0.5, img_w_ndc * 0.5, -img_h_ndc * 0.5, img_h_ndc * 0.5),
+                        ImageAnchor::BottomRight => (1.0 - img_w_ndc, 1.0, -1.0, -1.0 + img_h_ndc),
+                        _ => (
+                            -img_w_ndc * 0.5,
+                            img_w_ndc * 0.5,
+                            -img_h_ndc * 0.5,
+                            img_h_ndc * 0.5,
+                        ),
                     };
                     #[repr(C)]
                     #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
-                    struct NdcRectUniform { ndc_min: [f32; 2], ndc_max: [f32; 2] }
+                    struct NdcRectUniform {
+                        ndc_min: [f32; 2],
+                        ndc_max: [f32; 2],
+                    }
                     let uniform_data = NdcRectUniform {
                         ndc_min: [ndc_min_x, ndc_min_y],
                         ndc_max: [ndc_max_x, ndc_max_y],
                     };
-                    let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("screen_rect_outline_uniform"),
-                        contents: bytemuck::bytes_of(&uniform_data),
-                        usage: wgpu::BufferUsages::UNIFORM,
-                    });
+                    let uniform_buf =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("screen_rect_outline_uniform"),
+                            contents: bytemuck::bytes_of(&uniform_data),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        });
                     let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("screen_rect_outline_bg"),
                         layout: bgl,
@@ -2773,7 +2852,8 @@ impl ViewportRenderer {
         }
 
         // MC surface outlines: build per-job outline uniform + bind group.
-        let mut mc_outline_data: Vec<crate::resources::gpu_marching_cubes::McOutlineItem> = Vec::new();
+        let mut mc_outline_data: Vec<crate::resources::gpu_marching_cubes::McOutlineItem> =
+            Vec::new();
         if frame.interaction.outline_selected {
             for (i, job) in frame.scene.gpu_mc_jobs.iter().enumerate() {
                 if !job.selected {
@@ -2811,7 +2891,11 @@ impl ViewportRenderer {
         }
 
         // X-ray buffers for selected objects.
-        let mut xray_object_buffers: Vec<(crate::resources::mesh_store::MeshId, wgpu::Buffer, wgpu::BindGroup)> = Vec::new();
+        let mut xray_object_buffers: Vec<(
+            crate::resources::mesh_store::MeshId,
+            wgpu::Buffer,
+            wgpu::BindGroup,
+        )> = Vec::new();
         if frame.interaction.xray_selected {
             let resources = &self.resources;
             for item in scene_items {
@@ -2904,10 +2988,7 @@ impl ViewportRenderer {
                 };
 
                 // Border edge: use `edge_color` when set, otherwise derive from `color`.
-                let border_base = obj
-                    .edge_color
-                    .or(obj.color)
-                    .unwrap_or([1.0, 1.0, 1.0, 1.0]);
+                let border_base = obj.edge_color.or(obj.color).unwrap_or([1.0, 1.0, 1.0, 1.0]);
                 let border_color = if active {
                     [border_base[0], border_base[1], border_base[2], 0.9]
                 } else if hovered {
@@ -3004,11 +3085,7 @@ impl ViewportRenderer {
                 {
                     let plane_n = glam::Vec3::from(normal);
                     for item in scene_items.iter().filter(|i| i.visible) {
-                        let Some(mesh) = self
-                            .resources
-                            .mesh_store
-                            .get(item.mesh_id)
-                        else {
+                        let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
                             continue;
                         };
                         let model = glam::Mat4::from_cols_array_2d(&item.model);
@@ -3137,15 +3214,29 @@ impl ViewportRenderer {
         // by the composite pass in paint()/render().
         // ------------------------------------------------------------------
         if frame.interaction.outline_selected
-            && (!self.viewport_slots[vp_idx].outline_object_buffers.is_empty()
+            && (!self.viewport_slots[vp_idx]
+                .outline_object_buffers
+                .is_empty()
                 || !self.viewport_slots[vp_idx].splat_outline_buffers.is_empty()
-                || !self.viewport_slots[vp_idx].volume_outline_indices.is_empty()
+                || !self.viewport_slots[vp_idx]
+                    .volume_outline_indices
+                    .is_empty()
                 || !self.viewport_slots[vp_idx].glyph_outline_indices.is_empty()
-                || !self.viewport_slots[vp_idx].tensor_glyph_outline_indices.is_empty()
-                || !self.viewport_slots[vp_idx].sprite_outline_indices.is_empty()
-                || !self.viewport_slots[vp_idx].raw_geom_outline_buffers.is_empty()
-                || !self.viewport_slots[vp_idx].screen_rect_outline_buffers.is_empty()
-                || !self.viewport_slots[vp_idx].implicit_outline_indices.is_empty()
+                || !self.viewport_slots[vp_idx]
+                    .tensor_glyph_outline_indices
+                    .is_empty()
+                || !self.viewport_slots[vp_idx]
+                    .sprite_outline_indices
+                    .is_empty()
+                || !self.viewport_slots[vp_idx]
+                    .raw_geom_outline_buffers
+                    .is_empty()
+                || !self.viewport_slots[vp_idx]
+                    .screen_rect_outline_buffers
+                    .is_empty()
+                || !self.viewport_slots[vp_idx]
+                    .implicit_outline_indices
+                    .is_empty()
                 || !self.viewport_slots[vp_idx].mc_outline_data.is_empty())
         {
             let ppp = frame.camera.pixels_per_point;
@@ -3182,28 +3273,24 @@ impl ViewportRenderer {
             // Extract raw pointers for slot fields needed inside the render
             // passes alongside &self.resources borrows.
             let slot_ref = &self.viewport_slots[vp_idx];
-            let outlines_ptr =
-                &slot_ref.outline_object_buffers as *const Vec<OutlineObjectBuffers>;
-            let splat_outlines_ptr =
-                &slot_ref.splat_outline_buffers as *const Vec<crate::resources::SplatOutlineBuffers>;
-            let vol_outline_idx_ptr =
-                &slot_ref.volume_outline_indices as *const Vec<usize>;
+            let outlines_ptr = &slot_ref.outline_object_buffers as *const Vec<OutlineObjectBuffers>;
+            let splat_outlines_ptr = &slot_ref.splat_outline_buffers
+                as *const Vec<crate::resources::SplatOutlineBuffers>;
+            let vol_outline_idx_ptr = &slot_ref.volume_outline_indices as *const Vec<usize>;
             let glyph_outline_idx_ptr =
                 &slot_ref.glyph_outline_indices as *const Vec<(usize, Option<Vec<u32>>)>;
             let tensor_glyph_outline_idx_ptr =
                 &slot_ref.tensor_glyph_outline_indices as *const Vec<(usize, Option<Vec<u32>>)>;
             let sprite_outline_idx_ptr =
                 &slot_ref.sprite_outline_indices as *const Vec<(usize, Option<Vec<u32>>)>;
-            let raw_geom_outlines_ptr =
-                &slot_ref.raw_geom_outline_buffers as *const Vec<crate::resources::RawGeomOutlineBuffers>;
-            let screen_rect_outlines_ptr =
-                &slot_ref.screen_rect_outline_buffers as *const Vec<crate::resources::ScreenRectOutlineBuffers>;
-            let implicit_outline_idx_ptr =
-                &slot_ref.implicit_outline_indices as *const Vec<usize>;
-            let mc_outlines_ptr =
-                &slot_ref.mc_outline_data as *const Vec<crate::resources::gpu_marching_cubes::McOutlineItem>;
-            let glyph_gpu_ptr =
-                &self.glyph_gpu_data as *const Vec<crate::resources::GlyphGpuData>;
+            let raw_geom_outlines_ptr = &slot_ref.raw_geom_outline_buffers
+                as *const Vec<crate::resources::RawGeomOutlineBuffers>;
+            let screen_rect_outlines_ptr = &slot_ref.screen_rect_outline_buffers
+                as *const Vec<crate::resources::ScreenRectOutlineBuffers>;
+            let implicit_outline_idx_ptr = &slot_ref.implicit_outline_indices as *const Vec<usize>;
+            let mc_outlines_ptr = &slot_ref.mc_outline_data
+                as *const Vec<crate::resources::gpu_marching_cubes::McOutlineItem>;
+            let glyph_gpu_ptr = &self.glyph_gpu_data as *const Vec<crate::resources::GlyphGpuData>;
             let tensor_glyph_gpu_ptr =
                 &self.tensor_glyph_gpu_data as *const Vec<crate::resources::TensorGlyphGpuData>;
             let sprite_gpu_ptr =
@@ -3220,14 +3307,28 @@ impl ViewportRenderer {
             let edge_bg_ptr = &slot_hdr.outline_edge_bind_group as *const wgpu::BindGroup;
             // SAFETY: slot fields remain valid for the duration of this function;
             // no other code modifies these fields here.
-            let (outlines, splat_outlines, vol_outline_indices,
-                 glyph_outline_indices, tensor_glyph_outline_indices,
-                 sprite_outline_indices,
-                 raw_geom_outlines, screen_rect_outlines,
-                 implicit_outline_idxs, mc_outlines,
-                 glyph_gpu_data, tensor_glyph_gpu_data, sprite_gpu_data,
-                 implicit_gpu_data, mc_gpu_frame_data,
-                 camera_bg, mask_view, color_view, depth_view, edge_bg) = unsafe {
+            let (
+                outlines,
+                splat_outlines,
+                vol_outline_indices,
+                glyph_outline_indices,
+                tensor_glyph_outline_indices,
+                sprite_outline_indices,
+                raw_geom_outlines,
+                screen_rect_outlines,
+                implicit_outline_idxs,
+                mc_outlines,
+                glyph_gpu_data,
+                tensor_glyph_gpu_data,
+                sprite_gpu_data,
+                implicit_gpu_data,
+                mc_gpu_frame_data,
+                camera_bg,
+                mask_view,
+                color_view,
+                depth_view,
+                edge_bg,
+            ) = unsafe {
                 (
                     &*outlines_ptr,
                     &*splat_outlines_ptr,
@@ -3283,11 +3384,7 @@ impl ViewportRenderer {
 
                 pass.set_bind_group(0, camera_bg, &[]);
                 for outlined in outlines {
-                    let Some(mesh) = self
-                        .resources
-                        .mesh_store
-                        .get(outlined.mesh_id)
-                    else {
+                    let Some(mesh) = self.resources.mesh_store.get(outlined.mesh_id) else {
                         continue;
                     };
                     let pipeline = if outlined.two_sided {
@@ -3325,14 +3422,25 @@ impl ViewportRenderer {
                                 pass.set_bind_group(1, &glyph.uniform_bind_group, &[]);
                                 pass.set_bind_group(2, &glyph.instance_bind_group, &[]);
                                 pass.set_vertex_buffer(0, glyph.mesh_vertex_buffer.slice(..));
-                                pass.set_index_buffer(glyph.mesh_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                                pass.set_index_buffer(
+                                    glyph.mesh_index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
                                 match instance_filter {
                                     None => {
-                                        pass.draw_indexed(0..glyph.mesh_index_count, 0, 0..glyph.instance_count);
+                                        pass.draw_indexed(
+                                            0..glyph.mesh_index_count,
+                                            0,
+                                            0..glyph.instance_count,
+                                        );
                                     }
                                     Some(indices) => {
                                         for &i in indices {
-                                            pass.draw_indexed(0..glyph.mesh_index_count, 0, i..i + 1);
+                                            pass.draw_indexed(
+                                                0..glyph.mesh_index_count,
+                                                0,
+                                                i..i + 1,
+                                            );
                                         }
                                     }
                                 }
@@ -3343,7 +3451,9 @@ impl ViewportRenderer {
 
                 // Draw tensor glyph instances into the mask (instanced ellipsoids).
                 if !tensor_glyph_outline_indices.is_empty() {
-                    if let Some(pipeline) = self.resources.tensor_glyph_outline_mask_pipeline.as_ref() {
+                    if let Some(pipeline) =
+                        self.resources.tensor_glyph_outline_mask_pipeline.as_ref()
+                    {
                         pass.set_pipeline(pipeline);
                         for (idx, instance_filter) in tensor_glyph_outline_indices {
                             if let Some(tg) = tensor_glyph_gpu_data.get(*idx) {
@@ -3351,10 +3461,17 @@ impl ViewportRenderer {
                                 pass.set_bind_group(1, &tg.uniform_bind_group, &[]);
                                 pass.set_bind_group(2, &tg.instance_bind_group, &[]);
                                 pass.set_vertex_buffer(0, tg.mesh_vertex_buffer.slice(..));
-                                pass.set_index_buffer(tg.mesh_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                                pass.set_index_buffer(
+                                    tg.mesh_index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
                                 match instance_filter {
                                     None => {
-                                        pass.draw_indexed(0..tg.mesh_index_count, 0, 0..tg.instance_count);
+                                        pass.draw_indexed(
+                                            0..tg.mesh_index_count,
+                                            0,
+                                            0..tg.instance_count,
+                                        );
                                     }
                                     Some(indices) => {
                                         for &i in indices {
@@ -3401,7 +3518,10 @@ impl ViewportRenderer {
                             if let Some(vol) = self.volume_gpu_data.get(idx) {
                                 pass.set_bind_group(1, &vol.bind_group, &[]);
                                 pass.set_vertex_buffer(0, vol.vertex_buffer.slice(..));
-                                pass.set_index_buffer(vol.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                                pass.set_index_buffer(
+                                    vol.index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
                                 pass.draw_indexed(0..36, 0, 0..1);
                             }
                         }
@@ -3425,7 +3545,9 @@ impl ViewportRenderer {
 
                 // Draw screen-space rect outlines for screen images.
                 if !screen_rect_outlines.is_empty() {
-                    if let Some(pipeline) = self.resources.screen_rect_outline_mask_pipeline.as_ref() {
+                    if let Some(pipeline) =
+                        self.resources.screen_rect_outline_mask_pipeline.as_ref()
+                    {
                         pass.set_pipeline(pipeline);
                         for sr in screen_rect_outlines {
                             pass.set_bind_group(0, &sr.bind_group, &[]);
@@ -3512,8 +3634,7 @@ impl ViewportRenderer {
                         .as_ref()
                         .map(|s| slot.sub_highlight_generation != s.version)
                         .unwrap_or(slot.sub_highlight_generation != u64::MAX);
-                    sel_version_changed
-                        || slot.sub_highlight.is_none()
+                    sel_version_changed || slot.sub_highlight.is_none()
                 };
                 if needs_rebuild {
                     self.resources.ensure_sub_highlight_pipelines(device);
@@ -3606,7 +3727,10 @@ impl ViewportRenderer {
 
                     // Compute ascent so glyphs are positioned below the anchor.
                     let font_index = label.font.map_or(0, |h| h.0);
-                    let ascent = self.resources.glyph_atlas.font_ascent(font_index, label.font_size);
+                    let ascent = self
+                        .resources
+                        .glyph_atlas
+                        .font_ascent(font_index, label.font_size);
 
                     // Horizontal alignment.
                     let align_offset = match label.anchor_align {
@@ -3630,18 +3754,17 @@ impl ViewportRenderer {
                         if label.border_radius > 0.0 {
                             emit_rounded_quad(
                                 &mut verts,
-                                bx0, by0, bx1, by1,
+                                bx0,
+                                by0,
+                                bx1,
+                                by1,
                                 label.border_radius,
                                 bg_color,
-                                vp_w, vp_h,
+                                vp_w,
+                                vp_h,
                             );
                         } else {
-                            emit_solid_quad(
-                                &mut verts,
-                                bx0, by0, bx1, by1,
-                                bg_color,
-                                vp_w, vp_h,
-                            );
+                            emit_solid_quad(&mut verts, bx0, by0, bx1, by1, bg_color, vp_w, vp_h);
                         }
                     }
 
@@ -3652,11 +3775,14 @@ impl ViewportRenderer {
                             if let Some(wp) = world_px {
                                 emit_line_quad(
                                     &mut verts,
-                                    wp[0], wp[1],
-                                    text_x, text_y + layout.height * 0.5,
+                                    wp[0],
+                                    wp[1],
+                                    text_x,
+                                    text_y + layout.height * 0.5,
                                     1.5,
                                     apply_opacity(label.leader_color, opacity),
-                                    vp_w, vp_h,
+                                    vp_w,
+                                    vp_h,
                                 );
                             }
                         }
@@ -3669,11 +3795,15 @@ impl ViewportRenderer {
                         let gy = text_y + ascent + gq.pos[1];
                         emit_textured_quad(
                             &mut verts,
-                            gx, gy,
-                            gx + gq.size[0], gy + gq.size[1],
-                            gq.uv_min, gq.uv_max,
+                            gx,
+                            gy,
+                            gx + gq.size[0],
+                            gy + gq.size[1],
+                            gq.uv_min,
+                            gq.uv_max,
                             text_color,
-                            vp_w, vp_h,
+                            vp_w,
+                            vp_h,
                         );
                     }
                 }
@@ -3728,7 +3858,11 @@ impl ViewportRenderer {
                 for bar in &frame.overlays.scalar_bars {
                     // Clone the LUT immediately so the immutable borrow on self.resources
                     // is released before the mutable glyph_atlas borrow below.
-                    let Some(lut) = self.resources.get_colormap_rgba(bar.colormap_id).map(|l| l.to_vec()) else {
+                    let Some(lut) = self
+                        .resources
+                        .get_colormap_rgba(bar.colormap_id)
+                        .map(|l| l.to_vec())
+                    else {
                         continue;
                     };
 
@@ -3760,9 +3894,10 @@ impl ViewportRenderer {
                         let t = i as f32 / (tick_count - 1) as f32;
                         let value = bar.scalar_min + t * (bar.scalar_max - bar.scalar_min);
                         let text = format!("{value:.2}");
-                        let layout = self.resources.glyph_atlas.layout_text(
-                            &text, tick_fs, bar.font, device,
-                        );
+                        let layout = self
+                            .resources
+                            .glyph_atlas
+                            .layout_text(&text, tick_fs, bar.font, device);
                         max_tick_w = max_tick_w.max(layout.total_width);
                         tick_h = layout.height;
                         tick_data.push((text, layout.total_width, layout.height));
@@ -3784,7 +3919,10 @@ impl ViewportRenderer {
                     // Pre-compute title width before bar_x/bar_y so the overhang can
                     // be used to push the strip inward and prevent clipping.
                     let title_w = if let Some(ref t) = bar.title {
-                        self.resources.glyph_atlas.layout_text(t, title_fs, bar.font, device).total_width
+                        self.resources
+                            .glyph_atlas
+                            .layout_text(t, title_fs, bar.font, device)
+                            .total_width
                     } else {
                         0.0
                     };
@@ -3801,7 +3939,7 @@ impl ViewportRenderer {
                         (title_oh + bg_pad, right_extent)
                     } else {
                         let title_oh = ((title_w - strip_w) / 2.0).max(0.0);
-                        let tick_oh  = max_tick_w / 2.0;
+                        let tick_oh = max_tick_w / 2.0;
                         let side = title_oh.max(tick_oh) + bg_pad;
                         (side, side)
                     };
@@ -3818,10 +3956,9 @@ impl ViewportRenderer {
                     //   Top anchor:    bg_y0 = bar_y - title_h - bg_pad  =>  set bar_y = margin_px + title_h + bg_pad
                     //   Bottom anchor: bg_y1 = bar_y + strip_h + bottom_overhang + bg_pad  =>  bar_y = vp_h - margin_px - strip_h - bottom_overhang - bg_pad
                     let (bar_x, bar_y) = match bar.anchor {
-                        crate::renderer::types::ScalarBarAnchor::TopLeft => (
-                            bar.margin_px + inset_left,
-                            bar.margin_px + title_h + bg_pad,
-                        ),
+                        crate::renderer::types::ScalarBarAnchor::TopLeft => {
+                            (bar.margin_px + inset_left, bar.margin_px + title_h + bg_pad)
+                        }
                         crate::renderer::types::ScalarBarAnchor::TopRight => (
                             vp_w - bar.margin_px - strip_w - inset_right,
                             bar.margin_px + title_h + bg_pad,
@@ -3848,7 +3985,7 @@ impl ViewportRenderer {
                         )
                     } else {
                         let title_overhang = ((title_w - strip_w) / 2.0).max(0.0);
-                        let tick_overhang  = max_tick_w / 2.0;
+                        let tick_overhang = max_tick_w / 2.0;
                         let side_pad = title_overhang.max(tick_overhang);
                         let bottom = bar_y + strip_h + 3.0 + tick_h + bg_pad;
                         (
@@ -3860,10 +3997,14 @@ impl ViewportRenderer {
                     };
                     emit_rounded_quad(
                         &mut verts,
-                        bg_x0, bg_y0, bg_x1, bg_y1,
+                        bg_x0,
+                        bg_y0,
+                        bg_x1,
+                        bg_y1,
                         3.0,
                         bar.background_color,
-                        vp_w, vp_h,
+                        vp_w,
+                        vp_h,
                     );
 
                     // Gradient strip: 64 solid quads sampled from the colormap LUT.
@@ -3905,9 +4046,10 @@ impl ViewportRenderer {
                     let ascent = self.resources.glyph_atlas.font_ascent(font_index, tick_fs);
                     for (i, (text, tw, th)) in tick_data.iter().enumerate() {
                         let t = i as f32 / (tick_count - 1) as f32;
-                        let layout = self.resources.glyph_atlas.layout_text(
-                            text, tick_fs, bar.font, device,
-                        );
+                        let layout = self
+                            .resources
+                            .glyph_atlas
+                            .layout_text(text, tick_fs, bar.font, device);
 
                         let (lx, ly) = if is_vertical {
                             // Place text to the right of the strip, vertically centered
@@ -3932,21 +4074,27 @@ impl ViewportRenderer {
                             let gy = ly + ascent + gq.pos[1];
                             emit_textured_quad(
                                 &mut verts,
-                                gx, gy,
-                                gx + gq.size[0], gy + gq.size[1],
-                                gq.uv_min, gq.uv_max,
+                                gx,
+                                gy,
+                                gx + gq.size[0],
+                                gy + gq.size[1],
+                                gq.uv_min,
+                                gq.uv_max,
                                 bar.label_color,
-                                vp_w, vp_h,
+                                vp_w,
+                                vp_h,
                             );
                         }
                     }
 
                     // Optional title above the gradient strip.
                     if let Some(ref title_text) = bar.title {
-                        let layout = self.resources.glyph_atlas.layout_text(
-                            title_text, title_fs, bar.font, device,
-                        );
-                        let title_ascent = self.resources.glyph_atlas.font_ascent(font_index, title_fs);
+                        let layout = self
+                            .resources
+                            .glyph_atlas
+                            .layout_text(title_text, title_fs, bar.font, device);
+                        let title_ascent =
+                            self.resources.glyph_atlas.font_ascent(font_index, title_fs);
                         // Centre the title over the gradient strip.
                         let tx = bar_x + (strip_w - layout.total_width) * 0.5;
                         let ty = bar_y - title_h;
@@ -3955,11 +4103,15 @@ impl ViewportRenderer {
                             let gy = ty + title_ascent + gq.pos[1];
                             emit_textured_quad(
                                 &mut verts,
-                                gx, gy,
-                                gx + gq.size[0], gy + gq.size[1],
-                                gq.uv_min, gq.uv_max,
+                                gx,
+                                gy,
+                                gx + gq.size[0],
+                                gy + gq.size[1],
+                                gq.uv_min,
+                                gq.uv_max,
                                 bar.label_color,
-                                vp_w, vp_h,
+                                vp_w,
+                                vp_h,
                             );
                         }
                     }
@@ -3969,12 +4121,11 @@ impl ViewportRenderer {
                 self.resources.glyph_atlas.upload_if_dirty(queue);
 
                 if !verts.is_empty() {
-                    let vertex_buf =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("overlay_scalar_bar_vbuf"),
-                            contents: bytemuck::cast_slice(&verts),
-                            usage: wgpu::BufferUsages::VERTEX,
-                        });
+                    let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("overlay_scalar_bar_vbuf"),
+                        contents: bytemuck::cast_slice(&verts),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
                     let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -4019,29 +4170,37 @@ impl ViewportRenderer {
                 for ruler in &frame.overlays.rulers {
                     // Project both endpoints to NDC (returns None only if behind camera).
                     let start_ndc = project_to_ndc(ruler.start, view, proj);
-                    let end_ndc   = project_to_ndc(ruler.end,   view, proj);
+                    let end_ndc = project_to_ndc(ruler.end, view, proj);
 
                     // Cull entirely when either endpoint is behind the camera.
-                    let (Some(sndc), Some(endc)) = (start_ndc, end_ndc) else { continue };
+                    let (Some(sndc), Some(endc)) = (start_ndc, end_ndc) else {
+                        continue;
+                    };
 
                     // Clip the segment to the viewport NDC box [-1,1]^2.
                     // This keeps the line visible when only one end is off-screen sideways.
-                    let Some((csndc, cendc)) = clip_line_ndc(sndc, endc) else { continue };
+                    let Some((csndc, cendc)) = clip_line_ndc(sndc, endc) else {
+                        continue;
+                    };
 
                     let [sx, sy] = ndc_to_screen_px(csndc, vp_w, vp_h);
                     let [ex, ey] = ndc_to_screen_px(cendc, vp_w, vp_h);
 
                     // Track which original endpoints are within the viewport (for end caps).
                     let start_on_screen = ndc_in_viewport(sndc);
-                    let end_on_screen   = ndc_in_viewport(endc);
+                    let end_on_screen = ndc_in_viewport(endc);
 
                     // Main ruler line.
                     emit_line_quad(
                         &mut verts,
-                        sx, sy, ex, ey,
+                        sx,
+                        sy,
+                        ex,
+                        ey,
                         ruler.line_width_px,
                         ruler.color,
-                        vp_w, vp_h,
+                        vp_w,
+                        vp_h,
                     );
 
                     // End caps only at endpoints that are actually on screen.
@@ -4051,26 +4210,32 @@ impl ViewportRenderer {
                         let len = (dx * dx + dy * dy).sqrt().max(0.001);
                         let cap_half = 5.0;
                         let px = -dy / len * cap_half;
-                        let py =  dx / len * cap_half;
+                        let py = dx / len * cap_half;
 
                         if start_on_screen {
                             emit_line_quad(
                                 &mut verts,
-                                sx - px, sy - py,
-                                sx + px, sy + py,
+                                sx - px,
+                                sy - py,
+                                sx + px,
+                                sy + py,
                                 ruler.line_width_px,
                                 ruler.color,
-                                vp_w, vp_h,
+                                vp_w,
+                                vp_h,
                             );
                         }
                         if end_on_screen {
                             emit_line_quad(
                                 &mut verts,
-                                ex - px, ey - py,
-                                ex + px, ey + py,
+                                ex - px,
+                                ey - py,
+                                ex + px,
+                                ey + py,
                                 ruler.line_width_px,
                                 ruler.color,
-                                vp_w, vp_h,
+                                vp_w,
+                                vp_h,
                             );
                         }
                     }
@@ -4092,7 +4257,10 @@ impl ViewportRenderer {
                         device,
                     );
                     let font_index = ruler.font.map_or(0, |h| h.0);
-                    let ascent = self.resources.glyph_atlas.font_ascent(font_index, ruler.font_size);
+                    let ascent = self
+                        .resources
+                        .glyph_atlas
+                        .font_ascent(font_index, ruler.font_size);
 
                     // Center the label above the midpoint with a small gap.
                     let lx = mid_x - layout.total_width * 0.5;
@@ -4102,10 +4270,13 @@ impl ViewportRenderer {
                     let pad = 3.0;
                     emit_solid_quad(
                         &mut verts,
-                        lx - pad, ly - pad,
-                        lx + layout.total_width + pad, ly + layout.height + pad,
+                        lx - pad,
+                        ly - pad,
+                        lx + layout.total_width + pad,
+                        ly + layout.height + pad,
                         [0.0, 0.0, 0.0, 0.55],
-                        vp_w, vp_h,
+                        vp_w,
+                        vp_h,
                     );
 
                     // Glyph quads.
@@ -4114,11 +4285,15 @@ impl ViewportRenderer {
                         let gy = ly + ascent + gq.pos[1];
                         emit_textured_quad(
                             &mut verts,
-                            gx, gy,
-                            gx + gq.size[0], gy + gq.size[1],
-                            gq.uv_min, gq.uv_max,
+                            gx,
+                            gy,
+                            gx + gq.size[0],
+                            gy + gq.size[1],
+                            gq.uv_min,
+                            gq.uv_max,
                             ruler.label_color,
-                            vp_w, vp_h,
+                            vp_w,
+                            vp_h,
                         );
                     }
                 }
@@ -4127,12 +4302,11 @@ impl ViewportRenderer {
                 self.resources.glyph_atlas.upload_if_dirty(queue);
 
                 if !verts.is_empty() {
-                    let vertex_buf =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("overlay_ruler_vbuf"),
-                            contents: bytemuck::cast_slice(&verts),
-                            usage: wgpu::BufferUsages::VERTEX,
-                        });
+                    let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("overlay_ruler_vbuf"),
+                        contents: bytemuck::cast_slice(&verts),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
                     let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -4192,8 +4366,7 @@ impl ViewportRenderer {
                             None,
                             device,
                         );
-                        let ascent =
-                            self.resources.glyph_atlas.font_ascent(0, bar.font_size);
+                        let ascent = self.resources.glyph_atlas.font_ascent(0, bar.font_size);
                         let label_gap = 5.0;
                         let lx = bar_x + bar.width_px * 0.5 - layout.total_width * 0.5;
                         let ly = match bar.anchor {
@@ -4207,11 +4380,15 @@ impl ViewportRenderer {
                             let gy = ly + ascent + gq.pos[1];
                             emit_textured_quad(
                                 &mut verts,
-                                gx, gy,
-                                gx + gq.size[0], gy + gq.size[1],
-                                gq.uv_min, gq.uv_max,
+                                gx,
+                                gy,
+                                gx + gq.size[0],
+                                gy + gq.size[1],
+                                gq.uv_min,
+                                gq.uv_max,
                                 bar.label_color,
-                                vp_w, vp_h,
+                                vp_w,
+                                vp_h,
                             );
                         }
                     }
@@ -4219,11 +4396,14 @@ impl ViewportRenderer {
                     // Background rectangle.
                     emit_rounded_quad(
                         &mut verts,
-                        bar_x, bar_y,
-                        bar_x + bar.width_px, bar_y + bar.height_px,
+                        bar_x,
+                        bar_y,
+                        bar_x + bar.width_px,
+                        bar_y + bar.height_px,
                         bar.corner_radius,
                         bar.background_color,
-                        vp_w, vp_h,
+                        vp_w,
+                        vp_h,
                     );
 
                     // Fill rectangle clipped to progress fraction.
@@ -4231,11 +4411,14 @@ impl ViewportRenderer {
                     if fill_w > 0.5 {
                         emit_rounded_quad(
                             &mut verts,
-                            bar_x, bar_y,
-                            bar_x + fill_w, bar_y + bar.height_px,
+                            bar_x,
+                            bar_y,
+                            bar_x + fill_w,
+                            bar_y + bar.height_px,
                             bar.corner_radius,
                             bar.fill_color,
-                            vp_w, vp_h,
+                            vp_w,
+                            vp_h,
                         );
                     }
                 }
@@ -4243,12 +4426,11 @@ impl ViewportRenderer {
                 self.resources.glyph_atlas.upload_if_dirty(queue);
 
                 if !verts.is_empty() {
-                    let vertex_buf =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("loading_bar_vbuf"),
-                            contents: bytemuck::cast_slice(&verts),
-                            usage: wgpu::BufferUsages::VERTEX,
-                        });
+                    let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("loading_bar_vbuf"),
+                        contents: bytemuck::cast_slice(&verts),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
                     let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -4288,7 +4470,12 @@ impl ViewportRenderer {
             let vp_h = frame.camera.viewport_size[1].max(1.0);
             for item in &frame.scene.gaussian_splats {
                 let store_index = item.id.0;
-                if self.resources.gaussian_splat_store.get(store_index).is_none() {
+                if self
+                    .resources
+                    .gaussian_splat_store
+                    .get(store_index)
+                    .is_none()
+                {
                     continue;
                 }
                 let sh_degree = self
@@ -4314,14 +4501,13 @@ impl ViewportRenderer {
                     vp_h,
                     sh_degree,
                 );
-                self.gaussian_splat_draw_data.push(
-                    crate::resources::GaussianSplatDrawData {
+                self.gaussian_splat_draw_data
+                    .push(crate::resources::GaussianSplatDrawData {
                         store_index,
                         viewport_index: vp_idx,
                         model: item.model,
                         count,
-                    },
-                );
+                    });
             }
         }
     }
@@ -4376,11 +4562,12 @@ impl ViewportRenderer {
             if let Some(ref stg_buf) = self.indirect_readback_buf {
                 let bytes = self.indirect_readback_batch_count as u64 * 20;
                 if bytes > 0 {
-                    let (tx, rx) =
-                        std::sync::mpsc::channel::<Result<(), wgpu::BufferAsyncError>>();
-                    stg_buf.slice(..bytes).map_async(wgpu::MapMode::Read, move |r| {
-                        let _ = tx.send(r);
-                    });
+                    let (tx, rx) = std::sync::mpsc::channel::<Result<(), wgpu::BufferAsyncError>>();
+                    stg_buf
+                        .slice(..bytes)
+                        .map_async(wgpu::MapMode::Read, move |r| {
+                            let _ = tx.send(r);
+                        });
                     device
                         .poll(wgpu::PollType::Wait {
                             submission_index: None,
@@ -4459,8 +4646,9 @@ impl ViewportRenderer {
         // preset has a visible effect even when the adaptation controller is off.
         // The controller can still adjust within these bounds when enabled.
         if !in_capture && !hdr_active && policy.preset.is_some() {
-            self.current_render_scale =
-                self.current_render_scale.clamp(eff_min_scale, eff_max_scale);
+            self.current_render_scale = self
+                .current_render_scale
+                .clamp(eff_min_scale, eff_max_scale);
         }
 
         // Tiered degradation ladder.
@@ -4541,14 +4729,10 @@ impl ViewportRenderer {
         // it reflects wall-clock frame duration and correctly fires over-budget at low
         // frame rates. cpu_prepare_ms is not used as a fallback because it only measures
         // CPU-side work and is low even when the GPU or driver is the bottleneck.
-        let controller_ms = self
-            .last_stats
-            .gpu_frame_ms
-            .unwrap_or(total_frame_ms);
+        let controller_ms = self.last_stats.gpu_frame_ms.unwrap_or(total_frame_ms);
 
         // Capture mode always reports missed_budget = false; degradation is suppressed.
-        let missed_budget = !in_capture
-            && budget_ms.map(|b| controller_ms > b).unwrap_or(false);
+        let missed_budget = !in_capture && budget_ms.map(|b| controller_ms > b).unwrap_or(false);
 
         // Adaptation controller: adjust render scale within effective bounds when enabled.
         // Uses controller_ms from the previous frame (gpu_frame_ms when available,
@@ -4573,7 +4757,11 @@ impl ViewportRenderer {
 
         // On the HDR path the render_scale has no effect on output; report 1.0
         // so consumers are not misled by a value that is changing but doing nothing.
-        let reported_render_scale = if hdr_active { 1.0 } else { self.current_render_scale };
+        let reported_render_scale = if hdr_active {
+            1.0
+        } else {
+            self.current_render_scale
+        };
 
         let stats = crate::renderer::stats::FrameStats {
             cpu_prepare_ms,
@@ -4730,7 +4918,7 @@ fn clip_cylinder_outline(
         let (s, cs) = t.sin_cos();
         let offset = perp_u * (cs * radius) + perp_v * (s * radius);
         positions.push((c + ax * (-half_length) + offset).to_array());
-        positions.push((c + ax *   half_length  + offset).to_array());
+        positions.push((c + ax * half_length + offset).to_array());
         strip_lengths.push(2);
     }
 
@@ -4749,13 +4937,11 @@ fn clip_cylinder_outline(
 /// Project a world-space position to NDC.
 /// Returns `None` only if the point is behind the camera (`clip.w <= 0`).
 /// Does NOT reject points outside the [-1,1] viewport box.
-fn project_to_ndc(
-    pos: [f32; 3],
-    view: &glam::Mat4,
-    proj: &glam::Mat4,
-) -> Option<[f32; 2]> {
+fn project_to_ndc(pos: [f32; 3], view: &glam::Mat4, proj: &glam::Mat4) -> Option<[f32; 2]> {
     let clip = *proj * *view * glam::Vec3::from(pos).extend(1.0);
-    if clip.w <= 0.0 { return None; }
+    if clip.w <= 0.0 {
+        return None;
+    }
     Some([clip.x / clip.w, clip.y / clip.w])
 }
 
@@ -4784,19 +4970,27 @@ fn clip_line_ndc(a: [f32; 2], b: [f32; 2]) -> Option<([f32; 2], [f32; 2])> {
     // (p, q) pairs for left, right, bottom, top boundaries.
     for (p, q) in [
         (-dx, a[0] + 1.0),
-        ( dx, 1.0 - a[0]),
+        (dx, 1.0 - a[0]),
         (-dy, a[1] + 1.0),
-        ( dy, 1.0 - a[1]),
+        (dy, 1.0 - a[1]),
     ] {
         if p == 0.0 {
-            if q < 0.0 { return None; }
+            if q < 0.0 {
+                return None;
+            }
         } else {
             let r = q / p;
-            if p < 0.0 { t0 = t0.max(r); } else { t1 = t1.min(r); }
+            if p < 0.0 {
+                t0 = t0.max(r);
+            } else {
+                t1 = t1.min(r);
+            }
         }
     }
 
-    if t0 > t1 { return None; }
+    if t0 > t1 {
+        return None;
+    }
     Some((
         [a[0] + t0 * dx, a[1] + t0 * dy],
         [a[0] + t1 * dx, a[1] + t1 * dy],
@@ -4830,19 +5024,19 @@ fn project_to_screen(
 /// Convert screen pixel coordinates to NDC.
 #[inline]
 fn px_to_ndc(px_x: f32, px_y: f32, vp_w: f32, vp_h: f32) -> [f32; 2] {
-    [
-        px_x / vp_w * 2.0 - 1.0,
-        1.0 - px_y / vp_h * 2.0,
-    ]
+    [px_x / vp_w * 2.0 - 1.0, 1.0 - px_y / vp_h * 2.0]
 }
 
 /// Emit a solid-colour quad (6 vertices) in screen pixel coordinates.
 fn emit_solid_quad(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
-    x0: f32, y0: f32,
-    x1: f32, y1: f32,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
     color: [f32; 4],
-    vp_w: f32, vp_h: f32,
+    vp_w: f32,
+    vp_h: f32,
 ) {
     let tl = px_to_ndc(x0, y0, vp_w, vp_h);
     let tr = px_to_ndc(x1, y0, vp_w, vp_h);
@@ -4851,7 +5045,11 @@ fn emit_solid_quad(
     let uv = [0.0, 0.0];
     let tex = 0.0;
     let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
-        position: pos, uv, color, use_texture: tex, _pad: 0.0,
+        position: pos,
+        uv,
+        color,
+        use_texture: tex,
+        _pad: 0.0,
     };
     verts.extend_from_slice(&[v(tl), v(bl), v(tr), v(tr), v(bl), v(br)]);
 }
@@ -4859,12 +5057,15 @@ fn emit_solid_quad(
 /// Emit a textured quad (6 vertices) for a glyph in screen pixel coordinates.
 fn emit_textured_quad(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
-    x0: f32, y0: f32,
-    x1: f32, y1: f32,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
     uv_min: [f32; 2],
     uv_max: [f32; 2],
     color: [f32; 4],
-    vp_w: f32, vp_h: f32,
+    vp_w: f32,
+    vp_h: f32,
 ) {
     let tl = px_to_ndc(x0, y0, vp_w, vp_h);
     let tr = px_to_ndc(x1, y0, vp_w, vp_h);
@@ -4872,7 +5073,11 @@ fn emit_textured_quad(
     let br = px_to_ndc(x1, y1, vp_w, vp_h);
     let tex = 1.0;
     let v = |pos: [f32; 2], uv: [f32; 2]| crate::resources::OverlayTextVertex {
-        position: pos, uv, color, use_texture: tex, _pad: 0.0,
+        position: pos,
+        uv,
+        color,
+        use_texture: tex,
+        _pad: 0.0,
     };
     // UV layout: top-left = uv_min, bottom-right = uv_max.
     verts.extend_from_slice(&[
@@ -4888,11 +5093,14 @@ fn emit_textured_quad(
 /// Emit a thin screen-space line as a quad (6 vertices).
 fn emit_line_quad(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
-    x0: f32, y0: f32,
-    x1: f32, y1: f32,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
     thickness: f32,
     color: [f32; 4],
-    vp_w: f32, vp_h: f32,
+    vp_w: f32,
+    vp_h: f32,
 ) {
     let dx = x1 - x0;
     let dy = y1 - y0;
@@ -4911,7 +5119,11 @@ fn emit_line_quad(
     let uv = [0.0, 0.0];
     let tex = 0.0;
     let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
-        position: pos, uv, color, use_texture: tex, _pad: 0.0,
+        position: pos,
+        uv,
+        color,
+        use_texture: tex,
+        _pad: 0.0,
     };
     verts.extend_from_slice(&[v(p0), v(p1), v(p2), v(p2), v(p1), v(p3)]);
 }
@@ -4927,11 +5139,14 @@ fn apply_opacity(color: [f32; 4], opacity: f32) -> [f32; 4] {
 /// changes.
 fn emit_rounded_quad(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
-    x0: f32, y0: f32,
-    x1: f32, y1: f32,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
     radius: f32,
     color: [f32; 4],
-    vp_w: f32, vp_h: f32,
+    vp_w: f32,
+    vp_h: f32,
 ) {
     let w = x1 - x0;
     let h = y1 - y0;
@@ -4952,16 +5167,35 @@ fn emit_rounded_quad(
 
     // Four corner fans.
     let corners = [
-        (x0 + r, y0 + r, std::f32::consts::PI, std::f32::consts::FRAC_PI_2 * 3.0),       // top-left
-        (x1 - r, y0 + r, std::f32::consts::FRAC_PI_2 * 3.0, std::f32::consts::TAU),      // top-right
-        (x1 - r, y1 - r, 0.0, std::f32::consts::FRAC_PI_2),                               // bottom-right
-        (x0 + r, y1 - r, std::f32::consts::FRAC_PI_2, std::f32::consts::PI),              // bottom-left
+        (
+            x0 + r,
+            y0 + r,
+            std::f32::consts::PI,
+            std::f32::consts::FRAC_PI_2 * 3.0,
+        ), // top-left
+        (
+            x1 - r,
+            y0 + r,
+            std::f32::consts::FRAC_PI_2 * 3.0,
+            std::f32::consts::TAU,
+        ), // top-right
+        (x1 - r, y1 - r, 0.0, std::f32::consts::FRAC_PI_2), // bottom-right
+        (
+            x0 + r,
+            y1 - r,
+            std::f32::consts::FRAC_PI_2,
+            std::f32::consts::PI,
+        ), // bottom-left
     ];
     let segments = 6;
     let uv = [0.0, 0.0];
     let tex = 0.0;
     let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
-        position: pos, uv, color, use_texture: tex, _pad: 0.0,
+        position: pos,
+        uv,
+        color,
+        use_texture: tex,
+        _pad: 0.0,
     };
     for (cx, cy, start, end) in corners {
         let center = px_to_ndc(cx, cy, vp_w, vp_h);

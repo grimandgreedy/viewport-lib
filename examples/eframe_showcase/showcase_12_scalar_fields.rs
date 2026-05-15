@@ -17,41 +17,41 @@ use viewport_lib::{
 // ---------------------------------------------------------------------------
 
 pub(crate) struct ScalarFieldsState {
-    pub built:           bool,
-    pub scene:           Scene,
-    pub selection:       Selection,
-    pub colormap:        BuiltinColormap,
-    pub range_auto:      bool,
-    pub range:           (f32, f32),
-    pub nan_on:          bool,
-    pub bar_anchor:      ScalarBarAnchor,
+    pub built: bool,
+    pub scene: Scene,
+    pub selection: Selection,
+    pub colormap: BuiltinColormap,
+    pub range_auto: bool,
+    pub range: (f32, f32),
+    pub nan_on: bool,
+    pub bar_anchor: ScalarBarAnchor,
     pub bar_orientation: ScalarBarOrientation,
-    pub node_ids:        [NodeId; 3],
-    pub mesh_indices:    [MeshId; 3],
-    pub pick_positions:  [Vec<[f32; 3]>; 3],
-    pub pick_indices:    [Vec<u32>; 3],
-    pub values:          [Vec<f32>; 3],
-    pub active_object:   usize,
+    pub node_ids: [NodeId; 3],
+    pub mesh_indices: [MeshId; 3],
+    pub pick_positions: [Vec<[f32; 3]>; 3],
+    pub pick_indices: [Vec<u32>; 3],
+    pub values: [Vec<f32>; 3],
+    pub active_object: usize,
 }
 
 impl Default for ScalarFieldsState {
     fn default() -> Self {
         Self {
-            built:           false,
-            scene:           Scene::new(),
-            selection:       Selection::new(),
-            colormap:        BuiltinColormap::Viridis,
-            range_auto:      true,
-            range:           (0.0, 1.0),
-            nan_on:          false,
-            bar_anchor:      ScalarBarAnchor::BottomRight,
+            built: false,
+            scene: Scene::new(),
+            selection: Selection::new(),
+            colormap: BuiltinColormap::Viridis,
+            range_auto: true,
+            range: (0.0, 1.0),
+            nan_on: false,
+            bar_anchor: ScalarBarAnchor::BottomRight,
             bar_orientation: ScalarBarOrientation::Vertical,
-            node_ids:        [0; 3],
-            mesh_indices:    [MeshId::from_index(0); 3],
-            pick_positions:  [Vec::new(), Vec::new(), Vec::new()],
-            pick_indices:    [Vec::new(), Vec::new(), Vec::new()],
-            values:          [Vec::new(), Vec::new(), Vec::new()],
-            active_object:   0,
+            node_ids: [0; 3],
+            mesh_indices: [MeshId::from_index(0); 3],
+            pick_positions: [Vec::new(), Vec::new(), Vec::new()],
+            pick_indices: [Vec::new(), Vec::new(), Vec::new()],
+            values: [Vec::new(), Vec::new(), Vec::new()],
+            active_object: 0,
         }
     }
 }
@@ -127,16 +127,14 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &wave_mesh)
             .expect("scalar wave mesh");
-        let wave_node = self.scalar_state.scene.add_named(
-            "Wave Grid",
-            Some(wave_id),
-            glam::Mat4::IDENTITY,
-            {
-                let mut m = Material::from_color([0.8, 0.8, 0.8]);
-                m.roughness = 0.5;
-                m
-            },
-        );
+        let wave_node =
+            self.scalar_state
+                .scene
+                .add_named("Wave Grid", Some(wave_id), glam::Mat4::IDENTITY, {
+                    let mut m = Material::from_color([0.8, 0.8, 0.8]);
+                    m.roughness = 0.5;
+                    m
+                });
         self.scalar_state.node_ids[1] = wave_node;
         self.scalar_state.pick_positions[1] = wave_mesh.positions.clone();
         self.scalar_state.pick_indices[1] = wave_mesh.indices.clone();
@@ -283,7 +281,10 @@ pub(crate) fn controls_scalar_fields(app: &mut App, ui: &mut egui::Ui) {
     }
     ui.horizontal(|ui| {
         if ui
-            .radio(s.bar_orientation == ScalarBarOrientation::Vertical, "Vertical")
+            .radio(
+                s.bar_orientation == ScalarBarOrientation::Vertical,
+                "Vertical",
+            )
             .clicked()
         {
             s.bar_orientation = ScalarBarOrientation::Vertical;

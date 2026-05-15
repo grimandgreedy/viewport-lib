@@ -1067,10 +1067,7 @@ impl ViewportGpuResources {
 
         for item in items {
             // Resolve the mesh.
-            let gpu_mesh = match self
-                .mesh_store
-                .get(item.mesh_id)
-            {
+            let gpu_mesh = match self.mesh_store.get(item.mesh_id) {
                 Some(m) => m,
                 None => continue,
             };

@@ -1,7 +1,6 @@
 use super::*;
 
 impl ViewportGpuResources {
-
     /// Lazily create the polyline render pipeline (instanced TriangleList : screen-space thick lines).
     ///
     /// No-op if already created. Called from `prepare()` when `frame.scene.polylines` is non-empty.
@@ -210,20 +209,20 @@ impl ViewportGpuResources {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct SegInstance {
-            pos_a: [f32; 3],         // offset   0
-            pos_b: [f32; 3],         // offset  12
-            prev_pos: [f32; 3],      // offset  24
-            next_pos: [f32; 3],      // offset  36
-            scalar_a: f32,           // offset  48
-            scalar_b: f32,           // offset  52
-            has_prev: u32,           // offset  56
-            has_next: u32,           // offset  60
-            color_a: [f32; 4],       // offset  64
-            color_b: [f32; 4],       // offset  80
-            radius_a: f32,           // offset  96
-            radius_b: f32,           // offset 100
-            use_direct_color: u32,   // offset 104
-            _pad: u32,               // offset 108
+            pos_a: [f32; 3],       // offset   0
+            pos_b: [f32; 3],       // offset  12
+            prev_pos: [f32; 3],    // offset  24
+            next_pos: [f32; 3],    // offset  36
+            scalar_a: f32,         // offset  48
+            scalar_b: f32,         // offset  52
+            has_prev: u32,         // offset  56
+            has_next: u32,         // offset  60
+            color_a: [f32; 4],     // offset  64
+            color_b: [f32; 4],     // offset  80
+            radius_a: f32,         // offset  96
+            radius_b: f32,         // offset 100
+            use_direct_color: u32, // offset 104
+            _pad: u32,             // offset 108
         }
 
         // Determine which color/scalar/radius source to use per segment.
@@ -259,7 +258,11 @@ impl ViewportGpuResources {
 
                 // Scalar: edge_scalars (flat per segment) > per-node scalars > 0
                 let (scalar_a, scalar_b) = if use_edge_scalars {
-                    let s = item.edge_scalars.get(seg_idx_global).copied().unwrap_or(0.0);
+                    let s = item
+                        .edge_scalars
+                        .get(seg_idx_global)
+                        .copied()
+                        .unwrap_or(0.0);
                     (s, s)
                 } else {
                     (
@@ -275,7 +278,11 @@ impl ViewportGpuResources {
                         item.node_colors.get(j).copied().unwrap_or([1.0; 4]),
                     )
                 } else if !item.edge_colors.is_empty() {
-                    let c = item.edge_colors.get(seg_idx_global).copied().unwrap_or([1.0; 4]);
+                    let c = item
+                        .edge_colors
+                        .get(seg_idx_global)
+                        .copied()
+                        .unwrap_or([1.0; 4]);
                     (c, c)
                 } else {
                     ([1.0; 4], [1.0; 4])
@@ -294,8 +301,16 @@ impl ViewportGpuResources {
                 instances.push(SegInstance {
                     pos_a: positions[i],
                     pos_b: positions[j],
-                    prev_pos: if has_prev { positions[i - 1] } else { positions[i] },
-                    next_pos: if has_next { positions[j + 1] } else { positions[j] },
+                    prev_pos: if has_prev {
+                        positions[i - 1]
+                    } else {
+                        positions[i]
+                    },
+                    next_pos: if has_next {
+                        positions[j + 1]
+                    } else {
+                        positions[j]
+                    },
                     scalar_a,
                     scalar_b,
                     has_prev: has_prev as u32,
@@ -335,7 +350,10 @@ impl ViewportGpuResources {
         let (has_scalar, scalar_min, scalar_max) = if !scalar_source.is_empty() {
             let (min, max) = item.scalar_range.unwrap_or_else(|| {
                 let mn = scalar_source.iter().cloned().fold(f32::INFINITY, f32::min);
-                let mx = scalar_source.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                let mx = scalar_source
+                    .iter()
+                    .cloned()
+                    .fold(f32::NEG_INFINITY, f32::max);
                 (mn, mx)
             });
             (1u32, min, max)
@@ -434,7 +452,10 @@ impl ViewportGpuResources {
             source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/polyline.wgsl").into()),
         });
 
-        let pl_bgl = self.polyline_bgl.as_ref().expect("polyline_bgl must exist after ensure_polyline_pipeline");
+        let pl_bgl = self
+            .polyline_bgl
+            .as_ref()
+            .expect("polyline_bgl must exist after ensure_polyline_pipeline");
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("polyline_no_clip_pipeline_layout"),
             bind_group_layouts: &[&self.camera_bind_group_layout, pl_bgl],
@@ -446,19 +467,71 @@ impl ViewportGpuResources {
             array_stride: 112,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &[
-                wgpu::VertexAttribute { offset: 0,   shader_location: 0,  format: wgpu::VertexFormat::Float32x3 },
-                wgpu::VertexAttribute { offset: 12,  shader_location: 1,  format: wgpu::VertexFormat::Float32x3 },
-                wgpu::VertexAttribute { offset: 24,  shader_location: 2,  format: wgpu::VertexFormat::Float32x3 },
-                wgpu::VertexAttribute { offset: 36,  shader_location: 3,  format: wgpu::VertexFormat::Float32x3 },
-                wgpu::VertexAttribute { offset: 48,  shader_location: 4,  format: wgpu::VertexFormat::Float32    },
-                wgpu::VertexAttribute { offset: 52,  shader_location: 5,  format: wgpu::VertexFormat::Float32    },
-                wgpu::VertexAttribute { offset: 56,  shader_location: 6,  format: wgpu::VertexFormat::Uint32     },
-                wgpu::VertexAttribute { offset: 60,  shader_location: 7,  format: wgpu::VertexFormat::Uint32     },
-                wgpu::VertexAttribute { offset: 64,  shader_location: 8,  format: wgpu::VertexFormat::Float32x4  },
-                wgpu::VertexAttribute { offset: 80,  shader_location: 9,  format: wgpu::VertexFormat::Float32x4  },
-                wgpu::VertexAttribute { offset: 96,  shader_location: 10, format: wgpu::VertexFormat::Float32    },
-                wgpu::VertexAttribute { offset: 100, shader_location: 11, format: wgpu::VertexFormat::Float32    },
-                wgpu::VertexAttribute { offset: 104, shader_location: 12, format: wgpu::VertexFormat::Uint32     },
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: 12,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: 24,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: 36,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: 48,
+                    shader_location: 4,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                wgpu::VertexAttribute {
+                    offset: 52,
+                    shader_location: 5,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                wgpu::VertexAttribute {
+                    offset: 56,
+                    shader_location: 6,
+                    format: wgpu::VertexFormat::Uint32,
+                },
+                wgpu::VertexAttribute {
+                    offset: 60,
+                    shader_location: 7,
+                    format: wgpu::VertexFormat::Uint32,
+                },
+                wgpu::VertexAttribute {
+                    offset: 64,
+                    shader_location: 8,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: 80,
+                    shader_location: 9,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: 96,
+                    shader_location: 10,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                wgpu::VertexAttribute {
+                    offset: 100,
+                    shader_location: 11,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                wgpu::VertexAttribute {
+                    offset: 104,
+                    shader_location: 12,
+                    format: wgpu::VertexFormat::Uint32,
+                },
             ],
         };
 

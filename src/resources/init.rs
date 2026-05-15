@@ -1631,9 +1631,7 @@ impl ViewportGpuResources {
         // texture with depth testing, replacing the old stencil-based approach.
         let outline_mask_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("outline_mask_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/outline_mask.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/outline_mask.wgsl").into()),
         });
         let outline_mask_pipeline =
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1787,53 +1785,48 @@ impl ViewportGpuResources {
                 cache: None,
             });
 
-
         // Edge-detection pipeline: fullscreen pass that reads the R8 mask and
         // outputs an anti-aliased outline ring to the outline color texture.
         let outline_edge_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("outline_edge_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/outline_edge.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/outline_edge.wgsl").into()),
         });
-        let outline_edge_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("outline_edge_bgl"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
+        let outline_edge_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("outline_edge_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-        let outline_edge_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("outline_edge_layout"),
-                bind_group_layouts: &[&outline_edge_bgl],
-                push_constant_ranges: &[],
-            });
+                    count: None,
+                },
+            ],
+        });
+        let outline_edge_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("outline_edge_layout"),
+            bind_group_layouts: &[&outline_edge_bgl],
+            push_constant_ranges: &[],
+        });
         let outline_edge_pipeline =
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("outline_edge_pipeline"),

@@ -10,21 +10,21 @@ use viewport_lib::{Material, ViewportRenderer, scene::Scene};
 // ---------------------------------------------------------------------------
 
 pub(crate) struct ShadowsState {
-    pub built:         bool,
-    pub scene:         Scene,
+    pub built: bool,
+    pub scene: Scene,
     pub cascade_count: u32,
-    pub pcss_on:       bool,
-    pub contact_on:    bool,
+    pub pcss_on: bool,
+    pub contact_on: bool,
 }
 
 impl Default for ShadowsState {
     fn default() -> Self {
         Self {
-            built:         false,
-            scene:         Scene::new(),
+            built: false,
+            scene: Scene::new(),
             cascade_count: 4,
-            pcss_on:       false,
-            contact_on:    false,
+            pcss_on: false,
+            contact_on: false,
         }
     }
 }

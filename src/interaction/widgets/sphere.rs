@@ -128,7 +128,11 @@ impl SphereWidget {
             }
         }
 
-        if updated { WidgetResult::Updated } else { WidgetResult::None }
+        if updated {
+            WidgetResult::Updated
+        } else {
+            WidgetResult::None
+        }
     }
 
     /// Build a `ClipObject` for the sphere visual (fill + outline).
@@ -253,26 +257,21 @@ impl SphereWidget {
         let rh_ball = parry3d::shape::Ball::new(rh_r);
         let ch_ball = parry3d::shape::Ball::new(ch_r);
 
-        let rh_pose = Pose::from_parts(
-            [rp.x, rp.y, rp.z].into(),
-            glam::Quat::IDENTITY,
-        );
+        let rh_pose = Pose::from_parts([rp.x, rp.y, rp.z].into(), glam::Quat::IDENTITY);
         let ch_pose = Pose::from_parts(
             [self.center.x, self.center.y, self.center.z].into(),
             glam::Quat::IDENTITY,
         );
 
-        let t_rh = rh_ball
-            .cast_ray(&rh_pose, &ray, f32::MAX, true)
-            .map(|i| i);
-        let t_ch = ch_ball
-            .cast_ray(&ch_pose, &ray, f32::MAX, true)
-            .map(|i| i);
+        let t_rh = rh_ball.cast_ray(&rh_pose, &ray, f32::MAX, true).map(|i| i);
+        let t_ch = ch_ball.cast_ray(&ch_pose, &ray, f32::MAX, true).map(|i| i);
 
         match (t_ch, t_rh) {
-            (Some(tc), Some(tr)) => {
-                Some(if tc <= tr { SphereHandle::Center } else { SphereHandle::Radius })
-            }
+            (Some(tc), Some(tr)) => Some(if tc <= tr {
+                SphereHandle::Center
+            } else {
+                SphereHandle::Radius
+            }),
             (Some(_), None) => Some(SphereHandle::Center),
             (None, Some(_)) => Some(SphereHandle::Radius),
             (None, None) => None,

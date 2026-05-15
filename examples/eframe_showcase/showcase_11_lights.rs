@@ -15,33 +15,33 @@ use viewport_lib::{LightKind, LightSource, Material, ViewportRenderer, scene::Sc
 // ---------------------------------------------------------------------------
 
 pub(crate) struct LightsState {
-    pub built:          bool,
-    pub scene:          Scene,
-    pub sources:        Vec<LightSource>,
-    pub hemi_on:        bool,
+    pub built: bool,
+    pub scene: Scene,
+    pub sources: Vec<LightSource>,
+    pub hemi_on: bool,
     pub hemi_intensity: f32,
-    pub sky_color:      [f32; 3],
-    pub ground_color:   [f32; 3],
-    pub edl_enabled:    bool,
-    pub edl_radius:     f32,
-    pub edl_strength:   f32,
-    pub unlit_sphere:   bool,
+    pub sky_color: [f32; 3],
+    pub ground_color: [f32; 3],
+    pub edl_enabled: bool,
+    pub edl_radius: f32,
+    pub edl_strength: f32,
+    pub unlit_sphere: bool,
 }
 
 impl Default for LightsState {
     fn default() -> Self {
         Self {
-            built:          false,
-            scene:          Scene::new(),
-            sources:        vec![LightSource::default()],
-            hemi_on:        true,
+            built: false,
+            scene: Scene::new(),
+            sources: vec![LightSource::default()],
+            hemi_on: true,
             hemi_intensity: 1.0,
-            sky_color:      [1.0, 1.0, 1.0],
-            ground_color:   [1.0, 1.0, 1.0],
-            edl_enabled:    false,
-            edl_radius:     1.0,
-            edl_strength:   1.0,
-            unlit_sphere:   false,
+            sky_color: [1.0, 1.0, 1.0],
+            ground_color: [1.0, 1.0, 1.0],
+            edl_enabled: false,
+            edl_radius: 1.0,
+            edl_strength: 1.0,
+            unlit_sphere: false,
         }
     }
 }
@@ -308,7 +308,9 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
     ui.separator();
     ui.checkbox(&mut app.lights_state.hemi_on, "Hemisphere Ambient");
     if app.lights_state.hemi_on {
-        ui.add(egui::Slider::new(&mut app.lights_state.hemi_intensity, 0.0..=1.0).text("Intensity"));
+        ui.add(
+            egui::Slider::new(&mut app.lights_state.hemi_intensity, 0.0..=1.0).text("Intensity"),
+        );
         ui.horizontal(|ui| {
             ui.label("Sky:");
             ui.color_edit_button_rgb(&mut app.lights_state.sky_color);
@@ -332,9 +334,6 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                 .text("Radius (px)")
                 .step_by(0.5),
         );
-        ui.add(
-            egui::Slider::new(&mut app.lights_state.edl_strength, 0.0..=5.0)
-                .text("Strength"),
-        );
+        ui.add(egui::Slider::new(&mut app.lights_state.edl_strength, 0.0..=5.0).text("Strength"));
     }
 }

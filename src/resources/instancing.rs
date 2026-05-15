@@ -502,9 +502,7 @@ impl ViewportGpuResources {
         // HDR solid cull pipeline: Rgba16Float target, vs_main_cull, back-face cull.
         let instanced_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh_instanced_shader_cull"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/mesh_instanced.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mesh_instanced.wgsl").into()),
         });
         let inst_cull_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("hdr_instanced_cull_pipeline_layout"),
@@ -665,19 +663,20 @@ impl ViewportGpuResources {
             ],
         });
         // Recreate the shadow cascade BGL (same definition as in ensure_instanced_pipelines).
-        let shadow_bgl_for_cull = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("shadow_bgl_for_cull"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let shadow_bgl_for_cull =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("shadow_bgl_for_cull"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
         let shadow_cull_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("shadow_instanced_cull_pipeline_layout"),
             bind_group_layouts: &[&shadow_bgl_for_cull, &shadow_cull_bgl],
@@ -689,32 +688,33 @@ impl ViewportGpuResources {
                 include_str!("../shaders/shadow_instanced.wgsl").into(),
             ),
         });
-        let shadow_instanced_cull = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("shadow_instanced_cull_pipeline"),
-            layout: Some(&shadow_cull_layout),
-            vertex: wgpu::VertexState {
-                module: &shadow_cull_shader,
-                entry_point: Some("vs_shadow_cull"),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: None,
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: Some(wgpu::Face::Front),
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        let shadow_instanced_cull =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("shadow_instanced_cull_pipeline"),
+                layout: Some(&shadow_cull_layout),
+                vertex: wgpu::VertexState {
+                    module: &shadow_cull_shader,
+                    entry_point: Some("vs_shadow_cull"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: None,
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: Some(wgpu::Face::Front),
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
         self.shadow_instanced_cull_pipeline = Some(shadow_instanced_cull);
         self.shadow_cull_instance_bgl = Some(shadow_cull_bgl);
     }

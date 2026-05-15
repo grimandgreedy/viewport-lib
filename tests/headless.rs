@@ -135,9 +135,12 @@ fn replace_mesh_data_bad_index() {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
-    let result = renderer
-        .resources_mut()
-        .replace_mesh_data(&device, &queue, MeshId::from_index(999), &box_mesh());
+    let result = renderer.resources_mut().replace_mesh_data(
+        &device,
+        &queue,
+        MeshId::from_index(999),
+        &box_mesh(),
+    );
     assert!(matches!(
         result.unwrap_err(),
         ViewportError::MeshIndexOutOfBounds { index: 999, .. }

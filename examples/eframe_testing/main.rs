@@ -23,7 +23,7 @@ use viewport_lib::{
 // Solid unlit colors for the subsurface objects. Picked to be visually distinct
 // so any bleed-through is immediately identifiable by color.
 const COLOR_MAGENTA: [f32; 3] = [1.0, 0.0, 1.0];
-const COLOR_CYAN:    [f32; 3] = [0.0, 1.0, 1.0];
+const COLOR_CYAN: [f32; 3] = [0.0, 1.0, 1.0];
 
 fn main() -> eframe::Result {
     eframe::run_native(
@@ -35,7 +35,10 @@ fn main() -> eframe::Result {
             ..Default::default()
         },
         Box::new(|cc| {
-            let rs = cc.wgpu_render_state.as_ref().expect("wgpu backend required");
+            let rs = cc
+                .wgpu_render_state
+                .as_ref()
+                .expect("wgpu backend required");
             let device = &rs.device;
             let _queue = &rs.queue;
 
@@ -62,7 +65,13 @@ fn main() -> eframe::Result {
 
             rs.renderer.write().callback_resources.insert(renderer);
 
-            Ok(Box::new(App::new(ground_id, box_id, sphere_id, unlit_sphere_id, unlit_box_id)))
+            Ok(Box::new(App::new(
+                ground_id,
+                box_id,
+                sphere_id,
+                unlit_sphere_id,
+                unlit_box_id,
+            )))
         }),
     )
 }
@@ -104,7 +113,13 @@ struct App {
 }
 
 impl App {
-    fn new(ground_id: MeshId, box_id: MeshId, sphere_id: MeshId, unlit_sphere_id: MeshId, unlit_box_id: MeshId) -> Self {
+    fn new(
+        ground_id: MeshId,
+        box_id: MeshId,
+        sphere_id: MeshId,
+        unlit_sphere_id: MeshId,
+        unlit_box_id: MeshId,
+    ) -> Self {
         let mut lighting = LightingSettings::default();
         lighting.lights = vec![LightSource {
             kind: LightKind::Directional {
@@ -157,7 +172,8 @@ impl App {
                 };
                 m
             };
-            item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.15)).to_cols_array_2d();
+            item.model =
+                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.15)).to_cols_array_2d();
             item
         };
 
@@ -185,7 +201,8 @@ impl App {
             item.mesh_id = self.sphere_id;
             item.visible = true;
             item.material = sphere_mat;
-            item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.8)).to_cols_array_2d();
+            item.model =
+                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.8)).to_cols_array_2d();
             items.push(item);
         }
 
@@ -203,7 +220,8 @@ impl App {
                 let mut m = unlit_mat;
                 m.base_color = COLOR_MAGENTA;
                 item.material = m;
-                item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -2.0)).to_cols_array_2d();
+                item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -2.0))
+                    .to_cols_array_2d();
                 items.push(item);
             }
 
@@ -214,7 +232,8 @@ impl App {
                 let mut m = unlit_mat;
                 m.base_color = COLOR_CYAN;
                 item.material = m;
-                item.model = glam::Mat4::from_translation(glam::Vec3::new(8.0, 5.0, -2.5)).to_cols_array_2d();
+                item.model = glam::Mat4::from_translation(glam::Vec3::new(8.0, 5.0, -2.5))
+                    .to_cols_array_2d();
                 items.push(item);
             }
         }
@@ -226,73 +245,100 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Side panel: controls + live readout.
-        egui::SidePanel::left("controls").min_width(260.0).show(ctx, |ui| {
-            ui.heading("Shadow debug");
-            ui.separator();
+        egui::SidePanel::left("controls")
+            .min_width(260.0)
+            .show(ctx, |ui| {
+                ui.heading("Shadow debug");
+                ui.separator();
 
-            ui.label("Cascade count");
-            let mut cc = self.lighting.shadow_cascade_count as i32;
-            if ui.add(egui::Slider::new(&mut cc, 1..=4)).changed() {
-                self.lighting.shadow_cascade_count = cc as u32;
-            }
-
-            ui.label("Split lambda (0=linear, 1=log)");
-            ui.add(egui::Slider::new(&mut self.lighting.cascade_split_lambda, 0.0..=1.0));
-
-            ui.label("Shadow bias");
-            ui.add(egui::Slider::new(&mut self.lighting.shadow_bias, 0.0..=0.01).logarithmic(true));
-
-            ui.checkbox(&mut self.lighting.shadows_enabled, "Shadows enabled");
-
-            if ui.checkbox(&mut self.show_hemisphere, "Hemisphere ambient").changed() {
-                self.lighting.hemisphere_intensity = if self.show_hemisphere { 0.4 } else { 0.0 };
-            }
-
-            ui.separator();
-            ui.label("Geometry / GPU");
-            ui.checkbox(&mut self.ground_two_sided, "Ground two-sided (Identical vs Cull)");
-            ui.checkbox(&mut self.show_subsurface, "Show subsurface objects (magenta/cyan)");
-            ui.checkbox(&mut self.gpu_culling, "GPU driven culling");
-
-            ui.separator();
-            ui.label("Camera");
-
-            let dist      = self.camera.distance;
-            let eff_near  = self.camera.effective_znear();
-            let eff_far   = self.camera.effective_zfar();
-            let precision_limit = (2.0_f32 * eff_near * eff_far / (eff_far - eff_near)).sqrt();
-            ui.label(format!("distance:         {:.2}", dist));
-            ui.label(format!("znear (eff):      {:.4}", eff_near));
-            ui.label(format!("effective far:    {:.2}", eff_far));
-            ui.label(format!("near/far ratio:   {:.0}:1", eff_far / eff_near));
-            ui.label(format!("depth limit @2m:  {:.1}m", precision_limit));
-
-            ui.separator();
-            ui.label("Cascade splits (world depth)");
-            let splits = cascade_splits(eff_near, eff_far, self.lighting.shadow_cascade_count, self.lighting.cascade_split_lambda);
-            let mut prev = eff_near;
-            for (i, &s) in splits.iter().enumerate() {
-                ui.label(format!("  [{}] {:.2} .. {:.2}", i, prev, s));
-                prev = s;
-            }
-
-            ui.separator();
-            if ui.button("Log cascade matrices (P)").clicked() || self.log_next_frame {
-                self.log_next_frame = false;
-                // Print the cascade split state to stderr so it shows in the terminal.
-                eprintln!("=== CASCADE STATE ===");
-                eprintln!("  camera distance: {:.2}", dist);
-                eprintln!("  near: {:.4}  far: {:.2}", eff_near, eff_far);
-                let splits = cascade_splits(eff_near, eff_far, self.lighting.shadow_cascade_count, self.lighting.cascade_split_lambda);
-                for (i, &s) in splits.iter().enumerate() {
-                    let lo = if i == 0 { eff_near } else { splits[i - 1] };
-                    eprintln!("  cascade[{}]: {:.3} .. {:.3}", i, lo, s);
+                ui.label("Cascade count");
+                let mut cc = self.lighting.shadow_cascade_count as i32;
+                if ui.add(egui::Slider::new(&mut cc, 1..=4)).changed() {
+                    self.lighting.shadow_cascade_count = cc as u32;
                 }
-                eprintln!("=== END ===");
-            }
 
-            ui.small("P = log to terminal");
-        });
+                ui.label("Split lambda (0=linear, 1=log)");
+                ui.add(egui::Slider::new(
+                    &mut self.lighting.cascade_split_lambda,
+                    0.0..=1.0,
+                ));
+
+                ui.label("Shadow bias");
+                ui.add(
+                    egui::Slider::new(&mut self.lighting.shadow_bias, 0.0..=0.01).logarithmic(true),
+                );
+
+                ui.checkbox(&mut self.lighting.shadows_enabled, "Shadows enabled");
+
+                if ui
+                    .checkbox(&mut self.show_hemisphere, "Hemisphere ambient")
+                    .changed()
+                {
+                    self.lighting.hemisphere_intensity =
+                        if self.show_hemisphere { 0.4 } else { 0.0 };
+                }
+
+                ui.separator();
+                ui.label("Geometry / GPU");
+                ui.checkbox(
+                    &mut self.ground_two_sided,
+                    "Ground two-sided (Identical vs Cull)",
+                );
+                ui.checkbox(
+                    &mut self.show_subsurface,
+                    "Show subsurface objects (magenta/cyan)",
+                );
+                ui.checkbox(&mut self.gpu_culling, "GPU driven culling");
+
+                ui.separator();
+                ui.label("Camera");
+
+                let dist = self.camera.distance;
+                let eff_near = self.camera.effective_znear();
+                let eff_far = self.camera.effective_zfar();
+                let precision_limit = (2.0_f32 * eff_near * eff_far / (eff_far - eff_near)).sqrt();
+                ui.label(format!("distance:         {:.2}", dist));
+                ui.label(format!("znear (eff):      {:.4}", eff_near));
+                ui.label(format!("effective far:    {:.2}", eff_far));
+                ui.label(format!("near/far ratio:   {:.0}:1", eff_far / eff_near));
+                ui.label(format!("depth limit @2m:  {:.1}m", precision_limit));
+
+                ui.separator();
+                ui.label("Cascade splits (world depth)");
+                let splits = cascade_splits(
+                    eff_near,
+                    eff_far,
+                    self.lighting.shadow_cascade_count,
+                    self.lighting.cascade_split_lambda,
+                );
+                let mut prev = eff_near;
+                for (i, &s) in splits.iter().enumerate() {
+                    ui.label(format!("  [{}] {:.2} .. {:.2}", i, prev, s));
+                    prev = s;
+                }
+
+                ui.separator();
+                if ui.button("Log cascade matrices (P)").clicked() || self.log_next_frame {
+                    self.log_next_frame = false;
+                    // Print the cascade split state to stderr so it shows in the terminal.
+                    eprintln!("=== CASCADE STATE ===");
+                    eprintln!("  camera distance: {:.2}", dist);
+                    eprintln!("  near: {:.4}  far: {:.2}", eff_near, eff_far);
+                    let splits = cascade_splits(
+                        eff_near,
+                        eff_far,
+                        self.lighting.shadow_cascade_count,
+                        self.lighting.cascade_split_lambda,
+                    );
+                    for (i, &s) in splits.iter().enumerate() {
+                        let lo = if i == 0 { eff_near } else { splits[i - 1] };
+                        eprintln!("  cascade[{}]: {:.3} .. {:.3}", i, lo, s);
+                    }
+                    eprintln!("=== END ===");
+                }
+
+                ui.small("P = log to terminal");
+            });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let (rect, response) =
@@ -322,12 +368,15 @@ impl eframe::App for App {
                     .interact_pos()
                     .map(|p| glam::Vec2::new(p.x - rect.left(), p.y - rect.top()));
                 if let Some(pos) = local_pos {
-                    self.controller.push_event(ViewportEvent::PointerMoved { position: pos });
+                    self.controller
+                        .push_event(ViewportEvent::PointerMoved { position: pos });
                 }
 
                 for event in &i.events {
                     match event {
-                        egui::Event::PointerButton { button, pressed, .. } => {
+                        egui::Event::PointerButton {
+                            button, pressed, ..
+                        } => {
                             let vp_btn = match button {
                                 egui::PointerButton::Primary => viewport_lib::MouseButton::Left,
                                 egui::PointerButton::Secondary => viewport_lib::MouseButton::Right,
@@ -336,7 +385,11 @@ impl eframe::App for App {
                             };
                             self.controller.push_event(ViewportEvent::MouseButton {
                                 button: vp_btn,
-                                state: if *pressed { ButtonState::Pressed } else { ButtonState::Released },
+                                state: if *pressed {
+                                    ButtonState::Pressed
+                                } else {
+                                    ButtonState::Released
+                                },
                             });
                         }
                         egui::Event::MouseWheel { unit, delta, .. } => {
@@ -371,10 +424,14 @@ impl eframe::App for App {
             )
             .with_lighting(lighting);
 
-            ui.painter().add(eframe::egui_wgpu::Callback::new_paint_callback(
-                rect,
-                viewport_callback::ViewportCallback { frame: frame_data, gpu_culling: self.gpu_culling },
-            ));
+            ui.painter()
+                .add(eframe::egui_wgpu::Callback::new_paint_callback(
+                    rect,
+                    viewport_callback::ViewportCallback {
+                        frame: frame_data,
+                        gpu_culling: self.gpu_culling,
+                    },
+                ));
         });
     }
 }

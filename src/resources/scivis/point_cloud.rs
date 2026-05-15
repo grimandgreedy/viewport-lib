@@ -226,18 +226,18 @@ impl ViewportGpuResources {
         // Radius buffer: radius_scalars (mapped to radius_range) take priority over
         // explicit per-point radii.
         let (radius_buf, has_radius) = if !item.radius_scalars.is_empty() {
-            let r_min = item
-                .radius_scalar_range
-                .map(|r| r.0)
-                .unwrap_or_else(|| {
-                    item.radius_scalars.iter().cloned().fold(f32::INFINITY, f32::min)
-                });
-            let r_max = item
-                .radius_scalar_range
-                .map(|r| r.1)
-                .unwrap_or_else(|| {
-                    item.radius_scalars.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
-                });
+            let r_min = item.radius_scalar_range.map(|r| r.0).unwrap_or_else(|| {
+                item.radius_scalars
+                    .iter()
+                    .cloned()
+                    .fold(f32::INFINITY, f32::min)
+            });
+            let r_max = item.radius_scalar_range.map(|r| r.1).unwrap_or_else(|| {
+                item.radius_scalars
+                    .iter()
+                    .cloned()
+                    .fold(f32::NEG_INFINITY, f32::max)
+            });
             let range = (r_max - r_min).max(f32::EPSILON);
             let (out_min, out_max) = item.radius_range;
             let mapped: Vec<f32> = item
@@ -307,6 +307,9 @@ impl ViewportGpuResources {
             has_radius: u32,
             has_transparency: u32,
             gaussian: u32,
+            // 0 = ScreenSpaceCircle, 1 = Sphere
+            render_mode: u32,
+            _pad: [u32; 3],
         }
         let uniform_data = PointCloudUniform {
             model: item.model,
@@ -319,6 +322,11 @@ impl ViewportGpuResources {
             has_radius,
             has_transparency,
             gaussian: if item.gaussian { 1 } else { 0 },
+            render_mode: match item.render_mode {
+                crate::renderer::PointRenderMode::ScreenSpaceCircle => 0,
+                crate::renderer::PointRenderMode::Sphere => 1,
+            },
+            _pad: [0; 3],
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("pc_uniform_buf"),

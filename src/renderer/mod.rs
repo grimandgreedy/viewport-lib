@@ -17,19 +17,16 @@ pub mod stats;
 
 pub use self::types::{
     CameraFrame, CameraFrustumItem, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
-    EffectsFrame, EnvironmentMap, FilterMode, FrameData, GlyphItem, GlyphType, GroundPlane,
-    GroundPlaneMode, ImageAnchor, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
+    EffectsFrame, EnvironmentMap, FilterMode, FrameData, GaussianSplatData, GaussianSplatId,
+    GaussianSplatItem, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode, ImageAnchor,
+    ImageSliceItem, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
     LightingSettings, LoadingBarAnchor, LoadingBarItem, OverlayFrame, OverlayImageItem, PickId,
-    PointCloudItem, PointRenderMode,
-    aabb_wireframe_polyline, PolylineItem, PostProcessSettings, RenderCamera, RulerItem, ScalarBarAnchor, ScalarBarItem,
-    ScalarBarOrientation, SceneEffects,
-    RibbonItem, SceneFrame, SceneRenderItem, ScreenImageItem, VolumeMeshItem,
-    ShadowFilter, SliceAxis, SpriteItem, SpriteSizeMode, StreamtubeItem, SurfaceLICConfig,
-    SurfaceLICItem, SurfaceSubmission,
-    GaussianSplatData, GaussianSplatId, GaussianSplatItem, ShDegree,
-    ImageSliceItem, TensorGlyphItem, ToneMapping, TubeItem,
-    TransparentVolumeMeshItem, VolumeSurfaceSliceItem,
-    ViewportEffects, ViewportFrame, VolumeItem,
+    PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings, RenderCamera, RibbonItem,
+    RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, SceneEffects, SceneFrame,
+    SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpriteItem,
+    SpriteSizeMode, StreamtubeItem, SurfaceLICConfig, SurfaceLICItem, SurfaceSubmission,
+    TensorGlyphItem, ToneMapping, TransparentVolumeMeshItem, TubeItem, ViewportEffects,
+    ViewportFrame, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, aabb_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -48,11 +45,10 @@ pub struct ViewportId(pub usize);
 use self::shadows::{compute_cascade_matrix, compute_cascade_splits};
 use self::types::{INSTANCING_THRESHOLD, InstancedBatch};
 use crate::resources::{
-    BatchMeta, CameraUniform, ClipPlanesUniform, ClipVolumeEntry, ClipVolumesUniform,
-    CLIP_VOLUME_MAX, GridUniform, InstanceAabb,
-    InstanceData, LightsUniform, ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers,
-    OutlineUniform, PickInstance, ShadowAtlasUniform, SingleLightUniform,
-    SplatOutlineMaskUniform, ViewportGpuResources,
+    BatchMeta, CLIP_VOLUME_MAX, CameraUniform, ClipPlanesUniform, ClipVolumeEntry,
+    ClipVolumesUniform, GridUniform, InstanceAabb, InstanceData, LightsUniform, ObjectUniform,
+    OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, PickInstance, ShadowAtlasUniform,
+    SingleLightUniform, SplatOutlineMaskUniform, ViewportGpuResources,
 };
 
 /// Per-viewport GPU state: uniform buffers and bind groups that differ per viewport.
@@ -101,7 +97,11 @@ pub(crate) struct ViewportSlot {
     /// Per-frame outline data for selected GPU marching cubes jobs, rebuilt in prepare().
     pub mc_outline_data: Vec<crate::resources::gpu_marching_cubes::McOutlineItem>,
     /// Per-frame x-ray buffers for selected objects, rebuilt in prepare().
-    pub xray_object_buffers: Vec<(crate::resources::mesh_store::MeshId, wgpu::Buffer, wgpu::BindGroup)>,
+    pub xray_object_buffers: Vec<(
+        crate::resources::mesh_store::MeshId,
+        wgpu::Buffer,
+        wgpu::BindGroup,
+    )>,
     /// Per-frame constraint guide line buffers, rebuilt in prepare().
     pub constraint_line_buffers: Vec<(
         wgpu::Buffer,
@@ -519,16 +519,12 @@ impl ViewportRenderer {
     /// `policy.allow_dynamic_resolution` is `true` and `policy.target_fps` is
     /// `Some`. It adjusts `render_scale` within `[min_render_scale,
     /// max_render_scale]` each frame based on `total_frame_ms`.
-    pub fn set_performance_policy(
-        &mut self,
-        policy: crate::renderer::stats::PerformancePolicy,
-    ) {
+    pub fn set_performance_policy(&mut self, policy: crate::renderer::stats::PerformancePolicy) {
         self.performance_policy = policy;
         // Clamp current scale into the new bounds immediately.
-        self.current_render_scale = self.current_render_scale.clamp(
-            policy.min_render_scale,
-            policy.max_render_scale,
-        );
+        self.current_render_scale = self
+            .current_render_scale
+            .clamp(policy.min_render_scale, policy.max_render_scale);
     }
 
     /// Return the active performance policy.
@@ -1040,8 +1036,9 @@ impl ViewportRenderer {
             Some(dr) => dr.scaled_size != scaled_size || dr.surface_size != surface_size,
         };
         if needs_create {
-            let target =
-                self.resources.create_dyn_res_target(device, scaled_size, surface_size);
+            let target = self
+                .resources
+                .create_dyn_res_target(device, scaled_size, surface_size);
             self.viewport_slots[vp_idx].dyn_res = Some(target);
         }
     }

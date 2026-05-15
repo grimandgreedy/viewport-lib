@@ -27,9 +27,9 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap, CELL_SENTINEL, ColormapId,
-    LightingSettings, ProjectedTetId, SceneRenderItem, TransparentVolumeMeshItem,
-    ClipObject, ClipShape, ViewportRenderer, VolumeMeshData, VolumeMeshItem,
+    AttributeKind, AttributeRef, BackfacePolicy, BuiltinColormap, CELL_SENTINEL, ClipObject,
+    ClipShape, ColormapId, LightingSettings, ProjectedTetId, SceneRenderItem,
+    TransparentVolumeMeshItem, ViewportRenderer, VolumeMeshData, VolumeMeshItem,
 };
 
 // ---------------------------------------------------------------------------
@@ -37,71 +37,71 @@ use viewport_lib::{
 // ---------------------------------------------------------------------------
 
 pub(crate) struct VmState {
-    pub built:          bool,
-    pub mode:           VmMode,
-    pub tet_item:       Option<VolumeMeshItem>,
-    pub hex_item:       Option<VolumeMeshItem>,
+    pub built: bool,
+    pub mode: VmMode,
+    pub tet_item: Option<VolumeMeshItem>,
+    pub hex_item: Option<VolumeMeshItem>,
     pub tet_small_item: Option<VolumeMeshItem>,
-    pub tet_box_item:   Option<VolumeMeshItem>,
-    pub pyramid_item:   Option<VolumeMeshItem>,
-    pub wedge_item:     Option<VolumeMeshItem>,
-    pub colormap:       BuiltinColormap,
-    pub field:          VmField,
-    pub wireframe:      bool,
-    pub clip_on:        bool,
-    pub clip_offset:    f32,
+    pub tet_box_item: Option<VolumeMeshItem>,
+    pub pyramid_item: Option<VolumeMeshItem>,
+    pub wedge_item: Option<VolumeMeshItem>,
+    pub colormap: BuiltinColormap,
+    pub field: VmField,
+    pub wireframe: bool,
+    pub clip_on: bool,
+    pub clip_offset: f32,
     /// Elevation in degrees: angle above the horizontal XZ plane (-90 = down, 0 = horizontal, 90 = up).
     pub clip_elevation: f32,
     /// Azimuth in degrees: rotation in the XZ plane measured from +Z toward +X.
-    pub clip_azimuth:   f32,
+    pub clip_azimuth: f32,
     /// CPU-clipped volume mesh item; allocated lazily on first clip.
-    pub clipped_item:   Option<VolumeMeshItem>,
+    pub clipped_item: Option<VolumeMeshItem>,
     /// Projected-tet handles per cell type (uploaded at startup with raw positions).
-    pub pt_hex_id:      Option<ProjectedTetId>,
-    pub pt_tet_id:      Option<ProjectedTetId>,
+    pub pt_hex_id: Option<ProjectedTetId>,
+    pub pt_tet_id: Option<ProjectedTetId>,
     pub pt_tet_small_id: Option<ProjectedTetId>,
-    pub pt_tet_box_id:  Option<ProjectedTetId>,
-    pub pt_pyramid_id:  Option<ProjectedTetId>,
-    pub pt_wedge_id:    Option<ProjectedTetId>,
+    pub pt_tet_box_id: Option<ProjectedTetId>,
+    pub pt_pyramid_id: Option<ProjectedTetId>,
+    pub pt_wedge_id: Option<ProjectedTetId>,
     /// Whether to render in transparent (projected-tet) mode.
-    pub transparent:    bool,
+    pub transparent: bool,
     /// Beer-Lambert extinction coefficient for transparent mode.
-    pub density:        f32,
+    pub density: f32,
     /// Scalar field last used for the PT upload; triggers a rebuild when it differs from field.
-    pub pt_field:       VmField,
+    pub pt_field: VmField,
     /// Colormap last used for the PT upload; triggers a rebuild when it differs from colormap.
-    pub pt_colormap:    BuiltinColormap,
+    pub pt_colormap: BuiltinColormap,
 }
 
 impl Default for VmState {
     fn default() -> Self {
         Self {
-            built:           false,
-            mode:            VmMode::Hex,
-            tet_item:        None,
-            hex_item:        None,
-            tet_small_item:  None,
-            tet_box_item:    None,
-            pyramid_item:    None,
-            wedge_item:      None,
-            colormap:        BuiltinColormap::Viridis,
-            field:           VmField::Latitude,
-            wireframe:       false,
-            clip_on:         true,
-            clip_offset:     0.0,
-            clip_elevation:  0.0,
-            clip_azimuth:    0.0,
-            clipped_item:    None,
-            pt_hex_id:       None,
-            pt_tet_id:       None,
+            built: false,
+            mode: VmMode::Hex,
+            tet_item: None,
+            hex_item: None,
+            tet_small_item: None,
+            tet_box_item: None,
+            pyramid_item: None,
+            wedge_item: None,
+            colormap: BuiltinColormap::Viridis,
+            field: VmField::Latitude,
+            wireframe: false,
+            clip_on: true,
+            clip_offset: 0.0,
+            clip_elevation: 0.0,
+            clip_azimuth: 0.0,
+            clipped_item: None,
+            pt_hex_id: None,
+            pt_tet_id: None,
             pt_tet_small_id: None,
-            pt_tet_box_id:   None,
-            pt_pyramid_id:   None,
-            pt_wedge_id:     None,
-            transparent:     false,
-            density:         0.5,
-            pt_field:        VmField::Latitude,
-            pt_colormap:     BuiltinColormap::Viridis,
+            pt_tet_box_id: None,
+            pt_pyramid_id: None,
+            pt_wedge_id: None,
+            transparent: false,
+            density: 0.5,
+            pt_field: VmField::Latitude,
+            pt_colormap: BuiltinColormap::Viridis,
         }
     }
 }
@@ -165,7 +165,6 @@ pub(crate) enum VmField {
     /// Direct per-cell RGBA colour (no colormap).
     DirectColor,
 }
-
 
 // ---------------------------------------------------------------------------
 // App state fields (declared in main App struct):
@@ -614,9 +613,12 @@ fn build_pyramid_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
     }
 
     data.positions = all_positions;
-    data.cell_scalars.insert("latitude".to_string(), lat_scalars);
-    data.cell_scalars.insert("longitude".to_string(), lon_scalars);
-    data.cell_scalars.insert("radial".to_string(), radial_scalars);
+    data.cell_scalars
+        .insert("latitude".to_string(), lat_scalars);
+    data.cell_scalars
+        .insert("longitude".to_string(), lon_scalars);
+    data.cell_scalars
+        .insert("radial".to_string(), radial_scalars);
     data.cell_colors.insert("direct".to_string(), direct_colors);
     data
 }
@@ -676,9 +678,12 @@ fn build_wedge_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
     }
 
     data.positions = positions.to_vec();
-    data.cell_scalars.insert("latitude".to_string(), lat_scalars);
-    data.cell_scalars.insert("longitude".to_string(), lon_scalars);
-    data.cell_scalars.insert("radial".to_string(), radial_scalars);
+    data.cell_scalars
+        .insert("latitude".to_string(), lat_scalars);
+    data.cell_scalars
+        .insert("longitude".to_string(), lon_scalars);
+    data.cell_scalars
+        .insert("radial".to_string(), radial_scalars);
     data.cell_colors.insert("direct".to_string(), direct_colors);
     data
 }
@@ -754,12 +759,12 @@ impl App {
                 .map(|(id, _, _)| id)
         };
 
-        self.vm_state.pt_hex_id       = pt_upload(&pt_data_for_mode(VmMode::Hex));
-        self.vm_state.pt_tet_id       = pt_upload(&pt_data_for_mode(VmMode::Tet));
+        self.vm_state.pt_hex_id = pt_upload(&pt_data_for_mode(VmMode::Hex));
+        self.vm_state.pt_tet_id = pt_upload(&pt_data_for_mode(VmMode::Tet));
         self.vm_state.pt_tet_small_id = pt_upload(&pt_data_for_mode(VmMode::TetSmall));
-        self.vm_state.pt_tet_box_id   = pt_upload(&pt_data_for_mode(VmMode::TetBox));
-        self.vm_state.pt_pyramid_id   = pt_upload(&pt_data_for_mode(VmMode::Pyramid));
-        self.vm_state.pt_wedge_id     = pt_upload(&pt_data_for_mode(VmMode::Wedge));
+        self.vm_state.pt_tet_box_id = pt_upload(&pt_data_for_mode(VmMode::TetBox));
+        self.vm_state.pt_pyramid_id = pt_upload(&pt_data_for_mode(VmMode::Pyramid));
+        self.vm_state.pt_wedge_id = pt_upload(&pt_data_for_mode(VmMode::Wedge));
 
         self.vm_state.built = true;
     }
@@ -830,7 +835,10 @@ impl App {
         // Pick the active item: clipped if available and clipping is on,
         // otherwise the static boundary item for the current mode.
         let active = if self.vm_state.clip_on {
-            self.vm_state.clipped_item.as_ref().or_else(|| self.vm_active_item())
+            self.vm_state
+                .clipped_item
+                .as_ref()
+                .or_else(|| self.vm_active_item())
         } else {
             self.vm_active_item()
         };
@@ -876,12 +884,12 @@ impl App {
     /// Return a reference to the static [`VolumeMeshItem`] for the current mode.
     fn vm_active_item(&self) -> Option<&VolumeMeshItem> {
         match self.vm_state.mode {
-            VmMode::Hex      => self.vm_state.hex_item.as_ref(),
-            VmMode::Tet      => self.vm_state.tet_item.as_ref(),
+            VmMode::Hex => self.vm_state.hex_item.as_ref(),
+            VmMode::Tet => self.vm_state.tet_item.as_ref(),
             VmMode::TetSmall => self.vm_state.tet_small_item.as_ref(),
-            VmMode::TetBox   => self.vm_state.tet_box_item.as_ref(),
-            VmMode::Pyramid  => self.vm_state.pyramid_item.as_ref(),
-            VmMode::Wedge    => self.vm_state.wedge_item.as_ref(),
+            VmMode::TetBox => self.vm_state.tet_box_item.as_ref(),
+            VmMode::Pyramid => self.vm_state.pyramid_item.as_ref(),
+            VmMode::Wedge => self.vm_state.wedge_item.as_ref(),
         }
     }
 
@@ -909,18 +917,22 @@ impl App {
             VmMode::Wedge,
         ] {
             let id = match mode {
-                VmMode::Hex      => self.vm_state.pt_hex_id,
-                VmMode::Tet      => self.vm_state.pt_tet_id,
+                VmMode::Hex => self.vm_state.pt_hex_id,
+                VmMode::Tet => self.vm_state.pt_tet_id,
                 VmMode::TetSmall => self.vm_state.pt_tet_small_id,
-                VmMode::TetBox   => self.vm_state.pt_tet_box_id,
-                VmMode::Pyramid  => self.vm_state.pt_pyramid_id,
-                VmMode::Wedge    => self.vm_state.pt_wedge_id,
+                VmMode::TetBox => self.vm_state.pt_tet_box_id,
+                VmMode::Pyramid => self.vm_state.pt_pyramid_id,
+                VmMode::Wedge => self.vm_state.pt_wedge_id,
             };
             if let Some(id) = id {
                 let data = pt_data_for_mode(mode);
-                let _ = renderer
-                    .resources_mut()
-                    .replace_projected_tet_mesh(device, id, &data, attr, colormap_id);
+                let _ = renderer.resources_mut().replace_projected_tet_mesh(
+                    device,
+                    id,
+                    &data,
+                    attr,
+                    colormap_id,
+                );
             }
         }
     }
@@ -932,12 +944,12 @@ impl App {
             return None;
         }
         let id = match self.vm_state.mode {
-            VmMode::Hex      => self.vm_state.pt_hex_id,
-            VmMode::Tet      => self.vm_state.pt_tet_id,
+            VmMode::Hex => self.vm_state.pt_hex_id,
+            VmMode::Tet => self.vm_state.pt_tet_id,
             VmMode::TetSmall => self.vm_state.pt_tet_small_id,
-            VmMode::TetBox   => self.vm_state.pt_tet_box_id,
-            VmMode::Pyramid  => self.vm_state.pt_pyramid_id,
-            VmMode::Wedge    => self.vm_state.pt_wedge_id,
+            VmMode::TetBox => self.vm_state.pt_tet_box_id,
+            VmMode::Pyramid => self.vm_state.pt_pyramid_id,
+            VmMode::Wedge => self.vm_state.pt_wedge_id,
         }?;
         let mut item = TransparentVolumeMeshItem::new(id);
         item.density = self.vm_state.density;
@@ -982,7 +994,6 @@ impl App {
             ..LightingSettings::default()
         }
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -991,89 +1002,96 @@ impl App {
 
 pub(crate) fn controls_volume_mesh(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Cell type:");
+    ui.horizontal_wrapped(|ui| {
+        ui.radio_value(&mut app.vm_state.mode, VmMode::Hex, "Hex sphere (27)");
+        ui.radio_value(
+            &mut app.vm_state.mode,
+            VmMode::Pyramid,
+            "Pyramid sphere (162)",
+        );
+        ui.radio_value(&mut app.vm_state.mode, VmMode::Wedge, "Wedge sphere (54)");
+        ui.radio_value(&mut app.vm_state.mode, VmMode::Tet, "Tet sphere 3³ (162)");
+        ui.radio_value(&mut app.vm_state.mode, VmMode::TetBox, "Tet box 3³ (162)");
+        ui.radio_value(&mut app.vm_state.mode, VmMode::TetSmall, "Tet cube 1³ (6)");
+    });
+
+    ui.separator();
+    ui.label("Field:");
+    for (field, label) in [
+        (VmField::Latitude, "Latitude (scalar)"),
+        (VmField::Longitude, "Longitude (scalar)"),
+        (VmField::Radial, "Radial distance (scalar)"),
+        (VmField::DirectColor, "Direct cell colors (RGBA)"),
+    ] {
+        ui.radio_value(&mut app.vm_state.field, field, label);
+    }
+
+    if !matches!(app.vm_state.field, VmField::DirectColor) {
+        ui.separator();
+        ui.label("Colormap:");
         ui.horizontal_wrapped(|ui| {
-            ui.radio_value(&mut app.vm_state.mode, VmMode::Hex, "Hex sphere (27)");
-            ui.radio_value(&mut app.vm_state.mode, VmMode::Pyramid, "Pyramid sphere (162)");
-            ui.radio_value(&mut app.vm_state.mode, VmMode::Wedge, "Wedge sphere (54)");
-            ui.radio_value(&mut app.vm_state.mode, VmMode::Tet, "Tet sphere 3³ (162)");
-            ui.radio_value(&mut app.vm_state.mode, VmMode::TetBox, "Tet box 3³ (162)");
-            ui.radio_value(&mut app.vm_state.mode, VmMode::TetSmall, "Tet cube 1³ (6)");
+            for cm in [
+                BuiltinColormap::Viridis,
+                BuiltinColormap::Plasma,
+                BuiltinColormap::Magma,
+                BuiltinColormap::Inferno,
+                BuiltinColormap::Turbo,
+                BuiltinColormap::Coolwarm,
+                BuiltinColormap::RdBu,
+                BuiltinColormap::Rainbow,
+                BuiltinColormap::Jet,
+            ] {
+                ui.radio_value(&mut app.vm_state.colormap, cm, format!("{cm:?}"));
+            }
         });
+    }
 
-        ui.separator();
-        ui.label("Field:");
-        for (field, label) in [
-            (VmField::Latitude, "Latitude (scalar)"),
-            (VmField::Longitude, "Longitude (scalar)"),
-            (VmField::Radial, "Radial distance (scalar)"),
-            (VmField::DirectColor, "Direct cell colors (RGBA)"),
-        ] {
-            ui.radio_value(&mut app.vm_state.field, field, label);
-        }
+    ui.separator();
+    ui.checkbox(
+        &mut app.vm_state.transparent,
+        "Transparent (projected tetrahedra)",
+    );
+    if app.vm_state.transparent {
+        ui.add(
+            egui::Slider::new(&mut app.vm_state.density, 0.0..=1.0)
+                .text("Density")
+                .step_by(0.01),
+        );
+    }
 
-        if !matches!(app.vm_state.field, VmField::DirectColor) {
-            ui.separator();
-            ui.label("Colormap:");
-            ui.horizontal_wrapped(|ui| {
-                for cm in [
-                    BuiltinColormap::Viridis,
-                    BuiltinColormap::Plasma,
-                    BuiltinColormap::Magma,
-                    BuiltinColormap::Inferno,
-                    BuiltinColormap::Turbo,
-                    BuiltinColormap::Coolwarm,
-                    BuiltinColormap::RdBu,
-                    BuiltinColormap::Rainbow,
-                    BuiltinColormap::Jet,
-                ] {
-                    ui.radio_value(&mut app.vm_state.colormap, cm, format!("{cm:?}"));
-                }
-            });
-        }
+    ui.separator();
+    ui.checkbox(&mut app.vm_state.wireframe, "Wireframe");
 
-        ui.separator();
-        ui.checkbox(&mut app.vm_state.transparent, "Transparent (projected tetrahedra)");
-        if app.vm_state.transparent {
-            ui.add(
-                egui::Slider::new(&mut app.vm_state.density, 0.0..=1.0)
-                    .text("Density")
-                    .step_by(0.01),
-            );
-        }
+    ui.separator();
+    ui.checkbox(&mut app.vm_state.clip_on, "Clip plane");
+    if app.vm_state.clip_on {
+        ui.add(
+            egui::Slider::new(&mut app.vm_state.clip_offset, -1.75..=1.75)
+                .text("Offset")
+                .step_by(0.01),
+        );
+        ui.add(
+            egui::Slider::new(&mut app.vm_state.clip_elevation, -89.0..=89.0)
+                .text("Elevation (°)")
+                .step_by(1.0),
+        );
+        ui.add(
+            egui::Slider::new(&mut app.vm_state.clip_azimuth, -180.0..=180.0)
+                .text("Azimuth (°)")
+                .step_by(1.0),
+        );
+        ui.label("Keeps the positive-normal side of the plane.");
+    }
 
-        ui.separator();
-        ui.checkbox(&mut app.vm_state.wireframe, "Wireframe");
-
-        ui.separator();
-        ui.checkbox(&mut app.vm_state.clip_on, "Clip plane");
-        if app.vm_state.clip_on {
-            ui.add(
-                egui::Slider::new(&mut app.vm_state.clip_offset, -1.75..=1.75)
-                    .text("Offset")
-                    .step_by(0.01),
-            );
-            ui.add(
-                egui::Slider::new(&mut app.vm_state.clip_elevation, -89.0..=89.0)
-                    .text("Elevation (°)")
-                    .step_by(1.0),
-            );
-            ui.add(
-                egui::Slider::new(&mut app.vm_state.clip_azimuth, -180.0..=180.0)
-                    .text("Azimuth (°)")
-                    .step_by(1.0),
-            );
-            ui.label("Keeps the positive-normal side of the plane.");
-        }
-
-        ui.separator();
-        let (n_cells, note) = match app.vm_state.mode {
-            VmMode::Hex => (27, "3³ hexes, cube-to-sphere warp"),
-            VmMode::Tet => (162, "3³×6 tets on sphere"),
-            VmMode::TetBox => (162, "3³×6 tets, flat box"),
-            VmMode::TetSmall => (6, "1³×6 tets, unit cube"),
-            VmMode::Pyramid => (162, "3³×6 pyramids on sphere"),
-            VmMode::Wedge => (54, "3³×2 wedges on sphere"),
-        };
-        ui.label(format!("{n_cells} cells · {note}"));
-        ui.label("Interior faces are automatically discarded.");
+    ui.separator();
+    let (n_cells, note) = match app.vm_state.mode {
+        VmMode::Hex => (27, "3³ hexes, cube-to-sphere warp"),
+        VmMode::Tet => (162, "3³×6 tets on sphere"),
+        VmMode::TetBox => (162, "3³×6 tets, flat box"),
+        VmMode::TetSmall => (6, "1³×6 tets, unit cube"),
+        VmMode::Pyramid => (162, "3³×6 pyramids on sphere"),
+        VmMode::Wedge => (54, "3³×2 wedges on sphere"),
+    };
+    ui.label(format!("{n_cells} cells · {note}"));
+    ui.label("Interior faces are automatically discarded.");
 }

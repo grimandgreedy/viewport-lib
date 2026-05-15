@@ -1,7 +1,6 @@
 use super::*;
 
 impl ViewportGpuResources {
-
     /// Lazily create the streamtube render pipeline (connected tube mesh, TriangleList).
     ///
     /// No-op if already created. Called from `prepare()` when `frame.scene.streamtube_items`
@@ -127,8 +126,14 @@ impl ViewportGpuResources {
         let ldr = self.target_format;
         let hdr = wgpu::TextureFormat::Rgba16Float;
         self.streamtube_bgl = Some(streamtube_bgl);
-        self.streamtube_pipeline = Some(DualPipeline { ldr: make_tube(ldr), hdr: make_tube(hdr) });
-        self.ribbon_pipeline = Some(DualPipeline { ldr: make_ribbon(ldr), hdr: make_ribbon(hdr) });
+        self.streamtube_pipeline = Some(DualPipeline {
+            ldr: make_tube(ldr),
+            hdr: make_tube(hdr),
+        });
+        self.ribbon_pipeline = Some(DualPipeline {
+            ldr: make_ribbon(ldr),
+            hdr: make_ribbon(hdr),
+        });
     }
 
     /// Upload one [`StreamtubeItem`] to the GPU and return draw data.
@@ -396,12 +401,12 @@ impl ViewportGpuResources {
             .scalar_range
             .map(|r| r.0)
             .unwrap_or_else(|| item.scalars.iter().cloned().fold(f32::INFINITY, f32::min));
-        let scalar_max = item
-            .scalar_range
-            .map(|r| r.1)
-            .unwrap_or_else(|| {
-                item.scalars.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
-            });
+        let scalar_max = item.scalar_range.map(|r| r.1).unwrap_or_else(|| {
+            item.scalars
+                .iter()
+                .cloned()
+                .fold(f32::NEG_INFINITY, f32::max)
+        });
         let scalar_range = (scalar_max - scalar_min).max(f32::EPSILON);
 
         // Helper: map a scalar value to an RGBA f32 color from the LUT.
@@ -668,10 +673,12 @@ impl ViewportGpuResources {
             .scalar_range
             .map(|r| r.0)
             .unwrap_or_else(|| item.scalars.iter().cloned().fold(f32::INFINITY, f32::min));
-        let scalar_max = item
-            .scalar_range
-            .map(|r| r.1)
-            .unwrap_or_else(|| item.scalars.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
+        let scalar_max = item.scalar_range.map(|r| r.1).unwrap_or_else(|| {
+            item.scalars
+                .iter()
+                .cloned()
+                .fold(f32::NEG_INFINITY, f32::max)
+        });
         let scalar_range = (scalar_max - scalar_min).max(f32::EPSILON);
 
         let scalar_to_color = |idx: usize| -> [f32; 4] {
@@ -680,7 +687,12 @@ impl ViewportGpuResources {
                 let t = ((s - scalar_min) / scalar_range).clamp(0.0, 1.0);
                 let lut_idx = ((t * 255.0).round() as usize).min(255);
                 let c = lut[lut_idx];
-                [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, c[3] as f32 / 255.0]
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                    c[3] as f32 / 255.0,
+                ]
             } else {
                 item.color
             }
@@ -711,7 +723,11 @@ impl ViewportGpuResources {
             if t0.length_squared() < 1e-10 {
                 continue;
             }
-            let ref_v = if t0.x.abs() < 0.9 { glam::Vec3::X } else { glam::Vec3::Y };
+            let ref_v = if t0.x.abs() < 0.9 {
+                glam::Vec3::X
+            } else {
+                glam::Vec3::Y
+            };
             let mut u = t0.cross(ref_v).normalize();
 
             let base = verts.len() as u32;
@@ -860,5 +876,4 @@ impl ViewportGpuResources {
             _uniform_buf: uniform_buf,
         }
     }
-
 }

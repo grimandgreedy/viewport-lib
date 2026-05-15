@@ -151,9 +151,13 @@ impl ClipObject {
     /// `axis` must be a unit vector.
     pub fn cylinder(center: [f32; 3], axis: [f32; 3], radius: f32, half_length: f32) -> Self {
         Self {
-            shape: ClipShape::Cylinder { center, axis, radius, half_length },
+            shape: ClipShape::Cylinder {
+                center,
+                axis,
+                radius,
+                half_length,
+            },
             ..Default::default()
         }
     }
 }
-

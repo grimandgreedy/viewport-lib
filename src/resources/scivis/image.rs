@@ -264,7 +264,9 @@ impl ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("screen_image_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/screen_image.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../shaders/screen_image.wgsl").into(),
+            ),
         });
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -979,23 +981,23 @@ impl ViewportGpuResources {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct VolumeSurfaceSliceUniform {
-            model:      [[f32; 4]; 4],
-            bbox_min:   [f32; 3],
+            model: [[f32; 4]; 4],
+            bbox_min: [f32; 3],
             scalar_min: f32,
-            bbox_max:   [f32; 3],
+            bbox_max: [f32; 3],
             scalar_max: f32,
-            opacity:    f32,
-            _pad:       [f32; 3],
+            opacity: f32,
+            _pad: [f32; 3],
         }
 
         let uniform_data = VolumeSurfaceSliceUniform {
-            model:      item.model,
-            bbox_min:   item.bbox_min,
+            model: item.model,
+            bbox_min: item.bbox_min,
             scalar_min: item.scalar_range.0,
-            bbox_max:   item.bbox_max,
+            bbox_max: item.bbox_max,
             scalar_max: item.scalar_range.1,
-            opacity:    item.opacity,
-            _pad:       [0.0; 3],
+            opacity: item.opacity,
+            _pad: [0.0; 3],
         };
 
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {

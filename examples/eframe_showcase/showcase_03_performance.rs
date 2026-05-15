@@ -11,8 +11,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use eframe::egui;
 use viewport_lib::{
-    Aabb, FrameStats, Material, MeshId, PickAccelerator, SceneRenderItem, selection::Selection,
-    scene::Scene,
+    Aabb, FrameStats, Material, MeshId, PickAccelerator, SceneRenderItem, scene::Scene,
+    selection::Selection,
 };
 
 use crate::App;
@@ -22,37 +22,37 @@ use crate::App;
 // ---------------------------------------------------------------------------
 
 pub(crate) struct PerfState {
-    pub scene:               Scene,
-    pub selection:           Selection,
-    pub pick_accelerator:    Option<PickAccelerator>,
-    pub mesh:                Option<MeshId>,
-    pub last_stats:          FrameStats,
-    pub total_objects:       u32,
-    pub scene_items_cache:   std::sync::Arc<[SceneRenderItem]>,
+    pub scene: Scene,
+    pub selection: Selection,
+    pub pick_accelerator: Option<PickAccelerator>,
+    pub mesh: Option<MeshId>,
+    pub last_stats: FrameStats,
+    pub total_objects: u32,
+    pub scene_items_cache: std::sync::Arc<[SceneRenderItem]>,
     pub scene_items_version: (u64, u64),
-    pub built:               bool,
-    pub gpu_culling:         bool,
+    pub built: bool,
+    pub gpu_culling: bool,
     /// Receives the completed (Scene, PickAccelerator) from the background build thread.
-    pub build_rx:            Option<std::sync::mpsc::Receiver<(Scene, PickAccelerator)>>,
+    pub build_rx: Option<std::sync::mpsc::Receiver<(Scene, PickAccelerator)>>,
     /// Shared progress counter written by the background build thread (objects placed so far).
-    pub build_progress:      Option<std::sync::Arc<AtomicU32>>,
+    pub build_progress: Option<std::sync::Arc<AtomicU32>>,
 }
 
 impl Default for PerfState {
     fn default() -> Self {
         Self {
-            scene:               Scene::new(),
-            selection:           Selection::new(),
-            pick_accelerator:    None,
-            mesh:                None,
-            last_stats:          FrameStats::default(),
-            total_objects:       0,
-            scene_items_cache:   std::sync::Arc::from([]),
+            scene: Scene::new(),
+            selection: Selection::new(),
+            pick_accelerator: None,
+            mesh: None,
+            last_stats: FrameStats::default(),
+            total_objects: 0,
+            scene_items_cache: std::sync::Arc::from([]),
             scene_items_version: (u64::MAX, u64::MAX),
-            built:               false,
-            gpu_culling:         true,
-            build_rx:            None,
-            build_progress:      None,
+            built: false,
+            gpu_culling: true,
+            build_rx: None,
+            build_progress: None,
         }
     }
 }
@@ -106,9 +106,8 @@ pub(crate) fn build_perf_scene_threaded(
     }
     progress.store(count, Ordering::Relaxed);
 
-    let pick_acc = PickAccelerator::build_from_scene(&scene, |mid| {
-        if mid == mesh { mesh_aabb } else { None }
-    });
+    let pick_acc =
+        PickAccelerator::build_from_scene(&scene, |mid| if mid == mesh { mesh_aabb } else { None });
 
     (scene, pick_acc)
 }
@@ -137,7 +136,11 @@ pub(crate) fn controls_performance(app: &mut App, ui: &mut egui::Ui) {
     // --- Culling stats ---
     ui.separator();
     ui.heading("Culling");
-    perf_stat_row(ui, "Total instances", &format_count(app.perf_state.total_objects));
+    perf_stat_row(
+        ui,
+        "Total instances",
+        &format_count(app.perf_state.total_objects),
+    );
     if s.gpu_culling_active {
         // GPU readback gives the exact post-cull count (one frame lag).
         let gpu_vis = s.gpu_visible_instances.unwrap_or(s.visible_objects);
@@ -149,7 +152,11 @@ pub(crate) fn controls_performance(app: &mut App, ui: &mut egui::Ui) {
         perf_stat_row(
             ui,
             "Culled (CPU)",
-            &format_count(app.perf_state.total_objects.saturating_sub(s.visible_objects)),
+            &format_count(
+                app.perf_state
+                    .total_objects
+                    .saturating_sub(s.visible_objects),
+            ),
         );
     }
     ui.add_space(4.0);
@@ -160,7 +167,11 @@ pub(crate) fn controls_performance(app: &mut App, ui: &mut egui::Ui) {
     perf_stat_row(ui, "Draw calls", &format_count(s.draw_calls));
     perf_stat_row(ui, "Instanced batches", &format_count(s.instanced_batches));
     perf_stat_row(ui, "Shadow draw calls", &format_count(s.shadow_draw_calls));
-    perf_stat_row(ui, "Triangles submitted", &format_large(s.triangles_submitted));
+    perf_stat_row(
+        ui,
+        "Triangles submitted",
+        &format_large(s.triangles_submitted),
+    );
     ui.add_space(4.0);
 
     // --- Timings ---
@@ -191,7 +202,11 @@ pub(crate) fn controls_performance(app: &mut App, ui: &mut egui::Ui) {
         "Render scale",
         &format!("{:.0}%", s.render_scale * 100.0),
     );
-    perf_stat_row(ui, "Budget missed", if s.missed_budget { "yes" } else { "no" });
+    perf_stat_row(
+        ui,
+        "Budget missed",
+        if s.missed_budget { "yes" } else { "no" },
+    );
     perf_stat_row(ui, "Upload bytes", &format_bytes(s.upload_bytes));
     ui.add_space(4.0);
 

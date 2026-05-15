@@ -13,16 +13,16 @@ use viewport_lib::{Camera, LabelItem, Material, ViewportRenderer, scene::Scene};
 // ---------------------------------------------------------------------------
 
 pub(crate) struct AnnotationState {
-    pub built:  bool,
-    pub scene:  Scene,
+    pub built: bool,
+    pub scene: Scene,
     pub labels: Vec<LabelItem>,
 }
 
 impl Default for AnnotationState {
     fn default() -> Self {
         Self {
-            built:  false,
-            scene:  Scene::new(),
+            built: false,
+            scene: Scene::new(),
             labels: Vec::new(),
         }
     }

@@ -16,8 +16,8 @@
 use crate::{App, MeshId};
 use eframe::egui;
 use viewport_lib::{
-    AttributeData, AttributeKind, AttributeRef, BuiltinColormap, ColormapId, GlyphItem,
-    PointCloudItem, SceneRenderItem, CELL_SENTINEL, ViewportRenderer, VolumeMeshData,
+    AttributeData, AttributeKind, AttributeRef, BuiltinColormap, CELL_SENTINEL, ColormapId,
+    GlyphItem, PointCloudItem, SceneRenderItem, ViewportRenderer, VolumeMeshData,
     volume_mesh_cell_vectors_to_glyphs, volume_mesh_vertex_vectors_to_glyphs,
 };
 
@@ -89,8 +89,14 @@ fn make_hex_sphere_volume_mesh() -> VolumeMeshData {
             for ix in 0..nc {
                 let v = |dx, dy, dz| *idx_map.get(&(ix + dx, iy + dy, iz + dz)).unwrap();
                 cells.push([
-                    v(0,0,0), v(1,0,0), v(1,1,0), v(0,1,0),
-                    v(0,0,1), v(1,0,1), v(1,1,1), v(0,1,1),
+                    v(0, 0, 0),
+                    v(1, 0, 0),
+                    v(1, 1, 0),
+                    v(0, 1, 0),
+                    v(0, 0, 1),
+                    v(1, 0, 1),
+                    v(1, 1, 1),
+                    v(0, 1, 1),
                 ]);
             }
         }
@@ -102,25 +108,35 @@ fn make_hex_sphere_volume_mesh() -> VolumeMeshData {
 }
 
 fn vertex_radial_vectors(positions: &[[f32; 3]]) -> Vec<[f32; 3]> {
-    positions.iter().map(|&p| {
-        let len = (p[0]*p[0]+p[1]*p[1]+p[2]*p[2]).sqrt().max(1e-9);
-        [p[0]/len, p[1]/len, p[2]/len]
-    }).collect()
+    positions
+        .iter()
+        .map(|&p| {
+            let len = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt().max(1e-9);
+            [p[0] / len, p[1] / len, p[2] / len]
+        })
+        .collect()
 }
 
 fn cell_radial_vectors(data: &VolumeMeshData) -> Vec<[f32; 3]> {
-    data.cells.iter().map(|cell| {
-        let valid: Vec<usize> = cell.iter()
-            .filter(|&&i| i != CELL_SENTINEL && (i as usize) < data.positions.len())
-            .map(|&i| i as usize).collect();
-        if valid.is_empty() { return [0.0, 1.0, 0.0]; }
-        let inv = 1.0 / valid.len() as f32;
-        let cx: f32 = valid.iter().map(|&i| data.positions[i][0]).sum::<f32>() * inv;
-        let cy: f32 = valid.iter().map(|&i| data.positions[i][1]).sum::<f32>() * inv;
-        let cz: f32 = valid.iter().map(|&i| data.positions[i][2]).sum::<f32>() * inv;
-        let len = (cx*cx+cy*cy+cz*cz).sqrt().max(1e-9);
-        [cx/len, cy/len, cz/len]
-    }).collect()
+    data.cells
+        .iter()
+        .map(|cell| {
+            let valid: Vec<usize> = cell
+                .iter()
+                .filter(|&&i| i != CELL_SENTINEL && (i as usize) < data.positions.len())
+                .map(|&i| i as usize)
+                .collect();
+            if valid.is_empty() {
+                return [0.0, 1.0, 0.0];
+            }
+            let inv = 1.0 / valid.len() as f32;
+            let cx: f32 = valid.iter().map(|&i| data.positions[i][0]).sum::<f32>() * inv;
+            let cy: f32 = valid.iter().map(|&i| data.positions[i][1]).sum::<f32>() * inv;
+            let cz: f32 = valid.iter().map(|&i| data.positions[i][2]).sum::<f32>() * inv;
+            let len = (cx * cx + cy * cy + cz * cz).sqrt().max(1e-9);
+            [cx / len, cy / len, cz / len]
+        })
+        .collect()
 }
 
 fn make_pc_data(n: usize) -> (Vec<[f32; 3]>, Vec<f32>, Vec<f32>, Vec<f32>) {
@@ -148,33 +164,33 @@ fn make_pc_data(n: usize) -> (Vec<[f32; 3]>, Vec<f32>, Vec<f32>, Vec<f32>) {
 // ---------------------------------------------------------------------------
 
 pub(crate) struct EqState {
-    pub built:           bool,
-    pub sub_mode:        EqSubMode,
-    pub edge_mesh_ids:   [MeshId; 3],
-    pub vm_mesh_id:      MeshId,
-    pub vm_data:         viewport_lib::VolumeMeshData,
-    pub pc_positions:    Vec<[f32; 3]>,
-    pub pc_scalars:      Vec<f32>,
-    pub pc_radii:        Vec<f32>,
-    pub pc_transp:       Vec<f32>,
-    pub pc_bg_mesh_id:   MeshId,
-    pub colormap:        BuiltinColormap,
+    pub built: bool,
+    pub sub_mode: EqSubMode,
+    pub edge_mesh_ids: [MeshId; 3],
+    pub vm_mesh_id: MeshId,
+    pub vm_data: viewport_lib::VolumeMeshData,
+    pub pc_positions: Vec<[f32; 3]>,
+    pub pc_scalars: Vec<f32>,
+    pub pc_radii: Vec<f32>,
+    pub pc_transp: Vec<f32>,
+    pub pc_bg_mesh_id: MeshId,
+    pub colormap: BuiltinColormap,
 }
 
 impl Default for EqState {
     fn default() -> Self {
         Self {
-            built:         false,
-            sub_mode:      EqSubMode::EdgeCornerScalars,
+            built: false,
+            sub_mode: EqSubMode::EdgeCornerScalars,
             edge_mesh_ids: [MeshId::from_index(0); 3],
-            vm_mesh_id:    MeshId::from_index(0),
-            vm_data:       viewport_lib::VolumeMeshData::default(),
-            pc_positions:  Vec::new(),
-            pc_scalars:    Vec::new(),
-            pc_radii:      Vec::new(),
-            pc_transp:     Vec::new(),
+            vm_mesh_id: MeshId::from_index(0),
+            vm_data: viewport_lib::VolumeMeshData::default(),
+            pc_positions: Vec::new(),
+            pc_scalars: Vec::new(),
+            pc_radii: Vec::new(),
+            pc_transp: Vec::new(),
             pc_bg_mesh_id: MeshId::from_index(0),
-            colormap:      BuiltinColormap::Viridis,
+            colormap: BuiltinColormap::Viridis,
         }
     }
 }
@@ -190,23 +206,34 @@ impl App {
         let cv = corner_index_scalars(&sphere.indices);
 
         let mut em = viewport_lib::primitives::sphere(2.0, 48, 24);
-        em.attributes.insert("edge_z".into(), AttributeData::Edge(ev));
-        self.eq_state.edge_mesh_ids[0] = renderer.resources_mut()
-            .upload_mesh_data(&self.device, &em).expect("edge mesh");
+        em.attributes
+            .insert("edge_z".into(), AttributeData::Edge(ev));
+        self.eq_state.edge_mesh_ids[0] = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &em)
+            .expect("edge mesh");
 
         let mut hm = viewport_lib::primitives::sphere(2.0, 48, 24);
-        hm.attributes.insert("halfedge_z".into(), AttributeData::Halfedge(cv.clone()));
-        self.eq_state.edge_mesh_ids[1] = renderer.resources_mut()
-            .upload_mesh_data(&self.device, &hm).expect("halfedge mesh");
+        hm.attributes
+            .insert("halfedge_z".into(), AttributeData::Halfedge(cv.clone()));
+        self.eq_state.edge_mesh_ids[1] = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &hm)
+            .expect("halfedge mesh");
 
         let mut cm = viewport_lib::primitives::sphere(2.0, 48, 24);
-        cm.attributes.insert("corner_z".into(), AttributeData::Corner(cv));
-        self.eq_state.edge_mesh_ids[2] = renderer.resources_mut()
-            .upload_mesh_data(&self.device, &cm).expect("corner mesh");
+        cm.attributes
+            .insert("corner_z".into(), AttributeData::Corner(cv));
+        self.eq_state.edge_mesh_ids[2] = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &cm)
+            .expect("corner mesh");
 
         let vm_data = make_hex_sphere_volume_mesh();
-        let (vm_mesh_id, _) = renderer.resources_mut()
-            .upload_volume_mesh_data(&self.device, &vm_data).expect("vm mesh");
+        let (vm_mesh_id, _) = renderer
+            .resources_mut()
+            .upload_volume_mesh_data(&self.device, &vm_data)
+            .expect("vm mesh");
         self.eq_state.vm_mesh_id = vm_mesh_id;
         self.eq_state.vm_data = vm_data;
 
@@ -219,12 +246,13 @@ impl App {
         // Opaque background sphere slightly smaller than the point-cloud shell (r=2.0).
         // Placed in the middle so back-facing points are occluded.
         let bg_sphere = viewport_lib::primitives::sphere(1.75, 32, 16);
-        self.eq_state.pc_bg_mesh_id = renderer.resources_mut()
-            .upload_mesh_data(&self.device, &bg_sphere).expect("pc bg sphere");
+        self.eq_state.pc_bg_mesh_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &bg_sphere)
+            .expect("pc bg sphere");
 
         self.eq_state.built = true;
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -232,41 +260,48 @@ impl App {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn controls_eq(app: &mut App, ui: &mut egui::Ui) {
-        ui.label("Sub-mode:");
-        ui.horizontal_wrapped(|ui| {
-            for (label, mode) in [
-                ("Edge/Corner Scalars", EqSubMode::EdgeCornerScalars),
-                ("Volume Vectors", EqSubMode::VolumeMeshVectors),
-                ("PC Radius+Alpha", EqSubMode::PointCloudRadiusTransparency),
-            ] {
-                if ui.radio(app.eq_state.sub_mode == mode, label).clicked() {
-                    app.eq_state.sub_mode = mode;
-                }
-            }
-        });
-        ui.separator();
-        match app.eq_state.sub_mode {
-            EqSubMode::EdgeCornerScalars => {
-                ui.label("Left: Edge : smooth gradient (Z midpoints averaged to vertices)");
-                ui.label("Centre/Right: Halfedge & Corner : repeating 3-colour triangle pattern");
-                ui.label("(corner 0=purple, 1=teal, 2=yellow; discontinuous across edges)");
-                ui.separator();
-                ui.label("Colormap:");
-                for cm in [BuiltinColormap::Viridis, BuiltinColormap::Plasma, BuiltinColormap::Coolwarm] {
-                    if ui.radio(app.eq_state.colormap == cm, format!("{cm:?}")).clicked() {
-                        app.eq_state.colormap = cm;
-                    }
-                }
-            }
-            EqSubMode::VolumeMeshVectors => {
-                ui.label("Blue arrows: per-vertex radial vectors.");
-                ui.label("Orange arrows: per-cell centroid radial vectors.");
-            }
-            EqSubMode::PointCloudRadiusTransparency => {
-                ui.label("Radius: large at equator, small at poles.");
-                ui.label("Transparency: sinusoidal longitude stripes.");
+    ui.label("Sub-mode:");
+    ui.horizontal_wrapped(|ui| {
+        for (label, mode) in [
+            ("Edge/Corner Scalars", EqSubMode::EdgeCornerScalars),
+            ("Volume Vectors", EqSubMode::VolumeMeshVectors),
+            ("PC Radius+Alpha", EqSubMode::PointCloudRadiusTransparency),
+        ] {
+            if ui.radio(app.eq_state.sub_mode == mode, label).clicked() {
+                app.eq_state.sub_mode = mode;
             }
         }
+    });
+    ui.separator();
+    match app.eq_state.sub_mode {
+        EqSubMode::EdgeCornerScalars => {
+            ui.label("Left: Edge : smooth gradient (Z midpoints averaged to vertices)");
+            ui.label("Centre/Right: Halfedge & Corner : repeating 3-colour triangle pattern");
+            ui.label("(corner 0=purple, 1=teal, 2=yellow; discontinuous across edges)");
+            ui.separator();
+            ui.label("Colormap:");
+            for cm in [
+                BuiltinColormap::Viridis,
+                BuiltinColormap::Plasma,
+                BuiltinColormap::Coolwarm,
+            ] {
+                if ui
+                    .radio(app.eq_state.colormap == cm, format!("{cm:?}"))
+                    .clicked()
+                {
+                    app.eq_state.colormap = cm;
+                }
+            }
+        }
+        EqSubMode::VolumeMeshVectors => {
+            ui.label("Blue arrows: per-vertex radial vectors.");
+            ui.label("Orange arrows: per-cell centroid radial vectors.");
+        }
+        EqSubMode::PointCloudRadiusTransparency => {
+            ui.label("Radius: large at equator, small at poles.");
+            ui.label("Transparency: sinusoidal longitude stripes.");
+        }
+    }
 }
 
 impl App {
@@ -282,7 +317,11 @@ impl App {
                 let cm_id = Some(ColormapId(self.eq_state.colormap as usize));
                 let offsets = [-5.0f32, 0.0, 5.0];
                 let names = ["edge_z", "halfedge_z", "corner_z"];
-                let kinds = [AttributeKind::Edge, AttributeKind::Halfedge, AttributeKind::Corner];
+                let kinds = [
+                    AttributeKind::Edge,
+                    AttributeKind::Halfedge,
+                    AttributeKind::Corner,
+                ];
                 for i in 0..3 {
                     let mut item = SceneRenderItem::default();
                     item.mesh_id = self.eq_state.edge_mesh_ids[i];
@@ -304,7 +343,11 @@ impl App {
                 scene_items.push(item);
                 // Vertex vectors: blue (Viridis at 0.15).
                 let vv = vertex_radial_vectors(&self.eq_state.vm_data.positions);
-                let mut vg = volume_mesh_vertex_vectors_to_glyphs(&self.eq_state.vm_data.positions, &vv, 0.4);
+                let mut vg = volume_mesh_vertex_vectors_to_glyphs(
+                    &self.eq_state.vm_data.positions,
+                    &vv,
+                    0.4,
+                );
                 vg.scalars = vec![0.15; vg.positions.len()];
                 vg.scalar_range = Some((0.0, 1.0));
                 vg.colormap_id = Some(ColormapId(BuiltinColormap::Viridis as usize));

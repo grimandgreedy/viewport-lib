@@ -123,7 +123,8 @@ impl ViewportGpuResources {
         mesh.face_color_buffers = face_color_bufs;
         mesh.vector_attribute_buffers = vector_attr_bufs;
         self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
-            + data.indices.len() * std::mem::size_of::<u32>()) as u64;
+            + data.indices.len() * std::mem::size_of::<u32>())
+            as u64;
         let id = self.mesh_store.insert(mesh);
         tracing::debug!(
             mesh_index = id.index(),
@@ -164,11 +165,7 @@ impl ViewportGpuResources {
     /// without re-uploading.
     ///
     /// Has no effect if `mesh_id` is not found.
-    pub fn set_pickable(
-        &mut self,
-        mesh_id: crate::resources::mesh_store::MeshId,
-        pickable: bool,
-    ) {
+    pub fn set_pickable(&mut self, mesh_id: crate::resources::mesh_store::MeshId, pickable: bool) {
         if let Some(mesh) = self.mesh_store.get_mut(mesh_id) {
             if !pickable {
                 mesh.cpu_positions = None;
@@ -235,8 +232,12 @@ impl ViewportGpuResources {
             })
             .collect();
 
-        let has_normal_lines =
-            self.mesh_store.get(mesh_id).unwrap().normal_line_buffer.is_some();
+        let has_normal_lines = self
+            .mesh_store
+            .get(mesh_id)
+            .unwrap()
+            .normal_line_buffer
+            .is_some();
         let normal_line_verts: Option<Vec<Vertex>> = if has_normal_lines {
             let normal_length = 0.1_f32;
             let normal_color = [0.627_f32, 0.769, 1.0, 1.0];
@@ -366,14 +367,9 @@ impl ViewportGpuResources {
                 let mesh = self.mesh_store.get_mut(mesh_id).unwrap();
                 queue.write_buffer(&mesh.vertex_buffer, 0, cast_slice(&vertices));
                 queue.write_buffer(&mesh.index_buffer, 0, cast_slice(data.indices.as_slice()));
-                let edge_byte_len =
-                    (edge_indices.len() * std::mem::size_of::<u32>()) as u64;
+                let edge_byte_len = (edge_indices.len() * std::mem::size_of::<u32>()) as u64;
                 if edge_byte_len <= mesh.edge_index_buffer.size() {
-                    queue.write_buffer(
-                        &mesh.edge_index_buffer,
-                        0,
-                        cast_slice(&edge_indices),
-                    );
+                    queue.write_buffer(&mesh.edge_index_buffer, 0, cast_slice(&edge_indices));
                     mesh.edge_index_count = edge_indices.len() as u32;
                 }
                 if let Some(ref nl_buf) = mesh.normal_line_buffer {
@@ -384,7 +380,8 @@ impl ViewportGpuResources {
                 mesh.cpu_indices = Some(data.indices.clone());
 
                 self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
-                    + data.indices.len() * std::mem::size_of::<u32>()) as u64;
+                    + data.indices.len() * std::mem::size_of::<u32>())
+                    as u64;
                 tracing::debug!(
                     mesh_index = mesh_id.index(),
                     vertices = data.positions.len(),
@@ -431,7 +428,8 @@ impl ViewportGpuResources {
         new_mesh.face_color_buffers = face_color_bufs;
         new_mesh.vector_attribute_buffers = vector_attr_bufs;
         self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
-            + data.indices.len() * std::mem::size_of::<u32>()) as u64;
+            + data.indices.len() * std::mem::size_of::<u32>())
+            as u64;
         let _ = self.mesh_store.replace(mesh_id, new_mesh);
         tracing::debug!(
             mesh_index = mesh_id.index(),
@@ -672,11 +670,8 @@ impl ViewportGpuResources {
                     }
                     let min = scalars.iter().cloned().fold(f32::INFINITY, f32::min);
                     let max = scalars.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                    let buf = Self::create_storage_buffer_f32(
-                        device,
-                        &format!("attr_{name}"),
-                        &scalars,
-                    );
+                    let buf =
+                        Self::create_storage_buffer_f32(device, &format!("attr_{name}"), &scalars);
                     bufs.insert(name.clone(), buf);
                     ranges.insert(name.clone(), (min, max));
                 }
@@ -713,7 +708,9 @@ impl ViewportGpuResources {
                     let buf = device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some(&format!("vec_attr_{name}")),
                         size: byte_len,
-                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                        usage: wgpu::BufferUsages::VERTEX
+                            | wgpu::BufferUsages::STORAGE
+                            | wgpu::BufferUsages::COPY_DST,
                         mapped_at_creation: true,
                     });
                     {
@@ -725,7 +722,14 @@ impl ViewportGpuResources {
                 }
             }
         }
-        (bufs, ranges, face_vbuf, face_attr_bufs, face_color_bufs, vector_attr_bufs)
+        (
+            bufs,
+            ranges,
+            face_vbuf,
+            face_attr_bufs,
+            face_color_bufs,
+            vector_attr_bufs,
+        )
     }
 
     /// Allocate and fill a STORAGE buffer from a slice of `f32` values.
@@ -1155,7 +1159,9 @@ impl ViewportGpuResources {
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("vertex_buf"),
             size: (std::mem::size_of::<Vertex>() * vertices.len()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
+            usage: wgpu::BufferUsages::VERTEX
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: true,
         });
         vertex_buffer
@@ -1167,7 +1173,9 @@ impl ViewportGpuResources {
         let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("index_buf"),
             size: (std::mem::size_of::<u32>() * indices.len()) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
+            usage: wgpu::BufferUsages::INDEX
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: true,
         });
         index_buffer
@@ -1419,7 +1427,15 @@ impl ViewportGpuResources {
             normal_line_count,
             object_uniform_buf,
             object_bind_group,
-            last_tex_key: (u64::MAX, u64::MAX, u64::MAX, u64::MAX, u64::MAX, u64::MAX, u64::MAX),
+            last_tex_key: (
+                u64::MAX,
+                u64::MAX,
+                u64::MAX,
+                u64::MAX,
+                u64::MAX,
+                u64::MAX,
+                u64::MAX,
+            ),
             normal_uniform_buf,
             normal_bind_group,
             aabb,

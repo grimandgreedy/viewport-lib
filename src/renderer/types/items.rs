@@ -92,7 +92,6 @@ impl Default for SceneRenderItem {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Opaque volume mesh item
 // ---------------------------------------------------------------------------
@@ -192,7 +191,11 @@ impl VolumeMeshItem {
     /// Replace the mesh ID and face-to-cell map, for example after a clipped
     /// re-upload via
     /// [`replace_clipped_volume_mesh_data`](crate::resources::ViewportGpuResources::replace_clipped_volume_mesh_data).
-    pub fn update_mesh(&mut self, mesh_id: crate::resources::mesh_store::MeshId, face_to_cell: Vec<u32>) {
+    pub fn update_mesh(
+        &mut self,
+        mesh_id: crate::resources::mesh_store::MeshId,
+        face_to_cell: Vec<u32>,
+    ) {
         self.mesh_id = mesh_id;
         self.face_to_cell = face_to_cell;
     }
@@ -205,10 +208,12 @@ impl VolumeMeshItem {
 /// Render mode for point cloud items.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PointRenderMode {
-    /// GPU point primitives with `point_size` uniform (fastest, no shading).
+    /// Flat disc: billboard quad clipped to a circle. Fast, no shading.
     #[default]
     ScreenSpaceCircle,
-    // Future: BillboardQuad, FixedSphere
+    /// Shaded sphere: billboard quad with hemisphere normal shading (ambient + diffuse + specular).
+    /// Points look like small lit spheres without actual geometry cost.
+    Sphere,
 }
 
 /// A point cloud item to render in the viewport.
@@ -319,6 +324,8 @@ pub struct GlyphItem {
     /// When true, glyphs are colored by `default_color` (with per-instance scalar as brightness)
     /// instead of the LUT. Default: false.
     pub use_default_color: bool,
+    /// Skip lighting and return raw LUT color directly. Default: false.
+    pub unlit: bool,
     /// Glyph shape. Default: Arrow.
     pub glyph_type: GlyphType,
     /// World-space model matrix. Default: identity.
@@ -344,6 +351,7 @@ impl Default for GlyphItem {
             colormap_id: None,
             default_color: [0.0; 4],
             use_default_color: false,
+            unlit: false,
             glyph_type: GlyphType::Arrow,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             id: 0,
@@ -591,14 +599,26 @@ pub fn aabb_wireframe_polyline(aabb: &crate::scene::aabb::Aabb, color: [f32; 4])
     PolylineItem {
         positions: vec![
             // Bottom face loop
-            [mn.x, mn.y, mn.z], [mx.x, mn.y, mn.z], [mx.x, mx.y, mn.z], [mn.x, mx.y, mn.z], [mn.x, mn.y, mn.z],
+            [mn.x, mn.y, mn.z],
+            [mx.x, mn.y, mn.z],
+            [mx.x, mx.y, mn.z],
+            [mn.x, mx.y, mn.z],
+            [mn.x, mn.y, mn.z],
             // Top face loop
-            [mn.x, mn.y, mx.z], [mx.x, mn.y, mx.z], [mx.x, mx.y, mx.z], [mn.x, mx.y, mx.z], [mn.x, mn.y, mx.z],
+            [mn.x, mn.y, mx.z],
+            [mx.x, mn.y, mx.z],
+            [mx.x, mx.y, mx.z],
+            [mn.x, mx.y, mx.z],
+            [mn.x, mn.y, mx.z],
             // Vertical edges
-            [mn.x, mn.y, mn.z], [mn.x, mn.y, mx.z],
-            [mx.x, mn.y, mn.z], [mx.x, mn.y, mx.z],
-            [mx.x, mx.y, mn.z], [mx.x, mx.y, mx.z],
-            [mn.x, mx.y, mn.z], [mn.x, mx.y, mx.z],
+            [mn.x, mn.y, mn.z],
+            [mn.x, mn.y, mx.z],
+            [mx.x, mn.y, mn.z],
+            [mx.x, mn.y, mx.z],
+            [mx.x, mx.y, mn.z],
+            [mx.x, mx.y, mx.z],
+            [mn.x, mx.y, mn.z],
+            [mn.x, mx.y, mx.z],
         ],
         strip_lengths: vec![5, 5, 2, 2, 2, 2],
         default_color: color,
@@ -1436,4 +1456,3 @@ impl Default for GaussianSplatItem {
         }
     }
 }
-

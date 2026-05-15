@@ -174,8 +174,14 @@ const PYRAMID_TRI_FACES: [[usize; 3]; 4] = [
 
 /// Edges of a pyramid: 4 base + 4 lateral.
 const PYRAMID_EDGES: [[usize; 2]; 8] = [
-    [0, 1], [1, 2], [2, 3], [3, 0], // base ring
-    [0, 4], [1, 4], [2, 4], [3, 4], // lateral
+    [0, 1],
+    [1, 2],
+    [2, 3],
+    [3, 0], // base ring
+    [0, 4],
+    [1, 4],
+    [2, 4],
+    [3, 4], // lateral
 ];
 
 // ---------------------------------------------------------------------------
@@ -210,9 +216,15 @@ const WEDGE_QUAD_FACES: [[usize; 4]; 3] = [
 
 /// Edges of a wedge: 3 bottom + 3 top + 3 vertical.
 const WEDGE_EDGES: [[usize; 2]; 9] = [
-    [0, 1], [1, 2], [2, 0], // bottom tri
-    [3, 4], [4, 5], [5, 3], // top tri
-    [0, 3], [1, 4], [2, 5], // vertical
+    [0, 1],
+    [1, 2],
+    [2, 0], // bottom tri
+    [3, 4],
+    [4, 5],
+    [5, 3], // top tri
+    [0, 3],
+    [1, 4],
+    [2, 5], // vertical
 ];
 
 // ---------------------------------------------------------------------------
@@ -285,7 +297,11 @@ fn generate_tri_entries(cell_idx: usize, cell: &[u32; 8], positions: &[[f32; 3]]
 }
 
 /// Generate all quad face entries for a single cell.
-fn generate_quad_entries(cell_idx: usize, cell: &[u32; 8], positions: &[[f32; 3]]) -> Vec<QuadEntry> {
+fn generate_quad_entries(
+    cell_idx: usize,
+    cell: &[u32; 8],
+    positions: &[[f32; 3]],
+) -> Vec<QuadEntry> {
     let ct = cell_type(cell);
     let nv = ct.vertex_count();
     let mut out = Vec::new();
@@ -317,8 +333,7 @@ fn generate_quad_entries(cell_idx: usize, cell: &[u32; 8], positions: &[[f32; 3]
         }
         CellType::Hex => {
             for (face_idx, quad) in HEX_FACES.iter().enumerate() {
-                let v: [u32; 4] =
-                    [cell[quad[0]], cell[quad[1]], cell[quad[2]], cell[quad[3]]];
+                let v: [u32; 4] = [cell[quad[0]], cell[quad[1]], cell[quad[2]], cell[quad[3]]];
                 let interior_ref = {
                     let opposite = &HEX_FACES[HEX_FACE_OPPOSITE[face_idx]];
                     let mut c = [0.0f32; 3];
@@ -330,7 +345,12 @@ fn generate_quad_entries(cell_idx: usize, cell: &[u32; 8], positions: &[[f32; 3]
                     }
                     [c[0] / 4.0, c[1] / 4.0, c[2] / 4.0]
                 };
-                out.push((quad_face_key(v[0], v[1], v[2], v[3]), cell_idx, v, interior_ref));
+                out.push((
+                    quad_face_key(v[0], v[1], v[2], v[3]),
+                    cell_idx,
+                    v,
+                    interior_ref,
+                ));
             }
         }
     }
@@ -535,14 +555,17 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u3
 
     let face_to_cell: Vec<u32> = boundary.iter().map(|(ci, _, _)| *ci as u32).collect();
 
-    (MeshData {
-        positions: data.positions.clone(),
-        normals,
-        indices,
-        uvs: None,
-        tangents: None,
-        attributes,
-    }, face_to_cell)
+    (
+        MeshData {
+            positions: data.positions.clone(),
+            normals,
+            indices,
+            uvs: None,
+            tangents: None,
+            attributes,
+        },
+        face_to_cell,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -645,9 +668,7 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u3
 /// does not have access to per-cell attribute information and would produce an
 /// incorrect result if left enabled.
 /// Cell edges for tets: all 6 pairs from 4 vertices.
-const TET_EDGES: [[usize; 2]; 6] = [
-    [0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3],
-];
+const TET_EDGES: [[usize; 2]; 6] = [[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]];
 
 /// Cell edges for hexes (VTK ordering).
 ///
@@ -660,9 +681,18 @@ const TET_EDGES: [[usize; 2]; 6] = [
 ///   0 --- 1
 /// ```
 const HEX_EDGES: [[usize; 2]; 12] = [
-    [0, 1], [1, 2], [2, 3], [3, 0], // bottom ring
-    [4, 5], [5, 6], [6, 7], [7, 4], // top ring
-    [0, 4], [1, 5], [2, 6], [3, 7], // vertical
+    [0, 1],
+    [1, 2],
+    [2, 3],
+    [3, 0], // bottom ring
+    [4, 5],
+    [5, 6],
+    [6, 7],
+    [7, 4], // top ring
+    [0, 4],
+    [1, 5],
+    [2, 6],
+    [3, 7], // vertical
 ];
 
 // ---------------------------------------------------------------------------
@@ -853,7 +883,9 @@ fn sort_polygon_on_plane(pts: &mut Vec<[f32; 3]>, normal: [f32; 3]) {
         let db = [b[0] - centroid[0], b[1] - centroid[1], b[2] - centroid[2]];
         let ang_a = dot3(da, v).atan2(dot3(da, u));
         let ang_b = dot3(db, v).atan2(dot3(db, u));
-        ang_a.partial_cmp(&ang_b).unwrap_or(std::cmp::Ordering::Equal)
+        ang_a
+            .partial_cmp(&ang_b)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
 }
 
@@ -1056,9 +1088,7 @@ pub fn extract_clipped_volume_faces(
             let kc = cell_kept[*ci];
             kc > 0 && kc < cell_nv[*ci]
         })
-        .flat_map_iter(|(ci, cell)| {
-            generate_section_tris(ci, cell, &data.positions, clip_planes)
-        })
+        .flat_map_iter(|(ci, cell)| generate_section_tris(ci, cell, &data.positions, clip_planes))
         .collect();
     out_tris.extend(section_tris);
 
@@ -1118,7 +1148,11 @@ pub fn extract_clipped_volume_faces(
         .map(|n| {
             let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
             if len > 1e-12 {
-                [(n[0] / len) as f32, (n[1] / len) as f32, (n[2] / len) as f32]
+                [
+                    (n[0] / len) as f32,
+                    (n[1] / len) as f32,
+                    (n[2] / len) as f32,
+                ]
             } else {
                 [0.0, 1.0, 0.0]
             }
@@ -1143,14 +1177,17 @@ pub fn extract_clipped_volume_faces(
 
     let face_to_cell: Vec<u32> = indexed_tris.iter().map(|(ci, _)| *ci as u32).collect();
 
-    (MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: None,
-        tangents: None,
-        attributes,
-    }, face_to_cell)
+    (
+        MeshData {
+            positions,
+            normals,
+            indices,
+            uvs: None,
+            tangents: None,
+            attributes,
+        },
+        face_to_cell,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1163,8 +1200,14 @@ impl VolumeMeshData {
     /// Slots `[4..8]` are filled with [`CELL_SENTINEL`] automatically.
     pub fn push_tet(&mut self, a: u32, b: u32, c: u32, d: u32) {
         self.cells.push([
-            a, b, c, d,
-            CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL,
+            a,
+            b,
+            c,
+            d,
+            CELL_SENTINEL,
+            CELL_SENTINEL,
+            CELL_SENTINEL,
+            CELL_SENTINEL,
         ]);
     }
 
@@ -1175,8 +1218,14 @@ impl VolumeMeshData {
     /// Slots `[5..8]` are filled with [`CELL_SENTINEL`] automatically.
     pub fn push_pyramid(&mut self, base: [u32; 4], apex: u32) {
         self.cells.push([
-            base[0], base[1], base[2], base[3], apex,
-            CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL,
+            base[0],
+            base[1],
+            base[2],
+            base[3],
+            apex,
+            CELL_SENTINEL,
+            CELL_SENTINEL,
+            CELL_SENTINEL,
         ]);
     }
 
@@ -1187,8 +1236,14 @@ impl VolumeMeshData {
     /// faces.  Slots `[6..8]` are filled with [`CELL_SENTINEL`] automatically.
     pub fn push_wedge(&mut self, tri0: [u32; 3], tri1: [u32; 3]) {
         self.cells.push([
-            tri0[0], tri0[1], tri0[2], tri1[0], tri1[1], tri1[2],
-            CELL_SENTINEL, CELL_SENTINEL,
+            tri0[0],
+            tri0[1],
+            tri0[2],
+            tri1[0],
+            tri1[1],
+            tri1[2],
+            CELL_SENTINEL,
+            CELL_SENTINEL,
         ]);
     }
 
@@ -1715,7 +1770,10 @@ mod tests {
                 (pa[2] + pb[2] + pc[2]) / 3.0,
             ];
             let dot = normal[0] * fc[0] + normal[1] * fc[1] + normal[2] * fc[2];
-            assert!(dot > 0.0, "boundary face points inward: tri={tri:?}, dot={dot}");
+            assert!(
+                dot > 0.0,
+                "boundary face points inward: tri={tri:?}, dot={dot}"
+            );
         }
     }
 
@@ -1742,7 +1800,10 @@ mod tests {
                 (pa[2] + pb[2] + pc[2]) / 3.0,
             ];
             let dot = normal[0] * fc[0] + normal[1] * fc[1] + normal[2] * fc[2];
-            assert!(dot > 0.0, "boundary face points inward: tri={tri:?}, dot={dot}");
+            assert!(
+                dot > 0.0,
+                "boundary face points inward: tri={tri:?}, dot={dot}"
+            );
         }
     }
 
@@ -1809,7 +1870,7 @@ mod tests {
     /// extractor (the clipped path degenerates to an unclipped boundary extraction
     /// when no planes are active).
     #[test]
-    
+
     fn empty_planes_matches_boundary_extractor_tet() {
         let data = structured_tet_grid(3);
         let (boundary, _) = extract_boundary_faces(&data);
@@ -1839,7 +1900,7 @@ mod tests {
     /// Clipping a tet grid through its centre must produce non-empty section
     /// faces (i.e. the cut face count is greater than zero).
     #[test]
-    
+
     fn clipped_tet_grid_has_nonempty_section_faces() {
         let grid_n = 3;
         let data = structured_tet_grid(grid_n);
@@ -1856,7 +1917,7 @@ mod tests {
 
     /// Clipping a hex grid through its centre must produce non-empty section faces.
     #[test]
-    
+
     fn clipped_hex_grid_has_nonempty_section_faces() {
         let grid_n = 3;
         let data = structured_hex_grid(grid_n);
@@ -1871,7 +1932,7 @@ mod tests {
     /// Section face normals must point toward the kept side of the cutting
     /// plane (dot of the section face normal with the plane normal > 0).
     #[test]
-    
+
     fn section_face_normals_point_toward_kept_side_tet() {
         let data = structured_tet_grid(3);
         let plane_normal = [0.0_f32, 1.0, 0.0];
@@ -1890,7 +1951,7 @@ mod tests {
 
     /// A cell fully on the discarded side of a clip plane contributes no triangles.
     #[test]
-    
+
     fn fully_discarded_cells_contribute_nothing() {
         // Single tet at y=0..1 ; plane keeps y >= 2.0 -> tet is fully discarded.
         let data = single_tet();
@@ -1905,7 +1966,7 @@ mod tests {
     /// A cell fully on the kept side of a clip plane contributes the same
     /// boundary triangles as the unclipped extractor.
     #[test]
-    
+
     fn fully_kept_cell_matches_boundary_extractor() {
         // Single tet at y=0..1 ; plane keeps y >= -1.0 -> tet is fully kept.
         let data = single_tet();
@@ -2024,13 +2085,8 @@ mod tests {
 
     fn tet_volume(p: [[f32; 3]; 4]) -> f32 {
         // Signed volume = dot(v1, cross(v2, v3)) / 6 where vi = pi - p0.
-        let v = |i: usize| -> [f32; 3] {
-            [
-                p[i][0] - p[0][0],
-                p[i][1] - p[0][1],
-                p[i][2] - p[0][2],
-            ]
-        };
+        let v =
+            |i: usize| -> [f32; 3] { [p[i][0] - p[0][0], p[i][1] - p[0][1], p[i][2] - p[0][2]] };
         let (a, b, c) = (v(1), v(2), v(3));
         let cross = [
             b[1] * c[2] - b[2] * c[1],
@@ -2078,10 +2134,7 @@ mod tests {
             let (tets, _) = decompose_to_tetrahedra(&data, "");
             for (i, t) in tets.iter().enumerate() {
                 let vol = tet_volume(*t).abs();
-                assert!(
-                    vol > 1e-6,
-                    "tet {i} has near-zero volume {vol}: {t:?}"
-                );
+                assert!(vol > 1e-6, "tet {i} has near-zero volume {vol}: {t:?}");
             }
         }
     }

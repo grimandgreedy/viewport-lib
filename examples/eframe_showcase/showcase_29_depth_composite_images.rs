@@ -16,8 +16,8 @@
 use crate::{App, MeshId};
 use eframe::egui;
 use viewport_lib::{
-    Camera, ImageAnchor, LightKind, LightSource, LightingSettings, Material,
-    SceneRenderItem, ScreenImageItem, ViewportRenderer,
+    Camera, ImageAnchor, LightKind, LightSource, LightingSettings, Material, SceneRenderItem,
+    ScreenImageItem, ViewportRenderer,
 };
 
 // Overlay image dimensions.
@@ -40,21 +40,21 @@ pub enum DcMode {
 // ---------------------------------------------------------------------------
 
 pub(crate) struct DcState {
-    pub built:  bool,
+    pub built: bool,
     pub mesh_id: MeshId,
-    pub mode:    DcMode,
-    pub pixels:  Vec<[u8; 4]>,
-    pub depths:  Vec<f32>,
+    pub mode: DcMode,
+    pub pixels: Vec<[u8; 4]>,
+    pub depths: Vec<f32>,
 }
 
 impl Default for DcState {
     fn default() -> Self {
         Self {
-            built:   false,
+            built: false,
             mesh_id: MeshId::from_index(0),
-            mode:    DcMode::DepthComposite,
-            pixels:  Vec::new(),
-            depths:  Vec::new(),
+            mode: DcMode::DepthComposite,
+            pixels: Vec::new(),
+            depths: Vec::new(),
         }
     }
 }
@@ -116,7 +116,6 @@ impl App {
         self.dc_state.depths = depths;
         self.dc_state.built = true;
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -124,16 +123,24 @@ impl App {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn controls_dc(app: &mut App, ui: &mut egui::Ui) {
-        ui.label("Mode:");
-        ui.radio_value(&mut app.dc_state.mode, DcMode::Plain, "Plain overlay (always on top)");
-        ui.radio_value(&mut app.dc_state.mode, DcMode::DepthComposite, "Depth composite (depth-tested)");
+    ui.label("Mode:");
+    ui.radio_value(
+        &mut app.dc_state.mode,
+        DcMode::Plain,
+        "Plain overlay (always on top)",
+    );
+    ui.radio_value(
+        &mut app.dc_state.mode,
+        DcMode::DepthComposite,
+        "Depth composite (depth-tested)",
+    );
 
-        ui.separator();
-        ui.label("The heatmap sits at the depth of the blue center sphere.");
-        ui.separator();
-        ui.label("Green (left)  : closer than overlay : visible through it in DC mode.");
-        ui.label("Blue (center) : at the overlay depth.");
-        ui.label("Orange (right): farther than overlay : hidden behind it in DC mode.");
+    ui.separator();
+    ui.label("The heatmap sits at the depth of the blue center sphere.");
+    ui.separator();
+    ui.label("Green (left)  : closer than overlay : visible through it in DC mode.");
+    ui.label("Blue (center) : at the overlay depth.");
+    ui.label("Orange (right): farther than overlay : hidden behind it in DC mode.");
 }
 
 impl App {
@@ -144,22 +151,25 @@ impl App {
 
         // Three spheres: same mesh, different translations and colours.
         let spheres = [
-            (glam::Vec3::new(-3.5,  0.0,  4.5), [0.15f32, 0.85, 0.2]),   // green  - near
-            (glam::Vec3::new( 0.0,  0.0,  0.0), [0.25,    0.50, 1.0]),   // blue   - mid
-            (glam::Vec3::new( 3.5,  0.0, -5.0), [1.0,     0.45, 0.1]),   // orange - far
+            (glam::Vec3::new(-3.5, 0.0, 4.5), [0.15f32, 0.85, 0.2]), // green  - near
+            (glam::Vec3::new(0.0, 0.0, 0.0), [0.25, 0.50, 1.0]),     // blue   - mid
+            (glam::Vec3::new(3.5, 0.0, -5.0), [1.0, 0.45, 0.1]),     // orange - far
         ];
 
-        spheres.iter().map(|(pos, color)| {
-            let mut item = SceneRenderItem::default();
-            item.mesh_id = self.dc_state.mesh_id;
-            item.model = glam::Mat4::from_translation(*pos).to_cols_array_2d();
-            item.material = {
-                let mut m = Material::from_color(*color);
-                m.roughness = 0.3;
-                m
-            };
-            item
-        }).collect()
+        spheres
+            .iter()
+            .map(|(pos, color)| {
+                let mut item = SceneRenderItem::default();
+                item.mesh_id = self.dc_state.mesh_id;
+                item.model = glam::Mat4::from_translation(*pos).to_cols_array_2d();
+                item.material = {
+                    let mut m = Material::from_color(*color);
+                    m.roughness = 0.3;
+                    m
+                };
+                item
+            })
+            .collect()
     }
 
     pub(crate) fn dc_push_screen_image(&self, fd: &mut viewport_lib::FrameData) {
@@ -168,11 +178,11 @@ impl App {
         }
         let mut img = ScreenImageItem::default();
         img.pixels = self.dc_state.pixels.clone();
-        img.width  = IMG_W;
+        img.width = IMG_W;
         img.height = IMG_H;
         img.anchor = ImageAnchor::Center;
-        img.scale  = 1.7;   // ~870 x 435 screen pixels; covers all three spheres
-        img.alpha  = 1.0;
+        img.scale = 1.7; // ~870 x 435 screen pixels; covers all three spheres
+        img.alpha = 1.0;
         if self.dc_state.mode == DcMode::DepthComposite {
             img.depth = Some(self.dc_state.depths.clone());
         }
@@ -181,15 +191,13 @@ impl App {
 
     pub(crate) fn dc_lighting() -> LightingSettings {
         LightingSettings {
-            lights: vec![
-                LightSource {
-                    kind: LightKind::Directional {
-                        direction: [-0.4, -0.7, -1.0],
-                    },
-                    color: [1.0, 0.97, 0.93],
-                    intensity: 2.2,
+            lights: vec![LightSource {
+                kind: LightKind::Directional {
+                    direction: [-0.4, -0.7, -1.0],
                 },
-            ],
+                color: [1.0, 0.97, 0.93],
+                intensity: 2.2,
+            }],
             hemisphere_intensity: 0.45,
             // Darker sky so the coloured overlay stands out.
             sky_color: [0.08, 0.10, 0.18],
@@ -205,17 +213,17 @@ impl App {
 fn heatmap_rgb(t: f32) -> (u8, u8, u8) {
     // (r, g, b) stops normalised to [0, 1].
     const STOPS: [(f32, f32, f32); 5] = [
-        (0.00, 0.00, 0.80),  // deep blue
-        (0.00, 0.75, 0.85),  // cyan
-        (0.05, 0.80, 0.05),  // green
-        (0.90, 0.88, 0.00),  // yellow
-        (0.88, 0.06, 0.06),  // red
+        (0.00, 0.00, 0.80), // deep blue
+        (0.00, 0.75, 0.85), // cyan
+        (0.05, 0.80, 0.05), // green
+        (0.90, 0.88, 0.00), // yellow
+        (0.88, 0.06, 0.06), // red
     ];
     let seg = (t * 4.0).clamp(0.0, 3.9999);
-    let i   = seg as usize;
-    let f   = seg - i as f32;
-    let a   = STOPS[i];
-    let b   = STOPS[i + 1];
+    let i = seg as usize;
+    let f = seg - i as f32;
+    let a = STOPS[i];
+    let b = STOPS[i + 1];
     let lerp = |a: f32, b: f32| ((a + (b - a) * f).clamp(0.0, 1.0) * 255.0) as u8;
     (lerp(a.0, b.0), lerp(a.1, b.1), lerp(a.2, b.2))
 }

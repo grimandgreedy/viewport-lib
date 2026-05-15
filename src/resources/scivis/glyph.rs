@@ -1,7 +1,6 @@
 use super::*;
 
 impl ViewportGpuResources {
-
     /// Lazily create the glyph render pipeline (instanced TriangleList).
     ///
     /// No-op if already created. Called from `prepare()` when `frame.scene.glyphs` is non-empty.
@@ -221,7 +220,8 @@ impl ViewportGpuResources {
             has_mag_clamp: u32,
             default_color: [f32; 4],
             use_default_color: u32,
-            _pad: [u32; 3],
+            unlit: u32,
+            _pad: [u32; 2],
         }
         let uniform_data = GlyphUniform {
             global_scale: item.scale,
@@ -233,8 +233,13 @@ impl ViewportGpuResources {
             mag_clamp_max,
             has_mag_clamp,
             default_color: item.default_color,
-            use_default_color: if item.default_color[3] > 0.0 && item.use_default_color { 1 } else { 0 },
-            _pad: [0; 3],
+            use_default_color: if item.default_color[3] > 0.0 && item.use_default_color {
+                1
+            } else {
+                0
+            },
+            unlit: if item.unlit { 1 } else { 0 },
+            _pad: [0; 2],
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("glyph_uniform_buf"),
@@ -400,20 +405,19 @@ impl ViewportGpuResources {
             ],
         });
 
-        let tg_instance_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("tensor_glyph_instance_bgl"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
+        let tg_instance_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("tensor_glyph_instance_bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("tensor_glyph_shader"),
@@ -424,11 +428,7 @@ impl ViewportGpuResources {
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("tensor_glyph_pipeline_layout"),
-            bind_group_layouts: &[
-                &self.camera_bind_group_layout,
-                &tg_bgl,
-                &tg_instance_bgl,
-            ],
+            bind_group_layouts: &[&self.camera_bind_group_layout, &tg_bgl, &tg_instance_bgl],
             push_constant_ranges: &[],
         });
 
@@ -512,15 +512,15 @@ impl ViewportGpuResources {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct TensorInstance {
-            model_col0:  [f32; 4],
-            model_col1:  [f32; 4],
-            model_col2:  [f32; 4],
-            model_col3:  [f32; 4],
+            model_col0: [f32; 4],
+            model_col1: [f32; 4],
+            model_col2: [f32; 4],
+            model_col3: [f32; 4],
             normal_col0: [f32; 4],
             normal_col1: [f32; 4],
             normal_col2: [f32; 4],
-            scalar:      f32,
-            _pad:        [f32; 3],
+            scalar: f32,
+            _pad: [f32; 3],
         }
 
         let outer_model = glam::Mat4::from_cols_array_2d(&item.model);
@@ -566,8 +566,7 @@ impl ViewportGpuResources {
                 let rs = glam::Mat3::from_cols(col0 * s0, col1 * s1, col2 * s2);
 
                 // 4x4 model matrix.
-                let local_model = glam::Mat4::from_mat3(rs)
-                    * glam::Mat4::IDENTITY;
+                let local_model = glam::Mat4::from_mat3(rs) * glam::Mat4::IDENTITY;
                 let mut m4 = local_model;
                 m4.w_axis = glam::Vec4::new(pos.x, pos.y, pos.z, 1.0);
                 let world_model = outer_model * m4;
@@ -584,15 +583,19 @@ impl ViewportGpuResources {
                         .unwrap_or(0.0)
                 } else {
                     // Sign of dominant eigenvalue.
-                    if i < item.eigenvalues.len() { item.eigenvalues[i][0] } else { 0.0 }
+                    if i < item.eigenvalues.len() {
+                        item.eigenvalues[i][0]
+                    } else {
+                        0.0
+                    }
                 };
 
                 let mc = world_model.to_cols_array_2d();
                 TensorInstance {
-                    model_col0:  mc[0],
-                    model_col1:  mc[1],
-                    model_col2:  mc[2],
-                    model_col3:  mc[3],
+                    model_col0: mc[0],
+                    model_col1: mc[1],
+                    model_col2: mc[2],
+                    model_col3: mc[3],
                     normal_col0: [nm.x_axis.x, nm.x_axis.y, nm.x_axis.z, 0.0],
                     normal_col1: [nm.y_axis.x, nm.y_axis.y, nm.y_axis.z, 0.0],
                     normal_col2: [nm.z_axis.x, nm.z_axis.y, nm.z_axis.z, 0.0],
@@ -614,10 +617,10 @@ impl ViewportGpuResources {
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct TensorGlyphUniform {
             has_scalars: u32,
-            scalar_min:  f32,
-            scalar_max:  f32,
-            _pad0:       f32,
-            _pad1:       [[f32; 4]; 3],
+            scalar_min: f32,
+            scalar_max: f32,
+            _pad0: f32,
+            _pad1: [[f32; 4]; 3],
         }
         let uniform_data = TensorGlyphUniform {
             has_scalars: if has_scalars { 1 } else { 0 },
@@ -704,9 +707,13 @@ impl ViewportGpuResources {
         if self.glyph_outline_mask_pipeline.is_some() {
             return;
         }
-        let glyph_bgl = self.glyph_bgl.as_ref()
+        let glyph_bgl = self
+            .glyph_bgl
+            .as_ref()
             .expect("ensure_glyph_pipeline must be called first");
-        let glyph_instance_bgl = self.glyph_instance_bgl.as_ref()
+        let glyph_instance_bgl = self
+            .glyph_instance_bgl
+            .as_ref()
             .expect("ensure_glyph_pipeline must be called first");
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -726,8 +733,8 @@ impl ViewportGpuResources {
             push_constant_ranges: &[],
         });
 
-        self.glyph_outline_mask_pipeline = Some(
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        self.glyph_outline_mask_pipeline = Some(device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
                 label: Some("glyph_outline_mask_pipeline"),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
@@ -765,8 +772,8 @@ impl ViewportGpuResources {
                 },
                 multiview: None,
                 cache: None,
-            }),
-        );
+            },
+        ));
     }
 
     /// Lazily create the tensor glyph outline mask pipeline.
@@ -777,9 +784,13 @@ impl ViewportGpuResources {
         if self.tensor_glyph_outline_mask_pipeline.is_some() {
             return;
         }
-        let tg_bgl = self.tensor_glyph_bgl.as_ref()
+        let tg_bgl = self
+            .tensor_glyph_bgl
+            .as_ref()
             .expect("ensure_tensor_glyph_pipeline must be called first");
-        let tg_instance_bgl = self.tensor_glyph_instance_bgl.as_ref()
+        let tg_instance_bgl = self
+            .tensor_glyph_instance_bgl
+            .as_ref()
             .expect("ensure_tensor_glyph_pipeline must be called first");
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -791,16 +802,12 @@ impl ViewportGpuResources {
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("tensor_glyph_outline_mask_pipeline_layout"),
-            bind_group_layouts: &[
-                &self.camera_bind_group_layout,
-                tg_bgl,
-                tg_instance_bgl,
-            ],
+            bind_group_layouts: &[&self.camera_bind_group_layout, tg_bgl, tg_instance_bgl],
             push_constant_ranges: &[],
         });
 
-        self.tensor_glyph_outline_mask_pipeline = Some(
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        self.tensor_glyph_outline_mask_pipeline = Some(device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
                 label: Some("tensor_glyph_outline_mask_pipeline"),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
@@ -838,7 +845,7 @@ impl ViewportGpuResources {
                 },
                 multiview: None,
                 cache: None,
-            }),
-        );
+            },
+        ));
     }
 }

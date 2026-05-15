@@ -15,7 +15,8 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BackfacePolicy, GlyphItem, LightingSettings, MeshData, MeshId, SceneRenderItem,
+    BackfacePolicy, BuiltinColormap, ColormapId, GlyphItem, LightingSettings, MeshData, MeshId,
+    SceneRenderItem,
     quantities::{edge_one_form_to_glyphs, face_intrinsic_to_glyphs, vertex_intrinsic_to_glyphs},
 };
 
@@ -39,45 +40,48 @@ pub(crate) enum SvMode {
 // ---------------------------------------------------------------------------
 
 pub(crate) struct SvState {
-    pub built:         bool,
-    pub mode:          SvMode,
-    pub scale:         f32,
-    pub density:       f32,
+    pub built: bool,
+    pub mode: SvMode,
+    pub scale: f32,
+    pub density: f32,
     pub glyph_density: f32,
     /// Mesh upload indices: [sphere, torus, plane].
-    pub mesh_index:    [MeshId; 3],
+    pub mesh_index: [MeshId; 3],
     /// CPU-side positions for each mesh.
-    pub positions:     [Vec<[f32; 3]>; 3],
+    pub positions: [Vec<[f32; 3]>; 3],
     /// CPU-side normals for each mesh.
-    pub normals:       [Vec<[f32; 3]>; 3],
+    pub normals: [Vec<[f32; 3]>; 3],
     /// CPU-side explicit tangents (sphere only; others None).
-    pub tangents:      [Option<Vec<[f32; 4]>>; 3],
+    pub tangents: [Option<Vec<[f32; 4]>>; 3],
     /// CPU-side indices for each mesh.
-    pub indices:       [Vec<u32>; 3],
+    pub indices: [Vec<u32>; 3],
     /// Per-vertex intrinsic 2D vectors (sphere / vertex mode).
-    pub vertex_vecs:   Vec<[f32; 2]>,
+    pub vertex_vecs: Vec<[f32; 2]>,
     /// Per-face intrinsic 2D vectors (torus / face mode).
-    pub face_vecs:     Vec<[f32; 2]>,
+    pub face_vecs: Vec<[f32; 2]>,
     /// Per-directed-edge one-form values (plane / edge mode).
-    pub edge_vals:     Vec<f32>,
+    pub edge_vals: Vec<f32>,
+    /// Rainbow colormap ID fetched at build time.
+    pub rainbow_id: Option<ColormapId>,
 }
 
 impl Default for SvState {
     fn default() -> Self {
         Self {
-            built:         false,
-            mode:          SvMode::VertexIntrinsic,
-            scale:         0.15,
-            density:       1.0,
+            built: false,
+            mode: SvMode::VertexIntrinsic,
+            scale: 0.15,
+            density: 1.0,
             glyph_density: -1.0,
-            mesh_index:    [MeshId::from_index(0); 3],
-            positions:     [Vec::new(), Vec::new(), Vec::new()],
-            normals:       [Vec::new(), Vec::new(), Vec::new()],
-            tangents:      [None, None, None],
-            indices:       [Vec::new(), Vec::new(), Vec::new()],
-            vertex_vecs:   Vec::new(),
-            face_vecs:     Vec::new(),
-            edge_vals:     Vec::new(),
+            mesh_index: [MeshId::from_index(0); 3],
+            positions: [Vec::new(), Vec::new(), Vec::new()],
+            normals: [Vec::new(), Vec::new(), Vec::new()],
+            tangents: [None, None, None],
+            indices: [Vec::new(), Vec::new(), Vec::new()],
+            vertex_vecs: Vec::new(),
+            face_vecs: Vec::new(),
+            edge_vals: Vec::new(),
+            rainbow_id: None,
         }
     }
 }
@@ -115,6 +119,11 @@ impl App {
             .expect("sv plane");
 
         self.sv_state.mesh_index = [sphere_idx, torus_idx, plane_idx];
+        self.sv_state.rainbow_id = Some(
+            renderer
+                .resources()
+                .builtin_colormap_id(BuiltinColormap::Rainbow),
+        );
 
         self.sv_state.built = true;
 
@@ -178,12 +187,13 @@ impl App {
     pub(crate) fn sv_surface_item(&self) -> SceneRenderItem {
         let mesh_id = match self.sv_state.mode {
             SvMode::VertexIntrinsic => self.sv_state.mesh_index[0],
-            SvMode::FaceIntrinsic   => self.sv_state.mesh_index[1],
-            SvMode::EdgeOneForm     => self.sv_state.mesh_index[2],
+            SvMode::FaceIntrinsic => self.sv_state.mesh_index[1],
+            SvMode::EdgeOneForm => self.sv_state.mesh_index[2],
         };
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
         item.material.backface_policy = BackfacePolicy::Identical;
+        item.material.unlit = true;
         item
     }
 
@@ -191,8 +201,8 @@ impl App {
     fn sv_total_count(&self) -> usize {
         match self.sv_state.mode {
             SvMode::VertexIntrinsic => self.sv_state.vertex_vecs.len(),
-            SvMode::FaceIntrinsic   => self.sv_state.face_vecs.len(),
-            SvMode::EdgeOneForm     => self.sv_state.indices[2].len() / 3,
+            SvMode::FaceIntrinsic => self.sv_state.face_vecs.len(),
+            SvMode::EdgeOneForm => self.sv_state.indices[2].len() / 3,
         }
     }
 
@@ -204,7 +214,7 @@ impl App {
 
     /// Build the [`GlyphItem`] for the active sub-mode.
     pub(crate) fn sv_glyph_item(&self) -> GlyphItem {
-        match self.sv_state.mode {
+        let mut item = match self.sv_state.mode {
             SvMode::VertexIntrinsic => vertex_intrinsic_to_glyphs(
                 &self.sv_state.positions[0],
                 &self.sv_state.normals[0],
@@ -225,7 +235,10 @@ impl App {
                 &self.sv_state.edge_vals,
                 self.sv_state.scale,
             ),
-        }
+        };
+        item.colormap_id = self.sv_state.rainbow_id;
+        item.unlit = true;
+        item
     }
 
     /// Standard lighting for Showcase 25.

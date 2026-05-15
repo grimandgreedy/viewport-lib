@@ -268,7 +268,6 @@ impl ViewportGpuResources {
         self.outline_composite_sampler = Some(sampler);
     }
 
-
     /// Rebuild the tone-map bind group with device, swapping in the active bloom/AO textures.
     #[allow(dead_code)]
     pub(crate) fn rebuild_tone_map_bind_group_with_device(
@@ -360,7 +359,8 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: wgpu::BindingResource::TextureView(
-                        self.lic_placeholder_view.as_ref()
+                        self.lic_placeholder_view
+                            .as_ref()
                             .or(self.cs_placeholder_view.as_ref())
                             .expect("ensure_hdr_shared not called"),
                     ),
@@ -1797,18 +1797,16 @@ impl ViewportGpuResources {
         if self.lic_surface_bgl.is_none() {
             let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("lic_surface_bgl"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                ],
+                    count: None,
+                }],
             });
             self.lic_surface_bgl = Some(bgl);
         }
@@ -2350,7 +2348,9 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: wgpu::BindingResource::TextureView(
-                        self.lic_placeholder_view.as_ref().expect("ensure_hdr_shared not called"),
+                        self.lic_placeholder_view
+                            .as_ref()
+                            .expect("ensure_hdr_shared not called"),
                     ),
                 },
             ],
@@ -2471,10 +2471,7 @@ impl ViewportGpuResources {
                 },
             ],
         });
-        let dof_bgl = self
-            .dof_bgl
-            .as_ref()
-            .expect("ensure_hdr_shared not called");
+        let dof_bgl = self.dof_bgl.as_ref().expect("ensure_hdr_shared not called");
         let dof_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("dof_bg"),
             layout: dof_bgl,
@@ -2713,7 +2710,8 @@ impl ViewportGpuResources {
         let lic_vector_tex = make_tex(
             "lic_vector",
             wgpu::TextureFormat::Rgba8Unorm,
-            w, h,
+            w,
+            h,
             wgpu::TextureUsages::RENDER_ATTACHMENT,
         );
         let lic_vector_view = lic_vector_tex.create_view(&wgpu::TextureViewDescriptor::default());
@@ -2721,7 +2719,8 @@ impl ViewportGpuResources {
         let lic_output_tex = make_tex(
             "lic_output",
             wgpu::TextureFormat::R8Unorm,
-            w, h,
+            w,
+            h,
             wgpu::TextureUsages::RENDER_ATTACHMENT,
         );
         let lic_output_view = lic_output_tex.create_view(&wgpu::TextureViewDescriptor::default());
@@ -2741,7 +2740,11 @@ impl ViewportGpuResources {
             .collect();
         let lic_noise_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("lic_noise"),
-            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -2762,7 +2765,11 @@ impl ViewportGpuResources {
                 bytes_per_row: Some(w),
                 rows_per_image: Some(h),
             },
-            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
         );
         let lic_noise_view = lic_noise_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -2773,7 +2780,10 @@ impl ViewportGpuResources {
             mapped_at_creation: false,
         });
 
-        let lic_advect_bgl = self.lic_advect_bgl.as_ref().expect("ensure_hdr_shared not called");
+        let lic_advect_bgl = self
+            .lic_advect_bgl
+            .as_ref()
+            .expect("ensure_hdr_shared not called");
         let lic_advect_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("lic_advect_bg"),
             layout: lic_advect_bgl,
@@ -2793,7 +2803,9 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::Sampler(
-                        self.lic_noise_sampler.as_ref().expect("ensure_hdr_shared not called"),
+                        self.lic_noise_sampler
+                            .as_ref()
+                            .expect("ensure_hdr_shared not called"),
                     ),
                 },
             ],

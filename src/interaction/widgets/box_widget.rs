@@ -95,8 +95,8 @@ impl BoxWidget {
         for sx in [-1.0_f32, 1.0] {
             for sy in [-1.0_f32, 1.0] {
                 for sz in [-1.0_f32, 1.0] {
-                    let p = self.center
-                        + self.rotation * glam::Vec3::new(sx * h.x, sy * h.y, sz * h.z);
+                    let p =
+                        self.center + self.rotation * glam::Vec3::new(sx * h.x, sy * h.y, sz * h.z);
                     min = min.min(p);
                     max = max.max(p);
                 }
@@ -150,7 +150,10 @@ impl BoxWidget {
                 match handle {
                     BoxHandle::Center => {
                         if let Some(hit) = ray_plane_intersection(
-                            ro, rd, self.drag_plane_normal, self.drag_plane_d,
+                            ro,
+                            rd,
+                            self.drag_plane_normal,
+                            self.drag_plane_d,
                         ) {
                             let delta = hit - self.drag_anchor_world;
                             if delta.length_squared() > 1e-10 {
@@ -162,7 +165,10 @@ impl BoxWidget {
                     }
                     BoxHandle::Face(i) => {
                         if let Some(hit) = ray_plane_intersection(
-                            ro, rd, self.drag_plane_normal, self.drag_plane_d,
+                            ro,
+                            rd,
+                            self.drag_plane_normal,
+                            self.drag_plane_d,
                         ) {
                             // Rotated face normal in world space.
                             let world_normal = self.rotation * Self::local_face_normal(i);
@@ -185,22 +191,17 @@ impl BoxWidget {
                         // drag anchor and apply it as an incremental rotation.
                         let axis = Self::world_rotation_axis(axis_idx);
                         let plane_d = -axis.dot(self.center);
-                        if let Some(plane_hit) =
-                            ray_plane_intersection(ro, rd, axis, plane_d)
-                        {
+                        if let Some(plane_hit) = ray_plane_intersection(ro, rd, axis, plane_d) {
                             let start_dir =
                                 (self.drag_anchor_world - self.center).normalize_or_zero();
                             let new_dir = (plane_hit - self.center).normalize_or_zero();
-                            if start_dir.length_squared() > 0.5
-                                && new_dir.length_squared() > 0.5
-                            {
+                            if start_dir.length_squared() > 0.5 && new_dir.length_squared() > 0.5 {
                                 let cos_a = start_dir.dot(new_dir).clamp(-1.0, 1.0);
                                 let cross = start_dir.cross(new_dir);
                                 let sign = cross.dot(axis).signum();
                                 let angle = cos_a.acos() * sign;
                                 if angle.abs() > 1e-5 {
-                                    let delta_rot =
-                                        glam::Quat::from_axis_angle(axis, angle);
+                                    let delta_rot = glam::Quat::from_axis_angle(axis, angle);
                                     self.rotation = (delta_rot * self.rotation).normalize();
                                     // Update anchor to the new position on the arc.
                                     self.drag_anchor_world =
@@ -214,7 +215,11 @@ impl BoxWidget {
             }
         }
 
-        if updated { WidgetResult::Updated } else { WidgetResult::None }
+        if updated {
+            WidgetResult::Updated
+        } else {
+            WidgetResult::None
+        }
     }
 
     /// Build a `PolylineItem` for the oriented box wireframe (12 edges).
@@ -225,23 +230,32 @@ impl BoxWidget {
         let h = self.half_extents;
         let r = self.rotation;
 
-        let p = |x: f32, y: f32, z: f32| -> [f32; 3] {
-            (c + r * glam::Vec3::new(x, y, z)).to_array()
-        };
+        let p =
+            |x: f32, y: f32, z: f32| -> [f32; 3] { (c + r * glam::Vec3::new(x, y, z)).to_array() };
 
         PolylineItem {
             positions: vec![
                 // Bottom face loop (local z = -h.z)
-                p(-h.x, -h.y, -h.z), p( h.x, -h.y, -h.z),
-                p( h.x,  h.y, -h.z), p(-h.x,  h.y, -h.z), p(-h.x, -h.y, -h.z),
+                p(-h.x, -h.y, -h.z),
+                p(h.x, -h.y, -h.z),
+                p(h.x, h.y, -h.z),
+                p(-h.x, h.y, -h.z),
+                p(-h.x, -h.y, -h.z),
                 // Top face loop (local z = +h.z)
-                p(-h.x, -h.y,  h.z), p( h.x, -h.y,  h.z),
-                p( h.x,  h.y,  h.z), p(-h.x,  h.y,  h.z), p(-h.x, -h.y,  h.z),
+                p(-h.x, -h.y, h.z),
+                p(h.x, -h.y, h.z),
+                p(h.x, h.y, h.z),
+                p(-h.x, h.y, h.z),
+                p(-h.x, -h.y, h.z),
                 // Four vertical edges
-                p(-h.x, -h.y, -h.z), p(-h.x, -h.y,  h.z),
-                p( h.x, -h.y, -h.z), p( h.x, -h.y,  h.z),
-                p( h.x,  h.y, -h.z), p( h.x,  h.y,  h.z),
-                p(-h.x,  h.y, -h.z), p(-h.x,  h.y,  h.z),
+                p(-h.x, -h.y, -h.z),
+                p(-h.x, -h.y, h.z),
+                p(h.x, -h.y, -h.z),
+                p(h.x, -h.y, h.z),
+                p(h.x, h.y, -h.z),
+                p(h.x, h.y, h.z),
+                p(-h.x, h.y, -h.z),
+                p(-h.x, h.y, h.z),
             ],
             strip_lengths: vec![5, 5, 2, 2, 2, 2],
             default_color: self.color,
@@ -315,7 +329,11 @@ impl BoxWidget {
 
         for handle in all_handles {
             let pos = self.handle_pos(handle);
-            let target_px = if matches!(handle, BoxHandle::RotArc(_)) { 7.0 } else { 9.0 };
+            let target_px = if matches!(handle, BoxHandle::RotArc(_)) {
+                7.0
+            } else {
+                9.0
+            };
             let r = handle_world_radius(pos, &ctx.camera, ctx.viewport_size.y, target_px);
             let s = if self.hovered_handle == Some(handle) || self.active_handle == Some(handle) {
                 1.0_f32
@@ -351,7 +369,8 @@ impl BoxWidget {
         match handle {
             BoxHandle::Center => self.center,
             BoxHandle::Face(i) => {
-                self.center + self.rotation * (Self::local_face_normal(i) * self.half_extents[i / 2])
+                self.center
+                    + self.rotation * (Self::local_face_normal(i) * self.half_extents[i / 2])
             }
             BoxHandle::RotArc(i) => self.center + self.arc_grip_offset(i),
         }
@@ -423,7 +442,11 @@ impl BoxWidget {
 
         for handle in all_handles {
             let pos = self.handle_pos(handle);
-            let target_px = if matches!(handle, BoxHandle::RotArc(_)) { 7.0 } else { 9.0 };
+            let target_px = if matches!(handle, BoxHandle::RotArc(_)) {
+                7.0
+            } else {
+                9.0
+            };
             let r = handle_world_radius(pos, &ctx.camera, ctx.viewport_size.y, target_px);
             let ball = parry3d::shape::Ball::new(r);
             let pose = Pose::from_parts([pos.x, pos.y, pos.z].into(), glam::Quat::IDENTITY);

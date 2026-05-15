@@ -69,35 +69,35 @@ fn build_demo_track(frustums: &[CameraFrustumItem]) -> CameraTrack {
 // ---------------------------------------------------------------------------
 
 pub(crate) struct AuxState {
-    pub built:             bool,
-    pub scene:             viewport_lib::scene::Scene,
-    pub frustums:          Vec<viewport_lib::CameraFrustumItem>,
-    pub img_alpha:         f32,
-    pub img_scale:         f32,
-    pub active_frustum:    Option<usize>,
-    pub sub_mode:          AuxSubMode,
-    pub turntable:         TurntableController,
+    pub built: bool,
+    pub scene: viewport_lib::scene::Scene,
+    pub frustums: Vec<viewport_lib::CameraFrustumItem>,
+    pub img_alpha: f32,
+    pub img_scale: f32,
+    pub active_frustum: Option<usize>,
+    pub sub_mode: AuxSubMode,
+    pub turntable: TurntableController,
     pub turntable_running: bool,
-    pub track:             CameraTrack,
-    pub track_t:           f64,
-    pub track_playing:     bool,
+    pub track: CameraTrack,
+    pub track_t: f64,
+    pub track_playing: bool,
 }
 
 impl Default for AuxState {
     fn default() -> Self {
         Self {
-            built:             false,
-            scene:             viewport_lib::scene::Scene::new(),
-            frustums:          Vec::new(),
-            img_alpha:         1.0,
-            img_scale:         1.0,
-            active_frustum:    None,
-            sub_mode:          AuxSubMode::Framing,
-            turntable:         TurntableController::new(0.5, 1.1),
+            built: false,
+            scene: viewport_lib::scene::Scene::new(),
+            frustums: Vec::new(),
+            img_alpha: 1.0,
+            img_scale: 1.0,
+            active_frustum: None,
+            sub_mode: AuxSubMode::Framing,
+            turntable: TurntableController::new(0.5, 1.1),
             turntable_running: false,
-            track:             CameraTrack::new(),
-            track_t:           0.0,
-            track_playing:     false,
+            track: CameraTrack::new(),
+            track_t: 0.0,
+            track_playing: false,
         }
     }
 }
@@ -248,7 +248,6 @@ impl App {
             ..LightingSettings::default()
         }
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -256,268 +255,273 @@ impl App {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn controls_aux(app: &mut App, ui: &mut egui::Ui) {
-        // Sub-mode selector.
-        ui.horizontal(|ui| {
-            for (mode, label) in [
-                (AuxSubMode::Framing, "Framing"),
-                (AuxSubMode::Turntable, "Turntable"),
-                (AuxSubMode::Track, "Track"),
-            ] {
-                if ui
-                    .selectable_label(app.aux_state.sub_mode == mode, label)
-                    .clicked()
-                    && app.aux_state.sub_mode != mode
-                {
-                    app.aux_state.sub_mode = mode;
-                    // Stop any active motion when switching modes.
-                    app.aux_state.turntable_running = false;
-                    app.aux_state.track_playing = false;
-                }
+    // Sub-mode selector.
+    ui.horizontal(|ui| {
+        for (mode, label) in [
+            (AuxSubMode::Framing, "Framing"),
+            (AuxSubMode::Turntable, "Turntable"),
+            (AuxSubMode::Track, "Track"),
+        ] {
+            if ui
+                .selectable_label(app.aux_state.sub_mode == mode, label)
+                .clicked()
+                && app.aux_state.sub_mode != mode
+            {
+                app.aux_state.sub_mode = mode;
+                // Stop any active motion when switching modes.
+                app.aux_state.turntable_running = false;
+                app.aux_state.track_playing = false;
             }
-        });
-        ui.separator();
-
-        match app.aux_state.sub_mode {
-            AuxSubMode::Framing => controls_aux_framing(app, ui),
-            AuxSubMode::Turntable => controls_aux_turntable(app, ui),
-            AuxSubMode::Track => controls_aux_track(app, ui),
         }
+    });
+    ui.separator();
+
+    match app.aux_state.sub_mode {
+        AuxSubMode::Framing => controls_aux_framing(app, ui),
+        AuxSubMode::Turntable => controls_aux_turntable(app, ui),
+        AuxSubMode::Track => controls_aux_track(app, ui),
     }
+}
 
 fn controls_aux_framing(app: &mut App, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("Camera Framing").strong());
-        ui.label(
-            "A walled platform with warm objects (south) and cool objects (north). \
+    ui.label(egui::RichText::new("Camera Framing").strong());
+    ui.label(
+        "A walled platform with warm objects (south) and cool objects (north). \
              Each camera sees only one side; Camera C looks along the wall.",
-        );
+    );
 
-        #[derive(Clone, Copy)]
-        enum AuxAction {
-            LookThrough(usize),
-            Overview,
-        }
-        let mut action: Option<AuxAction> = None;
+    #[derive(Clone, Copy)]
+    enum AuxAction {
+        LookThrough(usize),
+        Overview,
+    }
+    let mut action: Option<AuxAction> = None;
 
-        ui.add_space(4.0);
-        let names = ["A - blue (south)", "B - orange (north)", "C - green (along wall)"];
-        for i in 0..app.aux_state.frustums.len() {
-            let active = app.aux_state.active_frustum == Some(i);
-            if ui
-                .selectable_label(active, format!("Look through {}", names[i]))
-                .clicked()
-            {
-                action = Some(AuxAction::LookThrough(i));
-            }
-        }
+    ui.add_space(4.0);
+    let names = [
+        "A - blue (south)",
+        "B - orange (north)",
+        "C - green (along wall)",
+    ];
+    for i in 0..app.aux_state.frustums.len() {
+        let active = app.aux_state.active_frustum == Some(i);
         if ui
-            .selectable_label(app.aux_state.active_frustum.is_none(), "Overview")
+            .selectable_label(active, format!("Look through {}", names[i]))
             .clicked()
         {
-            action = Some(AuxAction::Overview);
+            action = Some(AuxAction::LookThrough(i));
         }
-        ui.add_space(2.0);
-        ui.label(
-            egui::RichText::new("Tab: cycle cameras   Esc: exit to overview")
-                .weak()
-                .small(),
-        );
-
-        match action {
-            Some(AuxAction::LookThrough(i)) => {
-                let t = app.aux_state.frustums[i].camera_view_target();
-                app.cam_animator
-                    .fly_to(&app.camera, t.center, t.distance, t.orientation, 1.2);
-                app.aux_state.active_frustum = Some(i);
-            }
-            Some(AuxAction::Overview) => {
-                app.cam_animator.fly_to(
-                    &app.camera,
-                    glam::Vec3::new(0.0, 0.0, 0.5),
-                    30.0,
-                    glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
-                    1.2,
-                );
-                app.aux_state.active_frustum = None;
-            }
-            None => {}
-        }
-
-        ui.separator();
-        ui.label(egui::RichText::new("Active-Camera HUD Overlay").strong());
-        ui.label(
-            "Corner brackets and crosshair mark the active camera in its colour. \
-             Dim brackets indicate overview mode.",
-        );
-        ui.add_space(2.0);
-        match app.aux_state.active_frustum {
-            None => {
-                ui.label("(overview : click 'Look through' to activate a camera)");
-            }
-            Some(i) => {
-                ui.label(format!(
-                    "Active: {}",
-                    ["A - blue", "B - orange", "C - green"][i]
-                ));
-            }
-        }
-        ui.add_space(4.0);
-        ui.add(egui::Slider::new(&mut app.aux_state.img_alpha, 0.0..=1.0).text("Overlay alpha"));
-        ui.add(egui::Slider::new(&mut app.aux_state.img_scale, 0.25..=4.0).text("Overlay scale"));
     }
+    if ui
+        .selectable_label(app.aux_state.active_frustum.is_none(), "Overview")
+        .clicked()
+    {
+        action = Some(AuxAction::Overview);
+    }
+    ui.add_space(2.0);
+    ui.label(
+        egui::RichText::new("Tab: cycle cameras   Esc: exit to overview")
+            .weak()
+            .small(),
+    );
+
+    match action {
+        Some(AuxAction::LookThrough(i)) => {
+            let t = app.aux_state.frustums[i].camera_view_target();
+            app.cam_animator
+                .fly_to(&app.camera, t.center, t.distance, t.orientation, 1.2);
+            app.aux_state.active_frustum = Some(i);
+        }
+        Some(AuxAction::Overview) => {
+            app.cam_animator.fly_to(
+                &app.camera,
+                glam::Vec3::new(0.0, 0.0, 0.5),
+                30.0,
+                glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
+                1.2,
+            );
+            app.aux_state.active_frustum = None;
+        }
+        None => {}
+    }
+
+    ui.separator();
+    ui.label(egui::RichText::new("Active-Camera HUD Overlay").strong());
+    ui.label(
+        "Corner brackets and crosshair mark the active camera in its colour. \
+             Dim brackets indicate overview mode.",
+    );
+    ui.add_space(2.0);
+    match app.aux_state.active_frustum {
+        None => {
+            ui.label("(overview : click 'Look through' to activate a camera)");
+        }
+        Some(i) => {
+            ui.label(format!(
+                "Active: {}",
+                ["A - blue", "B - orange", "C - green"][i]
+            ));
+        }
+    }
+    ui.add_space(4.0);
+    ui.add(egui::Slider::new(&mut app.aux_state.img_alpha, 0.0..=1.0).text("Overlay alpha"));
+    ui.add(egui::Slider::new(&mut app.aux_state.img_scale, 0.25..=4.0).text("Overlay scale"));
+}
 
 fn controls_aux_turntable(app: &mut App, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("Turntable Camera").strong());
-        ui.label(
-            "Continuously orbits around the scene center at a fixed elevation. \
+    ui.label(egui::RichText::new("Turntable Camera").strong());
+    ui.label(
+        "Continuously orbits around the scene center at a fixed elevation. \
              Adjust speed and tilt, then press Start.",
-        );
-        ui.add_space(4.0);
+    );
+    ui.add_space(4.0);
 
-        let speed_changed = ui
-            .add(
-                egui::Slider::new(&mut app.aux_state.turntable.angular_velocity, -3.0..=3.0)
-                    .text("Speed (rad/s)")
-,
-            )
-            .changed();
-        let tilt_changed = ui
-            .add(
-                egui::Slider::new(&mut app.aux_state.turntable.tilt, 0.1..=1.8)
-                    .text("Tilt (rad)")
-,
-            )
-            .changed();
+    let speed_changed = ui
+        .add(
+            egui::Slider::new(&mut app.aux_state.turntable.angular_velocity, -3.0..=3.0)
+                .text("Speed (rad/s)"),
+        )
+        .changed();
+    let tilt_changed = ui
+        .add(egui::Slider::new(&mut app.aux_state.turntable.tilt, 0.1..=1.8).text("Tilt (rad)"))
+        .changed();
 
-        // If sliders changed while running, reapply the orientation immediately
-        // so the preview updates without waiting for the next frame.
-        if (speed_changed || tilt_changed) && app.aux_state.turntable_running {
-            let az = app.aux_state.turntable.azimuth;
-            let tilt = app.aux_state.turntable.tilt;
-            app.camera.set_orientation(
-                glam::Quat::from_rotation_z(az) * glam::Quat::from_rotation_x(tilt),
+    // If sliders changed while running, reapply the orientation immediately
+    // so the preview updates without waiting for the next frame.
+    if (speed_changed || tilt_changed) && app.aux_state.turntable_running {
+        let az = app.aux_state.turntable.azimuth;
+        let tilt = app.aux_state.turntable.tilt;
+        app.camera
+            .set_orientation(glam::Quat::from_rotation_z(az) * glam::Quat::from_rotation_x(tilt));
+    }
+
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        let label = if app.aux_state.turntable_running {
+            "Stop"
+        } else {
+            "Start"
+        };
+        if ui.button(label).clicked() {
+            if app.aux_state.turntable_running {
+                app.aux_state.turntable_running = false;
+            } else {
+                // Sync azimuth/tilt from the current camera orientation before starting.
+                app.aux_state.turntable = TurntableController::from_camera(
+                    &app.camera,
+                    app.aux_state.turntable.angular_velocity,
+                );
+                app.aux_state.turntable_running = true;
+            }
+        }
+        if ui.button("Reset to overview").clicked() {
+            app.aux_state.turntable_running = false;
+            app.cam_animator.fly_to(
+                &app.camera,
+                glam::Vec3::new(0.0, 0.0, 0.5),
+                30.0,
+                glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
+                1.0,
             );
         }
+    });
 
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            let label = if app.aux_state.turntable_running { "Stop" } else { "Start" };
-            if ui.button(label).clicked() {
-                if app.aux_state.turntable_running {
-                    app.aux_state.turntable_running = false;
-                } else {
-                    // Sync azimuth/tilt from the current camera orientation before starting.
-                    app.aux_state.turntable = TurntableController::from_camera(
-                        &app.camera,
-                        app.aux_state.turntable.angular_velocity,
-                    );
-                    app.aux_state.turntable_running = true;
-                }
-            }
-            if ui.button("Reset to overview").clicked() {
-                app.aux_state.turntable_running = false;
-                app.cam_animator.fly_to(
-                    &app.camera,
-                    glam::Vec3::new(0.0, 0.0, 0.5),
-                    30.0,
-                    glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
-                    1.0,
-                );
-            }
-        });
+    ui.add_space(4.0);
+    if app.aux_state.turntable_running {
+        ui.label(format!(
+            "Azimuth: {:.2} rad",
+            app.aux_state.turntable.azimuth
+        ));
+    } else {
+        ui.label("(stopped)");
+    }
+}
 
-        ui.add_space(4.0);
-        if app.aux_state.turntable_running {
-            ui.label(format!(
-                "Azimuth: {:.2} rad",
-                app.aux_state.turntable.azimuth
-            ));
+fn controls_aux_track(app: &mut App, ui: &mut egui::Ui) {
+    ui.label(egui::RichText::new("Camera Track").strong());
+    ui.label(
+        "Keyframe animation with Catmull-Rom interpolation. \
+             The demo track visits the overview then each of the three cameras.",
+    );
+    ui.add_space(4.0);
+
+    let duration = app.aux_state.track.duration();
+
+    // Playback controls.
+    ui.horizontal(|ui| {
+        let play_label = if app.aux_state.track_playing {
+            "Stop"
         } else {
-            ui.label("(stopped)");
+            "Play"
+        };
+        if ui.button(play_label).clicked() {
+            if app.aux_state.track_playing {
+                app.aux_state.track_playing = false;
+            } else if app.aux_state.track.len() >= 2 {
+                app.aux_state.track_t = 0.0;
+                app.aux_state.track_playing = true;
+            }
+        }
+        if ui.button("Rewind").clicked() {
+            app.aux_state.track_t = 0.0;
+            app.aux_state.track_playing = false;
+        }
+    });
+
+    // Scrub bar.
+    if duration > 0.0 {
+        let mut t_f32 = app.aux_state.track_t as f32;
+        if ui
+            .add(egui::Slider::new(&mut t_f32, 0.0..=(duration as f32)).text("Time (s)"))
+            .changed()
+        {
+            app.aux_state.track_t = t_f32 as f64;
+            app.aux_state.track_playing = false;
+            // Apply scrubbed position immediately.
+            let target = interpolate_camera(&app.aux_state.track, app.aux_state.track_t);
+            app.camera.center = target.center;
+            app.camera.set_distance(target.distance);
+            app.camera.set_orientation(target.orientation);
         }
     }
 
-fn controls_aux_track(app: &mut App, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("Camera Track").strong());
-        ui.label(
-            "Keyframe animation with Catmull-Rom interpolation. \
-             The demo track visits the overview then each of the three cameras.",
-        );
-        ui.add_space(4.0);
-
-        let duration = app.aux_state.track.duration();
-
-        // Playback controls.
-        ui.horizontal(|ui| {
-            let play_label = if app.aux_state.track_playing { "Stop" } else { "Play" };
-            if ui.button(play_label).clicked() {
-                if app.aux_state.track_playing {
-                    app.aux_state.track_playing = false;
-                } else if app.aux_state.track.len() >= 2 {
-                    app.aux_state.track_t = 0.0;
-                    app.aux_state.track_playing = true;
-                }
-            }
-            if ui.button("Rewind").clicked() {
-                app.aux_state.track_t = 0.0;
-                app.aux_state.track_playing = false;
-            }
-        });
-
-        // Scrub bar.
-        if duration > 0.0 {
-            let mut t_f32 = app.aux_state.track_t as f32;
-            if ui
-                .add(
-                    egui::Slider::new(&mut t_f32, 0.0..=(duration as f32))
-                        .text("Time (s)")
-,
-                )
-                .changed()
-            {
-                app.aux_state.track_t = t_f32 as f64;
-                app.aux_state.track_playing = false;
-                // Apply scrubbed position immediately.
-                let target = interpolate_camera(&app.aux_state.track, app.aux_state.track_t);
-                app.camera.center = target.center;
-                app.camera.set_distance(target.distance);
-                app.camera.set_orientation(target.orientation);
-            }
-        }
-
-        ui.add_space(4.0);
+    ui.add_space(4.0);
+    ui.label(format!(
+        "Track: {} keyframes, {:.1} s duration",
+        app.aux_state.track.len(),
+        duration
+    ));
+    if duration > 0.0 {
         ui.label(format!(
-            "Track: {} keyframes, {:.1} s duration",
-            app.aux_state.track.len(),
-            duration
+            "Playback: {:.2} / {:.2} s",
+            app.aux_state.track_t, duration
         ));
-        if duration > 0.0 {
-            ui.label(format!("Playback: {:.2} / {:.2} s", app.aux_state.track_t, duration));
+    }
+
+    ui.separator();
+    ui.label(egui::RichText::new("Edit Track").strong());
+
+    ui.horizontal(|ui| {
+        if ui.button("Add current view").clicked() {
+            let t = if duration > 0.0 { duration + 2.5 } else { 0.0 };
+            let target = CameraTarget {
+                center: app.camera.center,
+                distance: app.camera.distance,
+                orientation: app.camera.orientation,
+            };
+            app.aux_state.track.push(t, target);
         }
-
-        ui.separator();
-        ui.label(egui::RichText::new("Edit Track").strong());
-
-        ui.horizontal(|ui| {
-            if ui.button("Add current view").clicked() {
-                let t = if duration > 0.0 { duration + 2.5 } else { 0.0 };
-                let target = CameraTarget {
-                    center: app.camera.center,
-                    distance: app.camera.distance,
-                    orientation: app.camera.orientation,
-                };
-                app.aux_state.track.push(t, target);
-            }
-            if ui.button("Reset to demo").clicked() {
-                app.aux_state.track_playing = false;
-                app.aux_state.track_t = 0.0;
-                app.aux_state.track = build_demo_track(&app.aux_state.frustums);
-            }
-            if ui.button("Clear").clicked() {
-                app.aux_state.track_playing = false;
-                app.aux_state.track_t = 0.0;
-                app.aux_state.track = CameraTrack::new();
-            }
-        });
+        if ui.button("Reset to demo").clicked() {
+            app.aux_state.track_playing = false;
+            app.aux_state.track_t = 0.0;
+            app.aux_state.track = build_demo_track(&app.aux_state.frustums);
+        }
+        if ui.button("Clear").clicked() {
+            app.aux_state.track_playing = false;
+            app.aux_state.track_t = 0.0;
+            app.aux_state.track = CameraTrack::new();
+        }
+    });
 }
 
 impl App {

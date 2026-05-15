@@ -88,27 +88,27 @@ fn blob_color(p: Vec3) -> [u8; 4] {
 // ---------------------------------------------------------------------------
 
 pub(crate) struct IsState {
-    pub built:            bool,
-    pub mesh_id:          MeshId,
-    pub mc_mesh_id:       Option<MeshId>,
-    pub depth_composite:  bool,
-    pub resolution_div:   u32,
-    pub sdf_variant:      IsSdfVariant,
-    pub gmc_volume_id:    Option<viewport_lib::VolumeGpuId>,
-    pub gmc_isovalue:     f32,
+    pub built: bool,
+    pub mesh_id: MeshId,
+    pub mc_mesh_id: Option<MeshId>,
+    pub depth_composite: bool,
+    pub resolution_div: u32,
+    pub sdf_variant: IsSdfVariant,
+    pub gmc_volume_id: Option<viewport_lib::VolumeGpuId>,
+    pub gmc_isovalue: f32,
 }
 
 impl Default for IsState {
     fn default() -> Self {
         Self {
-            built:           false,
-            mesh_id:         MeshId::from_index(0),
-            mc_mesh_id:      None,
+            built: false,
+            mesh_id: MeshId::from_index(0),
+            mc_mesh_id: None,
             depth_composite: true,
-            resolution_div:  2,
-            sdf_variant:     IsSdfVariant::GpuImplicit,
-            gmc_volume_id:   None,
-            gmc_isovalue:    0.0,
+            resolution_div: 2,
+            sdf_variant: IsSdfVariant::GpuImplicit,
+            gmc_volume_id: None,
+            gmc_isovalue: 0.0,
         }
     }
 }
@@ -145,7 +145,12 @@ impl App {
                     }
                 }
             }
-            let vol = VolumeData { data, dims: [n, n, n], origin, spacing };
+            let vol = VolumeData {
+                data,
+                dims: [n, n, n],
+                origin,
+                spacing,
+            };
             extract_isosurface(&vol, 0.0)
         };
 
@@ -175,13 +180,22 @@ impl App {
                     }
                 }
             }
-            let vol = VolumeData { data, dims: [n, n, n], origin, spacing };
+            let vol = VolumeData {
+                data,
+                dims: [n, n, n],
+                origin,
+                spacing,
+            };
             match renderer
                 .resources_mut()
                 .upload_volume_for_mc(&self.device, &self.queue, &vol)
             {
-                Ok(id) => { self.is_state.gmc_volume_id = Some(id); }
-                Err(e) => { eprintln!("GPU MC upload failed, falling back to CPU: {e}"); }
+                Ok(id) => {
+                    self.is_state.gmc_volume_id = Some(id);
+                }
+                Err(e) => {
+                    eprintln!("GPU MC upload failed, falling back to CPU: {e}");
+                }
             }
         }
 
@@ -196,7 +210,6 @@ impl App {
 
         self.is_state.built = true;
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -205,61 +218,64 @@ impl App {
 
 /// Side-panel controls for Showcase 30.
 pub(crate) fn controls_implicit(app: &mut App, ui: &mut egui::Ui) {
-        ui.label("Rendering approach:");
-        ui.radio_value(
-            &mut app.is_state.sdf_variant,
-            IsSdfVariant::GpuImplicit,
-            "GPU implicit : descriptor-driven, full resolution",
-        );
-        ui.radio_value(
-            &mut app.is_state.sdf_variant,
-            IsSdfVariant::Blobs,
-            "CPU sphere-march : smin (merged blobs)",
-        );
-        ui.radio_value(
-            &mut app.is_state.sdf_variant,
-            IsSdfVariant::SeparateSpheres,
-            "CPU sphere-march : min (separate spheres)",
-        );
-        ui.radio_value(
-            &mut app.is_state.sdf_variant,
-            IsSdfVariant::MarchingCubes,
-            "Marching cubes : same smin field (CPU)",
-        );
-        ui.radio_value(
-            &mut app.is_state.sdf_variant,
-            IsSdfVariant::GpuMarchingCubes,
-            "GPU marching cubes : gyroid field, live isovalue",
+    ui.label("Rendering approach:");
+    ui.radio_value(
+        &mut app.is_state.sdf_variant,
+        IsSdfVariant::GpuImplicit,
+        "GPU implicit : descriptor-driven, full resolution",
+    );
+    ui.radio_value(
+        &mut app.is_state.sdf_variant,
+        IsSdfVariant::Blobs,
+        "CPU sphere-march : smin (merged blobs)",
+    );
+    ui.radio_value(
+        &mut app.is_state.sdf_variant,
+        IsSdfVariant::SeparateSpheres,
+        "CPU sphere-march : min (separate spheres)",
+    );
+    ui.radio_value(
+        &mut app.is_state.sdf_variant,
+        IsSdfVariant::MarchingCubes,
+        "Marching cubes : same smin field (CPU)",
+    );
+    ui.radio_value(
+        &mut app.is_state.sdf_variant,
+        IsSdfVariant::GpuMarchingCubes,
+        "GPU marching cubes : gyroid field, live isovalue",
+    );
+    ui.separator();
+
+    if app.is_state.sdf_variant == IsSdfVariant::GpuMarchingCubes {
+        ui.label("Isovalue (gyroid field):");
+        ui.add(egui::Slider::new(&mut app.is_state.gmc_isovalue, -1.5_f32..=1.5).text("isovalue"));
+        ui.separator();
+    }
+
+    let is_march = app.is_state.sdf_variant != IsSdfVariant::MarchingCubes
+        && app.is_state.sdf_variant != IsSdfVariant::GpuImplicit
+        && app.is_state.sdf_variant != IsSdfVariant::GpuMarchingCubes;
+    ui.add_enabled_ui(is_march, |ui| {
+        ui.label("Depth compositing (sphere-march only):");
+        ui.checkbox(
+            &mut app.is_state.depth_composite,
+            "Depth-composite against scene",
         );
         ui.separator();
+        ui.label("Render resolution divisor:");
+        ui.add(
+            egui::Slider::new(&mut app.is_state.resolution_div, 1_u32..=4)
+                .text("1/N  (lower = faster)"),
+        );
+    });
 
-        if app.is_state.sdf_variant == IsSdfVariant::GpuMarchingCubes {
-            ui.label("Isovalue (gyroid field):");
-            ui.add(egui::Slider::new(&mut app.is_state.gmc_isovalue, -1.5_f32..=1.5).text("isovalue"));
-            ui.separator();
-        }
-
-        let is_march = app.is_state.sdf_variant != IsSdfVariant::MarchingCubes
-            && app.is_state.sdf_variant != IsSdfVariant::GpuImplicit
-            && app.is_state.sdf_variant != IsSdfVariant::GpuMarchingCubes;
-        ui.add_enabled_ui(is_march, |ui| {
-            ui.label("Depth compositing (sphere-march only):");
-            ui.checkbox(&mut app.is_state.depth_composite, "Depth-composite against scene");
-            ui.separator();
-            ui.label("Render resolution divisor:");
-            ui.add(
-                egui::Slider::new(&mut app.is_state.resolution_div, 1_u32..=4)
-                    .text("1/N  (lower = faster)"),
-            );
-        });
-
+    ui.separator();
+    ui.label("Blue sphere  : in front of the surface.");
+    ui.label("Orange sphere: behind the surface.");
+    if app.is_state.sdf_variant == IsSdfVariant::MarchingCubes {
         ui.separator();
-        ui.label("Blue sphere  : in front of the surface.");
-        ui.label("Orange sphere: behind the surface.");
-        if app.is_state.sdf_variant == IsSdfVariant::MarchingCubes {
-            ui.separator();
-            ui.label("Marching cubes produces a real mesh : orbit and pick it like any other object. Notice the faceting versus the smooth sphere-march result.");
-        }
+        ui.label("Marching cubes produces a real mesh : orbit and pick it like any other object. Notice the faceting versus the smooth sphere-march result.");
+    }
 }
 
 impl App {
@@ -354,9 +370,9 @@ impl App {
 
         let cam = &self.camera;
         let mut img = match self.is_state.sdf_variant {
-            IsSdfVariant::Blobs => march_implicit_surface_color(cam, &opts, |p| {
-                (blob_sdf(p), blob_color(p))
-            }),
+            IsSdfVariant::Blobs => {
+                march_implicit_surface_color(cam, &opts, |p| (blob_sdf(p), blob_color(p)))
+            }
             IsSdfVariant::SeparateSpheres => march_implicit_surface_color(cam, &opts, |p| {
                 let d0 = (p - Vec3::new(-1.8, 0.0, 0.0)).length() - 1.3;
                 let d1 = (p - Vec3::new(1.8, 0.0, 0.0)).length() - 1.3;
@@ -364,11 +380,11 @@ impl App {
                 let d = d0.min(d1).min(d2);
                 // Each sphere keeps its own flat color.
                 let color = if d0 <= d1 && d0 <= d2 {
-                    [230u8, 90, 65, 255]  // red-orange
+                    [230u8, 90, 65, 255] // red-orange
                 } else if d1 <= d2 {
-                    [65, 140, 255, 255]   // blue
+                    [65, 140, 255, 255] // blue
                 } else {
-                    [65, 218, 115, 255]   // green
+                    [65, 218, 115, 255] // green
                 };
                 (d, color)
             }),
@@ -437,7 +453,9 @@ impl App {
         if !self.is_state.built || self.is_state.sdf_variant != IsSdfVariant::GpuMarchingCubes {
             return;
         }
-        let Some(volume_id) = self.is_state.gmc_volume_id else { return };
+        let Some(volume_id) = self.is_state.gmc_volume_id else {
+            return;
+        };
 
         let mut mat = Material::from_color([0.75, 0.80, 0.85]);
         mat.roughness = 0.4;

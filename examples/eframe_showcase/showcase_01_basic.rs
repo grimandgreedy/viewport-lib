@@ -9,14 +9,14 @@ use viewport_lib::{Projection, SceneRenderItem, ViewportRenderer};
 // ---------------------------------------------------------------------------
 
 pub(crate) struct BasicState {
-    pub mesh_id:        Option<MeshId>,
+    pub mesh_id: Option<MeshId>,
     pub use_point_light: bool,
 }
 
 impl Default for BasicState {
     fn default() -> Self {
         Self {
-            mesh_id:        None,
+            mesh_id: None,
             use_point_light: false,
         }
     }
@@ -49,16 +49,20 @@ impl App {
         };
         let positions = [
             [-1.5f32, -1.5, 0.0],
-            [1.5,    -1.5, 0.0],
-            [-1.5,    1.5, 0.0],
-            [1.5,     1.5, 0.0],
+            [1.5, -1.5, 0.0],
+            [-1.5, 1.5, 0.0],
+            [1.5, 1.5, 0.0],
         ];
-        positions.iter().map(|pos| {
-            let mut item = SceneRenderItem::default();
-            item.mesh_id = mesh_id;
-            item.model = glam::Mat4::from_translation(glam::Vec3::from(*pos)).to_cols_array_2d();
-            item
-        }).collect()
+        positions
+            .iter()
+            .map(|pos| {
+                let mut item = SceneRenderItem::default();
+                item.mesh_id = mesh_id;
+                item.model =
+                    glam::Mat4::from_translation(glam::Vec3::from(*pos)).to_cols_array_2d();
+                item
+            })
+            .collect()
     }
 }
 
@@ -70,13 +74,19 @@ pub(crate) fn controls_basic(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Projection:");
     ui.horizontal(|ui| {
         if ui
-            .radio(app.camera.projection == Projection::Perspective, "Perspective")
+            .radio(
+                app.camera.projection == Projection::Perspective,
+                "Perspective",
+            )
             .clicked()
         {
             app.camera.projection = Projection::Perspective;
         }
         if ui
-            .radio(app.camera.projection == Projection::Orthographic, "Orthographic")
+            .radio(
+                app.camera.projection == Projection::Orthographic,
+                "Orthographic",
+            )
             .clicked()
         {
             app.camera.projection = Projection::Orthographic;
@@ -85,7 +95,10 @@ pub(crate) fn controls_basic(app: &mut App, ui: &mut egui::Ui) {
     ui.separator();
     ui.label("Light:");
     ui.horizontal(|ui| {
-        if ui.radio(!app.basic_state.use_point_light, "Directional").clicked() {
+        if ui
+            .radio(!app.basic_state.use_point_light, "Directional")
+            .clicked()
+        {
             app.basic_state.use_point_light = false;
         }
         if ui.radio(app.basic_state.use_point_light, "Point").clicked() {

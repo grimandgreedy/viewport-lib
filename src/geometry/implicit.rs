@@ -213,9 +213,7 @@ where
                 let o = eye + right * (ndc_x * orth_half_w) + up * (ndc_y * orth_half_h);
                 (o, forward)
             } else {
-                let d = (forward
-                    + right * (ndc_x * half_w_persp)
-                    + up * (ndc_y * half_h_persp))
+                let d = (forward + right * (ndc_x * half_w_persp) + up * (ndc_y * half_h_persp))
                     .normalize();
                 (eye, d)
             };
@@ -243,12 +241,12 @@ where
 
             if hit {
                 // Normal from central differences.
-                let gx = sdf_color(hit_pos + Vec3::X * eps).0
-                    - sdf_color(hit_pos - Vec3::X * eps).0;
-                let gy = sdf_color(hit_pos + Vec3::Y * eps).0
-                    - sdf_color(hit_pos - Vec3::Y * eps).0;
-                let gz = sdf_color(hit_pos + Vec3::Z * eps).0
-                    - sdf_color(hit_pos - Vec3::Z * eps).0;
+                let gx =
+                    sdf_color(hit_pos + Vec3::X * eps).0 - sdf_color(hit_pos - Vec3::X * eps).0;
+                let gy =
+                    sdf_color(hit_pos + Vec3::Y * eps).0 - sdf_color(hit_pos - Vec3::Y * eps).0;
+                let gz =
+                    sdf_color(hit_pos + Vec3::Z * eps).0 - sdf_color(hit_pos - Vec3::Z * eps).0;
                 let normal = Vec3::new(gx, gy, gz).normalize_or_zero();
 
                 // Diffuse + ambient shading.
@@ -360,7 +358,10 @@ mod tests {
         let cx = 16usize;
         let cy = 16usize;
         let d = depths[cy * 32 + cx];
-        assert!(d > 0.0 && d < 1.0, "centre depth should be in (0,1), got {d}");
+        assert!(
+            d > 0.0 && d < 1.0,
+            "centre depth should be in (0,1), got {d}"
+        );
     }
 
     #[test]
@@ -377,11 +378,7 @@ mod tests {
         let img = march_implicit_surface(&cam, &opts, |p| p.length() - 1.0);
 
         for (i, px) in img.pixels.iter().enumerate() {
-            assert_eq!(
-                *px,
-                [0, 0, 0, 0],
-                "pixel {i} should be background colour"
-            );
+            assert_eq!(*px, [0, 0, 0, 0], "pixel {i} should be background colour");
         }
         let depths = img.depth.as_ref().unwrap();
         for d in depths.iter() {

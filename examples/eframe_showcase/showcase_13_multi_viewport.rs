@@ -35,27 +35,27 @@ use viewport_lib::{
 // ---------------------------------------------------------------------------
 
 pub(crate) struct MvState {
-    pub scene:               viewport_lib::scene::Scene,
-    pub selection:           Selection,
-    pub cameras:             [Camera; 4],
-    pub controllers:         [OrbitCameraController; 4],
-    pub viewports:           Option<[viewport_lib::ViewportId; 4]>,
-    pub built:               bool,
-    pub gizmo:               Gizmo,
-    pub hovered_quad:        usize,
-    pub cursor_local:        glam::Vec2,
-    pub gizmo_center:        Option<glam::Vec3>,
-    pub gizmo_scales:        [f32; 4],
-    pub manip:               ManipulationController,
+    pub scene: viewport_lib::scene::Scene,
+    pub selection: Selection,
+    pub cameras: [Camera; 4],
+    pub controllers: [OrbitCameraController; 4],
+    pub viewports: Option<[viewport_lib::ViewportId; 4]>,
+    pub built: bool,
+    pub gizmo: Gizmo,
+    pub hovered_quad: usize,
+    pub cursor_local: glam::Vec2,
+    pub gizmo_center: Option<glam::Vec3>,
+    pub gizmo_scales: [f32; 4],
+    pub manip: ManipulationController,
     pub transforms_snapshot: std::collections::HashMap<NodeId, glam::Mat4>,
-    pub left_held:           bool,
+    pub left_held: bool,
 }
 
 impl Default for MvState {
     fn default() -> Self {
         Self {
-            scene:               viewport_lib::scene::Scene::new(),
-            selection:           Selection::new(),
+            scene: viewport_lib::scene::Scene::new(),
+            selection: Selection::new(),
             cameras: [
                 Camera {
                     center: glam::Vec3::ZERO,
@@ -93,16 +93,16 @@ impl Default for MvState {
                 OrbitCameraController::viewport_all(),
                 OrbitCameraController::viewport_all(),
             ],
-            viewports:           None,
-            built:               false,
-            gizmo:               Gizmo::new(),
-            hovered_quad:        0,
-            cursor_local:        glam::Vec2::ZERO,
-            gizmo_center:        None,
-            gizmo_scales:        [1.0; 4],
-            manip:               ManipulationController::new(),
+            viewports: None,
+            built: false,
+            gizmo: Gizmo::new(),
+            hovered_quad: 0,
+            cursor_local: glam::Vec2::ZERO,
+            gizmo_center: None,
+            gizmo_scales: [1.0; 4],
+            manip: ManipulationController::new(),
             transforms_snapshot: std::collections::HashMap::new(),
-            left_held:           false,
+            left_held: false,
         }
     }
 }
@@ -141,7 +141,10 @@ impl App {
             let mesh = self.upload_box(renderer);
             let transform = glam::Mat4::from_translation(glam::Vec3::from(*pos));
             let mat = Material::from_color(*color);
-            let id = self.mv_state.scene.add_named(name, Some(mesh), transform, mat);
+            let id = self
+                .mv_state
+                .scene
+                .add_named(name, Some(mesh), transform, mat);
             if i == 0 {
                 self.mv_state.selection.select_one(id);
             }
@@ -353,8 +356,11 @@ impl App {
             }
 
             // Build GizmoInfo.
-            let orient =
-                mv_gizmo_orientation(self.mv_state.gizmo.space, &self.mv_state.selection, &self.mv_state.scene);
+            let orient = mv_gizmo_orientation(
+                self.mv_state.gizmo.space,
+                &self.mv_state.selection,
+                &self.mv_state.scene,
+            );
             let gizmo_info = self.mv_state.gizmo_center.map(|center| GizmoInfo {
                 center,
                 scale: self.mv_state.gizmo_scales[hq],
@@ -416,7 +422,8 @@ impl App {
                 if i != hq {
                     self.mv_state.controllers[i].apply_to_camera(&mut self.mv_state.cameras[i]);
                 }
-                self.mv_state.cameras[i].set_aspect_ratio(quad_rects[i].width(), quad_rects[i].height());
+                self.mv_state.cameras[i]
+                    .set_aspect_ratio(quad_rects[i].width(), quad_rects[i].height());
             }
 
             // Click-to-select only when no session is active.
@@ -446,7 +453,10 @@ impl App {
 
         // --- Build FrameData ---
         // Collect render items once; clone into each frame.
-        let scene_items = self.mv_state.scene.collect_render_items(&self.mv_state.selection);
+        let scene_items = self
+            .mv_state
+            .scene
+            .collect_render_items(&self.mv_state.selection);
         let lighting = LightingSettings {
             hemisphere_intensity: 0.5,
             sky_color: [1.0, 1.0, 1.0],
@@ -464,8 +474,11 @@ impl App {
         } else {
             self.mv_state.gizmo.hovered_axis
         };
-        let gizmo_orient =
-            mv_gizmo_orientation(self.mv_state.gizmo.space, &self.mv_state.selection, &self.mv_state.scene);
+        let gizmo_orient = mv_gizmo_orientation(
+            self.mv_state.gizmo.space,
+            &self.mv_state.selection,
+            &self.mv_state.scene,
+        );
 
         let frames: [FrameData; 4] = std::array::from_fn(|i| {
             let qr = quad_rects[i];
@@ -561,76 +574,76 @@ impl App {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn controls_mv(app: &mut App, ui: &mut egui::Ui) {
-        let node_count = app.mv_state.scene.node_count();
-        let sel_count = app.mv_state.selection.len();
-        ui.label(format!("Objects: {node_count}   Selected: {sel_count}"));
-        ui.separator();
+    let node_count = app.mv_state.scene.node_count();
+    let sel_count = app.mv_state.selection.len();
+    ui.label(format!("Objects: {node_count}   Selected: {sel_count}"));
+    ui.separator();
 
-        ui.label("Gizmo Mode:");
-        ui.horizontal(|ui| {
-            if ui
-                .radio(app.mv_state.gizmo.mode == GizmoMode::Translate, "Move")
-                .clicked()
-            {
-                app.mv_state.gizmo.mode = GizmoMode::Translate;
-            }
-            if ui
-                .radio(app.mv_state.gizmo.mode == GizmoMode::Rotate, "Rotate")
-                .clicked()
-            {
-                app.mv_state.gizmo.mode = GizmoMode::Rotate;
-            }
-            if ui
-                .radio(app.mv_state.gizmo.mode == GizmoMode::Scale, "Scale")
-                .clicked()
-            {
-                app.mv_state.gizmo.mode = GizmoMode::Scale;
-            }
-        });
-
-        ui.separator();
-        ui.label("Space:");
-        ui.horizontal(|ui| {
-            if ui
-                .radio(app.mv_state.gizmo.space == GizmoSpace::World, "World")
-                .clicked()
-            {
-                app.mv_state.gizmo.space = GizmoSpace::World;
-            }
-            if ui
-                .radio(app.mv_state.gizmo.space == GizmoSpace::Local, "Local")
-                .clicked()
-            {
-                app.mv_state.gizmo.space = GizmoSpace::Local;
-            }
-        });
-
-        ui.separator();
-        if ui.button("Clear Selection").clicked() {
-            app.mv_state.selection.clear();
+    ui.label("Gizmo Mode:");
+    ui.horizontal(|ui| {
+        if ui
+            .radio(app.mv_state.gizmo.mode == GizmoMode::Translate, "Move")
+            .clicked()
+        {
+            app.mv_state.gizmo.mode = GizmoMode::Translate;
         }
+        if ui
+            .radio(app.mv_state.gizmo.mode == GizmoMode::Rotate, "Rotate")
+            .clicked()
+        {
+            app.mv_state.gizmo.mode = GizmoMode::Rotate;
+        }
+        if ui
+            .radio(app.mv_state.gizmo.mode == GizmoMode::Scale, "Scale")
+            .clicked()
+        {
+            app.mv_state.gizmo.mode = GizmoMode::Scale;
+        }
+    });
 
-        ui.separator();
-        ui.weak("Camera controls");
-        ui.label("Middle/Left drag: Orbit");
-        ui.label("Right/Shift+drag: Pan");
-        ui.label("Scroll: Zoom");
-        ui.separator();
-        ui.weak("Manipulation");
-        ui.label("G / R / S: Move / Rotate / Scale");
-        ui.label("X / Y / Z: Constrain axis");
-        ui.label("Enter: Confirm   Esc: Cancel");
-        ui.label("Tab: Cycle gizmo mode");
-        ui.separator();
-        ui.weak("Selection");
-        ui.label("Click object: Select");
-        ui.label("Click empty: Deselect");
-        ui.separator();
-        ui.weak("Quad layout");
-        ui.label("TL : Perspective (orbit)");
-        ui.label("TR : Top (ortho, -Z)");
-        ui.label("BL : Front (ortho, -Y)");
-        ui.label("BR : Right (ortho, -X)");
+    ui.separator();
+    ui.label("Space:");
+    ui.horizontal(|ui| {
+        if ui
+            .radio(app.mv_state.gizmo.space == GizmoSpace::World, "World")
+            .clicked()
+        {
+            app.mv_state.gizmo.space = GizmoSpace::World;
+        }
+        if ui
+            .radio(app.mv_state.gizmo.space == GizmoSpace::Local, "Local")
+            .clicked()
+        {
+            app.mv_state.gizmo.space = GizmoSpace::Local;
+        }
+    });
+
+    ui.separator();
+    if ui.button("Clear Selection").clicked() {
+        app.mv_state.selection.clear();
+    }
+
+    ui.separator();
+    ui.weak("Camera controls");
+    ui.label("Middle/Left drag: Orbit");
+    ui.label("Right/Shift+drag: Pan");
+    ui.label("Scroll: Zoom");
+    ui.separator();
+    ui.weak("Manipulation");
+    ui.label("G / R / S: Move / Rotate / Scale");
+    ui.label("X / Y / Z: Constrain axis");
+    ui.label("Enter: Confirm   Esc: Cancel");
+    ui.label("Tab: Cycle gizmo mode");
+    ui.separator();
+    ui.weak("Selection");
+    ui.label("Click object: Select");
+    ui.label("Click empty: Deselect");
+    ui.separator();
+    ui.weak("Quad layout");
+    ui.label("TL : Perspective (orbit)");
+    ui.label("TR : Top (ortho, -Z)");
+    ui.label("BL : Front (ortho, -Y)");
+    ui.label("BR : Right (ortho, -X)");
 }
 
 // ---------------------------------------------------------------------------
@@ -665,18 +678,13 @@ impl App {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Manipulation helpers
 // ---------------------------------------------------------------------------
 
 impl crate::App {
     /// Apply a [`viewport_lib::TransformDelta`] to all selected mv scene nodes.
-    pub(crate) fn apply_mv_delta(
-        &mut self,
-        delta: viewport_lib::TransformDelta,
-        hq: usize,
-    ) {
+    pub(crate) fn apply_mv_delta(&mut self, delta: viewport_lib::TransformDelta, hq: usize) {
         let Some(center) = self.mv_state.gizmo_center else {
             return;
         };
@@ -730,7 +738,9 @@ impl crate::App {
         self.mv_state.transforms_snapshot.clear();
         for id in self.mv_state.selection.iter().copied().collect::<Vec<_>>() {
             if let Some(node) = self.mv_state.scene.node(id) {
-                self.mv_state.transforms_snapshot.insert(id, node.local_transform());
+                self.mv_state
+                    .transforms_snapshot
+                    .insert(id, node.local_transform());
             }
         }
     }

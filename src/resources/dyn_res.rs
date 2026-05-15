@@ -126,9 +126,10 @@ impl ViewportGpuResources {
             return;
         }
 
-        let bgl = self.dyn_res_upscale_bgl.as_ref().expect(
-            "ensure_dyn_res_pipeline must be called before ensure_dyn_res_ds_pipeline",
-        );
+        let bgl = self
+            .dyn_res_upscale_bgl
+            .as_ref()
+            .expect("ensure_dyn_res_pipeline must be called before ensure_dyn_res_ds_pipeline");
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("dyn_res_upscale_ds_shader"),
             source: wgpu::ShaderSource::Wgsl(
@@ -190,7 +191,11 @@ impl ViewportGpuResources {
 
         let color_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("dyn_res_color"),
-            size: wgpu::Extent3d { width: sw, height: sh, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: sw,
+                height: sh,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -202,7 +207,11 @@ impl ViewportGpuResources {
 
         let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("dyn_res_depth"),
-            size: wgpu::Extent3d { width: sw, height: sh, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: sw,
+                height: sh,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -252,7 +261,11 @@ impl ViewportGpuResources {
         let [w, h] = size;
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("hdr_callback_target"),
-            size: wgpu::Extent3d { width: w.max(1), height: h.max(1), depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: w.max(1),
+                height: h.max(1),
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -281,7 +294,11 @@ impl ViewportGpuResources {
             })
         };
 
-        HdrCallbackTarget { texture, blit_bind_group, size }
+        HdrCallbackTarget {
+            texture,
+            blit_bind_group,
+            size,
+        }
     }
 }
 

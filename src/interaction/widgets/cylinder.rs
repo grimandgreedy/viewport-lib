@@ -5,7 +5,10 @@ use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
 
-use super::{WidgetContext, WidgetResult, any_perpendicular, any_perpendicular_pair, ctx_ray, handle_world_radius, ray_point_dist};
+use super::{
+    WidgetContext, WidgetResult, any_perpendicular, any_perpendicular_pair, ctx_ray,
+    handle_world_radius, ray_point_dist,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum CylinderHandle {
@@ -138,7 +141,11 @@ impl CylinderWidget {
             }
         }
 
-        if updated { WidgetResult::Updated } else { WidgetResult::None }
+        if updated {
+            WidgetResult::Updated
+        } else {
+            WidgetResult::None
+        }
     }
 
     /// Build a `PolylineItem` with two end-cap circles and four longitudinal lines.
@@ -149,7 +156,11 @@ impl CylinderWidget {
 
         let axis = self.axis();
         let axis_len = axis.length();
-        let axis_dir = if axis_len > 1e-6 { axis / axis_len } else { glam::Vec3::Z };
+        let axis_dir = if axis_len > 1e-6 {
+            axis / axis_len
+        } else {
+            glam::Vec3::Z
+        };
         let (u, v) = any_perpendicular_pair(axis_dir);
         let r = self.radius;
 
@@ -203,7 +214,11 @@ impl CylinderWidget {
         let rr = handle_world_radius(rh, &ctx.camera, ctx.viewport_size.y, 8.0);
 
         let scalar = |h: CylinderHandle| {
-            if self.hovered_handle == Some(h) || self.active_handle == Some(h) { 1.0_f32 } else { 0.2 }
+            if self.hovered_handle == Some(h) || self.active_handle == Some(h) {
+                1.0_f32
+            } else {
+                0.2
+            }
         };
 
         GlyphItem {
@@ -236,7 +251,11 @@ impl CylinderWidget {
             CylinderHandle::Radius => {
                 let mid = (self.start + self.end) * 0.5;
                 let axis = self.axis();
-                let axis_dir = if axis.length() > 1e-6 { axis.normalize() } else { glam::Vec3::Z };
+                let axis_dir = if axis.length() > 1e-6 {
+                    axis.normalize()
+                } else {
+                    glam::Vec3::Z
+                };
                 mid + any_perpendicular(axis_dir) * self.radius
             }
         }
@@ -262,7 +281,12 @@ impl CylinderWidget {
         let radii = [
             handle_world_radius(self.start, &ctx.camera, ctx.viewport_size.y, 10.0),
             handle_world_radius(self.end, &ctx.camera, ctx.viewport_size.y, 10.0),
-            handle_world_radius(self.handle_pos(CylinderHandle::Radius), &ctx.camera, ctx.viewport_size.y, 8.0),
+            handle_world_radius(
+                self.handle_pos(CylinderHandle::Radius),
+                &ctx.camera,
+                ctx.viewport_size.y,
+                8.0,
+            ),
         ];
 
         let positions = [

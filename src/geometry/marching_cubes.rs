@@ -799,17 +799,21 @@ mod tests {
             let p1 = mesh.positions[i1];
             let p2 = mesh.positions[i2];
             // Geometric normal via cross product.
-            let e1 = [p1[0]-p0[0], p1[1]-p0[1], p1[2]-p0[2]];
-            let e2 = [p2[0]-p0[0], p2[1]-p0[1], p2[2]-p0[2]];
+            let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+            let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
             let gn = [
-                e1[1]*e2[2] - e1[2]*e2[1],
-                e1[2]*e2[0] - e1[0]*e2[2],
-                e1[0]*e2[1] - e1[1]*e2[0],
+                e1[1] * e2[2] - e1[2] * e2[1],
+                e1[2] * e2[0] - e1[0] * e2[2],
+                e1[0] * e2[1] - e1[1] * e2[0],
             ];
             // Vertex normal (gradient-based, points outward for this SDF).
             let vn = mesh.normals[i0];
-            let dot = gn[0]*vn[0] + gn[1]*vn[1] + gn[2]*vn[2];
-            if dot >= 0.0 { correct += 1; } else { flipped += 1; }
+            let dot = gn[0] * vn[0] + gn[1] * vn[1] + gn[2] * vn[2];
+            if dot >= 0.0 {
+                correct += 1;
+            } else {
+                flipped += 1;
+            }
         }
 
         let total = correct + flipped;
@@ -817,7 +821,9 @@ mod tests {
         assert!(
             flipped_pct < 5.0,
             "{}/{} triangles ({:.1}%) have geometric normal opposing the gradient — winding is wrong",
-            flipped, total, flipped_pct
+            flipped,
+            total,
+            flipped_pct
         );
     }
 

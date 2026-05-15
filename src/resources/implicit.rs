@@ -3,8 +3,8 @@
 //! Public API: [`GpuImplicitItem`], [`ImplicitPrimitive`], [`ImplicitBlendMode`],
 //! [`GpuImplicitOptions`].
 
-use wgpu::util::DeviceExt as _;
 use crate::resources::{DualPipeline, ViewportGpuResources};
+use wgpu::util::DeviceExt as _;
 
 // ---------------------------------------------------------------------------
 // Public API types
@@ -257,10 +257,9 @@ impl ViewportGpuResources {
             return;
         }
 
-        let implicit_bgl = self
-            .implicit_bgl
-            .as_ref()
-            .expect("ensure_implicit_pipeline must be called before ensure_implicit_outline_mask_pipeline");
+        let implicit_bgl = self.implicit_bgl.as_ref().expect(
+            "ensure_implicit_pipeline must be called before ensure_implicit_outline_mask_pipeline",
+        );
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("implicit_outline_mask_shader"),
@@ -275,8 +274,8 @@ impl ViewportGpuResources {
             push_constant_ranges: &[],
         });
 
-        self.implicit_outline_mask_pipeline =
-            Some(device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        self.implicit_outline_mask_pipeline = Some(device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
                 label: Some("implicit_outline_mask_pipeline"),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
@@ -314,7 +313,8 @@ impl ViewportGpuResources {
                 },
                 multiview: None,
                 cache: None,
-            }));
+            },
+        ));
     }
 
     /// Upload one [`GpuImplicitItem`] to GPU, returning the per-draw GPU data.
@@ -368,6 +368,9 @@ impl ViewportGpuResources {
             }],
         });
 
-        ImplicitGpuItem { _uniform_buf: uniform_buf, bind_group }
+        ImplicitGpuItem {
+            _uniform_buf: uniform_buf,
+            bind_group,
+        }
     }
 }

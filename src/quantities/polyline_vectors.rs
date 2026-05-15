@@ -170,7 +170,7 @@ mod tests {
             ],
             vec![],
             vec![[1.0, 0.0, 0.0]; 2], // 2 edges : strip1 has 1 edge, strip2 has 1 edge
-            vec![2, 2],                // two strips of 2 nodes each
+            vec![2, 2],               // two strips of 2 nodes each
         );
         let item = polyline_edge_vectors_to_glyphs(&pl);
         assert_eq!(item.positions.len(), 2);

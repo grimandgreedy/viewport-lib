@@ -189,11 +189,7 @@ mod tests {
 
     #[test]
     fn compute_vertex_tangent_frames_all_orthonormal() {
-        let normals = vec![
-            [0.0, 1.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0],
-        ];
+        let normals = vec![[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
         let frames = compute_vertex_tangent_frames(&normals);
         for (i, (t, b)) in frames.iter().enumerate() {
             assert_orthonormal(&format!("vtx_{i}"), normals[i], *t, *b);
@@ -202,11 +198,7 @@ mod tests {
 
     #[test]
     fn compute_face_tangent_frames_right_triangle() {
-        let positions = vec![
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-        ];
+        let positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
         let indices = vec![0u32, 1, 2];
         let frames = compute_face_tangent_frames(&positions, &indices);
         assert_eq!(frames.len(), 1);

@@ -130,22 +130,22 @@ const PARTS: &[GearboxPart] = &[
 // ---------------------------------------------------------------------------
 
 pub(crate) struct LblState {
-    pub scene:              viewport_lib::scene::Scene,
-    pub built:              bool,
-    pub labels:             Vec<viewport_lib::LabelItem>,
-    pub show_part_labels:   bool,
-    pub show_hud_labels:    bool,
+    pub scene: viewport_lib::scene::Scene,
+    pub built: bool,
+    pub labels: Vec<viewport_lib::LabelItem>,
+    pub show_part_labels: bool,
+    pub show_hud_labels: bool,
     pub show_feature_demos: bool,
 }
 
 impl Default for LblState {
     fn default() -> Self {
         Self {
-            scene:              viewport_lib::scene::Scene::new(),
-            built:              false,
-            labels:             Vec::new(),
-            show_part_labels:   true,
-            show_hud_labels:    true,
+            scene: viewport_lib::scene::Scene::new(),
+            built: false,
+            labels: Vec::new(),
+            show_part_labels: true,
+            show_hud_labels: true,
             show_feature_demos: true,
         }
     }
@@ -165,11 +165,7 @@ impl App {
                 .upload_mesh_data(&self.device, &mesh)
                 .expect("gearbox part upload");
 
-            let exploded_pos = [
-                part.pos[0],
-                part.pos[1] + part.explode_y,
-                part.pos[2],
-            ];
+            let exploded_pos = [part.pos[0], part.pos[1] + part.explode_y, part.pos[2]];
 
             self.lbl_state.scene.add_named(
                 part.name,
@@ -446,7 +442,6 @@ impl App {
 
         out
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -454,27 +449,27 @@ impl App {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn controls_labels(app: &mut App, ui: &mut eframe::egui::Ui) {
-        ui.label("Exploded gearbox assembly with");
-        ui.label("native overlay label features.");
-        ui.separator();
+    ui.label("Exploded gearbox assembly with");
+    ui.label("native overlay label features.");
+    ui.separator();
 
-        ui.checkbox(&mut app.lbl_state.show_part_labels, "Part labels");
-        ui.checkbox(&mut app.lbl_state.show_feature_demos, "Feature demos");
-        ui.checkbox(&mut app.lbl_state.show_hud_labels, "Title + legend");
+    ui.checkbox(&mut app.lbl_state.show_part_labels, "Part labels");
+    ui.checkbox(&mut app.lbl_state.show_feature_demos, "Feature demos");
+    ui.checkbox(&mut app.lbl_state.show_hud_labels, "Title + legend");
 
-        ui.separator();
-        ui.label("Feature rows (left side):");
-        ui.label("  anchor_align: Leading/Center/Trailing");
-        ui.label("  opacity: 100% -> 25%");
-        ui.label("  offset: pixel nudge from anchor");
-        ui.label("  max_width: word wrapping");
-        ui.label("  border_radius: rounded corners");
-        ui.label("  padding: 0 -> 16px");
-        ui.label("  font_size: 10 -> 20px");
-        ui.label("  z_order: overlapping draw order");
+    ui.separator();
+    ui.label("Feature rows (left side):");
+    ui.label("  anchor_align: Leading/Center/Trailing");
+    ui.label("  opacity: 100% -> 25%");
+    ui.label("  offset: pixel nudge from anchor");
+    ui.label("  max_width: word wrapping");
+    ui.label("  border_radius: rounded corners");
+    ui.label("  padding: 0 -> 16px");
+    ui.label("  font_size: 10 -> 20px");
+    ui.label("  z_order: overlapping draw order");
 
-        ui.separator();
-        ui.label("Parts (world-anchored):");
-        ui.label("  Casing, gasket, shafts, gears,");
-        ui.label("  bearings, mounting flange");
-    }
+    ui.separator();
+    ui.label("Parts (world-anchored):");
+    ui.label("  Casing, gasket, shafts, gears,");
+    ui.label("  bearings, mounting flange");
+}

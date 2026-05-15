@@ -14,29 +14,29 @@ use viewport_lib::{Material, ViewportRenderer, scene::Scene};
 // ---------------------------------------------------------------------------
 
 pub(crate) struct PostProcessState {
-    pub built:          bool,
-    pub scene:          Scene,
-    pub shadow_pcss:    bool,
+    pub built: bool,
+    pub scene: Scene,
+    pub shadow_pcss: bool,
     pub point_light_on: bool,
-    pub dir_intensity:  f32,
-    pub dof_enabled:    bool,
+    pub dir_intensity: f32,
+    pub dof_enabled: bool,
     pub dof_focal_dist: f32,
     pub dof_focal_range: f32,
-    pub dof_max_blur:   f32,
+    pub dof_max_blur: f32,
 }
 
 impl Default for PostProcessState {
     fn default() -> Self {
         Self {
-            built:          false,
-            scene:          Scene::new(),
-            shadow_pcss:    true,
+            built: false,
+            scene: Scene::new(),
+            shadow_pcss: true,
             point_light_on: true,
-            dir_intensity:  0.6,
-            dof_enabled:    false,
+            dir_intensity: 0.6,
+            dof_enabled: false,
             dof_focal_dist: 5.0,
             dof_focal_range: 1.0,
-            dof_max_blur:   8.0,
+            dof_max_blur: 8.0,
         }
     }
 }
@@ -140,17 +140,12 @@ pub(crate) fn controls_post_process(app: &mut App, ui: &mut egui::Ui) {
     ui.checkbox(&mut app.pp_state.dof_enabled, "Enable DoF");
     if app.pp_state.dof_enabled {
         ui.add(
-            egui::Slider::new(&mut app.pp_state.dof_focal_dist, 0.5..=30.0)
-                .text("Focal distance"),
+            egui::Slider::new(&mut app.pp_state.dof_focal_dist, 0.5..=30.0).text("Focal distance"),
         );
         ui.add(
-            egui::Slider::new(&mut app.pp_state.dof_focal_range, 0.1..=10.0)
-                .text("Focal range"),
+            egui::Slider::new(&mut app.pp_state.dof_focal_range, 0.1..=10.0).text("Focal range"),
         );
-        ui.add(
-            egui::Slider::new(&mut app.pp_state.dof_max_blur, 1.0..=20.0)
-                .text("Max blur (px)"),
-        );
+        ui.add(egui::Slider::new(&mut app.pp_state.dof_max_blur, 1.0..=20.0).text("Max blur (px)"));
     }
 
     ui.separator();

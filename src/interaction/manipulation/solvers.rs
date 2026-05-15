@@ -375,7 +375,10 @@ mod tests {
         // Result should be along camera right direction
         let cam_right = cam.right().normalize();
         let result_dir = result.normalize();
-        assert!(cam_right.dot(result_dir) > 0.9, "free translation should be along camera right");
+        assert!(
+            cam_right.dot(result_dir) > 0.9,
+            "free translation should be along camera right"
+        );
     }
 
     #[test]
@@ -472,7 +475,10 @@ mod tests {
             vp,
             glam::Vec2::new(800.0, 600.0),
         );
-        assert!((result.x - 1.0).abs() < 1e-5, "excluded X should stay at 1.0");
+        assert!(
+            (result.x - 1.0).abs() < 1e-5,
+            "excluded X should stay at 1.0"
+        );
         assert!(result.y > 1.0, "non-excluded Y should scale");
         assert!(result.z > 1.0, "non-excluded Z should scale");
     }

@@ -8,7 +8,7 @@
 use crate::App;
 use crate::geometry::make_uv_sphere;
 use eframe::egui;
-use viewport_lib::{BuiltinMatcap, Material, MatcapId, NodeId, ViewportRenderer, scene::Scene};
+use viewport_lib::{BuiltinMatcap, MatcapId, Material, NodeId, ViewportRenderer, scene::Scene};
 
 /// All eight built-in presets with their display name and blendable flag.
 pub(crate) const BUILTIN_PRESETS: [(BuiltinMatcap, &str, bool); 8] = [
@@ -27,28 +27,28 @@ pub(crate) const BUILTIN_PRESETS: [(BuiltinMatcap, &str, bool); 8] = [
 // ---------------------------------------------------------------------------
 
 pub(crate) struct MatcapState {
-    pub scene:              Scene,
-    pub built:              bool,
+    pub scene: Scene,
+    pub built: bool,
     /// NodeId for each of the 8 built-in preset spheres (matches BUILTIN_PRESETS order).
-    pub builtin_node_ids:   [NodeId; 8],
-    pub custom_node:        Option<NodeId>,
-    pub custom_id:          Option<MatcapId>,
+    pub builtin_node_ids: [NodeId; 8],
+    pub custom_node: Option<NodeId>,
+    pub custom_id: Option<MatcapId>,
     /// Base color applied to blendable matcap spheres.
-    pub blendable_color:    [f32; 3],
+    pub blendable_color: [f32; 3],
     /// Hue (0..360) for the custom matcap.
-    pub custom_hue:         f32,
+    pub custom_hue: f32,
 }
 
 impl Default for MatcapState {
     fn default() -> Self {
         Self {
-            scene:           Scene::new(),
-            built:           false,
+            scene: Scene::new(),
+            built: false,
             builtin_node_ids: [0; 8],
-            custom_node:     None,
-            custom_id:       None,
+            custom_node: None,
+            custom_id: None,
             blendable_color: [0.7, 0.7, 0.7],
-            custom_hue:      200.0,
+            custom_hue: 200.0,
         }
     }
 }
@@ -156,14 +156,13 @@ impl App {
                 continue;
             }
             let matcap_id = renderer.resources().builtin_matcap_id(*preset);
-            self.matcap_state.scene.set_material(
-                self.matcap_state.builtin_node_ids[i],
-                {
+            self.matcap_state
+                .scene
+                .set_material(self.matcap_state.builtin_node_ids[i], {
                     let mut m = Material::from_color(self.matcap_state.blendable_color);
                     m.matcap_id = Some(matcap_id);
                     m
-                },
-            );
+                });
         }
     }
 }

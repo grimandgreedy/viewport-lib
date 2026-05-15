@@ -116,7 +116,9 @@ pub(super) fn ray_point_dist(
 /// Returns a unit vector perpendicular to `n`.
 pub(super) fn any_perpendicular(n: glam::Vec3) -> glam::Vec3 {
     let len = n.length();
-    if len < 1e-6 { return glam::Vec3::X; }
+    if len < 1e-6 {
+        return glam::Vec3::X;
+    }
     let n = n / len;
     if n.x.abs() < 0.9 {
         n.cross(glam::Vec3::X).normalize()

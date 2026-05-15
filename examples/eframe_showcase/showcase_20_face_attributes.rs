@@ -26,23 +26,23 @@ use viewport_lib::{
 // ---------------------------------------------------------------------------
 
 pub(crate) struct FaceAttrState {
-    pub scene:        Scene,
-    pub built:        bool,
+    pub scene: Scene,
+    pub built: bool,
     pub mesh_indices: [MeshId; 3],
-    pub node_ids:     [NodeId; 3],
-    pub colormap:     BuiltinColormap,
-    pub opacity:      f32,
+    pub node_ids: [NodeId; 3],
+    pub colormap: BuiltinColormap,
+    pub opacity: f32,
 }
 
 impl Default for FaceAttrState {
     fn default() -> Self {
         Self {
-            scene:        Scene::new(),
-            built:        false,
+            scene: Scene::new(),
+            built: false,
             mesh_indices: [MeshId::from_index(0); 3],
-            node_ids:     [0; 3],
-            colormap:     BuiltinColormap::Viridis,
-            opacity:      1.0,
+            node_ids: [0; 3],
+            colormap: BuiltinColormap::Viridis,
+            opacity: 1.0,
         }
     }
 }

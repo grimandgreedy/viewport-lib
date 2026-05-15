@@ -171,11 +171,7 @@ mod tests {
 
     #[test]
     fn face_intrinsic_centroid_position() {
-        let positions = vec![
-            [0.0, 0.0, 0.0],
-            [3.0, 0.0, 0.0],
-            [0.0, 3.0, 0.0],
-        ];
+        let positions = vec![[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [0.0, 3.0, 0.0]];
         let normals = vec![[0.0, 0.0, 1.0]; 3];
         let indices = vec![0u32, 1, 2];
         let vectors = vec![[1.0, 0.0]];

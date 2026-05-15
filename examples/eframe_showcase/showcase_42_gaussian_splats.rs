@@ -17,12 +17,12 @@
 //!      along a vortex tube axis to see circular cross-sections appear. No
 //!      isosurface extraction, no geometry -- just the field.
 
-use std::f32::consts::PI;
+use crate::App;
 use eframe::egui;
+use std::f32::consts::PI;
 use viewport_lib::{
     GaussianSplatData, GaussianSplatId, GaussianSplatItem, ShDegree, ViewportRenderer,
 };
-use crate::App;
 
 // ---------------------------------------------------------------------------
 // State
@@ -75,22 +75,22 @@ pub(crate) fn build_gaussian_splat_scene(app: &mut App, renderer: &mut ViewportR
 // Each voxel has a diffusion tensor encoded as position/scale/rotation.
 // Color by fractional anisotropy (FA): orange = high, blue = isotropic.
 fn generate_dti() -> GaussianSplatData {
-    const SH0_C:        f32 = 0.28209479177;
-    const TRACT_R:      f32 = 0.60;  // tract inclusion radius
-    const BLEND_W:      f32 = 0.70;  // FA -> 0 over this extra width
-    const SCALE_LONG:   f32 = 0.24;  // scale along fiber axis
-    const SCALE_CROSS:  f32 = 0.040; // scale perpendicular to fiber
-    const SCALE_ISO:    f32 = 0.095; // background isotropic scale
+    const SH0_C: f32 = 0.28209479177;
+    const TRACT_R: f32 = 0.60; // tract inclusion radius
+    const BLEND_W: f32 = 0.70; // FA -> 0 over this extra width
+    const SCALE_LONG: f32 = 0.24; // scale along fiber axis
+    const SCALE_CROSS: f32 = 0.040; // scale perpendicular to fiber
+    const SCALE_ISO: f32 = 0.095; // background isotropic scale
 
-    let mut positions      = Vec::new();
-    let mut scales         = Vec::new();
-    let mut rotations      = Vec::new();
-    let mut opacities      = Vec::new();
+    let mut positions = Vec::new();
+    let mut scales = Vec::new();
+    let mut rotations = Vec::new();
+    let mut opacities = Vec::new();
     let mut sh_coefficients = Vec::new();
 
     // Grid: -3.5..3.5 in x,y,z, step 0.36.
     let range = 3.5_f32;
-    let step  = 0.36_f32;
+    let step = 0.36_f32;
     let steps = ((2.0 * range) / step).ceil() as i32 + 1;
 
     for ix in 0..steps {
@@ -109,7 +109,7 @@ fn generate_dti() -> GaussianSplatData {
                 // Smooth FA: 1 in core, fades to 0 at TRACT_R + BLEND_W.
                 let fa_a = fa_blend(dist_a, TRACT_R, BLEND_W);
                 let fa_b = fa_blend(dist_b, TRACT_R, BLEND_W);
-                let fa   = fa_a.max(fa_b);
+                let fa = fa_a.max(fa_b);
 
                 // Background: include within a sphere, at low opacity.
                 let bg_dist = (x * x + y * y + z * z).sqrt();
@@ -130,13 +130,13 @@ fn generate_dti() -> GaussianSplatData {
                     // Tract A: elongated along X.
                     let t = fa_a.min(1.0);
                     let c = SCALE_ISO + (SCALE_CROSS - SCALE_ISO) * t;
-                    let l = SCALE_ISO + (SCALE_LONG  - SCALE_ISO) * t;
+                    let l = SCALE_ISO + (SCALE_LONG - SCALE_ISO) * t;
                     ([c, c, l], quat_align_z_to([1.0, 0.0, 0.0]))
                 } else if fa_b > 0.05 {
                     // Tract B: elongated along Z (identity rotation).
                     let t = fa_b.min(1.0);
                     let c = SCALE_ISO + (SCALE_CROSS - SCALE_ISO) * t;
-                    let l = SCALE_ISO + (SCALE_LONG  - SCALE_ISO) * t;
+                    let l = SCALE_ISO + (SCALE_LONG - SCALE_ISO) * t;
                     ([c, c, l], [0.0_f32, 0.0, 0.0, 1.0])
                 } else {
                     // Background: isotropic.
@@ -159,7 +159,11 @@ fn generate_dti() -> GaussianSplatData {
     }
 
     GaussianSplatData {
-        positions, scales, rotations, opacities, sh_coefficients,
+        positions,
+        scales,
+        rotations,
+        opacities,
+        sh_coefficients,
         sh_degree: ShDegree::Zero,
     }
 }
@@ -192,7 +196,7 @@ fn fa_blend(dist: f32, radius: f32, blend_width: f32) -> f32 {
 // Splats are placed where |omega| exceeds a threshold, elongated along omega.
 // Color: red (omega_z > 0, CCW), blue (omega_z < 0, CW).
 fn generate_tgv() -> GaussianSplatData {
-    const SH0_C:     f32 = 0.28209479177;
+    const SH0_C: f32 = 0.28209479177;
     const THRESHOLD: f32 = 0.40; // fraction of max |omega| below which to skip
 
     let n = 24_usize; // 24^3 = 13824 grid points before threshold
@@ -210,9 +214,11 @@ fn generate_tgv() -> GaussianSplatData {
 
                 let ox = -x.cos() * y.sin() * z.sin();
                 let oy = -x.sin() * y.cos() * z.sin();
-                let oz =  2.0 * x.sin() * y.sin() * z.cos();
+                let oz = 2.0 * x.sin() * y.sin() * z.cos();
                 let mag = (ox * ox + oy * oy + oz * oz).sqrt();
-                if mag > max_mag { max_mag = mag; }
+                if mag > max_mag {
+                    max_mag = mag;
+                }
 
                 // Shift to center at origin for display.
                 pts.push(([x - PI, y - PI, z - PI], [ox, oy, oz]));
@@ -222,23 +228,25 @@ fn generate_tgv() -> GaussianSplatData {
 
     let threshold_mag = THRESHOLD * max_mag;
 
-    let mut positions       = Vec::new();
-    let mut scales          = Vec::new();
-    let mut rotations       = Vec::new();
-    let mut opacities       = Vec::new();
+    let mut positions = Vec::new();
+    let mut scales = Vec::new();
+    let mut rotations = Vec::new();
+    let mut opacities = Vec::new();
     let mut sh_coefficients = Vec::new();
 
     for ([px, py, pz], [ox, oy, oz]) in &pts {
         let mag = (ox * ox + oy * oy + oz * oz).sqrt();
-        if mag < threshold_mag { continue; }
+        if mag < threshold_mag {
+            continue;
+        }
 
         // Opacity proportional to (normalized vorticity)^1.5.
-        let norm    = (mag / max_mag).min(1.0);
+        let norm = (mag / max_mag).min(1.0);
         let opacity = norm.powf(1.5) * 0.88;
 
         // Tighter cross-section for stronger vorticity (concentrated core).
         let cross = (0.20 - 0.12 * norm).max(0.05);
-        let long  = 0.26;
+        let long = 0.26;
 
         // Align splat long axis to vorticity direction.
         let inv = 1.0 / mag;
@@ -258,7 +266,11 @@ fn generate_tgv() -> GaussianSplatData {
     }
 
     GaussianSplatData {
-        positions, scales, rotations, opacities, sh_coefficients,
+        positions,
+        scales,
+        rotations,
+        opacities,
+        sh_coefficients,
         sh_degree: ShDegree::Zero,
     }
 }
@@ -277,22 +289,28 @@ fn quat_align_z_to(n: [f32; 3]) -> [f32; 4] {
     }
     // cross((0,0,1), n) = (-ny, nx, 0)
     let qw = ((1.0 + nz) / 2.0_f32).sqrt();
-    let s  = 1.0 / (2.0 * qw);
+    let s = 1.0 / (2.0 * qw);
     [-ny * s, nx * s, 0.0, qw]
 }
 
 fn hsl_to_linear(h: f32, s: f32, l: f32) -> (f32, f32, f32) {
-    let c  = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
     let h6 = h * 6.0;
-    let x  = c * (1.0 - (h6 % 2.0 - 1.0).abs());
-    let (r1, g1, b1) =
-        if      h6 < 1.0 { (c, x, 0.0) }
-        else if h6 < 2.0 { (x, c, 0.0) }
-        else if h6 < 3.0 { (0.0, c, x) }
-        else if h6 < 4.0 { (0.0, x, c) }
-        else if h6 < 5.0 { (x, 0.0, c) }
-        else              { (c, 0.0, x) };
-    let m   = l - c / 2.0;
+    let x = c * (1.0 - (h6 % 2.0 - 1.0).abs());
+    let (r1, g1, b1) = if h6 < 1.0 {
+        (c, x, 0.0)
+    } else if h6 < 2.0 {
+        (x, c, 0.0)
+    } else if h6 < 3.0 {
+        (0.0, c, x)
+    } else if h6 < 4.0 {
+        (0.0, x, c)
+    } else if h6 < 5.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
+    let m = l - c / 2.0;
     let lin = |v: f32| (v + m).clamp(0.0, 1.0).powi(2);
     (lin(r1), lin(g1), lin(b1))
 }
@@ -304,8 +322,16 @@ fn hsl_to_linear(h: f32, s: f32, l: f32) -> (f32, f32, f32) {
 pub(crate) fn controls_gaussian_splats(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label("Scene:");
-        ui.selectable_value(&mut app.splat_state.scene, SplatScene::Dti, "Diffusion Tensor Field");
-        ui.selectable_value(&mut app.splat_state.scene, SplatScene::Tgv, "Taylor-Green Vortex");
+        ui.selectable_value(
+            &mut app.splat_state.scene,
+            SplatScene::Dti,
+            "Diffusion Tensor Field",
+        );
+        ui.selectable_value(
+            &mut app.splat_state.scene,
+            SplatScene::Tgv,
+            "Taylor-Green Vortex",
+        );
     });
     ui.separator();
 
@@ -316,7 +342,9 @@ pub(crate) fn controls_gaussian_splats(app: &mut App, ui: &mut egui::Ui) {
         }
         SplatScene::Tgv => {
             ui.label("Taylor-Green vortex vorticity field. Each splat is aligned with the local vorticity vector; opacity = vorticity magnitude. Red = counterclockwise rotation, blue = clockwise.");
-            ui.label("Tip: look along the Z axis to see circular cross-sections of the vortex tubes.");
+            ui.label(
+                "Tip: look along the Z axis to see circular cross-sections of the vortex tubes.",
+            );
         }
     }
 }
@@ -335,7 +363,7 @@ pub(crate) fn gaussian_splat_items(app: &App) -> Vec<GaussianSplatItem> {
     }
     let rot = glam::Mat4::from_rotation_y(app.splat_state.angle);
     let mut item = GaussianSplatItem::default();
-    item.id    = match app.splat_state.scene {
+    item.id = match app.splat_state.scene {
         SplatScene::Dti => app.splat_state.id_dti,
         SplatScene::Tgv => app.splat_state.id_tgv,
     };

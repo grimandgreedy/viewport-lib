@@ -110,9 +110,16 @@ impl SubObjectRef {
     /// Returns the raw index regardless of variant.
     pub fn index(&self) -> u32 {
         match *self {
-            Self::Face(i) | Self::Vertex(i) | Self::Edge(i) | Self::Point(i)
-            | Self::Voxel(i) | Self::Cell(i) | Self::Splat(i) | Self::Instance(i)
-            | Self::Segment(i) | Self::Strip(i) => i,
+            Self::Face(i)
+            | Self::Vertex(i)
+            | Self::Edge(i)
+            | Self::Point(i)
+            | Self::Voxel(i)
+            | Self::Cell(i)
+            | Self::Splat(i)
+            | Self::Instance(i)
+            | Self::Segment(i)
+            | Self::Strip(i) => i,
         }
     }
 
@@ -387,8 +394,7 @@ pub struct SubSelectionRef {
     /// [`pick_scene_cpu`](crate::interaction::picking::pick_scene_cpu):
     /// the value is `(positions, indices)` where every three consecutive
     /// indices form one triangle.
-    pub(crate) mesh_lookup:
-        std::collections::HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
+    pub(crate) mesh_lookup: std::collections::HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
     /// World-space model matrix for each node, keyed by node id.
     ///
     /// Used to transform local-space mesh positions into world space when
@@ -450,10 +456,7 @@ impl SubSelectionRef {
         point_positions: std::collections::HashMap<u64, Vec<[f32; 3]>>,
     ) -> Self {
         Self {
-            items: sub_selection
-                .iter()
-                .map(|(n, s)| (*n, *s))
-                .collect(),
+            items: sub_selection.iter().map(|(n, s)| (*n, *s)).collect(),
             mesh_lookup,
             model_matrices,
             point_positions,
@@ -481,10 +484,7 @@ impl SubSelectionRef {
     ///
     /// `lookup` maps each volume mesh's node id to its [`CellSelectionInfo`]. Without
     /// this, selected cells are silently skipped during highlight geometry build.
-    pub fn with_cells(
-        mut self,
-        lookup: std::collections::HashMap<u64, CellSelectionInfo>,
-    ) -> Self {
+    pub fn with_cells(mut self, lookup: std::collections::HashMap<u64, CellSelectionInfo>) -> Self {
         self.cell_lookup = lookup;
         self
     }

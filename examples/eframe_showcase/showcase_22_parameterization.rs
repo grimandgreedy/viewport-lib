@@ -48,21 +48,21 @@ const IDX_PLANE: usize = 12;
 // ---------------------------------------------------------------------------
 
 pub(crate) struct ParamVisState {
-    pub scene:    Scene,
-    pub built:    bool,
+    pub scene: Scene,
+    pub built: bool,
     pub node_ids: [NodeId; 16],
-    pub scale:    f32,
-    pub on:       bool,
+    pub scale: f32,
+    pub on: bool,
 }
 
 impl Default for ParamVisState {
     fn default() -> Self {
         Self {
-            scene:    Scene::new(),
-            built:    false,
+            scene: Scene::new(),
+            built: false,
             node_ids: [0u64; 16],
-            scale:    8.0,
-            on:       true,
+            scale: 8.0,
+            on: true,
         }
     }
 }
@@ -94,13 +94,13 @@ impl App {
         let scale = self.param_vis_state.scale;
 
         let add_row = |scene: &mut Scene,
-                           renderer: &mut ViewportRenderer,
-                           mesh_data: &MeshData,
-                           z: f32,
-                           base_idx: usize,
-                           node_ids: &mut [NodeId; 16],
-                           color: [f32; 3],
-                           two_sided: bool| {
+                       renderer: &mut ViewportRenderer,
+                       mesh_data: &MeshData,
+                       z: f32,
+                       base_idx: usize,
+                       node_ids: &mut [NodeId; 16],
+                       color: [f32; 3],
+                       two_sided: bool| {
             for (col, (mode, label)) in MODES.iter().enumerate() {
                 let mesh_id = upload_mesh(renderer, mesh_data);
                 let mat = {
@@ -184,7 +184,9 @@ pub(crate) fn controls_param_vis(app: &mut App, ui: &mut egui::Ui) {
 
     ui.separator();
 
-    let vis_changed = ui.checkbox(&mut app.param_vis_state.on, "UV vis on").changed();
+    let vis_changed = ui
+        .checkbox(&mut app.param_vis_state.on, "UV vis on")
+        .changed();
 
     ui.separator();
 

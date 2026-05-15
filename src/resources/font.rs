@@ -122,11 +122,9 @@ impl GlyphAtlas {
 
     /// Create a new atlas with the built-in default font pre-loaded.
     pub fn new(device: &wgpu::Device) -> Self {
-        let default_font = fontdue::Font::from_bytes(
-            DEFAULT_FONT_BYTES,
-            fontdue::FontSettings::default(),
-        )
-        .expect("built-in default font must parse");
+        let default_font =
+            fontdue::Font::from_bytes(DEFAULT_FONT_BYTES, fontdue::FontSettings::default())
+                .expect("built-in default font must parse");
 
         let size = Self::INITIAL_SIZE;
         let pixel_count = (size * size) as usize;
@@ -188,8 +186,8 @@ impl GlyphAtlas {
 
             // Kerning.
             if let Some(prev) = prev_glyph {
-                if let Some(kern) = self.fonts[font_index]
-                    .horizontal_kern_indexed(prev, glyph_index, px)
+                if let Some(kern) =
+                    self.fonts[font_index].horizontal_kern_indexed(prev, glyph_index, px)
                 {
                     pen_x += kern;
                 }
@@ -205,15 +203,9 @@ impl GlyphAtlas {
                 let atlas_size = self.size as f32;
 
                 quads.push(GlyphQuad {
-                    pos: [
-                        pen_x + entry.offset_x,
-                        entry.offset_y,
-                    ],
+                    pos: [pen_x + entry.offset_x, entry.offset_y],
                     size: [entry.width as f32, entry.height as f32],
-                    uv_min: [
-                        entry.x as f32 / atlas_size,
-                        entry.y as f32 / atlas_size,
-                    ],
+                    uv_min: [entry.x as f32 / atlas_size, entry.y as f32 / atlas_size],
                     uv_max: [
                         (entry.x + entry.width) as f32 / atlas_size,
                         (entry.y + entry.height) as f32 / atlas_size,
@@ -283,8 +275,8 @@ impl GlyphAtlas {
             for ch in word.chars() {
                 let glyph_index = self.fonts[font_index].lookup_glyph_index(ch);
                 if let Some(prev) = prev_glyph {
-                    if let Some(kern) = self.fonts[font_index]
-                        .horizontal_kern_indexed(prev, glyph_index, px)
+                    if let Some(kern) =
+                        self.fonts[font_index].horizontal_kern_indexed(prev, glyph_index, px)
                     {
                         pen_x += kern;
                     }
@@ -297,10 +289,7 @@ impl GlyphAtlas {
                     word_quads.push(GlyphQuad {
                         pos: [pen_x + entry.offset_x, entry.offset_y],
                         size: [entry.width as f32, entry.height as f32],
-                        uv_min: [
-                            entry.x as f32 / atlas_size,
-                            entry.y as f32 / atlas_size,
-                        ],
+                        uv_min: [entry.x as f32 / atlas_size, entry.y as f32 / atlas_size],
                         uv_max: [
                             (entry.x + entry.width) as f32 / atlas_size,
                             (entry.y + entry.height) as f32 / atlas_size,
@@ -312,7 +301,11 @@ impl GlyphAtlas {
             let word_width = pen_x;
 
             // Wrap if this word doesn't fit on the current line.
-            let test_x = if first_on_line { line_x } else { line_x + space_advance };
+            let test_x = if first_on_line {
+                line_x
+            } else {
+                line_x + space_advance
+            };
             if !first_on_line && test_x + word_width > max_width {
                 max_line_width = max_line_width.max(line_x);
                 line_x = 0.0;
@@ -320,7 +313,11 @@ impl GlyphAtlas {
                 first_on_line = true;
             }
 
-            let start_x = if first_on_line { line_x } else { line_x + space_advance };
+            let start_x = if first_on_line {
+                line_x
+            } else {
+                line_x + space_advance
+            };
             for mut gq in word_quads {
                 gq.pos[0] += start_x;
                 gq.pos[1] += line_y;
@@ -470,7 +467,13 @@ impl GlyphAtlas {
     fn grow(&mut self, device: &wgpu::Device) {
         let old_size = self.size;
         let new_size = old_size * 2;
-        tracing::info!("Growing glyph atlas from {}x{} to {}x{}", old_size, old_size, new_size, new_size);
+        tracing::info!(
+            "Growing glyph atlas from {}x{} to {}x{}",
+            old_size,
+            old_size,
+            new_size,
+            new_size
+        );
 
         let mut new_pixels = vec![[255, 255, 255, 0u8]; (new_size * new_size) as usize];
         for row in 0..old_size {

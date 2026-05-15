@@ -5,7 +5,10 @@ use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
 
-use super::{WidgetContext, WidgetResult, any_perpendicular_pair, ctx_ray, handle_world_radius, ray_point_dist};
+use super::{
+    WidgetContext, WidgetResult, any_perpendicular_pair, ctx_ray, handle_world_radius,
+    ray_point_dist,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PlaneHandle {
@@ -58,7 +61,11 @@ impl PlaneWidget {
     /// `normal` is normalized internally; if zero, defaults to `Vec3::Z`.
     pub fn new(center: glam::Vec3, normal: glam::Vec3) -> Self {
         let len = normal.length();
-        let normal = if len > 1e-6 { normal / len } else { glam::Vec3::Z };
+        let normal = if len > 1e-6 {
+            normal / len
+        } else {
+            glam::Vec3::Z
+        };
         Self {
             center,
             normal,
@@ -136,7 +143,11 @@ impl PlaneWidget {
             }
         }
 
-        if updated { WidgetResult::Updated } else { WidgetResult::None }
+        if updated {
+            WidgetResult::Updated
+        } else {
+            WidgetResult::None
+        }
     }
 
     /// Build a `PolylineItem` for the wireframe square outline and normal indicator.
@@ -242,11 +253,23 @@ impl PlaneWidget {
         );
         let tip_pose = Pose::from_parts([tip.x, tip.y, tip.z].into(), glam::Quat::IDENTITY);
 
-        let tc = if dc < rc { center_ball.cast_ray(&center_pose, &ray, f32::MAX, true) } else { None };
-        let tt = if dt < rt { tip_ball.cast_ray(&tip_pose, &ray, f32::MAX, true) } else { None };
+        let tc = if dc < rc {
+            center_ball.cast_ray(&center_pose, &ray, f32::MAX, true)
+        } else {
+            None
+        };
+        let tt = if dt < rt {
+            tip_ball.cast_ray(&tip_pose, &ray, f32::MAX, true)
+        } else {
+            None
+        };
 
         match (tc, tt) {
-            (Some(a), Some(b)) => Some(if a <= b { PlaneHandle::Center } else { PlaneHandle::NormalTip }),
+            (Some(a), Some(b)) => Some(if a <= b {
+                PlaneHandle::Center
+            } else {
+                PlaneHandle::NormalTip
+            }),
             (Some(_), None) => Some(PlaneHandle::Center),
             (None, Some(_)) => Some(PlaneHandle::NormalTip),
             (None, None) => None,

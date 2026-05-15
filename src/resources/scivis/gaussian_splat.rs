@@ -6,30 +6,30 @@ use crate::resources::types::{GaussianSplatGpuSet, GaussianSplatViewportSort};
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct SplatUniform {
-    model:      [[f32; 4]; 4],
+    model: [[f32; 4]; 4],
     viewport_w: f32,
     viewport_h: f32,
-    sh_degree:  u32,
-    count:      u32,
+    sh_degree: u32,
+    count: u32,
 }
 
 // Depth compute uniform (must match gaussian_splat_sort.wgsl DepthUniform).
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct DepthUniform {
-    model:  [[f32; 4]; 4],
-    eye:    [f32; 3],
-    count:  u32,
+    model: [[f32; 4]; 4],
+    eye: [f32; 3],
+    count: u32,
 }
 
 // Sort pass uniform (must match gaussian_splat_sort.wgsl SortUniform).
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct SortUniform {
-    shift:    u32,
-    count:    u32,
+    shift: u32,
+    count: u32,
     pass_num: u32,
-    _pad:     u32,
+    _pad: u32,
 }
 
 impl ViewportGpuResources {
@@ -377,8 +377,7 @@ impl ViewportGpuResources {
         self.gaussian_splat_sort_bgl = Some(sort_bgl);
         self.gaussian_splat_sort_init_pipeline = Some(gaussian_splat_sort_init_pipeline);
         self.gaussian_splat_sort_clear_pipeline = Some(gaussian_splat_sort_clear_pipeline);
-        self.gaussian_splat_sort_histogram_pipeline =
-            Some(gaussian_splat_sort_histogram_pipeline);
+        self.gaussian_splat_sort_histogram_pipeline = Some(gaussian_splat_sort_histogram_pipeline);
         self.gaussian_splat_sort_prefix_pipeline = Some(gaussian_splat_sort_prefix_pipeline);
         self.gaussian_splat_sort_scatter_pipeline = Some(gaussian_splat_sort_scatter_pipeline);
     }
@@ -449,11 +448,7 @@ impl ViewportGpuResources {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        queue.write_buffer(
-            &opacity_buf,
-            0,
-            bytemuck::cast_slice(&data.opacities),
-        );
+        queue.write_buffer(&opacity_buf, 0, bytemuck::cast_slice(&data.opacities));
 
         let sh_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("splat_sh_buf"),
@@ -486,10 +481,7 @@ impl ViewportGpuResources {
     }
 
     /// Remove an uploaded Gaussian splat set by handle.
-    pub fn remove_gaussian_splats(
-        &mut self,
-        id: crate::renderer::GaussianSplatId,
-    ) {
+    pub fn remove_gaussian_splats(&mut self, id: crate::renderer::GaussianSplatId) {
         self.gaussian_splat_store.remove(id.0);
     }
 
@@ -510,8 +502,7 @@ impl ViewportGpuResources {
         let count = set.count as usize;
 
         // Grow the per-viewport vec if needed.
-        if viewport_index >= set.viewport_sort.len()
-            || set.viewport_sort[viewport_index].is_none()
+        if viewport_index >= set.viewport_sort.len() || set.viewport_sort[viewport_index].is_none()
         {
             // We need mutable access - re-borrow.
             let set_mut = self.gaussian_splat_store.get_mut(store_index).unwrap();
@@ -525,7 +516,9 @@ impl ViewportGpuResources {
                 let depth_buf = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("splat_depth_buf"),
                     size: buf_size,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+                    usage: wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::COPY_DST
+                        | wgpu::BufferUsages::COPY_SRC,
                     mapped_at_creation: false,
                 });
                 let sort_buf_usage = wgpu::BufferUsages::STORAGE
@@ -677,11 +670,7 @@ impl ViewportGpuResources {
         queue.write_buffer(&vp_sort.uniform_buf, 0, bytemuck::bytes_of(&splat_uni));
 
         // Upload depth uniform.
-        let depth_uni = DepthUniform {
-            model,
-            eye,
-            count,
-        };
+        let depth_uni = DepthUniform { model, eye, count };
         let depth_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("splat_depth_uniform_tmp"),
             size: std::mem::size_of::<DepthUniform>() as u64,
@@ -717,10 +706,9 @@ impl ViewportGpuResources {
 
         let workgroups = (count + 255) / 256;
 
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("splat_sort_encoder"),
-            });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("splat_sort_encoder"),
+        });
 
         // --- Depth compute pass ---
         {
@@ -815,8 +803,7 @@ impl ViewportGpuResources {
 
             // Clear histogram.
             {
-                let clear_pipeline =
-                    self.gaussian_splat_sort_clear_pipeline.as_ref().unwrap();
+                let clear_pipeline = self.gaussian_splat_sort_clear_pipeline.as_ref().unwrap();
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("splat_clear_hist"),
                     timestamp_writes: None,
@@ -828,8 +815,10 @@ impl ViewportGpuResources {
 
             // Histogram pass.
             {
-                let hist_pipeline =
-                    self.gaussian_splat_sort_histogram_pipeline.as_ref().unwrap();
+                let hist_pipeline = self
+                    .gaussian_splat_sort_histogram_pipeline
+                    .as_ref()
+                    .unwrap();
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("splat_hist_pass"),
                     timestamp_writes: None,
@@ -841,8 +830,7 @@ impl ViewportGpuResources {
 
             // Prefix sum.
             {
-                let prefix_pipeline =
-                    self.gaussian_splat_sort_prefix_pipeline.as_ref().unwrap();
+                let prefix_pipeline = self.gaussian_splat_sort_prefix_pipeline.as_ref().unwrap();
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("splat_prefix_pass"),
                     timestamp_writes: None,
@@ -854,8 +842,7 @@ impl ViewportGpuResources {
 
             // Scatter.
             {
-                let scatter_pipeline =
-                    self.gaussian_splat_sort_scatter_pipeline.as_ref().unwrap();
+                let scatter_pipeline = self.gaussian_splat_sort_scatter_pipeline.as_ref().unwrap();
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("splat_scatter_pass"),
                     timestamp_writes: None,

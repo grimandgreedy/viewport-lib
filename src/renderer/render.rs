@@ -84,7 +84,11 @@ impl ViewportRenderer {
         // Outline composite after all scene content so translucent layers don't overdraw.
         emit_outline_composite!(&self.resources, &mut *render_pass, vp_slot);
         // Sub-object highlight (LDR path) : face fill, edge lines, vertex/point sprites.
-        if let Some(sub_hl) = self.viewport_slots.get(vp_idx).and_then(|s| s.sub_highlight.as_ref()) {
+        if let Some(sub_hl) = self
+            .viewport_slots
+            .get(vp_idx)
+            .and_then(|s| s.sub_highlight.as_ref())
+        {
             if let (Some(fill_pl), Some(edge_pl), Some(sprite_pl)) = (
                 &self.resources.sub_highlight_fill_ldr_pipeline,
                 &self.resources.sub_highlight_edge_ldr_pipeline,
@@ -254,7 +258,11 @@ impl ViewportRenderer {
         // Outline composite after all scene content so translucent layers don't overdraw.
         emit_outline_composite!(&self.resources, &mut *render_pass, vp_slot);
         // Sub-object highlight (LDR path) : face fill, edge lines, vertex/point sprites.
-        if let Some(sub_hl) = self.viewport_slots.get(vp_idx).and_then(|s| s.sub_highlight.as_ref()) {
+        if let Some(sub_hl) = self
+            .viewport_slots
+            .get(vp_idx)
+            .and_then(|s| s.sub_highlight.as_ref())
+        {
             if let (Some(fill_pl), Some(edge_pl), Some(sprite_pl)) = (
                 &self.resources.sub_highlight_fill_ldr_pipeline,
                 &self.resources.sub_highlight_edge_ldr_pipeline,
@@ -575,7 +583,11 @@ impl ViewportRenderer {
         frame: &FrameData,
     ) {
         let vp_idx = frame.camera.viewport_index;
-        if let Some(dr) = self.viewport_slots.get(vp_idx).and_then(|s| s.dyn_res.as_ref()) {
+        if let Some(dr) = self
+            .viewport_slots
+            .get(vp_idx)
+            .and_then(|s| s.dyn_res.as_ref())
+        {
             if let Some(pipeline) = &self.resources.dyn_res_upscale_ds_pipeline {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, &dr.upscale_bind_group, &[]);
@@ -651,13 +663,13 @@ impl ViewportRenderer {
     /// Call from `CallbackTrait::paint` after
     /// [`prepare_hdr_callback`](Self::prepare_hdr_callback) has been called for the
     /// same frame and viewport. Emits a fullscreen triangle into `render_pass`.
-    pub fn paint_hdr_blit(
-        &self,
-        render_pass: &mut wgpu::RenderPass<'static>,
-        frame: &FrameData,
-    ) {
+    pub fn paint_hdr_blit(&self, render_pass: &mut wgpu::RenderPass<'static>, frame: &FrameData) {
         let vp_idx = frame.camera.viewport_index;
-        if let Some(hc) = self.viewport_slots.get(vp_idx).and_then(|s| s.hdr_callback.as_ref()) {
+        if let Some(hc) = self
+            .viewport_slots
+            .get(vp_idx)
+            .and_then(|s| s.hdr_callback.as_ref())
+        {
             if let Some(pipeline) = &self.resources.dyn_res_upscale_ds_pipeline {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, &hc.blit_bind_group, &[]);
@@ -707,20 +719,25 @@ impl ViewportRenderer {
     /// Call after [`prepare_callback`](Self::prepare_callback) for the same frame.
     /// Dispatches internally to `paint_hdr_blit`, `paint_dyn_res_blit`, or `paint`
     /// based on which path `prepare_callback` activated.
-    pub fn paint_callback(
-        &self,
-        render_pass: &mut wgpu::RenderPass<'static>,
-        frame: &FrameData,
-    ) {
+    pub fn paint_callback(&self, render_pass: &mut wgpu::RenderPass<'static>, frame: &FrameData) {
         let vp_idx = frame.camera.viewport_index;
         if frame.effects.post_process.enabled {
-            if self.viewport_slots.get(vp_idx).and_then(|s| s.hdr_callback.as_ref()).is_some() {
+            if self
+                .viewport_slots
+                .get(vp_idx)
+                .and_then(|s| s.hdr_callback.as_ref())
+                .is_some()
+            {
                 self.paint_hdr_blit(render_pass, frame);
                 return;
             }
         }
         if self.current_render_scale < 1.0 - 0.001
-            && self.viewport_slots.get(vp_idx).and_then(|s| s.dyn_res.as_ref()).is_some()
+            && self
+                .viewport_slots
+                .get(vp_idx)
+                .and_then(|s| s.dyn_res.as_ref())
+                .is_some()
         {
             self.paint_dyn_res_blit(render_pass, frame);
         } else {
@@ -850,7 +867,9 @@ impl ViewportRenderer {
 
             {
                 let slot = &self.viewport_slots[vp_idx];
-                let slot_hdr = slot.hdr.as_ref().expect("HDR state missing in LDR path; ensure_viewport_hdr must have been called");
+                let slot_hdr = slot.hdr.as_ref().expect(
+                    "HDR state missing in LDR path; ensure_viewport_hdr must have been called",
+                );
                 let camera_bg = &slot.camera_bind_group;
                 let grid_bg = &slot.grid_bind_group;
                 // Choose render target: dyn_res intermediate or directly output_view.
@@ -861,13 +880,14 @@ impl ViewportRenderer {
                     } else {
                         (output_view, &slot_hdr.outline_depth_view)
                     };
-                let ts_writes = self.ts_query_set.as_ref().map(|qs| {
-                    wgpu::RenderPassTimestampWrites {
-                        query_set: qs,
-                        beginning_of_pass_write_index: Some(0),
-                        end_of_pass_write_index: Some(1),
-                    }
-                });
+                let ts_writes =
+                    self.ts_query_set
+                        .as_ref()
+                        .map(|qs| wgpu::RenderPassTimestampWrites {
+                            query_set: qs,
+                            beginning_of_pass_write_index: Some(0),
+                            end_of_pass_write_index: Some(1),
+                        });
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("ldr_render_pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1025,24 +1045,26 @@ impl ViewportRenderer {
 
             // Phase 3 : upscale blit from dyn_res intermediate to output_view.
             if use_dyn_res {
-                let upscale_bg =
-                    &self.viewport_slots[vp_idx].dyn_res.as_ref().unwrap().upscale_bind_group;
-                let mut upscale_pass =
-                    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("dyn_res_upscale_pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: output_view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Load,
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
+                let upscale_bg = &self.viewport_slots[vp_idx]
+                    .dyn_res
+                    .as_ref()
+                    .unwrap()
+                    .upscale_bind_group;
+                let mut upscale_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("dyn_res_upscale_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: output_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
                 if let Some(pipeline) = &self.resources.dyn_res_upscale_pipeline {
                     upscale_pass.set_pipeline(pipeline);
                     upscale_pass.set_bind_group(0, upscale_bg, &[]);
@@ -1080,8 +1102,17 @@ impl ViewportRenderer {
             background_color: bg_color,
             near_plane: frame.camera.render_camera.near,
             far_plane: frame.camera.render_camera.far,
-            lic_enabled: if frame.scene.lic_items.is_empty() { 0 } else { 1 },
-            lic_strength: frame.scene.lic_items.first().map(|i| i.config.strength).unwrap_or(0.5),
+            lic_enabled: if frame.scene.lic_items.is_empty() {
+                0
+            } else {
+                1
+            },
+            lic_strength: frame
+                .scene
+                .lic_items
+                .first()
+                .map(|i| i.config.strength)
+                .unwrap_or(0.5),
         };
         {
             let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
@@ -1210,7 +1241,11 @@ impl ViewportRenderer {
                 scene_items
                     .iter()
                     .any(|i| i.visible && i.material.opacity < 1.0)
-            } || frame.scene.transparent_volume_meshes.iter().any(|i| i.visible);
+            } || frame
+                .scene
+                .transparent_volume_meshes
+                .iter()
+                .any(|i| i.visible);
             if needs_oit {
                 let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
                 self.resources
@@ -1228,7 +1263,9 @@ impl ViewportRenderer {
         // Per-viewport camera bind group and HDR state for the HDR path.
         let slot = &self.viewport_slots[vp_idx];
         let camera_bg = &slot.camera_bind_group;
-        let slot_hdr = slot.hdr.as_ref().expect("HDR state missing; ensure_viewport_hdr must be called before render_frame_internal");
+        let slot_hdr = slot.hdr.as_ref().expect(
+            "HDR state missing; ensure_viewport_hdr must be called before render_frame_internal",
+        );
 
         // -----------------------------------------------------------------------
         // HDR scene pass: render geometry into the HDR texture.
@@ -1258,13 +1295,14 @@ impl ViewportRenderer {
                 a: 0.0,
             };
 
-            let hdr_ts_writes = self.ts_query_set.as_ref().map(|qs| {
-                wgpu::RenderPassTimestampWrites {
-                    query_set: qs,
-                    beginning_of_pass_write_index: Some(0),
-                    end_of_pass_write_index: Some(1),
-                }
-            });
+            let hdr_ts_writes =
+                self.ts_query_set
+                    .as_ref()
+                    .map(|qs| wgpu::RenderPassTimestampWrites {
+                        query_set: qs,
+                        beginning_of_pass_write_index: Some(0),
+                        end_of_pass_write_index: Some(1),
+                    });
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("hdr_scene_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1314,10 +1352,7 @@ impl ViewportRenderer {
                                 && (item.active_attribute.is_some()
                                     || item.material.is_two_sided()
                                     || item.material.matcap_id.is_some())
-                                && resources
-                                    .mesh_store
-                                    .get(item.mesh_id)
-                                    .is_some()
+                                && resources.mesh_store.get(item.mesh_id).is_some()
                         })
                         .collect();
 
@@ -1340,17 +1375,13 @@ impl ViewportRenderer {
                             && resources.indirect_args_buf.is_some();
 
                         if use_indirect {
-                            if let (
-                                Some(pipeline),
-                                Some(indirect_buf),
-                            ) = (
+                            if let (Some(pipeline), Some(indirect_buf)) = (
                                 &resources.hdr_solid_instanced_cull_pipeline,
                                 &resources.indirect_args_buf,
                             ) {
                                 render_pass.set_pipeline(pipeline);
                                 for (batch_global_idx, batch) in &opaque_batches {
-                                    let Some(mesh) = resources.mesh_store.get(batch.mesh_id)
-                                    else {
+                                    let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                         continue;
                                     };
                                     let mat_key = (
@@ -1364,10 +1395,7 @@ impl ViewportRenderer {
                                         continue;
                                     };
                                     render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                    render_pass.set_vertex_buffer(
-                                        0,
-                                        mesh.vertex_buffer.slice(..),
-                                    );
+                                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                     render_pass.set_index_buffer(
                                         mesh.index_buffer.slice(..),
                                         wgpu::IndexFormat::Uint32,
@@ -1383,10 +1411,7 @@ impl ViewportRenderer {
                         } else if let Some(ref pipeline) = resources.hdr_solid_instanced_pipeline {
                             render_pass.set_pipeline(pipeline);
                             for (_, batch) in &opaque_batches {
-                                let Some(mesh) = resources
-                                    .mesh_store
-                                    .get(batch.mesh_id)
-                                else {
+                                let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
                                 };
                                 let mat_key = (
@@ -1427,13 +1452,12 @@ impl ViewportRenderer {
                                 if !item.visible {
                                     continue;
                                 }
-                                let Some(mesh) = resources
-                                    .mesh_store
-                                    .get(item.mesh_id)
-                                else {
+                                let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                                     continue;
                                 };
-                                let bg = self.wireframe_bind_groups.get(wf_idx)
+                                let bg = self
+                                    .wireframe_bind_groups
+                                    .get(wf_idx)
                                     .unwrap_or(&mesh.object_bind_group);
                                 render_pass.set_bind_group(1, bg, &[]);
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
@@ -1453,10 +1477,7 @@ impl ViewportRenderer {
                             .into_iter()
                             .filter(|item| item.material.opacity >= 1.0)
                         {
-                            let Some(mesh) = resources
-                                .mesh_store
-                                .get(item.mesh_id)
-                            else {
+                            let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                                 continue;
                             };
                             let pipeline = if item.material.is_two_sided() {
@@ -1486,12 +1507,7 @@ impl ViewportRenderer {
                     let mut opaque: Vec<&SceneRenderItem> = Vec::new();
                     let mut transparent: Vec<&SceneRenderItem> = Vec::new();
                     for item in scene_items {
-                        if !item.visible
-                            || resources
-                                .mesh_store
-                                .get(item.mesh_id)
-                                .is_none()
-                        {
+                        if !item.visible || resources.mesh_store.get(item.mesh_id).is_none() {
                             continue;
                         }
                         if item.material.opacity < 1.0 {
@@ -1517,10 +1533,7 @@ impl ViewportRenderer {
                          solid_pl: &wgpu::RenderPipeline,
                          trans_pl: &wgpu::RenderPipeline,
                          wf_pl: &wgpu::RenderPipeline| {
-                            let mesh = resources
-                                .mesh_store
-                                .get(item.mesh_id)
-                                .unwrap();
+                            let mesh = resources.mesh_store.get(item.mesh_id).unwrap();
                             // mesh.object_bind_group (group 1) already carries the object uniform
                             // and the correct texture views.
                             render_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
@@ -1788,7 +1801,11 @@ impl ViewportRenderer {
             scene_items
                 .iter()
                 .any(|i| i.visible && i.material.opacity < 1.0)
-        } || frame.scene.transparent_volume_meshes.iter().any(|i| i.visible);
+        } || frame
+            .scene
+            .transparent_volume_meshes
+            .iter()
+            .any(|i| i.visible);
 
         if has_transparent {
             // OIT targets already allocated in the pre-pass above.
@@ -1850,10 +1867,7 @@ impl ViewportRenderer {
                         && self.resources.indirect_args_buf.is_some();
 
                     if use_indirect_oit {
-                        if let (
-                            Some(pipeline),
-                            Some(indirect_buf),
-                        ) = (
+                        if let (Some(pipeline), Some(indirect_buf)) = (
                             &self.resources.oit_instanced_cull_pipeline,
                             &self.resources.indirect_args_buf,
                         ) {
@@ -1864,8 +1878,7 @@ impl ViewportRenderer {
                                 if !batch.is_transparent {
                                     continue;
                                 }
-                                let Some(mesh) =
-                                    self.resources.mesh_store.get(batch.mesh_id)
+                                let Some(mesh) = self.resources.mesh_store.get(batch.mesh_id)
                                 else {
                                     continue;
                                 };
@@ -1897,11 +1910,7 @@ impl ViewportRenderer {
                             if !batch.is_transparent {
                                 continue;
                             }
-                            let Some(mesh) = self
-                                .resources
-                                .mesh_store
-                                .get(batch.mesh_id)
-                            else {
+                            let Some(mesh) = self.resources.mesh_store.get(batch.mesh_id) else {
                                 continue;
                             };
                             let mat_key = (
@@ -1927,17 +1936,41 @@ impl ViewportRenderer {
                             );
                         }
                     }
+
+                    // Transparent excluded items (two-sided, active attribute, matcap) are not
+                    // in any instanced batch, so the instanced OIT loop above skips them.
+                    // Render them here individually so they are not invisible at opacity < 1.
+                    if let Some(ref pipeline) = self.resources.oit_pipeline {
+                        oit_pass.set_pipeline(pipeline);
+                        for item in scene_items {
+                            if !item.visible || item.material.opacity >= 1.0 {
+                                continue;
+                            }
+                            if item.active_attribute.is_none()
+                                && !item.material.is_two_sided()
+                                && item.material.matcap_id.is_none()
+                            {
+                                continue;
+                            }
+                            let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
+                                continue;
+                            };
+                            oit_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
+                            oit_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                            oit_pass.set_index_buffer(
+                                mesh.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            oit_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                        }
+                    }
                 } else if let Some(ref pipeline) = self.resources.oit_pipeline {
                     oit_pass.set_pipeline(pipeline);
                     for item in scene_items {
                         if !item.visible || item.material.opacity >= 1.0 {
                             continue;
                         }
-                        let Some(mesh) = self
-                            .resources
-                            .mesh_store
-                            .get(item.mesh_id)
-                        else {
+                        let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
                             continue;
                         };
                         oit_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
@@ -1962,8 +1995,7 @@ impl ViewportRenderer {
                             if !item.visible {
                                 continue;
                             }
-                            let Some(gpu) =
-                                self.resources.projected_tet_store.get(item.id.0)
+                            let Some(gpu) = self.resources.projected_tet_store.get(item.id.0)
                             else {
                                 continue;
                             };
@@ -2057,7 +2089,9 @@ impl ViewportRenderer {
                         let Some(mesh) = self.resources.mesh_store.get(gpu.mesh_id) else {
                             continue;
                         };
-                        let Some(vec_buf) = mesh.vector_attribute_buffers.get(&gpu.vector_attribute) else {
+                        let Some(vec_buf) =
+                            mesh.vector_attribute_buffers.get(&gpu.vector_attribute)
+                        else {
                             continue;
                         };
                         pass.set_bind_group(1, &gpu.bind_group, &[]);
@@ -2104,7 +2138,8 @@ impl ViewportRenderer {
         // Runs after the HDR scene pass (which has depth+stencil) in a separate
         // pass with no depth attachment, so the composite pipeline is compatible.
         // -----------------------------------------------------------------------
-        if !slot.outline_object_buffers.is_empty() || !slot.splat_outline_buffers.is_empty()
+        if !slot.outline_object_buffers.is_empty()
+            || !slot.splat_outline_buffers.is_empty()
             || !slot.volume_outline_indices.is_empty()
             || !slot.glyph_outline_indices.is_empty()
             || !slot.tensor_glyph_outline_indices.is_empty()
@@ -2604,11 +2639,7 @@ impl ViewportRenderer {
                     overlay_pass.set_pipeline(&self.resources.xray_pipeline);
                     overlay_pass.set_bind_group(0, camera_bg, &[]);
                     for (mesh_id, _buf, bg) in &slot.xray_object_buffers {
-                        let Some(mesh) = self
-                            .resources
-                            .mesh_store
-                            .get(*mesh_id)
-                        else {
+                        let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {
                             continue;
                         };
                         overlay_pass.set_bind_group(1, bg, &[]);
@@ -2664,8 +2695,11 @@ impl ViewportRenderer {
             || self.loading_bar_gpu_data.is_some()
             || !self.overlay_image_gpu_data.is_empty();
         if has_overlay {
-            let hdr_depth_view =
-                &self.viewport_slots[vp_idx].hdr.as_ref().unwrap().hdr_depth_view;
+            let hdr_depth_view = &self.viewport_slots[vp_idx]
+                .hdr
+                .as_ref()
+                .unwrap()
+                .hdr_depth_view;
             let mut overlay_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("overlay_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {

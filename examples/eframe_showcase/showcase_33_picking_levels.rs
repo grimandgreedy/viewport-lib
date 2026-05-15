@@ -18,9 +18,9 @@ use std::collections::HashMap;
 
 use eframe::egui;
 use viewport_lib::{
-    GaussianSplatData, GaussianSplatId,
-    Material, MeshId, NodeId, PickMask, PickRectResult, ProjectedTetId,
-    ShDegree, SubObjectRef, VolumeData, VolumeMeshData, ViewportRenderer, VolumeGpuId,
+    GaussianSplatData, GaussianSplatId, Material, MeshId, NodeId, PickMask, PickRectResult,
+    ProjectedTetId, ShDegree, SubObjectRef, ViewportRenderer, VolumeData, VolumeGpuId,
+    VolumeMeshData,
 };
 
 use crate::App;
@@ -61,20 +61,20 @@ pub(crate) enum PlUnifiedMask {
 impl PlUnifiedMask {
     pub(crate) fn to_pick_mask(self) -> PickMask {
         match self {
-            Self::Object           => PickMask::OBJECT,
-            Self::Face             => PickMask::FACE,
-            Self::PointLike        => PickMask::POINT_LIKE,
-            Self::EdgeLike         => PickMask::EDGE_LIKE,
+            Self::Object => PickMask::OBJECT,
+            Self::Face => PickMask::FACE,
+            Self::PointLike => PickMask::POINT_LIKE,
+            Self::EdgeLike => PickMask::EDGE_LIKE,
             Self::FaceAndPointLike => PickMask::FACE | PickMask::POINT_LIKE,
         }
     }
 
     pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::Object           => "Object",
-            Self::Face             => "Face",
-            Self::PointLike        => "Point-like",
-            Self::EdgeLike         => "Edge-like",
+            Self::Object => "Object",
+            Self::Face => "Face",
+            Self::PointLike => "Point-like",
+            Self::EdgeLike => "Edge-like",
             Self::FaceAndPointLike => "Face + Point-like",
         }
     }
@@ -93,7 +93,6 @@ pub(crate) struct PlHitInfo {
     pub sub_object: Option<SubObjectRef>,
     pub scalar_value: Option<f32>,
 }
-
 
 // ---------------------------------------------------------------------------
 // Splat and TVM data helpers
@@ -129,8 +128,8 @@ fn make_pl_splat_data(positions: &[[f32; 3]]) -> GaussianSplatData {
 /// Uses a 5x5 cross-section grid with an elliptic square-to-disk mapping,
 /// giving 128 hex cells across 8 axial layers.
 fn make_pl_tvm_data() -> VolumeMeshData {
-    const N: usize = 5;   // cross-section grid side: (N-1)^2 cells per slice
-    const NZ: usize = 9;  // axial vertex count: NZ-1 cell layers
+    const N: usize = 5; // cross-section grid side: (N-1)^2 cells per slice
+    const NZ: usize = 9; // axial vertex count: NZ-1 cell layers
 
     let radius = 0.7_f32;
     let cyl_half = 1.2_f32;
@@ -174,10 +173,14 @@ fn make_pl_tvm_data() -> VolumeMeshData {
         for j in 0..n_lat {
             for i in 0..n_lat {
                 cells.push([
-                    vi(i,   j,   k  ), vi(i+1, j,   k  ),
-                    vi(i+1, j+1, k  ), vi(i,   j+1, k  ),
-                    vi(i,   j,   k+1), vi(i+1, j,   k+1),
-                    vi(i+1, j+1, k+1), vi(i,   j+1, k+1),
+                    vi(i, j, k),
+                    vi(i + 1, j, k),
+                    vi(i + 1, j + 1, k),
+                    vi(i, j + 1, k),
+                    vi(i, j, k + 1),
+                    vi(i + 1, j, k + 1),
+                    vi(i + 1, j + 1, k + 1),
+                    vi(i, j + 1, k + 1),
                 ]);
                 let idx = i + j * n_lat + k * n_lat * n_lat;
                 scalars.push(idx as f32 / (total - 1).max(1) as f32);
@@ -218,17 +221,11 @@ fn make_pl_tvm_tet_data() -> VolumeMeshData {
         // Outer ring.
         for s in 0..N_SECTORS {
             let angle = std::f32::consts::TAU * s as f32 / N_SECTORS as f32;
-            positions.push([
-                CX + R_OUTER * angle.cos(),
-                y,
-                CZ + R_OUTER * angle.sin(),
-            ]);
+            positions.push([CX + R_OUTER * angle.cos(), y, CZ + R_OUTER * angle.sin()]);
         }
     }
 
-    let vi = |slice: usize, local: usize| -> u32 {
-        (slice * verts_per_slice + local) as u32
-    };
+    let vi = |slice: usize, local: usize| -> u32 { (slice * verts_per_slice + local) as u32 };
 
     let total = N_SECTORS * N_LAYERS;
     let mut cells: Vec<[u32; 8]> = Vec::with_capacity(total);
@@ -245,8 +242,14 @@ fn make_pl_tvm_tet_data() -> VolumeMeshData {
             // We use a proper hex with the center vertex duplicated to fill the
             // 8-vertex slot (wedge-like hex).
             cells.push([
-                vi(bot, 0),         vi(bot, 1 + s),     vi(bot, 1 + s_next), vi(bot, 0),
-                vi(top, 0),         vi(top, 1 + s),     vi(top, 1 + s_next), vi(top, 0),
+                vi(bot, 0),
+                vi(bot, 1 + s),
+                vi(bot, 1 + s_next),
+                vi(bot, 0),
+                vi(top, 0),
+                vi(top, 1 + s),
+                vi(top, 1 + s_next),
+                vi(top, 0),
             ]);
             let t = (layer as f32 + 0.5) / N_LAYERS as f32;
             let u = (s as f32 + 0.5) / N_SECTORS as f32;
@@ -270,46 +273,46 @@ fn make_pl_tvm_tet_data() -> VolumeMeshData {
 // ---------------------------------------------------------------------------
 
 pub(crate) struct PlState {
-    pub scene:       viewport_lib::scene::Scene,
-    pub selection:   viewport_lib::Selection,
+    pub scene: viewport_lib::scene::Scene,
+    pub selection: viewport_lib::Selection,
     pub sub_selection: viewport_lib::SubSelection,
-    pub built:       bool,
+    pub built: bool,
     /// Which section is active: true = unified API, false = per-type reference.
     pub unified_mode: bool,
     /// Active mask for the unified section.
     pub unified_mask: PlUnifiedMask,
-    pub level:       PlPickLevel,
+    pub level: PlPickLevel,
     pub cube_mesh_id: MeshId,
     pub hemi_mesh_id: MeshId,
     pub mesh_lookup: std::collections::HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
-    pub wireframe:   bool,
-    pub shift_held:  bool,
-    pub drag_start:  Option<glam::Vec2>,
-    pub node_names:  Vec<(NodeId, String)>,
-    pub last_hit:    Option<PlHitInfo>,
-    pub hit_marker:  Option<glam::Vec3>,
+    pub wireframe: bool,
+    pub shift_held: bool,
+    pub drag_start: Option<glam::Vec2>,
+    pub node_names: Vec<(NodeId, String)>,
+    pub last_hit: Option<PlHitInfo>,
+    pub hit_marker: Option<glam::Vec3>,
     pub show_hit_marker: bool,
     pub pc_positions: Vec<[f32; 3]>,
-    pub volume_id:   Option<viewport_lib::VolumeId>,
+    pub volume_id: Option<viewport_lib::VolumeId>,
     pub volume_data: Option<viewport_lib::VolumeData>,
     /// Local-space positions of the Gaussian splat grid.
     pub splat_positions: Vec<[f32; 3]>,
     /// GPU handle for the uploaded Gaussian splat data.
-    pub splat_id:    Option<GaussianSplatId>,
+    pub splat_id: Option<GaussianSplatId>,
     /// Opaque mesh handle for TVM rendering (boundary surface).
     pub tvm_mesh_id: Option<MeshId>,
     /// face_to_cell mapping from upload_volume_mesh_data for the capsule (pick_id=11).
     pub tvm_face_to_cell: Vec<u32>,
     /// CPU-side volume mesh data (kept for per-type cell picking and highlighting).
-    pub tvm_data:    Option<VolumeMeshData>,
+    pub tvm_data: Option<VolumeMeshData>,
     /// Projected-tet handle for the transparent tet mesh (pick_id=12).
-    pub tvm_tet_id:   Option<ProjectedTetId>,
+    pub tvm_tet_id: Option<ProjectedTetId>,
     /// Opaque boundary mesh for the hex cylinder so it renders on the LDR path.
     pub tvm_tet_mesh_id: Option<MeshId>,
     /// CPU-side tet mesh data for unified CELL picking and sub-selection highlighting.
     pub tvm_tet_data: Option<std::sync::Arc<VolumeMeshData>>,
     /// Positions for the multi-strip polyline (pick_id=30).
-    pub polyline_positions:    Vec<[f32; 3]>,
+    pub polyline_positions: Vec<[f32; 3]>,
     /// Strip lengths for the multi-strip polyline.
     pub polyline_strip_lengths: Vec<u32>,
     /// Positions for the arrow glyph set (pick_id=31).
@@ -321,89 +324,89 @@ pub(crate) struct PlState {
     /// Per-instance eigenvector bases for tensor glyphs.
     pub tensor_glyph_eigenvectors: Vec<[[f32; 3]; 3]>,
     /// Positions for the sprite set (pick_id=33).
-    pub sprite_positions:       Vec<[f32; 3]>,
+    pub sprite_positions: Vec<[f32; 3]>,
     /// Per-instance sizes for the sprite arc.
-    pub sprite_sizes:           Vec<f32>,
+    pub sprite_sizes: Vec<f32>,
     /// Per-instance colors for the sprite arc.
-    pub sprite_colors:          Vec<[f32; 4]>,
+    pub sprite_colors: Vec<[f32; 4]>,
     /// Positions for the noughts-and-crosses sprite set (pick_id=34).
-    pub xo_sprite_positions:    Vec<[f32; 3]>,
+    pub xo_sprite_positions: Vec<[f32; 3]>,
     /// Per-instance sizes for the noughts-and-crosses set.
-    pub xo_sprite_sizes:        Vec<f32>,
+    pub xo_sprite_sizes: Vec<f32>,
     /// Per-instance colors for the noughts-and-crosses set.
-    pub xo_sprite_colors:       Vec<[f32; 4]>,
+    pub xo_sprite_colors: Vec<[f32; 4]>,
     /// Positions for the streamtube set (pick_id=40).
-    pub streamtube_positions:   Vec<[f32; 3]>,
+    pub streamtube_positions: Vec<[f32; 3]>,
     /// Strip lengths for the streamtube set.
     pub streamtube_strip_lengths: Vec<u32>,
     /// Positions for the tube set (pick_id=41).
-    pub tube_positions:         Vec<[f32; 3]>,
+    pub tube_positions: Vec<[f32; 3]>,
     /// Strip lengths for the tube set.
-    pub tube_strip_lengths:     Vec<u32>,
+    pub tube_strip_lengths: Vec<u32>,
     /// Positions for the ribbon set (pick_id=42).
-    pub ribbon_positions:       Vec<[f32; 3]>,
+    pub ribbon_positions: Vec<[f32; 3]>,
     /// Strip lengths for the ribbon set.
-    pub ribbon_strip_lengths:   Vec<u32>,
+    pub ribbon_strip_lengths: Vec<u32>,
     /// Plane mesh uploaded for VolumeSurfaceSliceItem (pick_id=51).
-    pub surface_slice_mesh_id:  Option<MeshId>,
+    pub surface_slice_mesh_id: Option<MeshId>,
     /// GPU volume handle for the GpuMarchingCubesJob (pick_id=54).
-    pub mc_volume_id:           Option<VolumeGpuId>,
+    pub mc_volume_id: Option<VolumeGpuId>,
     /// CPU-side copy of the MC volume data, retained for CPU picking.
-    pub mc_volume_data:         Option<std::sync::Arc<viewport_lib::VolumeData>>,
+    pub mc_volume_data: Option<std::sync::Arc<viewport_lib::VolumeData>>,
 }
 
 impl Default for PlState {
     fn default() -> Self {
         Self {
-            scene:            viewport_lib::scene::Scene::new(),
-            selection:        viewport_lib::Selection::new(),
-            sub_selection:    viewport_lib::SubSelection::new(),
-            built:            false,
-            unified_mode:     true,
-            unified_mask:     PlUnifiedMask::default(),
-            level:            PlPickLevel::default(),
-            cube_mesh_id:     MeshId::from_index(0),
-            hemi_mesh_id:     MeshId::from_index(0),
-            mesh_lookup:      std::collections::HashMap::new(),
-            wireframe:        false,
-            shift_held:       false,
-            drag_start:       None,
-            node_names:       Vec::new(),
-            last_hit:         None,
-            hit_marker:       None,
-            show_hit_marker:  true,
-            pc_positions:     Vec::new(),
-            volume_id:        None,
-            volume_data:      None,
-            splat_positions:  Vec::new(),
-            splat_id:         None,
-            tvm_mesh_id:           None,
-            tvm_face_to_cell:      Vec::new(),
-            tvm_data:              None,
-            tvm_tet_id:            None,
-            tvm_tet_mesh_id:       None,
-            tvm_tet_data:          None,
-            polyline_positions:    Vec::new(),
+            scene: viewport_lib::scene::Scene::new(),
+            selection: viewport_lib::Selection::new(),
+            sub_selection: viewport_lib::SubSelection::new(),
+            built: false,
+            unified_mode: true,
+            unified_mask: PlUnifiedMask::default(),
+            level: PlPickLevel::default(),
+            cube_mesh_id: MeshId::from_index(0),
+            hemi_mesh_id: MeshId::from_index(0),
+            mesh_lookup: std::collections::HashMap::new(),
+            wireframe: false,
+            shift_held: false,
+            drag_start: None,
+            node_names: Vec::new(),
+            last_hit: None,
+            hit_marker: None,
+            show_hit_marker: true,
+            pc_positions: Vec::new(),
+            volume_id: None,
+            volume_data: None,
+            splat_positions: Vec::new(),
+            splat_id: None,
+            tvm_mesh_id: None,
+            tvm_face_to_cell: Vec::new(),
+            tvm_data: None,
+            tvm_tet_id: None,
+            tvm_tet_mesh_id: None,
+            tvm_tet_data: None,
+            polyline_positions: Vec::new(),
             polyline_strip_lengths: Vec::new(),
             arrow_glyph_positions: Vec::new(),
             tensor_glyph_positions: Vec::new(),
             tensor_glyph_eigenvalues: Vec::new(),
             tensor_glyph_eigenvectors: Vec::new(),
-            sprite_positions:       Vec::new(),
-            sprite_sizes:           Vec::new(),
-            sprite_colors:          Vec::new(),
-            xo_sprite_positions:    Vec::new(),
-            xo_sprite_sizes:        Vec::new(),
-            xo_sprite_colors:       Vec::new(),
-            streamtube_positions:   Vec::new(),
+            sprite_positions: Vec::new(),
+            sprite_sizes: Vec::new(),
+            sprite_colors: Vec::new(),
+            xo_sprite_positions: Vec::new(),
+            xo_sprite_sizes: Vec::new(),
+            xo_sprite_colors: Vec::new(),
+            streamtube_positions: Vec::new(),
             streamtube_strip_lengths: Vec::new(),
-            tube_positions:         Vec::new(),
-            tube_strip_lengths:     Vec::new(),
-            ribbon_positions:       Vec::new(),
-            ribbon_strip_lengths:   Vec::new(),
-            surface_slice_mesh_id:  None,
-            mc_volume_id:           None,
-            mc_volume_data:         None,
+            tube_positions: Vec::new(),
+            tube_strip_lengths: Vec::new(),
+            ribbon_positions: Vec::new(),
+            ribbon_strip_lengths: Vec::new(),
+            surface_slice_mesh_id: None,
+            mc_volume_id: None,
+            mc_volume_data: None,
         }
     }
 }
@@ -462,16 +465,39 @@ impl App {
 
         // --- Scene objects: Cube A, Hemi A, Hemi B, Cube B ---
         let configs: &[(&str, MeshId, glam::Vec3, [f32; 3])] = &[
-            ("Cube A",   cube_id, glam::vec3(-4.5, 0.0,  0.0), [0.35, 0.55, 0.95]),
-            ("Hemi A",   hemi_id, glam::vec3(-1.5, 0.0,  0.0), [0.35, 0.80, 0.50]),
-            ("Hemi B",   hemi_id, glam::vec3( 1.5, 0.0,  0.0), [0.95, 0.60, 0.30]),
-            ("Cube B",   cube_id, glam::vec3( 4.5, 0.0,  0.0), [0.75, 0.40, 0.90]),
+            (
+                "Cube A",
+                cube_id,
+                glam::vec3(-4.5, 0.0, 0.0),
+                [0.35, 0.55, 0.95],
+            ),
+            (
+                "Hemi A",
+                hemi_id,
+                glam::vec3(-1.5, 0.0, 0.0),
+                [0.35, 0.80, 0.50],
+            ),
+            (
+                "Hemi B",
+                hemi_id,
+                glam::vec3(1.5, 0.0, 0.0),
+                [0.95, 0.60, 0.30],
+            ),
+            (
+                "Cube B",
+                cube_id,
+                glam::vec3(4.5, 0.0, 0.0),
+                [0.75, 0.40, 0.90],
+            ),
         ];
 
         for (name, mesh_id, pos, color) in configs {
             let transform = glam::Mat4::from_translation(*pos);
             let mat = Material::from_color(*color);
-            let node_id = self.pl_state.scene.add_named(name, Some(*mesh_id), transform, mat);
+            let node_id = self
+                .pl_state
+                .scene
+                .add_named(name, Some(*mesh_id), transform, mat);
             self.pl_state.node_names.push((node_id, name.to_string()));
         }
 
@@ -479,11 +505,7 @@ impl App {
         let mut pc: Vec<[f32; 3]> = Vec::new();
         for row in 0..8_i32 {
             for col in 0..10_i32 {
-                pc.push([
-                    (col as f32 - 4.5) * 0.9,
-                    (row as f32 - 3.5) * 0.55,
-                    3.5,
-                ]);
+                pc.push([(col as f32 - 4.5) * 0.9, (row as f32 - 3.5) * 0.55, 3.5]);
             }
         }
         self.pl_state.pc_positions = pc;
@@ -508,9 +530,10 @@ impl App {
                 }
             }
         }
-        let vol_id = renderer
-            .resources_mut()
-            .upload_volume(&self.device, &self.queue, &vol_data, dims);
+        let vol_id =
+            renderer
+                .resources_mut()
+                .upload_volume(&self.device, &self.queue, &vol_data, dims);
         self.pl_state.volume_id = Some(vol_id);
         self.pl_state.volume_data = Some(VolumeData {
             data: vol_data,
@@ -550,13 +573,19 @@ impl App {
                     }
                 }
             }
-            let vol = VolumeData { data, dims: [n, n, n], origin, spacing };
+            let vol = VolumeData {
+                data,
+                dims: [n, n, n],
+                origin,
+                spacing,
+            };
             let vol_arc = std::sync::Arc::new(vol);
-            if let Ok(id) = renderer
-                .resources_mut()
-                .upload_volume_for_mc(&self.device, &self.queue, &vol_arc)
+            if let Ok(id) =
+                renderer
+                    .resources_mut()
+                    .upload_volume_for_mc(&self.device, &self.queue, &vol_arc)
             {
-                self.pl_state.mc_volume_id   = Some(id);
+                self.pl_state.mc_volume_id = Some(id);
                 self.pl_state.mc_volume_data = Some(vol_arc);
             }
         }
@@ -565,11 +594,7 @@ impl App {
         let mut splat_positions: Vec<[f32; 3]> = Vec::with_capacity(9);
         for row in -1..=1_i32 {
             for col in -1..=1_i32 {
-                splat_positions.push([
-                    col as f32 * 0.8,
-                    0.0,
-                    -3.5 + row as f32 * 0.8
-                ]);
+                splat_positions.push([col as f32 * 0.8, 0.0, -3.5 + row as f32 * 0.8]);
             }
         }
         let splat_data = make_pl_splat_data(&splat_positions);
@@ -597,7 +622,12 @@ impl App {
         let tet_data = make_pl_tvm_tet_data();
         let tvm_tet_id = renderer
             .resources_mut()
-            .upload_projected_tet_mesh(&self.device, &tet_data, "scalar", viewport_lib::ColormapId(0))
+            .upload_projected_tet_mesh(
+                &self.device,
+                &tet_data,
+                "scalar",
+                viewport_lib::ColormapId(0),
+            )
             .ok()
             .map(|(id, _, _)| id);
         let tvm_tet_mesh_id = renderer
@@ -605,8 +635,8 @@ impl App {
             .upload_volume_mesh_data(&self.device, &tet_data)
             .ok()
             .map(|(id, _)| id);
-        self.pl_state.tvm_tet_id       = tvm_tet_id;
-        self.pl_state.tvm_tet_mesh_id  = tvm_tet_mesh_id;
+        self.pl_state.tvm_tet_id = tvm_tet_id;
+        self.pl_state.tvm_tet_mesh_id = tvm_tet_mesh_id;
         self.pl_state.tvm_tet_data = Some(std::sync::Arc::new(tet_data));
 
         // --- Polyline: 3 spiral streamlines in front of sprites (pick_id=30) ---
@@ -627,7 +657,7 @@ impl App {
             }
             pl_lens.push(n_per_strip);
         }
-        self.pl_state.polyline_positions    = pl_pos;
+        self.pl_state.polyline_positions = pl_pos;
         self.pl_state.polyline_strip_lengths = pl_lens;
 
         // --- Arrow glyphs: 5 arrows at y=-4 pointing up (pick_id=31) ---
@@ -638,9 +668,9 @@ impl App {
         // --- Tensor glyphs: 4 ellipsoids at x=8 (pick_id=32) ---
         self.pl_state.tensor_glyph_positions = vec![
             [8.0, -1.5, -1.5],
-            [8.0,  1.5, -1.5],
-            [8.0, -1.5,  1.5],
-            [8.0,  1.5,  1.5],
+            [8.0, 1.5, -1.5],
+            [8.0, -1.5, 1.5],
+            [8.0, 1.5, 1.5],
         ];
         // Varied eigenvalues: sphere-ish, cigar, disk, mixed.
         self.pl_state.tensor_glyph_eigenvalues = vec![
@@ -739,7 +769,7 @@ impl App {
                 }
                 lens.push(n);
             }
-            self.pl_state.streamtube_positions    = pos;
+            self.pl_state.streamtube_positions = pos;
             self.pl_state.streamtube_strip_lengths = lens;
         }
 
@@ -759,7 +789,7 @@ impl App {
                 }
                 lens.push(n);
             }
-            self.pl_state.tube_positions    = pos;
+            self.pl_state.tube_positions = pos;
             self.pl_state.tube_strip_lengths = lens;
         }
 
@@ -780,7 +810,7 @@ impl App {
                 }
                 lens.push(n);
             }
-            self.pl_state.ribbon_positions    = pos;
+            self.pl_state.ribbon_positions = pos;
             self.pl_state.ribbon_strip_lengths = lens;
         }
 
@@ -800,8 +830,7 @@ impl App {
         let vp_size = glam::Vec2::new(w, h);
         let view_proj = self.camera.view_proj_matrix();
         let vp_inv = view_proj.inverse();
-        let (ray_origin, ray_dir) =
-            viewport_lib::picking::screen_to_ray(pos, vp_size, vp_inv);
+        let (ray_origin, ray_dir) = viewport_lib::picking::screen_to_ray(pos, vp_size, vp_inv);
 
         let mesh_lookup = self.pl_pick_mesh_lookup();
 
@@ -835,7 +864,10 @@ impl App {
         match self.pl_state.level {
             PlPickLevel::Object => {
                 let mesh_hit = viewport_lib::picking::pick_scene_nodes_cpu(
-                    ray_origin, ray_dir, &self.pl_state.scene, &mesh_lookup,
+                    ray_origin,
+                    ray_dir,
+                    &self.pl_state.scene,
+                    &mesh_lookup,
                 );
                 // Fallback: also try a ray-AABB test against the volume box.
                 let vol_hit = self.pl_state.volume_id.is_some() && {
@@ -857,8 +889,12 @@ impl App {
                         self.pl_state.select_object(hit.id);
                     }
                     record_hit!(
-                        self.pl_node_name(hit.id), "Mesh",
-                        hit.world_pos, hit.normal, None, None
+                        self.pl_node_name(hit.id),
+                        "Mesh",
+                        hit.world_pos,
+                        hit.normal,
+                        None,
+                        None
                     );
                 } else if vol_hit {
                     if shift {
@@ -882,15 +918,22 @@ impl App {
 
             PlPickLevel::Face => {
                 let hit = viewport_lib::picking::pick_scene_nodes_cpu(
-                    ray_origin, ray_dir, &self.pl_state.scene, &mesh_lookup,
+                    ray_origin,
+                    ray_dir,
+                    &self.pl_state.scene,
+                    &mesh_lookup,
                 );
                 if let Some(hit) = hit {
                     if let Some(sub) = hit.sub_object {
                         select_sub!(hit.id, sub);
                     }
                     record_hit!(
-                        self.pl_node_name(hit.id), "Mesh",
-                        hit.world_pos, hit.normal, hit.sub_object, None
+                        self.pl_node_name(hit.id),
+                        "Mesh",
+                        hit.world_pos,
+                        hit.normal,
+                        hit.sub_object,
+                        None
                     );
                 } else if !shift {
                     self.pl_state.clear_selection();
@@ -899,7 +942,10 @@ impl App {
 
             PlPickLevel::Vertex => {
                 let hit = viewport_lib::picking::pick_scene_nodes_cpu(
-                    ray_origin, ray_dir, &self.pl_state.scene, &mesh_lookup,
+                    ray_origin,
+                    ray_dir,
+                    &self.pl_state.scene,
+                    &mesh_lookup,
                 );
                 if let Some(hit) = hit {
                     let vertex_sub = self.pl_node_mesh_key(hit.id).and_then(|key| {
@@ -914,8 +960,12 @@ impl App {
                         .and_then(|s| self.pl_vertex_world_pos(hit.id, s))
                         .unwrap_or(hit.world_pos);
                     record_hit!(
-                        self.pl_node_name(hit.id), "Mesh",
-                        marker, hit.normal, vertex_sub, None
+                        self.pl_node_name(hit.id),
+                        "Mesh",
+                        marker,
+                        hit.normal,
+                        vertex_sub,
+                        None
                     );
                 } else if !shift {
                     self.pl_state.clear_selection();
@@ -923,25 +973,33 @@ impl App {
             }
 
             PlPickLevel::Voxel => {
-                let hit = self.pl_state.volume_id.zip(self.pl_state.volume_data.as_ref()).and_then(|(vol_id, vol_data)| {
-                    let mut item = viewport_lib::VolumeItem::default();
-                    item.volume_id = vol_id;
-                    item.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0))
-                        .to_cols_array_2d();
-                    item.bbox_min = [0.0, 0.0, 0.0];
-                    item.bbox_max = [4.0, 4.0, 4.0];
-                    item.scalar_range = (0.0, 1.0);
-                    item.threshold_min = 0.15;
-                    item.threshold_max = 1.0;
-                    viewport_lib::pick_volume_cpu(ray_origin, ray_dir, 20, &item, vol_data)
-                });
+                let hit = self
+                    .pl_state
+                    .volume_id
+                    .zip(self.pl_state.volume_data.as_ref())
+                    .and_then(|(vol_id, vol_data)| {
+                        let mut item = viewport_lib::VolumeItem::default();
+                        item.volume_id = vol_id;
+                        item.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0))
+                            .to_cols_array_2d();
+                        item.bbox_min = [0.0, 0.0, 0.0];
+                        item.bbox_max = [4.0, 4.0, 4.0];
+                        item.scalar_range = (0.0, 1.0);
+                        item.threshold_min = 0.15;
+                        item.threshold_max = 1.0;
+                        viewport_lib::pick_volume_cpu(ray_origin, ray_dir, 20, &item, vol_data)
+                    });
 
                 if let Some(hit) = hit {
                     let sub = hit.sub_object.unwrap();
                     select_sub!(20, sub);
                     record_hit!(
-                        "Volume".to_string(), "Volume",
-                        hit.world_pos, hit.normal, hit.sub_object, hit.scalar_value
+                        "Volume".to_string(),
+                        "Volume",
+                        hit.world_pos,
+                        hit.normal,
+                        hit.sub_object,
+                        hit.scalar_value
                     );
                 } else if !shift {
                     self.pl_state.clear_selection();
@@ -952,13 +1010,19 @@ impl App {
                 let mut pc_item = viewport_lib::PointCloudItem::default();
                 pc_item.positions = self.pl_state.pc_positions.clone();
                 pc_item.id = 100;
-                let hit = viewport_lib::pick_point_cloud_cpu(pos, 100, &pc_item, view_proj, vp_size, 20.0);
+                let hit = viewport_lib::pick_point_cloud_cpu(
+                    pos, 100, &pc_item, view_proj, vp_size, 20.0,
+                );
                 if let Some(hit) = hit {
                     let sub = hit.sub_object.unwrap();
                     select_sub!(100, sub);
                     record_hit!(
-                        "Point Cloud".to_string(), "Point Cloud",
-                        hit.world_pos, glam::Vec3::Y, Some(sub), None
+                        "Point Cloud".to_string(),
+                        "Point Cloud",
+                        hit.world_pos,
+                        glam::Vec3::Y,
+                        Some(sub),
+                        None
                     );
                 } else if !shift {
                     self.pl_state.clear_selection();
@@ -968,15 +1032,24 @@ impl App {
             PlPickLevel::Splat => {
                 let splat_model = pl_splat_model();
                 let hit = viewport_lib::pick_gaussian_splat_cpu(
-                    pos, 10, &self.pl_state.splat_positions,
-                    splat_model, view_proj, vp_size, 24.0,
+                    pos,
+                    10,
+                    &self.pl_state.splat_positions,
+                    splat_model,
+                    view_proj,
+                    vp_size,
+                    24.0,
                 );
                 if let Some(hit) = hit {
                     let sub = hit.sub_object.unwrap();
                     select_sub!(10, sub);
                     record_hit!(
-                        "Gaussian Splats".to_string(), "Gaussian Splat",
-                        hit.world_pos, glam::Vec3::Y, Some(sub), None
+                        "Gaussian Splats".to_string(),
+                        "Gaussian Splat",
+                        hit.world_pos,
+                        glam::Vec3::Y,
+                        Some(sub),
+                        None
                     );
                 } else if !shift {
                     self.pl_state.clear_selection();
@@ -986,15 +1059,23 @@ impl App {
             PlPickLevel::Tvm => {
                 let hit = self.pl_state.tvm_data.as_ref().and_then(|data| {
                     viewport_lib::pick_transparent_volume_mesh_cpu(
-                        ray_origin, ray_dir, 11, glam::Mat4::IDENTITY, data,
+                        ray_origin,
+                        ray_dir,
+                        11,
+                        glam::Mat4::IDENTITY,
+                        data,
                     )
                 });
                 if let Some(hit) = hit {
                     let sub = hit.sub_object.unwrap();
                     select_sub!(11, sub);
                     record_hit!(
-                        "Transparent Volume Mesh".to_string(), "Volume Mesh",
-                        hit.world_pos, hit.normal, Some(sub), None
+                        "Transparent Volume Mesh".to_string(),
+                        "Volume Mesh",
+                        hit.world_pos,
+                        hit.normal,
+                        Some(sub),
+                        None
                     );
                 } else if !shift {
                     self.pl_state.clear_selection();
@@ -1026,11 +1107,14 @@ impl App {
         match self.pl_state.level {
             PlPickLevel::Object => {
                 // Use box_select (object-level by position).
-                let objects: Vec<&dyn viewport_lib::traits::ViewportObject> =
-                    self.pl_state.scene.nodes().map(|n| n as &dyn viewport_lib::traits::ViewportObject).collect();
-                let hits = viewport_lib::picking::box_select(
-                    r_min, r_max, &objects, view_proj, vp_size,
-                );
+                let objects: Vec<&dyn viewport_lib::traits::ViewportObject> = self
+                    .pl_state
+                    .scene
+                    .nodes()
+                    .map(|n| n as &dyn viewport_lib::traits::ViewportObject)
+                    .collect();
+                let hits =
+                    viewport_lib::picking::box_select(r_min, r_max, &objects, view_proj, vp_size);
                 for id in hits {
                     self.pl_state.selection.add(id);
                 }
@@ -1038,9 +1122,13 @@ impl App {
 
             PlPickLevel::Face => {
                 let mesh_lookup_usize = self.pl_pick_mesh_lookup_usize();
-                let scene_items = self.pl_state.scene.collect_render_items(&viewport_lib::Selection::new());
+                let scene_items = self
+                    .pl_state
+                    .scene
+                    .collect_render_items(&viewport_lib::Selection::new());
                 let result = viewport_lib::picking::pick_rect(
-                    r_min, r_max,
+                    r_min,
+                    r_max,
                     &scene_items,
                     &mesh_lookup_usize,
                     &[],
@@ -1072,10 +1160,14 @@ impl App {
                                 }
                                 let ndc = glam::Vec2::new(clip.x / clip.w, -clip.y / clip.w);
                                 let screen = (ndc * 0.5 + glam::Vec2::splat(0.5)) * vp_size;
-                                if screen.x >= r_min.x && screen.x <= r_max.x
-                                    && screen.y >= r_min.y && screen.y <= r_max.y
+                                if screen.x >= r_min.x
+                                    && screen.x <= r_max.x
+                                    && screen.y >= r_min.y
+                                    && screen.y <= r_max.y
                                 {
-                                    self.pl_state.sub_selection.add(node_id, SubObjectRef::Vertex(vi as u32));
+                                    self.pl_state
+                                        .sub_selection
+                                        .add(node_id, SubObjectRef::Vertex(vi as u32));
                                 }
                             }
                         }
@@ -1093,10 +1185,14 @@ impl App {
                     }
                     let ndc = glam::Vec2::new(clip.x / clip.w, -clip.y / clip.w);
                     let screen = (ndc * 0.5 + glam::Vec2::splat(0.5)) * vp_size;
-                    if screen.x >= r_min.x && screen.x <= r_max.x
-                        && screen.y >= r_min.y && screen.y <= r_max.y
+                    if screen.x >= r_min.x
+                        && screen.x <= r_max.x
+                        && screen.y >= r_min.y
+                        && screen.y <= r_max.y
                     {
-                        self.pl_state.sub_selection.add(100, SubObjectRef::Point(i as u32));
+                        self.pl_state
+                            .sub_selection
+                            .add(100, SubObjectRef::Point(i as u32));
                     }
                 }
             }
@@ -1127,8 +1223,13 @@ impl App {
             PlPickLevel::Splat => {
                 let splat_model = pl_splat_model();
                 let result = viewport_lib::pick_gaussian_splat_rect(
-                    r_min, r_max, 10, &self.pl_state.splat_positions,
-                    splat_model, view_proj, vp_size,
+                    r_min,
+                    r_max,
+                    10,
+                    &self.pl_state.splat_positions,
+                    splat_model,
+                    view_proj,
+                    vp_size,
                 );
                 for (_, subs) in &result.hits {
                     for &sub in subs {
@@ -1140,7 +1241,13 @@ impl App {
             PlPickLevel::Tvm => {
                 if let Some(data) = self.pl_state.tvm_data.as_ref() {
                     let result = viewport_lib::pick_transparent_volume_mesh_rect(
-                        r_min, r_max, 11, glam::Mat4::IDENTITY, data, view_proj, vp_size,
+                        r_min,
+                        r_max,
+                        11,
+                        glam::Mat4::IDENTITY,
+                        data,
+                        view_proj,
+                        vp_size,
                     );
                     for (_, subs) in &result.hits {
                         for &sub in subs {
@@ -1199,18 +1306,22 @@ impl App {
         let is_mesh_node = Self::pl_item_label(hit.id).is_none();
         let object_type = match hit.sub_object {
             None => {
-                if is_mesh_node { "Mesh" } else { Self::pl_item_label(hit.id).unwrap_or("Object") }
+                if is_mesh_node {
+                    "Mesh"
+                } else {
+                    Self::pl_item_label(hit.id).unwrap_or("Object")
+                }
             }
-            Some(SubObjectRef::Face(_))     => "Mesh",
-            Some(SubObjectRef::Vertex(_))   => "Mesh",
-            Some(SubObjectRef::Point(_))    => "Point Cloud",
-            Some(SubObjectRef::Splat(_))    => "Gaussian Splat",
+            Some(SubObjectRef::Face(_)) => "Mesh",
+            Some(SubObjectRef::Vertex(_)) => "Mesh",
+            Some(SubObjectRef::Point(_)) => "Point Cloud",
+            Some(SubObjectRef::Splat(_)) => "Gaussian Splat",
             Some(SubObjectRef::Instance(_)) => "Glyph",
-            Some(SubObjectRef::Segment(_))  => "Polyline",
-            Some(SubObjectRef::Strip(_))    => "Polyline",
-            Some(SubObjectRef::Cell(_))     => "Volume Mesh",
-            Some(SubObjectRef::Voxel(_))    => "Volume",
-            Some(_)                         => "Object",
+            Some(SubObjectRef::Segment(_)) => "Polyline",
+            Some(SubObjectRef::Strip(_)) => "Polyline",
+            Some(SubObjectRef::Cell(_)) => "Volume Mesh",
+            Some(SubObjectRef::Voxel(_)) => "Volume",
+            Some(_) => "Object",
         };
 
         self.pl_state.last_hit = Some(PlHitInfo {
@@ -1276,7 +1387,8 @@ impl App {
 
     /// Mesh lookup map for `pick_rect` (key = usize mesh index).
     fn pl_pick_mesh_lookup_usize(&self) -> HashMap<usize, (Vec<[f32; 3]>, Vec<u32>)> {
-        self.pl_state.mesh_lookup
+        self.pl_state
+            .mesh_lookup
             .iter()
             .map(|(&k, v)| (k as usize, v.clone()))
             .collect()
@@ -1287,35 +1399,35 @@ impl App {
         if let Some(label) = Self::pl_item_label(id) {
             return label.to_string();
         }
-        self.pl_state.node_names
+        self.pl_state
+            .node_names
             .iter()
             .find(|(nid, _)| *nid == id)
             .map(|(_, n)| n.clone())
             .unwrap_or_else(|| format!("id={id}"))
     }
 
-
     /// Human-readable label for the non-mesh pick IDs used in showcase 33.
     fn pl_item_label(id: NodeId) -> Option<&'static str> {
         match id {
             100 => Some("Point Cloud"),
-            20  => Some("Volume"),
-            10  => Some("Gaussian Splats"),
-            11  => Some("Volume Mesh"),
-            12  => Some("TVM Tets"),
-            30  => Some("Polyline"),
-            31  => Some("Arrow Glyphs"),
-            32  => Some("Tensor Glyphs"),
-            33  => Some("Sprites"),
-            34  => Some("XO Sprites"),
-            40  => Some("Streamtube"),
-            41  => Some("Tube"),
-            42  => Some("Ribbon"),
-            51  => Some("Surface Slice"),
-            52  => Some("Screen Image"),
-            53  => Some("GPU Implicit"),
-            54  => Some("GPU Marching Cubes"),
-            _   => None,
+            20 => Some("Volume"),
+            10 => Some("Gaussian Splats"),
+            11 => Some("Volume Mesh"),
+            12 => Some("TVM Tets"),
+            30 => Some("Polyline"),
+            31 => Some("Arrow Glyphs"),
+            32 => Some("Tensor Glyphs"),
+            33 => Some("Sprites"),
+            34 => Some("XO Sprites"),
+            40 => Some("Streamtube"),
+            41 => Some("Tube"),
+            42 => Some("Ribbon"),
+            51 => Some("Surface Slice"),
+            52 => Some("Screen Image"),
+            53 => Some("GPU Implicit"),
+            54 => Some("GPU Marching Cubes"),
+            _ => None,
         }
     }
 
@@ -1340,7 +1452,11 @@ impl App {
     }
 
     /// World-space position for a Vertex sub-object.
-    pub(crate) fn pl_vertex_world_pos(&self, node_id: NodeId, sub: SubObjectRef) -> Option<glam::Vec3> {
+    pub(crate) fn pl_vertex_world_pos(
+        &self,
+        node_id: NodeId,
+        sub: SubObjectRef,
+    ) -> Option<glam::Vec3> {
         if let SubObjectRef::Vertex(vi) = sub {
             let key = self.pl_node_mesh_key(node_id)?;
             let (positions, _) = self.pl_state.mesh_lookup.get(&key)?;
@@ -1351,7 +1467,6 @@ impl App {
             None
         }
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -1363,7 +1478,7 @@ pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
     // Section toggle
     // -----------------------------------------------------------------------
     ui.horizontal(|ui| {
-        ui.selectable_value(&mut app.pl_state.unified_mode, true,  "Unified API");
+        ui.selectable_value(&mut app.pl_state.unified_mode, true, "Unified API");
         ui.selectable_value(&mut app.pl_state.unified_mode, false, "Per-type reference");
     });
     ui.separator();
@@ -1393,12 +1508,12 @@ pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
         ui.label("Pick Level:");
         ui.horizontal_wrapped(|ui| {
             ui.radio_value(&mut app.pl_state.level, PlPickLevel::Object, "Object");
-            ui.radio_value(&mut app.pl_state.level, PlPickLevel::Face,   "Face");
+            ui.radio_value(&mut app.pl_state.level, PlPickLevel::Face, "Face");
             ui.radio_value(&mut app.pl_state.level, PlPickLevel::Vertex, "Vertex");
-            ui.radio_value(&mut app.pl_state.level, PlPickLevel::Point,  "Point");
-            ui.radio_value(&mut app.pl_state.level, PlPickLevel::Voxel,  "Voxel");
-            ui.radio_value(&mut app.pl_state.level, PlPickLevel::Splat,  "Splat");
-            ui.radio_value(&mut app.pl_state.level, PlPickLevel::Tvm,    "TVM");
+            ui.radio_value(&mut app.pl_state.level, PlPickLevel::Point, "Point");
+            ui.radio_value(&mut app.pl_state.level, PlPickLevel::Voxel, "Voxel");
+            ui.radio_value(&mut app.pl_state.level, PlPickLevel::Splat, "Splat");
+            ui.radio_value(&mut app.pl_state.level, PlPickLevel::Tvm, "TVM");
         });
     }
 
@@ -1423,18 +1538,42 @@ pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
         ui.label(format!("Object: {}", hit.object_name));
         ui.label(format!("Type: {}", hit.object_type));
         match hit.sub_object {
-            None                             => { ui.label("Level: Object"); }
-            Some(SubObjectRef::Face(i))      => { ui.label(format!("Level: Face #{i}")); }
-            Some(SubObjectRef::Vertex(i))    => { ui.label(format!("Level: Vertex #{i}")); }
-            Some(SubObjectRef::Edge(i))      => { ui.label(format!("Level: Edge #{i}")); }
-            Some(SubObjectRef::Point(i))     => { ui.label(format!("Level: Point #{i}")); }
-            Some(SubObjectRef::Voxel(i))     => { ui.label(format!("Level: Voxel #{i}")); }
-            Some(SubObjectRef::Cell(i))      => { ui.label(format!("Level: Cell #{i}")); }
-            Some(SubObjectRef::Splat(i))     => { ui.label(format!("Level: Splat #{i}")); }
-            Some(SubObjectRef::Instance(i))  => { ui.label(format!("Level: Instance #{i}")); }
-            Some(SubObjectRef::Segment(i))   => { ui.label(format!("Level: Segment #{i}")); }
-            Some(SubObjectRef::Strip(i))     => { ui.label(format!("Level: Strip #{i}")); }
-            Some(_)                          => { ui.label("Level: (unknown)"); }
+            None => {
+                ui.label("Level: Object");
+            }
+            Some(SubObjectRef::Face(i)) => {
+                ui.label(format!("Level: Face #{i}"));
+            }
+            Some(SubObjectRef::Vertex(i)) => {
+                ui.label(format!("Level: Vertex #{i}"));
+            }
+            Some(SubObjectRef::Edge(i)) => {
+                ui.label(format!("Level: Edge #{i}"));
+            }
+            Some(SubObjectRef::Point(i)) => {
+                ui.label(format!("Level: Point #{i}"));
+            }
+            Some(SubObjectRef::Voxel(i)) => {
+                ui.label(format!("Level: Voxel #{i}"));
+            }
+            Some(SubObjectRef::Cell(i)) => {
+                ui.label(format!("Level: Cell #{i}"));
+            }
+            Some(SubObjectRef::Splat(i)) => {
+                ui.label(format!("Level: Splat #{i}"));
+            }
+            Some(SubObjectRef::Instance(i)) => {
+                ui.label(format!("Level: Instance #{i}"));
+            }
+            Some(SubObjectRef::Segment(i)) => {
+                ui.label(format!("Level: Segment #{i}"));
+            }
+            Some(SubObjectRef::Strip(i)) => {
+                ui.label(format!("Level: Strip #{i}"));
+            }
+            Some(_) => {
+                ui.label("Level: (unknown)");
+            }
         }
         let p = hit.world_pos;
         ui.label(format!("Pos: ({:.2}, {:.2}, {:.2})", p.x, p.y, p.z));
@@ -1445,43 +1584,63 @@ pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
         }
     } else {
         let obj_count = app.pl_state.selection.len();
-        let mut faces     = 0u32;
-        let mut verts     = 0u32;
-        let mut points    = 0u32;
-        let mut splats    = 0u32;
-        let mut voxels    = 0u32;
-        let mut cells     = 0u32;
+        let mut faces = 0u32;
+        let mut verts = 0u32;
+        let mut points = 0u32;
+        let mut splats = 0u32;
+        let mut voxels = 0u32;
+        let mut cells = 0u32;
         let mut instances = 0u32;
-        let mut segments  = 0u32;
-        let mut strips    = 0u32;
+        let mut segments = 0u32;
+        let mut strips = 0u32;
         for (_, sub) in app.pl_state.sub_selection.iter() {
             match sub {
-                SubObjectRef::Face(_)     => faces     += 1,
-                SubObjectRef::Vertex(_)   => verts     += 1,
-                SubObjectRef::Point(_)    => points    += 1,
-                SubObjectRef::Splat(_)    => splats    += 1,
-                SubObjectRef::Voxel(_)    => voxels    += 1,
-                SubObjectRef::Cell(_)     => cells     += 1,
+                SubObjectRef::Face(_) => faces += 1,
+                SubObjectRef::Vertex(_) => verts += 1,
+                SubObjectRef::Point(_) => points += 1,
+                SubObjectRef::Splat(_) => splats += 1,
+                SubObjectRef::Voxel(_) => voxels += 1,
+                SubObjectRef::Cell(_) => cells += 1,
                 SubObjectRef::Instance(_) => instances += 1,
-                SubObjectRef::Segment(_)  => segments  += 1,
-                SubObjectRef::Strip(_)    => strips    += 1,
+                SubObjectRef::Segment(_) => segments += 1,
+                SubObjectRef::Strip(_) => strips += 1,
                 _ => {}
             }
         }
-        let sub_total = faces + verts + points + splats + voxels + cells
-            + instances + segments + strips;
+        let sub_total =
+            faces + verts + points + splats + voxels + cells + instances + segments + strips;
         if obj_count > 0 || sub_total > 0 {
             ui.label(egui::RichText::new("Selection").strong());
-            if obj_count  > 0 { ui.label(format!("Objects: {obj_count}")); }
-            if faces      > 0 { ui.label(format!("Faces: {faces}")); }
-            if verts      > 0 { ui.label(format!("Vertices: {verts}")); }
-            if points     > 0 { ui.label(format!("Points: {points}")); }
-            if splats     > 0 { ui.label(format!("Splats: {splats}")); }
-            if voxels     > 0 { ui.label(format!("Voxels: {voxels}")); }
-            if cells      > 0 { ui.label(format!("Cells: {cells}")); }
-            if instances  > 0 { ui.label(format!("Instances: {instances}")); }
-            if segments   > 0 { ui.label(format!("Segments: {segments}")); }
-            if strips     > 0 { ui.label(format!("Strips: {strips}")); }
+            if obj_count > 0 {
+                ui.label(format!("Objects: {obj_count}"));
+            }
+            if faces > 0 {
+                ui.label(format!("Faces: {faces}"));
+            }
+            if verts > 0 {
+                ui.label(format!("Vertices: {verts}"));
+            }
+            if points > 0 {
+                ui.label(format!("Points: {points}"));
+            }
+            if splats > 0 {
+                ui.label(format!("Splats: {splats}"));
+            }
+            if voxels > 0 {
+                ui.label(format!("Voxels: {voxels}"));
+            }
+            if cells > 0 {
+                ui.label(format!("Cells: {cells}"));
+            }
+            if instances > 0 {
+                ui.label(format!("Instances: {instances}"));
+            }
+            if segments > 0 {
+                ui.label(format!("Segments: {segments}"));
+            }
+            if strips > 0 {
+                ui.label(format!("Strips: {strips}"));
+            }
         } else {
             ui.label("Click or drag to select.");
         }

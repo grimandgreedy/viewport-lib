@@ -68,8 +68,7 @@ impl TurntableController {
         // Normalize azimuth to [-PI, PI] to avoid float drift over time.
         self.azimuth = normalize_angle(self.azimuth);
         camera.set_orientation(
-            glam::Quat::from_rotation_z(self.azimuth)
-                * glam::Quat::from_rotation_x(self.tilt),
+            glam::Quat::from_rotation_z(self.azimuth) * glam::Quat::from_rotation_x(self.tilt),
         );
     }
 }

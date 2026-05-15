@@ -61,18 +61,18 @@ pub struct GpuMarchingCubesJob {
 /// Adjacent slabs share exactly one scalar Z-layer at their boundary so MC
 /// edge interpolation produces no seams.
 pub(crate) struct McSlabGpuData {
-    pub scalar_buf:     wgpu::Buffer,  // f32 per slab node; STORAGE | COPY_DST
-    pub counts_buf:     wgpu::Buffer,  // u32 per slab cell; STORAGE
-    pub case_idx_buf:   wgpu::Buffer,  // u32 per slab cell; STORAGE
-    pub offsets_buf:    wgpu::Buffer,  // u32 per slab cell; STORAGE
-    pub block_sums_buf: wgpu::Buffer,  // u32 per slab block; STORAGE
-    pub vertex_buf:     wgpu::Buffer,  // f32 * 6 per vertex; STORAGE | VERTEX
-    pub indirect_buf:   wgpu::Buffer,  // 4 u32; STORAGE | INDIRECT
-    pub dims:           [u32; 3],      // [nx, ny, slab_nz] (scalar layers)
-    pub origin:         [f32; 3],      // world origin; z is offset per slab
-    pub spacing:        [f32; 3],
-    pub cell_count:     u32,
-    pub block_count:    u32,
+    pub scalar_buf: wgpu::Buffer,   // f32 per slab node; STORAGE | COPY_DST
+    pub counts_buf: wgpu::Buffer,   // u32 per slab cell; STORAGE
+    pub case_idx_buf: wgpu::Buffer, // u32 per slab cell; STORAGE
+    pub offsets_buf: wgpu::Buffer,  // u32 per slab cell; STORAGE
+    pub block_sums_buf: wgpu::Buffer, // u32 per slab block; STORAGE
+    pub vertex_buf: wgpu::Buffer,   // f32 * 6 per vertex; STORAGE | VERTEX
+    pub indirect_buf: wgpu::Buffer, // 4 u32; STORAGE | INDIRECT
+    pub dims: [u32; 3],             // [nx, ny, slab_nz] (scalar layers)
+    pub origin: [f32; 3],           // world origin; z is offset per slab
+    pub spacing: [f32; 3],
+    pub cell_count: u32,
+    pub block_count: u32,
 }
 
 /// Persistent GPU resources for one uploaded volume, split into Z-axis slabs.
@@ -88,7 +88,7 @@ pub(crate) struct McVolumeGpuData {
 /// Per-frame data for one MC job, consumed by the render phase.
 pub(crate) struct McFrameData {
     pub volume_idx: usize,
-    pub render_bg:  wgpu::BindGroup,
+    pub render_bg: wgpu::BindGroup,
 }
 
 /// Per-selected MC job data for the outline mask pass.
@@ -106,43 +106,43 @@ pub(crate) struct McOutlineItem {
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct ClassifyParams {
-    nx:       u32,
-    ny:       u32,
-    nz:       u32,
+    nx: u32,
+    ny: u32,
+    nz: u32,
     isovalue: f32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct PrefixSumParams {
-    cell_count:  u32,
+    cell_count: u32,
     block_count: u32,
-    level:       u32,
-    _pad:        u32,
+    level: u32,
+    _pad: u32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GenerateParams {
-    nx:       u32,
-    ny:       u32,
-    nz:       u32,
+    nx: u32,
+    ny: u32,
+    nz: u32,
     isovalue: f32,
     origin_x: f32,
     origin_y: f32,
     origin_z: f32,
-    _pad0:    f32,
+    _pad0: f32,
     spacing_x: f32,
     spacing_y: f32,
     spacing_z: f32,
-    _pad1:    f32,
+    _pad1: f32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct McSurfaceRaw {
     base_color: [f32; 3],
-    roughness:  f32,
+    roughness: f32,
 }
 
 // ---------------------------------------------------------------------------
@@ -266,30 +266,25 @@ impl ViewportGpuResources {
         // ----------------------------------------------------------------
         let classify_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mc_classify_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/mc_classify.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mc_classify.wgsl").into()),
         });
         let classify_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mc_classify_layout"),
             bind_group_layouts: &[&classify_bgl],
             push_constant_ranges: &[],
         });
-        let classify_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("mc_classify_pipeline"),
-                layout: Some(&classify_layout),
-                module: &classify_shader,
-                entry_point: Some("main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
-            });
+        let classify_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("mc_classify_pipeline"),
+            layout: Some(&classify_layout),
+            module: &classify_shader,
+            entry_point: Some("main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
 
         let prefix_sum_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mc_prefix_sum_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/mc_prefix_sum.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mc_prefix_sum.wgsl").into()),
         });
         let prefix_sum_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mc_prefix_sum_layout"),
@@ -308,33 +303,28 @@ impl ViewportGpuResources {
 
         let generate_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mc_generate_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/mc_generate.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mc_generate.wgsl").into()),
         });
         let generate_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mc_generate_layout"),
             bind_group_layouts: &[&generate_bgl],
             push_constant_ranges: &[],
         });
-        let generate_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("mc_generate_pipeline"),
-                layout: Some(&generate_layout),
-                module: &generate_shader,
-                entry_point: Some("main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
-            });
+        let generate_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("mc_generate_pipeline"),
+            layout: Some(&generate_layout),
+            module: &generate_shader,
+            entry_point: Some("main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
 
         // ----------------------------------------------------------------
         // Surface render pipeline.
         // ----------------------------------------------------------------
         let surface_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mc_surface_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/mc_surface.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mc_surface.wgsl").into()),
         });
         let surface_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mc_surface_layout"),
@@ -405,16 +395,16 @@ impl ViewportGpuResources {
         // ----------------------------------------------------------------
         // Commit all resources.
         // ----------------------------------------------------------------
-        self.mc_case_count_buf    = Some(mc_case_count_buf);
-        self.mc_case_table_buf    = Some(mc_case_table_buf);
-        self.mc_classify_bgl      = Some(classify_bgl);
-        self.mc_prefix_sum_bgl    = Some(prefix_sum_bgl);
-        self.mc_generate_bgl      = Some(generate_bgl);
-        self.mc_render_bgl        = Some(render_bgl);
+        self.mc_case_count_buf = Some(mc_case_count_buf);
+        self.mc_case_table_buf = Some(mc_case_table_buf);
+        self.mc_classify_bgl = Some(classify_bgl);
+        self.mc_prefix_sum_bgl = Some(prefix_sum_bgl);
+        self.mc_generate_bgl = Some(generate_bgl);
+        self.mc_render_bgl = Some(render_bgl);
         self.mc_classify_pipeline = Some(classify_pipeline);
         self.mc_prefix_sum_pipeline = Some(prefix_sum_pipeline);
         self.mc_generate_pipeline = Some(generate_pipeline);
-        self.mc_surface_pipeline  = Some(DualPipeline {
+        self.mc_surface_pipeline = Some(DualPipeline {
             ldr: make_surface(self.target_format),
             hdr: make_surface(wgpu::TextureFormat::Rgba16Float),
         });
@@ -440,8 +430,8 @@ impl ViewportGpuResources {
         // is often half of max_buffer_size (e.g. 128 MiB vs 256 MiB). Use the smaller of
         // the two so slab sizing respects both constraints.
         let max_binding = device.limits().max_storage_buffer_binding_size as u64;
-        let max_buf     = device.limits().max_buffer_size;
-        let max_limit   = max_binding.min(max_buf);
+        let max_buf = device.limits().max_buffer_size;
+        let max_limit = max_binding.min(max_buf);
 
         // Worst-case vertex buffer bytes per Z-cell-layer:
         // (nx-1)*(ny-1) cells × 5 triangles × 3 vertices × 24 bytes = cells_xy × 360.
@@ -458,27 +448,27 @@ impl ViewportGpuResources {
             return Err(crate::ViewportError::McBufferTooLarge {
                 buffer: "vertex_buf",
                 needed: cells_xy * 15 * 24,
-                limit:  max_limit,
+                limit: max_limit,
             });
         }
 
         let nz_cells_total = nz - 1;
-        let slab_count     = nz_cells_total.div_ceil(z_cells_per_slab);
-        let nodes_per_z    = (nx * ny) as usize;
+        let slab_count = nz_cells_total.div_ceil(z_cells_per_slab);
+        let nodes_per_z = (nx * ny) as usize;
 
         let mut slabs = Vec::with_capacity(slab_count as usize);
 
         for s in 0..slab_count {
             let z_cell_start = s * z_cells_per_slab;
-            let z_cell_end   = (z_cell_start + z_cells_per_slab).min(nz_cells_total);
-            let slab_z_cells = z_cell_end - z_cell_start;  // cell layers in this slab
-            let slab_nz      = slab_z_cells + 1;           // scalar layers in this slab
+            let z_cell_end = (z_cell_start + z_cells_per_slab).min(nz_cells_total);
+            let slab_z_cells = z_cell_end - z_cell_start; // cell layers in this slab
+            let slab_nz = slab_z_cells + 1; // scalar layers in this slab
 
             // slab_cell_count is bounded by max_cells_per_slab, which fits in u32
             // at any realistic max_buffer_size value.
-            let slab_cell_count  = (cells_xy * slab_z_cells as u64) as u32;
+            let slab_cell_count = (cells_xy * slab_z_cells as u64) as u32;
             let slab_block_count = slab_cell_count.div_ceil(256);
-            let slab_cell_bytes  = (slab_cell_count as u64) * 4;
+            let slab_cell_bytes = (slab_cell_count as u64) * 4;
             let slab_block_bytes = (slab_block_count as u64) * 4;
             // At most 15 vertices per cell (5 triangles × 3 vertices) × 24 bytes each.
             let slab_vertex_bytes = (slab_cell_count as u64) * 15 * 24;
@@ -486,8 +476,8 @@ impl ViewportGpuResources {
             // Scalar data is x-fastest: index = x + y*nx + z*nx*ny.
             // A Z-slab covering scalar layers z_cell_start..z_cell_start+slab_nz is
             // a contiguous slice — no copying required.
-            let scalar_start  = z_cell_start as usize * nodes_per_z;
-            let scalar_end    = (z_cell_start + slab_nz) as usize * nodes_per_z;
+            let scalar_start = z_cell_start as usize * nodes_per_z;
+            let scalar_end = (z_cell_start + slab_nz) as usize * nodes_per_z;
             let slab_origin_z = vol.origin[2] + z_cell_start as f32 * vol.spacing[2];
 
             let scalar_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -542,10 +532,10 @@ impl ViewportGpuResources {
                 block_sums_buf,
                 vertex_buf,
                 indirect_buf,
-                dims:    [nx, ny, slab_nz],
-                origin:  [vol.origin[0], vol.origin[1], slab_origin_z],
+                dims: [nx, ny, slab_nz],
+                origin: [vol.origin[0], vol.origin[1], slab_origin_z],
                 spacing: vol.spacing,
-                cell_count:  slab_cell_count,
+                cell_count: slab_cell_count,
                 block_count: slab_block_count,
             });
         }
@@ -586,14 +576,15 @@ impl ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mc_outline_mask_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/outline_mask.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/outline_mask.wgsl").into()),
         });
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mc_outline_mask_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &self.outline_bind_group_layout],
+            bind_group_layouts: &[
+                &self.camera_bind_group_layout,
+                &self.outline_bind_group_layout,
+            ],
             push_constant_ranges: &[],
         });
 
@@ -608,8 +599,8 @@ impl ViewportGpuResources {
             attributes: &vert_attrs,
         };
 
-        self.mc_outline_mask_pipeline =
-            Some(device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        self.mc_outline_mask_pipeline = Some(device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
                 label: Some("mc_outline_mask_pipeline"),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
@@ -647,7 +638,8 @@ impl ViewportGpuResources {
                 },
                 multiview: None,
                 cache: None,
-            }));
+            },
+        ));
     }
 
     /// Dispatch all three compute passes for every pending MC job.
@@ -689,7 +681,7 @@ impl ViewportGpuResources {
             // ----------------------------------------------------------
             let mat_raw = McSurfaceRaw {
                 base_color: job.material.base_color,
-                roughness:  job.material.roughness,
+                roughness: job.material.roughness,
             };
             let mat_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("mc_surface_mat"),
@@ -699,7 +691,10 @@ impl ViewportGpuResources {
             let render_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("mc_render_bg"),
                 layout: render_bgl,
-                entries: &[wgpu::BindGroupEntry { binding: 0, resource: mat_buf.as_entire_binding() }],
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: mat_buf.as_entire_binding(),
+                }],
             });
 
             // Run all three compute passes for each slab independently.
@@ -716,21 +711,37 @@ impl ViewportGpuResources {
                     nz: slab.dims[2],
                     isovalue: job.isovalue,
                 };
-                let classify_uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("mc_classify_uniform"),
-                    contents: bytemuck::bytes_of(&classify_params),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
+                let classify_uniform =
+                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("mc_classify_uniform"),
+                        contents: bytemuck::bytes_of(&classify_params),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    });
 
                 let classify_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("mc_classify_bg"),
                     layout: classify_bgl,
                     entries: &[
-                        wgpu::BindGroupEntry { binding: 0, resource: classify_uniform.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 1, resource: slab.scalar_buf.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 2, resource: case_count_buf.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 3, resource: slab.counts_buf.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 4, resource: slab.case_idx_buf.as_entire_binding() },
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: classify_uniform.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: slab.scalar_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: case_count_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: slab.counts_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: slab.case_idx_buf.as_entire_binding(),
+                        },
                     ],
                 });
 
@@ -738,7 +749,12 @@ impl ViewportGpuResources {
                 // Per-slab prefix-sum uniforms (one per level).
                 // ----------------------------------------------------------
                 let ps_uniforms: [wgpu::Buffer; 3] = std::array::from_fn(|level| {
-                    let params = PrefixSumParams { cell_count: cc, block_count: bc, level: level as u32, _pad: 0 };
+                    let params = PrefixSumParams {
+                        cell_count: cc,
+                        block_count: bc,
+                        level: level as u32,
+                        _pad: 0,
+                    };
                     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("mc_ps_uniform"),
                         contents: bytemuck::bytes_of(&params),
@@ -751,11 +767,26 @@ impl ViewportGpuResources {
                         label: Some("mc_ps_bg"),
                         layout: prefix_sum_bgl,
                         entries: &[
-                            wgpu::BindGroupEntry { binding: 0, resource: ps_uniforms[level].as_entire_binding() },
-                            wgpu::BindGroupEntry { binding: 1, resource: slab.counts_buf.as_entire_binding() },
-                            wgpu::BindGroupEntry { binding: 2, resource: slab.offsets_buf.as_entire_binding() },
-                            wgpu::BindGroupEntry { binding: 3, resource: slab.block_sums_buf.as_entire_binding() },
-                            wgpu::BindGroupEntry { binding: 4, resource: slab.indirect_buf.as_entire_binding() },
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: ps_uniforms[level].as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: slab.counts_buf.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: slab.offsets_buf.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: slab.block_sums_buf.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
+                                resource: slab.indirect_buf.as_entire_binding(),
+                            },
                         ],
                     })
                 });
@@ -764,35 +795,54 @@ impl ViewportGpuResources {
                 // Per-slab generate uniform (origin_z shifted by slab offset).
                 // ----------------------------------------------------------
                 let generate_params = GenerateParams {
-                    nx:        slab.dims[0],
-                    ny:        slab.dims[1],
-                    nz:        slab.dims[2],
-                    isovalue:  job.isovalue,
-                    origin_x:  slab.origin[0],
-                    origin_y:  slab.origin[1],
-                    origin_z:  slab.origin[2],
-                    _pad0:     0.0,
+                    nx: slab.dims[0],
+                    ny: slab.dims[1],
+                    nz: slab.dims[2],
+                    isovalue: job.isovalue,
+                    origin_x: slab.origin[0],
+                    origin_y: slab.origin[1],
+                    origin_z: slab.origin[2],
+                    _pad0: 0.0,
                     spacing_x: slab.spacing[0],
                     spacing_y: slab.spacing[1],
                     spacing_z: slab.spacing[2],
-                    _pad1:     0.0,
+                    _pad1: 0.0,
                 };
-                let generate_uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("mc_generate_uniform"),
-                    contents: bytemuck::bytes_of(&generate_params),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
+                let generate_uniform =
+                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("mc_generate_uniform"),
+                        contents: bytemuck::bytes_of(&generate_params),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    });
 
                 let generate_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("mc_generate_bg"),
                     layout: generate_bgl,
                     entries: &[
-                        wgpu::BindGroupEntry { binding: 0, resource: generate_uniform.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 1, resource: slab.scalar_buf.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 2, resource: case_table_buf.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 3, resource: slab.offsets_buf.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 4, resource: slab.case_idx_buf.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 5, resource: slab.vertex_buf.as_entire_binding() },
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: generate_uniform.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: slab.scalar_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: case_table_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: slab.offsets_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: slab.case_idx_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 5,
+                            resource: slab.vertex_buf.as_entire_binding(),
+                        },
                     ],
                 });
 
@@ -862,7 +912,10 @@ impl ViewportGpuResources {
                 }
             }
 
-            frame_data.push(McFrameData { volume_idx: job.volume_id.0, render_bg });
+            frame_data.push(McFrameData {
+                volume_idx: job.volume_id.0,
+                render_bg,
+            });
         }
 
         queue.submit(std::iter::once(encoder.finish()));
