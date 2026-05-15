@@ -140,31 +140,123 @@ fn strip_for_segment(seg_idx: u32, strip_lengths: &[u32]) -> u32 {
     strip_lengths.len().saturating_sub(1) as u32
 }
 
-/// Build a flat list of segment midpoints ordered by global segment index.
+/// Möller-Trumbore ray-triangle intersection.
 ///
-/// Shared by polyline, streamtube, tube, and ribbon click picking.
-/// The index into the returned slice is the global segment index for that item.
-fn build_segment_midpoints(positions: &[[f32; 3]], strip_lengths: &[u32]) -> Vec<[f32; 3]> {
-    let mut midpoints = Vec::new();
-    if strip_lengths.is_empty() {
-        for j in 0..positions.len().saturating_sub(1) {
-            let a = glam::Vec3::from(positions[j]);
-            let b = glam::Vec3::from(positions[j + 1]);
-            midpoints.push(((a + b) * 0.5).to_array());
-        }
+/// Returns the ray parameter `t > 0` on hit, or `None` on miss or backface cull.
+/// Call twice with reversed winding to test both faces.
+#[inline]
+fn ray_triangle(
+    ray_orig: glam::Vec3,
+    ray_dir: glam::Vec3,
+    v0: glam::Vec3,
+    v1: glam::Vec3,
+    v2: glam::Vec3,
+) -> Option<f32> {
+    let e1 = v1 - v0;
+    let e2 = v2 - v0;
+    let h = ray_dir.cross(e2);
+    let a = e1.dot(h);
+    if a.abs() < 1e-10 { return None; }
+    let f = 1.0 / a;
+    let s = ray_orig - v0;
+    let u = f * s.dot(h);
+    if u < 0.0 || u > 1.0 { return None; }
+    let q = s.cross(e1);
+    let v = f * ray_dir.dot(q);
+    if v < 0.0 || u + v > 1.0 { return None; }
+    let t = f * e2.dot(q);
+    if t > 0.0 { Some(t) } else { None }
+}
+
+/// Reconstruct per-vertex (lateral direction, half-width) for a ribbon item.
+///
+/// Replicates the parallel-transport frame built by `upload_ribbon()` in
+/// `prepare.rs` so click and rect picking can test the actual swept quad
+/// rather than a midpoint proxy.
+fn ribbon_lateral_frames(
+    positions: &[[f32; 3]],
+    strip_lengths: &[u32],
+    width: f32,
+    width_attribute: Option<&[f32]>,
+    twist_attribute: Option<&[[f32; 3]]>,
+) -> Vec<(glam::Vec3, f32)> {
+    let n = positions.len();
+    // Initialise with a sentinel so any unvisited vertex has zero width.
+    let mut frames: Vec<(glam::Vec3, f32)> = vec![(glam::Vec3::X, 0.0); n];
+
+    let single;
+    let strips: &[u32] = if strip_lengths.is_empty() {
+        single = [positions.len() as u32];
+        &single
     } else {
-        let mut node_off = 0usize;
-        for &slen in strip_lengths {
-            let slen = slen as usize;
-            for j in 0..slen.saturating_sub(1) {
-                let a = glam::Vec3::from(positions[node_off + j]);
-                let b = glam::Vec3::from(positions[node_off + j + 1]);
-                midpoints.push(((a + b) * 0.5).to_array());
-            }
+        strip_lengths
+    };
+
+    let mut node_off = 0usize;
+    for &slen in strips {
+        let slen = slen as usize;
+        if slen < 2 {
             node_off += slen;
+            continue;
         }
+
+        let pts: Vec<glam::Vec3> = positions[node_off..node_off + slen]
+            .iter()
+            .map(|&p| glam::Vec3::from(p))
+            .collect();
+
+        let t0 = (pts[1] - pts[0]).normalize_or_zero();
+        if t0.length_squared() < 1e-10 {
+            node_off += slen;
+            continue;
+        }
+        let ref_v = if t0.x.abs() < 0.9 { glam::Vec3::X } else { glam::Vec3::Y };
+        let mut u = t0.cross(ref_v).normalize();
+
+        for k in 0..slen {
+            let tangent = if k + 1 < slen {
+                (pts[k + 1] - pts[k]).normalize_or_zero()
+            } else {
+                (pts[k] - pts[k - 1]).normalize_or_zero()
+            };
+
+            // Parallel transport: rotate u to stay perpendicular to the new tangent.
+            if k > 0 {
+                let t_prev = (pts[k] - pts[k - 1]).normalize_or_zero();
+                let axis = t_prev.cross(tangent);
+                let sin_a = axis.length().min(1.0);
+                if sin_a > 1e-6 {
+                    let cos_a = t_prev.dot(tangent).clamp(-1.0, 1.0);
+                    let ax = axis / sin_a;
+                    u = u * cos_a + ax.cross(u) * sin_a + ax * ax.dot(u) * (1.0 - cos_a);
+                    u = u.normalize_or_zero();
+                }
+            }
+
+            // Apply per-point twist if supplied.
+            let mut lateral = u;
+            if let Some(twist) = twist_attribute {
+                if let Some(&tv) = twist.get(node_off + k) {
+                    let tv = glam::Vec3::from(tv);
+                    let proj = tv - tangent * tangent.dot(tv);
+                    if proj.length_squared() > 1e-10 {
+                        lateral = proj.normalize();
+                    }
+                }
+            }
+
+            let half_w = width_attribute
+                .and_then(|wa| wa.get(node_off + k).copied())
+                .unwrap_or(width)
+                * 0.5;
+
+            frames[node_off + k] = (lateral, half_w);
+        }
+
+        node_off += slen;
     }
-    midpoints
+
+    frames
 }
 
 // ---------------------------------------------------------------------------
@@ -794,8 +886,14 @@ impl ViewportRenderer {
             }
         }
 
-        // 9. Streamtube / tube / ribbon segment picks (SEGMENT, STRIP, or OBJECT fallback).
-        if wants_segment || wants_strip || wants_object {
+        // 9. Streamtube / tube / ribbon picks (POLY_NODE, SEGMENT, STRIP, or OBJECT).
+        // Phase 10 fidelity upgrade:
+        //   Streamtube / tube: screen-space closest-segment test against each cylinder
+        //     axis (both endpoints projected), not just the midpoint.
+        //   Ribbon: ray-triangle intersection against the reconstructed swept quad
+        //     using the parallel-transport lateral frame.
+        //   POLY_NODE: control points are point-like sub-elements (pick_gaussian_splat_cpu).
+        if wants_poly_node || wants_segment || wants_strip || wants_object {
             // Convert a world-space radius at a reference point to a screen-pixel threshold.
             let world_r_to_px = |ref_world: glam::Vec3, world_r: f32| -> f32 {
                 let p0 = view_proj * ref_world.extend(1.0);
@@ -809,75 +907,315 @@ impl ViewportRenderer {
                 }
             };
 
-            for item in &self.pick_streamtube_items {
-                if item.id == 0 || item.positions.is_empty() { continue; }
-                let midpoints = build_segment_midpoints(&item.positions, &item.strip_lengths);
-                if midpoints.is_empty() { continue; }
-                let radius_px = world_r_to_px(glam::Vec3::from(midpoints[0]), item.radius.max(0.01));
-                if let Some(mut hit) = pick_gaussian_splat_cpu(
-                    click_pos, item.id, &midpoints, glam::Mat4::IDENTITY, view_proj, viewport_size, radius_px,
-                ) {
-                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
-                    if wants_segment {
-                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
-                            hit.sub_object = Some(SubObjectRef::Segment(idx));
+            // POLY_NODE pass: nearest control point, promoted to Strip/Object as needed.
+            if wants_poly_node || wants_strip || wants_object {
+                for item in &self.pick_streamtube_items {
+                    if item.id == 0 || item.positions.is_empty() { continue; }
+                    let ref_pos = glam::Vec3::from(item.positions[0]);
+                    let radius_px = world_r_to_px(ref_pos, item.radius.max(0.01)).max(8.0);
+                    if let Some(mut hit) = pick_gaussian_splat_cpu(
+                        click_pos, item.id, &item.positions,
+                        glam::Mat4::IDENTITY, view_proj, viewport_size, radius_px,
+                    ) {
+                        let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
+                        if wants_poly_node {
+                            // sub_object is already SubObjectRef::Point(node_index)
+                        } else if wants_strip {
+                            if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
+                                hit.sub_object = Some(SubObjectRef::Strip(
+                                    strip_for_node(idx, &item.strip_lengths),
+                                ));
+                            }
+                        } else {
+                            hit.sub_object = None;
                         }
-                    } else if wants_strip {
-                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
-                            hit.sub_object = Some(SubObjectRef::Strip(strip_for_segment(idx, &item.strip_lengths)));
-                        }
-                    } else {
-                        hit.sub_object = None;
+                        consider(toi, hit);
                     }
-                    consider(toi, hit);
+                }
+                for item in &self.pick_tube_items {
+                    if item.id == 0 || item.positions.is_empty() { continue; }
+                    let ref_pos = glam::Vec3::from(item.positions[0]);
+                    let max_r = item.radius_attribute.as_ref()
+                        .and_then(|ra| ra.iter().copied().reduce(f32::max))
+                        .unwrap_or(0.0)
+                        .max(item.radius)
+                        .max(0.01);
+                    let radius_px = world_r_to_px(ref_pos, max_r).max(8.0);
+                    if let Some(mut hit) = pick_gaussian_splat_cpu(
+                        click_pos, item.id, &item.positions,
+                        glam::Mat4::IDENTITY, view_proj, viewport_size, radius_px,
+                    ) {
+                        let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
+                        if wants_poly_node {
+                            // sub_object is already SubObjectRef::Point(node_index)
+                        } else if wants_strip {
+                            if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
+                                hit.sub_object = Some(SubObjectRef::Strip(
+                                    strip_for_node(idx, &item.strip_lengths),
+                                ));
+                            }
+                        } else {
+                            hit.sub_object = None;
+                        }
+                        consider(toi, hit);
+                    }
+                }
+                for item in &self.pick_ribbon_items {
+                    if item.id == 0 || item.positions.is_empty() { continue; }
+                    let ref_pos = glam::Vec3::from(item.positions[0]);
+                    let radius_px = world_r_to_px(ref_pos, item.width * 0.5).max(8.0);
+                    if let Some(mut hit) = pick_gaussian_splat_cpu(
+                        click_pos, item.id, &item.positions,
+                        glam::Mat4::IDENTITY, view_proj, viewport_size, radius_px,
+                    ) {
+                        let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
+                        if wants_poly_node {
+                            // sub_object is already SubObjectRef::Point(node_index)
+                        } else if wants_strip {
+                            if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
+                                hit.sub_object = Some(SubObjectRef::Strip(
+                                    strip_for_node(idx, &item.strip_lengths),
+                                ));
+                            }
+                        } else {
+                            hit.sub_object = None;
+                        }
+                        consider(toi, hit);
+                    }
                 }
             }
 
-            for item in &self.pick_tube_items {
-                if item.id == 0 || item.positions.is_empty() { continue; }
-                let midpoints = build_segment_midpoints(&item.positions, &item.strip_lengths);
-                if midpoints.is_empty() { continue; }
-                let radius_px = world_r_to_px(glam::Vec3::from(midpoints[0]), item.radius.max(0.01));
-                if let Some(mut hit) = pick_gaussian_splat_cpu(
-                    click_pos, item.id, &midpoints, glam::Mat4::IDENTITY, view_proj, viewport_size, radius_px,
-                ) {
-                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
-                    if wants_segment {
-                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
-                            hit.sub_object = Some(SubObjectRef::Segment(idx));
-                        }
+            // SEGMENT / STRIP / OBJECT pass using full geometric tests.
+            if wants_segment || wants_strip || wants_object {
+                // Streamtube: project each cylinder axis segment to screen and find the
+                // closest point along the full segment (not just the midpoint).
+                for item in &self.pick_streamtube_items {
+                    if item.id == 0 || item.positions.is_empty() { continue; }
+                    let ref_pos = glam::Vec3::from(item.positions[0]);
+                    let threshold_px = world_r_to_px(ref_pos, item.radius.max(0.01));
+                    let Some((seg_idx, world_pos)) = pick_closest_polyline_segment(
+                        click_pos, viewport_size, view_proj,
+                        &item.positions, &item.strip_lengths, threshold_px,
+                    ) else { continue };
+                    let toi = (world_pos - ray_origin).dot(ray_dir).max(0.0);
+                    let sub_object = if wants_segment {
+                        Some(SubObjectRef::Segment(seg_idx))
                     } else if wants_strip {
-                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
-                            hit.sub_object = Some(SubObjectRef::Strip(strip_for_segment(idx, &item.strip_lengths)));
-                        }
+                        Some(SubObjectRef::Strip(strip_for_segment(seg_idx, &item.strip_lengths)))
                     } else {
-                        hit.sub_object = None;
+                        None
+                    };
+                    #[allow(deprecated)]
+                    consider(toi, PickHit {
+                        id: item.id, sub_object, world_pos,
+                        normal: glam::Vec3::Y, triangle_index: u32::MAX,
+                        point_index: None, scalar_value: None,
+                    });
+                }
+
+                // Tube: same as streamtube; uses the conservative max of uniform and
+                // per-point radii for the screen-space threshold.
+                for item in &self.pick_tube_items {
+                    if item.id == 0 || item.positions.is_empty() { continue; }
+                    let ref_pos = glam::Vec3::from(item.positions[0]);
+                    let max_r = item.radius_attribute.as_ref()
+                        .and_then(|ra| ra.iter().copied().reduce(f32::max))
+                        .unwrap_or(0.0)
+                        .max(item.radius)
+                        .max(0.01);
+                    let threshold_px = world_r_to_px(ref_pos, max_r);
+                    let Some((seg_idx, world_pos)) = pick_closest_polyline_segment(
+                        click_pos, viewport_size, view_proj,
+                        &item.positions, &item.strip_lengths, threshold_px,
+                    ) else { continue };
+                    let toi = (world_pos - ray_origin).dot(ray_dir).max(0.0);
+                    let sub_object = if wants_segment {
+                        Some(SubObjectRef::Segment(seg_idx))
+                    } else if wants_strip {
+                        Some(SubObjectRef::Strip(strip_for_segment(seg_idx, &item.strip_lengths)))
+                    } else {
+                        None
+                    };
+                    #[allow(deprecated)]
+                    consider(toi, PickHit {
+                        id: item.id, sub_object, world_pos,
+                        normal: glam::Vec3::Y, triangle_index: u32::MAX,
+                        point_index: None, scalar_value: None,
+                    });
+                }
+
+                // Ribbon: reconstruct the swept quad per segment (parallel-transport
+                // lateral frame) and test the ray against both triangles of each quad.
+                for item in &self.pick_ribbon_items {
+                    if item.id == 0 || item.positions.is_empty() { continue; }
+                    let frames = ribbon_lateral_frames(
+                        &item.positions, &item.strip_lengths, item.width,
+                        item.width_attribute.as_deref(),
+                        item.twist_attribute.as_deref(),
+                    );
+
+                    let single;
+                    let strips: &[u32] = if item.strip_lengths.is_empty() {
+                        single = [item.positions.len() as u32];
+                        &single
+                    } else {
+                        &item.strip_lengths
+                    };
+
+                    let mut best_t = f32::MAX;
+                    let mut best_seg: Option<(u32, glam::Vec3)> = None;
+                    let mut node_off = 0usize;
+                    let mut seg_off = 0u32;
+
+                    for &slen in strips {
+                        let slen = slen as usize;
+                        for k in 0..slen.saturating_sub(1) {
+                            let ia = node_off + k;
+                            let ib = node_off + k + 1;
+                            let pa = glam::Vec3::from(item.positions[ia]);
+                            let pb = glam::Vec3::from(item.positions[ib]);
+                            let (ua, wa) = frames[ia];
+                            let (ub, wb) = frames[ib];
+                            // Quad corners: c0/c1 at segment start, c2/c3 at end.
+                            let c0 = pa + ua * wa; // left  at a
+                            let c1 = pa - ua * wa; // right at a
+                            let c2 = pb + ub * wb; // left  at b
+                            let c3 = pb - ub * wb; // right at b
+                            // Test 2 triangles, both front and back faces.
+                            let t = ray_triangle(ray_origin, ray_dir, c0, c1, c2)
+                                .or_else(|| ray_triangle(ray_origin, ray_dir, c1, c3, c2))
+                                .or_else(|| ray_triangle(ray_origin, ray_dir, c2, c1, c0))
+                                .or_else(|| ray_triangle(ray_origin, ray_dir, c2, c3, c1));
+                            if let Some(t) = t {
+                                if t < best_t {
+                                    best_t = t;
+                                    best_seg = Some((seg_off + k as u32, ray_origin + ray_dir * t));
+                                }
+                            }
+                        }
+                        seg_off += slen.saturating_sub(1) as u32;
+                        node_off += slen;
                     }
-                    consider(toi, hit);
+
+                    if let Some((seg_idx, world_pos)) = best_seg {
+                        let sub_object = if wants_segment {
+                            Some(SubObjectRef::Segment(seg_idx))
+                        } else if wants_strip {
+                            Some(SubObjectRef::Strip(strip_for_segment(seg_idx, &item.strip_lengths)))
+                        } else {
+                            None
+                        };
+                        #[allow(deprecated)]
+                        consider(best_t, PickHit {
+                            id: item.id, sub_object, world_pos,
+                            normal: glam::Vec3::Y, triangle_index: u32::MAX,
+                            point_index: None, scalar_value: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        // 10. Image slice / volume surface slice / screen image object picks (OBJECT only).
+        if wants_object {
+            // Image slice: axis-aligned quad ray intersection.
+            for item in &self.pick_image_slice_items {
+                if item.id == 0 { continue; }
+                let [bmin, bmax] = [item.bbox_min, item.bbox_max];
+                let t = item.offset;
+                // Plane normal and position along the axis.
+                let (axis_idx, plane_pos) = match item.axis {
+                    SliceAxis::X => (0usize, bmin[0] + t * (bmax[0] - bmin[0])),
+                    SliceAxis::Y => (1usize, bmin[1] + t * (bmax[1] - bmin[1])),
+                    SliceAxis::Z => (2usize, bmin[2] + t * (bmax[2] - bmin[2])),
+                };
+                let plane_n = {
+                    let mut n = glam::Vec3::ZERO;
+                    n[axis_idx] = 1.0;
+                    n
+                };
+                let denom = plane_n.dot(ray_dir);
+                if denom.abs() < 1e-6 { continue; }
+                let toi = (plane_pos - ray_origin[axis_idx]) / denom;
+                if toi <= 0.0 { continue; }
+                let hit_pos = ray_origin + ray_dir * toi;
+                // Check that the hit is within the slice quad's other two dimensions.
+                let in_bounds = (0..3).filter(|&i| i != axis_idx).all(|i| {
+                    hit_pos[i] >= bmin[i] - 1e-4 && hit_pos[i] <= bmax[i] + 1e-4
+                });
+                if in_bounds {
+                    #[allow(deprecated)]
+                    consider(toi, PickHit {
+                        id: item.id, sub_object: None, world_pos: hit_pos,
+                        normal: plane_n, triangle_index: u32::MAX,
+                        point_index: None, scalar_value: None,
+                    });
                 }
             }
 
-            for item in &self.pick_ribbon_items {
-                if item.id == 0 || item.positions.is_empty() { continue; }
-                let midpoints = build_segment_midpoints(&item.positions, &item.strip_lengths);
-                if midpoints.is_empty() { continue; }
-                let radius_px = world_r_to_px(glam::Vec3::from(midpoints[0]), item.width.max(0.01));
-                if let Some(mut hit) = pick_gaussian_splat_cpu(
-                    click_pos, item.id, &midpoints, glam::Mat4::IDENTITY, view_proj, viewport_size, radius_px,
-                ) {
-                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
-                    if wants_segment {
-                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
-                            hit.sub_object = Some(SubObjectRef::Segment(idx));
-                        }
-                    } else if wants_strip {
-                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
-                            hit.sub_object = Some(SubObjectRef::Strip(strip_for_segment(idx, &item.strip_lengths)));
-                        }
-                    } else {
-                        hit.sub_object = None;
+            // Volume surface slice: ray/mesh intersection via mesh_store CPU data.
+            for item in &self.pick_volume_surface_slice_items {
+                if item.id == 0 { continue; }
+                let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else { continue; };
+                let (Some(positions), Some(indices)) = (&mesh.cpu_positions, &mesh.cpu_indices)
+                else { continue; };
+                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                let verts: Vec<parry3d::math::Vector> = positions.iter()
+                    .map(|p| {
+                        let wp = model.transform_point3(glam::Vec3::from(*p));
+                        parry3d::math::Vector::new(wp.x, wp.y, wp.z)
+                    })
+                    .collect();
+                let tri_indices: Vec<[u32; 3]> = indices.chunks(3)
+                    .filter(|c| c.len() == 3)
+                    .map(|c| [c[0], c[1], c[2]])
+                    .collect();
+                if tri_indices.is_empty() { continue; }
+                let ray = parry3d::query::Ray::new(
+                    parry3d::math::Vector::new(ray_origin.x, ray_origin.y, ray_origin.z),
+                    parry3d::math::Vector::new(ray_dir.x, ray_dir.y, ray_dir.z),
+                );
+                if let Ok(trimesh) = parry3d::shape::TriMesh::new(verts, tri_indices) {
+                    use parry3d::query::RayCast;
+                    if let Some(hit) = trimesh.cast_ray_and_get_normal(
+                        &parry3d::math::Pose::identity(), &ray, f32::MAX, true,
+                    ) {
+                        let world_pos = ray_origin + ray_dir * hit.time_of_impact;
+                        let n = hit.normal;
+                        #[allow(deprecated)]
+                        consider(hit.time_of_impact, PickHit {
+                            id: item.id, sub_object: None, world_pos,
+                            normal: glam::Vec3::new(n.x, n.y, n.z),
+                            triangle_index: u32::MAX,
+                            point_index: None, scalar_value: None,
+                        });
                     }
-                    consider(toi, hit);
+                }
+            }
+
+            // Screen image: screen-space rect test. toi=0 so these win over any 3D hit.
+            for item in &self.pick_screen_image_items {
+                if item.id == 0 || item.width == 0 || item.height == 0 { continue; }
+                let img_w = item.width as f32 * item.scale;
+                let img_h = item.height as f32 * item.scale;
+                let (sx, sy) = match item.anchor {
+                    ImageAnchor::TopLeft     => (0.0, 0.0),
+                    ImageAnchor::TopRight    => (viewport_size.x - img_w, 0.0),
+                    ImageAnchor::BottomLeft  => (0.0, viewport_size.y - img_h),
+                    ImageAnchor::BottomRight => (viewport_size.x - img_w, viewport_size.y - img_h),
+                    ImageAnchor::Center      => ((viewport_size.x - img_w) * 0.5, (viewport_size.y - img_h) * 0.5),
+                };
+                if click_pos.x >= sx && click_pos.x <= sx + img_w
+                    && click_pos.y >= sy && click_pos.y <= sy + img_h
+                {
+                    // No meaningful 3D position; place the hit at the near-plane.
+                    let world_pos = ray_origin + ray_dir * 0.001;
+                    #[allow(deprecated)]
+                    consider(0.0, PickHit {
+                        id: item.id, sub_object: None, world_pos,
+                        normal: -ray_dir, triangle_index: u32::MAX,
+                        point_index: None, scalar_value: None,
+                    });
                 }
             }
         }
@@ -1404,53 +1742,87 @@ impl ViewportRenderer {
         }
 
         // 8. Streamtube / tube / ribbon segment / strip / object rect picks.
-        if wants_segment || wants_strip || wants_object {
-            let curve_iter = self.pick_streamtube_items.iter()
+        if wants_poly_node || wants_segment || wants_strip || wants_object {
+            // Streamtube and tube: test both projected endpoints of each segment
+            // with segment_in_rect instead of the midpoint projection heuristic.
+            // POLY_NODE: also check each control point individually.
+            let st_tube_iter = self.pick_streamtube_items.iter()
                 .map(|it| (it.id, it.positions.as_slice(), it.strip_lengths.as_slice()))
                 .chain(self.pick_tube_items.iter()
-                    .map(|it| (it.id, it.positions.as_slice(), it.strip_lengths.as_slice())))
-                .chain(self.pick_ribbon_items.iter()
                     .map(|it| (it.id, it.positions.as_slice(), it.strip_lengths.as_slice())));
 
-            for (id, positions, strip_lengths) in curve_iter {
+            for (id, positions, strip_lengths) in st_tube_iter {
                 if id == 0 || positions.is_empty() { continue; }
                 let mut item_hit = false;
                 let mut strips_hit = std::collections::HashSet::<u32>::new();
-                // Build indexed midpoints (midpoint world pos, global segment index).
-                let mut midpoints: Vec<([f32; 3], u32)> = Vec::new();
-                if strip_lengths.is_empty() {
-                    for j in 0..positions.len().saturating_sub(1) {
-                        let a = glam::Vec3::from(positions[j]);
-                        let b = glam::Vec3::from(positions[j + 1]);
-                        midpoints.push((((a + b) * 0.5).to_array(), j as u32));
-                    }
+
+                let single_st;
+                let strips_st: &[u32] = if strip_lengths.is_empty() {
+                    single_st = [positions.len() as u32];
+                    &single_st
                 } else {
+                    strip_lengths
+                };
+
+                // POLY_NODE pass: project each control point and check in_rect.
+                if wants_poly_node || wants_strip || wants_object {
+                    'st_nodes: for (ni, pos) in positions.iter().enumerate() {
+                        if let Some((sx, sy)) = project(view_proj, glam::Vec3::from(*pos)) {
+                            if in_rect(sx, sy) {
+                                item_hit = true;
+                                if wants_poly_node {
+                                    result.elements.push((id, SubObjectRef::Point(ni as u32)));
+                                } else if wants_strip {
+                                    let s = strip_for_node(ni as u32, strip_lengths);
+                                    strips_hit.insert(s);
+                                } else {
+                                    // wants_object only: no need to enumerate further nodes.
+                                    break 'st_nodes;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // SEGMENT pass: test both projected endpoints of each segment.
+                if wants_segment || wants_strip || wants_object {
                     let mut node_off = 0usize;
                     let mut seg_off = 0u32;
-                    for &slen in strip_lengths {
+                    'st_strips: for &slen in strips_st {
                         let slen = slen as usize;
                         for j in 0..slen.saturating_sub(1) {
-                            let a = glam::Vec3::from(positions[node_off + j]);
-                            let b = glam::Vec3::from(positions[node_off + j + 1]);
-                            midpoints.push((((a + b) * 0.5).to_array(), seg_off + j as u32));
+                            let seg_idx = seg_off + j as u32;
+                            let pa = glam::Vec3::from(positions[node_off + j]);
+                            let pb = glam::Vec3::from(positions[node_off + j + 1]);
+                            let hit = match (project(view_proj, pa), project(view_proj, pb)) {
+                                (Some((ax, ay)), Some((bx, by))) => {
+                                    segment_in_rect(
+                                        glam::Vec2::new(ax, ay), glam::Vec2::new(bx, by),
+                                        rect_min, rect_max,
+                                    )
+                                }
+                                (Some((ax, ay)), None) => in_rect(ax, ay),
+                                (None, Some((bx, by))) => in_rect(bx, by),
+                                (None, None) => false,
+                            };
+                            if hit {
+                                item_hit = true;
+                                if wants_segment {
+                                    result.elements.push((id, SubObjectRef::Segment(seg_idx)));
+                                } else if wants_strip {
+                                    let s = strip_for_segment(seg_idx, strip_lengths);
+                                    strips_hit.insert(s);
+                                } else {
+                                    // wants_object only: no need to enumerate further segments.
+                                    break 'st_strips;
+                                }
+                            }
                         }
                         seg_off += slen.saturating_sub(1) as u32;
                         node_off += slen;
                     }
                 }
-                for (mid, seg_idx) in &midpoints {
-                    if let Some((sx, sy)) = project(view_proj, glam::Vec3::from(*mid)) {
-                        if in_rect(sx, sy) {
-                            item_hit = true;
-                            if wants_segment {
-                                result.elements.push((id, SubObjectRef::Segment(*seg_idx)));
-                            } else if wants_strip {
-                                let s = strip_for_segment(*seg_idx, strip_lengths);
-                                strips_hit.insert(s);
-                            }
-                        }
-                    }
-                }
+
                 if wants_strip {
                     for s in strips_hit {
                         result.elements.push((id, SubObjectRef::Strip(s)));
@@ -1458,6 +1830,195 @@ impl ViewportRenderer {
                 }
                 if wants_object && item_hit {
                     result.objects.push(id);
+                }
+            }
+
+            // Ribbon: reconstruct the swept quad per segment and test all four
+            // quad edges with segment_in_rect (also catches quad corners inside
+            // the rect via the endpoint check inside segment_in_rect).
+            // POLY_NODE: also check each control point individually.
+            for item in &self.pick_ribbon_items {
+                if item.id == 0 || item.positions.is_empty() { continue; }
+
+                let single_r;
+                let strips_r: &[u32] = if item.strip_lengths.is_empty() {
+                    single_r = [item.positions.len() as u32];
+                    &single_r
+                } else {
+                    &item.strip_lengths
+                };
+
+                let mut item_hit = false;
+                let mut strips_hit = std::collections::HashSet::<u32>::new();
+
+                // Project a world point to screen Vec2; returns None if behind camera.
+                let proj2 = |p: glam::Vec3| -> Option<glam::Vec2> {
+                    project(view_proj, p).map(|(x, y)| glam::Vec2::new(x, y))
+                };
+
+                // POLY_NODE pass: project each control point and check in_rect.
+                if wants_poly_node || wants_strip || wants_object {
+                    'rb_nodes: for (ni, pos) in item.positions.iter().enumerate() {
+                        if let Some((sx, sy)) = project(view_proj, glam::Vec3::from(*pos)) {
+                            if in_rect(sx, sy) {
+                                item_hit = true;
+                                if wants_poly_node {
+                                    result.elements.push((item.id, SubObjectRef::Point(ni as u32)));
+                                } else if wants_strip {
+                                    let s = strip_for_node(ni as u32, &item.strip_lengths);
+                                    strips_hit.insert(s);
+                                } else {
+                                    break 'rb_nodes;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // SEGMENT pass: quad edge tests using ribbon_lateral_frames.
+                if wants_segment || wants_strip || wants_object {
+                    let frames = ribbon_lateral_frames(
+                        &item.positions, &item.strip_lengths, item.width,
+                        item.width_attribute.as_deref(),
+                        item.twist_attribute.as_deref(),
+                    );
+                    let mut node_off = 0usize;
+                    let mut seg_off = 0u32;
+
+                    'rb_strips: for &slen in strips_r {
+                        let slen = slen as usize;
+                        for k in 0..slen.saturating_sub(1) {
+                            let seg_idx = seg_off + k as u32;
+                            let ia = node_off + k;
+                            let ib = node_off + k + 1;
+                            let pa = glam::Vec3::from(item.positions[ia]);
+                            let pb = glam::Vec3::from(item.positions[ib]);
+                            let (ua, wa) = frames[ia];
+                            let (ub, wb) = frames[ib];
+                            let c0 = pa + ua * wa; // left  at a
+                            let c1 = pa - ua * wa; // right at a
+                            let c2 = pb + ub * wb; // left  at b
+                            let c3 = pb - ub * wb; // right at b
+                            let sc0 = proj2(c0);
+                            let sc1 = proj2(c1);
+                            let sc2 = proj2(c2);
+                            let sc3 = proj2(c3);
+                            let edge_hit = |a: Option<glam::Vec2>, b: Option<glam::Vec2>| -> bool {
+                                match (a, b) {
+                                    (Some(a), Some(b)) => segment_in_rect(a, b, rect_min, rect_max),
+                                    (Some(a), None) => in_rect(a.x, a.y),
+                                    (None, Some(b)) => in_rect(b.x, b.y),
+                                    (None, None) => false,
+                                }
+                            };
+                            let hit = edge_hit(sc0, sc1)
+                                || edge_hit(sc2, sc3)
+                                || edge_hit(sc0, sc2)
+                                || edge_hit(sc1, sc3);
+                            if hit {
+                                item_hit = true;
+                                if wants_segment {
+                                    result.elements.push((item.id, SubObjectRef::Segment(seg_idx)));
+                                } else if wants_strip {
+                                    let s = strip_for_segment(seg_idx, &item.strip_lengths);
+                                    strips_hit.insert(s);
+                                } else {
+                                    break 'rb_strips;
+                                }
+                            }
+                        }
+                        seg_off += slen.saturating_sub(1) as u32;
+                        node_off += slen;
+                    }
+                }
+
+                if wants_strip {
+                    for s in strips_hit {
+                        result.elements.push((item.id, SubObjectRef::Strip(s)));
+                    }
+                }
+                if wants_object && item_hit {
+                    result.objects.push(item.id);
+                }
+            }
+        }
+
+        // 9. Image slice / volume surface slice / screen image object rect picks (OBJECT only).
+        if wants_object {
+            // Image slice: project all 4 quad corners and check containment/edge intersection.
+            for item in &self.pick_image_slice_items {
+                if item.id == 0 { continue; }
+                let [bmin, bmax] = [item.bbox_min, item.bbox_max];
+                let t = item.offset;
+                let corners: [[f32; 3]; 4] = match item.axis {
+                    SliceAxis::X => {
+                        let x = bmin[0] + t * (bmax[0] - bmin[0]);
+                        [[x, bmin[1], bmin[2]], [x, bmax[1], bmin[2]],
+                         [x, bmax[1], bmax[2]], [x, bmin[1], bmax[2]]]
+                    }
+                    SliceAxis::Y => {
+                        let y = bmin[1] + t * (bmax[1] - bmin[1]);
+                        [[bmin[0], y, bmin[2]], [bmax[0], y, bmin[2]],
+                         [bmax[0], y, bmax[2]], [bmin[0], y, bmax[2]]]
+                    }
+                    SliceAxis::Z => {
+                        let z = bmin[2] + t * (bmax[2] - bmin[2]);
+                        [[bmin[0], bmin[1], z], [bmax[0], bmin[1], z],
+                         [bmax[0], bmax[1], z], [bmin[0], bmax[1], z]]
+                    }
+                };
+                let sc: Vec<Option<glam::Vec2>> = corners.iter().map(|&c| {
+                    project(view_proj, glam::Vec3::from(c))
+                        .map(|(x, y)| glam::Vec2::new(x, y))
+                }).collect();
+                let hit = sc.iter().any(|p| p.map_or(false, |p| in_rect(p.x, p.y)))
+                    || (0..4).any(|i| {
+                        let a = sc[i];
+                        let b = sc[(i + 1) % 4];
+                        match (a, b) {
+                            (Some(a), Some(b)) => segment_in_rect(a, b, rect_min, rect_max),
+                            (Some(a), None) => in_rect(a.x, a.y),
+                            (None, Some(b)) => in_rect(b.x, b.y),
+                            (None, None) => false,
+                        }
+                    });
+                if hit {
+                    result.objects.push(item.id);
+                }
+            }
+
+            // Volume surface slice: project each mesh vertex (with model transform) and check.
+            for item in &self.pick_volume_surface_slice_items {
+                if item.id == 0 { continue; }
+                let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else { continue; };
+                let Some(positions) = &mesh.cpu_positions else { continue; };
+                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                let hit = positions.iter().any(|&p| {
+                    let wp = model.transform_point3(glam::Vec3::from(p));
+                    project(view_proj, wp).map_or(false, |(sx, sy)| in_rect(sx, sy))
+                });
+                if hit {
+                    result.objects.push(item.id);
+                }
+            }
+
+            // Screen image: check if the image's screen rect overlaps the pick rect.
+            for item in &self.pick_screen_image_items {
+                if item.id == 0 || item.width == 0 || item.height == 0 { continue; }
+                let img_w = item.width as f32 * item.scale;
+                let img_h = item.height as f32 * item.scale;
+                let (sx, sy) = match item.anchor {
+                    ImageAnchor::TopLeft     => (0.0, 0.0),
+                    ImageAnchor::TopRight    => (viewport_size.x - img_w, 0.0),
+                    ImageAnchor::BottomLeft  => (0.0, viewport_size.y - img_h),
+                    ImageAnchor::BottomRight => (viewport_size.x - img_w, viewport_size.y - img_h),
+                    ImageAnchor::Center      => ((viewport_size.x - img_w) * 0.5, (viewport_size.y - img_h) * 0.5),
+                };
+                // Overlap: image rect [sx, sx+img_w] x [sy, sy+img_h] vs pick rect.
+                let overlap = sx <= rect_max.x && sx + img_w >= rect_min.x
+                    && sy <= rect_max.y && sy + img_h >= rect_min.y;
+                if overlap {
+                    result.objects.push(item.id);
                 }
             }
         }

@@ -305,6 +305,12 @@ pub struct ViewportRenderer {
     pick_tube_items: Vec<TubeItem>,
     /// Ribbon items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_ribbon_items: Vec<RibbonItem>,
+    /// Image slice items from the last `prepare()` call, retained for `pick()` dispatch.
+    pick_image_slice_items: Vec<ImageSliceItem>,
+    /// Volume surface slice items from the last `prepare()` call, retained for `pick()` dispatch.
+    pick_volume_surface_slice_items: Vec<VolumeSurfaceSliceItem>,
+    /// Screen image items from the last `prepare()` call, retained for `pick()` dispatch.
+    pick_screen_image_items: Vec<ScreenImageItem>,
 
     // --- Phase 4 : GPU timestamp queries ---
     /// Timestamp query set with 2 entries (scene-pass begin + end).
@@ -422,6 +428,9 @@ impl ViewportRenderer {
             pick_streamtube_items: Vec::new(),
             pick_tube_items: Vec::new(),
             pick_ribbon_items: Vec::new(),
+            pick_image_slice_items: Vec::new(),
+            pick_volume_surface_slice_items: Vec::new(),
+            pick_screen_image_items: Vec::new(),
             ts_query_set: None,
             ts_resolve_buf: None,
             ts_staging_buf: None,

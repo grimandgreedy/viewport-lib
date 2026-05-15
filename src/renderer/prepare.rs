@@ -4499,6 +4499,9 @@ impl ViewportRenderer {
             self.pick_streamtube_items = frame.scene.streamtube_items.clone();
             self.pick_tube_items = frame.scene.tube_items.clone();
             self.pick_ribbon_items = frame.scene.ribbon_items.clone();
+            self.pick_image_slice_items = frame.scene.image_slices.clone();
+            self.pick_volume_surface_slice_items = frame.scene.volume_surface_slices.clone();
+            self.pick_screen_image_items = frame.scene.screen_images.clone();
         }
 
         let (scene_fx, viewport_fx) = frame.effects.split();
