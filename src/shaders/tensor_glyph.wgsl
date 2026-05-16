@@ -60,7 +60,7 @@ struct TensorGlyphUniform {
     scalar_max:  f32,     //  4 bytes
     unlit:       u32,     //  4 bytes (1 = skip lighting, output raw colour)
     opacity:     f32,     //  4 bytes (global opacity multiplier, 0.0-1.0)
-    _pad1a:      f32,     //  4 bytes
+    wireframe:   u32,     //  4 bytes (1 = return flat gray, no lighting)
     _pad1b:      f32,     //  4 bytes
     _pad1c:      f32,     //  4 bytes -- end of first 32 bytes
     _pad2:       array<vec4<f32>, 2>, // 32 bytes padding -- total 64 bytes
@@ -179,6 +179,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         }
     }
     if !clip_volume_test(in.world_pos) { discard; }
+
+    if tg_uniform.wireframe != 0u {
+        return vec4<f32>(0.75, 0.75, 0.75, 1.0);
+    }
 
     let alpha = in.colour.a * tg_uniform.opacity;
 

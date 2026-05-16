@@ -654,6 +654,10 @@ impl ViewportRenderer {
                             binding: 9,
                             resource: resources.fallback_warp_buf.as_entire_binding(),
                         },
+                        wgpu::BindGroupEntry {
+                            binding: 10,
+                            resource: wgpu::BindingResource::Sampler(&resources.lut_sampler),
+                        },
                     ],
                 });
                 self.wireframe_uniform_bufs.push(buf);
@@ -977,7 +981,8 @@ impl ViewportRenderer {
                 if item.positions.is_empty() || item.vectors.is_empty() {
                     continue;
                 }
-                let gpu_data = resources.upload_glyph_set(device, queue, item);
+                let wireframe = frame.viewport.wireframe_mode || item.appearance.wireframe;
+                let gpu_data = resources.upload_glyph_set(device, queue, item, wireframe);
                 self.glyph_gpu_data.push(gpu_data);
             }
         }
@@ -1007,7 +1012,8 @@ impl ViewportRenderer {
                 if item.positions.is_empty() {
                     continue;
                 }
-                let gd = resources.upload_tensor_glyph_set(device, queue, item);
+                let wireframe = frame.viewport.wireframe_mode || item.appearance.wireframe;
+                let gd = resources.upload_tensor_glyph_set(device, queue, item, wireframe);
                 self.tensor_glyph_gpu_data.push(gd);
             }
         }
@@ -1031,7 +1037,8 @@ impl ViewportRenderer {
                     resources.ensure_glyph_pipeline(device);
                     let g = crate::quantities::polyline_node_vectors_to_glyphs(item);
                     if !g.positions.is_empty() {
-                        let gd = resources.upload_glyph_set(device, queue, &g);
+                        let wf = frame.viewport.wireframe_mode || item.appearance.wireframe;
+                        let gd = resources.upload_glyph_set(device, queue, &g, wf);
                         self.glyph_gpu_data.push(gd);
                     }
                 }
@@ -1039,7 +1046,8 @@ impl ViewportRenderer {
                     resources.ensure_glyph_pipeline(device);
                     let g = crate::quantities::polyline_edge_vectors_to_glyphs(item);
                     if !g.positions.is_empty() {
-                        let gd = resources.upload_glyph_set(device, queue, &g);
+                        let wf = frame.viewport.wireframe_mode || item.appearance.wireframe;
+                        let gd = resources.upload_glyph_set(device, queue, &g, wf);
                         self.glyph_gpu_data.push(gd);
                     }
                 }
@@ -1147,9 +1155,8 @@ impl ViewportRenderer {
             if frame.scene.screen_images.iter().any(|i| i.depth.is_some()) {
                 resources.ensure_screen_image_dc_pipeline(device);
             }
-            let ppp = frame.camera.pixels_per_point;
-            let vp_w = vp_size[0] * ppp;
-            let vp_h = vp_size[1] * ppp;
+            let vp_w = vp_size[0];
+            let vp_h = vp_size[1];
             for item in &frame.scene.screen_images {
                 if item.width == 0 || item.height == 0 || item.pixels.is_empty() {
                     continue;
@@ -1165,9 +1172,8 @@ impl ViewportRenderer {
         self.overlay_image_gpu_data.clear();
         if !frame.overlays.images.is_empty() {
             resources.ensure_screen_image_pipeline(device);
-            let ppp = frame.camera.pixels_per_point;
-            let vp_w = vp_size[0] * ppp;
-            let vp_h = vp_size[1] * ppp;
+            let vp_w = vp_size[0];
+            let vp_h = vp_size[1];
             for item in &frame.overlays.images {
                 if item.width == 0 || item.height == 0 || item.pixels.is_empty() {
                     continue;

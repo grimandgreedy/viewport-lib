@@ -119,6 +119,52 @@ impl ViewportGpuResources {
             ldr: make(self.target_format),
             hdr: make(wgpu::TextureFormat::Rgba16Float),
         });
+
+        // Wireframe variant: same bind groups, LineList topology, no culling.
+        let make_wf = |fmt: wgpu::TextureFormat| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("glyph_wireframe_pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: fmt,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::LineList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                multiview: None,
+                cache: None,
+            })
+        };
+        self.glyph_wireframe_pipeline = Some(DualPipeline {
+            ldr: make_wf(self.target_format),
+            hdr: make_wf(wgpu::TextureFormat::Rgba16Float),
+        });
     }
 
     /// Upload one [`GlyphItem`] to the GPU and return draw data.
@@ -130,12 +176,13 @@ impl ViewportGpuResources {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         item: &crate::renderer::GlyphItem,
+        wireframe: bool,
     ) -> GlyphGpuData {
         let instance_count = item.positions.len() as u32;
 
         self.ensure_glyph_mesh(device, item.glyph_type);
 
-        let (mesh_vbuf, mesh_ibuf, mesh_idx_count) = {
+        let (mesh_vbuf, mesh_ibuf, mesh_idx_count, mesh_edge_ibuf, mesh_edge_count) = {
             let mesh = match item.glyph_type {
                 crate::renderer::GlyphType::Arrow => self.glyph_arrow_mesh.as_ref(),
                 crate::renderer::GlyphType::Sphere => self.glyph_sphere_mesh.as_ref(),
@@ -145,7 +192,9 @@ impl ViewportGpuResources {
 
             let vbuf: &'static wgpu::Buffer = unsafe { &*(&mesh.vertex_buffer as *const _) };
             let ibuf: &'static wgpu::Buffer = unsafe { &*(&mesh.index_buffer as *const _) };
-            (vbuf, ibuf, mesh.index_count)
+            let eibuf: &'static wgpu::Buffer =
+                unsafe { &*(&mesh.edge_index_buffer as *const _) };
+            (vbuf, ibuf, mesh.index_count, eibuf, mesh.edge_index_count)
         };
 
         let mags: Vec<f32> = item
@@ -222,7 +271,7 @@ impl ViewportGpuResources {
             use_default_colour: u32,
             unlit: u32,
             opacity: f32,
-            _pad: u32,
+            wireframe: u32,
         }
         let uniform_data = GlyphUniform {
             global_scale: item.scale,
@@ -241,7 +290,7 @@ impl ViewportGpuResources {
             },
             unlit: if item.appearance.unlit { 1 } else { 0 },
             opacity: item.appearance.opacity,
-            _pad: 0,
+            wireframe: if wireframe { 1 } else { 0 },
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("glyph_uniform_buf"),
@@ -303,7 +352,10 @@ impl ViewportGpuResources {
             mesh_vertex_buffer: mesh_vbuf,
             mesh_index_buffer: mesh_ibuf,
             mesh_index_count: mesh_idx_count,
+            mesh_edge_index_buffer: mesh_edge_ibuf,
+            mesh_edge_index_count: mesh_edge_count,
             instance_count,
+            wireframe,
             uniform_bind_group,
             instance_bind_group,
             _uniform_buf: uniform_buf,
@@ -353,10 +405,28 @@ impl ViewportGpuResources {
             .copy_from_slice(bytemuck::cast_slice(&indices));
         ibuf.unmap();
 
+        let edge_indices = crate::resources::extra_impls::generate_edge_indices(&indices);
+        let edge_buf_size =
+            (std::mem::size_of::<u32>() * edge_indices.len().max(2)) as u64;
+        let edge_ibuf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("glyph_mesh_edge_ibuf"),
+            size: edge_buf_size,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        {
+            let mut mapped = edge_ibuf.slice(..).get_mapped_range_mut();
+            let bytes = bytemuck::cast_slice::<u32, u8>(&edge_indices);
+            mapped[..bytes.len()].copy_from_slice(bytes);
+        }
+        edge_ibuf.unmap();
+
         let mesh = GlyphBaseMesh {
             vertex_buffer: vbuf,
             index_buffer: ibuf,
             index_count: indices.len() as u32,
+            edge_index_buffer: edge_ibuf,
+            edge_index_count: edge_indices.len() as u32,
         };
 
         match glyph_type {
@@ -482,6 +552,52 @@ impl ViewportGpuResources {
             ldr: make(self.target_format),
             hdr: make(wgpu::TextureFormat::Rgba16Float),
         });
+
+        // Wireframe variant: same bind groups, LineList topology, no culling.
+        let make_wf = |fmt: wgpu::TextureFormat| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("tensor_glyph_wireframe_pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: fmt,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::LineList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                multiview: None,
+                cache: None,
+            })
+        };
+        self.tensor_glyph_wireframe_pipeline = Some(DualPipeline {
+            ldr: make_wf(self.target_format),
+            hdr: make_wf(wgpu::TextureFormat::Rgba16Float),
+        });
     }
 
     /// Upload one [`TensorGlyphItem`] to the GPU and return draw data (Phase 5).
@@ -493,6 +609,7 @@ impl ViewportGpuResources {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         item: &crate::renderer::TensorGlyphItem,
+        wireframe: bool,
     ) -> TensorGlyphGpuData {
         use crate::renderer::GlyphType;
 
@@ -500,14 +617,16 @@ impl ViewportGpuResources {
 
         // Reuse the cached sphere mesh from the glyph pipeline.
         self.ensure_glyph_mesh(device, GlyphType::Sphere);
-        let (mesh_vbuf, mesh_ibuf, mesh_idx_count) = {
+        let (mesh_vbuf, mesh_ibuf, mesh_idx_count, mesh_edge_ibuf, mesh_edge_count) = {
             let mesh = self
                 .glyph_sphere_mesh
                 .as_ref()
                 .expect("sphere mesh should be present after ensure_glyph_mesh");
             let vbuf: &'static wgpu::Buffer = unsafe { &*(&mesh.vertex_buffer as *const _) };
             let ibuf: &'static wgpu::Buffer = unsafe { &*(&mesh.index_buffer as *const _) };
-            (vbuf, ibuf, mesh.index_count)
+            let eibuf: &'static wgpu::Buffer =
+                unsafe { &*(&mesh.edge_index_buffer as *const _) };
+            (vbuf, ibuf, mesh.index_count, eibuf, mesh.edge_index_count)
         };
 
         // Pre-compute per-instance model and normal matrices on the CPU.
@@ -623,7 +742,9 @@ impl ViewportGpuResources {
             scalar_max: f32,
             unlit: u32,
             opacity: f32,
-            _pad1: [f32; 3],
+            wireframe: u32,
+            _pad1b: f32,
+            _pad1c: f32,
             _pad2: [[f32; 4]; 2],
         }
         let uniform_data = TensorGlyphUniform {
@@ -632,7 +753,9 @@ impl ViewportGpuResources {
             scalar_max,
             unlit: item.appearance.unlit as u32,
             opacity: item.appearance.opacity,
-            _pad1: [0.0; 3],
+            wireframe: if wireframe { 1 } else { 0 },
+            _pad1b: 0.0,
+            _pad1c: 0.0,
             _pad2: [[0.0; 4]; 2],
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -695,7 +818,10 @@ impl ViewportGpuResources {
             mesh_vertex_buffer: mesh_vbuf,
             mesh_index_buffer: mesh_ibuf,
             mesh_index_count: mesh_idx_count,
+            mesh_edge_index_buffer: mesh_edge_ibuf,
+            mesh_edge_index_count: mesh_edge_count,
             instance_count,
+            wireframe,
             uniform_bind_group,
             instance_bind_group,
             _uniform_buf: uniform_buf,

@@ -1264,6 +1264,10 @@ pub(crate) struct GlyphBaseMesh {
     pub index_buffer: wgpu::Buffer,
     /// Number of indices.
     pub index_count: u32,
+    /// Edge index buffer (deduplicated pairs) for wireframe LineList rendering.
+    pub edge_index_buffer: wgpu::Buffer,
+    /// Number of indices in the edge buffer.
+    pub edge_index_count: u32,
 }
 
 /// Per-frame GPU data for one point cloud item, created in `prepare()`.
@@ -1444,12 +1448,18 @@ pub struct GlyphGpuData {
     /// We keep a reference via raw pointer : `ViewportGpuResources` owns the mesh.
     /// Safety: the mesh lives as long as `ViewportGpuResources`.
     pub(crate) mesh_vertex_buffer: &'static wgpu::Buffer,
-    /// Index buffer for the glyph base mesh.
+    /// Triangle index buffer for the glyph base mesh.
     pub(crate) mesh_index_buffer: &'static wgpu::Buffer,
-    /// Number of mesh indices.
+    /// Number of triangle mesh indices.
     pub(crate) mesh_index_count: u32,
+    /// Edge index buffer for wireframe LineList rendering (borrowed from cached `GlyphBaseMesh`).
+    pub(crate) mesh_edge_index_buffer: &'static wgpu::Buffer,
+    /// Number of edge indices.
+    pub(crate) mesh_edge_index_count: u32,
     /// Number of glyph instances.
     pub(crate) instance_count: u32,
+    /// Whether this batch should be drawn with the wireframe pipeline.
+    pub(crate) wireframe: bool,
     /// Bind group (group 1): glyph uniform + LUT texture + sampler.
     pub(crate) uniform_bind_group: wgpu::BindGroup,
     /// Bind group (group 2): instance storage buffer.
@@ -1465,12 +1475,18 @@ pub struct GlyphGpuData {
 pub struct TensorGlyphGpuData {
     /// Vertex buffer for the sphere base mesh (borrowed).
     pub(crate) mesh_vertex_buffer: &'static wgpu::Buffer,
-    /// Index buffer for the sphere base mesh (borrowed).
+    /// Triangle index buffer for the sphere base mesh (borrowed).
     pub(crate) mesh_index_buffer: &'static wgpu::Buffer,
-    /// Number of mesh indices.
+    /// Number of triangle mesh indices.
     pub(crate) mesh_index_count: u32,
+    /// Edge index buffer for wireframe LineList rendering (borrowed from sphere mesh).
+    pub(crate) mesh_edge_index_buffer: &'static wgpu::Buffer,
+    /// Number of edge indices.
+    pub(crate) mesh_edge_index_count: u32,
     /// Number of tensor glyph instances.
     pub(crate) instance_count: u32,
+    /// Whether this batch should be drawn with the wireframe pipeline.
+    pub(crate) wireframe: bool,
     /// Bind group (group 1): uniform + LUT texture + sampler.
     pub(crate) uniform_bind_group: wgpu::BindGroup,
     /// Bind group (group 2): per-instance storage buffer.
@@ -2207,6 +2223,8 @@ pub struct ViewportGpuResources {
     pub(crate) point_cloud_pipeline: Option<DualPipeline>,
     /// Glyph render pipeline. None until first glyph set is submitted.
     pub(crate) glyph_pipeline: Option<DualPipeline>,
+    /// Glyph wireframe pipeline (LineList, same bind groups as glyph_pipeline).
+    pub(crate) glyph_wireframe_pipeline: Option<DualPipeline>,
     /// Bind group layout for point cloud uniforms (group 1).
     pub(crate) point_cloud_bgl: Option<wgpu::BindGroupLayout>,
     /// Bind group layout for glyph uniforms (group 1).
@@ -2223,6 +2241,8 @@ pub struct ViewportGpuResources {
     // --- SciVis Phase 5: tensor glyph rendering (lazily created) ---
     /// Tensor glyph render pipeline. None until first tensor glyph set is submitted.
     pub(crate) tensor_glyph_pipeline: Option<DualPipeline>,
+    /// Tensor glyph wireframe pipeline (LineList, same bind groups as tensor_glyph_pipeline).
+    pub(crate) tensor_glyph_wireframe_pipeline: Option<DualPipeline>,
     /// Bind group layout for tensor glyph uniforms (group 1).
     pub(crate) tensor_glyph_bgl: Option<wgpu::BindGroupLayout>,
     /// Bind group layout for tensor glyph instance storage (group 2).

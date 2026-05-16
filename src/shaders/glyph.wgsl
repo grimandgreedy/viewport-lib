@@ -44,7 +44,7 @@ struct GlyphUniform {
     use_default_colour:  u32,        //  4 bytes (1 = colour by default_colour instead of LUT)
     unlit:              u32,        //  4 bytes (1 = skip lighting, return raw colour)
     opacity:            f32,        //  4 bytes (global opacity multiplier, 0.0-1.0)
-    _pad2:              u32,        //  4 bytes : total 64 bytes
+    wireframe:          u32,        //  4 bytes (1 = return flat gray, no lighting)
 };
 
 // Per-instance data : 32 bytes.
@@ -256,6 +256,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         }
     }
     if !clip_volume_test(in.world_pos) { discard; }
+
+    if glyph_uniform.wireframe != 0u {
+        return vec4<f32>(0.75, 0.75, 0.75, 1.0);
+    }
 
     let alpha = in.colour.a * glyph_uniform.opacity;
 

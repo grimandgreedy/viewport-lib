@@ -587,18 +587,31 @@ macro_rules! emit_scivis_draw_calls {
 
         // Glyph pass.
         if !$glyph_gpu_data.is_empty() {
-            if let Some(ref dual) = resources.glyph_pipeline {
-                render_pass.set_pipeline(dual.for_format(_is_hdr));
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for glyph in $glyph_gpu_data.iter() {
+            render_pass.set_bind_group(0, camera_bg, &[]);
+            for glyph in $glyph_gpu_data.iter() {
+                let pipeline = if glyph.wireframe {
+                    resources.glyph_wireframe_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                } else {
+                    resources.glyph_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                };
+                if let Some(pipeline) = pipeline {
+                    render_pass.set_pipeline(pipeline);
                     render_pass.set_bind_group(1, &glyph.uniform_bind_group, &[]);
                     render_pass.set_bind_group(2, &glyph.instance_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, glyph.mesh_vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(
-                        glyph.mesh_index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
-                    render_pass.draw_indexed(0..glyph.mesh_index_count, 0, 0..glyph.instance_count);
+                    if glyph.wireframe {
+                        render_pass.set_index_buffer(
+                            glyph.mesh_edge_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..glyph.mesh_edge_index_count, 0, 0..glyph.instance_count);
+                    } else {
+                        render_pass.set_index_buffer(
+                            glyph.mesh_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..glyph.mesh_index_count, 0, 0..glyph.instance_count);
+                    }
                 }
             }
         }
@@ -698,18 +711,31 @@ macro_rules! emit_scivis_draw_calls {
 
         // Tensor glyph pass (Phase 5 : instanced ellipsoids for stress/strain tensors).
         if !$tensor_glyph_gpu_data.is_empty() {
-            if let Some(ref dual) = resources.tensor_glyph_pipeline {
-                render_pass.set_pipeline(dual.for_format(_is_hdr));
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for tg in $tensor_glyph_gpu_data.iter() {
+            render_pass.set_bind_group(0, camera_bg, &[]);
+            for tg in $tensor_glyph_gpu_data.iter() {
+                let pipeline = if tg.wireframe {
+                    resources.tensor_glyph_wireframe_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                } else {
+                    resources.tensor_glyph_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                };
+                if let Some(pipeline) = pipeline {
+                    render_pass.set_pipeline(pipeline);
                     render_pass.set_bind_group(1, &tg.uniform_bind_group, &[]);
                     render_pass.set_bind_group(2, &tg.instance_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, tg.mesh_vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(
-                        tg.mesh_index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
-                    render_pass.draw_indexed(0..tg.mesh_index_count, 0, 0..tg.instance_count);
+                    if tg.wireframe {
+                        render_pass.set_index_buffer(
+                            tg.mesh_edge_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..tg.mesh_edge_index_count, 0, 0..tg.instance_count);
+                    } else {
+                        render_pass.set_index_buffer(
+                            tg.mesh_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..tg.mesh_index_count, 0, 0..tg.instance_count);
+                    }
                 }
             }
         }
