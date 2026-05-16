@@ -61,6 +61,7 @@ mod showcase_40_vertex_warp;
 mod showcase_41_sprites;
 mod showcase_42_gaussian_splats;
 mod showcase_43_scene_runtime;
+mod showcase_44_runtime_interaction;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -205,6 +206,7 @@ fn main() -> eframe::Result {
                 sprite_state: showcase_41_sprites::SpriteState::default(),
                 splat_state: showcase_42_gaussian_splats::GaussianSplatsState::default(),
                 rt_state: showcase_43_scene_runtime::RtDemoState::default(),
+                rt_interact_state: showcase_44_runtime_interaction::RtInteractState::default(),
             }))
         }),
     )
@@ -261,6 +263,7 @@ enum ShowcaseMode {
     Sprites,
     GaussianSplats,
     SceneRuntime,
+    SceneRuntimeInteract,
 }
 
 impl ShowcaseMode {
@@ -309,6 +312,7 @@ impl ShowcaseMode {
             Self::Sprites => "41: Sprites & Particles",
             Self::GaussianSplats => "42: Gaussian Splats",
             Self::SceneRuntime => "43: Scene Runtime",
+            Self::SceneRuntimeInteract => "44: Runtime Interaction",
         }
     }
 }
@@ -464,6 +468,9 @@ pub(crate) struct App {
 
     // --- Showcase 43 ---
     pub(crate) rt_state: showcase_43_scene_runtime::RtDemoState,
+
+    // --- Showcase 44 ---
+    pub(crate) rt_interact_state: showcase_44_runtime_interaction::RtInteractState,
 }
 
 // ---------------------------------------------------------------------------
@@ -640,6 +647,7 @@ impl eframe::App for App {
                     ShowcaseMode::Sprites,
                     ShowcaseMode::GaussianSplats,
                     ShowcaseMode::SceneRuntime,
+                    ShowcaseMode::SceneRuntimeInteract,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -693,7 +701,8 @@ impl eframe::App for App {
                 });
 
                 // Translate egui events -> ViewportEvents.
-                let manip_active_for_text = self.interact_state.manip.is_active();
+                let manip_active_for_text = self.interact_state.manip.is_active()
+                    || self.rt_interact_state.runtime.is_manipulating();
                 ui.input(|i| {
                     let mods = viewport_lib::Modifiers {
                         alt: i.modifiers.alt,
@@ -717,7 +726,9 @@ impl eframe::App for App {
                                 pressed,
                                 repeat,
                                 ..
-                            } if self.mode == ShowcaseMode::Interaction => {
+                            } if self.mode == ShowcaseMode::Interaction
+                                || self.mode == ShowcaseMode::SceneRuntimeInteract =>
+                            {
                                 if let Some(kc) = shared::egui_key_to_keycode(*key) {
                                     self.controller.push_event(ViewportEvent::Key {
                                         key: kc,
@@ -763,8 +774,10 @@ impl eframe::App for App {
                                 if *button == egui::PointerButton::Primary {
                                     if *pressed {
                                         self.interact_state.left_held = true;
+                                        self.rt_interact_state.left_held = true;
                                     } else {
                                         self.interact_state.left_held = false;
+                                        self.rt_interact_state.left_held = false;
                                     }
                                 }
 
@@ -1050,6 +1063,9 @@ impl eframe::App for App {
                     } else {
                         self.controller.apply_to_camera(&mut self.camera);
                     }
+                } else if self.mode == ShowcaseMode::SceneRuntimeInteract {
+                    // Orbit is handled inside the SceneRuntimeInteract per-frame update
+                    // block below (after build_frame_data), so skip it here.
                 } else {
                     // ----- Apply / resolve orbit controller (non-Interaction modes) -----
                     let suppress_orbit = (self.mode == ShowcaseMode::ClipVolumes
@@ -1313,6 +1329,40 @@ impl eframe::App for App {
                     showcase_43_scene_runtime::update_rt_demo(self, dt);
                     ctx.request_repaint();
                 }
+                // ----- Runtime Interaction: step with input context -----
+                if self.mode == ShowcaseMode::SceneRuntimeInteract && self.rt_interact_state.built {
+                    let dt = ctx.input(|i| i.stable_dt.min(1.0 / 30.0));
+                    let cursor = self.interact_state.last_cursor_viewport;
+                    let viewport_size = glam::Vec2::new(rect.width(), rect.height());
+                    let pointer_delta = ctx.input(|i| {
+                        glam::Vec2::new(i.pointer.delta().x, i.pointer.delta().y)
+                    });
+                    let shift_held = ctx.input(|i| i.modifiers.shift);
+                    let clicked = response.clicked();
+                    let drag_started = response.drag_started();
+                    let dragging = self.rt_interact_state.left_held;
+
+                    // Suppress orbit while manipulation is active.
+                    let action_frame = if self.rt_interact_state.runtime.is_manipulating() {
+                        self.controller.resolve()
+                    } else {
+                        self.controller.apply_to_camera(&mut self.camera)
+                    };
+
+                    showcase_44_runtime_interaction::update_rt_interact(
+                        self,
+                        dt,
+                        cursor,
+                        viewport_size,
+                        &action_frame,
+                        clicked,
+                        drag_started,
+                        dragging,
+                        pointer_delta,
+                        shift_held,
+                    );
+                    ctx.request_repaint();
+                }
             });
     }
 }
@@ -1323,7 +1373,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 43] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 44] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1367,6 +1417,7 @@ impl App {
             ShowcaseMode::Sprites,
             ShowcaseMode::GaussianSplats,
             ShowcaseMode::SceneRuntime,
+            ShowcaseMode::SceneRuntimeInteract,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1492,6 +1543,7 @@ impl App {
             ShowcaseMode::Sprites => !self.sprite_state.built,
             ShowcaseMode::GaussianSplats => !self.splat_state.built,
             ShowcaseMode::SceneRuntime => !self.rt_state.built,
+            ShowcaseMode::SceneRuntimeInteract => !self.rt_interact_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -1895,6 +1947,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::SceneRuntimeInteract => {
+                showcase_44_runtime_interaction::build_rt_interact_scene(self, renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 12.0,
+                    orientation: glam::Quat::from_rotation_z(0.6)
+                        * glam::Quat::from_rotation_x(1.1),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -1987,6 +2049,9 @@ impl App {
             }
             ShowcaseMode::SceneRuntime => {
                 showcase_43_scene_runtime::controls_rt_demo(self, ui)
+            }
+            ShowcaseMode::SceneRuntimeInteract => {
+                showcase_44_runtime_interaction::controls_rt_interact(self, ui)
             }
         }
     }
@@ -2692,11 +2757,32 @@ impl App {
                 let sg = self.rt_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
+
+            ShowcaseMode::SceneRuntimeInteract => {
+                let items = if self.rt_interact_state.built {
+                    showcase_44_runtime_interaction::rt_interact_scene_items(self)
+                } else {
+                    Vec::new()
+                };
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.5,
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [0.7, 0.7, 0.7],
+                    ..LightingSettings::default()
+                };
+                let sg = self.rt_interact_state.scene.version();
+                let ss = self.rt_interact_state.selection.version();
+                (items, Some(BG_COLOUR), lighting, sg, ss)
+            }
         };
 
-        // Gizmo matrices for Interaction and ClipVolumes modes.
+        // Gizmo matrices for Interaction, ClipVolumes, and SceneRuntimeInteract modes.
         let (gizmo_model, gizmo_mode, gizmo_space_orient, gizmo_hovered) =
-            if self.mode == ShowcaseMode::Interaction {
+            if self.mode == ShowcaseMode::SceneRuntimeInteract {
+                let (model, mode, orient, hovered) =
+                    showcase_44_runtime_interaction::rt_interact_gizmo(self);
+                (model, mode, orient, hovered)
+            } else if self.mode == ShowcaseMode::Interaction {
                 let center = self.interact_state.gizmo_center;
                 let model = center.map(|c| {
                     glam::Mat4::from_scale_rotation_translation(
@@ -2808,7 +2894,9 @@ impl App {
                 && showcase_04_interaction::interact_outline_selected(self))
             || (self.mode == ShowcaseMode::ScalarFields && !self.scalar_state.selection.is_empty())
             || (self.mode == ShowcaseMode::PickLevels
-                && showcase_33_picking_levels::pl_outline_selected(self));
+                && showcase_33_picking_levels::pl_outline_selected(self))
+            || (self.mode == ShowcaseMode::SceneRuntimeInteract
+                && !self.rt_interact_state.selection.is_empty());
         if scene_graph_outline {
             fd.interaction.outline_width_px = scene_graph_outline_width;
         }

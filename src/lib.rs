@@ -221,8 +221,8 @@ pub use resources::{
 };
 
 pub use runtime::{
-    ContactEvent, FixedStepIter, FixedTimestep, NodeTransformOp, RuntimeFrameContext,
-    RuntimeOutput, RuntimePhase, RuntimePlugin, RuntimeStepContext, SceneRuntimeMode,
-    SelectionOp, SimulationStepContext, TransformSnapshot, TransformSnapshotTable,
-    TransformWriteback, ViewportRuntime,
+    ContactEvent, FixedStepIter, FixedTimestep, ManipulationSystem, NodeTransformOp,
+    RuntimeFrameContext, RuntimeOutput, RuntimePhase, RuntimePlugin, RuntimeStepContext,
+    SceneRuntimeMode, SelectionOp, SelectionSystem, SimulationStepContext, TransformSnapshot,
+    TransformSnapshotTable, TransformWriteback, ViewportRuntime,
 };

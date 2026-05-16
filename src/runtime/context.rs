@@ -17,6 +17,21 @@ pub struct RuntimeFrameContext<'a> {
     pub viewport_size: glam::Vec2,
     /// Resolved input actions for this frame.
     pub input: &'a ActionFrame,
+    /// Pick result under the cursor for this frame. Supply from CPU or GPU picking.
+    /// None if no picking was done or nothing was hit.
+    pub pick_hit: Option<crate::interaction::picking::PickHit>,
+    /// True on the frame the primary pointer button was clicked (pressed and released without drag).
+    pub clicked: bool,
+    /// True on the frame a primary drag began.
+    pub drag_started: bool,
+    /// True while a primary drag is ongoing.
+    pub dragging: bool,
+    /// Pointer movement in viewport pixels since last frame.
+    pub pointer_delta: glam::Vec2,
+    /// Cursor position in viewport-local pixels. None when outside the viewport.
+    pub cursor_viewport: Option<glam::Vec2>,
+    /// True when the shift modifier is held (for shift-click multi-select).
+    pub shift_held: bool,
 }
 
 /// Context passed to each plugin during its execution phase.
@@ -37,6 +52,8 @@ pub struct RuntimeStepContext<'a> {
     pub writeback: &'a mut TransformWriteback,
     /// Accumulate selection changes and contact events here.
     pub output: &'a mut RuntimeOutput,
+    /// Forwarded from RuntimeFrameContext for plugins that need the current pick result.
+    pub pick_hit: Option<crate::interaction::picking::PickHit>,
 }
 
 impl<'a> RuntimeStepContext<'a> {

@@ -45,6 +45,8 @@ pub mod mode;
 pub mod output;
 pub mod plugin;
 pub mod snapshot;
+/// Built-in interaction systems: SelectionSystem and ManipulationSystem.
+pub mod systems;
 pub mod timestep;
 
 pub use context::{RuntimeFrameContext, RuntimeStepContext, SimulationStepContext};
@@ -52,6 +54,7 @@ pub use mode::SceneRuntimeMode;
 pub use output::{ContactEvent, NodeTransformOp, RuntimeOutput, SelectionOp, TransformWriteback};
 pub use plugin::{RuntimePhase, RuntimePlugin};
 pub use snapshot::{TransformSnapshot, TransformSnapshotTable};
+pub use systems::{ManipulationSystem, SelectionSystem};
 pub use timestep::{FixedStepIter, FixedTimestep};
 
 use crate::interaction::selection::Selection;
@@ -68,8 +71,8 @@ use crate::scene::scene::Scene;
 ///
 /// 1. `Prepare` -- once, at wall dt
 /// 2. `Pick` -- once, at wall dt
-/// 3. `Select` -- once, at wall dt
-/// 4. `Manipulate` -- once, at wall dt
+/// 3. `Select` -- once, at wall dt (built-in SelectionSystem runs first if enabled)
+/// 4. `Manipulate` -- once, at wall dt (built-in ManipulationSystem runs first if enabled)
 /// 5. `Animate` -- once, at wall dt
 /// 6. `Simulate` -- once per fixed step (may be 0, 1, or N times); once at wall
 ///    dt if no fixed timestep is configured
@@ -81,6 +84,8 @@ pub struct ViewportRuntime {
     fixed_timestep: Option<FixedTimestep>,
     snapshots: TransformSnapshotTable,
     step_index: u64,
+    selection_system: Option<SelectionSystem>,
+    manipulation_system: Option<ManipulationSystem>,
 }
 
 impl Default for ViewportRuntime {
@@ -98,7 +103,43 @@ impl ViewportRuntime {
             fixed_timestep: None,
             snapshots: TransformSnapshotTable::new(),
             step_index: 0,
+            selection_system: None,
+            manipulation_system: None,
         }
+    }
+
+    /// Enable the built-in click-to-select system.
+    ///
+    /// The SelectionSystem runs before the `Select` phase each frame. It reads
+    /// `RuntimeFrameContext::clicked`, `pick_hit`, and `shift_held` to produce
+    /// SelectionOp entries in RuntimeOutput.
+    pub fn with_selection_system(mut self) -> Self {
+        self.selection_system = Some(SelectionSystem::new());
+        self
+    }
+
+    /// Enable the built-in manipulation system.
+    ///
+    /// The ManipulationSystem runs before the `Manipulate` phase each frame. It
+    /// drives G/R/S sessions and gizmo drag from RuntimeFrameContext inputs, writing
+    /// transform changes via TransformWriteback.
+    pub fn with_manipulation_system(mut self) -> Self {
+        self.manipulation_system = Some(ManipulationSystem::new());
+        self
+    }
+
+    /// True while the built-in manipulation system has an active G/R/S session or gizmo drag.
+    ///
+    /// Use this to suppress orbit camera movement while manipulating objects.
+    pub fn is_manipulating(&self) -> bool {
+        self.manipulation_system
+            .as_ref()
+            .map_or(false, |m| m.is_active())
+    }
+
+    /// Access the built-in manipulation system, if enabled.
+    pub fn manipulation_system(&self) -> Option<&ManipulationSystem> {
+        self.manipulation_system.as_ref()
     }
 
     /// Set the runtime mode.
@@ -183,16 +224,48 @@ impl ViewportRuntime {
         let mut output = RuntimeOutput::default();
         let mut writeback = TransformWriteback::default();
 
-        // Phases that always run once per frame.
-        for phase in [
-            RuntimePhase::Prepare,
-            RuntimePhase::Pick,
-            RuntimePhase::Select,
-            RuntimePhase::Manipulate,
-            RuntimePhase::Animate,
-        ] {
-            self.run_phase(phase, frame.dt, scene, &mut writeback, &mut output);
+        // Phases before Select run unconditionally once per frame.
+        for phase in [RuntimePhase::Prepare, RuntimePhase::Pick] {
+            self.run_phase(phase, frame.dt, frame, scene, &mut writeback, &mut output);
         }
+
+        // Built-in selection system runs before the Select phase.
+        if let Some(sel_sys) = &self.selection_system {
+            sel_sys.step(frame, &mut output);
+        }
+        self.run_phase(
+            RuntimePhase::Select,
+            frame.dt,
+            frame,
+            scene,
+            &mut writeback,
+            &mut output,
+        );
+
+        // Built-in manipulation system runs before the Manipulate phase.
+        if self.manipulation_system.is_some() {
+            // Take the system out temporarily to satisfy the borrow checker.
+            let mut manip_sys = self.manipulation_system.take().unwrap();
+            manip_sys.step(frame, scene, selection, &mut writeback, &mut output);
+            self.manipulation_system = Some(manip_sys);
+        }
+        self.run_phase(
+            RuntimePhase::Manipulate,
+            frame.dt,
+            frame,
+            scene,
+            &mut writeback,
+            &mut output,
+        );
+
+        self.run_phase(
+            RuntimePhase::Animate,
+            frame.dt,
+            frame,
+            scene,
+            &mut writeback,
+            &mut output,
+        );
 
         // Simulate: runs once per fixed step, or once at wall dt if no fixed timestep.
         if self.fixed_timestep.is_some() {
@@ -202,6 +275,7 @@ impl ViewportRuntime {
                 self.run_phase(
                     RuntimePhase::Simulate,
                     step_dt,
+                    frame,
                     scene,
                     &mut writeback,
                     &mut output,
@@ -213,6 +287,7 @@ impl ViewportRuntime {
             self.run_phase(
                 RuntimePhase::Simulate,
                 frame.dt,
+                frame,
                 scene,
                 &mut writeback,
                 &mut output,
@@ -224,6 +299,7 @@ impl ViewportRuntime {
         self.run_phase(
             RuntimePhase::Writeback,
             frame.dt,
+            frame,
             scene,
             &mut writeback,
             &mut output,
@@ -253,6 +329,7 @@ impl ViewportRuntime {
         &mut self,
         phase: RuntimePhase,
         dt: f32,
+        frame: &RuntimeFrameContext,
         scene: &Scene,
         writeback: &mut TransformWriteback,
         output: &mut RuntimeOutput,
@@ -265,6 +342,7 @@ impl ViewportRuntime {
                     scene,
                     writeback,
                     output,
+                    pick_hit: frame.pick_hit,
                 };
                 plugin.step(&mut ctx);
             }

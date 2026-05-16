@@ -148,6 +148,13 @@ pub(crate) fn update_rt_demo(app: &mut App, dt: f32) {
         camera: &camera,
         viewport_size: glam::Vec2::new(800.0, 600.0),
         input: &ActionFrame::default(),
+        pick_hit: None,
+        clicked: false,
+        drag_started: false,
+        dragging: false,
+        pointer_delta: glam::Vec2::ZERO,
+        cursor_viewport: None,
+        shift_held: false,
     };
     app.rt_state.runtime.step(
         &mut app.rt_state.scene,
