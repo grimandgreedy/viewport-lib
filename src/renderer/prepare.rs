@@ -1,5 +1,6 @@
 use super::types::{ClipShape, SceneEffects, ViewportEffects};
 use super::*;
+use crate::resources::CurveMeshOutlineItem;
 use wgpu::util::DeviceExt;
 
 impl ViewportRenderer {
@@ -1022,6 +1023,7 @@ impl ViewportRenderer {
         // SciVis Phase M8 : polyline GPU data upload.
         // ------------------------------------------------------------------
         self.polyline_gpu_data.clear();
+        self.polyline_selected_gpu_indices.clear();
         let vp_size = frame.camera.viewport_size;
         if !frame.scene.polylines.is_empty() {
             resources.ensure_polyline_pipeline(device);
@@ -1030,6 +1032,9 @@ impl ViewportRenderer {
                     continue;
                 }
                 let gpu_data = resources.upload_polyline(device, queue, item, vp_size);
+                if frame.interaction.outline_selected && item.selected {
+                    self.polyline_selected_gpu_indices.push(self.polyline_gpu_data.len());
+                }
                 self.polyline_gpu_data.push(gpu_data);
 
                 // Phase 11: auto-generate GlyphItems for node/edge vector quantities.
@@ -1189,6 +1194,7 @@ impl ViewportRenderer {
         // SciVis Phase M : streamtube GPU data upload.
         // ------------------------------------------------------------------
         self.streamtube_gpu_data.clear();
+        self.streamtube_selected_gpu_indices.clear();
         if !frame.scene.streamtube_items.is_empty() {
             resources.ensure_streamtube_pipeline(device);
             for item in &frame.scene.streamtube_items {
@@ -1198,6 +1204,9 @@ impl ViewportRenderer {
                 let wireframe = frame.viewport.wireframe_mode || item.appearance.wireframe;
                 let gpu_data = resources.upload_streamtube(device, queue, item, wireframe);
                 if gpu_data.index_count > 0 {
+                    if frame.interaction.outline_selected && item.selected {
+                        self.streamtube_selected_gpu_indices.push(self.streamtube_gpu_data.len());
+                    }
                     self.streamtube_gpu_data.push(gpu_data);
                 }
             }
@@ -1207,6 +1216,7 @@ impl ViewportRenderer {
         // Phase 3.3 : General Tube GPU data upload.
         // ------------------------------------------------------------------
         self.tube_gpu_data.clear();
+        self.tube_selected_gpu_indices.clear();
         if !frame.scene.tube_items.is_empty() {
             resources.ensure_streamtube_pipeline(device);
             for item in &frame.scene.tube_items {
@@ -1216,6 +1226,9 @@ impl ViewportRenderer {
                 let wireframe = frame.viewport.wireframe_mode || item.appearance.wireframe;
                 let gpu_data = resources.upload_tube(device, queue, item, wireframe);
                 if gpu_data.index_count > 0 {
+                    if frame.interaction.outline_selected && item.selected {
+                        self.tube_selected_gpu_indices.push(self.tube_gpu_data.len());
+                    }
                     self.tube_gpu_data.push(gpu_data);
                 }
             }
@@ -1225,6 +1238,7 @@ impl ViewportRenderer {
         // Phase 8.1 : Ribbon GPU data upload.
         // ------------------------------------------------------------------
         self.ribbon_gpu_data.clear();
+        self.ribbon_selected_gpu_indices.clear();
         if !frame.scene.ribbon_items.is_empty() {
             resources.ensure_streamtube_pipeline(device);
             for item in &frame.scene.ribbon_items {
@@ -1234,6 +1248,9 @@ impl ViewportRenderer {
                 let wireframe = frame.viewport.wireframe_mode || item.appearance.wireframe;
                 let gpu_data = resources.upload_ribbon(device, queue, item, wireframe);
                 if gpu_data.index_count > 0 {
+                    if frame.interaction.outline_selected && item.selected {
+                        self.ribbon_selected_gpu_indices.push(self.ribbon_gpu_data.len());
+                    }
                     self.ribbon_gpu_data.push(gpu_data);
                 }
             }
@@ -2247,6 +2264,12 @@ impl ViewportRenderer {
 
         // Splat outline buffers: point sprite discs for selected Gaussian splat sets.
         let mut splat_outline_buffers: Vec<crate::resources::SplatOutlineBuffers> = Vec::new();
+        // Curve mesh outline items: streamtubes, tubes, ribbons rendered via outline_mask_pipeline.
+        let mut streamtube_outline_items: Vec<CurveMeshOutlineItem> = Vec::new();
+        let mut tube_outline_items: Vec<CurveMeshOutlineItem> = Vec::new();
+        let mut ribbon_outline_items: Vec<CurveMeshOutlineItem> = Vec::new();
+        // Polyline outline indices: indices into polyline_gpu_data for selected polylines.
+        let mut polyline_outline_indices: Vec<usize> = Vec::new();
         // Each entry is (gpu_data_index, instance_ranges).
         // None = draw all instances (object-level selection).
         // Some(vec) = draw only these specific instance indices (sub-object Instance selection).
@@ -2603,56 +2626,11 @@ impl ViewportRenderer {
                 }
             }
 
-            // Polyline outline buffers: point sprite discs at node positions.
-            for item in &frame.scene.polylines {
-                if !item.selected || item.positions.is_empty() {
-                    continue;
-                }
-
-                let pixel_radius = item.line_width.max(2.0);
-
-                let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("polyline_outline_pos_buf"),
-                    contents: bytemuck::cast_slice(item.positions.as_slice()),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-
-                let uniform = SplatOutlineMaskUniform {
-                    model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                    viewport_w: vp_w,
-                    viewport_h: vp_h,
-                    pixel_radius,
-                    _pad: [0.0; 5],
-                };
-                let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("polyline_outline_uniform_buf"),
-                    contents: bytemuck::cast_slice(&[uniform]),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("polyline_outline_bg"),
-                    layout: &self.resources.outline_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: uniform_buf.as_entire_binding(),
-                    }],
-                });
-
-                let n = item.positions.len();
-                let size_data: Vec<f32> = vec![pixel_radius; n];
-                let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("polyline_outline_size_buf"),
-                    contents: bytemuck::cast_slice(&size_data),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-
-                splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
-                    position_buf,
-                    size_buf,
-                    instance_count: n as u32,
-                    _uniform_buf: uniform_buf,
-                    bind_group,
-                });
+            // Polyline outlines: collect indices of selected polylines so the mask
+            // pass can draw their segment quads via the polyline_outline_mask_pipeline.
+            if !self.polyline_selected_gpu_indices.is_empty() {
+                self.resources.ensure_polyline_outline_mask_pipeline(device);
+                polyline_outline_indices = self.polyline_selected_gpu_indices.clone();
             }
 
             // Sprite outline indices: record which sprite GPU data entries are selected
@@ -2690,78 +2668,46 @@ impl ViewportRenderer {
                 }
             }
 
-            // Streamtube / Tube / Ribbon outline buffers: point sprite discs at
-            // control point positions.
-            let curve_sets: Vec<(&[[f32; 3]], f32)> = frame
-                .scene
-                .streamtube_items
-                .iter()
-                .filter(|s| s.selected && !s.positions.is_empty())
-                .map(|s| (s.positions.as_slice(), s.radius * 16.0))
-                .chain(
-                    frame
-                        .scene
-                        .tube_items
-                        .iter()
-                        .filter(|s| s.selected && !s.positions.is_empty())
-                        .map(|s| (s.positions.as_slice(), s.radius * 16.0)),
-                )
-                .chain(
-                    frame
-                        .scene
-                        .ribbon_items
-                        .iter()
-                        .filter(|s| s.selected && !s.positions.is_empty())
-                        .map(|s| (s.positions.as_slice(), s.width * 8.0)),
-                )
-                .collect();
-
-            for (positions, pixel_radius) in curve_sets {
-                let pixel_radius = pixel_radius.max(4.0);
-
-                let position_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("curve_outline_pos_buf"),
-                    contents: bytemuck::cast_slice(positions),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-
-                let uniform = SplatOutlineMaskUniform {
+            // Streamtube / Tube / Ribbon outline items: use the actual triangle mesh
+            // geometry so the depth-buffer edge detection follows the tube silhouette.
+            let make_curve_item = |index: usize, two_sided: bool| -> CurveMeshOutlineItem {
+                let uniform = crate::resources::OutlineUniform {
                     model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                    viewport_w: vp_w,
-                    viewport_h: vp_h,
-                    pixel_radius,
-                    _pad: [0.0; 5],
+                    colour: [1.0, 1.0, 1.0, 1.0],
+                    pixel_offset: 0.0,
+                    _pad: [0.0; 3],
                 };
-                let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("curve_outline_uniform_buf"),
                     contents: bytemuck::cast_slice(&[uniform]),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("curve_outline_bg"),
+                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("curve_outline_mask_bg"),
                     layout: &self.resources.outline_bind_group_layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: uniform_buf.as_entire_binding(),
+                        resource: buf.as_entire_binding(),
                     }],
                 });
+                CurveMeshOutlineItem {
+                    index,
+                    two_sided,
+                    _mask_uniform_buf: buf,
+                    mask_bind_group: bg,
+                }
+            };
 
-                let n = positions.len();
-                let size_data: Vec<f32> = vec![pixel_radius; n];
-                let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("curve_outline_size_buf"),
-                    contents: bytemuck::cast_slice(&size_data),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-
-                splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
-                    position_buf,
-                    size_buf,
-                    instance_count: n as u32,
-                    _uniform_buf: uniform_buf,
-                    bind_group,
-                });
+            for &idx in &self.streamtube_selected_gpu_indices {
+                streamtube_outline_items.push(make_curve_item(idx, false));
             }
+            for &idx in &self.tube_selected_gpu_indices {
+                tube_outline_items.push(make_curve_item(idx, false));
+            }
+            for &idx in &self.ribbon_selected_gpu_indices {
+                ribbon_outline_items.push(make_curve_item(idx, true));
+            }
+
 
             // Tensor glyph outline indices: same approach as arrow glyphs.
             {
@@ -3270,6 +3216,10 @@ impl ViewportRenderer {
             let slot = &mut self.viewport_slots[vp_idx];
             slot.outline_object_buffers = outline_object_buffers;
             slot.splat_outline_buffers = splat_outline_buffers;
+            slot.streamtube_outline_items = streamtube_outline_items;
+            slot.tube_outline_items = tube_outline_items;
+            slot.ribbon_outline_items = ribbon_outline_items;
+            slot.polyline_outline_indices = polyline_outline_indices;
             slot.volume_outline_indices = volume_outline_indices;
             slot.glyph_outline_indices = glyph_outline_indices;
             slot.tensor_glyph_outline_indices = tensor_glyph_outline_indices;
@@ -3347,6 +3297,14 @@ impl ViewportRenderer {
                 .is_empty()
                 || !self.viewport_slots[vp_idx].splat_outline_buffers.is_empty()
                 || !self.viewport_slots[vp_idx]
+                    .streamtube_outline_items
+                    .is_empty()
+                || !self.viewport_slots[vp_idx].tube_outline_items.is_empty()
+                || !self.viewport_slots[vp_idx].ribbon_outline_items.is_empty()
+                || !self.viewport_slots[vp_idx]
+                    .polyline_outline_indices
+                    .is_empty()
+                || !self.viewport_slots[vp_idx]
                     .volume_outline_indices
                     .is_empty()
                 || !self.viewport_slots[vp_idx].glyph_outline_indices.is_empty()
@@ -3404,6 +3362,14 @@ impl ViewportRenderer {
             let outlines_ptr = &slot_ref.outline_object_buffers as *const Vec<OutlineObjectBuffers>;
             let splat_outlines_ptr = &slot_ref.splat_outline_buffers
                 as *const Vec<crate::resources::SplatOutlineBuffers>;
+            let streamtube_outline_items_ptr = &slot_ref.streamtube_outline_items
+                as *const Vec<CurveMeshOutlineItem>;
+            let tube_outline_items_ptr = &slot_ref.tube_outline_items
+                as *const Vec<CurveMeshOutlineItem>;
+            let ribbon_outline_items_ptr = &slot_ref.ribbon_outline_items
+                as *const Vec<CurveMeshOutlineItem>;
+            let polyline_outline_idx_ptr =
+                &slot_ref.polyline_outline_indices as *const Vec<usize>;
             let vol_outline_idx_ptr = &slot_ref.volume_outline_indices as *const Vec<usize>;
             let glyph_outline_idx_ptr =
                 &slot_ref.glyph_outline_indices as *const Vec<(usize, Option<Vec<u32>>)>;
@@ -3423,6 +3389,14 @@ impl ViewportRenderer {
                 &self.tensor_glyph_gpu_data as *const Vec<crate::resources::TensorGlyphGpuData>;
             let sprite_gpu_ptr =
                 &self.sprite_gpu_data as *const Vec<crate::resources::SpriteGpuData>;
+            let streamtube_gpu_ptr =
+                &self.streamtube_gpu_data as *const Vec<crate::resources::StreamtubeGpuData>;
+            let tube_gpu_ptr =
+                &self.tube_gpu_data as *const Vec<crate::resources::StreamtubeGpuData>;
+            let ribbon_gpu_ptr =
+                &self.ribbon_gpu_data as *const Vec<crate::resources::StreamtubeGpuData>;
+            let polyline_gpu_ptr =
+                &self.polyline_gpu_data as *const Vec<crate::resources::PolylineGpuData>;
             let implicit_gpu_ptr =
                 &self.implicit_gpu_data as *const Vec<crate::resources::implicit::ImplicitGpuItem>;
             let mc_gpu_data_ptr =
@@ -3438,6 +3412,10 @@ impl ViewportRenderer {
             let (
                 outlines,
                 splat_outlines,
+                streamtube_outline_items,
+                tube_outline_items,
+                ribbon_outline_items,
+                polyline_outline_idxs,
                 vol_outline_indices,
                 glyph_outline_indices,
                 tensor_glyph_outline_indices,
@@ -3449,6 +3427,10 @@ impl ViewportRenderer {
                 glyph_gpu_data,
                 tensor_glyph_gpu_data,
                 sprite_gpu_data,
+                streamtube_gpu_data,
+                tube_gpu_data,
+                ribbon_gpu_data,
+                polyline_gpu_data,
                 implicit_gpu_data,
                 mc_gpu_frame_data,
                 camera_bg,
@@ -3460,6 +3442,10 @@ impl ViewportRenderer {
                 (
                     &*outlines_ptr,
                     &*splat_outlines_ptr,
+                    &*streamtube_outline_items_ptr,
+                    &*tube_outline_items_ptr,
+                    &*ribbon_outline_items_ptr,
+                    &*polyline_outline_idx_ptr,
                     &*vol_outline_idx_ptr,
                     &*glyph_outline_idx_ptr,
                     &*tensor_glyph_outline_idx_ptr,
@@ -3471,6 +3457,10 @@ impl ViewportRenderer {
                     &*glyph_gpu_ptr,
                     &*tensor_glyph_gpu_ptr,
                     &*sprite_gpu_ptr,
+                    &*streamtube_gpu_ptr,
+                    &*tube_gpu_ptr,
+                    &*ribbon_gpu_ptr,
+                    &*polyline_gpu_ptr,
                     &*implicit_gpu_ptr,
                     &*mc_gpu_data_ptr,
                     &*camera_bg_ptr,
@@ -3712,6 +3702,71 @@ impl ViewportRenderer {
                                         pass.draw_indirect(&slab.indirect_buf, 0);
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+
+                // Draw streamtube and tube mesh outlines using the standard
+                // outline_mask_pipeline (Vertex layout, back-face culled).
+                {
+                    pass.set_pipeline(&self.resources.outline_mask_pipeline);
+                    pass.set_bind_group(0, camera_bg, &[]);
+                    for item in streamtube_outline_items {
+                        if let Some(gpu) = streamtube_gpu_data.get(item.index) {
+                            pass.set_bind_group(1, &item.mask_bind_group, &[]);
+                            pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
+                            pass.set_index_buffer(
+                                gpu.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            pass.draw_indexed(0..gpu.index_count, 0, 0..1);
+                        }
+                    }
+                    for item in tube_outline_items {
+                        if let Some(gpu) = tube_gpu_data.get(item.index) {
+                            pass.set_bind_group(1, &item.mask_bind_group, &[]);
+                            pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
+                            pass.set_index_buffer(
+                                gpu.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            pass.draw_indexed(0..gpu.index_count, 0, 0..1);
+                        }
+                    }
+                }
+
+                // Draw ribbon mesh outlines using the two-sided pipeline
+                // (ribbons are flat, so both sides need to contribute to the mask).
+                if !ribbon_outline_items.is_empty() {
+                    pass.set_pipeline(&self.resources.outline_mask_two_sided_pipeline);
+                    pass.set_bind_group(0, camera_bg, &[]);
+                    for item in ribbon_outline_items {
+                        if let Some(gpu) = ribbon_gpu_data.get(item.index) {
+                            pass.set_bind_group(1, &item.mask_bind_group, &[]);
+                            pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
+                            pass.set_index_buffer(
+                                gpu.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            pass.draw_indexed(0..gpu.index_count, 0, 0..1);
+                        }
+                    }
+                }
+
+                // Draw polyline segment quads into the mask using the dedicated
+                // polyline_outline_mask_pipeline (instance-expanded quads).
+                if !polyline_outline_idxs.is_empty() {
+                    if let Some(pipeline) =
+                        self.resources.polyline_outline_mask_pipeline.as_ref()
+                    {
+                        pass.set_pipeline(pipeline);
+                        pass.set_bind_group(0, camera_bg, &[]);
+                        for &idx in polyline_outline_idxs {
+                            if let Some(pline) = polyline_gpu_data.get(idx) {
+                                pass.set_bind_group(1, &pline.bind_group, &[]);
+                                pass.set_vertex_buffer(0, pline.vertex_buffer.slice(..));
+                                pass.draw(0..6, 0..pline.segment_count);
                             }
                         }
                     }
@@ -4668,6 +4723,30 @@ impl ViewportRenderer {
                 }
             }
         }
+
+        // Sprite wireframe overlay: quad outline per sprite (<=100) or AABB box (>100).
+        let need_sprite_wf = frame.viewport.wireframe_mode
+            || frame.scene.sprite_items.iter().any(|s| !s.appearance.hidden && s.appearance.wireframe);
+        if need_sprite_wf {
+            self.resources.ensure_polyline_pipeline(device);
+            let vp_size = frame.camera.viewport_size;
+            for item in &frame.scene.sprite_items {
+                if item.appearance.hidden {
+                    continue;
+                }
+                if !(frame.viewport.wireframe_mode || item.appearance.wireframe) {
+                    continue;
+                }
+                if item.positions.is_empty() {
+                    continue;
+                }
+                let polyline = sprite_wireframe_polyline(item, &frame.camera);
+                if !polyline.positions.is_empty() {
+                    let gpu = self.resources.upload_polyline(device, queue, &polyline, vp_size);
+                    self.polyline_gpu_data.push(gpu);
+                }
+            }
+        }
     }
 
     /// Upload per-frame data to GPU buffers and render the shadow pass.
@@ -5554,6 +5633,133 @@ fn splat_obb_polyline(
         })
         .collect();
     obb_box_polyline(&corners)
+}
+
+/// Generate a wireframe polyline for a sprite batch.
+/// <= 100 sprites: 4-edge quad outline per sprite.
+/// > 100 sprites: AABB box from world-space positions.
+fn sprite_wireframe_polyline(
+    item: &crate::renderer::types::SpriteItem,
+    camera: &crate::CameraFrame,
+) -> crate::renderer::types::PolylineItem {
+    let count = item.positions.len();
+    if count == 0 {
+        return crate::renderer::types::PolylineItem::default();
+    }
+    let model = glam::Mat4::from_cols_array_2d(&item.model);
+    if count <= 100 {
+        sprite_quad_outlines_polyline(item, camera, model)
+    } else {
+        let mut mn = glam::Vec3::splat(f32::INFINITY);
+        let mut mx = glam::Vec3::splat(f32::NEG_INFINITY);
+        for pos in &item.positions {
+            let wp = model.transform_point3(glam::Vec3::from(*pos));
+            mn = mn.min(wp);
+            mx = mx.max(wp);
+        }
+        let corners: Vec<[f32; 3]> = [
+            glam::Vec3::new(mn.x, mn.y, mn.z),
+            glam::Vec3::new(mx.x, mn.y, mn.z),
+            glam::Vec3::new(mn.x, mx.y, mn.z),
+            glam::Vec3::new(mx.x, mx.y, mn.z),
+            glam::Vec3::new(mn.x, mn.y, mx.z),
+            glam::Vec3::new(mx.x, mn.y, mx.z),
+            glam::Vec3::new(mn.x, mx.y, mx.z),
+            glam::Vec3::new(mx.x, mx.y, mx.z),
+        ]
+        .iter()
+        .map(|p| p.to_array())
+        .collect();
+        obb_box_polyline(&corners)
+    }
+}
+
+/// Generate 4-edge quad outlines for each sprite in a batch.
+///
+/// Mirrors the sprite vertex shader corner computation:
+/// - WorldSpace sprites: expand along camera right/up by half-size in world units.
+/// - ScreenSpace sprites: convert NDC corners back to world space via inv_view_proj.
+fn sprite_quad_outlines_polyline(
+    item: &crate::renderer::types::SpriteItem,
+    camera: &crate::CameraFrame,
+    model: glam::Mat4,
+) -> crate::renderer::types::PolylineItem {
+    let view = &camera.render_camera.view;
+    // Row 0 of the view matrix = camera right in world space.
+    // Row 1 of the view matrix = camera up in world space.
+    // glam Mat4 is column-major: view[col][row], matching view[0][0]/view[1][0]/view[2][0] in WGSL.
+    let cam_right = glam::Vec3::new(view.x_axis.x, view.y_axis.x, view.z_axis.x);
+    let cam_up = glam::Vec3::new(view.x_axis.y, view.y_axis.y, view.z_axis.y);
+
+    let view_proj = camera.render_camera.view_proj();
+    let inv_view_proj = view_proj.inverse();
+    let [vw, vh] = camera.viewport_size;
+    let is_world_space =
+        matches!(item.size_mode, crate::renderer::types::SpriteSizeMode::WorldSpace);
+
+    // BL -> BR -> TR -> TL -> BL: a closed rectangle (4 edges, 5 positions per strip).
+    const CORNERS: [(f32, f32); 5] =
+        [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0)];
+
+    let mut all_positions: Vec<[f32; 3]> = Vec::new();
+    let mut strip_lengths: Vec<u32> = Vec::new();
+
+    for i in 0..item.positions.len() {
+        let world_pos = model.transform_point3(glam::Vec3::from(item.positions[i]));
+        let size = if i < item.sizes.len() { item.sizes[i] } else { item.default_size };
+        let rotation = if i < item.rotations.len() { item.rotations[i] } else { 0.0 };
+        let cos_r = rotation.cos();
+        let sin_r = rotation.sin();
+        let half = size * 0.5;
+
+        let mut pts: Vec<[f32; 3]> = Vec::with_capacity(5);
+        let mut ok = true;
+
+        if is_world_space {
+            for (cx, cy) in CORNERS {
+                let rx = cos_r * cx - sin_r * cy;
+                let ry = sin_r * cx + cos_r * cy;
+                let p = world_pos + cam_right * (rx * half) + cam_up * (ry * half);
+                pts.push(p.to_array());
+            }
+        } else {
+            let clip_center = view_proj * world_pos.extend(1.0);
+            if clip_center.w <= 0.0 {
+                // Behind camera -- skip this sprite.
+                ok = false;
+            } else {
+                let ndc_center = glam::Vec3::new(clip_center.x, clip_center.y, clip_center.z) / clip_center.w;
+                for (cx, cy) in CORNERS {
+                    let rx = cos_r * cx - sin_r * cy;
+                    let ry = sin_r * cx + cos_r * cy;
+                    let ndc = glam::Vec3::new(
+                        ndc_center.x + rx * half / vw,
+                        ndc_center.y + ry * half / vh,
+                        ndc_center.z,
+                    );
+                    let world_h = inv_view_proj * ndc.extend(1.0);
+                    if world_h.w.abs() < 1e-7 {
+                        ok = false;
+                        break;
+                    }
+                    pts.push((glam::Vec3::new(world_h.x, world_h.y, world_h.z) / world_h.w).to_array());
+                }
+            }
+        }
+
+        if ok && pts.len() == 5 {
+            all_positions.extend_from_slice(&pts);
+            strip_lengths.push(5);
+        }
+    }
+
+    crate::renderer::types::PolylineItem {
+        positions: all_positions,
+        strip_lengths,
+        default_colour: [0.75, 0.75, 0.75, 1.0],
+        line_width: 1.0,
+        ..crate::renderer::types::PolylineItem::default()
+    }
 }
 
 /// Jacobi eigenvalue decomposition for a 3x3 symmetric matrix.
