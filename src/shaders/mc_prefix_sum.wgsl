@@ -17,10 +17,11 @@
 //
 // Group 0 bindings:
 //   0 : PrefixSumParams uniform
-//   1 : counts       storage read       (u32 per cell, triangle count from classify)
-//   2 : offsets      storage read_write (u32 per cell, global exclusive offset output)
-//   3 : block_sums   storage read_write (u32 per block; at most ceil(max_cells/256))
-//   4 : indirect_buf storage read_write ([vertex_count, instance_count=1, 0, 0])
+//   1 : counts            storage read       (u32 per cell, triangle count from classify)
+//   2 : offsets           storage read_write (u32 per cell, global exclusive offset output)
+//   3 : block_sums        storage read_write (u32 per block; at most ceil(max_cells/256))
+//   4 : indirect_buf      storage read_write ([vertex_count=tris*3, 1, 0, 0] for surface draw)
+//   5 : wire_indirect_buf storage read_write ([vertex_count=tris*6, 1, 0, 0] for wire draw)
 
 struct PrefixSumParams {
     cell_count:  u32,
@@ -29,11 +30,12 @@ struct PrefixSumParams {
     _pad:        u32,
 };
 
-@group(0) @binding(0) var<uniform>             params:       PrefixSumParams;
-@group(0) @binding(1) var<storage, read>       counts:       array<u32>;
-@group(0) @binding(2) var<storage, read_write> offsets:      array<u32>;
-@group(0) @binding(3) var<storage, read_write> block_sums:   array<u32>;
-@group(0) @binding(4) var<storage, read_write> indirect_buf: array<u32>;
+@group(0) @binding(0) var<uniform>             params:            PrefixSumParams;
+@group(0) @binding(1) var<storage, read>       counts:            array<u32>;
+@group(0) @binding(2) var<storage, read_write> offsets:           array<u32>;
+@group(0) @binding(3) var<storage, read_write> block_sums:        array<u32>;
+@group(0) @binding(4) var<storage, read_write> indirect_buf:      array<u32>;
+@group(0) @binding(5) var<storage, read_write> wire_indirect_buf: array<u32>;
 
 var<workgroup> smem: array<u32, 256>;
 
@@ -124,10 +126,15 @@ fn main(
                 i += 1u;
             }
             // running = total triangles.
-            indirect_buf[0] = running * 3u; // vertex_count
+            indirect_buf[0] = running * 3u; // vertex_count (surface: 3 verts per tri)
             indirect_buf[1] = 1u;           // instance_count
             indirect_buf[2] = 0u;           // first_vertex
             indirect_buf[3] = 0u;           // first_instance
+            // Wireframe draw: 6 procedural vertices per triangle (3 edges x 2 endpoints).
+            wire_indirect_buf[0] = running * 6u;
+            wire_indirect_buf[1] = 1u;
+            wire_indirect_buf[2] = 0u;
+            wire_indirect_buf[3] = 0u;
         }
 
     } else {

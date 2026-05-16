@@ -2401,6 +2401,8 @@ pub struct ViewportGpuResources {
     pub(crate) mc_prefix_sum_pipeline: Option<wgpu::ComputePipeline>,
     pub(crate) mc_generate_pipeline: Option<wgpu::ComputePipeline>,
     pub(crate) mc_surface_pipeline: Option<DualPipeline>,
+    pub(crate) mc_wireframe_pipeline: Option<DualPipeline>,
+    pub(crate) mc_wireframe_render_bgl: Option<wgpu::BindGroupLayout>,
     pub(crate) mc_classify_bgl: Option<wgpu::BindGroupLayout>,
     pub(crate) mc_prefix_sum_bgl: Option<wgpu::BindGroupLayout>,
     pub(crate) mc_generate_bgl: Option<wgpu::BindGroupLayout>,

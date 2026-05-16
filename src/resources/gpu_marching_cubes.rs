@@ -69,7 +69,8 @@ pub(crate) struct McSlabGpuData {
     pub offsets_buf: wgpu::Buffer,  // u32 per slab cell; STORAGE
     pub block_sums_buf: wgpu::Buffer, // u32 per slab block; STORAGE
     pub vertex_buf: wgpu::Buffer,   // f32 * 6 per vertex; STORAGE | VERTEX
-    pub indirect_buf: wgpu::Buffer, // 4 u32; STORAGE | INDIRECT
+    pub indirect_buf: wgpu::Buffer, // 4 u32; STORAGE | INDIRECT (surface draw)
+    pub wire_indirect_buf: wgpu::Buffer, // 4 u32; STORAGE | INDIRECT (wireframe draw)
     pub dims: [u32; 3],             // [nx, ny, slab_nz] (scalar layers)
     pub origin: [f32; 3],           // world origin; z is offset per slab
     pub spacing: [f32; 3],
@@ -91,6 +92,10 @@ pub(crate) struct McVolumeGpuData {
 pub(crate) struct McFrameData {
     pub volume_idx: usize,
     pub render_bg: wgpu::BindGroup,
+    /// True if this job was submitted with `appearance.wireframe = true`.
+    pub wireframe: bool,
+    /// Per-slab bind groups for the wireframe pipeline (binding 0 = vertex storage buffer).
+    pub wire_slab_bgs: Vec<wgpu::BindGroup>,
 }
 
 /// Per-selected MC job data for the outline mask pass.
@@ -226,7 +231,7 @@ impl ViewportGpuResources {
             ],
         });
 
-        // Prefix sum: 5 bindings (uniform + ro + 3 rw).
+        // Prefix sum: 6 bindings (uniform + ro + 3 rw + wire_indirect_buf rw).
         let prefix_sum_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("mc_prefix_sum_bgl"),
             entries: &[
@@ -235,6 +240,7 @@ impl ViewportGpuResources {
                 bgl_storage_rw(2),
                 bgl_storage_rw(3),
                 bgl_storage_rw(4),
+                bgl_storage_rw(5), // wire_indirect_buf
             ],
         });
 
@@ -398,6 +404,77 @@ impl ViewportGpuResources {
         };
 
         // ----------------------------------------------------------------
+        // Wireframe render pipeline.
+        // ----------------------------------------------------------------
+        let wireframe_render_bgl =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("mc_wireframe_render_bgl"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let wireframe_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("mc_wireframe_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/mc_wireframe.wgsl").into(),
+            ),
+        });
+        let wireframe_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("mc_wireframe_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, &wireframe_render_bgl],
+            push_constant_ranges: &[],
+        });
+        let make_wireframe = |fmt: wgpu::TextureFormat| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("mc_wireframe_pipeline"),
+                layout: Some(&wireframe_layout),
+                vertex: wgpu::VertexState {
+                    module: &wireframe_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[], // positions read from storage buffer
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &wireframe_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: fmt,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::LineList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            })
+        };
+
+        // ----------------------------------------------------------------
         // Commit all resources.
         // ----------------------------------------------------------------
         self.mc_case_count_buf = Some(mc_case_count_buf);
@@ -412,6 +489,11 @@ impl ViewportGpuResources {
         self.mc_surface_pipeline = Some(DualPipeline {
             ldr: make_surface(self.target_format),
             hdr: make_surface(wgpu::TextureFormat::Rgba16Float),
+        });
+        self.mc_wireframe_render_bgl = Some(wireframe_render_bgl);
+        self.mc_wireframe_pipeline = Some(DualPipeline {
+            ldr: make_wireframe(self.target_format),
+            hdr: make_wireframe(wgpu::TextureFormat::Rgba16Float),
         });
     }
 
@@ -520,14 +602,23 @@ impl ViewportGpuResources {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX,
                 mapped_at_creation: false,
             });
+            let initial_indirect = bytemuck::cast_slice(&[0u32, 1u32, 0u32, 0u32]);
             let indirect_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("mc_indirect_buf"),
                 // Initial: 0 vertices, 1 instance, 0 first_vertex, 0 first_instance.
-                contents: bytemuck::cast_slice(&[0u32, 1u32, 0u32, 0u32]),
+                contents: initial_indirect,
                 usage: wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::INDIRECT
                     | wgpu::BufferUsages::COPY_DST,
             });
+            let wire_indirect_buf =
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("mc_wire_indirect_buf"),
+                    contents: initial_indirect,
+                    usage: wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::INDIRECT
+                        | wgpu::BufferUsages::COPY_DST,
+                });
 
             slabs.push(McSlabGpuData {
                 scalar_buf,
@@ -537,6 +628,7 @@ impl ViewportGpuResources {
                 block_sums_buf,
                 vertex_buf,
                 indirect_buf,
+                wire_indirect_buf,
                 dims: [nx, ny, slab_nz],
                 origin: [vol.origin[0], vol.origin[1], slab_origin_z],
                 spacing: vol.spacing,
@@ -795,6 +887,10 @@ impl ViewportGpuResources {
                                 binding: 4,
                                 resource: slab.indirect_buf.as_entire_binding(),
                             },
+                            wgpu::BindGroupEntry {
+                                binding: 5,
+                                resource: slab.wire_indirect_buf.as_entire_binding(),
+                            },
                         ],
                     })
                 });
@@ -920,9 +1016,30 @@ impl ViewportGpuResources {
                 }
             }
 
+            let wire_slab_bgs: Vec<wgpu::BindGroup> =
+                if let Some(ref wire_bgl) = self.mc_wireframe_render_bgl {
+                    vol.slabs
+                        .iter()
+                        .map(|slab| {
+                            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                label: Some("mc_wire_slab_bg"),
+                                layout: wire_bgl,
+                                entries: &[wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: slab.vertex_buf.as_entire_binding(),
+                                }],
+                            })
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+
             frame_data.push(McFrameData {
                 volume_idx: job.volume_id.0,
                 render_bg,
+                wireframe: job.appearance.wireframe,
+                wire_slab_bgs,
             });
         }
 

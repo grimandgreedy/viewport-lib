@@ -2238,6 +2238,8 @@ impl ViewportGpuResources {
             mc_prefix_sum_pipeline: None,
             mc_generate_pipeline: None,
             mc_surface_pipeline: None,
+            mc_wireframe_pipeline: None,
+            mc_wireframe_render_bgl: None,
             mc_classify_bgl: None,
             mc_prefix_sum_bgl: None,
             mc_generate_bgl: None,
