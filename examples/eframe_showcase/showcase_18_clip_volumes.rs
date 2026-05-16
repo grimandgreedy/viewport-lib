@@ -11,8 +11,9 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BuiltinColourmap, ClipObject, ColourmapId, Gizmo, Material, ViewportRenderer, VolumeId,
-    VolumeItem, scene::Scene,
+    BackfacePolicy, BuiltinColourmap, ClipObject, ColourmapId, FrameData, Gizmo, LightKind,
+    LightSource, LightingSettings, Material, SceneRenderItem, ViewportRenderer, VolumeId,
+    VolumeItem, scene::Scene, selection::Selection,
 };
 
 // ---------------------------------------------------------------------------
@@ -515,5 +516,53 @@ impl App {
                 }
             })
             .collect()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Frame assembly
+// ---------------------------------------------------------------------------
+
+pub(crate) fn clipvol_collect_scene_items(
+    app: &mut App,
+) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+    let items = if app.clipvol_state.scene_mode == SceneMode::Mesh {
+        let mut items = app
+            .clipvol_state
+            .scene
+            .collect_render_items(&Selection::new());
+        for item in items.iter_mut() {
+            item.material.backface_policy = BackfacePolicy::Identical;
+        }
+        items
+    } else {
+        Vec::new()
+    };
+    let sg = app.clipvol_state.scene.version();
+    let lighting = LightingSettings {
+        lights: vec![LightSource {
+            kind: LightKind::Directional {
+                direction: [0.5, 0.3, 1.2],
+            },
+            intensity: 1.8,
+            ..LightSource::default()
+        }],
+        hemisphere_intensity: 0.4,
+        sky_colour: [1.0, 1.0, 1.0],
+        ground_colour: [0.8, 0.8, 0.8],
+        ..LightingSettings::default()
+    };
+    (items, lighting, sg, 0)
+}
+
+pub(crate) fn submit_clipvol_items(app: &mut App, fd: &mut FrameData) {
+    if !app.clipvol_state.built {
+        return;
+    }
+    fd.effects.clip_objects.extend(app.make_clip_objects());
+    if app.clipvol_state.scene_mode == SceneMode::Volume {
+        if let Some(vol) = app.make_clipvol_volume_item() {
+            fd.scene.volumes.push(vol);
+        }
     }
 }

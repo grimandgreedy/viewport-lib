@@ -9,7 +9,8 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BuiltinColourmap, ColourmapId, PolylineItem, RibbonItem, StreamtubeItem, TubeItem,
+    BuiltinColourmap, ColourmapId, FrameData, LightingSettings, PolylineItem, RibbonItem,
+    SceneRenderItem, StreamtubeItem, TubeItem,
 };
 
 // ---------------------------------------------------------------------------
@@ -392,4 +393,40 @@ fn flatten_paths(
     }
 
     (positions, strip_lengths, flat_scalars)
+}
+
+// ---------------------------------------------------------------------------
+// Frame assembly
+// ---------------------------------------------------------------------------
+
+pub(crate) fn stream_collect_scene_items(
+    _app: &App,
+) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+    let lighting = LightingSettings {
+        hemisphere_intensity: 0.5,
+        sky_colour: [1.0, 1.0, 1.0],
+        ground_colour: [1.0, 1.0, 1.0],
+        ..LightingSettings::default()
+    };
+    (vec![], lighting, 0, 0)
+}
+
+pub(crate) fn submit_stream_items(app: &mut App, fd: &mut FrameData) {
+    if !app.stream_state.built {
+        return;
+    }
+    match app.stream_state.render_mode {
+        StreamRenderMode::Polylines => {
+            fd.scene.polylines.push(app.make_stream_polyline_item());
+        }
+        StreamRenderMode::Streamtube => {
+            fd.scene.streamtube_items.push(app.make_stream_tube_item());
+        }
+        StreamRenderMode::GeneralTube => {
+            fd.scene.tube_items.push(app.make_stream_general_tube_item());
+        }
+        StreamRenderMode::Ribbon => {
+            fd.scene.ribbon_items.push(app.make_stream_ribbon_item());
+        }
+    }
 }

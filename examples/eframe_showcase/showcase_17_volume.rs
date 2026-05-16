@@ -18,8 +18,9 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BuiltinColourmap, ColourmapId, ImageSliceItem, Material, MeshData, MeshId, SliceAxis, VolumeData,
-    VolumeId, VolumeItem, VolumeSurfaceSliceItem, extract_isosurface,
+    BuiltinColourmap, ColourmapId, FrameData, ImageSliceItem, LightingSettings, Material,
+    MeshData, MeshId, SceneRenderItem, SliceAxis, VolumeData, VolumeId, VolumeItem,
+    VolumeSurfaceSliceItem, extract_isosurface,
 };
 
 // ---------------------------------------------------------------------------
@@ -504,4 +505,46 @@ fn make_saddle_mesh(n: u32) -> MeshData {
     mesh.normals = normals;
     mesh.indices = indices;
     mesh
+}
+
+// ---------------------------------------------------------------------------
+// Frame assembly
+// ---------------------------------------------------------------------------
+
+pub(crate) fn vol_collect_scene_items(
+    app: &mut App,
+) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+    let surface_items = if app.vol_state.mode != VolumeMode::VolumeOnly {
+        app.make_iso_surface_item().into_iter().collect()
+    } else {
+        vec![]
+    };
+    let lighting = LightingSettings {
+        hemisphere_intensity: 0.6,
+        sky_colour: [1.0, 1.0, 1.0],
+        ground_colour: [0.8, 0.8, 0.8],
+        ..LightingSettings::default()
+    };
+    (surface_items, lighting, 0, 0)
+}
+
+pub(crate) fn submit_vol_items(app: &mut App, fd: &mut FrameData) {
+    if !app.vol_state.built {
+        return;
+    }
+    if app.vol_state.mode != VolumeMode::IsosurfaceOnly {
+        if let Some(vol_item) = app.make_volume_item() {
+            fd.scene.volumes.push(vol_item);
+        }
+    }
+    if app.vol_state.show_slice {
+        if let Some(slice_item) = app.make_image_slice_item() {
+            fd.scene.image_slices.push(slice_item);
+        }
+    }
+    if app.vol_state.show_surface_slice {
+        if let Some(item) = app.make_volume_surface_slice_item() {
+            fd.scene.volume_surface_slices.push(item);
+        }
+    }
 }

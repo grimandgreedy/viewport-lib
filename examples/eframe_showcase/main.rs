@@ -2,13 +2,12 @@
 
 use eframe::egui;
 use viewport_lib::{
-    Action, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, ButtonState, Camera,
+    Action, AttributeKind, AttributeRef, BackfacePolicy, ButtonState, Camera,
     CameraAnimator, CameraFrame, ClipObject, ColourmapId, FrameData, GizmoAxis, GizmoInfo,
-    GizmoMode, GlyphItem, GroundPlane, GroundPlaneMode, LightKind, LightSource, LightingSettings,
+    GizmoMode, GroundPlane, GroundPlaneMode, LightKind, LightSource, LightingSettings,
     ManipResult, ManipulationContext, MeshData, MeshId, OrbitCameraController, PickId,
     PointCloudItem, PostProcessSettings, RenderCamera, RuntimeMode, SceneFrame, SceneRenderItem,
     ScrollUnits, Selection, ShadowFilter, ViewportContext, ViewportEvent, ViewportRenderer,
-    geometry::isoline::IsolineItem,
     gizmo::{self, compute_gizmo_scale},
     scene::Scene,
 };
@@ -1980,12 +1979,8 @@ impl App {
         let mut adv_outline = false;
         let mut adv_xray = false;
         let mut perf_outline = false;
-        let mut interact_outline = false;
         let mut scene_graph_outline = false;
         let mut scene_graph_outline_width = 4.0_f32;
-
-        let mut eq_glyphs: Vec<GlyphItem> = Vec::new();
-        let mut eq_pcs: Vec<PointCloudItem> = Vec::new();
 
         // Performance showcase uses a cached Arc<[SceneRenderItem]> to avoid a per-frame
         // deep clone of the 1M-item Vec. Set by the Performance arm below; None for all others.
@@ -2063,19 +2058,8 @@ impl App {
             }
 
             ShowcaseMode::Interaction => {
-                let items = self
-                    .interact_state
-                    .scene
-                    .collect_render_items(&self.interact_state.selection);
-                interact_outline = !self.interact_state.selection.is_empty();
-                let sg = self.interact_state.scene.version();
-                let ss = self.interact_state.selection.version();
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [1.0, 1.0, 1.0],
-                    ..LightingSettings::default()
-                };
+                let (items, lighting, sg, ss) =
+                    showcase_04_interaction::interact_collect_scene_items(self);
                 (items, Some(BG_COLOUR), lighting, sg, ss)
             }
 
@@ -2250,94 +2234,33 @@ impl App {
                 unreachable!("MultiViewport is handled before build_frame_data")
             }
             ShowcaseMode::Isolines => {
-                let mut items = self.iso_state.scene.collect_render_items(&Selection::new());
-                // Apply scalar colouring or flat grey depending on toggle.
-                if self.iso_state.show_surface_colour {
-                    for item in items.iter_mut() {
-                        item.active_attribute = Some(AttributeRef {
-                            name: "wave".to_string(),
-                            kind: AttributeKind::Vertex,
-                        });
-                        item.colourmap_id = Some(ColourmapId(BuiltinColourmap::Coolwarm as usize));
-                        item.material.backface_policy = BackfacePolicy::Identical;
-                    }
-                } else {
-                    for item in items.iter_mut() {
-                        item.material.backface_policy = BackfacePolicy::Identical;
-                    }
-                }
-                let sg = self.iso_state.scene.version();
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [1.0, 1.0, 1.0],
-                    ..LightingSettings::default()
-                };
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                let (items, lighting, sg, ss) =
+                    showcase_14_isolines::iso_collect_scene_items(self);
+                (items, Some(BG_COLOUR), lighting, sg, ss)
             }
 
             ShowcaseMode::PointClouds => {
-                let lighting = App::pc_lighting();
-                (App::pc_surface_items(), Some(BG_COLOUR), lighting, 0, 0)
+                let (items, lighting, sg, ss) =
+                    showcase_15_point_clouds::pc_collect_scene_items(self);
+                (items, Some(BG_COLOUR), lighting, sg, ss)
             }
 
             ShowcaseMode::Streamlines => {
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [1.0, 1.0, 1.0],
-                    ..LightingSettings::default()
-                };
-                (vec![], Some(BG_COLOUR), lighting, 0, 0)
+                let (items, lighting, sg, ss) =
+                    showcase_16_streamlines::stream_collect_scene_items(self);
+                (items, Some(BG_COLOUR), lighting, sg, ss)
             }
 
             ShowcaseMode::Volume => {
-                // Isosurface mesh items go into surface_items when visible.
-                let surface_items =
-                    if self.vol_state.mode != showcase_17_volume::VolumeMode::VolumeOnly {
-                        self.make_iso_surface_item().into_iter().collect()
-                    } else {
-                        vec![]
-                    };
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.6,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [0.8, 0.8, 0.8],
-                    ..LightingSettings::default()
-                };
-                (surface_items, Some(BG_COLOUR), lighting, 0, 0)
+                let (items, lighting, sg, ss) =
+                    showcase_17_volume::vol_collect_scene_items(self);
+                (items, Some(BG_COLOUR), lighting, sg, ss)
             }
 
             ShowcaseMode::ClipVolumes => {
-                use showcase_18_clip_volumes::SceneMode;
-                let items = if self.clipvol_state.scene_mode == SceneMode::Mesh {
-                    let mut items = self
-                        .clipvol_state
-                        .scene
-                        .collect_render_items(&Selection::new());
-                    // Show inside faces when clipped so the cross-section is visible.
-                    for item in items.iter_mut() {
-                        item.material.backface_policy = BackfacePolicy::Identical;
-                    }
-                    items
-                } else {
-                    Vec::new()
-                };
-                let sg = self.clipvol_state.scene.version();
-                let lighting = LightingSettings {
-                    lights: vec![LightSource {
-                        kind: LightKind::Directional {
-                            direction: [0.5, 0.3, 1.2],
-                        },
-                        intensity: 1.8,
-                        ..LightSource::default()
-                    }],
-                    hemisphere_intensity: 0.4,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [0.8, 0.8, 0.8],
-                    ..LightingSettings::default()
-                };
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                let (items, lighting, sg, ss) =
+                    showcase_18_clip_volumes::clipvol_collect_scene_items(self);
+                (items, Some(BG_COLOUR), lighting, sg, ss)
             }
 
             ShowcaseMode::ScalarFields => {
@@ -2524,83 +2447,15 @@ impl App {
             }
 
             ShowcaseMode::SurfaceVectors => {
-                let surface_item = if self.sv_state.built {
-                    vec![self.sv_surface_item()]
-                } else {
-                    vec![]
-                };
-                (surface_item, Some(BG_COLOUR), App::sv_lighting(), 0, 0)
+                let (items, lighting, sg, ss) =
+                    showcase_25_surface_vectors::sv_collect_scene_items(self);
+                (items, Some(BG_COLOUR), lighting, sg, ss)
             }
 
             ShowcaseMode::VolumeMesh => {
-                // Per-frame CPU clip section: regenerate the clipped mesh slot
-                // so section faces reflect the current plane position.
-                if self.vm_state.clip_on && self.vm_state.built {
-                    if let Some(rs) = frame.wgpu_render_state() {
-                        let mut guard = rs.renderer.write();
-                        if let Some(renderer) =
-                            guard.callback_resources.get_mut::<ViewportRenderer>()
-                        {
-                            let data = self.vm_active_data();
-                            let clip_planes = [self.vm_clip_plane()];
-                            match self.vm_state.clipped_item.as_ref() {
-                                None => {
-                                    if let Ok((id, f2c)) =
-                                        renderer.resources_mut().upload_clipped_volume_mesh_data(
-                                            &rs.device,
-                                            &data,
-                                            &clip_planes,
-                                        )
-                                    {
-                                        let mut item = viewport_lib::VolumeMeshItem::new(id, f2c);
-                                        item.material.backface_policy =
-                                            viewport_lib::BackfacePolicy::Identical;
-                                        self.vm_state.clipped_item = Some(item);
-                                    }
-                                }
-                                Some(existing) => {
-                                    if let Ok(f2c) =
-                                        renderer.resources_mut().replace_clipped_volume_mesh_data(
-                                            &rs.device,
-                                            &rs.queue,
-                                            existing.mesh_id,
-                                            &data,
-                                            &clip_planes,
-                                        )
-                                    {
-                                        if let Some(item) = self.vm_state.clipped_item.as_mut() {
-                                            item.face_to_cell = f2c;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                // Rebuild PT meshes when the scalar field or colourmap changes.
-                let pt_needs_rebuild = self.vm_state.built
-                    && (self.vm_state.field != self.vm_state.pt_field
-                        || self.vm_state.colourmap != self.vm_state.pt_colourmap);
-                if pt_needs_rebuild {
-                    if let Some(rs) = frame.wgpu_render_state() {
-                        let mut guard = rs.renderer.write();
-                        if let Some(renderer) =
-                            guard.callback_resources.get_mut::<ViewportRenderer>()
-                        {
-                            self.rebuild_pt_meshes(
-                                renderer,
-                                &rs.device,
-                                self.vm_state.field,
-                                self.vm_state.colourmap,
-                            );
-                            self.vm_state.pt_field = self.vm_state.field;
-                            self.vm_state.pt_colourmap = self.vm_state.colourmap;
-                        }
-                    }
-                }
-
-                let items = self.vm_scene_items();
-                (items, Some(BG_COLOUR), App::vm_lighting(), 0, 0)
+                let (items, lighting, sg, ss) =
+                    showcase_26_volume_mesh::vm_collect_scene_items(self, frame);
+                (items, Some(BG_COLOUR), lighting, sg, ss)
             }
 
             ShowcaseMode::Auxiliary => {
@@ -2609,7 +2464,9 @@ impl App {
             }
 
             ShowcaseMode::CurveNetworkQuantities => {
-                (vec![], Some(BG_COLOUR), LightingSettings::default(), 0, 0)
+                let (items, lighting, sg, ss) =
+                    showcase_28_curve_network_quantities::cnq_collect_scene_items(self);
+                (items, Some(BG_COLOUR), lighting, sg, ss)
             }
 
             ShowcaseMode::DepthCompositeImages => (
@@ -2637,10 +2494,9 @@ impl App {
             ),
 
             ShowcaseMode::ExtendedQuantities => {
-                let (items, glyphs, pcs) = self.eq_scene_items();
-                eq_glyphs = glyphs;
-                eq_pcs = pcs;
-                (items, Some(BG_COLOUR), LightingSettings::default(), 0, 0)
+                let (items, lighting, sg, ss) =
+                    showcase_32_extended_quantities::eq_collect_scene_items(self);
+                (items, Some(BG_COLOUR), lighting, sg, ss)
             }
 
             ShowcaseMode::PickLevels => {
@@ -2736,15 +2592,9 @@ impl App {
             }
 
             ShowcaseMode::ProbeWidgets => {
-                let items = self.pw_state.scene.collect_render_items(&Selection::new());
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.6,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [0.8, 0.8, 0.8],
-                    ..LightingSettings::default()
-                };
-                let sg = self.pw_state.scene.version();
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                let (items, lighting, sg, ss) =
+                    showcase_37_probe_widgets::pw_collect_scene_items(self);
+                (items, Some(BG_COLOUR), lighting, sg, ss)
             }
 
             ShowcaseMode::SurfaceLIC => {
@@ -2793,7 +2643,9 @@ impl App {
             }
 
             ShowcaseMode::GaussianSplats => {
-                (vec![], Some(BG_COLOUR), LightingSettings::default(), 0, 0)
+                let (items, lighting, sg, ss) =
+                    showcase_42_gaussian_splats::splat_collect_scene_items(self);
+                (items, Some(BG_COLOUR), lighting, sg, ss)
             }
         };
 
@@ -2856,9 +2708,6 @@ impl App {
         if self.mode == ShowcaseMode::PickLevels {
             showcase_33_picking_levels::pl_configure_frame(self, &mut fd);
         }
-        if self.mode == ShowcaseMode::VolumeMesh {
-            fd.viewport.wireframe_mode = self.vm_state.wireframe;
-        }
         fd.viewport.show_grid = false;
         fd.viewport.show_axes_indicator = true;
         fd.viewport.background_colour = bg_colour;
@@ -2884,9 +2733,6 @@ impl App {
         if self.mode == ShowcaseMode::BackfacePolicy {
             adv_clip_objects.extend(self.sa_clip_objects());
         }
-        if self.mode == ShowcaseMode::VolumeMesh {
-            adv_clip_objects.extend(self.vm_clip_objects());
-        }
         fd.effects.clip_objects = adv_clip_objects;
         if self.mode == ShowcaseMode::NormalMaps {
             fd.effects.cap_fill_enabled = self.nm_state.cap_fill;
@@ -2896,7 +2742,7 @@ impl App {
             fd.effects.cap_fill_enabled = false;
         }
         if self.mode == ShowcaseMode::VolumeMesh {
-            fd.effects.cap_fill_enabled = false;
+            showcase_26_volume_mesh::vm_configure_frame(self, &mut fd);
         }
         fd.interaction.gizmo_model = gizmo_model;
         fd.interaction.gizmo_mode = gizmo_mode;
@@ -2905,7 +2751,8 @@ impl App {
         fd.interaction.outline_selected = adv_outline
             || perf_outline
             || scene_graph_outline
-            || interact_outline
+            || (self.mode == ShowcaseMode::Interaction
+                && showcase_04_interaction::interact_outline_selected(self))
             || (self.mode == ShowcaseMode::ScalarFields && !self.scalar_state.selection.is_empty())
             || (self.mode == ShowcaseMode::PickLevels
                 && showcase_33_picking_levels::pl_outline_selected(self));
@@ -2918,101 +2765,37 @@ impl App {
 
         // Transparent volume mesh (Showcase 26) : submitted every frame when transparent mode is on.
         if self.mode == ShowcaseMode::VolumeMesh {
-            if let Some(item) = self.vm_transparent_item() {
-                fd.scene.transparent_volume_meshes.push(item);
-                // OIT runs inside the HDR path; enable post-processing to activate it.
-                fd.effects.post_process.enabled = true;
-            }
+            showcase_26_volume_mesh::submit_vm_items(self, &mut fd);
         }
 
-        // Volume item (Showcase 17) : submitted every frame when in volume mode.
-        if self.mode == ShowcaseMode::Volume
-            && self.vol_state.built
-            && self.vol_state.mode != showcase_17_volume::VolumeMode::IsosurfaceOnly
-        {
-            if let Some(vol_item) = self.make_volume_item() {
-                fd.scene.volumes.push(vol_item);
-            }
-        }
-
-        // Image slice (Showcase 17) : submitted every frame when enabled.
-        if self.mode == ShowcaseMode::Volume && self.vol_state.built && self.vol_state.show_slice {
-            if let Some(slice_item) = self.make_image_slice_item() {
-                fd.scene.image_slices.push(slice_item);
-            }
-        }
-
-        // Volume surface slice (Showcase 17) : submitted every frame when enabled.
-        if self.mode == ShowcaseMode::Volume
-            && self.vol_state.built
-            && self.vol_state.show_surface_slice
-        {
-            if let Some(item) = self.make_volume_surface_slice_item() {
-                fd.scene.volume_surface_slices.push(item);
-            }
+        // Volume items (Showcase 17) : submitted every frame.
+        if self.mode == ShowcaseMode::Volume {
+            showcase_17_volume::submit_vol_items(self, &mut fd);
         }
 
         // Clip volume (Showcase 18) : set every frame from current state.
-        if self.mode == ShowcaseMode::ClipVolumes && self.clipvol_state.built {
-            fd.effects.clip_objects.extend(self.make_clip_objects());
-            // Volume mode: ray-march the density field with the same clip objects applied.
-            if self.clipvol_state.scene_mode == showcase_18_clip_volumes::SceneMode::Volume {
-                if let Some(vol) = self.make_clipvol_volume_item() {
-                    fd.scene.volumes.push(vol);
-                }
-            }
+        if self.mode == ShowcaseMode::ClipVolumes {
+            showcase_18_clip_volumes::submit_clipvol_items(self, &mut fd);
         }
 
         // Streamline / tube items (Showcase 16) : submitted every frame.
-        if self.mode == ShowcaseMode::Streamlines && self.stream_state.built {
-            use showcase_16_streamlines::StreamRenderMode;
-            match self.stream_state.render_mode {
-                StreamRenderMode::Polylines => {
-                    fd.scene.polylines.push(self.make_stream_polyline_item());
-                }
-                StreamRenderMode::Streamtube => {
-                    fd.scene.streamtube_items.push(self.make_stream_tube_item());
-                }
-                StreamRenderMode::GeneralTube => {
-                    fd.scene
-                        .tube_items
-                        .push(self.make_stream_general_tube_item());
-                }
-                StreamRenderMode::Ribbon => {
-                    fd.scene.ribbon_items.push(self.make_stream_ribbon_item());
-                }
-            }
+        if self.mode == ShowcaseMode::Streamlines {
+            showcase_16_streamlines::submit_stream_items(self, &mut fd);
         }
 
         // Spline widget polyline + handles (Showcase 4) : submitted every frame.
-        if self.mode == ShowcaseMode::Interaction && self.interact_state.built {
-            fd.scene
-                .polylines
-                .push(self.interact_state.spline.polyline_item(9900));
-            let render_cam = CameraFrame::from_camera(&self.camera, [w, h]).render_camera;
-            let spline_ctx = viewport_lib::WidgetContext {
-                camera: render_cam,
-                viewport_size: glam::Vec2::new(w, h),
-                cursor_viewport: self.interact_state.last_cursor_viewport,
-                drag_started: false,
-                dragging: false,
-                released: false,
-                double_clicked: false,
-            };
-            fd.scene
-                .glyphs
-                .push(self.interact_state.spline.handle_glyphs(9901, &spline_ctx));
+        if self.mode == ShowcaseMode::Interaction {
+            showcase_04_interaction::submit_interact_items(self, &mut fd, w, h);
         }
 
         // Surface vector glyphs (Showcase 25) : submitted every frame.
-        if self.mode == ShowcaseMode::SurfaceVectors && self.sv_state.built {
-            fd.scene.glyphs.push(self.sv_glyph_item());
+        if self.mode == ShowcaseMode::SurfaceVectors {
+            showcase_25_surface_vectors::submit_sv_items(self, &mut fd);
         }
 
         // Extended quantity glyphs and point clouds (Showcase 32) : submitted every frame.
-        if self.mode == ShowcaseMode::ExtendedQuantities && self.eq_state.built {
-            fd.scene.glyphs.extend(eq_glyphs);
-            fd.scene.point_clouds.extend(eq_pcs);
+        if self.mode == ShowcaseMode::ExtendedQuantities {
+            showcase_32_extended_quantities::submit_eq_items(self, &mut fd);
         }
 
         // Picking Levels (Showcase 33).
@@ -3023,9 +2806,7 @@ impl App {
 
         // Curve network quantities (Showcase 28) : submitted every frame.
         if self.mode == ShowcaseMode::CurveNetworkQuantities {
-            fd.scene
-                .polylines
-                .push(showcase_28_curve_network_quantities::make_cnq_polyline_item(self));
+            showcase_28_curve_network_quantities::submit_cnq_items(self, &mut fd);
         }
 
         // Depth-composite screen image (Showcase 29) : submitted every frame.
@@ -3047,58 +2828,13 @@ impl App {
         }
 
         // Point cloud / glyph items (Showcase 15) : submitted every frame.
-        if self.mode == ShowcaseMode::PointClouds && self.pc_state.built {
-            use showcase_15_point_clouds::PcSubMode;
-            match self.pc_state.sub_mode {
-                PcSubMode::PointCloud => {
-                    fd.scene.point_clouds.push(self.make_pc_point_cloud_item());
-                }
-                PcSubMode::VectorField => {
-                    fd.scene.glyphs.push(self.make_pc_glyph_item());
-                }
-                PcSubMode::PointGaussian => {
-                    fd.scene.point_clouds.push(self.make_pc_gaussian_item());
-                }
-            }
-            if self.pc_state.ssao_enabled {
-                fd.effects.post_process = PostProcessSettings {
-                    enabled: true,
-                    ssao: true,
-                    ..PostProcessSettings::default()
-                };
-            }
+        if self.mode == ShowcaseMode::PointClouds {
+            showcase_15_point_clouds::submit_pc_items(self, &mut fd);
         }
 
         // Isoline items (Showcase 14) : submitted every frame with current settings.
-        if self.mode == ShowcaseMode::Isolines && self.iso_state.built {
-            let scalar_min = self
-                .iso_state
-                .scalars
-                .iter()
-                .cloned()
-                .fold(f32::INFINITY, f32::min);
-            let scalar_max = self
-                .iso_state
-                .scalars
-                .iter()
-                .cloned()
-                .fold(f32::NEG_INFINITY, f32::max);
-            let range = scalar_max - scalar_min;
-            let isovalues: Vec<f32> = (0..self.iso_state.contour_count)
-                .map(|i| {
-                    scalar_min
-                        + range * (i as f32 + 1.0) / (self.iso_state.contour_count as f32 + 1.0)
-                })
-                .collect();
-            let mut iso_item = IsolineItem::default();
-            iso_item.positions = self.iso_state.positions.clone();
-            iso_item.indices = self.iso_state.indices.clone();
-            iso_item.scalars = self.iso_state.scalars.clone();
-            iso_item.isovalues = isovalues;
-            iso_item.colour = self.iso_state.line_colour;
-            iso_item.line_width = self.iso_state.line_width;
-            iso_item.depth_bias = self.iso_state.depth_bias;
-            fd.scene.isolines.push(iso_item);
+        if self.mode == ShowcaseMode::Isolines {
+            showcase_14_isolines::submit_iso_items(self, &mut fd);
         }
 
         // Post-process settings (Showcases 6–8).
@@ -3250,97 +2986,8 @@ impl App {
             }
         }
         // Probe widget render items (Showcase 37) : submitted every frame.
-        if self.mode == ShowcaseMode::ProbeWidgets && self.pw_state.built {
-            let render_cam = CameraFrame::from_camera(&self.camera, [w, h]).render_camera;
-            let widget_ctx = viewport_lib::WidgetContext {
-                camera: render_cam,
-                viewport_size: glam::Vec2::new(w, h),
-                cursor_viewport: self.interact_state.last_cursor_viewport,
-                drag_started: false,
-                dragging: false,
-                released: false,
-                double_clicked: false,
-            };
-            use showcase_37_probe_widgets::PwSubMode;
-            let state = &self.pw_state;
-            match state.sub_mode {
-                PwSubMode::LineProbe => {
-                    fd.scene.polylines.push(state.probe.polyline_item(0));
-                    fd.scene
-                        .glyphs
-                        .push(state.probe.handle_glyphs(100, &widget_ctx));
-                }
-                PwSubMode::Sphere => {
-                    fd.effects.clip_objects.push(state.sphere.clip_object());
-                    fd.scene.polylines.push(state.sphere.wireframe_item(0));
-                    fd.scene
-                        .glyphs
-                        .push(state.sphere.handle_glyphs(100, &widget_ctx));
-                }
-                PwSubMode::Box => {
-                    fd.scene.polylines.push(state.bw.wireframe_item(0));
-                    fd.scene.polylines.push(state.bw.rotation_arcs_item(1));
-                    fd.scene
-                        .glyphs
-                        .push(state.bw.handle_glyphs(100, &widget_ctx));
-                }
-                PwSubMode::Plane => {
-                    fd.scene.polylines.push(state.plane.plane_item(0));
-                    fd.scene
-                        .glyphs
-                        .push(state.plane.handle_glyphs(100, &widget_ctx));
-                }
-                PwSubMode::Disk => {
-                    fd.scene.polylines.push(state.disk.wireframe_item(0));
-                    fd.scene
-                        .glyphs
-                        .push(state.disk.handle_glyphs(100, &widget_ctx));
-                }
-                PwSubMode::Cylinder => {
-                    fd.scene.polylines.push(state.cylinder.wireframe_item(0));
-                    fd.scene
-                        .glyphs
-                        .push(state.cylinder.handle_glyphs(100, &widget_ctx));
-                }
-                PwSubMode::Polyline => {
-                    fd.scene.polylines.push(state.polyline.polyline_item(0));
-                    fd.scene
-                        .glyphs
-                        .push(state.polyline.handle_glyphs(100, &widget_ctx));
-                }
-            }
-
-            // Point cloud: unselected in blue, selected in orange -- rendered as Gaussian splats.
-            let unsel: Vec<[f32; 3]> = state
-                .cloud_positions
-                .iter()
-                .zip(state.selected.iter())
-                .filter(|(_, s)| !**s)
-                .map(|(p, _)| *p)
-                .collect();
-            let sel: Vec<[f32; 3]> = state
-                .cloud_positions
-                .iter()
-                .zip(state.selected.iter())
-                .filter(|(_, s)| **s)
-                .map(|(p, _)| *p)
-                .collect();
-            if !unsel.is_empty() {
-                let mut pc = PointCloudItem::default();
-                pc.positions = unsel;
-                pc.default_colour = [0.5, 0.7, 1.0, 1.0];
-                pc.gaussian = true;
-                pc.point_size = 8.0;
-                fd.scene.point_clouds.push(pc);
-            }
-            if !sel.is_empty() {
-                let mut pc = PointCloudItem::default();
-                pc.positions = sel;
-                pc.default_colour = [1.0, 0.55, 0.1, 1.0];
-                pc.gaussian = true;
-                pc.point_size = 14.0;
-                fd.scene.point_clouds.push(pc);
-            }
+        if self.mode == ShowcaseMode::ProbeWidgets {
+            showcase_37_probe_widgets::submit_pw_items(self, &mut fd, w, h);
         }
 
         // Surface LIC render items (Showcase 38) : submitted every frame when built.
@@ -3359,20 +3006,13 @@ impl App {
         }
 
         // Sprite items and ring polylines (Showcase 41) : submitted every frame when built.
-        if self.mode == ShowcaseMode::Sprites && self.sprite_state.built {
-            fd.scene
-                .sprite_items
-                .extend(showcase_41_sprites::sprite_items(self));
-            fd.scene
-                .polylines
-                .extend(showcase_41_sprites::ring_polylines(self));
+        if self.mode == ShowcaseMode::Sprites {
+            showcase_41_sprites::submit_sprite_items(self, &mut fd);
         }
 
         // Gaussian splat items (Showcase 42) : submitted every frame when built.
-        if self.mode == ShowcaseMode::GaussianSplats && self.splat_state.built {
-            fd.scene
-                .gaussian_splats
-                .extend(showcase_42_gaussian_splats::gaussian_splat_items(self));
+        if self.mode == ShowcaseMode::GaussianSplats {
+            showcase_42_gaussian_splats::submit_splat_items(self, &mut fd);
         }
 
         // PlaybackRuntime stats are updated inside the build_frame_data PlaybackRuntime arm.

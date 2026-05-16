@@ -15,8 +15,8 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BackfacePolicy, BuiltinColourmap, ColourmapId, GlyphItem, LightingSettings, MeshData, MeshId,
-    SceneRenderItem,
+    BackfacePolicy, BuiltinColourmap, ColourmapId, FrameData, GlyphItem, LightingSettings,
+    MeshData, MeshId, SceneRenderItem,
     quantities::{edge_one_form_to_glyphs, face_intrinsic_to_glyphs, vertex_intrinsic_to_glyphs},
 };
 
@@ -513,4 +513,26 @@ fn edge_line_integral(p: glam::Vec3, q: glam::Vec3) -> f32 {
     let fq = glam::Vec3::new(q.x, q.y, 0.0);
     let dq = q - p;
     0.5 * (fp + fq).dot(dq)
+}
+
+// ---------------------------------------------------------------------------
+// Frame assembly
+// ---------------------------------------------------------------------------
+
+pub(crate) fn sv_collect_scene_items(
+    app: &mut App,
+) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+    let surface_item = if app.sv_state.built {
+        vec![app.sv_surface_item()]
+    } else {
+        vec![]
+    };
+    (surface_item, App::sv_lighting(), 0, 0)
+}
+
+pub(crate) fn submit_sv_items(app: &mut App, fd: &mut FrameData) {
+    if !app.sv_state.built {
+        return;
+    }
+    fd.scene.glyphs.push(app.sv_glyph_item());
 }

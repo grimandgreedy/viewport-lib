@@ -28,8 +28,8 @@ use crate::App;
 use eframe::egui;
 use viewport_lib::{
     AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, CELL_SENTINEL, ClipObject,
-    ClipShape, ColourmapId, LightingSettings, ProjectedTetId, SceneRenderItem,
-    TransparentVolumeMeshItem, ViewportRenderer, VolumeMeshData, VolumeMeshItem,
+    ClipShape, ColourmapId, FrameData, LightingSettings, ProjectedTetId,
+    SceneRenderItem, TransparentVolumeMeshItem, ViewportRenderer, VolumeMeshData, VolumeMeshItem,
 };
 
 // ---------------------------------------------------------------------------
@@ -1094,4 +1094,91 @@ pub(crate) fn controls_volume_mesh(app: &mut App, ui: &mut egui::Ui) {
     };
     ui.label(format!("{n_cells} cells · {note}"));
     ui.label("Interior faces are automatically discarded.");
+}
+
+// ---------------------------------------------------------------------------
+// Frame assembly
+// ---------------------------------------------------------------------------
+
+pub(crate) fn vm_collect_scene_items(
+    app: &mut App,
+    frame: &eframe::Frame,
+) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+    // Per-frame CPU clip section: regenerate the clipped mesh slot
+    // so section faces reflect the current plane position.
+    if app.vm_state.clip_on && app.vm_state.built {
+        if let Some(rs) = frame.wgpu_render_state() {
+            let mut guard = rs.renderer.write();
+            if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
+                let data = app.vm_active_data();
+                let clip_planes = [app.vm_clip_plane()];
+                match app.vm_state.clipped_item.as_ref() {
+                    None => {
+                        if let Ok((id, f2c)) =
+                            renderer.resources_mut().upload_clipped_volume_mesh_data(
+                                &rs.device,
+                                &data,
+                                &clip_planes,
+                            )
+                        {
+                            let mut item = viewport_lib::VolumeMeshItem::new(id, f2c);
+                            item.material.backface_policy =
+                                viewport_lib::BackfacePolicy::Identical;
+                            app.vm_state.clipped_item = Some(item);
+                        }
+                    }
+                    Some(existing) => {
+                        if let Ok(f2c) =
+                            renderer.resources_mut().replace_clipped_volume_mesh_data(
+                                &rs.device,
+                                &rs.queue,
+                                existing.mesh_id,
+                                &data,
+                                &clip_planes,
+                            )
+                        {
+                            if let Some(item) = app.vm_state.clipped_item.as_mut() {
+                                item.face_to_cell = f2c;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Rebuild PT meshes when the scalar field or colourmap changes.
+    let pt_needs_rebuild = app.vm_state.built
+        && (app.vm_state.field != app.vm_state.pt_field
+            || app.vm_state.colourmap != app.vm_state.pt_colourmap);
+    if pt_needs_rebuild {
+        if let Some(rs) = frame.wgpu_render_state() {
+            let mut guard = rs.renderer.write();
+            if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
+                app.rebuild_pt_meshes(
+                    renderer,
+                    &rs.device,
+                    app.vm_state.field,
+                    app.vm_state.colourmap,
+                );
+                app.vm_state.pt_field = app.vm_state.field;
+                app.vm_state.pt_colourmap = app.vm_state.colourmap;
+            }
+        }
+    }
+
+    let items = app.vm_scene_items();
+    (items, App::vm_lighting(), 0, 0)
+}
+
+pub(crate) fn submit_vm_items(app: &mut App, fd: &mut FrameData) {
+    if let Some(item) = app.vm_transparent_item() {
+        fd.scene.transparent_volume_meshes.push(item);
+        fd.effects.post_process.enabled = true;
+    }
+}
+
+pub(crate) fn vm_configure_frame(app: &App, fd: &mut FrameData) {
+    fd.viewport.wireframe_mode = app.vm_state.wireframe;
+    fd.effects.cap_fill_enabled = false;
+    fd.effects.clip_objects.extend(app.vm_clip_objects());
 }

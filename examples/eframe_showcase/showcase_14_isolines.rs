@@ -8,7 +8,11 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{AttributeData, Material, MeshData, MeshId, ViewportRenderer, scene::Scene};
+use viewport_lib::{
+    AttributeData, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, ColourmapId,
+    FrameData, LightingSettings, Material, MeshData, MeshId, SceneRenderItem, ViewportRenderer,
+    geometry::isoline::IsolineItem, scene::Scene,
+};
 
 // ---------------------------------------------------------------------------
 // State
@@ -191,4 +195,70 @@ fn make_wave_grid_iso(cols: u32, rows: u32, size: f32) -> (MeshData, Vec<f32>) {
     mesh.attributes
         .insert("wave".to_string(), AttributeData::Vertex(scalars.clone()));
     (mesh, scalars)
+}
+
+// ---------------------------------------------------------------------------
+// Frame assembly
+// ---------------------------------------------------------------------------
+
+pub(crate) fn iso_collect_scene_items(
+    app: &mut App,
+) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+    let mut items = app.iso_state.scene.collect_render_items(&viewport_lib::selection::Selection::new());
+    if app.iso_state.show_surface_colour {
+        for item in items.iter_mut() {
+            item.active_attribute = Some(AttributeRef {
+                name: "wave".to_string(),
+                kind: AttributeKind::Vertex,
+            });
+            item.colourmap_id = Some(ColourmapId(BuiltinColourmap::Coolwarm as usize));
+            item.material.backface_policy = BackfacePolicy::Identical;
+        }
+    } else {
+        for item in items.iter_mut() {
+            item.material.backface_policy = BackfacePolicy::Identical;
+        }
+    }
+    let sg = app.iso_state.scene.version();
+    let lighting = LightingSettings {
+        hemisphere_intensity: 0.5,
+        sky_colour: [1.0, 1.0, 1.0],
+        ground_colour: [1.0, 1.0, 1.0],
+        ..LightingSettings::default()
+    };
+    (items, lighting, sg, 0)
+}
+
+pub(crate) fn submit_iso_items(app: &App, fd: &mut FrameData) {
+    if !app.iso_state.built {
+        return;
+    }
+    let scalar_min = app
+        .iso_state
+        .scalars
+        .iter()
+        .cloned()
+        .fold(f32::INFINITY, f32::min);
+    let scalar_max = app
+        .iso_state
+        .scalars
+        .iter()
+        .cloned()
+        .fold(f32::NEG_INFINITY, f32::max);
+    let range = scalar_max - scalar_min;
+    let isovalues: Vec<f32> = (0..app.iso_state.contour_count)
+        .map(|i| {
+            scalar_min
+                + range * (i as f32 + 1.0) / (app.iso_state.contour_count as f32 + 1.0)
+        })
+        .collect();
+    let mut iso_item = IsolineItem::default();
+    iso_item.positions = app.iso_state.positions.clone();
+    iso_item.indices = app.iso_state.indices.clone();
+    iso_item.scalars = app.iso_state.scalars.clone();
+    iso_item.isovalues = isovalues;
+    iso_item.colour = app.iso_state.line_colour;
+    iso_item.line_width = app.iso_state.line_width;
+    iso_item.depth_bias = app.iso_state.depth_bias;
+    fd.scene.isolines.push(iso_item);
 }

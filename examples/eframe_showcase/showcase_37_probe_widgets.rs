@@ -16,8 +16,9 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BoxWidget, CylinderWidget, DiskWidget, LineProbeWidget, PlaneWidget, PolylineWidget,
-    SphereWidget, ViewportRenderer, WidgetContext, WidgetResult, scene::Scene,
+    BoxWidget, CameraFrame, CylinderWidget, DiskWidget, FrameData, LightingSettings,
+    LineProbeWidget, PlaneWidget, PointCloudItem, PolylineWidget, SceneRenderItem, SphereWidget,
+    ViewportRenderer, WidgetContext, WidgetResult, scene::Scene,
 };
 
 const CLOUD_N: usize = 20000;
@@ -474,5 +475,118 @@ fn selection_buttons(ui: &mut egui::Ui, state: &mut ProbeWidgetState, mode: PwSu
     });
     if ui.button("Clear selection").clicked() {
         state.clear_selection();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Frame assembly
+// ---------------------------------------------------------------------------
+
+pub(crate) fn pw_collect_scene_items(
+    app: &mut App,
+) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+    let items = app.pw_state.scene.collect_render_items(&viewport_lib::selection::Selection::new());
+    let lighting = LightingSettings {
+        hemisphere_intensity: 0.6,
+        sky_colour: [1.0, 1.0, 1.0],
+        ground_colour: [0.8, 0.8, 0.8],
+        ..LightingSettings::default()
+    };
+    let sg = app.pw_state.scene.version();
+    (items, lighting, sg, 0)
+}
+
+pub(crate) fn submit_pw_items(app: &App, fd: &mut FrameData, w: f32, h: f32) {
+    if !app.pw_state.built {
+        return;
+    }
+    let render_cam = CameraFrame::from_camera(&app.camera, [w, h]).render_camera;
+    let widget_ctx = WidgetContext {
+        camera: render_cam,
+        viewport_size: glam::Vec2::new(w, h),
+        cursor_viewport: app.interact_state.last_cursor_viewport,
+        drag_started: false,
+        dragging: false,
+        released: false,
+        double_clicked: false,
+    };
+    let state = &app.pw_state;
+    match state.sub_mode {
+        PwSubMode::LineProbe => {
+            fd.scene.polylines.push(state.probe.polyline_item(0));
+            fd.scene
+                .glyphs
+                .push(state.probe.handle_glyphs(100, &widget_ctx));
+        }
+        PwSubMode::Sphere => {
+            fd.effects.clip_objects.push(state.sphere.clip_object());
+            fd.scene.polylines.push(state.sphere.wireframe_item(0));
+            fd.scene
+                .glyphs
+                .push(state.sphere.handle_glyphs(100, &widget_ctx));
+        }
+        PwSubMode::Box => {
+            fd.scene.polylines.push(state.bw.wireframe_item(0));
+            fd.scene.polylines.push(state.bw.rotation_arcs_item(1));
+            fd.scene
+                .glyphs
+                .push(state.bw.handle_glyphs(100, &widget_ctx));
+        }
+        PwSubMode::Plane => {
+            fd.scene.polylines.push(state.plane.plane_item(0));
+            fd.scene
+                .glyphs
+                .push(state.plane.handle_glyphs(100, &widget_ctx));
+        }
+        PwSubMode::Disk => {
+            fd.scene.polylines.push(state.disk.wireframe_item(0));
+            fd.scene
+                .glyphs
+                .push(state.disk.handle_glyphs(100, &widget_ctx));
+        }
+        PwSubMode::Cylinder => {
+            fd.scene.polylines.push(state.cylinder.wireframe_item(0));
+            fd.scene
+                .glyphs
+                .push(state.cylinder.handle_glyphs(100, &widget_ctx));
+        }
+        PwSubMode::Polyline => {
+            fd.scene.polylines.push(state.polyline.polyline_item(0));
+            fd.scene
+                .glyphs
+                .push(state.polyline.handle_glyphs(100, &widget_ctx));
+        }
+    }
+
+    // Point cloud: unselected in blue, selected in orange.
+    let unsel: Vec<[f32; 3]> = state
+        .cloud_positions
+        .iter()
+        .zip(state.selected.iter())
+        .filter(|(_, s)| !**s)
+        .map(|(p, _)| *p)
+        .collect();
+    let sel: Vec<[f32; 3]> = state
+        .cloud_positions
+        .iter()
+        .zip(state.selected.iter())
+        .filter(|(_, s)| **s)
+        .map(|(p, _)| *p)
+        .collect();
+    if !unsel.is_empty() {
+        let mut pc = PointCloudItem::default();
+        pc.positions = unsel;
+        pc.default_colour = [0.5, 0.7, 1.0, 1.0];
+        pc.gaussian = true;
+        pc.point_size = 8.0;
+        fd.scene.point_clouds.push(pc);
+    }
+    if !sel.is_empty() {
+        let mut pc = PointCloudItem::default();
+        pc.positions = sel;
+        pc.default_colour = [1.0, 0.55, 0.1, 1.0];
+        pc.gaussian = true;
+        pc.point_size = 14.0;
+        fd.scene.point_clouds.push(pc);
     }
 }

@@ -13,8 +13,8 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BuiltinColourmap, ColourmapId, GlyphItem, GlyphType, LightingSettings, PointCloudItem,
-    SceneRenderItem,
+    BuiltinColourmap, ColourmapId, FrameData, GlyphItem, GlyphType, LightingSettings,
+    PointCloudItem, PostProcessSettings, SceneRenderItem,
 };
 
 // ---------------------------------------------------------------------------
@@ -337,6 +337,41 @@ fn make_point_cloud(count: usize) -> (Vec<[f32; 3]>, Vec<f32>) {
 /// Generate a 5x5x5 grid of outward-diverging vectors.
 ///
 /// Returns `(positions, vectors)` where each vector points away from the origin
+// ---------------------------------------------------------------------------
+// Frame assembly
+// ---------------------------------------------------------------------------
+
+pub(crate) fn pc_collect_scene_items(
+    _app: &App,
+) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+    let lighting = App::pc_lighting();
+    (App::pc_surface_items(), lighting, 0, 0)
+}
+
+pub(crate) fn submit_pc_items(app: &mut App, fd: &mut FrameData) {
+    if !app.pc_state.built {
+        return;
+    }
+    match app.pc_state.sub_mode {
+        PcSubMode::PointCloud => {
+            fd.scene.point_clouds.push(app.make_pc_point_cloud_item());
+        }
+        PcSubMode::VectorField => {
+            fd.scene.glyphs.push(app.make_pc_glyph_item());
+        }
+        PcSubMode::PointGaussian => {
+            fd.scene.point_clouds.push(app.make_pc_gaussian_item());
+        }
+    }
+    if app.pc_state.ssao_enabled {
+        fd.effects.post_process = PostProcessSettings {
+            enabled: true,
+            ssao: true,
+            ..PostProcessSettings::default()
+        };
+    }
+}
+
 /// with length proportional to radial distance: a classic divergence demo.
 fn make_vector_field() -> (Vec<[f32; 3]>, Vec<[f32; 3]>) {
     let mut positions = Vec::new();

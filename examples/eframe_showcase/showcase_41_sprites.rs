@@ -20,8 +20,8 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    LightKind, LightSource, LightingSettings, MeshId, PolylineItem, SceneRenderItem, SpriteItem,
-    SpriteSizeMode, ViewportRenderer, primitives,
+    FrameData, LightKind, LightSource, LightingSettings, MeshId, PolylineItem, SceneRenderItem,
+    SpriteItem, SpriteSizeMode, ViewportRenderer, primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -665,4 +665,16 @@ pub(crate) fn sprite_lighting() -> LightingSettings {
         ground_colour: [0.4, 0.4, 0.5],
         ..LightingSettings::default()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Frame assembly
+// ---------------------------------------------------------------------------
+
+pub(crate) fn submit_sprite_items(app: &App, fd: &mut FrameData) {
+    if !app.sprite_state.built {
+        return;
+    }
+    fd.scene.sprite_items.extend(sprite_items(app));
+    fd.scene.polylines.extend(ring_polylines(app));
 }

@@ -4,8 +4,9 @@ use crate::App;
 use eframe::egui;
 use std::collections::HashMap;
 use viewport_lib::{
-    CameraAnimator, Easing, Gizmo, GizmoMode, GizmoSpace, ManipulationController, Material, NodeId,
-    ViewPreset, ViewportRenderer, scene::Scene, selection::Selection,
+    CameraAnimator, CameraFrame, Easing, FrameData, Gizmo, GizmoMode, GizmoSpace,
+    LightingSettings, ManipulationController, Material, NodeId, SceneRenderItem, ViewPreset,
+    ViewportRenderer, scene::Scene, selection::Selection,
 };
 
 // ---------------------------------------------------------------------------
@@ -321,4 +322,52 @@ pub(crate) fn controls_interaction(app: &mut App, ui: &mut egui::Ui) {
     if ui.button("Clear Selection").clicked() {
         app.interact_state.selection.clear();
     }
+}
+
+// ---------------------------------------------------------------------------
+// Frame assembly
+// ---------------------------------------------------------------------------
+
+pub(crate) fn interact_collect_scene_items(
+    app: &mut App,
+) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+    let items = app
+        .interact_state
+        .scene
+        .collect_render_items(&app.interact_state.selection);
+    let sg = app.interact_state.scene.version();
+    let ss = app.interact_state.selection.version();
+    let lighting = LightingSettings {
+        hemisphere_intensity: 0.5,
+        sky_colour: [1.0, 1.0, 1.0],
+        ground_colour: [1.0, 1.0, 1.0],
+        ..LightingSettings::default()
+    };
+    (items, lighting, sg, ss)
+}
+
+pub(crate) fn interact_outline_selected(app: &App) -> bool {
+    !app.interact_state.selection.is_empty()
+}
+
+pub(crate) fn submit_interact_items(app: &App, fd: &mut FrameData, w: f32, h: f32) {
+    if !app.interact_state.built {
+        return;
+    }
+    fd.scene
+        .polylines
+        .push(app.interact_state.spline.polyline_item(9900));
+    let render_cam = CameraFrame::from_camera(&app.camera, [w, h]).render_camera;
+    let spline_ctx = viewport_lib::WidgetContext {
+        camera: render_cam,
+        viewport_size: glam::Vec2::new(w, h),
+        cursor_viewport: app.interact_state.last_cursor_viewport,
+        drag_started: false,
+        dragging: false,
+        released: false,
+        double_clicked: false,
+    };
+    fd.scene
+        .glyphs
+        .push(app.interact_state.spline.handle_glyphs(9901, &spline_ctx));
 }

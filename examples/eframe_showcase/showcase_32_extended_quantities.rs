@@ -17,8 +17,8 @@ use crate::{App, MeshId};
 use eframe::egui;
 use viewport_lib::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, CELL_SENTINEL, ColourmapId,
-    GlyphItem, PointCloudItem, SceneRenderItem, ViewportRenderer, VolumeMeshData,
-    volume_mesh_cell_vectors_to_glyphs, volume_mesh_vertex_vectors_to_glyphs,
+    FrameData, GlyphItem, LightingSettings, PointCloudItem, SceneRenderItem, ViewportRenderer,
+    VolumeMeshData, volume_mesh_cell_vectors_to_glyphs, volume_mesh_vertex_vectors_to_glyphs,
 };
 
 // ---------------------------------------------------------------------------
@@ -376,4 +376,24 @@ impl App {
 
         (scene_items, glyph_items, pc_items)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Frame assembly
+// ---------------------------------------------------------------------------
+
+pub(crate) fn eq_collect_scene_items(
+    app: &mut App,
+) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+    let (items, _glyphs, _pcs) = app.eq_scene_items();
+    (items, LightingSettings::default(), 0, 0)
+}
+
+pub(crate) fn submit_eq_items(app: &mut App, fd: &mut FrameData) {
+    if !app.eq_state.built {
+        return;
+    }
+    let (_items, glyphs, pcs) = app.eq_scene_items();
+    fd.scene.glyphs.extend(glyphs);
+    fd.scene.point_clouds.extend(pcs);
 }

@@ -21,7 +21,8 @@ use crate::App;
 use eframe::egui;
 use std::f32::consts::PI;
 use viewport_lib::{
-    GaussianSplatData, GaussianSplatId, GaussianSplatItem, ShDegree, ViewportRenderer,
+    FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, LightingSettings,
+    SceneRenderItem, ShDegree, ViewportRenderer,
 };
 
 // ---------------------------------------------------------------------------
@@ -369,4 +370,21 @@ pub(crate) fn gaussian_splat_items(app: &App) -> Vec<GaussianSplatItem> {
     };
     item.model = rot.to_cols_array_2d();
     vec![item]
+}
+
+// ---------------------------------------------------------------------------
+// Frame assembly
+// ---------------------------------------------------------------------------
+
+pub(crate) fn splat_collect_scene_items(
+    _app: &App,
+) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+    (vec![], LightingSettings::default(), 0, 0)
+}
+
+pub(crate) fn submit_splat_items(app: &App, fd: &mut FrameData) {
+    if !app.splat_state.built {
+        return;
+    }
+    fd.scene.gaussian_splats.extend(gaussian_splat_items(app));
 }
