@@ -8,6 +8,7 @@
     - `Material` no longer has `unlit` or `opacity` fields. These are now controlled per-item through `appearance`.
     - `SceneRenderItem.visible` and `VolumeMeshItem.visible` are replaced by `appearance.hidden` (note the inverted polarity).
     - `GlyphItem.unlit` is replaced by `appearance.unlit`.
+    - `SceneRenderItem.render_as_wireframe` and `VolumeMeshItem.render_as_wireframe` are replaced by `appearance.wireframe`.
     - Item types constructed with struct literal syntax (e.g. `GpuMarchingCubesJob`) need to add `appearance: Default::default()`.
 
 ### Improvements

@@ -701,7 +701,7 @@ impl Scene {
                 colourmap_id: None,
                 nan_colour: None,
                 pick_id: PickId(node.id),
-                render_as_wireframe: false,
+
                 warp_attribute: None,
                 warp_scale: 1.0,
             });
@@ -771,7 +771,7 @@ impl Scene {
                 colourmap_id: None,
                 nan_colour: None,
                 pick_id: PickId(node.id),
-                render_as_wireframe: false,
+
                 warp_attribute: None,
                 warp_scale: 1.0,
             });

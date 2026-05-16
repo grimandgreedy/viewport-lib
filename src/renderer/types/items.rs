@@ -57,9 +57,6 @@ pub struct SceneRenderItem {
     /// click to select. Helper geometry and transient previews that should not
     /// participate in picking should leave this at the default [`PickId::NONE`].
     pub pick_id: PickId,
-    /// Render this item as a wireframe regardless of the global `wireframe_mode` setting.
-    /// Default: false.
-    pub render_as_wireframe: bool,
     /// Named vector attribute (from `AttributeData::VertexVector`) used to displace
     /// vertex positions in the vertex shader. `None` = no warp. See also `warp_scale`.
     ///
@@ -85,7 +82,6 @@ impl Default for SceneRenderItem {
             colourmap_id: None,
             nan_colour: None,
             pick_id: PickId::NONE,
-            render_as_wireframe: false,
             warp_attribute: None,
             warp_scale: 1.0,
         }
@@ -138,8 +134,6 @@ pub struct VolumeMeshItem {
     pub colourmap_id: Option<ColourmapId>,
     /// GPU pick identifier. [`PickId::NONE`] = not pickable.
     pub pick_id: PickId,
-    /// Render as wireframe regardless of global setting. Default: false.
-    pub render_as_wireframe: bool,
 }
 
 impl VolumeMeshItem {
@@ -157,7 +151,6 @@ impl VolumeMeshItem {
             scalar_range: None,
             colourmap_id: None,
             pick_id: PickId::NONE,
-            render_as_wireframe: false,
         }
     }
 
@@ -176,7 +169,6 @@ impl VolumeMeshItem {
             scalar_range: self.scalar_range,
             colourmap_id: self.colourmap_id,
             pick_id: self.pick_id,
-            render_as_wireframe: self.render_as_wireframe,
             ..SceneRenderItem::default()
         }
     }

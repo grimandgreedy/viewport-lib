@@ -391,7 +391,7 @@ impl ViewportRenderer {
         let has_two_sided_items = scene_items.iter().any(|i| i.material.is_two_sided());
         let has_matcap_items = scene_items.iter().any(|i| i.material.matcap_id.is_some());
         let has_param_vis_items = scene_items.iter().any(|i| i.material.param_vis.is_some());
-        let has_wireframe_items = scene_items.iter().any(|i| i.render_as_wireframe);
+        let has_wireframe_items = scene_items.iter().any(|i| i.appearance.wireframe);
         // Collect per-item uniforms when wireframe mode is on so we can give each
         // visible item its own bind group (the mesh's shared object_uniform_buf gets
         // overwritten when multiple items reference the same MeshId).
@@ -416,7 +416,7 @@ impl ViewportRenderer {
                     && !item.material.is_two_sided()
                     && item.material.matcap_id.is_none()
                     && item.material.param_vis.is_none()
-                    && !item.render_as_wireframe
+                    && !item.appearance.wireframe
                     && item.warp_attribute.is_none()
                 {
                     continue;
@@ -448,7 +448,7 @@ impl ViewportRenderer {
                     model: item.model,
                     colour: [m.base_colour[0], m.base_colour[1], m.base_colour[2], item.appearance.opacity],
                     selected: if item.selected { 1 } else { 0 },
-                    wireframe: if frame.viewport.wireframe_mode || item.render_as_wireframe {
+                    wireframe: if frame.viewport.wireframe_mode || item.appearance.wireframe {
                         1
                     } else {
                         0
@@ -1147,8 +1147,9 @@ impl ViewportRenderer {
             if frame.scene.screen_images.iter().any(|i| i.depth.is_some()) {
                 resources.ensure_screen_image_dc_pipeline(device);
             }
-            let vp_w = vp_size[0];
-            let vp_h = vp_size[1];
+            let ppp = frame.camera.pixels_per_point;
+            let vp_w = vp_size[0] * ppp;
+            let vp_h = vp_size[1] * ppp;
             for item in &frame.scene.screen_images {
                 if item.width == 0 || item.height == 0 || item.pixels.is_empty() {
                     continue;
@@ -1164,8 +1165,9 @@ impl ViewportRenderer {
         self.overlay_image_gpu_data.clear();
         if !frame.overlays.images.is_empty() {
             resources.ensure_screen_image_pipeline(device);
-            let vp_w = vp_size[0];
-            let vp_h = vp_size[1];
+            let ppp = frame.camera.pixels_per_point;
+            let vp_w = vp_size[0] * ppp;
+            let vp_h = vp_size[1] * ppp;
             for item in &frame.overlays.images {
                 if item.width == 0 || item.height == 0 || item.pixels.is_empty() {
                     continue;
