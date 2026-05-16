@@ -290,6 +290,7 @@ impl ViewportGpuResources {
             sprite_count: count,
             bind_group,
             depth_write: item.depth_write,
+            wireframe: false,
             _uniform_buf: uniform_buf,
             _instance_buf: instance_buf,
         }

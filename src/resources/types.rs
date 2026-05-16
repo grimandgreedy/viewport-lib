@@ -870,6 +870,17 @@ pub(crate) struct RawGeomOutlineBuffers {
     pub mask_bind_group: wgpu::BindGroup,
 }
 
+/// Per-frame outline item for a tube/streamtube/ribbon mesh.
+///
+/// Holds an index into the per-frame gpu_data array and a mask bind group
+/// that supplies an identity model matrix to the outline_mask shader.
+pub(crate) struct CurveMeshOutlineItem {
+    pub index: usize,
+    pub two_sided: bool,
+    pub _mask_uniform_buf: wgpu::Buffer,
+    pub mask_bind_group: wgpu::BindGroup,
+}
+
 /// NDC-space rect outline for screen image overlays.
 pub(crate) struct ScreenRectOutlineBuffers {
     pub _uniform_buf: wgpu::Buffer,
@@ -1297,6 +1308,8 @@ pub struct SpriteGpuData {
     pub(crate) bind_group: wgpu::BindGroup,
     /// Whether this batch was submitted with `depth_write: true`.
     pub(crate) depth_write: bool,
+    /// When true, skip the billboard draw; the wireframe overlay polyline is rendered instead.
+    pub(crate) wireframe: bool,
     // Keep buffers alive for the lifetime of this struct.
     pub(crate) _uniform_buf: wgpu::Buffer,
     pub(crate) _instance_buf: wgpu::Buffer,
@@ -2227,6 +2240,8 @@ pub struct ViewportGpuResources {
     pub(crate) sprite_bgl: Option<wgpu::BindGroupLayout>,
     /// Sprite outline mask pipeline (R8Unorm, no texture sampling). None until first selected sprite.
     pub(crate) sprite_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+    /// Polyline outline mask pipeline (R8Unorm, same instance layout as polyline). None until first selected polyline.
+    pub(crate) polyline_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
 
     // --- SciVis Phase B: point cloud and glyph pipelines (lazily created) ---
     /// Point cloud render pipeline. None until first point cloud is submitted.

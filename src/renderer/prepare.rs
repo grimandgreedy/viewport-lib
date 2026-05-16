@@ -998,7 +998,8 @@ impl ViewportRenderer {
                 if item.positions.is_empty() {
                     continue;
                 }
-                let gd = resources.upload_sprite(device, queue, item);
+                let mut gd = resources.upload_sprite(device, queue, item);
+                gd.wireframe = frame.viewport.wireframe_mode || item.appearance.wireframe;
                 self.sprite_gpu_data.push(gd);
             }
         }
@@ -3707,42 +3708,24 @@ impl ViewportRenderer {
                     }
                 }
 
-                // Draw streamtube and tube mesh outlines using the standard
-                // outline_mask_pipeline (Vertex layout, back-face culled).
-                {
-                    pass.set_pipeline(&self.resources.outline_mask_pipeline);
-                    pass.set_bind_group(0, camera_bg, &[]);
-                    for item in streamtube_outline_items {
-                        if let Some(gpu) = streamtube_gpu_data.get(item.index) {
-                            pass.set_bind_group(1, &item.mask_bind_group, &[]);
-                            pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
-                            pass.set_index_buffer(
-                                gpu.index_buffer.slice(..),
-                                wgpu::IndexFormat::Uint32,
-                            );
-                            pass.draw_indexed(0..gpu.index_count, 0, 0..1);
-                        }
-                    }
-                    for item in tube_outline_items {
-                        if let Some(gpu) = tube_gpu_data.get(item.index) {
-                            pass.set_bind_group(1, &item.mask_bind_group, &[]);
-                            pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
-                            pass.set_index_buffer(
-                                gpu.index_buffer.slice(..),
-                                wgpu::IndexFormat::Uint32,
-                            );
-                            pass.draw_indexed(0..gpu.index_count, 0, 0..1);
-                        }
-                    }
-                }
-
-                // Draw ribbon mesh outlines using the two-sided pipeline
-                // (ribbons are flat, so both sides need to contribute to the mask).
-                if !ribbon_outline_items.is_empty() {
-                    pass.set_pipeline(&self.resources.outline_mask_two_sided_pipeline);
-                    pass.set_bind_group(0, camera_bg, &[]);
-                    for item in ribbon_outline_items {
-                        if let Some(gpu) = ribbon_gpu_data.get(item.index) {
+                // Draw streamtube, tube, and ribbon mesh outlines. Streamtubes and
+                // tubes use the back-face-culled pipeline; ribbons use the two-sided
+                // pipeline because they are flat surfaces with no clear front face.
+                pass.set_bind_group(0, camera_bg, &[]);
+                let curve_draw_groups = [
+                    (streamtube_outline_items as &[CurveMeshOutlineItem], streamtube_gpu_data as &[crate::resources::StreamtubeGpuData]),
+                    (tube_outline_items, tube_gpu_data),
+                    (ribbon_outline_items, ribbon_gpu_data),
+                ];
+                for (items, gpu_data_slice) in &curve_draw_groups {
+                    for item in *items {
+                        let pipeline = if item.two_sided {
+                            &self.resources.outline_mask_two_sided_pipeline
+                        } else {
+                            &self.resources.outline_mask_pipeline
+                        };
+                        pass.set_pipeline(pipeline);
+                        if let Some(gpu) = gpu_data_slice.get(item.index) {
                             pass.set_bind_group(1, &item.mask_bind_group, &[]);
                             pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
                             pass.set_index_buffer(

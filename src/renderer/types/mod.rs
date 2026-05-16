@@ -541,6 +541,10 @@ macro_rules! emit_outline_composite {
         if let Some(slot) = $vp_slot {
             if !slot.outline_object_buffers.is_empty()
                 || !slot.splat_outline_buffers.is_empty()
+                || !slot.streamtube_outline_items.is_empty()
+                || !slot.tube_outline_items.is_empty()
+                || !slot.ribbon_outline_items.is_empty()
+                || !slot.polyline_outline_indices.is_empty()
                 || !slot.volume_outline_indices.is_empty()
                 || !slot.glyph_outline_indices.is_empty()
                 || !slot.tensor_glyph_outline_indices.is_empty()
@@ -831,7 +835,7 @@ macro_rules! emit_scivis_draw_calls {
             if let Some(ref dual) = resources.sprite_pipeline_depth_write {
                 let mut set = false;
                 for sprite in $sprite_gpu_data.iter() {
-                    if !sprite.depth_write {
+                    if !sprite.depth_write || sprite.wireframe {
                         continue;
                     }
                     if !set {
@@ -848,7 +852,7 @@ macro_rules! emit_scivis_draw_calls {
             if let Some(ref dual) = resources.sprite_pipeline {
                 let mut set = false;
                 for sprite in $sprite_gpu_data.iter() {
-                    if sprite.depth_write {
+                    if sprite.depth_write || sprite.wireframe {
                         continue;
                     }
                     if !set {

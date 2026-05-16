@@ -12,6 +12,7 @@
     - Item types constructed with struct literal syntax (e.g. `GpuMarchingCubesJob`) need to add `appearance: Default::default()`.
 
 ### Improvements
+- SpriteItem batches now render wireframe overlays when `ViewportFrame::wireframe_mode` is enabled or when `appearance.wireframe` is set. Batches with 100 or fewer sprites show a 4-edge quad outline per sprite; larger batches show an AABB box. Outline corners are computed to match the sprite shader exactly, handling both `WorldSpace` and `ScreenSpace` size modes and per-instance rotation.
 - GPU marching cubes surfaces now render in wireframe when `ViewportFrame::wireframe_mode` is enabled or when `appearance.wireframe` is set on the job. Triangle edges are generated procedurally on the GPU via a fourth compute pass and drawn with a LineList pipeline; no CPU readback is required.
 - VolumeItem, GaussianSplatItem, and TransparentVolumeMeshItem now render wireframe overlays when `ViewportFrame::wireframe_mode` is enabled or when `appearance.wireframe` is set on an individual item. Volumes show an OBB; small splat clouds (<=100) show three orthogonal rings per splat, and larger clouds show an OBB fitted via PCA; transparent volume meshes show their boundary surface edges.
 - Glyphs and tensor glyphs now render in wireframe when `ViewportFrame::wireframe_mode` is enabled, or when `appearance.wireframe` is set on an individual item. Previously enabling wireframe left dark holes in the scene where these item types were drawn.
