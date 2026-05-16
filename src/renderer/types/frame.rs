@@ -505,6 +505,8 @@ pub struct ViewportFrame {
     pub grid_half_extent: f32,
     /// World-space Z coordinate of the grid plane (3D mode only, Z-up). Default: 0.0.
     pub grid_z: f32,
+    /// RGB colour for the grid lines. None = renderer default (mid-grey).
+    pub grid_colour: Option<[f32; 3]>,
     /// Whether to draw the axes orientation indicator overlay. Default: true.
     pub show_axes_indicator: bool,
 }
@@ -518,6 +520,7 @@ impl Default for ViewportFrame {
             grid_cell_size: 0.0,
             grid_half_extent: 0.0,
             grid_z: 0.0,
+            grid_colour: None,
             show_axes_indicator: true,
         }
     }

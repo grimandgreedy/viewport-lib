@@ -26,6 +26,7 @@ pub(crate) struct GroundPlaneState {
     pub tile_size: f32,
     pub shadow_colour: [f32; 4],
     pub shadow_opacity: f32,
+    pub grid_colour: [f32; 3],
 }
 
 impl Default for GroundPlaneState {
@@ -33,12 +34,13 @@ impl Default for GroundPlaneState {
         Self {
             scene: Scene::new(),
             built: false,
-            mode: GpMode::Tile,
+            mode: GpMode::Grid,
             height: 0.0,
-            colour: [0.3, 0.3, 0.3, 1.0],
+            colour: [0.45, 0.38, 0.30, 1.0],
             tile_size: 1.0,
             shadow_colour: [0.0, 0.0, 0.0, 1.0],
             shadow_opacity: 0.5,
+            grid_colour: [0.55, 0.55, 0.55],
         }
     }
 }
@@ -91,6 +93,7 @@ pub(crate) fn controls_ground_plane(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal_wrapped(|ui| {
         for (label, mode) in [
             ("None", GpMode::None),
+            ("Grid", GpMode::Grid),
             ("ShadowOnly", GpMode::ShadowOnly),
             ("Tile", GpMode::Tile),
             ("SolidColour", GpMode::SolidColour),
@@ -106,6 +109,11 @@ pub(crate) fn controls_ground_plane(app: &mut App, ui: &mut egui::Ui) {
     ui.add(egui::Slider::new(&mut s.height, -3.0..=3.0).step_by(0.1));
 
     match s.mode {
+        GpMode::Grid => {
+            ui.separator();
+            ui.label("Grid colour:");
+            ui.color_edit_button_rgb(&mut s.grid_colour);
+        }
         GpMode::Tile => {
             ui.separator();
             ui.label("Tile colour:");
@@ -136,9 +144,15 @@ pub(crate) fn controls_ground_plane(app: &mut App, ui: &mut egui::Ui) {
 /// Ground plane mode selection (mirrors `viewport_lib::GroundPlaneMode`).
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum GpMode {
+    /// Wire grid only, no ground plane.
     #[default]
-    None,
-    ShadowOnly,
+    Grid,
+    /// Tile checkerboard ground plane, no wire grid.
     Tile,
+    /// Invisible plane that receives shadows.
+    ShadowOnly,
+    /// Flat-coloured ground plane.
     SolidColour,
+    /// Nothing.
+    None,
 }

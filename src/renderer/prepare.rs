@@ -2088,8 +2088,14 @@ impl ViewportRenderer {
                         spacing_minor: spacing,
                         spacing_major,
                         snap_origin: [snap_x, snap_y],
-                        colour_minor: [0.35, 0.35, 0.35, 0.4 * minor_fade],
-                        colour_major: [0.40, 0.40, 0.40, 0.4 + 0.2 * minor_fade],
+                        colour_minor: {
+                            let [r, g, b] = frame.viewport.grid_colour.unwrap_or([0.55, 0.55, 0.55]);
+                            [r, g, b, 0.4 * minor_fade]
+                        },
+                        colour_major: {
+                            let [r, g, b] = frame.viewport.grid_colour.unwrap_or([0.60, 0.60, 0.60]);
+                            [r, g, b, 0.4 + 0.2 * minor_fade]
+                        },
                     };
                     // Write to per-viewport slot buffer.
                     if let Some(slot) = self.viewport_slots.get(frame.camera.viewport_index) {

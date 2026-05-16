@@ -2708,7 +2708,13 @@ impl App {
         if self.mode == ShowcaseMode::PickLevels {
             showcase_33_picking_levels::pl_configure_frame(self, &mut fd);
         }
-        fd.viewport.show_grid = false;
+        fd.viewport.show_grid = self.mode == ShowcaseMode::GroundPlane
+            && self.gp_state.mode == showcase_03_ground_plane::GpMode::Grid;
+        if self.mode == ShowcaseMode::GroundPlane
+            && self.gp_state.mode == showcase_03_ground_plane::GpMode::Grid
+        {
+            fd.viewport.grid_colour = Some(self.gp_state.grid_colour);
+        }
         fd.viewport.show_axes_indicator = true;
         fd.viewport.background_colour = bg_colour;
 
@@ -2717,7 +2723,7 @@ impl App {
             use showcase_03_ground_plane::GpMode;
             fd.effects.ground_plane = GroundPlane {
                 mode: match self.gp_state.mode {
-                    GpMode::None => GroundPlaneMode::None,
+                    GpMode::None | GpMode::Grid => GroundPlaneMode::None,
                     GpMode::ShadowOnly => GroundPlaneMode::ShadowOnly,
                     GpMode::Tile => GroundPlaneMode::Tile,
                     GpMode::SolidColour => GroundPlaneMode::SolidColour,
