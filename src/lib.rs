@@ -74,6 +74,8 @@ pub mod interaction;
 pub mod quantities;
 /// Main viewport renderer wrapping all GPU resources.
 pub mod renderer;
+/// Scene runtime: per-frame orchestration, plugin system, and physics hooks.
+pub mod runtime;
 /// GPU resource container (pipelines, buffers, bind groups).
 pub mod resources;
 /// Scene graph, material, traits, and AABB.
@@ -216,4 +218,11 @@ pub use resources::{
     FontHandle, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode,
     ImplicitPrimitive, LightUniform, LightsUniform, MatcapId, MeshData, ProjectedTetId,
     SingleLightUniform, ViewportGpuResources, VolumeGpuId, VolumeId, lerp_attributes,
+};
+
+pub use runtime::{
+    ContactEvent, FixedStepIter, FixedTimestep, NodeTransformOp, RuntimeFrameContext,
+    RuntimeOutput, RuntimePhase, RuntimePlugin, RuntimeStepContext, SceneRuntimeMode,
+    SelectionOp, SimulationStepContext, TransformSnapshot, TransformSnapshotTable,
+    TransformWriteback, ViewportRuntime,
 };

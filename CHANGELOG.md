@@ -2,6 +2,14 @@
 
 ## Unreleased changes
 
+### Runtime
+
+- Scene runtime layer: a formal per-frame orchestration layer now sits between the scene graph and the renderer. Register plugins that run in a defined phase order (prepare, pick, select, manipulate, animate, simulate, writeback), drive a fixed-timestep accumulator for physics, and receive flushed transform results back from the runtime without managing that loop yourself.
+    - The fixed timestep accumulator handles the common physics pattern of accumulating wall-clock time and running zero, one, or several fixed steps per frame. After iterating, a blend factor is available for interpolating transforms when rendering between steps.
+    - A transform snapshot table stores the previous and current transform for each physics-driven node so you can lerp to a smooth render position between fixed steps, without jitter.
+    - The scene and selection remain app-owned. The runtime borrows them per call and applies transform writes and selection changes before returning.
+    - Existing `prepare` / `paint_to` call sites are unchanged. The runtime layer is purely additive.
+
 ### Improvements
 - The wire grid and the checkerboard ground plane now each accept explicit colours:
     - The wire grid colour can be set per-frame via `ViewportFrame::grid_colour`. When unset the grid renders slightly lighter than before.
