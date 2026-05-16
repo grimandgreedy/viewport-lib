@@ -1193,7 +1193,8 @@ impl ViewportRenderer {
                 if item.positions.is_empty() || item.strip_lengths.is_empty() {
                     continue;
                 }
-                let gpu_data = resources.upload_streamtube(device, queue, item);
+                let wireframe = frame.viewport.wireframe_mode || item.appearance.wireframe;
+                let gpu_data = resources.upload_streamtube(device, queue, item, wireframe);
                 if gpu_data.index_count > 0 {
                     self.streamtube_gpu_data.push(gpu_data);
                 }
@@ -1210,7 +1211,8 @@ impl ViewportRenderer {
                 if item.positions.is_empty() || item.strip_lengths.is_empty() {
                     continue;
                 }
-                let gpu_data = resources.upload_tube(device, queue, item);
+                let wireframe = frame.viewport.wireframe_mode || item.appearance.wireframe;
+                let gpu_data = resources.upload_tube(device, queue, item, wireframe);
                 if gpu_data.index_count > 0 {
                     self.tube_gpu_data.push(gpu_data);
                 }
@@ -1227,7 +1229,8 @@ impl ViewportRenderer {
                 if item.positions.is_empty() || item.strip_lengths.is_empty() {
                     continue;
                 }
-                let gpu_data = resources.upload_ribbon(device, queue, item);
+                let wireframe = frame.viewport.wireframe_mode || item.appearance.wireframe;
+                let gpu_data = resources.upload_ribbon(device, queue, item, wireframe);
                 if gpu_data.index_count > 0 {
                     self.ribbon_gpu_data.push(gpu_data);
                 }

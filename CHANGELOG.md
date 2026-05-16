@@ -13,6 +13,7 @@
 
 ### Improvements
 - Glyphs and tensor glyphs now render in wireframe when `ViewportFrame::wireframe_mode` is enabled, or when `appearance.wireframe` is set on an individual item. Previously enabling wireframe left dark holes in the scene where these item types were drawn.
+- Streamtubes, tubes, and ribbons now render in wireframe when `ViewportFrame::wireframe_mode` is enabled, or when `appearance.wireframe` is set on an individual item. Previously these types also left dark holes in wireframe scenes.
 - Unified appearance settings across all renderable item types. Setting `item.appearance.hidden`, `.unlit`, or `.opacity` now works on every type without knowing how that type is rendered:
     - `unlit` skips lighting entirely and outputs the raw resolved colour. For mesh shaders the early-out fires right after colour resolution, before normal mapping, shadow maps, and the lighting loop. For types with fixed directional lighting (tensor glyphs, streamtubes, tubes, ribbons, implicit surfaces, marching cubes) the light calculation is skipped completely.
     - `opacity` multiplies the final output alpha on every lit geometry type. Glyph, tensor glyph, streamtube, tube, ribbon, implicit surface, and marching cubes types all now support it. The marching cubes pipeline has alpha blending enabled to make this work.

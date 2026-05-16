@@ -663,36 +663,66 @@ macro_rules! emit_scivis_draw_calls {
 
         // Streamtube pass (SciVis Phase M : connected tube mesh per strip set).
         if !$streamtube_gpu_data.is_empty() {
-            if let Some(ref dual) = resources.streamtube_pipeline {
-                render_pass.set_pipeline(dual.for_format(_is_hdr));
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for tube in $streamtube_gpu_data.iter() {
-                    if tube.index_count == 0 {
-                        continue;
-                    }
+            render_pass.set_bind_group(0, camera_bg, &[]);
+            for tube in $streamtube_gpu_data.iter() {
+                if tube.index_count == 0 && tube.edge_index_count == 0 {
+                    continue;
+                }
+                let pipeline = if tube.wireframe {
+                    resources.streamtube_wireframe_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                } else {
+                    resources.streamtube_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                };
+                if let Some(pipeline) = pipeline {
+                    render_pass.set_pipeline(pipeline);
                     render_pass.set_bind_group(1, &tube.uniform_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, tube.vertex_buffer.slice(..));
-                    render_pass
-                        .set_index_buffer(tube.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    render_pass.draw_indexed(0..tube.index_count, 0, 0..1);
+                    if tube.wireframe {
+                        render_pass.set_index_buffer(
+                            tube.edge_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..tube.edge_index_count, 0, 0..1);
+                    } else {
+                        render_pass.set_index_buffer(
+                            tube.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..tube.index_count, 0, 0..1);
+                    }
                 }
             }
         }
 
         // General tube pass (Phase 3.3 : uses same streamtube pipeline, per-vertex colour).
         if !$tube_gpu_data.is_empty() {
-            if let Some(ref dual) = resources.streamtube_pipeline {
-                render_pass.set_pipeline(dual.for_format(_is_hdr));
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for tube in $tube_gpu_data.iter() {
-                    if tube.index_count == 0 {
-                        continue;
-                    }
+            render_pass.set_bind_group(0, camera_bg, &[]);
+            for tube in $tube_gpu_data.iter() {
+                if tube.index_count == 0 && tube.edge_index_count == 0 {
+                    continue;
+                }
+                let pipeline = if tube.wireframe {
+                    resources.streamtube_wireframe_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                } else {
+                    resources.streamtube_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                };
+                if let Some(pipeline) = pipeline {
+                    render_pass.set_pipeline(pipeline);
                     render_pass.set_bind_group(1, &tube.uniform_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, tube.vertex_buffer.slice(..));
-                    render_pass
-                        .set_index_buffer(tube.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    render_pass.draw_indexed(0..tube.index_count, 0, 0..1);
+                    if tube.wireframe {
+                        render_pass.set_index_buffer(
+                            tube.edge_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..tube.edge_index_count, 0, 0..1);
+                    } else {
+                        render_pass.set_index_buffer(
+                            tube.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..tube.index_count, 0, 0..1);
+                    }
                 }
             }
         }
@@ -761,18 +791,33 @@ macro_rules! emit_scivis_draw_calls {
 
         // Ribbon pass (Phase 8.1 : flat quad strips, two-sided pipeline).
         if !$ribbon_gpu_data.is_empty() {
-            if let Some(ref dual) = resources.ribbon_pipeline {
-                render_pass.set_pipeline(dual.for_format(_is_hdr));
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for ribbon in $ribbon_gpu_data.iter() {
-                    if ribbon.index_count == 0 {
-                        continue;
-                    }
+            render_pass.set_bind_group(0, camera_bg, &[]);
+            for ribbon in $ribbon_gpu_data.iter() {
+                if ribbon.index_count == 0 && ribbon.edge_index_count == 0 {
+                    continue;
+                }
+                let pipeline = if ribbon.wireframe {
+                    resources.ribbon_wireframe_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                } else {
+                    resources.ribbon_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                };
+                if let Some(pipeline) = pipeline {
+                    render_pass.set_pipeline(pipeline);
                     render_pass.set_bind_group(1, &ribbon.uniform_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, ribbon.vertex_buffer.slice(..));
-                    render_pass
-                        .set_index_buffer(ribbon.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    render_pass.draw_indexed(0..ribbon.index_count, 0, 0..1);
+                    if ribbon.wireframe {
+                        render_pass.set_index_buffer(
+                            ribbon.edge_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..ribbon.edge_index_count, 0, 0..1);
+                    } else {
+                        render_pass.set_index_buffer(
+                            ribbon.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..ribbon.index_count, 0, 0..1);
+                    }
                 }
             }
         }

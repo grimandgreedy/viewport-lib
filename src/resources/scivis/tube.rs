@@ -123,6 +123,91 @@ impl ViewportGpuResources {
             })
         };
 
+        // Wireframe pipeline: same shader and bind groups as the solid tube, but LineList
+        // topology and no back-face culling so edges on both sides are visible.
+        let make_tube_wireframe = |fmt: wgpu::TextureFormat| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("streamtube_wireframe_pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: fmt,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::LineList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                multiview: None,
+                cache: None,
+            })
+        };
+
+        // Ribbon wireframe pipeline: same as tube wireframe but using the ribbon shader.
+        let make_ribbon_wireframe = |fmt: wgpu::TextureFormat| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("ribbon_wireframe_pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &ribbon_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &ribbon_shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: fmt,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::LineList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                multiview: None,
+                cache: None,
+            })
+        };
+
         let ldr = self.target_format;
         let hdr = wgpu::TextureFormat::Rgba16Float;
         self.streamtube_bgl = Some(streamtube_bgl);
@@ -130,9 +215,17 @@ impl ViewportGpuResources {
             ldr: make_tube(ldr),
             hdr: make_tube(hdr),
         });
+        self.streamtube_wireframe_pipeline = Some(DualPipeline {
+            ldr: make_tube_wireframe(ldr),
+            hdr: make_tube_wireframe(hdr),
+        });
         self.ribbon_pipeline = Some(DualPipeline {
             ldr: make_ribbon(ldr),
             hdr: make_ribbon(hdr),
+        });
+        self.ribbon_wireframe_pipeline = Some(DualPipeline {
+            ldr: make_ribbon_wireframe(ldr),
+            hdr: make_ribbon_wireframe(hdr),
         });
     }
 
@@ -147,6 +240,7 @@ impl ViewportGpuResources {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         item: &crate::renderer::StreamtubeItem,
+        wireframe: bool,
     ) -> StreamtubeGpuData {
         const SIDES: usize = 12; // tube cross-section resolution
 
@@ -318,7 +412,21 @@ impl ViewportGpuResources {
 
         let index_count = indices.len() as u32;
 
-        // Uniform buffer: colour + radius + use_vertex_colour flag.
+        // Edge index buffer: deduplicated triangle edges as line-list pairs for wireframe.
+        let edge_indices = crate::resources::extra_impls::generate_edge_indices(&indices);
+        let edge_bytes: &[u8] = bytemuck::cast_slice(&edge_indices);
+        let edge_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("streamtube_edge_ibuf"),
+            size: edge_bytes.len().max(8) as u64,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        if !edge_bytes.is_empty() {
+            queue.write_buffer(&edge_index_buffer, 0, edge_bytes);
+        }
+        let edge_index_count = edge_indices.len() as u32;
+
+        // Uniform buffer: colour + radius + use_vertex_colour + unlit + opacity + wireframe.
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct StreamtubeUniform {
@@ -327,7 +435,8 @@ impl ViewportGpuResources {
             use_vertex_colour: u32,
             unlit: u32,
             opacity: f32,
-            _pad: [f32; 4],
+            wireframe: u32,
+            _pad: [f32; 3],
         }
         let uniform_data = StreamtubeUniform {
             colour: item.colour,
@@ -335,7 +444,8 @@ impl ViewportGpuResources {
             use_vertex_colour: 0,
             unlit: item.appearance.unlit as u32,
             opacity: item.appearance.opacity,
-            _pad: [0.0; 4],
+            wireframe: wireframe as u32,
+            _pad: [0.0; 3],
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("streamtube_uniform_buf"),
@@ -362,6 +472,9 @@ impl ViewportGpuResources {
             vertex_buffer,
             index_buffer,
             index_count,
+            edge_index_buffer,
+            edge_index_count,
+            wireframe,
             uniform_bind_group,
             _uniform_buf: uniform_buf,
         }
@@ -381,6 +494,7 @@ impl ViewportGpuResources {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         item: &crate::renderer::TubeItem,
+        wireframe: bool,
     ) -> StreamtubeGpuData {
         let sides = (item.sides.max(3)) as usize;
 
@@ -597,6 +711,19 @@ impl ViewportGpuResources {
 
         let index_count = indices.len() as u32;
 
+        let edge_indices = crate::resources::extra_impls::generate_edge_indices(&indices);
+        let edge_bytes: &[u8] = bytemuck::cast_slice(&edge_indices);
+        let edge_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("tube_edge_ibuf"),
+            size: edge_bytes.len().max(8) as u64,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        if !edge_bytes.is_empty() {
+            queue.write_buffer(&edge_index_buffer, 0, edge_bytes);
+        }
+        let edge_index_count = edge_indices.len() as u32;
+
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct TubeUniform {
@@ -605,7 +732,8 @@ impl ViewportGpuResources {
             use_vertex_colour: u32,
             unlit: u32,
             opacity: f32,
-            _pad: [f32; 4],
+            wireframe: u32,
+            _pad: [f32; 3],
         }
         let uniform_data = TubeUniform {
             colour: item.colour,
@@ -613,7 +741,8 @@ impl ViewportGpuResources {
             use_vertex_colour,
             unlit: item.appearance.unlit as u32,
             opacity: item.appearance.opacity,
-            _pad: [0.0; 4],
+            wireframe: wireframe as u32,
+            _pad: [0.0; 3],
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("tube_uniform_buf"),
@@ -640,6 +769,9 @@ impl ViewportGpuResources {
             vertex_buffer,
             index_buffer,
             index_count,
+            edge_index_buffer,
+            edge_index_count,
+            wireframe,
             uniform_bind_group,
             _uniform_buf: uniform_buf,
         }
@@ -659,6 +791,7 @@ impl ViewportGpuResources {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         item: &crate::renderer::RibbonItem,
+        wireframe: bool,
     ) -> StreamtubeGpuData {
         // Resolve LUT for scalar colouring.
         let (use_vertex_colour, lut_rgba): (u32, Option<[[u8; 4]; 256]>) =
@@ -841,6 +974,19 @@ impl ViewportGpuResources {
 
         let index_count = indices.len() as u32;
 
+        let edge_indices = crate::resources::extra_impls::generate_edge_indices(&indices);
+        let edge_bytes: &[u8] = bytemuck::cast_slice(&edge_indices);
+        let edge_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ribbon_edge_ibuf"),
+            size: edge_bytes.len().max(8) as u64,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        if !edge_bytes.is_empty() {
+            queue.write_buffer(&edge_index_buffer, 0, edge_bytes);
+        }
+        let edge_index_count = edge_indices.len() as u32;
+
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct RibbonUniform {
@@ -849,7 +995,8 @@ impl ViewportGpuResources {
             use_vertex_colour: u32,
             unlit: u32,
             opacity: f32,
-            _pad: [f32; 4],
+            wireframe: u32,
+            _pad: [f32; 3],
         }
         let uniform_data = RibbonUniform {
             colour: item.colour,
@@ -857,7 +1004,8 @@ impl ViewportGpuResources {
             use_vertex_colour,
             unlit: item.appearance.unlit as u32,
             opacity: item.appearance.opacity,
-            _pad: [0.0; 4],
+            wireframe: wireframe as u32,
+            _pad: [0.0; 3],
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ribbon_uniform_buf"),
@@ -884,6 +1032,9 @@ impl ViewportGpuResources {
             vertex_buffer,
             index_buffer,
             index_count,
+            edge_index_buffer,
+            edge_index_count,
+            wireframe,
             uniform_bind_group,
             _uniform_buf: uniform_buf,
         }

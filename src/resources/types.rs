@@ -1503,10 +1503,16 @@ pub struct TensorGlyphGpuData {
 pub struct StreamtubeGpuData {
     /// Owned vertex buffer for the connected tube mesh (world-space positions + normals).
     pub(crate) vertex_buffer: wgpu::Buffer,
-    /// Owned index buffer for the connected tube mesh.
+    /// Owned index buffer for the connected tube mesh (triangle indices).
     pub(crate) index_buffer: wgpu::Buffer,
-    /// Number of indices to draw.
+    /// Number of triangle indices to draw (solid mode).
     pub(crate) index_count: u32,
+    /// Owned index buffer for wireframe edges (deduplicated line-list pairs).
+    pub(crate) edge_index_buffer: wgpu::Buffer,
+    /// Number of edge indices to draw (wireframe mode).
+    pub(crate) edge_index_count: u32,
+    /// Whether this item should be drawn in wireframe mode.
+    pub(crate) wireframe: bool,
     /// Bind group (group 1): tube uniform (colour, radius).
     pub(crate) uniform_bind_group: wgpu::BindGroup,
     // Keep uniform buffer alive.
@@ -2260,8 +2266,12 @@ pub struct ViewportGpuResources {
     // --- SciVis Phase M: streamtube rendering (lazily created) ---
     /// Streamtube render pipeline. None until first streamtube item is submitted.
     pub(crate) streamtube_pipeline: Option<DualPipeline>,
+    /// Streamtube wireframe pipeline (LineList topology, cull_mode None). None until first wireframe streamtube.
+    pub(crate) streamtube_wireframe_pipeline: Option<DualPipeline>,
     /// Ribbon pipeline: same layout as streamtube but cull_mode None and two-sided normals.
     pub(crate) ribbon_pipeline: Option<DualPipeline>,
+    /// Ribbon wireframe pipeline (LineList topology, cull_mode None).
+    pub(crate) ribbon_wireframe_pipeline: Option<DualPipeline>,
     /// Bind group layout for streamtube uniforms (group 1).
     pub(crate) streamtube_bgl: Option<wgpu::BindGroupLayout>,
 
