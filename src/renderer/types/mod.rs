@@ -624,9 +624,22 @@ macro_rules! emit_scivis_draw_calls {
         // Each segment instance is drawn as 6 vertices (2 triangles).
         // Items with skip_clip=true (clip object wireframe overlays) use the clip-exempt
         // pipeline so they are always fully visible regardless of active clip volumes.
+        // Items with wireframe=true use the thin 1px LineList pipeline instead.
         if !$polyline_gpu_data.is_empty() && resources.polyline_pipeline.is_some() {
             for pl in $polyline_gpu_data.iter() {
                 if pl.segment_count == 0 {
+                    continue;
+                }
+                if pl.wireframe {
+                    if let (Some(wf_pipeline), Some(wf_bg)) = (
+                        resources.polyline_wireframe_pipeline.as_ref().map(|d| d.for_format(_is_hdr)),
+                        pl.wireframe_bind_group.as_ref(),
+                    ) {
+                        render_pass.set_pipeline(wf_pipeline);
+                        render_pass.set_bind_group(0, camera_bg, &[]);
+                        render_pass.set_bind_group(1, wf_bg, &[]);
+                        render_pass.draw(0..2, 0..pl.segment_count);
+                    }
                     continue;
                 }
                 let pipeline = if pl.skip_clip {

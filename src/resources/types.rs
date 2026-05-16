@@ -1439,6 +1439,11 @@ pub struct PolylineGpuData {
     /// When true, renders with the clip-exempt pipeline (no clip plane or clip volume test).
     /// Used for clip object wireframe overlays that must always be fully visible.
     pub(crate) skip_clip: bool,
+    /// When true, render as thin 1px lines using the wireframe pipeline instead of thick billboards.
+    pub(crate) wireframe: bool,
+    /// Bind group for the wireframe pipeline (group 1: segment storage buffer).
+    /// None when the wireframe pipeline has not been created yet.
+    pub(crate) wireframe_bind_group: Option<wgpu::BindGroup>,
 }
 
 /// Per-frame GPU data for one screen-space image overlay, created in `prepare()` (Phase 10B/12).
@@ -2281,6 +2286,11 @@ pub struct ViewportGpuResources {
     pub(crate) polyline_no_clip_pipeline: Option<DualPipeline>,
     /// Bind group layout for polyline uniforms (group 1).
     pub(crate) polyline_bgl: Option<wgpu::BindGroupLayout>,
+    /// Wireframe polyline pipeline: thin 1px LineList, reads segment endpoints from a
+    /// storage buffer. Created alongside polyline_pipeline.
+    pub(crate) polyline_wireframe_pipeline: Option<DualPipeline>,
+    /// Bind group layout for the wireframe polyline pipeline (group 1: segment storage buffer).
+    pub(crate) polyline_wireframe_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- SciVis Phase M: streamtube rendering (lazily created) ---
     /// Streamtube render pipeline. None until first streamtube item is submitted.

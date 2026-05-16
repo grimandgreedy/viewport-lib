@@ -1032,7 +1032,8 @@ impl ViewportRenderer {
                 if item.positions.is_empty() {
                     continue;
                 }
-                let gpu_data = resources.upload_polyline(device, queue, item, vp_size);
+                let mut gpu_data = resources.upload_polyline(device, queue, item, vp_size);
+                gpu_data.wireframe = frame.viewport.wireframe_mode || item.appearance.wireframe;
                 if frame.interaction.outline_selected && item.selected {
                     self.polyline_selected_gpu_indices.push(self.polyline_gpu_data.len());
                 }
@@ -1161,9 +1162,8 @@ impl ViewportRenderer {
             if frame.scene.screen_images.iter().any(|i| i.depth.is_some()) {
                 resources.ensure_screen_image_dc_pipeline(device);
             }
-            let ppp = frame.camera.pixels_per_point;
-            let vp_w = vp_size[0] * ppp;
-            let vp_h = vp_size[1] * ppp;
+            let vp_w = vp_size[0];
+            let vp_h = vp_size[1];
             for item in &frame.scene.screen_images {
                 if item.width == 0 || item.height == 0 || item.pixels.is_empty() {
                     continue;
@@ -1179,9 +1179,8 @@ impl ViewportRenderer {
         self.overlay_image_gpu_data.clear();
         if !frame.overlays.images.is_empty() {
             resources.ensure_screen_image_pipeline(device);
-            let ppp = frame.camera.pixels_per_point;
-            let vp_w = vp_size[0] * ppp;
-            let vp_h = vp_size[1] * ppp;
+            let vp_w = vp_size[0];
+            let vp_h = vp_size[1];
             for item in &frame.overlays.images {
                 if item.width == 0 || item.height == 0 || item.pixels.is_empty() {
                     continue;
