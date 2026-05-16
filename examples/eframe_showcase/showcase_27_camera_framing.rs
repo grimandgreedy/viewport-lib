@@ -530,6 +530,14 @@ impl App {
         if self.aux_state.sub_mode != AuxSubMode::Framing {
             return;
         }
+
+        // Scale all pixel dimensions by pixels_per_point so the textures are at
+        // native resolution on HiDPI displays.  The library NDC calculation uses
+        // physical viewport dimensions, so item.width physical pixels map to
+        // item.width / ppp logical pixels -- the same visual size as before.
+        let ppp = fd.camera.pixels_per_point;
+        let px = |n: u32| ((n as f32 * ppp).round() as u32).max(1);
+
         let (colour, size, arm_len, thick) = match self.aux_state.active_frustum {
             Some(idx) => {
                 let fc = self.aux_state.frustums[idx].colour;
@@ -539,9 +547,9 @@ impl App {
                     (fc[2] * 255.0) as u8,
                     255u8,
                 ];
-                (c, 72u32, 28u32, 4u32)
+                (c, px(72), px(28), px(4))
             }
-            None => ([160u8, 160u8, 160u8, 80u8], 40u32, 16u32, 3u32),
+            None => ([160u8, 160u8, 160u8, 80u8], px(40), px(16), px(3)),
         };
 
         for (anchor, fx, fy) in [
@@ -561,10 +569,11 @@ impl App {
         }
 
         if self.aux_state.active_frustum.is_some() {
+            let ch_size = px(40);
             let mut item = ScreenImageItem::default();
-            item.pixels = crosshair_pixels(colour, 40, 3, 5);
-            item.width = 40;
-            item.height = 40;
+            item.pixels = crosshair_pixels(colour, ch_size, px(3), px(5));
+            item.width = ch_size;
+            item.height = ch_size;
             item.anchor = ImageAnchor::Center;
             item.scale = self.aux_state.img_scale;
             item.alpha = self.aux_state.img_alpha;

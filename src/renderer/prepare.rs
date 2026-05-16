@@ -1155,8 +1155,9 @@ impl ViewportRenderer {
             if frame.scene.screen_images.iter().any(|i| i.depth.is_some()) {
                 resources.ensure_screen_image_dc_pipeline(device);
             }
-            let vp_w = vp_size[0];
-            let vp_h = vp_size[1];
+            let ppp = frame.camera.pixels_per_point;
+            let vp_w = vp_size[0] * ppp;
+            let vp_h = vp_size[1] * ppp;
             for item in &frame.scene.screen_images {
                 if item.width == 0 || item.height == 0 || item.pixels.is_empty() {
                     continue;
@@ -1172,8 +1173,9 @@ impl ViewportRenderer {
         self.overlay_image_gpu_data.clear();
         if !frame.overlays.images.is_empty() {
             resources.ensure_screen_image_pipeline(device);
-            let vp_w = vp_size[0];
-            let vp_h = vp_size[1];
+            let ppp = frame.camera.pixels_per_point;
+            let vp_w = vp_size[0] * ppp;
+            let vp_h = vp_size[1] * ppp;
             for item in &frame.overlays.images {
                 if item.width == 0 || item.height == 0 || item.pixels.is_empty() {
                     continue;
