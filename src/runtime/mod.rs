@@ -123,6 +123,19 @@ impl ViewportRuntime {
         self
     }
 
+    /// Replace the fixed timestep at runtime. Resets the accumulator.
+    ///
+    /// Use this to change the simulation rate after construction without
+    /// rebuilding the runtime or its plugins.
+    pub fn set_fixed_timestep(&mut self, ts: FixedTimestep) {
+        self.fixed_timestep = Some(ts);
+    }
+
+    /// Remove the fixed timestep, reverting to one `Simulate` call per frame at wall dt.
+    pub fn clear_fixed_timestep(&mut self) {
+        self.fixed_timestep = None;
+    }
+
     /// The current runtime mode.
     pub fn mode(&self) -> SceneRuntimeMode {
         self.mode

@@ -60,6 +60,7 @@ mod showcase_39_tensor_glyphs;
 mod showcase_40_vertex_warp;
 mod showcase_41_sprites;
 mod showcase_42_gaussian_splats;
+mod showcase_43_scene_runtime;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -203,6 +204,7 @@ fn main() -> eframe::Result {
                 warp_state: showcase_40_vertex_warp::VertexWarpState::default(),
                 sprite_state: showcase_41_sprites::SpriteState::default(),
                 splat_state: showcase_42_gaussian_splats::GaussianSplatsState::default(),
+                rt_state: showcase_43_scene_runtime::RtDemoState::default(),
             }))
         }),
     )
@@ -258,6 +260,7 @@ enum ShowcaseMode {
     VertexWarp,
     Sprites,
     GaussianSplats,
+    SceneRuntime,
 }
 
 impl ShowcaseMode {
@@ -305,6 +308,7 @@ impl ShowcaseMode {
             Self::VertexWarp => "40: GPU Vertex Warp",
             Self::Sprites => "41: Sprites & Particles",
             Self::GaussianSplats => "42: Gaussian Splats",
+            Self::SceneRuntime => "43: Scene Runtime",
         }
     }
 }
@@ -457,6 +461,9 @@ pub(crate) struct App {
 
     // --- Showcase 42 ---
     pub(crate) splat_state: showcase_42_gaussian_splats::GaussianSplatsState,
+
+    // --- Showcase 43 ---
+    pub(crate) rt_state: showcase_43_scene_runtime::RtDemoState,
 }
 
 // ---------------------------------------------------------------------------
@@ -632,6 +639,7 @@ impl eframe::App for App {
                     ShowcaseMode::VertexWarp,
                     ShowcaseMode::Sprites,
                     ShowcaseMode::GaussianSplats,
+                    ShowcaseMode::SceneRuntime,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1299,6 +1307,12 @@ impl eframe::App for App {
                     showcase_42_gaussian_splats::update_gaussian_splats(self, dt);
                     ctx.request_repaint();
                 }
+                // ----- Scene runtime: step simulation -----
+                if self.mode == ShowcaseMode::SceneRuntime && self.rt_state.built {
+                    let dt = ctx.input(|i| i.stable_dt.min(0.25));
+                    showcase_43_scene_runtime::update_rt_demo(self, dt);
+                    ctx.request_repaint();
+                }
             });
     }
 }
@@ -1309,7 +1323,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 42] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 43] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1352,6 +1366,7 @@ impl App {
             ShowcaseMode::VertexWarp,
             ShowcaseMode::Sprites,
             ShowcaseMode::GaussianSplats,
+            ShowcaseMode::SceneRuntime,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1476,6 +1491,7 @@ impl App {
             ShowcaseMode::VertexWarp => !self.warp_state.built,
             ShowcaseMode::Sprites => !self.sprite_state.built,
             ShowcaseMode::GaussianSplats => !self.splat_state.built,
+            ShowcaseMode::SceneRuntime => !self.rt_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -1869,6 +1885,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::SceneRuntime => {
+                showcase_43_scene_runtime::build_rt_demo_scene(self, renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 14.0,
+                    orientation: glam::Quat::from_rotation_z(0.6)
+                        * glam::Quat::from_rotation_x(1.1),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -1958,6 +1984,9 @@ impl App {
             ShowcaseMode::Sprites => showcase_41_sprites::controls_sprites(self, ui),
             ShowcaseMode::GaussianSplats => {
                 showcase_42_gaussian_splats::controls_gaussian_splats(self, ui)
+            }
+            ShowcaseMode::SceneRuntime => {
+                showcase_43_scene_runtime::controls_rt_demo(self, ui)
             }
         }
     }
@@ -2646,6 +2675,22 @@ impl App {
                 let (items, lighting, sg, ss) =
                     showcase_42_gaussian_splats::splat_collect_scene_items(self);
                 (items, Some(BG_COLOUR), lighting, sg, ss)
+            }
+
+            ShowcaseMode::SceneRuntime => {
+                let items = if self.rt_state.built {
+                    showcase_43_scene_runtime::rt_demo_scene_items(self)
+                } else {
+                    Vec::new()
+                };
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.5,
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [0.7, 0.7, 0.7],
+                    ..LightingSettings::default()
+                };
+                let sg = self.rt_state.scene.version();
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
         };
 
