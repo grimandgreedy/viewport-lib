@@ -96,6 +96,14 @@ pub(crate) struct ViewportSlot {
     pub implicit_outline_indices: Vec<usize>,
     /// Per-frame outline data for selected GPU marching cubes jobs, rebuilt in prepare().
     pub mc_outline_data: Vec<crate::resources::gpu_marching_cubes::McOutlineItem>,
+    /// Outline items for selected streamtubes (index into streamtube_gpu_data + mask bind group).
+    pub streamtube_outline_items: Vec<crate::resources::CurveMeshOutlineItem>,
+    /// Outline items for selected tubes.
+    pub tube_outline_items: Vec<crate::resources::CurveMeshOutlineItem>,
+    /// Outline items for selected ribbons.
+    pub ribbon_outline_items: Vec<crate::resources::CurveMeshOutlineItem>,
+    /// Indices into polyline_gpu_data for selected user polylines.
+    pub polyline_outline_indices: Vec<usize>,
     /// Per-frame x-ray buffers for selected objects, rebuilt in prepare().
     pub xray_object_buffers: Vec<(
         crate::resources::mesh_store::MeshId,
@@ -231,6 +239,14 @@ pub struct ViewportRenderer {
     tube_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
     /// Per-frame ribbon GPU data, rebuilt in prepare(), consumed in paint() (Phase 8.1).
     ribbon_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
+    /// Indices into streamtube_gpu_data for selected streamtubes (set in prepare_scene, consumed in prepare_viewport).
+    streamtube_selected_gpu_indices: Vec<usize>,
+    /// Indices into tube_gpu_data for selected tubes (set in prepare_scene, consumed in prepare_viewport).
+    tube_selected_gpu_indices: Vec<usize>,
+    /// Indices into ribbon_gpu_data for selected ribbons (set in prepare_scene, consumed in prepare_viewport).
+    ribbon_selected_gpu_indices: Vec<usize>,
+    /// Indices into polyline_gpu_data for selected user polylines (set in prepare_scene, consumed in prepare_viewport).
+    polyline_selected_gpu_indices: Vec<usize>,
     /// Per-frame image slice GPU data, rebuilt in prepare(), consumed in paint() (Phase 3).
     image_slice_gpu_data: Vec<crate::resources::ImageSliceGpuData>,
     /// Per-frame volume surface slice GPU data, rebuilt in prepare(), consumed in paint() (Phase 10).
@@ -424,6 +440,10 @@ impl ViewportRenderer {
             streamtube_gpu_data: Vec::new(),
             tube_gpu_data: Vec::new(),
             ribbon_gpu_data: Vec::new(),
+            streamtube_selected_gpu_indices: Vec::new(),
+            tube_selected_gpu_indices: Vec::new(),
+            ribbon_selected_gpu_indices: Vec::new(),
+            polyline_selected_gpu_indices: Vec::new(),
             image_slice_gpu_data: Vec::new(),
             volume_surface_slice_gpu_data: Vec::new(),
             sprite_gpu_data: Vec::new(),
@@ -780,6 +800,10 @@ impl ViewportRenderer {
                 screen_rect_outline_buffers: Vec::new(),
                 implicit_outline_indices: Vec::new(),
                 mc_outline_data: Vec::new(),
+                streamtube_outline_items: Vec::new(),
+                tube_outline_items: Vec::new(),
+                ribbon_outline_items: Vec::new(),
+                polyline_outline_indices: Vec::new(),
                 xray_object_buffers: Vec::new(),
                 constraint_line_buffers: Vec::new(),
                 cap_buffers: Vec::new(),

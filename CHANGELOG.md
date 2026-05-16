@@ -12,6 +12,7 @@
     - Item types constructed with struct literal syntax (e.g. `GpuMarchingCubesJob`) need to add `appearance: Default::default()`.
 
 ### Improvements
+- PolylineItem batches now render as thin 1px GPU lines when `ViewportFrame::wireframe_mode` is enabled or when `appearance.wireframe` is set. Previously polylines rendered as thick screen-space billboards regardless of wireframe mode. The wireframe path reads segment endpoints from a storage buffer using a LineList pipeline, so no separate position buffer is needed.
 - SpriteItem batches now render wireframe overlays when `ViewportFrame::wireframe_mode` is enabled or when `appearance.wireframe` is set. Batches with 100 or fewer sprites show a 4-edge quad outline per sprite; larger batches show an AABB box. Outline corners are computed to match the sprite shader exactly, handling both `WorldSpace` and `ScreenSpace` size modes and per-instance rotation.
 - GPU marching cubes surfaces now render in wireframe when `ViewportFrame::wireframe_mode` is enabled or when `appearance.wireframe` is set on the job. Triangle edges are generated procedurally on the GPU via a fourth compute pass and drawn with a LineList pipeline; no CPU readback is required.
 - VolumeItem, GaussianSplatItem, and TransparentVolumeMeshItem now render wireframe overlays when `ViewportFrame::wireframe_mode` is enabled or when `appearance.wireframe` is set on an individual item. Volumes show an OBB; small splat clouds (<=100) show three orthogonal rings per splat, and larger clouds show an OBB fitted via PCA; transparent volume meshes show their boundary surface edges.
@@ -25,6 +26,7 @@
     - Implicit surfaces, marching-cubes surfaces, image slices, surface slices, and screen images now participate in the unified picking API and can show object-level selection outlines.
     - Streamtubes, tubes, and ribbons can now highlight selected segments and strips in the same style as polylines.
     - Transparent volume meshes can now show object-level selection outlines.
+- Selection outlines for polylines, tubes, streamtubes, and ribbons now use the same depth-buffer edge-detection effect as triangle mesh objects, instead of point sprite discs at each control point. The outline follows the actual silhouette of the rendered geometry.
 - Tone mapping now defaults to Khronos Neutral instead of ACES. This keeps ordinary SDR colours closer to how they looked in the older LDR path, while still preserving HDR highlight compression. ACES remains available for scenes that want a stronger filmic look.
 - Post-processing types now live in a dedicated module, without changing existing import paths.
 - Transparent volume meshes require the HDR/post-processing path. This was already true in practice and is now called out clearly in the API documentation.

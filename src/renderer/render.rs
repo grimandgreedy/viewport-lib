@@ -2271,6 +2271,10 @@ impl ViewportRenderer {
         // -----------------------------------------------------------------------
         if !slot.outline_object_buffers.is_empty()
             || !slot.splat_outline_buffers.is_empty()
+            || !slot.streamtube_outline_items.is_empty()
+            || !slot.tube_outline_items.is_empty()
+            || !slot.ribbon_outline_items.is_empty()
+            || !slot.polyline_outline_indices.is_empty()
             || !slot.volume_outline_indices.is_empty()
             || !slot.glyph_outline_indices.is_empty()
             || !slot.tensor_glyph_outline_indices.is_empty()

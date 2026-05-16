@@ -185,6 +185,93 @@ impl ViewportGpuResources {
             ldr: make(self.target_format),
             hdr: make(wgpu::TextureFormat::Rgba16Float),
         });
+
+        self.ensure_polyline_wireframe_pipeline(device);
+    }
+
+    /// Lazily create the thin wireframe polyline pipeline (LineList, 1px).
+    ///
+    /// Reads segment endpoints from a storage buffer so no vertex buffer is needed.
+    /// Created alongside `ensure_polyline_pipeline`; no-op if already created.
+    pub(crate) fn ensure_polyline_wireframe_pipeline(&mut self, device: &wgpu::Device) {
+        if self.polyline_wireframe_pipeline.is_some() {
+            return;
+        }
+
+        let wf_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("polyline_wireframe_bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("polyline_wireframe_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../shaders/polyline_wireframe.wgsl").into(),
+            ),
+        });
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("polyline_wireframe_pipeline_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, &wf_bgl],
+            push_constant_ranges: &[],
+        });
+
+        let sample_count = self.sample_count;
+        let make = |fmt: wgpu::TextureFormat| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("polyline_wireframe_pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: fmt,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::LineList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                multiview: None,
+                cache: None,
+            })
+        };
+
+        self.polyline_wireframe_bgl = Some(wf_bgl);
+        self.polyline_wireframe_pipeline = Some(DualPipeline {
+            ldr: make(self.target_format),
+            hdr: make(wgpu::TextureFormat::Rgba16Float),
+        });
     }
 
     /// Upload one [`PolylineItem`] to the GPU and return draw data.
@@ -334,7 +421,7 @@ impl ViewportGpuResources {
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("polyline_vertex_buf"),
             size: seg_bytes.len().max(112) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         if !seg_bytes.is_empty() {
@@ -426,12 +513,25 @@ impl ViewportGpuResources {
             ],
         });
 
+        let wireframe_bind_group = self.polyline_wireframe_bgl.as_ref().map(|bgl| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("polyline_wireframe_bind_group"),
+                layout: bgl,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: vertex_buffer.as_entire_binding(),
+                }],
+            })
+        });
+
         PolylineGpuData {
             vertex_buffer,
             segment_count: seg_count,
             bind_group,
             _uniform_buf: uniform_buf,
             skip_clip: false,
+            wireframe: false,
+            wireframe_bind_group,
         }
     }
 
@@ -580,5 +680,97 @@ impl ViewportGpuResources {
             ldr: make(self.target_format),
             hdr: make(wgpu::TextureFormat::Rgba16Float),
         });
+    }
+
+    /// Lazily create the polyline outline mask pipeline.
+    ///
+    /// Renders polyline segments into the R8 mask texture using the same
+    /// screen-space quad expansion as the regular pipeline, but outputs white
+    /// and skips clip plane / colour logic.
+    pub(crate) fn ensure_polyline_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
+        if self.polyline_outline_mask_pipeline.is_some() {
+            return;
+        }
+        self.ensure_polyline_pipeline(device);
+
+        let pl_bgl = self
+            .polyline_bgl
+            .as_ref()
+            .expect("polyline_bgl must exist after ensure_polyline_pipeline");
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("polyline_outline_mask_pipeline_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, pl_bgl],
+            push_constant_ranges: &[],
+        });
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("polyline_outline_mask_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../shaders/polyline_outline_mask.wgsl").into(),
+            ),
+        });
+
+        let pl_instance_layout = wgpu::VertexBufferLayout {
+            array_stride: 112,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[
+                wgpu::VertexAttribute { offset: 0,   shader_location: 0,  format: wgpu::VertexFormat::Float32x3 },
+                wgpu::VertexAttribute { offset: 12,  shader_location: 1,  format: wgpu::VertexFormat::Float32x3 },
+                wgpu::VertexAttribute { offset: 24,  shader_location: 2,  format: wgpu::VertexFormat::Float32x3 },
+                wgpu::VertexAttribute { offset: 36,  shader_location: 3,  format: wgpu::VertexFormat::Float32x3 },
+                wgpu::VertexAttribute { offset: 48,  shader_location: 4,  format: wgpu::VertexFormat::Float32   },
+                wgpu::VertexAttribute { offset: 52,  shader_location: 5,  format: wgpu::VertexFormat::Float32   },
+                wgpu::VertexAttribute { offset: 56,  shader_location: 6,  format: wgpu::VertexFormat::Uint32    },
+                wgpu::VertexAttribute { offset: 60,  shader_location: 7,  format: wgpu::VertexFormat::Uint32    },
+                wgpu::VertexAttribute { offset: 64,  shader_location: 8,  format: wgpu::VertexFormat::Float32x4 },
+                wgpu::VertexAttribute { offset: 80,  shader_location: 9,  format: wgpu::VertexFormat::Float32x4 },
+                wgpu::VertexAttribute { offset: 96,  shader_location: 10, format: wgpu::VertexFormat::Float32   },
+                wgpu::VertexAttribute { offset: 100, shader_location: 11, format: wgpu::VertexFormat::Float32   },
+                wgpu::VertexAttribute { offset: 104, shader_location: 12, format: wgpu::VertexFormat::Uint32    },
+            ],
+        };
+
+        self.polyline_outline_mask_pipeline = Some(device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("polyline_outline_mask_pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[pl_instance_layout],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R8Unorm,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            },
+        ));
     }
 }
