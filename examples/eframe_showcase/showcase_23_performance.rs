@@ -1,4 +1,4 @@
-//! Showcase 3: Performance at Scale : build + controls.
+//! Showcase 23: Performance at Scale : build + controls.
 //!
 //! Demonstrates GPU-driven instanced rendering and culling:
 //! - 1 000 000 boxes (100x100x100 grid) sharing a single mesh
@@ -11,8 +11,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use eframe::egui;
 use viewport_lib::{
-    Aabb, FrameStats, Material, MeshId, PickAccelerator, SceneRenderItem, scene::Scene,
-    selection::Selection,
+    Aabb, AppearanceSettings, FrameStats, Material, MeshId, PickAccelerator, SceneRenderItem,
+    scene::Scene, selection::Selection,
 };
 
 use crate::App;
@@ -96,7 +96,10 @@ pub(crate) fn build_perf_scene_threaded(
                 let transform = glam::Mat4::from_translation(pos);
                 let colour = colours[count as usize % colours.len()];
                 let mat = Material::from_colour(colour);
-                scene.add(Some(mesh), transform, mat);
+                let id = scene.add(Some(mesh), transform, mat);
+                let mut appearance = AppearanceSettings::default();
+                appearance.unlit = true;
+                scene.set_appearance(id, appearance);
                 count += 1;
                 if count % 10_000 == 0 {
                     progress.store(count, Ordering::Relaxed);

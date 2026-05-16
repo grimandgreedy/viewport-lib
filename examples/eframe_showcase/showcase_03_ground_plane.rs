@@ -1,4 +1,4 @@
-//! Showcase 23: Ground Plane.
+//! Showcase 3: Ground Plane.
 //!
 //! Demonstrates all four ground-plane modes:
 //!   - None       : plane disabled (zero overhead)

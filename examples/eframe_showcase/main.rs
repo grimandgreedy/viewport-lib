@@ -20,7 +20,7 @@ mod multi_viewport_callback;
 mod shared;
 mod showcase_01_basic;
 mod showcase_02_scene_graph;
-mod showcase_03_performance;
+mod showcase_03_ground_plane;
 mod showcase_04_interaction;
 mod showcase_05_materials_and_visibility;
 mod showcase_06_post_process;
@@ -40,7 +40,7 @@ mod showcase_19_matcap;
 mod showcase_20_face_attributes;
 mod showcase_21_textures;
 mod showcase_22_parameterization;
-mod showcase_23_ground_plane;
+mod showcase_23_performance;
 mod showcase_24_backface_policy;
 mod showcase_25_surface_vectors;
 mod showcase_26_volume_mesh;
@@ -141,7 +141,7 @@ fn main() -> eframe::Result {
                 basic_state: showcase_01_basic::BasicState::default(),
                 sg_state: showcase_02_scene_graph::SgState::default(),
                 box_mesh_data: box_mesh,
-                perf_state: showcase_03_performance::PerfState::default(),
+                perf_state: showcase_23_performance::PerfState::default(),
                 interact_state: showcase_04_interaction::InteractState::default(),
                 materials_visibility_state:
                     showcase_05_materials_and_visibility::MaterialsVisibilityState::default(),
@@ -167,7 +167,7 @@ fn main() -> eframe::Result {
 
                 param_vis_state: showcase_22_parameterization::ParamVisState::default(),
 
-                gp_state: showcase_23_ground_plane::GroundPlaneState::default(),
+                gp_state: showcase_03_ground_plane::GroundPlaneState::default(),
 
                 sa_state: showcase_24_backface_policy::SaState::default(),
 
@@ -265,7 +265,7 @@ impl ShowcaseMode {
         match self {
             Self::Basic => "1: Rendering Basics",
             Self::SceneGraph => "2: Scene Graph",
-            Self::Performance => "3: Performance",
+            Self::Performance => "23: Performance",
             Self::Interaction => "4: Interaction",
             Self::MaterialsVisibility => "5: Materials and Visibility",
             Self::PostProcess => "6: Post-Processing",
@@ -285,7 +285,7 @@ impl ShowcaseMode {
             Self::FaceAttributes => "20: Face Attributes",
             Self::Textures => "21: Textures",
             Self::ParamVis => "22: UV Parameterization",
-            Self::GroundPlane => "23: Ground Plane",
+            Self::GroundPlane => "3: Ground Plane",
             Self::BackfacePolicy => "24: Backface Policy",
             Self::SurfaceVectors => "25: Surface Vectors",
             Self::VolumeMesh => "26: Volume Meshes",
@@ -338,8 +338,8 @@ pub(crate) struct App {
     /// Shared box MeshData for on-demand uploads in later showcases.
     pub(crate) box_mesh_data: MeshData,
 
-    // --- Showcase 3 ---
-    pub(crate) perf_state: showcase_03_performance::PerfState,
+    // --- Showcase 23 ---
+    pub(crate) perf_state: showcase_23_performance::PerfState,
 
     // --- Showcase 4 ---
     pub(crate) interact_state: showcase_04_interaction::InteractState,
@@ -398,8 +398,8 @@ pub(crate) struct App {
 
     // --- Showcase 22 ---
     pub(crate) param_vis_state: showcase_22_parameterization::ParamVisState,
-    // --- Showcase 23 ---
-    pub(crate) gp_state: showcase_23_ground_plane::GroundPlaneState,
+    // --- Showcase 3 ---
+    pub(crate) gp_state: showcase_03_ground_plane::GroundPlaneState,
 
     // --- Showcase 24 ---
     pub(crate) sa_state: showcase_24_backface_policy::SaState,
@@ -592,7 +592,7 @@ impl eframe::App for App {
                 for mode in [
                     ShowcaseMode::Basic,
                     ShowcaseMode::SceneGraph,
-                    ShowcaseMode::Performance,
+                    ShowcaseMode::GroundPlane,
                     ShowcaseMode::Interaction,
                     ShowcaseMode::MaterialsVisibility,
                     ShowcaseMode::PostProcess,
@@ -612,7 +612,7 @@ impl eframe::App for App {
                     ShowcaseMode::FaceAttributes,
                     ShowcaseMode::Textures,
                     ShowcaseMode::ParamVis,
-                    ShowcaseMode::GroundPlane,
+                    ShowcaseMode::Performance,
                     ShowcaseMode::BackfacePolicy,
                     ShowcaseMode::SurfaceVectors,
                     ShowcaseMode::VolumeMesh,
@@ -1312,7 +1312,7 @@ impl App {
         const SHOWCASE_MODES: [ShowcaseMode; 42] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
-            ShowcaseMode::Performance,
+            ShowcaseMode::GroundPlane,
             ShowcaseMode::Interaction,
             ShowcaseMode::MaterialsVisibility,
             ShowcaseMode::PostProcess,
@@ -1332,7 +1332,7 @@ impl App {
             ShowcaseMode::FaceAttributes,
             ShowcaseMode::Textures,
             ShowcaseMode::ParamVis,
-            ShowcaseMode::GroundPlane,
+            ShowcaseMode::Performance,
             ShowcaseMode::BackfacePolicy,
             ShowcaseMode::SurfaceVectors,
             ShowcaseMode::VolumeMesh,
@@ -1508,7 +1508,7 @@ impl App {
                 let (tx, rx) = std::sync::mpsc::channel();
 
                 std::thread::spawn(move || {
-                    let result = showcase_03_performance::build_perf_scene_threaded(
+                    let result = showcase_23_performance::build_perf_scene_threaded(
                         mesh,
                         mesh_aabb,
                         &progress_clone,
@@ -1893,7 +1893,7 @@ impl App {
             ShowcaseMode::SceneGraph => {
                 showcase_02_scene_graph::controls_scene_graph(self, ui, frame)
             }
-            ShowcaseMode::Performance => showcase_03_performance::controls_performance(self, ui),
+            ShowcaseMode::Performance => showcase_23_performance::controls_performance(self, ui),
             ShowcaseMode::Interaction => showcase_04_interaction::controls_interaction(self, ui),
             ShowcaseMode::MaterialsVisibility => {
                 showcase_05_materials_and_visibility::controls_materials_visibility(self, ui)
@@ -1919,7 +1919,7 @@ impl App {
             }
             ShowcaseMode::Textures => showcase_21_textures::controls_textures(self, ui),
             ShowcaseMode::ParamVis => showcase_22_parameterization::controls_param_vis(self, ui),
-            ShowcaseMode::GroundPlane => showcase_23_ground_plane::controls_ground_plane(self, ui),
+            ShowcaseMode::GroundPlane => showcase_03_ground_plane::controls_ground_plane(self, ui),
             ShowcaseMode::BackfacePolicy => {
                 showcase_24_backface_policy::controls_surface_appearance(self, ui)
             }
@@ -2712,9 +2712,9 @@ impl App {
         fd.viewport.show_axes_indicator = true;
         fd.viewport.background_colour = bg_colour;
 
-        // Ground plane (Showcase 23).
+        // Ground plane (Showcase 3).
         if self.mode == ShowcaseMode::GroundPlane {
-            use showcase_23_ground_plane::GpMode;
+            use showcase_03_ground_plane::GpMode;
             fd.effects.ground_plane = GroundPlane {
                 mode: match self.gp_state.mode {
                     GpMode::None => GroundPlaneMode::None,
@@ -2961,7 +2961,7 @@ impl App {
                 let n = progress.load(std::sync::atomic::Ordering::Relaxed);
                 let label = format!(
                     "Building scene\u{2026} {} / 1 000 000",
-                    showcase_03_performance::format_count(n),
+                    showcase_23_performance::format_count(n),
                 );
                 fd.overlays.loading_bars.push(LoadingBarItem {
                     progress: n as f32 / 1_000_000.0,
