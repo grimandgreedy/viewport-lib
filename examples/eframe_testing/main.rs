@@ -162,7 +162,7 @@ impl App {
         let ground = {
             let mut item = SceneRenderItem::default();
             item.mesh_id = self.ground_id;
-            item.visible = true;
+
             item.material = {
                 let mut m = ground_mat;
                 m.backface_policy = if self.ground_two_sided {
@@ -189,7 +189,7 @@ impl App {
         for pos in &box_positions {
             let mut item = SceneRenderItem::default();
             item.mesh_id = self.box_id;
-            item.visible = true;
+
             item.material = box_mat;
             item.model = glam::Mat4::from_translation(*pos).to_cols_array_2d();
             items.push(item);
@@ -199,7 +199,7 @@ impl App {
         {
             let mut item = SceneRenderItem::default();
             item.mesh_id = self.sphere_id;
-            item.visible = true;
+
             item.material = sphere_mat;
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.8)).to_cols_array_2d();
@@ -210,16 +210,11 @@ impl App {
         // the depth issue is active. Magenta sphere at the centre, cyan box
         // offset so both are independently visible.
         if self.show_subsurface {
-            let mut unlit_mat = Material::default();
-            unlit_mat.unlit = true;
-
             {
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = self.unlit_sphere_id;
-                item.visible = true;
-                let mut m = unlit_mat;
-                m.base_colour = COLOUR_MAGENTA;
-                item.material = m;
+                item.appearance.unlit = true;
+                item.material.base_colour = COLOUR_MAGENTA;
                 item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -2.0))
                     .to_cols_array_2d();
                 items.push(item);
@@ -228,10 +223,9 @@ impl App {
             {
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = self.unlit_box_id;
-                item.visible = true;
-                let mut m = unlit_mat;
-                m.base_colour = COLOUR_CYAN;
-                item.material = m;
+    
+                item.appearance.unlit = true;
+                item.material.base_colour = COLOUR_CYAN;
                 item.model = glam::Mat4::from_translation(glam::Vec3::new(8.0, 5.0, -2.5))
                     .to_cols_array_2d();
                 items.push(item);

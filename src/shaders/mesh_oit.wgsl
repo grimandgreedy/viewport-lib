@@ -510,6 +510,16 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
         base_colour = textureSampleLevel(lut_texture, lut_sampler, vec2<f32>(t, 0.5), 0.0).rgb;
     }
 
+    // Unlit: skip all lighting, return raw colour directly through OIT.
+    if object.unlit != 0u {
+        let alpha = obj_colour.a;
+        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
+        var oit_out: OitOut;
+        oit_out.accum  = vec4<f32>(base_colour * alpha, alpha) * w;
+        oit_out.reveal = alpha;
+        return oit_out;
+    }
+
     // UV parameterization visualization: procedural pattern replaces all lighting.
     if object.uv_vis_mode != 0u {
         let vis   = param_vis_colour(in.uv, object.uv_vis_mode, object.uv_vis_scale);
@@ -517,16 +527,6 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
         let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
         var oit_out: OitOut;
         oit_out.accum  = vec4<f32>(vis * alpha, alpha) * w;
-        oit_out.reveal = alpha;
-        return oit_out;
-    }
-
-    // Unlit: skip all lighting, return raw colour directly through OIT.
-    if object.unlit != 0u {
-        let alpha = obj_colour.a;
-        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
-        var oit_out: OitOut;
-        oit_out.accum  = vec4<f32>(base_colour * alpha, alpha) * w;
         oit_out.reveal = alpha;
         return oit_out;
     }

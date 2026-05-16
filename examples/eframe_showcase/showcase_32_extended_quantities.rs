@@ -332,14 +332,12 @@ impl App {
                         kind: kinds[i],
                     });
                     item.colourmap_id = cm_id;
-                    item.visible = true;
                     scene_items.push(item);
                 }
             }
             EqSubMode::VolumeMeshVectors => {
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = self.eq_state.vm_mesh_id;
-                item.visible = true;
                 scene_items.push(item);
                 // Vertex vectors: blue (Viridis at 0.15).
                 let vv = vertex_radial_vectors(&self.eq_state.vm_data.positions);
@@ -365,7 +363,6 @@ impl App {
                 // Opaque sphere behind the point cloud to occlude back-facing points.
                 let mut bg = SceneRenderItem::default();
                 bg.mesh_id = self.eq_state.pc_bg_mesh_id;
-                bg.visible = true;
                 scene_items.push(bg);
 
                 let mut pc = PointCloudItem::default();

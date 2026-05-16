@@ -58,8 +58,12 @@ struct TensorGlyphUniform {
     has_scalars: u32,     //  4 bytes (1 = use per-instance scalar field)
     scalar_min:  f32,     //  4 bytes
     scalar_max:  f32,     //  4 bytes
-    _pad0:       f32,     //  4 bytes
-    _pad1:       array<vec4<f32>, 3>, // 48 bytes padding -- total 64 bytes
+    unlit:       u32,     //  4 bytes (1 = skip lighting, output raw colour)
+    opacity:     f32,     //  4 bytes (global opacity multiplier, 0.0-1.0)
+    _pad1a:      f32,     //  4 bytes
+    _pad1b:      f32,     //  4 bytes
+    _pad1c:      f32,     //  4 bytes -- end of first 32 bytes
+    _pad2:       array<vec4<f32>, 2>, // 32 bytes padding -- total 64 bytes
 };
 
 // Per-instance data : 128 bytes.
@@ -176,6 +180,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
     if !clip_volume_test(in.world_pos) { discard; }
 
+    let alpha = in.colour.a * tg_uniform.opacity;
+
+    // Unlit early-out: skip lighting entirely and return the LUT colour.
+    if tg_uniform.unlit != 0u {
+        return vec4<f32>(in.colour.rgb, alpha);
+    }
+
     // Simple diffuse lighting with a fixed directional light.
     let light_dir = normalize(vec3<f32>(0.3, 1.0, 0.5));
     let n_dot_l   = max(dot(in.world_nrm, light_dir), 0.0);
@@ -183,5 +194,5 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let diffuse   = 0.8 * n_dot_l;
     let shading   = ambient + diffuse;
 
-    return vec4<f32>(in.colour.rgb * shading, in.colour.a);
+    return vec4<f32>(in.colour.rgb * shading, alpha);
 }

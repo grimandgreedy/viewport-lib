@@ -465,6 +465,7 @@ impl App {
             isovalue: self.is_state.gmc_isovalue,
             material: mat,
             id: 0,
+            appearance: Default::default(),
             selected: false,
             cpu_data: None,
         });

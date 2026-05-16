@@ -1,5 +1,5 @@
 use crate::resources::ColourmapId;
-use crate::scene::material::Material;
+use crate::scene::material::{AppearanceSettings, Material};
 
 // ---------------------------------------------------------------------------
 // Per-frame data types
@@ -36,11 +36,11 @@ pub struct SceneRenderItem {
     pub model: [[f32; 4]; 4],
     /// Whether this object is selected (drives orange tint in WGSL).
     pub selected: bool,
-    /// Whether this object is visible. Hidden objects are not drawn.
-    pub visible: bool,
+    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
+    pub appearance: AppearanceSettings,
     /// Whether to render per-vertex normal visualization lines for this object.
     pub show_normals: bool,
-    /// Per-object material (colour, shading coefficients, opacity, texture).
+    /// Per-object material (colour, shading coefficients, texture).
     pub material: Material,
     /// Named scalar attribute to colour by. `None` = use material base colour.
     pub active_attribute: Option<crate::resources::AttributeRef>,
@@ -77,7 +77,7 @@ impl Default for SceneRenderItem {
             mesh_id: crate::resources::mesh_store::MeshId(0),
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             selected: false,
-            visible: true,
+            appearance: AppearanceSettings::default(),
             show_normals: false,
             material: Material::default(),
             active_attribute: None,
@@ -126,8 +126,8 @@ pub struct VolumeMeshItem {
     pub model: [[f32; 4]; 4],
     /// Whether this object is selected. Default: false.
     pub selected: bool,
-    /// Whether this object is visible. Default: true.
-    pub visible: bool,
+    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
+    pub appearance: AppearanceSettings,
     /// Per-object material.
     pub material: crate::scene::material::Material,
     /// Named scalar or colour attribute to colour by.
@@ -151,7 +151,7 @@ impl VolumeMeshItem {
             face_to_cell,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             selected: false,
-            visible: true,
+            appearance: AppearanceSettings::default(),
             material: crate::scene::material::Material::default(),
             active_attribute: None,
             scalar_range: None,
@@ -170,7 +170,7 @@ impl VolumeMeshItem {
             mesh_id: self.mesh_id,
             model: self.model,
             selected: self.selected,
-            visible: self.visible,
+            appearance: self.appearance,
             material: self.material.clone(),
             active_attribute: self.active_attribute.clone(),
             scalar_range: self.scalar_range,
@@ -257,6 +257,8 @@ pub struct PointCloudItem {
     /// Output pixel-radius range `[min_px, max_px]` for the radius scalar mapping.
     /// Default: `(2.0, 12.0)`.
     pub radius_range: (f32, f32),
+    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
+    pub appearance: AppearanceSettings,
     /// Whether this point cloud is selected at object level. When true and
     /// `InteractionFrame::outline_selected` is set, the renderer draws a smooth
     /// outline ring around the cloud's screen-space silhouette. Default: false.
@@ -282,6 +284,7 @@ impl Default for PointCloudItem {
             radius_scalars: Vec::new(),
             radius_scalar_range: None,
             radius_range: (2.0, 12.0),
+            appearance: AppearanceSettings::default(),
             selected: false,
         }
     }
@@ -324,8 +327,8 @@ pub struct GlyphItem {
     /// When true, glyphs are coloured by `default_colour` (with per-instance scalar as brightness)
     /// instead of the LUT. Default: false.
     pub use_default_colour: bool,
-    /// Skip lighting and return raw LUT colour directly. Default: false.
-    pub unlit: bool,
+    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
+    pub appearance: AppearanceSettings,
     /// Glyph shape. Default: Arrow.
     pub glyph_type: GlyphType,
     /// World-space model matrix. Default: identity.
@@ -351,7 +354,7 @@ impl Default for GlyphItem {
             colourmap_id: None,
             default_colour: [0.0; 4],
             use_default_colour: false,
-            unlit: false,
+            appearance: AppearanceSettings::default(),
             glyph_type: GlyphType::Arrow,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             id: 0,
@@ -389,6 +392,8 @@ pub struct TensorGlyphItem {
     pub model: [[f32; 4]; 4],
     /// Unique ID for picking. 0 = not pickable.
     pub id: u64,
+    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
+    pub appearance: AppearanceSettings,
     /// Whether this tensor glyph set is selected at object level. Default: false.
     pub selected: bool,
 }
@@ -405,6 +410,7 @@ impl Default for TensorGlyphItem {
             colourmap_id: None,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             id: 0,
+            appearance: AppearanceSettings::default(),
             selected: false,
         }
     }
@@ -466,6 +472,8 @@ pub struct VolumeItem {
     /// (same as current behaviour: discard). `Some([r, g, b, a])` = render NaN voxels with
     /// this fixed RGBA colour instead of sampling the transfer function.
     pub nan_colour: Option<[f32; 4]>,
+    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
+    pub appearance: AppearanceSettings,
     /// When true, the renderer draws a wireframe outline around the volume AABB.
     /// Default: false.
     pub selected: bool,
@@ -489,6 +497,7 @@ impl Default for VolumeItem {
             threshold_min: 0.0,
             threshold_max: 1.0,
             nan_colour: None,
+            appearance: AppearanceSettings::default(),
             selected: false,
         }
     }
@@ -560,6 +569,8 @@ pub struct PolylineItem {
     pub edge_vectors: Vec<[f32; 3]>,
     /// Scale applied to generated arrow glyphs from `node_vectors`/`edge_vectors`.
     pub vector_scale: f32,
+    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
+    pub appearance: AppearanceSettings,
     /// Whether this polyline set is selected at object level. When true and
     /// `InteractionFrame::outline_selected` is set, the renderer draws a smooth
     /// outline ring around the node positions. Default: false.
@@ -584,6 +595,7 @@ impl Default for PolylineItem {
             node_vectors: Vec::new(),
             edge_vectors: Vec::new(),
             vector_scale: 1.0,
+            appearance: AppearanceSettings::default(),
             selected: false,
         }
     }
@@ -651,6 +663,8 @@ pub struct StreamtubeItem {
     pub colour: [f32; 4],
     /// Unique ID (reserved for future picking support).  Default: `0`.
     pub id: u64,
+    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
+    pub appearance: AppearanceSettings,
     /// Whether this streamtube set is selected at object level. Default: false.
     pub selected: bool,
 }
@@ -663,6 +677,7 @@ impl Default for StreamtubeItem {
             radius: 0.05,
             colour: [1.0, 1.0, 1.0, 1.0],
             id: 0,
+            appearance: AppearanceSettings::default(),
             selected: false,
         }
     }
@@ -702,6 +717,8 @@ pub struct TubeItem {
     pub colour: [f32; 4],
     /// Unique ID (reserved for picking). Default: 0.
     pub id: u64,
+    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
+    pub appearance: AppearanceSettings,
     /// Whether this tube set is selected at object level. Default: false.
     pub selected: bool,
 }
@@ -719,6 +736,7 @@ impl Default for TubeItem {
             colourmap_id: None,
             colour: [1.0, 1.0, 1.0, 1.0],
             id: 0,
+            appearance: AppearanceSettings::default(),
             selected: false,
         }
     }
@@ -758,6 +776,8 @@ pub struct RibbonItem {
     pub colour: [f32; 4],
     /// Unique ID (reserved for picking). Default: 0.
     pub id: u64,
+    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
+    pub appearance: AppearanceSettings,
     /// Whether this ribbon set is selected at object level. Default: false.
     pub selected: bool,
 }
@@ -775,6 +795,7 @@ impl Default for RibbonItem {
             colourmap_id: None,
             colour: [1.0, 1.0, 1.0, 1.0],
             id: 0,
+            appearance: AppearanceSettings::default(),
             selected: false,
         }
     }
@@ -822,6 +843,8 @@ pub struct ImageSliceItem {
     pub opacity: f32,
     /// Pick ID for unified selection API. `0` = not selectable.
     pub id: u64,
+    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
+    pub appearance: AppearanceSettings,
     /// If `true`, draws an outline ring around the slice quad.
     pub selected: bool,
 }
@@ -838,6 +861,7 @@ impl Default for ImageSliceItem {
             colour_lut: None,
             opacity: 1.0,
             id: 0,
+            appearance: AppearanceSettings::default(),
             selected: false,
         }
     }
@@ -881,6 +905,8 @@ pub struct VolumeSurfaceSliceItem {
     pub model: [[f32; 4]; 4],
     /// Pick ID for unified selection API. `0` = not selectable.
     pub id: u64,
+    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
+    pub appearance: AppearanceSettings,
     /// If `true`, draws an outline ring around the slice mesh.
     pub selected: bool,
 }
@@ -897,6 +923,7 @@ impl Default for VolumeSurfaceSliceItem {
             opacity: 1.0,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             id: 0,
+            appearance: AppearanceSettings::default(),
             selected: false,
         }
     }
@@ -1179,6 +1206,8 @@ pub struct ScreenImageItem {
     pub depth: Option<Vec<f32>>,
     /// Pick ID for unified selection API. `0` = not selectable.
     pub id: u64,
+    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
+    pub appearance: AppearanceSettings,
     /// If `true`, draws an outline ring around the image rect.
     pub selected: bool,
 }
@@ -1194,6 +1223,7 @@ impl Default for ScreenImageItem {
             alpha: 1.0,
             depth: None,
             id: 0,
+            appearance: AppearanceSettings::default(),
             selected: false,
         }
     }
@@ -1341,6 +1371,8 @@ pub struct SpriteItem {
     pub depth_write: bool,
     /// Picking ID. `0` = not pickable.
     pub id: u64,
+    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
+    pub appearance: AppearanceSettings,
     /// Whether this sprite set is selected at object level. When true and
     /// `InteractionFrame::outline_selected` is set, the renderer draws a smooth
     /// outline ring around the sprite positions. Default: false.
@@ -1362,6 +1394,7 @@ impl Default for SpriteItem {
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             depth_write: false,
             id: 0,
+            appearance: AppearanceSettings::default(),
             selected: false,
         }
     }
@@ -1440,6 +1473,8 @@ pub struct GaussianSplatItem {
     pub model: [[f32; 4]; 4],
     /// Pick ID. 0 = not pickable.
     pub pick_id: u64,
+    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
+    pub appearance: AppearanceSettings,
     /// Whether this splat set is selected. When true and `InteractionFrame::outline_selected`
     /// is set, the renderer draws a smooth outline ring around the cloud's screen-space
     /// silhouette. Default: false.
@@ -1452,6 +1487,7 @@ impl Default for GaussianSplatItem {
             id: GaussianSplatId(usize::MAX),
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             pick_id: 0,
+            appearance: AppearanceSettings::default(),
             selected: false,
         }
     }

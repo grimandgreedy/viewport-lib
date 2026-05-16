@@ -101,16 +101,17 @@ impl App {
         // Unlit sphere in the corner : shows the raw base colour regardless of scene
         // lighting. A lit sphere of the same colour sits beside it for comparison.
         // Visibility is controlled at frame time via the toggle, not by rebuilding.
-        self.lights_state.scene.add_named(
+        let unlit_id = self.lights_state.scene.add_named(
             "Unlit Sphere",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(6.0, -6.0, 0.6)),
-            {
-                let mut m = Material::from_colour([0.2, 0.7, 1.0]);
-                m.unlit = true;
-                m
-            },
+            Material::from_colour([0.2, 0.7, 1.0]),
         );
+        {
+            let mut a = viewport_lib::AppearanceSettings::default();
+            a.unlit = true;
+            self.lights_state.scene.set_appearance(unlit_id, a);
+        }
         self.lights_state.scene.add_named(
             "Lit Sphere (same colour)",
             Some(sphere_id),

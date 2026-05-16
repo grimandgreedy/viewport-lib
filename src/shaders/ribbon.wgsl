@@ -25,7 +25,8 @@ struct StreamtubeUniform {
     colour:            vec4<f32>,
     radius:           f32,
     use_vertex_colour: u32,
-    _pad:             vec2<f32>,
+    unlit:            u32,
+    opacity:          f32,
 };
 
 struct ClipVolumeEntry {
@@ -120,6 +121,15 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     }
     if !clip_volume_test(in.world_pos) { discard; }
 
+    // Resolve base colour.
+    let base_colour = select(tube.colour, in.vert_col, tube.use_vertex_colour != 0u);
+    let alpha = base_colour.a * tube.opacity;
+
+    // Unlit early-out: skip lighting entirely and return the resolved colour.
+    if tube.unlit != 0u {
+        return vec4<f32>(base_colour.rgb, alpha);
+    }
+
     // Flip normal for back faces so both sides shade correctly.
     let n_raw = normalize(in.world_nrm);
     let n     = select(-n_raw, n_raw, is_front);
@@ -128,6 +138,5 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     let n_dot_l   = max(dot(n, light_dir), 0.0);
     let shading   = 0.2 + 0.8 * n_dot_l;
 
-    let base_colour = select(tube.colour, in.vert_col, tube.use_vertex_colour != 0u);
-    return vec4<f32>(base_colour.rgb * shading, base_colour.a);
+    return vec4<f32>(base_colour.rgb * shading, alpha);
 }

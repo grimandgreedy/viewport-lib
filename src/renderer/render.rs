@@ -1240,12 +1240,12 @@ impl ViewportRenderer {
             } else {
                 scene_items
                     .iter()
-                    .any(|i| i.visible && i.material.opacity < 1.0)
+                    .any(|i| !i.appearance.hidden && i.appearance.opacity < 1.0)
             } || frame
                 .scene
                 .transparent_volume_meshes
                 .iter()
-                .any(|i| i.visible);
+                .any(|i| !i.appearance.hidden);
             if needs_oit {
                 let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
                 self.resources
@@ -1348,7 +1348,7 @@ impl ViewportRenderer {
                     let excluded_items: Vec<&SceneRenderItem> = scene_items
                         .iter()
                         .filter(|item| {
-                            item.visible
+                            !item.appearance.hidden
                                 && (item.active_attribute.is_some()
                                     || item.material.is_two_sided()
                                     || item.material.matcap_id.is_some())
@@ -1449,7 +1449,7 @@ impl ViewportRenderer {
                             render_pass.set_pipeline(hdr_wf);
                             let mut wf_idx = 0usize;
                             for item in scene_items {
-                                if !item.visible {
+                                if item.appearance.hidden {
                                     continue;
                                 }
                                 let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
@@ -1475,7 +1475,7 @@ impl ViewportRenderer {
                     ) {
                         for item in excluded_items
                             .into_iter()
-                            .filter(|item| item.material.opacity >= 1.0)
+                            .filter(|item| item.appearance.opacity >= 1.0)
                         {
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                                 continue;
@@ -1507,10 +1507,10 @@ impl ViewportRenderer {
                     let mut opaque: Vec<&SceneRenderItem> = Vec::new();
                     let mut transparent: Vec<&SceneRenderItem> = Vec::new();
                     for item in scene_items {
-                        if !item.visible || resources.mesh_store.get(item.mesh_id).is_none() {
+                        if item.appearance.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
                             continue;
                         }
-                        if item.material.opacity < 1.0 {
+                        if item.appearance.opacity < 1.0 {
                             transparent.push(item);
                         } else {
                             opaque.push(item);
@@ -1556,7 +1556,7 @@ impl ViewportRenderer {
                                 render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
                             } else if is_face_attr {
                                 if let Some(ref fvb) = mesh.face_vertex_buffer {
-                                    let pl = if item.material.opacity < 1.0 {
+                                    let pl = if item.appearance.opacity < 1.0 {
                                         trans_pl
                                     } else {
                                         solid_pl
@@ -1565,7 +1565,7 @@ impl ViewportRenderer {
                                     render_pass.set_vertex_buffer(0, fvb.slice(..));
                                     render_pass.draw(0..mesh.index_count, 0..1);
                                 }
-                            } else if item.material.opacity < 1.0 {
+                            } else if item.appearance.opacity < 1.0 {
                                 render_pass.set_pipeline(trans_pl);
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 render_pass.set_index_buffer(
@@ -1800,12 +1800,12 @@ impl ViewportRenderer {
         } else {
             scene_items
                 .iter()
-                .any(|i| i.visible && i.material.opacity < 1.0)
+                .any(|i| !i.appearance.hidden && i.appearance.opacity < 1.0)
         } || frame
             .scene
             .transparent_volume_meshes
             .iter()
-            .any(|i| i.visible);
+            .any(|i| !i.appearance.hidden);
 
         if has_transparent {
             // OIT targets already allocated in the pre-pass above.
@@ -1943,7 +1943,7 @@ impl ViewportRenderer {
                     if let Some(ref pipeline) = self.resources.oit_pipeline {
                         oit_pass.set_pipeline(pipeline);
                         for item in scene_items {
-                            if !item.visible || item.material.opacity >= 1.0 {
+                            if item.appearance.hidden || item.appearance.opacity >= 1.0 {
                                 continue;
                             }
                             if item.active_attribute.is_none()
@@ -1967,7 +1967,7 @@ impl ViewportRenderer {
                 } else if let Some(ref pipeline) = self.resources.oit_pipeline {
                     oit_pass.set_pipeline(pipeline);
                     for item in scene_items {
-                        if !item.visible || item.material.opacity >= 1.0 {
+                        if item.appearance.hidden || item.appearance.opacity >= 1.0 {
                             continue;
                         }
                         let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
@@ -1992,7 +1992,7 @@ impl ViewportRenderer {
                         oit_pass.set_pipeline(pipeline);
                         oit_pass.set_bind_group(0, camera_bg, &[]);
                         for item in &frame.scene.transparent_volume_meshes {
-                            if !item.visible {
+                            if item.appearance.hidden {
                                 continue;
                             }
                             let Some(gpu) = self.resources.projected_tet_store.get(item.id.0)

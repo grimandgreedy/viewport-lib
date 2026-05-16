@@ -193,7 +193,7 @@ macro_rules! emit_draw_calls {
                     let excluded_items: Vec<&SceneRenderItem> = scene_items
                         .iter()
                         .filter(|item| {
-                            item.visible
+                            !item.appearance.hidden
                                 && (item.active_attribute.is_some()
                                     || item.material.is_two_sided()
                                     || item.material.param_vis.is_some())
@@ -270,7 +270,7 @@ macro_rules! emit_draw_calls {
                     if frame.viewport.wireframe_mode {
                         let mut wf_idx = 0usize;
                         for item in scene_items {
-                            if !item.visible { continue; }
+                            if item.appearance.hidden { continue; }
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else { continue };
                             render_pass.set_pipeline(&resources.wireframe_pipeline);
                             let bg = wireframe_bind_groups.get(wf_idx)
@@ -289,7 +289,7 @@ macro_rules! emit_draw_calls {
                             else {
                                 continue;
                             };
-                            let pipeline = if item.material.opacity < 1.0 {
+                            let pipeline = if item.appearance.opacity < 1.0 {
                                 &resources.transparent_pipeline
                             } else if item.material.is_two_sided() {
                                 &resources.solid_two_sided_pipeline
@@ -339,10 +339,10 @@ macro_rules! emit_draw_calls {
                 let mut opaque: Vec<&SceneRenderItem> = Vec::new();
                 let mut transparent: Vec<&SceneRenderItem> = Vec::new();
                 for item in scene_items {
-                    if !item.visible || resources.mesh_store.get(item.mesh_id).is_none() {
+                    if item.appearance.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
                         continue;
                     }
-                    if item.material.opacity < 1.0 {
+                    if item.appearance.opacity < 1.0 {
                         transparent.push(item);
                     } else {
                         opaque.push(item);

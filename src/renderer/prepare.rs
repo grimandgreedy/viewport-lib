@@ -372,7 +372,7 @@ impl ViewportRenderer {
 
         // -- Instancing preparation --
         // Determine instancing mode BEFORE per-object uniforms so we can skip them.
-        let visible_count = scene_items.iter().filter(|i| i.visible).count();
+        let visible_count = scene_items.iter().filter(|i| !i.appearance.hidden).count();
         let prev_use_instancing = self.use_instancing;
         self.use_instancing = visible_count > INSTANCING_THRESHOLD;
 
@@ -446,7 +446,7 @@ impl ViewportRenderer {
                 };
                 let obj_uniform = ObjectUniform {
                     model: item.model,
-                    colour: [m.base_colour[0], m.base_colour[1], m.base_colour[2], m.opacity],
+                    colour: [m.base_colour[0], m.base_colour[1], m.base_colour[2], item.appearance.opacity],
                     selected: if item.selected { 1 } else { 0 },
                     wireframe: if frame.viewport.wireframe_mode || item.render_as_wireframe {
                         1
@@ -471,7 +471,7 @@ impl ViewportRenderer {
                     use_nan_colour: if item.nan_colour.is_some() { 1 } else { 0 },
                     use_matcap: if m.matcap_id.is_some() { 1 } else { 0 },
                     matcap_blendable: m.matcap_id.map_or(0, |id| if id.blendable { 1 } else { 0 }),
-                    unlit: if m.unlit { 1 } else { 0 },
+                    unlit: if item.appearance.unlit { 1 } else { 0 },
                     use_face_colour: u32::from(item.active_attribute.as_ref().map_or(false, |a| {
                         a.kind == crate::resources::AttributeKind::FaceColour
                     })),
@@ -549,7 +549,7 @@ impl ViewportRenderer {
                 };
 
                 // Collect per-item uniform for wireframe per-item bind groups.
-                if collect_wf_uniforms && item.visible {
+                if collect_wf_uniforms && !item.appearance.hidden {
                     wireframe_uniforms.push(obj_uniform);
                 }
 
@@ -689,7 +689,7 @@ impl ViewportRenderer {
             let instancable_count = scene_items
                 .iter()
                 .filter(|item| {
-                    item.visible
+                    !item.appearance.hidden
                         && item.active_attribute.is_none()
                         && !item.material.is_two_sided()
                         && item.material.matcap_id.is_none()
@@ -707,7 +707,7 @@ impl ViewportRenderer {
                 let mut sorted_items: Vec<&SceneRenderItem> = scene_items
                     .iter()
                     .filter(|item| {
-                        item.visible
+                        !item.appearance.hidden
                             && item.active_attribute.is_none()
                             && !item.material.is_two_sided()
                             && item.material.matcap_id.is_none()
@@ -747,7 +747,7 @@ impl ViewportRenderer {
                             let batch_items = &sorted_items[batch_start..i];
                             let rep = batch_items[0];
                             let instance_offset = all_instances.len() as u32;
-                            let is_transparent = rep.material.opacity < 1.0;
+                            let is_transparent = rep.appearance.opacity < 1.0;
 
                             for item in batch_items {
                                 let m = &item.material;
@@ -757,7 +757,7 @@ impl ViewportRenderer {
                                         m.base_colour[0],
                                         m.base_colour[1],
                                         m.base_colour[2],
-                                        m.opacity,
+                                        item.appearance.opacity,
                                     ],
                                     selected: if item.selected { 1 } else { 0 },
                                     wireframe: 0, // Phase 2: always 0 : wireframe uses per-object pipeline
@@ -771,7 +771,7 @@ impl ViewportRenderer {
                                     roughness: m.roughness,
                                     has_normal_map: if m.normal_map_id.is_some() { 1 } else { 0 },
                                     has_ao_map: if m.ao_map_id.is_some() { 1 } else { 0 },
-                                    unlit: if m.unlit { 1 } else { 0 },
+                                    unlit: if item.appearance.unlit { 1 } else { 0 },
                                     _pad_inst: [0; 3],
                                 });
                             }
@@ -1349,7 +1349,7 @@ impl ViewportRenderer {
         // -- Frame stats --
         {
             let total = scene_items.len() as u32;
-            let visible = scene_items.iter().filter(|i| i.visible).count() as u32;
+            let visible = scene_items.iter().filter(|i| !i.appearance.hidden).count() as u32;
             let mut draw_calls = 0u32;
             let mut triangles = 0u64;
             let instanced_batch_count = if self.use_instancing {
@@ -1367,7 +1367,7 @@ impl ViewportRenderer {
                 }
             } else {
                 for item in scene_items {
-                    if !item.visible {
+                    if item.appearance.hidden {
                         continue;
                     }
                     if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
@@ -1700,10 +1700,10 @@ impl ViewportRenderer {
                         );
 
                         for item in scene_items.iter() {
-                            if !item.visible {
+                            if item.appearance.hidden {
                                 continue;
                             }
-                            if item.material.opacity < 1.0 {
+                            if item.appearance.opacity < 1.0 {
                                 continue;
                             }
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
@@ -2015,7 +2015,7 @@ impl ViewportRenderer {
         if frame.interaction.outline_selected {
             let resources = &self.resources;
             for item in scene_items {
-                if !item.visible || !item.selected {
+                if item.appearance.hidden || !item.selected {
                     continue;
                 }
                 let uniform = OutlineUniform {
@@ -2899,7 +2899,7 @@ impl ViewportRenderer {
         if frame.interaction.xray_selected {
             let resources = &self.resources;
             for item in scene_items {
-                if !item.visible || !item.selected {
+                if item.appearance.hidden || !item.selected {
                     continue;
                 }
                 let uniform = OutlineUniform {
@@ -3084,7 +3084,7 @@ impl ViewportRenderer {
                 } = obj.shape
                 {
                     let plane_n = glam::Vec3::from(normal);
-                    for item in scene_items.iter().filter(|i| i.visible) {
+                    for item in scene_items.iter().filter(|i| !i.appearance.hidden) {
                         let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
                             continue;
                         };

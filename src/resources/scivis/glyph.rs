@@ -221,7 +221,8 @@ impl ViewportGpuResources {
             default_colour: [f32; 4],
             use_default_colour: u32,
             unlit: u32,
-            _pad: [u32; 2],
+            opacity: f32,
+            _pad: u32,
         }
         let uniform_data = GlyphUniform {
             global_scale: item.scale,
@@ -238,8 +239,9 @@ impl ViewportGpuResources {
             } else {
                 0
             },
-            unlit: if item.unlit { 1 } else { 0 },
-            _pad: [0; 2],
+            unlit: if item.appearance.unlit { 1 } else { 0 },
+            opacity: item.appearance.opacity,
+            _pad: 0,
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("glyph_uniform_buf"),
@@ -619,15 +621,19 @@ impl ViewportGpuResources {
             has_scalars: u32,
             scalar_min: f32,
             scalar_max: f32,
-            _pad0: f32,
-            _pad1: [[f32; 4]; 3],
+            unlit: u32,
+            opacity: f32,
+            _pad1: [f32; 3],
+            _pad2: [[f32; 4]; 2],
         }
         let uniform_data = TensorGlyphUniform {
             has_scalars: if has_scalars { 1 } else { 0 },
             scalar_min,
             scalar_max,
-            _pad0: 0.0,
-            _pad1: [[0.0; 4]; 3],
+            unlit: item.appearance.unlit as u32,
+            opacity: item.appearance.opacity,
+            _pad1: [0.0; 3],
+            _pad2: [[0.0; 4]; 2],
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("tensor_glyph_uniform_buf"),

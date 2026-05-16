@@ -2236,7 +2236,7 @@ impl App {
                     .scene
                     .collect_render_items(&Selection::new());
                 if !self.lights_state.unlit_sphere {
-                    items.retain(|item| !item.material.unlit);
+                    items.retain(|item| !item.appearance.unlit);
                 }
                 let lighting = LightingSettings {
                     lights: self.lights_state.sources.clone(),
@@ -2511,7 +2511,7 @@ impl App {
                         name: "colour".to_string(),
                         kind: AttributeKind::FaceColour,
                     });
-                    item.material.opacity = self.face_state.opacity;
+                    item.appearance.opacity = self.face_state.opacity;
                 }
 
                 let sg = self.face_state.scene.version();
@@ -2660,7 +2660,6 @@ impl App {
                     let mut tvm_item = SceneRenderItem::default();
                     tvm_item.mesh_id = tvm_mesh_id;
                     tvm_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-                    tvm_item.visible = true;
                     tvm_item.pick_id = PickId(11);
                     tvm_item.selected = self.pl_state.selection.contains(11);
                     tvm_item.material = viewport_lib::Material::from_colour([0.8, 0.45, 0.2]);
@@ -3435,6 +3434,7 @@ impl App {
                     isovalue: 0.0,
                     material: mat,
                     id: 54,
+                    appearance: Default::default(),
                     selected: self.pl_state.selection.contains(54),
                     cpu_data: self.pl_state.mc_volume_data.clone(),
                 });

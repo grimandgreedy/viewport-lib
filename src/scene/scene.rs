@@ -68,6 +68,7 @@ pub struct SceneNode {
     name: String,
     mesh_id: Option<MeshId>,
     material: Material,
+    appearance: crate::scene::material::AppearanceSettings,
     visible: bool,
     show_normals: bool,
     local_transform: glam::Mat4,
@@ -94,9 +95,14 @@ impl SceneNode {
         self.mesh_id
     }
 
-    /// Material parameters (colour, shading, opacity, texture) for this node.
+    /// Material parameters (colour, shading, texture) for this node.
     pub fn material(&self) -> &Material {
         &self.material
+    }
+
+    /// Per-node appearance overrides (hidden, unlit, opacity, wireframe).
+    pub fn appearance(&self) -> &crate::scene::material::AppearanceSettings {
+        &self.appearance
     }
 
     /// Whether this node is visible.
@@ -268,6 +274,7 @@ impl Scene {
             name: name.to_string(),
             mesh_id,
             material,
+            appearance: crate::scene::material::AppearanceSettings::default(),
             visible: true,
             show_normals: false,
             local_transform: transform,
@@ -397,6 +404,14 @@ impl Scene {
     pub fn set_material(&mut self, id: NodeId, material: Material) {
         if let Some(node) = self.nodes.get_mut(&id) {
             node.material = material;
+        }
+        self.version = self.version.wrapping_add(1);
+    }
+
+    /// Set node appearance overrides.
+    pub fn set_appearance(&mut self, id: NodeId, appearance: crate::scene::material::AppearanceSettings) {
+        if let Some(node) = self.nodes.get_mut(&id) {
+            node.appearance = appearance;
         }
         self.version = self.version.wrapping_add(1);
     }
@@ -678,7 +693,7 @@ impl Scene {
                 } else {
                     selection.contains(node.id)
                 },
-                visible: true,
+                appearance: node.appearance,
                 show_normals: node.show_normals,
                 material: node.material,
                 active_attribute: None,
@@ -748,7 +763,7 @@ impl Scene {
                 } else {
                     selection.contains(node.id)
                 },
-                visible: true,
+                appearance: node.appearance,
                 show_normals: node.show_normals,
                 material: node.material,
                 active_attribute: None,

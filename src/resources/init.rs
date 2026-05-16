@@ -439,7 +439,7 @@ impl ViewportGpuResources {
         // ------------------------------------------------------------------
         // Transparent render pipeline (TriangleList, alpha blending)
         // Identical to solid_pipeline but with alpha blending enabled.
-        // Used for objects with material.opacity < 1.0.
+        // Used for objects with appearance.opacity < 1.0.
         // ------------------------------------------------------------------
         let transparent_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("transparent_pipeline"),

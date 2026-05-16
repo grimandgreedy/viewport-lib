@@ -4,8 +4,17 @@
 
 ### Breaking changes
 - HDR rendering is now on by default. Applications that relied on the old LDR-only path should explicitly disable post-processing. The main rendering entry points support both modes; the paint-to-texture helpers remain LDR-only.
+- Per-item appearance control (visibility, unlit, opacity) is now unified under a single `AppearanceSettings` struct on every item type, replacing the scattered fields that existed before:
+    - `Material` no longer has `unlit` or `opacity` fields. These are now controlled per-item through `appearance`.
+    - `SceneRenderItem.visible` and `VolumeMeshItem.visible` are replaced by `appearance.hidden` (note the inverted polarity).
+    - `GlyphItem.unlit` is replaced by `appearance.unlit`.
+    - Item types constructed with struct literal syntax (e.g. `GpuMarchingCubesJob`) need to add `appearance: Default::default()`.
 
 ### Improvements
+- Unified appearance settings across all renderable item types. Setting `item.appearance.hidden`, `.unlit`, or `.opacity` now works on every type without knowing how that type is rendered:
+    - `unlit` skips lighting entirely and outputs the raw resolved colour. For mesh shaders the early-out fires right after colour resolution, before normal mapping, shadow maps, and the lighting loop. For types with fixed directional lighting (tensor glyphs, streamtubes, tubes, ribbons, implicit surfaces, marching cubes) the light calculation is skipped completely.
+    - `opacity` multiplies the final output alpha on every lit geometry type. Glyph, tensor glyph, streamtube, tube, ribbon, implicit surface, and marching cubes types all now support it. The marching cubes pipeline has alpha blending enabled to make this work.
+    - Scene graph nodes can set appearance via `scene.set_appearance(node_id, settings)`, which propagates through to the rendered items.
 - Picking and selection highlight coverage now extends to more scene types:
     - Implicit surfaces, marching-cubes surfaces, image slices, surface slices, and screen images now participate in the unified picking API and can show object-level selection outlines.
     - Streamtubes, tubes, and ribbons can now highlight selected segments and strips in the same style as polylines.
@@ -13,6 +22,9 @@
 - Tone mapping now defaults to Khronos Neutral instead of ACES. This keeps ordinary SDR colours closer to how they looked in the older LDR path, while still preserving HDR highlight compression. ACES remains available for scenes that want a stronger filmic look.
 - Post-processing types now live in a dedicated module, without changing existing import paths.
 - Transparent volume meshes require the HDR/post-processing path. This was already true in practice and is now called out clearly in the API documentation.
+
+### Performance
+- Unlit meshes now skip normal mapping, shadow map samples, AO, matcap, and the full lighting loop. Previously the unlit check ran late in the fragment shader, after most of that work was already done.
 
 ### Fixes
 - Vector glyphs were often very dark. The shaft used one-sided lighting, so back-facing faces only got ambient (0.2 brightness); and the hardcoded light direction was nearly vertical, leaving horizontal vector fields dim everywhere. Glyphs now use two-sided diffuse so the full shaft is lit, and they read from the scene light settings instead of a fixed direction.

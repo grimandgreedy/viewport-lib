@@ -261,7 +261,7 @@ impl App {
         item.material = s.iso_material;
         // Slight transparency in Both mode so the volume is visible through the surface.
         if s.mode == VolumeMode::Both {
-            item.material.opacity = 0.55;
+            item.appearance.opacity = 0.55;
         }
         Some(item)
     }

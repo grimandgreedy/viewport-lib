@@ -106,6 +106,8 @@ pub struct GpuImplicitItem {
     pub march_options: GpuImplicitOptions,
     /// Pick ID for unified selection API. `0` = not selectable.
     pub id: u64,
+    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
+    pub appearance: crate::scene::material::AppearanceSettings,
     /// If `true`, draws an outline ring around the implicit surface.
     pub selected: bool,
 }
@@ -117,6 +119,7 @@ impl Default for GpuImplicitItem {
             blend_mode: crate::resources::ImplicitBlendMode::Union,
             march_options: GpuImplicitOptions::default(),
             id: 0,
+            appearance: crate::scene::material::AppearanceSettings::default(),
             selected: false,
         }
     }
@@ -142,11 +145,11 @@ pub(crate) struct ImplicitUniformRaw {
     pub num_primitives: u32,
     pub blend_mode: u32,
     pub max_steps: u32,
-    pub _pad0: u32,
+    pub unlit: u32,
     pub step_scale: f32,
     pub hit_threshold: f32,
     pub max_distance: f32,
-    pub _pad1: f32,
+    pub opacity: f32,
     pub primitives: [ImplicitPrimitive; 16],
 }
 
@@ -336,11 +339,11 @@ impl ViewportGpuResources {
             num_primitives: item.primitives.len().min(16) as u32,
             blend_mode: blend_mode_u32,
             max_steps: item.march_options.max_steps,
-            _pad0: 0,
+            unlit: item.appearance.unlit as u32,
             step_scale: item.march_options.step_scale,
             hit_threshold: item.march_options.hit_threshold,
             max_distance: item.march_options.max_distance,
-            _pad1: 0.0,
+            opacity: item.appearance.opacity,
             primitives: [ImplicitPrimitive::zeroed(); 16],
         };
 

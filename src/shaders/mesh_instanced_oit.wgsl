@@ -313,6 +313,16 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
     );
     let base_colour = obj_colour.rgb;
 
+    // Unlit: skip all lighting, return raw colour directly through OIT.
+    if inst.unlit != 0u {
+        let alpha = obj_colour.a;
+        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
+        var oit_out: OitOut;
+        oit_out.accum  = vec4<f32>(base_colour * alpha, alpha) * w;
+        oit_out.reveal = alpha;
+        return oit_out;
+    }
+
     var N: vec3<f32>;
     if inst.has_normal_map != 0u {
         let nm_sample = textureSample(normal_map, obj_sampler, in.uv).rgb;
@@ -329,16 +339,6 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
 
     var ao_factor = 1.0;
     if inst.has_ao_map != 0u { ao_factor = textureSample(ao_map, obj_sampler, in.uv).r; }
-
-    // Unlit: skip all lighting, return raw colour directly through OIT.
-    if inst.unlit != 0u {
-        let alpha = obj_colour.a;
-        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
-        var oit_out: OitOut;
-        oit_out.accum  = vec4<f32>(base_colour * alpha, alpha) * w;
-        oit_out.reveal = alpha;
-        return oit_out;
-    }
 
     let V = normalize(camera.eye_pos - in.world_pos);
     let tint = vec4<f32>(1.0);

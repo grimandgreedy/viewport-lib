@@ -231,6 +231,8 @@ pub struct SurfaceLICItem {
     pub model: [[f32; 4]; 4],
     /// LIC rendering configuration.
     pub config: SurfaceLICConfig,
+    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
+    pub appearance: crate::scene::material::AppearanceSettings,
 }
 
 impl SurfaceLICItem {
@@ -247,6 +249,7 @@ impl SurfaceLICItem {
             vector_attribute: vector_attribute.into(),
             model,
             config,
+            appearance: crate::scene::material::AppearanceSettings::default(),
         }
     }
 }
@@ -301,8 +304,8 @@ pub struct TransparentVolumeMeshItem {
     pub threshold_min: f32,
     /// Upper scalar threshold. See `threshold_min`.
     pub threshold_max: f32,
-    /// Whether this item is drawn this frame.
-    pub visible: bool,
+    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
+    pub appearance: crate::scene::material::AppearanceSettings,
     /// Draw a selection outline ring around this mesh when `true`.
     ///
     /// Requires `boundary_mesh_id` to be set; see the type-level docs.
@@ -326,7 +329,7 @@ impl TransparentVolumeMeshItem {
             scalar_range: None,
             threshold_min: f32::NEG_INFINITY,
             threshold_max: f32::INFINITY,
-            visible: true,
+            appearance: crate::scene::material::AppearanceSettings::default(),
             selected: false,
             boundary_mesh_id: None,
         }

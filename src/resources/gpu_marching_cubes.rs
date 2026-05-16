@@ -41,6 +41,8 @@ pub struct GpuMarchingCubesJob {
     pub material: Material,
     /// Pick ID for unified selection API. `0` = not selectable.
     pub id: u64,
+    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
+    pub appearance: crate::scene::material::AppearanceSettings,
     /// If `true`, draws an outline ring around the marching cubes surface.
     pub selected: bool,
     /// CPU-side volume data for `pick()` and `pick_rect()`.
@@ -143,6 +145,9 @@ struct GenerateParams {
 struct McSurfaceRaw {
     base_colour: [f32; 3],
     roughness: f32,
+    unlit: u32,
+    opacity: f32,
+    _pad: [u32; 2],
 }
 
 // ---------------------------------------------------------------------------
@@ -365,7 +370,7 @@ impl ViewportGpuResources {
                     entry_point: Some("fs_main"),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: fmt,
-                        blend: None, // opaque
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -682,6 +687,9 @@ impl ViewportGpuResources {
             let mat_raw = McSurfaceRaw {
                 base_colour: job.material.base_colour,
                 roughness: job.material.roughness,
+                unlit: job.appearance.unlit as u32,
+                opacity: job.appearance.opacity,
+                _pad: [0; 2],
             };
             let mat_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("mc_surface_mat"),

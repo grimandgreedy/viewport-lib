@@ -79,11 +79,11 @@ struct ImplicitUniform {
     num_primitives: u32,
     blend_mode:     u32,   // 0=union  1=smooth_union  2=intersection
     max_steps:      u32,
-    _pad0:          u32,
+    unlit:          u32,   // 1 = skip lighting, output raw colour
     step_scale:     f32,
     hit_threshold:  f32,
     max_distance:   f32,
-    _pad1:          f32,
+    opacity:        f32,
     primitives:     array<ImplicitPrimitive, 16>,
 };
 
@@ -258,9 +258,22 @@ fn fs_main(in: VertexOutput) -> FragOutput {
         discard;
     }
 
-    // Normal and shading.
-    let normal     = estimate_normal(hit_pos);
+    // Colour resolution.
     let base_colour = scene_colour(hit_pos);
+
+    let alpha = base_colour.a * u.opacity;
+
+    // Unlit early-out: skip normal estimation and lighting entirely.
+    if u.unlit != 0u {
+        let clip_hit_u = camera.view_proj * vec4<f32>(hit_pos, 1.0);
+        var out_u: FragOutput;
+        out_u.colour = vec4<f32>(base_colour.rgb, alpha);
+        out_u.depth = clip_hit_u.z / clip_hit_u.w;
+        return out_u;
+    }
+
+    // Normal and shading.
+    let normal = estimate_normal(hit_pos);
 
     // First directional light (or hardcoded fallback).
     var light_dir: vec3<f32>;
@@ -277,7 +290,7 @@ fn fs_main(in: VertexOutput) -> FragOutput {
     const AMBIENT: f32 = 0.25;
     let diffuse   = max(dot(normal, light_dir), 0.0);
     let shade_fac = AMBIENT + (1.0 - AMBIENT) * diffuse;
-    let shaded    = vec4<f32>(base_colour.rgb * light_rgb * shade_fac, base_colour.a);
+    let shaded    = vec4<f32>(base_colour.rgb * light_rgb * shade_fac, alpha);
 
     // Compute NDC depth of the hit point so the hardware depth test fires correctly.
     let clip_hit = camera.view_proj * vec4<f32>(hit_pos, 1.0);

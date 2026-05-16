@@ -89,18 +89,19 @@ pub(crate) fn controls_scene_graph(app: &mut App, ui: &mut egui::Ui, frame: &efr
 
     if ui.button("Cycle Material").clicked() {
         app.sg_state.material_cycle += 1;
-        let mat = material_preset(app.sg_state.material_cycle);
+        let (mat, app_s) = material_preset(app.sg_state.material_cycle);
         for &id in app.sg_state.selection.iter() {
             app.sg_state.scene.set_material(id, mat);
+            app.sg_state.scene.set_appearance(id, app_s);
         }
     }
 
     if ui.button("Toggle Transparency").clicked() {
         for &id in app.sg_state.selection.iter() {
             if let Some(node) = app.sg_state.scene.node(id) {
-                let mut mat = *node.material();
-                mat.opacity = if mat.opacity < 1.0 { 1.0 } else { 0.4 };
-                app.sg_state.scene.set_material(id, mat);
+                let mut app_s = *node.appearance();
+                app_s.opacity = if app_s.opacity < 1.0 { 1.0 } else { 0.4 };
+                app.sg_state.scene.set_appearance(id, app_s);
             }
         }
     }
@@ -198,29 +199,31 @@ pub(crate) fn controls_scene_graph(app: &mut App, ui: &mut egui::Ui, frame: &efr
 // Material and background presets
 // ---------------------------------------------------------------------------
 
-pub(crate) fn material_preset(index: usize) -> Material {
+pub(crate) fn material_preset(index: usize) -> (Material, viewport_lib::AppearanceSettings) {
+    let default_app = viewport_lib::AppearanceSettings::default();
     match index % 4 {
-        0 => Material::default(),
+        0 => (Material::default(), default_app),
         1 => {
             let mut m = Material::from_colour([0.8, 0.2, 0.2]);
             m.specular = 0.8;
             m.shininess = 64.0;
             m.ambient = 0.1;
-            m
+            (m, default_app)
         }
         2 => {
             let mut m = Material::from_colour([0.2, 0.4, 0.9]);
-            m.opacity = 0.5;
             m.specular = 0.9;
             m.shininess = 128.0;
-            m
+            let mut a = default_app;
+            a.opacity = 0.5;
+            (m, a)
         }
         3 => {
             let mut m = Material::from_colour([0.3, 0.7, 0.3]);
             m.specular = 0.1;
             m.shininess = 8.0;
             m.diffuse = 0.9;
-            m
+            (m, default_app)
         }
         _ => unreachable!(),
     }

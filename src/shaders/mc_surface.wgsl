@@ -64,6 +64,10 @@ struct Lights {
 struct McSurfaceUniform {
     base_colour: vec3<f32>,
     roughness:  f32,
+    unlit:      u32,
+    opacity:    f32,
+    _pad1:      u32,
+    _pad2:      u32,
 };
 
 @group(1) @binding(0) var<uniform> material: McSurfaceUniform;
@@ -98,6 +102,11 @@ fn vs_main(v: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // Unlit early-out: return base colour with no lighting.
+    if material.unlit != 0u {
+        return vec4<f32>(material.base_colour, material.opacity);
+    }
+
     let N = normalize(in.world_norm);
     let V = normalize(camera.eye_pos - in.world_pos);
 
@@ -132,5 +141,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     let final_colour = material.base_colour * (ambient + diffuse) + specular;
-    return vec4<f32>(final_colour, 1.0);
+    return vec4<f32>(final_colour, material.opacity);
 }

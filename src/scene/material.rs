@@ -1,3 +1,45 @@
+/// Per-item appearance overrides that apply uniformly across all renderable types.
+///
+/// Every field defaults to the "do nothing" state so that `AppearanceSettings::default()`
+/// is always safe to use without changing existing behaviour.
+///
+/// This struct is `#[non_exhaustive]`: always construct with `..Default::default()` so
+/// that new fields added in future versions do not break your code:
+///
+/// ```rust
+/// # use viewport_lib::AppearanceSettings;
+/// let mut app = AppearanceSettings::default();
+/// app.unlit = true;
+/// ```
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct AppearanceSettings {
+    /// Hide the object entirely. Default `false`.
+    pub hidden: bool,
+    /// Skip all lighting calculations and output raw colour. Default `false`.
+    ///
+    /// For types that are already flat-shaded (polylines, point clouds, image slices)
+    /// this flag is accepted but has no visible effect.
+    pub unlit: bool,
+    /// Global opacity multiplier applied on top of the item's own opacity mechanism.
+    /// 1.0 = fully opaque, 0.0 = fully transparent. Default 1.0.
+    pub opacity: f32,
+    /// Render as wireframe regardless of the global wireframe mode flag. Default `false`.
+    pub wireframe: bool,
+}
+
+impl Default for AppearanceSettings {
+    fn default() -> Self {
+        Self {
+            hidden: false,
+            unlit: false,
+            opacity: 1.0,
+            wireframe: false,
+        }
+    }
+}
+
 /// Procedural UV visualization mode for parameterization inspection.
 ///
 /// When set on a [`Material`], the mesh fragment shader ignores the albedo texture and
@@ -160,8 +202,6 @@ pub struct Material {
     pub metallic: f32,
     /// Roughness factor for PBR microfacet distribution. 0=mirror, 1=fully rough. Default 0.5.
     pub roughness: f32,
-    /// Opacity (1.0 = fully opaque, 0.0 = fully transparent). Default 1.0.
-    pub opacity: f32,
     /// Optional albedo texture identifier. None = no texture applied. Default None.
     pub texture_id: Option<u64>,
     /// Optional normal map texture identifier. None = no normal mapping. Default None.
@@ -197,12 +237,6 @@ pub struct Material {
     /// surfaces. Use [`BackfacePolicy::DifferentColour`] to highlight back faces in a
     /// distinct colour : helpful for diagnosing mesh orientation errors.
     pub backface_policy: BackfacePolicy,
-    /// Skip all lighting and output the raw surface colour directly. Default `false`.
-    ///
-    /// When `true`, the fragment shader bypasses Blinn-Phong, PBR, and matcap shading
-    /// and returns the base colour (or colourmap value) unchanged. Useful for 2D chart
-    /// overlays, pre-lit data, and flat UI geometry.
-    pub unlit: bool,
 }
 
 impl Default for Material {
@@ -215,7 +249,6 @@ impl Default for Material {
             shininess: 32.0,
             metallic: 0.0,
             roughness: 0.5,
-            opacity: 1.0,
             texture_id: None,
             normal_map_id: None,
             ao_map_id: None,
@@ -223,7 +256,6 @@ impl Default for Material {
             matcap_id: None,
             param_vis: None,
             backface_policy: BackfacePolicy::Cull,
-            unlit: false,
         }
     }
 }
@@ -265,12 +297,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn appearance_defaults() {
+        let a = AppearanceSettings::default();
+        assert!(!a.hidden);
+        assert!(!a.unlit);
+        assert!((a.opacity - 1.0).abs() < 1e-6);
+        assert!(!a.wireframe);
+    }
+
+    #[test]
+    fn appearance_spread_syntax() {
+        let a = AppearanceSettings {
+            unlit: true,
+            ..Default::default()
+        };
+        assert!(a.unlit);
+        assert!(!a.hidden);
+        assert!((a.opacity - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
     fn default_values() {
         let m = Material::default();
         assert!((m.base_colour[0] - 0.7).abs() < 1e-6);
         assert!((m.ambient - 0.15).abs() < 1e-6);
         assert!((m.diffuse - 0.75).abs() < 1e-6);
-        assert!((m.opacity - 1.0).abs() < 1e-6);
         assert!(!m.use_pbr);
         assert!(m.texture_id.is_none());
         assert!(m.normal_map_id.is_none());

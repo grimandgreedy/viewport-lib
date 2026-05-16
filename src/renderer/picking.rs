@@ -593,7 +593,7 @@ impl ViewportRenderer {
                 Vector::new(ray_dir.x, ray_dir.y, ray_dir.z),
             );
             for item in &self.pick_scene_items {
-                if !item.visible || item.pick_id == PickId::NONE {
+                if item.appearance.hidden || item.pick_id == PickId::NONE {
                     continue;
                 }
                 let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
@@ -1735,7 +1735,7 @@ impl ViewportRenderer {
         // 1. Surface mesh picks (FACE, VERTEX, CELL, or OBJECT).
         if wants_face || wants_vertex || wants_cell || wants_object {
             for item in &self.pick_scene_items {
-                if !item.visible || item.pick_id == PickId::NONE {
+                if item.appearance.hidden || item.pick_id == PickId::NONE {
                     continue;
                 }
                 let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
@@ -2704,7 +2704,7 @@ impl ViewportRenderer {
         // Clear value 0 means "no hit" (or non-pickable surface).
         let pickable_items: Vec<&SceneRenderItem> = scene_items
             .iter()
-            .filter(|item| item.visible && item.pick_id != PickId::NONE)
+            .filter(|item| !item.appearance.hidden && item.pick_id != PickId::NONE)
             .collect();
 
         let pick_instances: Vec<PickInstance> = pickable_items

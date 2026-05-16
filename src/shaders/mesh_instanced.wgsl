@@ -430,6 +430,11 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
                                inst.colour.a   * in.colour.a   * tex_colour.a);
     let base_colour = obj_colour.rgb;
 
+    // Unlit: skip all lighting, return raw colour directly.
+    if inst.unlit != 0u {
+        return vec4<f32>(base_colour, obj_colour.a);
+    }
+
     var N: vec3<f32>;
     if inst.has_normal_map != 0u {
         let nm_sample = textureSample(normal_map, obj_sampler, in.uv).rgb;
@@ -446,11 +451,6 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 
     var ao_factor = 1.0;
     if inst.has_ao_map != 0u { ao_factor = textureSample(ao_map, obj_sampler, in.uv).r; }
-
-    // Unlit: skip all lighting, return raw colour directly.
-    if inst.unlit != 0u {
-        return vec4<f32>(base_colour, obj_colour.a);
-    }
 
     // Use the geometric fragment normal for shadowing so the receiver test
     // matches the faceted mesh that was rasterized into the shadow atlas.

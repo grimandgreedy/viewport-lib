@@ -526,7 +526,7 @@ pub fn pick_rect(
 
     // --- Mesh scene items ---
     for item in scene_items {
-        if !item.visible {
+        if item.appearance.hidden {
             continue;
         }
         let Some((positions, indices)) = mesh_lookup.get(&item.mesh_id.index()) else {
@@ -1902,7 +1902,6 @@ mod tests {
         let item = crate::renderer::SceneRenderItem {
             mesh_id: crate::resources::mesh_store::MeshId(0),
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            visible: true,
             ..Default::default()
         };
 
@@ -1935,7 +1934,6 @@ mod tests {
         let item = crate::renderer::SceneRenderItem {
             mesh_id: crate::resources::mesh_store::MeshId(0),
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            visible: true,
             ..Default::default()
         };
 
@@ -2004,7 +2002,10 @@ mod tests {
         let item = crate::renderer::SceneRenderItem {
             mesh_id: crate::resources::mesh_store::MeshId(0),
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            visible: false, // hidden
+            appearance: crate::scene::material::AppearanceSettings {
+                hidden: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
 

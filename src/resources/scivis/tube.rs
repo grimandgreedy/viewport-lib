@@ -325,13 +325,17 @@ impl ViewportGpuResources {
             colour: [f32; 4],
             radius: f32,
             use_vertex_colour: u32,
-            _pad: [f32; 6],
+            unlit: u32,
+            opacity: f32,
+            _pad: [f32; 4],
         }
         let uniform_data = StreamtubeUniform {
             colour: item.colour,
             radius,
             use_vertex_colour: 0,
-            _pad: [0.0; 6],
+            unlit: item.appearance.unlit as u32,
+            opacity: item.appearance.opacity,
+            _pad: [0.0; 4],
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("streamtube_uniform_buf"),
@@ -599,13 +603,17 @@ impl ViewportGpuResources {
             colour: [f32; 4],
             radius: f32,
             use_vertex_colour: u32,
-            _pad: [f32; 6],
+            unlit: u32,
+            opacity: f32,
+            _pad: [f32; 4],
         }
         let uniform_data = TubeUniform {
             colour: item.colour,
             radius: item.radius.max(f32::EPSILON),
             use_vertex_colour,
-            _pad: [0.0; 6],
+            unlit: item.appearance.unlit as u32,
+            opacity: item.appearance.opacity,
+            _pad: [0.0; 4],
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("tube_uniform_buf"),
@@ -839,13 +847,17 @@ impl ViewportGpuResources {
             colour: [f32; 4],
             radius: f32,
             use_vertex_colour: u32,
-            _pad: [f32; 6],
+            unlit: u32,
+            opacity: f32,
+            _pad: [f32; 4],
         }
         let uniform_data = RibbonUniform {
             colour: item.colour,
             radius: item.width * 0.5,
             use_vertex_colour,
-            _pad: [0.0; 6],
+            unlit: item.appearance.unlit as u32,
+            opacity: item.appearance.opacity,
+            _pad: [0.0; 4],
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ribbon_uniform_buf"),

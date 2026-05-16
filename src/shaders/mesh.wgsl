@@ -611,6 +611,20 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         base_colour = textureSampleLevel(lut_texture, lut_sampler, vec2<f32>(t, 0.5), 0.0).rgb;
     }
 
+    // Per-face RGBA colour: use directly, bypassing all lighting and colourmap logic.
+    if object.use_face_colour != 0u {
+        var fc = in.face_colour;
+        if object.selected != 0u {
+            fc = mix(fc, vec4<f32>(1.0, 0.55, 0.1, 1.0), 0.35);
+        }
+        return vec4<f32>(fc.rgb, fc.a * object.colour.a);
+    }
+
+    // Unlit: skip all lighting, return raw colour directly.
+    if object.unlit != 0u {
+        return vec4<f32>(base_colour, obj_colour.a);
+    }
+
     // Resolve shading normal: TBN normal mapping or geometric normal.
     var N: vec3<f32>;
     if object.has_normal_map != 0u {
@@ -667,17 +681,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         ao_factor = textureSample(ao_map, obj_sampler, in.uv).r;
     }
 
-    // Matcap shading : replaces the Blinn-Phong / PBR path.
-    // Per-face RGBA colour: use directly, bypassing all lighting and colourmap logic.
-    if object.use_face_colour != 0u {
-        var fc = in.face_colour;
-        if object.selected != 0u {
-            fc = mix(fc, vec4<f32>(1.0, 0.55, 0.1, 1.0), 0.35);
-        }
-        return vec4<f32>(fc.rgb, fc.a * object.colour.a);
-    }
-
-    // The matcap texture encodes material appearance as a sphere-space lookup.
+    // Matcap shading : the matcap texture encodes material appearance as a sphere-space lookup.
     // UV is derived from the view-space normal (x,y components).
     if object.use_matcap != 0u {
         // Transform world-space shading normal to view space (rotation only, w=0).
@@ -710,11 +714,6 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     if object.uv_vis_mode != 0u {
         let vis = param_vis_colour(in.uv, object.uv_vis_mode, object.uv_vis_scale);
         return vec4<f32>(vis, obj_colour.a);
-    }
-
-    // Unlit: skip all lighting, return raw colour directly.
-    if object.unlit != 0u {
-        return vec4<f32>(base_colour, obj_colour.a);
     }
 
     // Use the smooth vertex normal for shadow bias. Screen-space derivatives
