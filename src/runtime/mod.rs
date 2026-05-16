@@ -68,6 +68,292 @@ pub use timestep::{FixedStepIter, FixedTimestep};
 use crate::interaction::selection::Selection;
 use crate::scene::scene::Scene;
 
+// ---- tests ------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::camera::camera::Camera;
+    use crate::interaction::input::ActionFrame;
+    use crate::interaction::selection::{NodeId, Selection};
+    use crate::scene::material::Material;
+    use crate::scene::scene::Scene;
+    use std::sync::{Arc, Mutex};
+
+    fn make_frame<'a>(camera: &'a Camera, input: &'a ActionFrame, dt: f32) -> RuntimeFrameContext<'a> {
+        RuntimeFrameContext {
+            dt,
+            camera,
+            viewport_size: glam::Vec2::new(800.0, 600.0),
+            input,
+            pick_hit: None,
+            clicked: false,
+            drag_started: false,
+            dragging: false,
+            pointer_delta: glam::Vec2::ZERO,
+            cursor_viewport: None,
+            shift_held: false,
+        }
+    }
+
+    // Records (phase, id) each time step() is called.
+    struct OrderTracker {
+        phase: RuntimePhase,
+        id: u32,
+        log: Arc<Mutex<Vec<(RuntimePhase, u32)>>>,
+    }
+
+    impl RuntimePlugin for OrderTracker {
+        fn phase(&self) -> RuntimePhase {
+            self.phase
+        }
+        fn step(&mut self, _ctx: &mut RuntimeStepContext) {
+            self.log.lock().unwrap().push((self.phase, self.id));
+        }
+    }
+
+    // Counts total step() calls.
+    struct CallCounter {
+        phase: RuntimePhase,
+        count: Arc<Mutex<u32>>,
+    }
+
+    impl RuntimePlugin for CallCounter {
+        fn phase(&self) -> RuntimePhase {
+            self.phase
+        }
+        fn step(&mut self, _ctx: &mut RuntimeStepContext) {
+            *self.count.lock().unwrap() += 1;
+        }
+    }
+
+    // Writes a fixed transform for one node each step.
+    struct WritebackPlugin {
+        node_id: NodeId,
+        transform: glam::Affine3A,
+    }
+
+    impl RuntimePlugin for WritebackPlugin {
+        fn phase(&self) -> RuntimePhase {
+            RuntimePhase::Simulate
+        }
+        fn step(&mut self, ctx: &mut RuntimeStepContext) {
+            ctx.writeback.set(self.node_id, self.transform);
+        }
+    }
+
+    // Records the dt value passed to each Simulate step.
+    struct DtRecorder {
+        dts: Arc<Mutex<Vec<f32>>>,
+    }
+
+    impl RuntimePlugin for DtRecorder {
+        fn phase(&self) -> RuntimePhase {
+            RuntimePhase::Simulate
+        }
+        fn step(&mut self, ctx: &mut RuntimeStepContext) {
+            self.dts.lock().unwrap().push(ctx.dt);
+        }
+    }
+
+    #[test]
+    fn test_phase_execution_order() {
+        // Register plugins in a scrambled order; verify they execute in phase order.
+        let log = Arc::new(Mutex::new(Vec::<(RuntimePhase, u32)>::new()));
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(OrderTracker { phase: RuntimePhase::Writeback, id: 3, log: log.clone() })
+            .with_plugin(OrderTracker { phase: RuntimePhase::Simulate,  id: 2, log: log.clone() })
+            .with_plugin(OrderTracker { phase: RuntimePhase::Animate,   id: 1, log: log.clone() })
+            .with_plugin(OrderTracker { phase: RuntimePhase::Prepare,   id: 0, log: log.clone() });
+
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+
+        let calls = log.lock().unwrap();
+        let phases: Vec<RuntimePhase> = calls.iter().map(|(p, _)| *p).collect();
+        assert_eq!(
+            phases,
+            vec![
+                RuntimePhase::Prepare,
+                RuntimePhase::Animate,
+                RuntimePhase::Simulate,
+                RuntimePhase::Writeback,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_registration_order_within_phase() {
+        // Two plugins in the same phase must execute in registration order.
+        let log = Arc::new(Mutex::new(Vec::<(RuntimePhase, u32)>::new()));
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(OrderTracker { phase: RuntimePhase::Simulate, id: 0, log: log.clone() })
+            .with_plugin(OrderTracker { phase: RuntimePhase::Simulate, id: 1, log: log.clone() });
+
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+
+        let calls = log.lock().unwrap();
+        let ids: Vec<u32> = calls.iter().map(|(_, id)| *id).collect();
+        assert_eq!(ids, vec![0, 1]);
+    }
+
+    #[test]
+    fn test_simulate_runs_once_without_fixed_timestep() {
+        let count = Arc::new(Mutex::new(0u32));
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(CallCounter { phase: RuntimePhase::Simulate, count: count.clone() });
+
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+
+        assert_eq!(*count.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_simulate_runs_n_times_with_fixed_timestep() {
+        let count = Arc::new(Mutex::new(0u32));
+        let hz = 60.0_f32;
+        let step_dt = 1.0 / hz;
+        let mut runtime = ViewportRuntime::new()
+            .with_fixed_timestep(FixedTimestep::new(hz))
+            .with_plugin(CallCounter { phase: RuntimePhase::Simulate, count: count.clone() });
+
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+
+        // A frame spanning exactly 3 steps plus a tiny remainder yields 3 steps.
+        let dt = step_dt * 3.0 + 0.0001;
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, dt));
+
+        assert_eq!(*count.lock().unwrap(), 3);
+    }
+
+    #[test]
+    fn test_simulate_dt_equals_step_dt_with_fixed_timestep() {
+        let dts = Arc::new(Mutex::new(Vec::<f32>::new()));
+        let hz = 60.0_f32;
+        let step_dt = 1.0 / hz;
+        let mut runtime = ViewportRuntime::new()
+            .with_fixed_timestep(FixedTimestep::new(hz))
+            .with_plugin(DtRecorder { dts: dts.clone() });
+
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+
+        // Frame spanning 2 steps.
+        let dt = step_dt * 2.0 + 0.0001;
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, dt));
+
+        let recorded = dts.lock().unwrap();
+        assert_eq!(recorded.len(), 2);
+        for &d in recorded.iter() {
+            assert!((d - step_dt).abs() < 1e-6, "expected {step_dt}, got {d}");
+        }
+    }
+
+    #[test]
+    fn test_writeback_flushes_to_scene() {
+        let target = glam::Affine3A::from_translation(glam::Vec3::new(3.0, 4.0, 5.0));
+        let mut scene = Scene::new();
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(WritebackPlugin { node_id, transform: target });
+
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut sel = Selection::new();
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+
+        let node = scene.node(node_id).expect("node not found");
+        let pos = node.world_transform().col(3).truncate();
+        assert!((pos - glam::Vec3::new(3.0, 4.0, 5.0)).length() < 1e-5, "pos was {pos:?}");
+    }
+
+    #[test]
+    fn test_writeback_ops_in_output() {
+        let target = glam::Affine3A::from_translation(glam::Vec3::new(1.0, 0.0, 0.0));
+        let mut scene = Scene::new();
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(WritebackPlugin { node_id, transform: target });
+
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut sel = Selection::new();
+        let output = runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+
+        assert_eq!(output.node_transform_ops.len(), 1);
+        assert_eq!(output.node_transform_ops[0].id, node_id);
+    }
+
+    #[test]
+    fn test_step_index_increments_each_simulate() {
+        let mut runtime = ViewportRuntime::new();
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+
+        assert_eq!(runtime.step_index(), 0);
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        assert_eq!(runtime.step_index(), 1);
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        assert_eq!(runtime.step_index(), 2);
+    }
+
+    #[test]
+    fn test_step_index_increments_n_times_with_fixed_timestep() {
+        let hz = 60.0_f32;
+        let step_dt = 1.0 / hz;
+        let mut runtime = ViewportRuntime::new()
+            .with_fixed_timestep(FixedTimestep::new(hz));
+
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+
+        // 3 fixed steps in one frame.
+        let dt = step_dt * 3.0 + 0.0001;
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, dt));
+        assert_eq!(runtime.step_index(), 3);
+    }
+
+    #[test]
+    fn test_snapshot_updated_after_writeback() {
+        let target = glam::Affine3A::from_translation(glam::Vec3::new(7.0, 0.0, 0.0));
+        let mut scene = Scene::new();
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(WritebackPlugin { node_id, transform: target });
+
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut sel = Selection::new();
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+
+        let snap = runtime.snapshots().get(node_id).expect("snapshot missing");
+        assert!((snap.curr.translation.x - 7.0).abs() < 1e-5);
+    }
+}
+
 /// Per-frame scene orchestration layer.
 ///
 /// Owns plugins, an optional fixed timestep accumulator, and a transform snapshot
