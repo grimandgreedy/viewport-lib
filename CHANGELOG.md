@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased changes
+
+### Improvements
+- The wire grid and the checkerboard ground plane now each accept explicit colours:
+    - The wire grid colour can be set per-frame via `ViewportFrame::grid_colour`. When unset the grid renders slightly lighter than before.
+    - The checkerboard ground plane now takes two independent tile colours instead of deriving both from a single tint. Set the second colour via `GroundPlane::tile_colour2`; the default is white and black.
+
 ## [0.14.0]
 
 ### Breaking changes

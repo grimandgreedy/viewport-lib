@@ -27,7 +27,8 @@ struct GroundPlaneUniform {
     mode:           u32,          // offset 240,  4 bytes
     shadow_opacity: f32,          // offset 244,  4 bytes
     _pad:           vec2<f32>,    // offset 248,  8 bytes
-} // total 256 bytes
+    colour2:        vec4<f32>,    // offset 256, 16 bytes : second tile colour
+} // total 272 bytes
 
 // Shadow atlas uniform : matches the mesh shader's ShadowAtlas struct exactly.
 struct ShadowAtlas {
@@ -131,24 +132,13 @@ fn fs_main(in: VertexOutput) -> FragOut {
         let p_f = (i32(floor(uv_f.x)) + i32(floor(uv_f.y))) & 1;
         let p_c = (i32(floor(uv_c.x)) + i32(floor(uv_c.y))) & 1;
 
-        // Standard 2-tone fine checker.
-        let b_fine_std = mix(0.6, 1.0, f32(p_f));
-        // 4-tone fine checker: coarse parity pre-emphasises cells that survive the next
-        // LOD step : analogous to major grid lines being brighter than minor ones.
-        let b_fine_emph = 0.55 + f32(p_f) * 0.30 + f32(p_c) * 0.15;
-        // Coarse level: standard 2-tone.
-        let b_coarse = mix(0.6, 1.0, f32(p_c));
+        // Crossfade fine to coarse as LOD advances.
+        let lod_blend = smoothstep(0.82, 0.97, frac);
 
-        // Two separate curves, both late in the octave:
-        //   emphasis_blend : fades the fine pattern from 2-tone to 4-tone.
-        //   lod_blend      : then quickly crossfades fine to coarse.
-        let emphasis_blend = smoothstep(0.6, 0.82, frac);
-        let lod_blend      = smoothstep(0.82, 0.97, frac);
-
-        let b_fine     = mix(b_fine_std, b_fine_emph, emphasis_blend);
-        let brightness = mix(b_fine, b_coarse, lod_blend);
-
-        let base = gp.colour.rgb * brightness;
+        // Select between the two tile colours based on parity, then LOD-blend.
+        let col_fine   = select(gp.colour2.rgb, gp.colour.rgb, p_f == 1);
+        let col_coarse = select(gp.colour2.rgb, gp.colour.rgb, p_c == 1);
+        let base = mix(col_fine, col_coarse, lod_blend);
         out_colour = vec4<f32>(base, gp.colour.a * fade);
 
     } else if gp.mode == 3u {

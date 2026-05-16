@@ -642,8 +642,10 @@ pub struct GroundPlane {
     pub mode: GroundPlaneMode,
     /// World-space Z coordinate of the ground plane. Default: `0.0`.
     pub height: f32,
-    /// Ground colour for `Tile` and `SolidColour` modes. Default: `[0.3, 0.3, 0.3, 1.0]`.
+    /// Primary colour for `Tile` and `SolidColour` modes. Default: `[0.3, 0.3, 0.3, 1.0]`.
     pub colour: [f32; 4],
+    /// Secondary tile colour for `Tile` mode. Default: `[0.5, 0.5, 0.5, 1.0]`.
+    pub tile_colour2: [f32; 4],
     /// Checker tile size in world units (`Tile` mode). Default: `1.0`.
     pub tile_size: f32,
     /// Shadow tint colour (`ShadowOnly` mode). Default: `[0.0, 0.0, 0.0, 1.0]`.
@@ -657,7 +659,8 @@ impl Default for GroundPlane {
         Self {
             mode: GroundPlaneMode::None,
             height: 0.0,
-            colour: [0.3, 0.3, 0.3, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0],
+            tile_colour2: [0.0, 0.0, 0.0, 1.0],
             tile_size: 1.0,
             shadow_colour: [0.0, 0.0, 0.0, 1.0],
             shadow_opacity: 0.5,

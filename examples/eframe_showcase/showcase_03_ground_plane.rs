@@ -23,6 +23,7 @@ pub(crate) struct GroundPlaneState {
     pub mode: GpMode,
     pub height: f32,
     pub colour: [f32; 4],
+    pub tile_colour2: [f32; 4],
     pub tile_size: f32,
     pub shadow_colour: [f32; 4],
     pub shadow_opacity: f32,
@@ -36,7 +37,8 @@ impl Default for GroundPlaneState {
             built: false,
             mode: GpMode::Grid,
             height: 0.0,
-            colour: [0.45, 0.38, 0.30, 1.0],
+            colour: [0.85, 0.15, 0.10, 1.0],
+            tile_colour2: [1.0, 1.0, 1.0, 1.0],
             tile_size: 1.0,
             shadow_colour: [0.0, 0.0, 0.0, 1.0],
             shadow_opacity: 0.5,
@@ -116,8 +118,10 @@ pub(crate) fn controls_ground_plane(app: &mut App, ui: &mut egui::Ui) {
         }
         GpMode::Tile => {
             ui.separator();
-            ui.label("Tile colour:");
+            ui.label("Tile colour A:");
             ui.color_edit_button_rgba_unmultiplied(&mut s.colour);
+            ui.label("Tile colour B:");
+            ui.color_edit_button_rgba_unmultiplied(&mut s.tile_colour2);
             ui.label("Tile size:");
             ui.add(egui::Slider::new(&mut s.tile_size, 0.1..=5.0).step_by(0.1));
         }

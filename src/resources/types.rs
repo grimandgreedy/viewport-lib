@@ -1148,7 +1148,8 @@ pub(crate) struct GroundPlaneUniform {
     pub mode: u32,                // offset 240,  4 bytes
     pub shadow_opacity: f32,      // offset 244,  4 bytes
     pub _pad: [f32; 2],           // offset 248,  8 bytes
-} // total  256 bytes
+    pub colour2: [f32; 4],        // offset 256, 16 bytes : second tile colour
+} // total  272 bytes
 
 /// Uniform buffer layout for the full-screen analytical grid shader.
 ///

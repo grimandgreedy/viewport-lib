@@ -2714,6 +2714,7 @@ impl App {
             && self.gp_state.mode == showcase_03_ground_plane::GpMode::Grid
         {
             fd.viewport.grid_colour = Some(self.gp_state.grid_colour);
+            fd.viewport.grid_z = self.gp_state.height;
         }
         fd.viewport.show_axes_indicator = true;
         fd.viewport.background_colour = bg_colour;
@@ -2730,6 +2731,7 @@ impl App {
                 },
                 height: self.gp_state.height,
                 colour: self.gp_state.colour,
+                tile_colour2: self.gp_state.tile_colour2,
                 tile_size: self.gp_state.tile_size,
                 shadow_colour: self.gp_state.shadow_colour,
                 shadow_opacity: self.gp_state.shadow_opacity,

@@ -2144,6 +2144,7 @@ impl ViewportRenderer {
                     mode: mode_u32,
                     shadow_opacity: gp.shadow_opacity,
                     _pad: [0.0; 2],
+                    colour2: gp.tile_colour2,
                 };
                 queue.write_buffer(
                     &resources.ground_plane_uniform_buf,
