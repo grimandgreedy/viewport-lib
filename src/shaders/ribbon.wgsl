@@ -4,7 +4,7 @@
 // and the fragment shader flips the normal for back-facing triangles so both
 // sides of the ribbon shade correctly under Blinn-Phong.
 //
-// Group 0: Camera uniform (view-projection, eye position) + ClipPlanes + ClipVolume.
+// Group 0: Camera uniform (view-projection, eye position) + Lights + ClipPlanes + ClipVolume.
 // Group 1: StreamtubeUniform : colour (vec4) + radius (f32) + use_vertex_colour (u32).
 
 struct Camera {
@@ -54,7 +54,37 @@ struct ClipVolumeUB {
     volumes: array<ClipVolumeEntry, 4>,
 };
 
+struct SingleLight {
+    light_view_proj: mat4x4<f32>,
+    pos_or_dir:      vec3<f32>,
+    light_type:      u32,
+    colour:           vec3<f32>,
+    intensity:       f32,
+    range:           f32,
+    inner_angle:     f32,
+    outer_angle:     f32,
+    spot_direction:  vec3<f32>,
+    _pad:            vec2<f32>,
+};
+
+struct Lights {
+    count:                u32,
+    shadow_bias:          f32,
+    shadows_enabled:      u32,
+    _pad:                 u32,
+    sky_colour:            vec3<f32>,
+    hemisphere_intensity: f32,
+    ground_colour:         vec3<f32>,
+    _pad2:                f32,
+    lights:               array<SingleLight, 8>,
+    ibl_enabled:          u32,
+    ibl_intensity:        f32,
+    ibl_rotation:         f32,
+    show_skybox:          u32,
+};
+
 @group(0) @binding(0) var<uniform> camera:      Camera;
+@group(0) @binding(3) var<uniform> lights:      Lights;
 @group(0) @binding(4) var<uniform> clip_planes: ClipPlanes;
 @group(0) @binding(6) var<uniform> clip_volume: ClipVolumeUB;
 @group(1) @binding(0) var<uniform> tube:        StreamtubeUniform;
@@ -134,9 +164,19 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     let n_raw = normalize(in.world_nrm);
     let n     = select(-n_raw, n_raw, is_front);
 
-    let light_dir = normalize(vec3<f32>(0.3, 1.0, 0.5));
-    let n_dot_l   = max(dot(n, light_dir), 0.0);
-    let shading   = 0.2 + 0.8 * n_dot_l;
+    // Scene directional lights, with hardcoded fallback when none are set.
+    var light_dir: vec3<f32>;
+    var light_rgb: vec3<f32>;
+    if lights.count > 0u && lights.lights[0].light_type == 0u {
+        light_dir = normalize(-lights.lights[0].pos_or_dir);
+        light_rgb = lights.lights[0].colour * lights.lights[0].intensity;
+    } else {
+        light_dir = normalize(vec3<f32>(0.3, 1.0, 0.5));
+        light_rgb = vec3<f32>(1.0);
+    }
 
-    return vec4<f32>(base_colour.rgb * shading, alpha);
+    let n_dot_l = max(dot(n, light_dir), 0.0);
+    let shading = 0.2 + 0.8 * n_dot_l;
+
+    return vec4<f32>(base_colour.rgb * light_rgb * shading, alpha);
 }
