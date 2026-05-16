@@ -40,19 +40,27 @@
 //! Existing `prepare` / `paint_to` call sites need no changes. `ViewportRuntime`
 //! is purely additive and does not affect [`ViewportRenderer`](crate::ViewportRenderer).
 
+pub mod camera_follow;
 pub mod context;
 pub mod mode;
 pub mod output;
 pub mod plugin;
+/// Built-in animation, constraint, and physics plugins.
+pub mod plugins;
 pub mod snapshot;
 /// Built-in interaction systems: SelectionSystem and ManipulationSystem.
 pub mod systems;
 pub mod timestep;
 
+pub use camera_follow::CameraFollow;
 pub use context::{RuntimeFrameContext, RuntimeStepContext, SimulationStepContext};
 pub use mode::SceneRuntimeMode;
 pub use output::{ContactEvent, NodeTransformOp, RuntimeOutput, SelectionOp, TransformWriteback};
 pub use plugin::{RuntimePhase, RuntimePlugin};
+pub use plugins::{
+    AnimationPlugin, AnimationTrack, Constraint, ConstraintPlugin, Keyframe, PhysicsBody,
+    PhysicsLitePlugin,
+};
 pub use snapshot::{TransformSnapshot, TransformSnapshotTable};
 pub use systems::{ManipulationSystem, SelectionSystem};
 pub use timestep::{FixedStepIter, FixedTimestep};
@@ -86,6 +94,7 @@ pub struct ViewportRuntime {
     step_index: u64,
     selection_system: Option<SelectionSystem>,
     manipulation_system: Option<ManipulationSystem>,
+    camera_follow: Option<CameraFollow>,
 }
 
 impl Default for ViewportRuntime {
@@ -105,6 +114,7 @@ impl ViewportRuntime {
             step_index: 0,
             selection_system: None,
             manipulation_system: None,
+            camera_follow: None,
         }
     }
 
@@ -204,6 +214,31 @@ impl ViewportRuntime {
     /// means it may increment multiple times per rendered frame. Wraps on overflow.
     pub fn step_index(&self) -> u64 {
         self.step_index
+    }
+
+    /// Set a camera follow binding (builder style).
+    ///
+    /// Each call to [`step`](Self::step) will compute a suggested camera center
+    /// from the followed node and return it in [`RuntimeOutput::camera_follow_target`].
+    pub fn with_camera_follow(mut self, follow: CameraFollow) -> Self {
+        self.camera_follow = Some(follow);
+        self
+    }
+
+    /// Update the camera follow binding at runtime.
+    pub fn set_camera_follow(&mut self, follow: CameraFollow) {
+        self.camera_follow = Some(follow);
+    }
+
+    /// Remove the camera follow binding. [`RuntimeOutput::camera_follow_target`]
+    /// will be `None` after this call.
+    pub fn clear_camera_follow(&mut self) {
+        self.camera_follow = None;
+    }
+
+    /// The current camera follow binding.
+    pub fn camera_follow(&self) -> Option<&CameraFollow> {
+        self.camera_follow.as_ref()
     }
 
     /// Run one frame of the runtime.
@@ -319,6 +354,28 @@ impl ViewportRuntime {
         // Apply selection ops produced by plugins.
         for op in &output.selection_ops {
             op.apply_to(selection);
+        }
+
+        // Compute camera follow target. Use the interpolated snapshot position so
+        // the camera tracks the same point that the renderer draws, not the raw
+        // post-step scene position. This avoids jitter at low simulation rates
+        // when interpolation is enabled.
+        if let Some(CameraFollow::Node { id, offset, .. }) = &self.camera_follow {
+            let id = *id;
+            let offset = *offset;
+            let alpha = self.alpha();
+            let pos = self
+                .snapshots
+                .interpolated(id, alpha)
+                .map(|t| glam::Vec3::from(t.translation))
+                .or_else(|| {
+                    scene
+                        .node(id)
+                        .map(|n| n.world_transform().col(3).truncate())
+                });
+            if let Some(pos) = pos {
+                output.camera_follow_target = Some(pos + offset);
+            }
         }
 
         output

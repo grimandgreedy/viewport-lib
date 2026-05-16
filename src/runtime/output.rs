@@ -108,4 +108,10 @@ pub struct RuntimeOutput {
     pub selection_ops: Vec<SelectionOp>,
     /// Contact events from physics plugins. Empty if no physics plugin is active.
     pub contact_events: Vec<ContactEvent>,
+    /// Suggested camera center computed from the active [`super::CameraFollow`] binding.
+    ///
+    /// `Some` when a `CameraFollow::Node` target was resolved this step; `None`
+    /// when no follow binding is set or the target node was not found. Apply to
+    /// `camera.center` for orbit-camera follow behavior.
+    pub camera_follow_target: Option<glam::Vec3>,
 }

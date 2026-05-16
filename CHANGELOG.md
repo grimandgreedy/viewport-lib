@@ -9,11 +9,20 @@
     - A transform snapshot table stores the previous and current transform for each physics-driven node so you can lerp to a smooth render position between fixed steps, without jitter.
     - The scene and selection remain app-owned. The runtime borrows them per call and applies transform writes and selection changes before returning.
     - Existing `prepare` / `paint_to` call sites are unchanged. The runtime layer is purely additive.
+- Animation, constraints, and simple physics are now available as built-in runtime plugins:
+    - Drive any scene node along a keyframed path. Provide keyframes as transform-time pairs, mark the track as looping if needed, and register it with the runtime. The playhead advances each frame and transforms are interpolated automatically between keyframes.
+    - Three positional constraint types for the animate phase: spring-to-target pulls a node toward a fixed world position with configurable stiffness and damping; dampen drags the node's velocity to zero over time; bounds clamp keeps a node inside an axis-aligned box.
+    - Simple physics: bodies with linear velocity, gravity scale, and restitution. The runtime integrates velocity each simulate step, applies per-body gravity, and reflects bodies off optional bounding box walls. Contacts with bounds produce events available in the runtime output each frame.
+- Camera tracking: the runtime can follow a scene node and return a suggested camera center each frame. The orbit camera pivot moves with the followed object; distance and orientation are unaffected. Tracking can be set or cleared at any time and works alongside any combination of other plugins.
 
 ### Improvements
 - The wire grid and the checkerboard ground plane now each accept explicit colours:
     - The wire grid colour can be set per-frame via `ViewportFrame::grid_colour`. When unset the grid renders slightly lighter than before.
     - The checkerboard ground plane now takes two independent tile colours instead of deriving both from a single tint. Set the second colour via `GroundPlane::tile_colour2`; the default is white and black.
+
+### Fixes
+- Selection stopped working after moving or rotating objects using the runtime manipulation system. The pick accelerator was rebuilt with no geometry data after each manipulation session ended, so no subsequent clicks registered any hits.
+- Camera follow at low simulation rates could visibly lag behind the followed object when transform interpolation was enabled. The camera center is now derived from the same interpolated position the renderer uses, so the pivot and the rendered object stay aligned.
 
 ## [0.14.0]
 

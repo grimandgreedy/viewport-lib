@@ -62,6 +62,7 @@ mod showcase_41_sprites;
 mod showcase_42_gaussian_splats;
 mod showcase_43_scene_runtime;
 mod showcase_44_runtime_interaction;
+mod showcase_45_simulation;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -207,6 +208,7 @@ fn main() -> eframe::Result {
                 splat_state: showcase_42_gaussian_splats::GaussianSplatsState::default(),
                 rt_state: showcase_43_scene_runtime::RtDemoState::default(),
                 rt_interact_state: showcase_44_runtime_interaction::RtInteractState::default(),
+                sim45_state: showcase_45_simulation::Sim45State::default(),
             }))
         }),
     )
@@ -264,6 +266,7 @@ enum ShowcaseMode {
     GaussianSplats,
     SceneRuntime,
     SceneRuntimeInteract,
+    Simulation,
 }
 
 impl ShowcaseMode {
@@ -313,6 +316,7 @@ impl ShowcaseMode {
             Self::GaussianSplats => "42: Gaussian Splats",
             Self::SceneRuntime => "43: Scene Runtime",
             Self::SceneRuntimeInteract => "44: Runtime Interaction",
+            Self::Simulation => "45: Simulation & Animation",
         }
     }
 }
@@ -471,6 +475,9 @@ pub(crate) struct App {
 
     // --- Showcase 44 ---
     pub(crate) rt_interact_state: showcase_44_runtime_interaction::RtInteractState,
+
+    // --- Showcase 45 ---
+    pub(crate) sim45_state: showcase_45_simulation::Sim45State,
 }
 
 // ---------------------------------------------------------------------------
@@ -648,6 +655,7 @@ impl eframe::App for App {
                     ShowcaseMode::GaussianSplats,
                     ShowcaseMode::SceneRuntime,
                     ShowcaseMode::SceneRuntimeInteract,
+                    ShowcaseMode::Simulation,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1329,6 +1337,14 @@ impl eframe::App for App {
                     showcase_43_scene_runtime::update_rt_demo(self, dt);
                     ctx.request_repaint();
                 }
+                // ----- Simulation: step physics + animation -----
+                if self.mode == ShowcaseMode::Simulation && self.sim45_state.built {
+                    let dt = ctx.input(|i| i.stable_dt.min(0.25));
+                    showcase_45_simulation::update_sim45(self, dt);
+                    if !self.sim45_state.paused {
+                        ctx.request_repaint();
+                    }
+                }
                 // ----- Runtime Interaction: step with input context -----
                 if self.mode == ShowcaseMode::SceneRuntimeInteract && self.rt_interact_state.built {
                     let dt = ctx.input(|i| i.stable_dt.min(1.0 / 30.0));
@@ -1373,7 +1389,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 44] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 45] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1418,6 +1434,7 @@ impl App {
             ShowcaseMode::GaussianSplats,
             ShowcaseMode::SceneRuntime,
             ShowcaseMode::SceneRuntimeInteract,
+            ShowcaseMode::Simulation,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1544,6 +1561,7 @@ impl App {
             ShowcaseMode::GaussianSplats => !self.splat_state.built,
             ShowcaseMode::SceneRuntime => !self.rt_state.built,
             ShowcaseMode::SceneRuntimeInteract => !self.rt_interact_state.built,
+            ShowcaseMode::Simulation => !self.sim45_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -1957,6 +1975,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::Simulation => {
+                showcase_45_simulation::build_sim45_scene(self, renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::new(0.0, 0.0, 4.5),
+                    distance: 20.0,
+                    orientation: glam::Quat::from_rotation_z(0.4)
+                        * glam::Quat::from_rotation_x(1.0),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2052,6 +2080,9 @@ impl App {
             }
             ShowcaseMode::SceneRuntimeInteract => {
                 showcase_44_runtime_interaction::controls_rt_interact(self, ui)
+            }
+            ShowcaseMode::Simulation => {
+                showcase_45_simulation::controls_sim45(self, ui)
             }
         }
     }
@@ -2773,6 +2804,22 @@ impl App {
                 let sg = self.rt_interact_state.scene.version();
                 let ss = self.rt_interact_state.selection.version();
                 (items, Some(BG_COLOUR), lighting, sg, ss)
+            }
+
+            ShowcaseMode::Simulation => {
+                let items = if self.sim45_state.built {
+                    showcase_45_simulation::sim45_scene_items(self)
+                } else {
+                    Vec::new()
+                };
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.5,
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [0.7, 0.7, 0.7],
+                    ..LightingSettings::default()
+                };
+                let sg = self.sim45_state.scene.version();
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
         };
 
