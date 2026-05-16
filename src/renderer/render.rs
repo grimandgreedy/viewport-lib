@@ -2093,6 +2093,9 @@ impl ViewportRenderer {
                             if item.appearance.hidden {
                                 continue;
                             }
+                            if item.appearance.wireframe || frame.viewport.wireframe_mode {
+                                continue;
+                            }
                             let Some(gpu) = self.resources.projected_tet_store.get(item.id.0)
                             else {
                                 continue;

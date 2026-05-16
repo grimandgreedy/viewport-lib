@@ -1379,7 +1379,10 @@ impl ViewportRenderer {
         // TransparentVolumeMesh wireframe: boundary mesh edge overlay.
         self.tvm_wireframe_draws.clear();
         for item in &frame.scene.transparent_volume_meshes {
-            if item.appearance.hidden || !item.appearance.wireframe {
+            if item.appearance.hidden {
+                continue;
+            }
+            if !(item.appearance.wireframe || frame.viewport.wireframe_mode) {
                 continue;
             }
             let Some(mesh_id) = item.boundary_mesh_id else {
