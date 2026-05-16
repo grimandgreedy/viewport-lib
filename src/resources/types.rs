@@ -1364,6 +1364,8 @@ pub(crate) struct GaussianSplatDrawData {
     pub model: [[f32; 4]; 4],
     /// Number of splats.
     pub count: u32,
+    /// When true, skip the splat rasterization draw; a wireframe polyline overlay is rendered instead.
+    pub wireframe: bool,
 }
 
 /// Slotted store for Gaussian splat sets.
@@ -1531,6 +1533,8 @@ pub struct VolumeGpuData {
     pub(crate) _dims: [u32; 3],
     // Keep the uniform buffer alive.
     pub(crate) _uniform_buf: wgpu::Buffer,
+    /// When true, skip the volume ray-march draw; an OBB wireframe polyline is rendered instead.
+    pub(crate) wireframe: bool,
 }
 
 /// Per-frame GPU data for one image slice item, created in `prepare()`.

@@ -280,6 +280,16 @@ pub struct ViewportRenderer {
     /// the per-item uniform buffer with the mesh's fallback textures so it is
     /// compatible with the object bind group layout.
     wireframe_bind_groups: Vec<wgpu::BindGroup>,
+    /// Per-frame list of boundary mesh IDs to draw in wireframe for
+    /// TransparentVolumeMeshItems with `appearance.wireframe = true`.
+    /// Cleared and rebuilt each frame in prepare_scene_internal.
+    tvm_wireframe_draws: Vec<crate::resources::mesh_store::MeshId>,
+    /// Shared uniform buffer for TVM boundary wireframe draws (wireframe=1, model=identity).
+    /// Created once on first use, reused every frame.
+    tvm_wireframe_buf: Option<wgpu::Buffer>,
+    /// Bind group for TVM boundary wireframe draws. Pairs `tvm_wireframe_buf` with
+    /// fallback textures matching the object bind group layout.
+    tvm_wireframe_bg: Option<wgpu::BindGroup>,
     /// Cascade-0 light-space view-projection matrix from the last shadow prepare.
     /// Cached here so `prepare_viewport_internal` can copy it into the ground plane uniform.
     last_cascade0_shadow_mat: glam::Mat4,
@@ -431,6 +441,9 @@ impl ViewportRenderer {
             compute_filter_results: Vec::new(),
             wireframe_uniform_bufs: Vec::new(),
             wireframe_bind_groups: Vec::new(),
+            tvm_wireframe_draws: Vec::new(),
+            tvm_wireframe_buf: None,
+            tvm_wireframe_bg: None,
             last_cascade0_shadow_mat: glam::Mat4::IDENTITY,
             runtime_mode: crate::renderer::stats::RuntimeMode::Interactive,
             performance_policy: crate::renderer::stats::PerformancePolicy::default(),
@@ -925,11 +938,32 @@ impl ViewportRenderer {
                 render_pass.set_pipeline(dual.for_format(false));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for dd in &self.gaussian_splat_draw_data {
+                    if dd.wireframe {
+                        continue;
+                    }
                     if let Some(set) = self.resources.gaussian_splat_store.get(dd.store_index) {
                         if let Some(Some(vp_sort)) = set.viewport_sort.get(dd.viewport_index) {
                             render_pass.set_bind_group(1, &vp_sort.render_bg, &[]);
                             render_pass.draw(0..6, 0..dd.count);
                         }
+                    }
+                }
+            }
+        }
+        // TransparentVolumeMesh boundary wireframe overlay.
+        if !self.tvm_wireframe_draws.is_empty() {
+            if let Some(ref tvm_bg) = self.tvm_wireframe_bg {
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for mesh_id in &self.tvm_wireframe_draws {
+                    if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
+                        render_pass.set_pipeline(&self.resources.wireframe_pipeline);
+                        render_pass.set_bind_group(1, tvm_bg, &[]);
+                        render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        render_pass.set_index_buffer(
+                            mesh.edge_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
                     }
                 }
             }
@@ -986,11 +1020,32 @@ impl ViewportRenderer {
                 render_pass.set_pipeline(dual.for_format(false));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for dd in &self.gaussian_splat_draw_data {
+                    if dd.wireframe {
+                        continue;
+                    }
                     if let Some(set) = self.resources.gaussian_splat_store.get(dd.store_index) {
                         if let Some(Some(vp_sort)) = set.viewport_sort.get(dd.viewport_index) {
                             render_pass.set_bind_group(1, &vp_sort.render_bg, &[]);
                             render_pass.draw(0..6, 0..dd.count);
                         }
+                    }
+                }
+            }
+        }
+        // TransparentVolumeMesh boundary wireframe overlay.
+        if !self.tvm_wireframe_draws.is_empty() {
+            if let Some(ref tvm_bg) = self.tvm_wireframe_bg {
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for mesh_id in &self.tvm_wireframe_draws {
+                    if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
+                        render_pass.set_pipeline(&self.resources.wireframe_pipeline);
+                        render_pass.set_bind_group(1, tvm_bg, &[]);
+                        render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        render_pass.set_index_buffer(
+                            mesh.edge_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
                     }
                 }
             }

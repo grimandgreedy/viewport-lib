@@ -1346,15 +1346,127 @@ impl ViewportRenderer {
                 1.0_f32
             };
             for item in &frame.scene.volumes {
-                let gpu = resources.upload_volume_frame(
+                let mut gpu = resources.upload_volume_frame(
                     device,
                     queue,
                     item,
                     clip_objects_for_vol,
                     vol_step_multiplier,
                 );
+                gpu.wireframe = frame.viewport.wireframe_mode || item.appearance.wireframe;
                 self.volume_gpu_data.push(gpu);
             }
+        }
+
+        // Volume wireframe overlay: OBB from bbox + model matrix.
+        let need_vol_wf = frame.viewport.wireframe_mode
+            || frame.scene.volumes.iter().any(|v| !v.appearance.hidden && v.appearance.wireframe);
+        if need_vol_wf {
+            resources.ensure_polyline_pipeline(device);
+            for item in &frame.scene.volumes {
+                if item.appearance.hidden {
+                    continue;
+                }
+                if !(frame.viewport.wireframe_mode || item.appearance.wireframe) {
+                    continue;
+                }
+                let polyline = volume_obb_polyline(item);
+                let gpu = resources.upload_polyline(device, queue, &polyline, vp_size);
+                self.polyline_gpu_data.push(gpu);
+            }
+        }
+
+        // TransparentVolumeMesh wireframe: boundary mesh edge overlay.
+        self.tvm_wireframe_draws.clear();
+        for item in &frame.scene.transparent_volume_meshes {
+            if item.appearance.hidden || !item.appearance.wireframe {
+                continue;
+            }
+            let Some(mesh_id) = item.boundary_mesh_id else {
+                continue;
+            };
+            if resources.mesh_store.get(mesh_id).is_none() {
+                continue;
+            }
+            self.tvm_wireframe_draws.push(mesh_id);
+        }
+        if !self.tvm_wireframe_draws.is_empty() && self.tvm_wireframe_bg.is_none() {
+            use wgpu::util::DeviceExt;
+            let mut tvm_wf_uniform: crate::resources::ObjectUniform =
+                bytemuck::Zeroable::zeroed();
+            tvm_wf_uniform.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+            tvm_wf_uniform.colour = [0.75, 0.75, 0.75, 1.0];
+            tvm_wf_uniform.wireframe = 1;
+            let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("tvm_wireframe_uniform"),
+                contents: bytemuck::cast_slice(&[tvm_wf_uniform]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("tvm_wireframe_bg"),
+                layout: &resources.object_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(
+                            &resources.fallback_texture.view,
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&resources.material_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(
+                            &resources.fallback_normal_map_view,
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(
+                            &resources.fallback_ao_map_view,
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::TextureView(
+                            &resources.fallback_lut_view,
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: resources.fallback_scalar_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: wgpu::BindingResource::TextureView(
+                            resources
+                                .fallback_matcap_view
+                                .as_ref()
+                                .unwrap_or(&resources.fallback_texture.view),
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 8,
+                        resource: resources.fallback_face_colour_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 9,
+                        resource: resources.fallback_warp_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 10,
+                        resource: wgpu::BindingResource::Sampler(&resources.lut_sampler),
+                    },
+                ],
+            });
+            self.tvm_wireframe_buf = Some(buf);
+            self.tvm_wireframe_bg = Some(bg);
         }
 
         // -- Frame stats --
@@ -4518,7 +4630,37 @@ impl ViewportRenderer {
                         viewport_index: vp_idx,
                         model: item.model,
                         count,
+                        wireframe: frame.viewport.wireframe_mode || item.appearance.wireframe,
                     });
+            }
+        }
+
+        // Gaussian splat wireframe overlay.
+        let need_splat_wf = frame.viewport.wireframe_mode
+            || frame.scene.gaussian_splats.iter().any(|g| !g.appearance.hidden && g.appearance.wireframe);
+        if need_splat_wf {
+            self.resources.ensure_polyline_pipeline(device);
+            let vp_size = frame.camera.viewport_size;
+            for item in &frame.scene.gaussian_splats {
+                if item.appearance.hidden {
+                    continue;
+                }
+                if !(frame.viewport.wireframe_mode || item.appearance.wireframe) {
+                    continue;
+                }
+                let store_index = item.id.0;
+                let Some(gpu_set) = self.resources.gaussian_splat_store.get(store_index) else {
+                    continue;
+                };
+                let count = gpu_set.count as usize;
+                let positions = gpu_set.cpu_positions.clone();
+                let scales = gpu_set.cpu_scales.clone();
+                let _ = gpu_set;
+                let polyline = splat_wireframe_polyline(&positions, &scales, item.model, count);
+                if !polyline.positions.is_empty() {
+                    let gpu = self.resources.upload_polyline(device, queue, &polyline, vp_size);
+                    self.polyline_gpu_data.push(gpu);
+                }
             }
         }
     }
@@ -5218,6 +5360,259 @@ fn emit_rounded_quad(
             verts.extend_from_slice(&[v(center), v(p0), v(p1)]);
         }
     }
+}
+
+/// Generate an OBB wireframe polyline for a VolumeItem by transforming its
+/// bbox corners through the model matrix.
+fn volume_obb_polyline(item: &crate::renderer::types::VolumeItem) -> crate::renderer::types::PolylineItem {
+    let model = glam::Mat4::from_cols_array_2d(&item.model);
+    let mn = glam::Vec3::from(item.bbox_min);
+    let mx = glam::Vec3::from(item.bbox_max);
+    let local = [
+        glam::Vec3::new(mn.x, mn.y, mn.z),
+        glam::Vec3::new(mx.x, mn.y, mn.z),
+        glam::Vec3::new(mn.x, mx.y, mn.z),
+        glam::Vec3::new(mx.x, mx.y, mn.z),
+        glam::Vec3::new(mn.x, mn.y, mx.z),
+        glam::Vec3::new(mx.x, mn.y, mx.z),
+        glam::Vec3::new(mn.x, mx.y, mx.z),
+        glam::Vec3::new(mx.x, mx.y, mx.z),
+    ];
+    let c: Vec<[f32; 3]> = local
+        .iter()
+        .map(|p| model.transform_point3(*p).to_array())
+        .collect();
+    obb_box_polyline(&c)
+}
+
+/// Generate a box wireframe polyline from 8 corners.
+/// Corner indexing: bit 0=x, bit 1=y, bit 2=z (0=min, 1=max).
+fn obb_box_polyline(c: &[[f32; 3]]) -> crate::renderer::types::PolylineItem {
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut strip_lengths: Vec<u32> = Vec::new();
+    // Bottom face (z=min): 0,1,3,2,0
+    positions.extend_from_slice(&[c[0], c[1], c[3], c[2], c[0]]);
+    strip_lengths.push(5);
+    // Top face (z=max): 4,5,7,6,4
+    positions.extend_from_slice(&[c[4], c[5], c[7], c[6], c[4]]);
+    strip_lengths.push(5);
+    // Lateral edges
+    for (lo, hi) in [(0usize, 4usize), (1, 5), (2, 6), (3, 7)] {
+        positions.extend_from_slice(&[c[lo], c[hi]]);
+        strip_lengths.push(2);
+    }
+    crate::renderer::types::PolylineItem {
+        positions,
+        strip_lengths,
+        default_colour: [0.75, 0.75, 0.75, 1.0],
+        line_width: 1.0,
+        ..crate::renderer::types::PolylineItem::default()
+    }
+}
+
+/// Generate a wireframe polyline for a Gaussian splat set.
+/// <= 100 splats: three orthogonal rings (XY, XZ, YZ) per splat scaled by splat scale.
+/// > 100 splats: OBB fitted via PCA on a subsample of positions.
+fn splat_wireframe_polyline(
+    positions: &[[f32; 3]],
+    scales: &[[f32; 3]],
+    model: [[f32; 4]; 4],
+    count: usize,
+) -> crate::renderer::types::PolylineItem {
+    if count == 0 || positions.is_empty() {
+        return crate::renderer::types::PolylineItem::default();
+    }
+    let model_mat = glam::Mat4::from_cols_array_2d(&model);
+    if count <= 100 {
+        splat_rings_polyline(positions, scales, model_mat)
+    } else {
+        splat_obb_polyline(positions, model_mat)
+    }
+}
+
+fn splat_rings_polyline(
+    positions: &[[f32; 3]],
+    scales: &[[f32; 3]],
+    model_mat: glam::Mat4,
+) -> crate::renderer::types::PolylineItem {
+    const SEGMENTS: usize = 32;
+    let mut all_positions: Vec<[f32; 3]> = Vec::new();
+    let mut strip_lengths: Vec<u32> = Vec::new();
+    for (pos, scale) in positions.iter().zip(scales.iter()) {
+        let center = glam::Vec3::from(*pos);
+        let [sx, sy, sz] = *scale;
+        let rings: [(glam::Vec3, glam::Vec3, f32, f32); 3] = [
+            (glam::Vec3::X, glam::Vec3::Y, sx, sy),
+            (glam::Vec3::X, glam::Vec3::Z, sx, sz),
+            (glam::Vec3::Y, glam::Vec3::Z, sy, sz),
+        ];
+        for (a1, a2, r1, r2) in &rings {
+            for i in 0..=SEGMENTS {
+                let t = std::f32::consts::TAU * i as f32 / SEGMENTS as f32;
+                let p_local = center + (*a1) * (r1 * t.cos()) + (*a2) * (r2 * t.sin());
+                let p_world = model_mat.transform_point3(p_local);
+                all_positions.push(p_world.to_array());
+            }
+            strip_lengths.push((SEGMENTS + 1) as u32);
+        }
+    }
+    crate::renderer::types::PolylineItem {
+        positions: all_positions,
+        strip_lengths,
+        default_colour: [0.75, 0.75, 0.75, 1.0],
+        line_width: 1.0,
+        ..crate::renderer::types::PolylineItem::default()
+    }
+}
+
+fn splat_obb_polyline(
+    positions: &[[f32; 3]],
+    model_mat: glam::Mat4,
+) -> crate::renderer::types::PolylineItem {
+    const N_SUBSAMPLE: usize = 10_000;
+    let n = positions.len();
+    // Compute centroid from subsample.
+    let step = if n > N_SUBSAMPLE { n / N_SUBSAMPLE } else { 1 };
+    let samples: Vec<glam::Vec3> = positions
+        .iter()
+        .step_by(step)
+        .map(|p| glam::Vec3::from(*p))
+        .collect();
+    if samples.is_empty() {
+        return crate::renderer::types::PolylineItem::default();
+    }
+    let centroid = samples.iter().copied().sum::<glam::Vec3>() / samples.len() as f32;
+    // Compute 3x3 covariance matrix.
+    let mut cov = [[0.0f32; 3]; 3];
+    for p in &samples {
+        let d = *p - centroid;
+        let v = [d.x, d.y, d.z];
+        for i in 0..3 {
+            for j in 0..3 {
+                cov[i][j] += v[i] * v[j];
+            }
+        }
+    }
+    let inv_n = 1.0 / samples.len() as f32;
+    for i in 0..3 {
+        for j in 0..3 {
+            cov[i][j] *= inv_n;
+        }
+    }
+    // Eigenvectors via Jacobi iteration.
+    let (axes, _) = jacobi_eig_3x3(&cov);
+    // Project ALL positions onto each axis to find exact extents.
+    let mut min_ext = [f32::INFINITY; 3];
+    let mut max_ext = [f32::NEG_INFINITY; 3];
+    for p in positions {
+        let d = glam::Vec3::from(*p) - centroid;
+        let dv = [d.x, d.y, d.z];
+        for i in 0..3 {
+            let proj = dv[0] * axes[i][0] + dv[1] * axes[i][1] + dv[2] * axes[i][2];
+            min_ext[i] = min_ext[i].min(proj);
+            max_ext[i] = max_ext[i].max(proj);
+        }
+    }
+    // Build 8 OBB corners in world space (object space -> model matrix).
+    let axis: [glam::Vec3; 3] = [
+        glam::Vec3::from(axes[0]),
+        glam::Vec3::from(axes[1]),
+        glam::Vec3::from(axes[2]),
+    ];
+    let center_obj = centroid
+        + axis[0] * (min_ext[0] + max_ext[0]) * 0.5
+        + axis[1] * (min_ext[1] + max_ext[1]) * 0.5
+        + axis[2] * (min_ext[2] + max_ext[2]) * 0.5;
+    let half = [
+        (max_ext[0] - min_ext[0]) * 0.5,
+        (max_ext[1] - min_ext[1]) * 0.5,
+        (max_ext[2] - min_ext[2]) * 0.5,
+    ];
+    let signs: [[f32; 3]; 8] = [
+        [-1.0, -1.0, -1.0],
+        [ 1.0, -1.0, -1.0],
+        [-1.0,  1.0, -1.0],
+        [ 1.0,  1.0, -1.0],
+        [-1.0, -1.0,  1.0],
+        [ 1.0, -1.0,  1.0],
+        [-1.0,  1.0,  1.0],
+        [ 1.0,  1.0,  1.0],
+    ];
+    let corners: Vec<[f32; 3]> = signs
+        .iter()
+        .map(|s| {
+            let p = center_obj
+                + axis[0] * (s[0] * half[0])
+                + axis[1] * (s[1] * half[1])
+                + axis[2] * (s[2] * half[2]);
+            model_mat.transform_point3(p).to_array()
+        })
+        .collect();
+    obb_box_polyline(&corners)
+}
+
+/// Jacobi eigenvalue decomposition for a 3x3 symmetric matrix.
+/// Returns (eigenvectors as rows, eigenvalues).
+fn jacobi_eig_3x3(a: &[[f32; 3]; 3]) -> ([[f32; 3]; 3], [f32; 3]) {
+    let mut m = *a;
+    let mut v: [[f32; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    for _ in 0..50 {
+        let mut max_off = 0.0f32;
+        let (mut p, mut q) = (0usize, 1usize);
+        for i in 0..3usize {
+            for j in (i + 1)..3usize {
+                let abs = m[i][j].abs();
+                if abs > max_off {
+                    max_off = abs;
+                    p = i;
+                    q = j;
+                }
+            }
+        }
+        if max_off < 1e-10 {
+            break;
+        }
+        let tau = (m[q][q] - m[p][p]) / (2.0 * m[p][q]);
+        let t = if tau >= 0.0 {
+            1.0 / (tau + (1.0 + tau * tau).sqrt())
+        } else {
+            -1.0 / (-tau + (1.0 + tau * tau).sqrt())
+        };
+        let c = 1.0 / (1.0 + t * t).sqrt();
+        let s = t * c;
+        let m_pp = m[p][p];
+        let m_qq = m[q][q];
+        let m_pq = m[p][q];
+        m[p][p] = c * c * m_pp - 2.0 * s * c * m_pq + s * s * m_qq;
+        m[q][q] = s * s * m_pp + 2.0 * s * c * m_pq + c * c * m_qq;
+        m[p][q] = 0.0;
+        m[q][p] = 0.0;
+        for r in 0..3usize {
+            if r != p && r != q {
+                let m_pr = m[p][r];
+                let m_qr = m[q][r];
+                m[p][r] = c * m_pr - s * m_qr;
+                m[r][p] = m[p][r];
+                m[q][r] = s * m_pr + c * m_qr;
+                m[r][q] = m[q][r];
+            }
+        }
+        for r in 0..3usize {
+            let v_rp = v[r][p];
+            let v_rq = v[r][q];
+            v[r][p] = c * v_rp - s * v_rq;
+            v[r][q] = s * v_rp + c * v_rq;
+        }
+    }
+    // Return eigenvectors as rows (transposed from columns of v).
+    (
+        [
+            [v[0][0], v[1][0], v[2][0]],
+            [v[0][1], v[1][1], v[2][1]],
+            [v[0][2], v[1][2], v[2][2]],
+        ],
+        [m[0][0], m[1][1], m[2][2]],
+    )
 }
 
 // ---------------------------------------------------------------------------

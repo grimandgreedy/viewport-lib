@@ -652,6 +652,9 @@ macro_rules! emit_scivis_draw_calls {
                 render_pass.set_pipeline(dual.for_format(_is_hdr));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for vol in $volume_gpu_data.iter() {
+                    if vol.wireframe {
+                        continue;
+                    }
                     render_pass.set_bind_group(1, &vol.bind_group, &[]);
                     render_pass.set_vertex_buffer(0, vol.vertex_buffer.slice(..));
                     render_pass

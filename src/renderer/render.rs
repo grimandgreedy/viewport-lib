@@ -46,11 +46,32 @@ impl ViewportRenderer {
                 render_pass.set_pipeline(dual.for_format(false));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for dd in &self.gaussian_splat_draw_data {
+                    if dd.wireframe {
+                        continue;
+                    }
                     if let Some(set) = self.resources.gaussian_splat_store.get(dd.store_index) {
                         if let Some(Some(vp_sort)) = set.viewport_sort.get(dd.viewport_index) {
                             render_pass.set_bind_group(1, &vp_sort.render_bg, &[]);
                             render_pass.draw(0..6, 0..dd.count);
                         }
+                    }
+                }
+            }
+        }
+        // TransparentVolumeMesh boundary wireframe overlay.
+        if !self.tvm_wireframe_draws.is_empty() {
+            if let Some(ref tvm_bg) = self.tvm_wireframe_bg {
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for mesh_id in &self.tvm_wireframe_draws {
+                    if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
+                        render_pass.set_pipeline(&self.resources.wireframe_pipeline);
+                        render_pass.set_bind_group(1, tvm_bg, &[]);
+                        render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        render_pass.set_index_buffer(
+                            mesh.edge_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
                     }
                 }
             }
@@ -220,11 +241,32 @@ impl ViewportRenderer {
                 render_pass.set_pipeline(dual.for_format(false));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for dd in &self.gaussian_splat_draw_data {
+                    if dd.wireframe {
+                        continue;
+                    }
                     if let Some(set) = self.resources.gaussian_splat_store.get(dd.store_index) {
                         if let Some(Some(vp_sort)) = set.viewport_sort.get(dd.viewport_index) {
                             render_pass.set_bind_group(1, &vp_sort.render_bg, &[]);
                             render_pass.draw(0..6, 0..dd.count);
                         }
+                    }
+                }
+            }
+        }
+        // TransparentVolumeMesh boundary wireframe overlay.
+        if !self.tvm_wireframe_draws.is_empty() {
+            if let Some(ref tvm_bg) = self.tvm_wireframe_bg {
+                render_pass.set_bind_group(0, camera_bg, &[]);
+                for mesh_id in &self.tvm_wireframe_draws {
+                    if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
+                        render_pass.set_pipeline(&self.resources.wireframe_pipeline);
+                        render_pass.set_bind_group(1, tvm_bg, &[]);
+                        render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        render_pass.set_index_buffer(
+                            mesh.edge_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
                     }
                 }
             }
@@ -453,6 +495,24 @@ impl ViewportRenderer {
                 &self.sprite_gpu_data,
                 false
             );
+            // TransparentVolumeMesh boundary wireframe overlay.
+            if !self.tvm_wireframe_draws.is_empty() {
+                if let Some(ref tvm_bg) = self.tvm_wireframe_bg {
+                    render_pass.set_bind_group(0, camera_bg, &[]);
+                    for mesh_id in &self.tvm_wireframe_draws {
+                        if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
+                            render_pass.set_pipeline(&self.resources.wireframe_pipeline);
+                            render_pass.set_bind_group(1, tvm_bg, &[]);
+                            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                            render_pass.set_index_buffer(
+                                mesh.edge_index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
+                        }
+                    }
+                }
+            }
             // Implicit surface.
             if !self.implicit_gpu_data.is_empty() {
                 if let Some(ref dual) = self.resources.implicit_pipeline {
@@ -944,6 +1004,24 @@ impl ViewportRenderer {
                     &self.sprite_gpu_data,
                     false
                 );
+                // TransparentVolumeMesh boundary wireframe overlay.
+                if !self.tvm_wireframe_draws.is_empty() {
+                    if let Some(ref tvm_bg) = self.tvm_wireframe_bg {
+                        render_pass.set_bind_group(0, camera_bg, &[]);
+                        for mesh_id in &self.tvm_wireframe_draws {
+                            if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
+                                render_pass.set_pipeline(&self.resources.wireframe_pipeline);
+                                render_pass.set_bind_group(1, tvm_bg, &[]);
+                                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                render_pass.set_index_buffer(
+                                    mesh.edge_index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
+                                render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
+                            }
+                        }
+                    }
+                }
                 // Phase 16 : GPU implicit surface.
                 if !self.implicit_gpu_data.is_empty() {
                     if let Some(ref dual) = self.resources.implicit_pipeline {
@@ -1676,11 +1754,31 @@ impl ViewportRenderer {
                     render_pass.set_pipeline(dual.for_format(true));
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     for dd in &self.gaussian_splat_draw_data {
+                        if dd.wireframe {
+                            continue;
+                        }
                         if let Some(set) = self.resources.gaussian_splat_store.get(dd.store_index) {
                             if let Some(Some(vp_sort)) = set.viewport_sort.get(dd.viewport_index) {
                                 render_pass.set_bind_group(1, &vp_sort.render_bg, &[]);
                                 render_pass.draw(0..6, 0..dd.count);
                             }
+                        }
+                    }
+                }
+            }
+            // TransparentVolumeMesh boundary wireframe overlay (HDR path).
+            if !self.tvm_wireframe_draws.is_empty() {
+                if let (Some(tvm_bg), Some(hdr_wf)) = (&self.tvm_wireframe_bg, &resources.hdr_wireframe_pipeline) {
+                    for mesh_id in &self.tvm_wireframe_draws {
+                        if let Some(mesh) = resources.mesh_store.get(*mesh_id) {
+                            render_pass.set_pipeline(hdr_wf);
+                            render_pass.set_bind_group(1, tvm_bg, &[]);
+                            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                            render_pass.set_index_buffer(
+                                mesh.edge_index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
                         }
                     }
                 }

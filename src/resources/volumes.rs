@@ -636,6 +636,7 @@ impl ViewportGpuResources {
             index_buffer,
             _dims: dims,
             _uniform_buf: uniform_buf,
+            wireframe: false,
         }
     }
 }
