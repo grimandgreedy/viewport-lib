@@ -484,12 +484,28 @@ impl ViewportGpuResources {
     ) -> ScreenImageGpuData {
         use crate::ImageAnchor;
 
+        // Infer the physical texture dimensions from the pixel buffer.
+        // item.width/height are in logical pixels (the visual size); callers may
+        // supply a higher-resolution buffer (e.g. width*ppp x height*ppp) for
+        // crisp HiDPI rendering. The integer scale factor is derived from the
+        // ratio of pixel count to logical area.
+        let logical_area = (item.width * item.height) as usize;
+        let tex_scale = if logical_area > 0 {
+            let ratio = item.pixels.len() / logical_area;
+            (ratio as f32).sqrt().round() as u32
+        } else {
+            1
+        }
+        .max(1);
+        let tex_w = (item.width * tex_scale).max(1);
+        let tex_h = (item.height * tex_scale).max(1);
+
         // Create texture from pixel data.
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("screen_image_tex"),
             size: wgpu::Extent3d {
-                width: item.width.max(1),
-                height: item.height.max(1),
+                width: tex_w,
+                height: tex_h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -512,12 +528,12 @@ impl ViewportGpuResources {
                 &raw,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(item.width * 4),
-                    rows_per_image: Some(item.height),
+                    bytes_per_row: Some(tex_w * 4),
+                    rows_per_image: Some(tex_h),
                 },
                 wgpu::Extent3d {
-                    width: item.width,
-                    height: item.height,
+                    width: tex_w,
+                    height: tex_h,
                     depth_or_array_layers: 1,
                 },
             );
@@ -710,11 +726,22 @@ impl ViewportGpuResources {
     ) -> ScreenImageGpuData {
         use crate::ImageAnchor;
 
+        let logical_area = (item.width * item.height) as usize;
+        let tex_scale = if logical_area > 0 {
+            let ratio = item.pixels.len() / logical_area;
+            (ratio as f32).sqrt().round() as u32
+        } else {
+            1
+        }
+        .max(1);
+        let tex_w = (item.width * tex_scale).max(1);
+        let tex_h = (item.height * tex_scale).max(1);
+
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("overlay_image_tex"),
             size: wgpu::Extent3d {
-                width: item.width.max(1),
-                height: item.height.max(1),
+                width: tex_w,
+                height: tex_h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -737,12 +764,12 @@ impl ViewportGpuResources {
                 &raw,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(item.width * 4),
-                    rows_per_image: Some(item.height),
+                    bytes_per_row: Some(tex_w * 4),
+                    rows_per_image: Some(tex_h),
                 },
                 wgpu::Extent3d {
-                    width: item.width,
-                    height: item.height,
+                    width: tex_w,
+                    height: tex_h,
                     depth_or_array_layers: 1,
                 },
             );

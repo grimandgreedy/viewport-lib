@@ -1,20 +1,13 @@
 //! Feature showcase for `viewport-lib` using `eframe` / `egui`.
 
-use std::collections::HashMap;
-
 use eframe::egui;
 use viewport_lib::{
     Action, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, ButtonState, Camera,
-    CameraAnimator, CameraFrame, CellSelectionInfo, ClipObject, ColourmapId, FrameData,
-    GaussianSplatItem, GizmoAxis, GizmoInfo, GizmoMode, GlyphItem, GlyphType, GpuImplicitItem,
-    GpuImplicitOptions, GpuMarchingCubesJob, GroundPlane, GroundPlaneMode, ImageAnchor,
-    ImplicitBlendMode, ImplicitPrimitive, LightKind, LightSource, LightingSettings, ManipResult,
-    ManipulationContext, MeshData, MeshId, OrbitCameraController, PickId, PointCloudItem,
-    PolylineItem, PolylineSelectionInfo, PostProcessSettings, RenderCamera, RibbonItem,
-    RuntimeMode, SceneFrame, SceneRenderItem, ScreenImageItem, ScrollUnits, Selection,
-    ShadowFilter, SpriteItem, StreamtubeItem, SubSelectionRef, TensorGlyphItem,
-    TransparentVolumeMeshItem, TubeItem, ViewportContext, ViewportEvent, ViewportRenderer,
-    VolumeMeshItem, VolumeSurfaceSliceItem,
+    CameraAnimator, CameraFrame, ClipObject, ColourmapId, FrameData, GizmoAxis, GizmoInfo,
+    GizmoMode, GlyphItem, GroundPlane, GroundPlaneMode, LightKind, LightSource, LightingSettings,
+    ManipResult, ManipulationContext, MeshData, MeshId, OrbitCameraController, PickId,
+    PointCloudItem, PostProcessSettings, RenderCamera, RuntimeMode, SceneFrame, SceneRenderItem,
+    ScrollUnits, Selection, ShadowFilter, ViewportContext, ViewportEvent, ViewportRenderer,
     geometry::isoline::IsolineItem,
     gizmo::{self, compute_gizmo_scale},
     scene::Scene,
@@ -2651,50 +2644,9 @@ impl App {
             }
 
             ShowcaseMode::PickLevels => {
-                let mut items = self
-                    .pl_state
-                    .scene
-                    .collect_render_items(&self.pl_state.selection);
-                // TVM boundary surface rendered as an opaque mesh alongside the scene.
-                if let Some(tvm_mesh_id) = self.pl_state.tvm_mesh_id {
-                    let mut tvm_item = SceneRenderItem::default();
-                    tvm_item.mesh_id = tvm_mesh_id;
-                    tvm_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-                    tvm_item.pick_id = PickId(11);
-                    tvm_item.selected = self.pl_state.selection.contains(11);
-                    tvm_item.material = viewport_lib::Material::from_colour([0.8, 0.45, 0.2]);
-                    items.push(tvm_item);
-                }
-                let sg = self.pl_state.scene.version();
-                let lighting = LightingSettings {
-                    lights: vec![
-                        viewport_lib::LightSource {
-                            kind: viewport_lib::LightKind::Directional {
-                                direction: [0.4, 0.3, 1.5],
-                            },
-                            intensity: 0.7,
-                            ..Default::default()
-                        },
-                        viewport_lib::LightSource {
-                            kind: viewport_lib::LightKind::Directional {
-                                direction: [-0.3, -0.2, -1.0],
-                            },
-                            intensity: 0.35,
-                            ..Default::default()
-                        },
-                    ],
-                    hemisphere_intensity: 0.7,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [0.8, 0.8, 0.8],
-                    ..LightingSettings::default()
-                };
-                (
-                    items,
-                    Some(BG_COLOUR),
-                    lighting,
-                    sg,
-                    self.pl_state.selection.version(),
-                )
+                let (items, lighting, sg, sel_gen) =
+                    showcase_33_picking_levels::pl_collect_scene_items(self);
+                (items, Some(BG_COLOUR), lighting, sg, sel_gen)
             }
 
             ShowcaseMode::Labels => {
@@ -2902,7 +2854,7 @@ impl App {
         );
         fd.effects.lighting = lighting;
         if self.mode == ShowcaseMode::PickLevels {
-            fd.viewport.wireframe_mode = self.pl_state.wireframe;
+            showcase_33_picking_levels::pl_configure_frame(self, &mut fd);
         }
         if self.mode == ShowcaseMode::VolumeMesh {
             fd.viewport.wireframe_mode = self.vm_state.wireframe;
@@ -2955,23 +2907,10 @@ impl App {
             || scene_graph_outline
             || interact_outline
             || (self.mode == ShowcaseMode::ScalarFields && !self.scalar_state.selection.is_empty())
-            || (self.mode == ShowcaseMode::PickLevels && !self.pl_state.selection.is_empty())
             || (self.mode == ShowcaseMode::PickLevels
-                && self
-                    .pl_state
-                    .sub_selection
-                    .iter()
-                    .any(|(id, sub)| match sub {
-                        viewport_lib::SubObjectRef::Instance(_) => matches!(*id, 31 | 32 | 33 | 34),
-                        viewport_lib::SubObjectRef::Point(_) => *id == 100,
-                        viewport_lib::SubObjectRef::Splat(_) => *id == 10,
-                        _ => false,
-                    }));
+                && showcase_33_picking_levels::pl_outline_selected(self));
         if scene_graph_outline {
             fd.interaction.outline_width_px = scene_graph_outline_width;
-        }
-        if self.mode == ShowcaseMode::PickLevels {
-            fd.interaction.outline_colour = [1.0, 0.85, 0.0, 1.0];
         }
         fd.interaction.xray_selected = adv_xray;
         fd.scene.generation = scene_gen;
@@ -3076,370 +3015,11 @@ impl App {
             fd.scene.point_clouds.extend(eq_pcs);
         }
 
-        // Picking Levels (Showcase 33) : point cloud, sub-selection highlights, and hit marker.
-        if self.mode == ShowcaseMode::PickLevels && self.pl_state.built {
-            // Background point cloud (blue). Id=100 avoids collision with scene
-            // NodeIds (which start at 1 and cover the 4 mesh objects here).
-            if !self.pl_state.pc_positions.is_empty() {
-                let mut pc = PointCloudItem::default();
-                pc.positions = self.pl_state.pc_positions.clone();
-                pc.point_size = 18.0;
-                pc.default_colour = [0.5, 0.8, 1.0, 1.0];
-                pc.id = 100;
-                pc.selected = self.pl_state.selection.contains(100);
-                fd.scene.point_clouds.push(pc);
-            }
-            // Gaussian splat grid (pickable via pick_id=10).
-            if let Some(splat_id) = self.pl_state.splat_id {
-                let mut item = GaussianSplatItem::default();
-                item.id = splat_id;
-                item.model = showcase_33_picking_levels::pl_splat_model().to_cols_array_2d();
-                item.pick_id = 10;
-                item.selected = self.pl_state.selection.contains(10);
-                fd.scene.gaussian_splats.push(item);
-            }
-            // Hex cylinder: transparent volume mesh (pick_id=12).
-            // Rendered via OIT; boundary mesh used for the selection outline.
-            if let (Some(tet_id), Some(tet_data)) = (
-                self.pl_state.tvm_tet_id,
-                self.pl_state.tvm_tet_data.as_ref(),
-            ) {
-                let mut tvm = TransparentVolumeMeshItem::new(tet_id);
-                tvm.pick_id = 12;
-                tvm.volume_mesh_data = Some(tet_data.clone());
-                tvm.selected = self.pl_state.selection.contains(12);
-                tvm.boundary_mesh_id = self.pl_state.tvm_tet_mesh_id;
-                tvm.density = 2.0;
-                fd.scene.transparent_volume_meshes.push(tvm);
-            }
-            // TVM capsule (pick_id=11) submitted as VolumeMeshItem so renderer.pick()
-            // with PointLike mask can return Cell sub_objects for it via face_to_cell.
-            if let Some(mesh_id) = self.pl_state.tvm_mesh_id {
-                if !self.pl_state.tvm_face_to_cell.is_empty() {
-                    let mut item =
-                        VolumeMeshItem::new(mesh_id, self.pl_state.tvm_face_to_cell.clone());
-                    item.pick_id = PickId(11);
-                    fd.scene.volume_mesh_items.push(item);
-                }
-            }
-            // Sub-object highlight pass (face fill, edge outline, vertex/point sprites).
-            if !self.pl_state.sub_selection.is_empty() {
-                let mut mesh_lookup: HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)> = HashMap::new();
-                let mut model_matrices: HashMap<u64, glam::Mat4> = HashMap::new();
-                for node in self.pl_state.scene.nodes() {
-                    let node_id = viewport_lib::traits::ViewportObject::id(node);
-                    let model = viewport_lib::traits::ViewportObject::model_matrix(node);
-                    model_matrices.insert(node_id, model);
-                    if let Some(mesh_key) = viewport_lib::traits::ViewportObject::mesh_id(node) {
-                        if let Some(data) = self.pl_state.mesh_lookup.get(&mesh_key) {
-                            mesh_lookup.insert(node_id, data.clone());
-                        }
-                    }
-                }
-                let mut point_positions: HashMap<u64, Vec<[f32; 3]>> = HashMap::new();
-                point_positions.insert(100, self.pl_state.pc_positions.clone());
-                let mut voxel_lookup: HashMap<u64, viewport_lib::VolumeSelectionInfo> =
-                    HashMap::new();
-                if self.pl_state.volume_id.is_some() {
-                    voxel_lookup.insert(
-                        20,
-                        viewport_lib::VolumeSelectionInfo {
-                            dims: [16, 16, 16],
-                            bbox_min: [0.0, 0.0, 0.0],
-                            bbox_max: [4.0, 4.0, 4.0],
-                            model: glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0))
-                                .to_cols_array_2d(),
-                        },
-                    );
-                }
-                let mut cell_lookup: HashMap<u64, CellSelectionInfo> = HashMap::new();
-                if let Some(tvm_data) = &self.pl_state.tvm_data {
-                    cell_lookup.insert(
-                        11,
-                        CellSelectionInfo {
-                            positions: tvm_data.positions.clone(),
-                            cells: tvm_data.cells.clone(),
-                        },
-                    );
-                }
-                if let Some(tet_data) = &self.pl_state.tvm_tet_data {
-                    cell_lookup.insert(
-                        12,
-                        CellSelectionInfo {
-                            positions: tet_data.positions.clone(),
-                            cells: tet_data.cells.clone(),
-                        },
-                    );
-                }
-                let mut polyline_lookup: HashMap<u64, PolylineSelectionInfo> = HashMap::new();
-                if !self.pl_state.polyline_positions.is_empty() {
-                    polyline_lookup.insert(
-                        30,
-                        PolylineSelectionInfo {
-                            positions: self.pl_state.polyline_positions.clone(),
-                            strip_lengths: self.pl_state.polyline_strip_lengths.clone(),
-                        },
-                    );
-                }
-                let mut curve_family_lookup: HashMap<u64, PolylineSelectionInfo> = HashMap::new();
-                if !self.pl_state.streamtube_positions.is_empty() {
-                    curve_family_lookup.insert(
-                        40,
-                        PolylineSelectionInfo {
-                            positions: self.pl_state.streamtube_positions.clone(),
-                            strip_lengths: self.pl_state.streamtube_strip_lengths.clone(),
-                        },
-                    );
-                }
-                if !self.pl_state.tube_positions.is_empty() {
-                    curve_family_lookup.insert(
-                        41,
-                        PolylineSelectionInfo {
-                            positions: self.pl_state.tube_positions.clone(),
-                            strip_lengths: self.pl_state.tube_strip_lengths.clone(),
-                        },
-                    );
-                }
-                if !self.pl_state.ribbon_positions.is_empty() {
-                    curve_family_lookup.insert(
-                        42,
-                        PolylineSelectionInfo {
-                            positions: self.pl_state.ribbon_positions.clone(),
-                            strip_lengths: self.pl_state.ribbon_strip_lengths.clone(),
-                        },
-                    );
-                }
-                fd.interaction.sub_selection = Some(
-                    SubSelectionRef::new(
-                        &self.pl_state.sub_selection,
-                        mesh_lookup,
-                        model_matrices,
-                        point_positions,
-                    )
-                    .with_voxels(voxel_lookup)
-                    .with_cells(cell_lookup)
-                    .with_polylines(polyline_lookup)
-                    .with_curve_families(curve_family_lookup),
-                );
-                fd.interaction.sub_highlight_face_fill_colour = [1.0, 0.85, 0.0, 0.25];
-                fd.interaction.sub_highlight_edge_colour = [1.0, 0.85, 0.0, 1.0];
-                fd.interaction.sub_highlight_edge_width_px = 5.0;
-                fd.interaction.sub_highlight_vertex_size_px = 14.0;
-            }
-            // Orange crosshair marker at the click point.
-            if self.pl_state.show_hit_marker {
-                if let Some(marker_pos) = self.pl_state.hit_marker {
-                    let mut marker = PointCloudItem::default();
-                    marker.positions = vec![marker_pos.to_array()];
-                    marker.point_size = 16.0;
-                    marker.default_colour = [1.0, 0.35, 0.0, 1.0];
-                    fd.scene.point_clouds.push(marker);
-                }
-            }
-            // Volume render.
-            if let Some(vol_id) = self.pl_state.volume_id {
-                let mut vol = viewport_lib::VolumeItem::default();
-                vol.volume_id = vol_id;
-                vol.model =
-                    glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0)).to_cols_array_2d();
-                vol.bbox_min = [0.0, 0.0, 0.0];
-                vol.bbox_max = [4.0, 4.0, 4.0];
-                vol.scalar_range = (0.0, 1.0);
-                vol.threshold_min = 0.15;
-                vol.threshold_max = 1.0;
-                vol.opacity_scale = 0.6;
-                vol.enable_shading = true;
-                vol.selected = self.pl_state.selection.contains(20);
-                vol.pick_id = 20;
-                vol.volume_data = self
-                    .pl_state
-                    .volume_data
-                    .as_ref()
-                    .map(|d| std::sync::Arc::new(d.clone()));
-                fd.scene.volumes.push(vol);
-            }
-            // Polyline: 3 strips (pick_id=30).
-            if !self.pl_state.polyline_positions.is_empty() {
-                let mut pl = PolylineItem::default();
-                pl.positions = self.pl_state.polyline_positions.clone();
-                pl.strip_lengths = self.pl_state.polyline_strip_lengths.clone();
-                pl.default_colour = [0.2, 0.85, 0.35, 1.0];
-                pl.line_width = 3.0;
-                pl.id = 30;
-                pl.selected = self.pl_state.selection.contains(30);
-                fd.scene.polylines.push(pl);
-            }
-            // Arrow glyphs (pick_id=31).
-            if !self.pl_state.arrow_glyph_positions.is_empty() {
-                let n = self.pl_state.arrow_glyph_positions.len();
-                let mut g = GlyphItem::default();
-                g.positions = self.pl_state.arrow_glyph_positions.clone();
-                g.vectors = vec![[0.0, 0.0, 1.0]; n];
-                g.scale = 0.8;
-                g.scale_by_magnitude = false;
-                g.use_default_colour = true;
-                g.default_colour = [0.75, 0.1, 1.0, 1.0];
-                g.glyph_type = GlyphType::Arrow;
-                g.id = 31;
-                g.selected = self.pl_state.selection.contains(31);
-                fd.scene.glyphs.push(g);
-            }
-            // Tensor glyphs (pick_id=32).
-            if !self.pl_state.tensor_glyph_positions.is_empty() {
-                let mut tg = TensorGlyphItem::default();
-                tg.positions = self.pl_state.tensor_glyph_positions.clone();
-                tg.eigenvalues = self.pl_state.tensor_glyph_eigenvalues.clone();
-                tg.eigenvectors = self.pl_state.tensor_glyph_eigenvectors.clone();
-                tg.scale = 0.5;
-                tg.colourmap_id = Some(ColourmapId(BuiltinColourmap::Coolwarm as usize));
-                tg.id = 32;
-                tg.selected = self.pl_state.selection.contains(32);
-                fd.scene.tensor_glyphs.push(tg);
-            }
-            // Sprites (pick_id=33).
-            if !self.pl_state.sprite_positions.is_empty() {
-                let mut s = SpriteItem::default();
-                s.positions = self.pl_state.sprite_positions.clone();
-                s.sizes = self.pl_state.sprite_sizes.clone();
-                s.colours = self.pl_state.sprite_colours.clone();
-                s.default_colour = [1.0, 0.90, 0.20, 1.0];
-                s.default_size = 28.0;
-                s.depth_write = true;
-                s.id = 33;
-                s.selected = self.pl_state.selection.contains(33);
-                fd.scene.sprite_items.push(s);
-            }
-            if !self.pl_state.xo_sprite_positions.is_empty() {
-                let mut s = SpriteItem::default();
-                s.positions = self.pl_state.xo_sprite_positions.clone();
-                s.sizes = self.pl_state.xo_sprite_sizes.clone();
-                s.colours = self.pl_state.xo_sprite_colours.clone();
-                s.default_colour = [0.5, 0.5, 1.0, 1.0];
-                s.default_size = 30.0;
-                s.depth_write = true;
-                s.id = 34;
-                s.selected = self.pl_state.selection.contains(34);
-                fd.scene.sprite_items.push(s);
-            }
-            // Streamtube (pick_id=40).
-            if !self.pl_state.streamtube_positions.is_empty() {
-                let mut st = StreamtubeItem::default();
-                st.positions = self.pl_state.streamtube_positions.clone();
-                st.strip_lengths = self.pl_state.streamtube_strip_lengths.clone();
-                st.radius = 0.12;
-                st.colour = [0.3, 0.8, 0.55, 1.0];
-                st.id = 40;
-                st.selected = self.pl_state.selection.contains(40);
-                fd.scene.streamtube_items.push(st);
-            }
-            // Tube (pick_id=41).
-            if !self.pl_state.tube_positions.is_empty() {
-                let mut tb = TubeItem::default();
-                tb.positions = self.pl_state.tube_positions.clone();
-                tb.strip_lengths = self.pl_state.tube_strip_lengths.clone();
-                tb.radius = 0.15;
-                tb.colour = [0.85, 0.4, 0.2, 1.0];
-                tb.id = 41;
-                tb.selected = self.pl_state.selection.contains(41);
-                fd.scene.tube_items.push(tb);
-            }
-            // Ribbon (pick_id=42).
-            if !self.pl_state.ribbon_positions.is_empty() {
-                let mut rb = RibbonItem::default();
-                rb.positions = self.pl_state.ribbon_positions.clone();
-                rb.strip_lengths = self.pl_state.ribbon_strip_lengths.clone();
-                rb.width = 0.4;
-                rb.colour = [0.6, 0.3, 0.9, 1.0];
-                rb.id = 42;
-                rb.selected = self.pl_state.selection.contains(42);
-                fd.scene.ribbon_items.push(rb);
-            }
-            // Volume surface slice (pick_id=51): plane mesh coloured by the same volume.
-            // Plane mesh is a 3.6x3.6 XZ quad; model places it at (0, 1, -4) and tilts it
-            // 60 degrees around X so the plane makes a 30 degree angle with the XY plane.
-            if let (Some(vol_id), Some(mesh_id)) =
-                (self.pl_state.volume_id, self.pl_state.surface_slice_mesh_id)
-            {
-                let mut item = VolumeSurfaceSliceItem::default();
-                item.volume_id = vol_id;
-                item.mesh_id = mesh_id;
-                item.bbox_min = [-2.0, -1.0, -6.0];
-                item.bbox_max = [2.0, 3.0, -2.0];
-                item.scalar_range = (0.0, 1.0);
-                item.model = (glam::Mat4::from_translation(glam::vec3(0.0, 1.0, -4.0))
-                    * glam::Mat4::from_rotation_x(60_f32.to_radians()))
-                .to_cols_array_2d();
-                item.id = 51;
-                item.selected = self.pl_state.selection.contains(51);
-                fd.scene.volume_surface_slices.push(item);
-            }
-            // Screen image (pick_id=52): small checkerboard pinned to the top-right corner.
-            {
-                let iw = 48u32;
-                let ih = 48u32;
-                let pixels: Vec<[u8; 4]> = (0..iw * ih)
-                    .map(|i| {
-                        let x = i % iw;
-                        let y = i / iw;
-                        if (x / 6 + y / 6) % 2 == 0 {
-                            [255, 200, 50, 220]
-                        } else {
-                            [80, 50, 200, 220]
-                        }
-                    })
-                    .collect();
-                let mut img = ScreenImageItem::default();
-                img.pixels = pixels;
-                img.width = iw;
-                img.height = ih;
-                img.anchor = ImageAnchor::TopRight;
-                img.scale = 2.0;
-                img.id = 52;
-                img.selected = self.pl_state.selection.contains(52);
-                fd.scene.screen_images.push(img);
-            }
-            // GPU implicit (pick_id=53): two smooth-blended spheres at (13, 0, 0) / (15, 0, 0).
-            {
-                let centers: [[f32; 3]; 2] = [[13.0, 0.0, 0.0], [15.0, 0.0, 0.0]];
-                let colours: [[f32; 4]; 2] = [[0.9, 0.4, 0.2, 1.0], [0.2, 0.5, 1.0, 1.0]];
-                let mut item = GpuImplicitItem::default();
-                for i in 0..2 {
-                    let mut prim = ImplicitPrimitive::zeroed();
-                    prim.kind = 1; // sphere
-                    prim.blend = 0.8;
-                    prim.params[0] = centers[i][0];
-                    prim.params[1] = centers[i][1];
-                    prim.params[2] = centers[i][2];
-                    prim.params[3] = 1.2; // radius
-                    prim.colour = colours[i];
-                    item.primitives.push(prim);
-                }
-                item.blend_mode = ImplicitBlendMode::SmoothUnion;
-                item.march_options = GpuImplicitOptions {
-                    max_steps: 64,
-                    step_scale: 0.9,
-                    hit_threshold: 1e-3,
-                    max_distance: self.camera.zfar,
-                };
-                item.id = 53;
-                item.selected = self.pl_state.selection.contains(53);
-                fd.scene.gpu_implicit.push(item);
-            }
-            // GPU marching cubes (pick_id=54): gyroid surface centered near (13, 0, -5).
-            if let Some(mc_vol_id) = self.pl_state.mc_volume_id {
-                let mut mat = viewport_lib::Material::from_colour([0.5, 0.8, 0.55]);
-                mat.roughness = 0.4;
-                fd.scene.gpu_mc_jobs.push(GpuMarchingCubesJob {
-                    volume_id: mc_vol_id,
-                    isovalue: 0.0,
-                    material: mat,
-                    id: 54,
-                    appearance: Default::default(),
-                    selected: self.pl_state.selection.contains(54),
-                    cpu_data: self.pl_state.mc_volume_data.clone(),
-                });
-            }
+        // Picking Levels (Showcase 33).
+        if self.mode == ShowcaseMode::PickLevels {
+            showcase_33_picking_levels::submit_pl_items(self, &mut fd);
         }
+
 
         // Curve network quantities (Showcase 28) : submitted every frame.
         if self.mode == ShowcaseMode::CurveNetworkQuantities {

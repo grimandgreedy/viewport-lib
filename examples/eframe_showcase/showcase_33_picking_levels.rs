@@ -18,9 +18,14 @@ use std::collections::HashMap;
 
 use eframe::egui;
 use viewport_lib::{
-    GaussianSplatData, GaussianSplatId, Material, MeshId, NodeId, PickMask, PickRectResult,
-    ProjectedTetId, ShDegree, SubObjectRef, ViewportRenderer, VolumeData, VolumeGpuId,
-    VolumeMeshData,
+    AppearanceSettings, BuiltinColourmap, CellSelectionInfo, ColourmapId, FrameData,
+    GaussianSplatData, GaussianSplatId, GlyphItem, GlyphType, GpuImplicitItem, GpuImplicitOptions,
+    GpuMarchingCubesJob, GaussianSplatItem, ImageAnchor, ImplicitBlendMode, ImplicitPrimitive,
+    LightingSettings, Material, MeshId, NodeId, PickId, PickMask, PickRectResult, PointCloudItem,
+    PolylineItem, PolylineSelectionInfo, ProjectedTetId, RibbonItem, SceneRenderItem,
+    ScreenImageItem, ShDegree, SpriteItem, StreamtubeItem, SubObjectRef, SubSelectionRef,
+    TensorGlyphItem, TransparentVolumeMeshItem, TubeItem, ViewportRenderer, VolumeData,
+    VolumeGpuId, VolumeMeshData, VolumeMeshItem, VolumeSurfaceSliceItem,
 };
 
 use crate::App;
@@ -491,6 +496,8 @@ impl App {
             ),
         ];
 
+        let mut unlit = AppearanceSettings::default();
+        unlit.unlit = true;
         for (name, mesh_id, pos, colour) in configs {
             let transform = glam::Mat4::from_translation(*pos);
             let mat = Material::from_colour(*colour);
@@ -498,6 +505,7 @@ impl App {
                 .pl_state
                 .scene
                 .add_named(name, Some(*mesh_id), transform, mat);
+            self.pl_state.scene.set_appearance(node_id, unlit);
             self.pl_state.node_names.push((node_id, name.to_string()));
         }
 
@@ -1645,4 +1653,464 @@ pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
             ui.label("Click or drag to select.");
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame submission
+// ---------------------------------------------------------------------------
+
+/// Collect the surface render items and lighting for showcase 33.
+///
+/// Returns `(items, lighting, scene_gen, selection_gen)`. Call this from the
+/// `ShowcaseMode::PickLevels` arm of the frame-data builder and feed the result
+/// into the shared `SceneFrame` and `LightingSettings` slots.
+pub(crate) fn pl_collect_scene_items(
+    app: &mut App,
+) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+    let mut items = app
+        .pl_state
+        .scene
+        .collect_render_items(&app.pl_state.selection);
+    // TVM boundary surface rendered as an opaque mesh alongside the scene nodes.
+    if let Some(tvm_mesh_id) = app.pl_state.tvm_mesh_id {
+        let mut tvm_item = SceneRenderItem::default();
+        tvm_item.mesh_id = tvm_mesh_id;
+        tvm_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        tvm_item.pick_id = PickId(11);
+        tvm_item.selected = app.pl_state.selection.contains(11);
+        tvm_item.material = Material::from_colour([0.8, 0.45, 0.2]);
+        tvm_item.appearance.unlit = true;
+        items.push(tvm_item);
+    }
+    let scene_gen = app.pl_state.scene.version();
+    let sel_gen = app.pl_state.selection.version();
+    let lighting = LightingSettings {
+        lights: vec![
+            viewport_lib::LightSource {
+                kind: viewport_lib::LightKind::Directional {
+                    direction: [0.4, 0.3, 1.5],
+                },
+                intensity: 0.7,
+                ..Default::default()
+            },
+            viewport_lib::LightSource {
+                kind: viewport_lib::LightKind::Directional {
+                    direction: [-0.3, -0.2, -1.0],
+                },
+                intensity: 0.35,
+                ..Default::default()
+            },
+        ],
+        hemisphere_intensity: 0.7,
+        sky_colour: [1.0, 1.0, 1.0],
+        ground_colour: [0.8, 0.8, 0.8],
+        ..LightingSettings::default()
+    };
+    (items, lighting, scene_gen, sel_gen)
+}
+
+/// Push all per-frame scivis items for showcase 33 into `fd`.
+///
+/// Call this once per frame when `mode == ShowcaseMode::PickLevels`.
+pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
+    if !app.pl_state.built {
+        return;
+    }
+
+    // Point cloud (blue, pick_id=100).
+    if !app.pl_state.pc_positions.is_empty() {
+        let mut pc = PointCloudItem::default();
+        pc.positions = app.pl_state.pc_positions.clone();
+        pc.point_size = 18.0;
+        pc.default_colour = [0.5, 0.8, 1.0, 1.0];
+        pc.id = 100;
+        pc.selected = app.pl_state.selection.contains(100);
+        pc.appearance.unlit = true;
+        fd.scene.point_clouds.push(pc);
+    }
+    // Gaussian splat grid (pick_id=10).
+    if let Some(splat_id) = app.pl_state.splat_id {
+        let mut item = GaussianSplatItem::default();
+        item.id = splat_id;
+        item.model = pl_splat_model().to_cols_array_2d();
+        item.pick_id = 10;
+        item.selected = app.pl_state.selection.contains(10);
+        item.appearance.unlit = true;
+        fd.scene.gaussian_splats.push(item);
+    }
+    // Hex cylinder: transparent volume mesh (pick_id=12).
+    if let (Some(tet_id), Some(tet_data)) = (
+        app.pl_state.tvm_tet_id,
+        app.pl_state.tvm_tet_data.as_ref(),
+    ) {
+        let mut tvm = TransparentVolumeMeshItem::new(tet_id);
+        tvm.pick_id = 12;
+        tvm.volume_mesh_data = Some(tet_data.clone());
+        tvm.selected = app.pl_state.selection.contains(12);
+        tvm.boundary_mesh_id = app.pl_state.tvm_tet_mesh_id;
+        tvm.density = 2.0;
+        tvm.appearance.unlit = true;
+        fd.scene.transparent_volume_meshes.push(tvm);
+    }
+    // TVM capsule (pick_id=11): VolumeMeshItem so renderer.pick() with PointLike
+    // mask can return Cell sub_objects via face_to_cell.
+    if let Some(mesh_id) = app.pl_state.tvm_mesh_id {
+        if !app.pl_state.tvm_face_to_cell.is_empty() {
+            let mut item =
+                VolumeMeshItem::new(mesh_id, app.pl_state.tvm_face_to_cell.clone());
+            item.pick_id = PickId(11);
+            item.appearance.unlit = true;
+            fd.scene.volume_mesh_items.push(item);
+        }
+    }
+    // Sub-object highlight pass (face fill, edge outline, vertex/point sprites).
+    if !app.pl_state.sub_selection.is_empty() {
+        let mut mesh_lookup: HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)> = HashMap::new();
+        let mut model_matrices: HashMap<u64, glam::Mat4> = HashMap::new();
+        for node in app.pl_state.scene.nodes() {
+            let node_id = viewport_lib::traits::ViewportObject::id(node);
+            let model = viewport_lib::traits::ViewportObject::model_matrix(node);
+            model_matrices.insert(node_id, model);
+            if let Some(mesh_key) = viewport_lib::traits::ViewportObject::mesh_id(node) {
+                if let Some(data) = app.pl_state.mesh_lookup.get(&mesh_key) {
+                    mesh_lookup.insert(node_id, data.clone());
+                }
+            }
+        }
+        let mut point_positions: HashMap<u64, Vec<[f32; 3]>> = HashMap::new();
+        point_positions.insert(100, app.pl_state.pc_positions.clone());
+        let mut voxel_lookup: HashMap<u64, viewport_lib::VolumeSelectionInfo> = HashMap::new();
+        if app.pl_state.volume_id.is_some() {
+            voxel_lookup.insert(
+                20,
+                viewport_lib::VolumeSelectionInfo {
+                    dims: [16, 16, 16],
+                    bbox_min: [0.0, 0.0, 0.0],
+                    bbox_max: [4.0, 4.0, 4.0],
+                    model: glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0))
+                        .to_cols_array_2d(),
+                },
+            );
+        }
+        let mut cell_lookup: HashMap<u64, CellSelectionInfo> = HashMap::new();
+        if let Some(tvm_data) = &app.pl_state.tvm_data {
+            cell_lookup.insert(
+                11,
+                CellSelectionInfo {
+                    positions: tvm_data.positions.clone(),
+                    cells: tvm_data.cells.clone(),
+                },
+            );
+        }
+        if let Some(tet_data) = &app.pl_state.tvm_tet_data {
+            cell_lookup.insert(
+                12,
+                CellSelectionInfo {
+                    positions: tet_data.positions.clone(),
+                    cells: tet_data.cells.clone(),
+                },
+            );
+        }
+        let mut polyline_lookup: HashMap<u64, PolylineSelectionInfo> = HashMap::new();
+        if !app.pl_state.polyline_positions.is_empty() {
+            polyline_lookup.insert(
+                30,
+                PolylineSelectionInfo {
+                    positions: app.pl_state.polyline_positions.clone(),
+                    strip_lengths: app.pl_state.polyline_strip_lengths.clone(),
+                },
+            );
+        }
+        let mut curve_family_lookup: HashMap<u64, PolylineSelectionInfo> = HashMap::new();
+        if !app.pl_state.streamtube_positions.is_empty() {
+            curve_family_lookup.insert(
+                40,
+                PolylineSelectionInfo {
+                    positions: app.pl_state.streamtube_positions.clone(),
+                    strip_lengths: app.pl_state.streamtube_strip_lengths.clone(),
+                },
+            );
+        }
+        if !app.pl_state.tube_positions.is_empty() {
+            curve_family_lookup.insert(
+                41,
+                PolylineSelectionInfo {
+                    positions: app.pl_state.tube_positions.clone(),
+                    strip_lengths: app.pl_state.tube_strip_lengths.clone(),
+                },
+            );
+        }
+        if !app.pl_state.ribbon_positions.is_empty() {
+            curve_family_lookup.insert(
+                42,
+                PolylineSelectionInfo {
+                    positions: app.pl_state.ribbon_positions.clone(),
+                    strip_lengths: app.pl_state.ribbon_strip_lengths.clone(),
+                },
+            );
+        }
+        fd.interaction.sub_selection = Some(
+            SubSelectionRef::new(
+                &app.pl_state.sub_selection,
+                mesh_lookup,
+                model_matrices,
+                point_positions,
+            )
+            .with_voxels(voxel_lookup)
+            .with_cells(cell_lookup)
+            .with_polylines(polyline_lookup)
+            .with_curve_families(curve_family_lookup),
+        );
+        fd.interaction.sub_highlight_face_fill_colour = [1.0, 0.85, 0.0, 0.25];
+        fd.interaction.sub_highlight_edge_colour = [1.0, 0.85, 0.0, 1.0];
+        fd.interaction.sub_highlight_edge_width_px = 5.0;
+        fd.interaction.sub_highlight_vertex_size_px = 14.0;
+    }
+    // Orange crosshair marker at the click point.
+    if app.pl_state.show_hit_marker {
+        if let Some(marker_pos) = app.pl_state.hit_marker {
+            let mut marker = PointCloudItem::default();
+            marker.positions = vec![marker_pos.to_array()];
+            marker.point_size = 16.0;
+            marker.default_colour = [1.0, 0.35, 0.0, 1.0];
+            fd.scene.point_clouds.push(marker);
+        }
+    }
+    // Volume (pick_id=20).
+    if let Some(vol_id) = app.pl_state.volume_id {
+        let mut vol = viewport_lib::VolumeItem::default();
+        vol.volume_id = vol_id;
+        vol.model =
+            glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0)).to_cols_array_2d();
+        vol.bbox_min = [0.0, 0.0, 0.0];
+        vol.bbox_max = [4.0, 4.0, 4.0];
+        vol.scalar_range = (0.0, 1.0);
+        vol.threshold_min = 0.15;
+        vol.threshold_max = 1.0;
+        vol.opacity_scale = 0.6;
+        vol.enable_shading = false;
+        vol.appearance.unlit = true;
+        vol.selected = app.pl_state.selection.contains(20);
+        vol.pick_id = 20;
+        vol.volume_data = app
+            .pl_state
+            .volume_data
+            .as_ref()
+            .map(|d| std::sync::Arc::new(d.clone()));
+        fd.scene.volumes.push(vol);
+    }
+    // Polyline: 3 spiral strips (pick_id=30).
+    if !app.pl_state.polyline_positions.is_empty() {
+        let mut pl = PolylineItem::default();
+        pl.positions = app.pl_state.polyline_positions.clone();
+        pl.strip_lengths = app.pl_state.polyline_strip_lengths.clone();
+        pl.default_colour = [0.2, 0.85, 0.35, 1.0];
+        pl.line_width = 3.0;
+        pl.id = 30;
+        pl.selected = app.pl_state.selection.contains(30);
+        pl.appearance.unlit = true;
+        fd.scene.polylines.push(pl);
+    }
+    // Arrow glyphs (pick_id=31).
+    if !app.pl_state.arrow_glyph_positions.is_empty() {
+        let n = app.pl_state.arrow_glyph_positions.len();
+        let mut g = GlyphItem::default();
+        g.positions = app.pl_state.arrow_glyph_positions.clone();
+        g.vectors = vec![[0.0, 0.0, 1.0]; n];
+        g.scale = 0.8;
+        g.scale_by_magnitude = false;
+        g.use_default_colour = true;
+        g.default_colour = [0.75, 0.1, 1.0, 1.0];
+        g.glyph_type = GlyphType::Arrow;
+        g.id = 31;
+        g.selected = app.pl_state.selection.contains(31);
+        g.appearance.unlit = true;
+        fd.scene.glyphs.push(g);
+    }
+    // Tensor glyphs (pick_id=32).
+    if !app.pl_state.tensor_glyph_positions.is_empty() {
+        let mut tg = TensorGlyphItem::default();
+        tg.positions = app.pl_state.tensor_glyph_positions.clone();
+        tg.eigenvalues = app.pl_state.tensor_glyph_eigenvalues.clone();
+        tg.eigenvectors = app.pl_state.tensor_glyph_eigenvectors.clone();
+        tg.scale = 0.5;
+        tg.colourmap_id = Some(ColourmapId(BuiltinColourmap::Coolwarm as usize));
+        tg.id = 32;
+        tg.selected = app.pl_state.selection.contains(32);
+        tg.appearance.unlit = true;
+        fd.scene.tensor_glyphs.push(tg);
+    }
+    // Sprites: arc of 8 (pick_id=33).
+    if !app.pl_state.sprite_positions.is_empty() {
+        let mut s = SpriteItem::default();
+        s.positions = app.pl_state.sprite_positions.clone();
+        s.sizes = app.pl_state.sprite_sizes.clone();
+        s.colours = app.pl_state.sprite_colours.clone();
+        s.default_colour = [1.0, 0.90, 0.20, 1.0];
+        s.default_size = 28.0;
+        s.depth_write = true;
+        s.id = 33;
+        s.selected = app.pl_state.selection.contains(33);
+        s.appearance.unlit = true;
+        fd.scene.sprite_items.push(s);
+    }
+    // XO sprites (pick_id=34).
+    if !app.pl_state.xo_sprite_positions.is_empty() {
+        let mut s = SpriteItem::default();
+        s.positions = app.pl_state.xo_sprite_positions.clone();
+        s.sizes = app.pl_state.xo_sprite_sizes.clone();
+        s.colours = app.pl_state.xo_sprite_colours.clone();
+        s.default_colour = [0.5, 0.5, 1.0, 1.0];
+        s.default_size = 30.0;
+        s.depth_write = true;
+        s.id = 34;
+        s.selected = app.pl_state.selection.contains(34);
+        s.appearance.unlit = true;
+        fd.scene.sprite_items.push(s);
+    }
+    // Streamtube (pick_id=40).
+    if !app.pl_state.streamtube_positions.is_empty() {
+        let mut st = StreamtubeItem::default();
+        st.positions = app.pl_state.streamtube_positions.clone();
+        st.strip_lengths = app.pl_state.streamtube_strip_lengths.clone();
+        st.radius = 0.12;
+        st.colour = [0.3, 0.8, 0.55, 1.0];
+        st.id = 40;
+        st.selected = app.pl_state.selection.contains(40);
+        st.appearance.unlit = true;
+        fd.scene.streamtube_items.push(st);
+    }
+    // Tube (pick_id=41).
+    if !app.pl_state.tube_positions.is_empty() {
+        let mut tb = TubeItem::default();
+        tb.positions = app.pl_state.tube_positions.clone();
+        tb.strip_lengths = app.pl_state.tube_strip_lengths.clone();
+        tb.radius = 0.15;
+        tb.colour = [0.85, 0.4, 0.2, 1.0];
+        tb.id = 41;
+        tb.selected = app.pl_state.selection.contains(41);
+        tb.appearance.unlit = true;
+        fd.scene.tube_items.push(tb);
+    }
+    // Ribbon (pick_id=42).
+    if !app.pl_state.ribbon_positions.is_empty() {
+        let mut rb = RibbonItem::default();
+        rb.positions = app.pl_state.ribbon_positions.clone();
+        rb.strip_lengths = app.pl_state.ribbon_strip_lengths.clone();
+        rb.width = 0.4;
+        rb.colour = [0.6, 0.3, 0.9, 1.0];
+        rb.id = 42;
+        rb.selected = app.pl_state.selection.contains(42);
+        rb.appearance.unlit = true;
+        fd.scene.ribbon_items.push(rb);
+    }
+    // Volume surface slice (pick_id=51): plane tilted 60 degrees inside the volume bbox.
+    if let (Some(vol_id), Some(mesh_id)) =
+        (app.pl_state.volume_id, app.pl_state.surface_slice_mesh_id)
+    {
+        let mut item = VolumeSurfaceSliceItem::default();
+        item.volume_id = vol_id;
+        item.mesh_id = mesh_id;
+        item.bbox_min = [-2.0, -1.0, -6.0];
+        item.bbox_max = [2.0, 3.0, -2.0];
+        item.scalar_range = (0.0, 1.0);
+        item.model = (glam::Mat4::from_translation(glam::vec3(0.0, 1.0, -4.0))
+            * glam::Mat4::from_rotation_x(60_f32.to_radians()))
+        .to_cols_array_2d();
+        item.id = 51;
+        item.selected = app.pl_state.selection.contains(51);
+        item.appearance.unlit = true;
+        fd.scene.volume_surface_slices.push(item);
+    }
+    // Screen image (pick_id=52): checkerboard pinned to the top-right corner.
+    {
+        let iw = 48u32;
+        let ih = 48u32;
+        let pixels: Vec<[u8; 4]> = (0..iw * ih)
+            .map(|i| {
+                let x = i % iw;
+                let y = i / iw;
+                if (x / 6 + y / 6) % 2 == 0 {
+                    [255, 255, 255, 220]
+                } else {
+                    [0, 0, 0, 220]
+                }
+            })
+            .collect();
+        let mut img = ScreenImageItem::default();
+        img.pixels = pixels;
+        img.width = iw;
+        img.height = ih;
+        img.anchor = ImageAnchor::TopRight;
+        img.scale = 2.0;
+        img.id = 52;
+        img.selected = app.pl_state.selection.contains(52);
+        img.appearance.unlit = true;
+        fd.scene.screen_images.push(img);
+    }
+    // GPU implicit (pick_id=53): two smooth-blended spheres.
+    {
+        let centers: [[f32; 3]; 2] = [[13.0, 0.0, 0.0], [15.0, 0.0, 0.0]];
+        let colours: [[f32; 4]; 2] = [[0.9, 0.4, 0.2, 1.0], [0.2, 0.5, 1.0, 1.0]];
+        let mut item = GpuImplicitItem::default();
+        for i in 0..2 {
+            let mut prim = ImplicitPrimitive::zeroed();
+            prim.kind = 1; // sphere
+            prim.blend = 0.8;
+            prim.params[0] = centers[i][0];
+            prim.params[1] = centers[i][1];
+            prim.params[2] = centers[i][2];
+            prim.params[3] = 1.2; // radius
+            prim.colour = colours[i];
+            item.primitives.push(prim);
+        }
+        item.blend_mode = ImplicitBlendMode::SmoothUnion;
+        item.march_options = GpuImplicitOptions {
+            max_steps: 64,
+            step_scale: 0.9,
+            hit_threshold: 1e-3,
+            max_distance: app.camera.zfar,
+        };
+        item.id = 53;
+        item.selected = app.pl_state.selection.contains(53);
+        item.appearance.unlit = true;
+        fd.scene.gpu_implicit.push(item);
+    }
+    // GPU marching cubes (pick_id=54): gyroid surface.
+    if let Some(mc_vol_id) = app.pl_state.mc_volume_id {
+        let mut mat = Material::from_colour([0.5, 0.8, 0.55]);
+        mat.roughness = 0.4;
+        let mut appearance = AppearanceSettings::default();
+        appearance.unlit = true;
+        fd.scene.gpu_mc_jobs.push(GpuMarchingCubesJob {
+            volume_id: mc_vol_id,
+            isovalue: 0.0,
+            material: mat,
+            id: 54,
+            appearance,
+            selected: app.pl_state.selection.contains(54),
+            cpu_data: app.pl_state.mc_volume_data.clone(),
+        });
+    }
+}
+
+/// Set wireframe mode and selection outline colour on `fd` for showcase 33.
+pub(crate) fn pl_configure_frame(app: &App, fd: &mut FrameData) {
+    fd.viewport.wireframe_mode = app.pl_state.wireframe;
+    fd.interaction.outline_colour = [1.0, 0.85, 0.0, 1.0];
+}
+
+/// Returns true if the selection outline should be active for showcase 33.
+///
+/// Plug the return value into the `outline_selected` OR chain in the frame builder.
+pub(crate) fn pl_outline_selected(app: &App) -> bool {
+    if !app.pl_state.selection.is_empty() {
+        return true;
+    }
+    app.pl_state.sub_selection.iter().any(|(id, sub)| match sub {
+        SubObjectRef::Instance(_) => matches!(*id, 31 | 32 | 33 | 34),
+        SubObjectRef::Point(_) => *id == 100,
+        SubObjectRef::Splat(_) => *id == 10,
+        _ => false,
+    })
 }

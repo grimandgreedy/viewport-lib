@@ -531,10 +531,9 @@ impl App {
             return;
         }
 
-        // Scale all pixel dimensions by pixels_per_point so the textures are at
-        // native resolution on HiDPI displays.  The library NDC calculation uses
-        // physical viewport dimensions, so item.width physical pixels map to
-        // item.width / ppp logical pixels -- the same visual size as before.
+        // Generate pixel buffers at physical resolution for crisp HiDPI rendering.
+        // item.width/height stay in logical pixels (the visual size); the renderer
+        // infers the physical texture size from the pixel buffer length.
         let ppp = fd.camera.pixels_per_point;
         let px = |n: u32| ((n as f32 * ppp).round() as u32).max(1);
 
@@ -547,9 +546,9 @@ impl App {
                     (fc[2] * 255.0) as u8,
                     255u8,
                 ];
-                (c, px(72), px(28), px(4))
+                (c, 72u32, 28u32, 4u32)
             }
-            None => ([160u8, 160u8, 160u8, 80u8], px(40), px(16), px(3)),
+            None => ([160u8, 160u8, 160u8, 80u8], 40u32, 16u32, 3u32),
         };
 
         for (anchor, fx, fy) in [
@@ -559,7 +558,7 @@ impl App {
             (ImageAnchor::BottomRight, true, true),
         ] {
             let mut item = ScreenImageItem::default();
-            item.pixels = bracket_pixels(colour, size, arm_len, thick, fx, fy);
+            item.pixels = bracket_pixels(colour, px(size), px(arm_len), px(thick), fx, fy);
             item.width = size;
             item.height = size;
             item.anchor = anchor;
@@ -569,11 +568,10 @@ impl App {
         }
 
         if self.aux_state.active_frustum.is_some() {
-            let ch_size = px(40);
             let mut item = ScreenImageItem::default();
-            item.pixels = crosshair_pixels(colour, ch_size, px(3), px(5));
-            item.width = ch_size;
-            item.height = ch_size;
+            item.pixels = crosshair_pixels(colour, px(40), px(3), px(5));
+            item.width = 40;
+            item.height = 40;
             item.anchor = ImageAnchor::Center;
             item.scale = self.aux_state.img_scale;
             item.alpha = self.aux_state.img_alpha;
