@@ -1,6 +1,6 @@
 //! Shader hash pinning for runtime integrity validation.
 //!
-//! Provides FNV-1a 64-bit hashing for all 16 WGSL shaders in the viewport library.
+//! Provides FNV-1a 64-bit hashing for all 25 WGSL shaders in the viewport library.
 //! Use `current_shader_hashes()` to snapshot hashes at build time, then
 //! `validate_shader_hashes()` at startup to detect accidental shader changes.
 
@@ -33,7 +33,7 @@ pub struct ShaderEntry {
     pub source: &'static str,
 }
 
-/// All 24 shaders embedded via `include_str!`.
+/// All 25 shaders embedded via `include_str!`.
 ///
 /// Order matches the filesystem order in `src/shaders/`.
 pub const SHADERS: &[ShaderEntry] = &[
@@ -226,8 +226,8 @@ mod tests {
         let hashes = current_shader_hashes();
         assert_eq!(
             hashes.len(),
-            24,
-            "expected 24 shaders, got {}",
+            25,
+            "expected 25 shaders, got {}",
             hashes.len()
         );
     }
@@ -247,7 +247,7 @@ mod tests {
         let hashes = current_shader_hashes();
         let expected: Vec<(&str, u64)> = hashes.iter().map(|(n, h)| (*n, *h)).collect();
         let result = validate_shader_hashes(&expected);
-        assert_eq!(result.valid, 24);
+        assert_eq!(result.valid, 25);
         assert!(result.mismatched.is_empty());
     }
 
