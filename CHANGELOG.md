@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.14.0] (dev, current, unreleased)
+## [0.14.0]
 
 ### Breaking changes
 - HDR rendering is now on by default. Applications that relied on the old LDR-only path should explicitly disable post-processing. The main rendering entry points support both modes; the paint-to-texture helpers remain LDR-only.
