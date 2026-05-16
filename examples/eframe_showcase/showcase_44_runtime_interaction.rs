@@ -12,8 +12,8 @@ use std::collections::HashMap;
 
 use eframe::egui;
 use viewport_lib::{
-    ActionFrame, GizmoAxis, GizmoMode, Material, MeshId, PickAccelerator, RuntimeFrameContext,
-    ViewportRuntime,
+    ActionFrame, Aabb, GizmoAxis, GizmoMode, Material, MeshId, PickAccelerator,
+    RuntimeFrameContext, ViewportRuntime,
     scene::Scene,
     selection::Selection,
 };
@@ -31,10 +31,15 @@ pub(crate) struct RtInteractState {
     pub runtime: ViewportRuntime,
     pub pick_acc: Option<PickAccelerator>,
     pub mesh_id: Option<MeshId>,
+    /// AABB of the box mesh in local space, cached so the BVH can be rebuilt
+    /// after manipulation without needing access to the renderer.
+    pub mesh_aabb: Option<Aabb>,
     /// Last known cursor position in viewport-local pixels.
     pub last_cursor: glam::Vec2,
     /// True while the primary button is held.
     pub left_held: bool,
+    /// Tracks manipulation active state from the previous frame to detect commit.
+    was_manipulating: bool,
 }
 
 impl Default for RtInteractState {
@@ -48,8 +53,10 @@ impl Default for RtInteractState {
                 .with_manipulation_system(),
             pick_acc: None,
             mesh_id: None,
+            mesh_aabb: None,
             last_cursor: glam::Vec2::ZERO,
             left_held: false,
+            was_manipulating: false,
         }
     }
 }
@@ -99,6 +106,7 @@ pub(crate) fn build_rt_interact_scene(
         .resources()
         .mesh(mesh_id)
         .map(|m| m.aabb);
+    app.rt_interact_state.mesh_aabb = mesh_aabb;
     app.rt_interact_state.pick_acc =
         Some(PickAccelerator::build_from_scene(scene, |mid| {
             if mid == mesh_id { mesh_aabb } else { None }
@@ -174,11 +182,27 @@ pub(crate) fn update_rt_interact(
         shift_held,
     };
 
+    let was = app.rt_interact_state.was_manipulating;
     app.rt_interact_state.runtime.step(
         &mut app.rt_interact_state.scene,
         &mut app.rt_interact_state.selection,
         &frame_ctx,
     );
+    let now = app.rt_interact_state.runtime.is_manipulating();
+    app.rt_interact_state.was_manipulating = now;
+
+    // Rebuild the pick BVH when a manipulation session ends so transforms
+    // are reflected in subsequent picks.
+    if was && !now {
+        if let Some(mid) = app.rt_interact_state.mesh_id {
+            let mesh_aabb = app.rt_interact_state.mesh_aabb;
+            let scene = &app.rt_interact_state.scene;
+            app.rt_interact_state.pick_acc =
+                Some(PickAccelerator::build_from_scene(scene, |m| {
+                    if m == mid { mesh_aabb } else { None }
+                }));
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
