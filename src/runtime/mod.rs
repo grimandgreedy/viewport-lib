@@ -58,7 +58,7 @@ pub use camera_follow::CameraFollow;
 pub use context::{RuntimeFrameContext, RuntimeStepContext, SimulationStepContext};
 pub use events::RuntimeEventBus;
 pub use mode::SceneRuntimeMode;
-pub use output::{ContactEvent, NodeTransformOp, RuntimeOutput, SelectionOp, TransformWriteback};
+pub use output::{CameraCommand, ContactEvent, NodeTransformOp, RuntimeOutput, SelectionOp, TransformWriteback};
 pub use plugin::{phase, RuntimeEvent, RuntimePhase, RuntimePlugin};
 pub use plugins::{
     AnimationPlugin, AnimationTrack, Constraint, ConstraintPlugin, Keyframe, PhysicsBody,

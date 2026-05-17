@@ -1,5 +1,6 @@
 //! Runtime output types: transform ops, selection ops, contact events, and generic events.
 
+use crate::camera::camera::{Camera, CameraTarget};
 use crate::interaction::selection::{NodeId, Selection};
 use super::events::RuntimeEventBus;
 
@@ -101,6 +102,39 @@ pub struct ContactEvent {
     pub contact_point: glam::Vec3,
 }
 
+/// A camera state change produced by a runtime plugin.
+///
+/// Accumulated in [`RuntimeOutput::camera_commands`] and applied to the app-owned
+/// [`Camera`] by calling [`RuntimeOutput::apply_camera_commands`].
+///
+/// Commands are applied in the order they were emitted (plugin priority order,
+/// then registration order within the same priority). Each command builds on the
+/// result of the previous one in the same frame.
+///
+/// This is independent of [`super::CameraFollow`]: `camera_follow_target` and
+/// `camera_commands` coexist and the app decides which to apply.
+#[derive(Debug, Clone)]
+pub enum CameraCommand {
+    /// Set the orbit center (pivot point) to an absolute world position.
+    SetCenter(glam::Vec3),
+    /// Add a world-space delta to the orbit center.
+    OffsetCenter(glam::Vec3),
+    /// Set the camera distance from the center. Clamped to a small positive value.
+    SetDistance(f32),
+    /// Set the camera orientation.
+    SetOrientation(glam::Quat),
+    /// Blend center, distance, and orientation toward a target state.
+    ///
+    /// `weight` is in `[0, 1]`. At `1.0` the camera snaps to `target` immediately.
+    /// Smaller values produce smooth motion when emitted every frame.
+    BlendToward {
+        /// Target camera state to blend toward.
+        target: CameraTarget,
+        /// Blend weight in `[0, 1]`.
+        weight: f32,
+    },
+}
+
 /// Output produced by one call to [`super::ViewportRuntime::step`].
 ///
 /// `node_transform_ops` have already been applied to the scene and the snapshot
@@ -109,6 +143,8 @@ pub struct ContactEvent {
 ///
 /// Plugin-authored events of any type are collected in `events`. Use
 /// `output.events.read::<T>()` or `output.events.drain::<T>()` to consume them.
+/// Plugin-authored camera changes are in `camera_commands`; apply them with
+/// `output.apply_camera_commands(&mut camera)`.
 #[derive(Default)]
 pub struct RuntimeOutput {
     /// Transform ops applied to the scene during this step.
@@ -124,9 +160,50 @@ pub struct RuntimeOutput {
     /// when no follow binding is set or the target node was not found. Apply to
     /// `camera.center` for orbit-camera follow behavior.
     pub camera_follow_target: Option<glam::Vec3>,
+    /// Camera commands emitted by plugins this frame. Apply with
+    /// [`Self::apply_camera_commands`]. Empty when no camera plugin is active.
+    pub camera_commands: Vec<CameraCommand>,
     /// Generic typed event bus. Plugins emit events via `ctx.output.events.emit(MyEvent { .. })`.
     /// The app reads them after `step()` via `output.events.read::<MyEvent>()` or
     /// `output.events.drain::<MyEvent>()`. Events are cleared each frame because
     /// `RuntimeOutput` is constructed fresh on every `step` call.
     pub events: RuntimeEventBus,
+}
+
+impl RuntimeOutput {
+    /// Apply all camera commands in emission order to `camera`.
+    ///
+    /// Call this after [`super::ViewportRuntime::step`] returns, before rendering.
+    /// Has no effect if `camera_commands` is empty.
+    ///
+    /// Commands are applied sequentially: each one builds on the result of the
+    /// previous. A `BlendToward` command blends from whatever state the camera
+    /// is in after all prior commands, not from the frame-start state.
+    pub fn apply_camera_commands(&self, camera: &mut Camera) {
+        for cmd in &self.camera_commands {
+            match cmd {
+                CameraCommand::SetCenter(c) => {
+                    camera.center = *c;
+                }
+                CameraCommand::OffsetCenter(d) => {
+                    camera.center += *d;
+                }
+                CameraCommand::SetDistance(d) => {
+                    camera.set_distance(*d);
+                }
+                CameraCommand::SetOrientation(q) => {
+                    camera.orientation = q.normalize();
+                }
+                CameraCommand::BlendToward { target, weight } => {
+                    let w = weight.clamp(0.0, 1.0);
+                    camera.center = camera.center.lerp(target.center, w);
+                    camera.distance = camera.distance + (target.distance - camera.distance) * w;
+                    camera.distance = camera.distance.max(0.001);
+                    camera.orientation = camera.orientation
+                        .slerp(target.orientation.normalize(), w)
+                        .normalize();
+                }
+            }
+        }
+    }
 }
