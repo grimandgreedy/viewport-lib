@@ -53,6 +53,8 @@ pub mod plugin;
 /// Built-in animation, constraint, and physics plugins.
 pub mod plugins;
 pub mod resources;
+/// Skeleton, pose, and CPU linear blend skinning.
+pub mod skeleton;
 pub mod snapshot;
 /// Built-in interaction systems: SelectionSystem and ManipulationSystem.
 pub mod systems;
@@ -64,12 +66,13 @@ pub use debug_draw::{DebugDraw, DebugLayer, DebugPrim};
 pub use events::RuntimeEventBus;
 pub use jobs::{JobPoll, JobSender, JobSlot};
 pub use mode::SceneRuntimeMode;
-pub use output::{CameraCommand, ContactEvent, NodeTransformOp, RuntimeOutput, SelectionOp, TransformWriteback};
+pub use output::{CameraCommand, ContactEvent, NodeTransformOp, RuntimeOutput, SelectionOp, SkinnedMeshUpdate, TransformWriteback};
 pub use plugin::{phase, RuntimeEvent, RuntimePhase, RuntimePlugin};
 pub use plugins::{
     AnimationPlugin, AnimationTrack, Constraint, ConstraintPlugin, Keyframe, PhysicsBody,
-    PhysicsLitePlugin,
+    PhysicsLitePlugin, SkeletonPlugin,
 };
+pub use skeleton::{Joint, JointMatrices, Pose, Skeleton, apply_skin};
 pub use resources::RuntimeResources;
 pub use snapshot::{TransformSnapshot, TransformSnapshotTable};
 pub use systems::{ManipulationSystem, SelectionSystem};
@@ -1017,6 +1020,244 @@ mod tests {
             JobPoll::Ready(v) => assert_eq!(v, 55),
             _ => panic!("expected Ready"),
         }
+    }
+
+    // ---- skeleton / skinning tests ------------------------------------------
+
+    use crate::resources::SkinWeights;
+    use crate::runtime::skeleton::{Joint, JointMatrices, Pose, Skeleton, apply_skin};
+    use crate::runtime::plugins::SkeletonPlugin;
+
+    fn two_joint_skeleton() -> Skeleton {
+        Skeleton::new(vec![
+            Joint {
+                name: "root".into(),
+                parent: None,
+                inverse_bind: glam::Affine3A::IDENTITY,
+            },
+            Joint {
+                name: "child".into(),
+                parent: Some(0),
+                inverse_bind: glam::Affine3A::from_translation(-glam::Vec3::Y),
+            },
+        ])
+    }
+
+    fn single_vertex_weights(joint: u8, weight: f32) -> SkinWeights {
+        SkinWeights {
+            joint_indices: vec![[joint, 0, 0, 0]],
+            joint_weights: vec![[weight, 0.0, 0.0, 0.0]],
+        }
+    }
+
+    #[test]
+    fn test_skeleton_joint_count() {
+        let sk = two_joint_skeleton();
+        assert_eq!(sk.joint_count(), 2);
+    }
+
+    #[test]
+    fn test_skeleton_find_joint() {
+        let sk = two_joint_skeleton();
+        assert_eq!(sk.find_joint("root"), Some(0));
+        assert_eq!(sk.find_joint("child"), Some(1));
+        assert_eq!(sk.find_joint("missing"), None);
+    }
+
+    #[test]
+    fn test_pose_identity_transforms() {
+        let pose = Pose::identity(3);
+        assert_eq!(pose.joint_count(), 3);
+        for t in &pose.local_transforms {
+            assert_eq!(*t, glam::Affine3A::IDENTITY);
+        }
+    }
+
+    #[test]
+    fn test_joint_matrices_single_root_identity() {
+        let sk = Skeleton::new(vec![Joint {
+            name: "root".into(),
+            parent: None,
+            inverse_bind: glam::Affine3A::IDENTITY,
+        }]);
+        let pose = Pose::identity(1);
+        let mats = JointMatrices::compute(&sk, &pose);
+        let m = mats.as_slice()[0];
+        // identity local * identity inverse_bind = identity
+        assert!(m.matrix3.col(0).abs_diff_eq(glam::Vec3A::X, 1e-5));
+        assert!(m.translation.abs_diff_eq(glam::Vec3A::ZERO, 1e-5));
+    }
+
+    #[test]
+    fn test_joint_matrices_parent_child_chain() {
+        // Root translated by (1,0,0) in local space.
+        // Child at local identity, parent = 0.
+        // child.inverse_bind offsets by -Y.
+        // Expected child world = root_world * child_local = translate(1,0,0)
+        // Final matrix = world * inverse_bind = translate(1,0,0) * translate(0,-1,0) = translate(1,-1,0)
+        let sk = two_joint_skeleton();
+        let mut pose = Pose::identity(2);
+        pose.local_transforms[0] = glam::Affine3A::from_translation(glam::Vec3::X);
+        let mats = JointMatrices::compute(&sk, &pose);
+        let child = mats.as_slice()[1];
+        let expected_translation = glam::Vec3A::new(1.0, -1.0, 0.0);
+        assert!(
+            child.translation.abs_diff_eq(expected_translation, 1e-5),
+            "child translation was {:?}, expected {:?}",
+            child.translation,
+            expected_translation,
+        );
+    }
+
+    #[test]
+    fn test_apply_skin_identity_pose() {
+        let sk = Skeleton::new(vec![Joint {
+            name: "root".into(),
+            parent: None,
+            inverse_bind: glam::Affine3A::IDENTITY,
+        }]);
+        let pose = Pose::identity(1);
+        let mats = JointMatrices::compute(&sk, &pose);
+
+        let positions = vec![[1.0f32, 2.0, 3.0]];
+        let normals = vec![[0.0f32, 1.0, 0.0]];
+        let weights = single_vertex_weights(0, 1.0);
+        let (out_pos, out_nrm) = apply_skin(&positions, &normals, &weights, &mats);
+
+        assert!((out_pos[0][0] - 1.0).abs() < 1e-5);
+        assert!((out_pos[0][1] - 2.0).abs() < 1e-5);
+        assert!((out_pos[0][2] - 3.0).abs() < 1e-5);
+        assert!((out_nrm[0][1] - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_apply_skin_single_joint_full_weight() {
+        // Joint 0 translates by (5,0,0). Vertex at origin must move to (5,0,0).
+        let sk = Skeleton::new(vec![Joint {
+            name: "root".into(),
+            parent: None,
+            inverse_bind: glam::Affine3A::IDENTITY,
+        }]);
+        let mut pose = Pose::identity(1);
+        pose.local_transforms[0] = glam::Affine3A::from_translation(glam::Vec3::new(5.0, 0.0, 0.0));
+        let mats = JointMatrices::compute(&sk, &pose);
+
+        let positions = vec![[0.0f32, 0.0, 0.0]];
+        let normals = vec![[1.0f32, 0.0, 0.0]];
+        let weights = single_vertex_weights(0, 1.0);
+        let (out_pos, _) = apply_skin(&positions, &normals, &weights, &mats);
+        assert!((out_pos[0][0] - 5.0).abs() < 1e-5);
+        assert!(out_pos[0][1].abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_apply_skin_two_joint_blend() {
+        // Two joints: joint 0 at (0,0,0), joint 1 at (10,0,0).
+        // Vertex at origin, 50/50 blend -> output at (5,0,0).
+        let sk = Skeleton::new(vec![
+            Joint { name: "a".into(), parent: None, inverse_bind: glam::Affine3A::IDENTITY },
+            Joint { name: "b".into(), parent: None, inverse_bind: glam::Affine3A::IDENTITY },
+        ]);
+        let mut pose = Pose::identity(2);
+        pose.local_transforms[1] = glam::Affine3A::from_translation(glam::Vec3::new(10.0, 0.0, 0.0));
+        let mats = JointMatrices::compute(&sk, &pose);
+
+        let positions = vec![[0.0f32, 0.0, 0.0]];
+        let normals = vec![[1.0f32, 0.0, 0.0]];
+        let weights = SkinWeights {
+            joint_indices: vec![[0, 1, 0, 0]],
+            joint_weights: vec![[0.5, 0.5, 0.0, 0.0]],
+        };
+        let (out_pos, _) = apply_skin(&positions, &normals, &weights, &mats);
+        assert!((out_pos[0][0] - 5.0).abs() < 1e-5, "expected 5.0, got {}", out_pos[0][0]);
+    }
+
+    #[test]
+    fn test_apply_skin_normal_renormalized() {
+        // Even with a uniform scale, output normals must have unit length.
+        let sk = Skeleton::new(vec![Joint {
+            name: "root".into(),
+            parent: None,
+            inverse_bind: glam::Affine3A::IDENTITY,
+        }]);
+        let mut pose = Pose::identity(1);
+        pose.local_transforms[0] = glam::Affine3A::from_scale(glam::Vec3::splat(2.0));
+        let mats = JointMatrices::compute(&sk, &pose);
+
+        let positions = vec![[1.0f32, 0.0, 0.0]];
+        let normals = vec![[1.0f32, 0.0, 0.0]];
+        let weights = single_vertex_weights(0, 1.0);
+        let (_, out_nrm) = apply_skin(&positions, &normals, &weights, &mats);
+        let len = (out_nrm[0][0].powi(2) + out_nrm[0][1].powi(2) + out_nrm[0][2].powi(2)).sqrt();
+        assert!((len - 1.0).abs() < 1e-5, "normal length was {len}");
+    }
+
+    #[test]
+    fn test_skeleton_plugin_writes_update_to_output() {
+        let sk = Skeleton::new(vec![Joint {
+            name: "root".into(),
+            parent: None,
+            inverse_bind: glam::Affine3A::IDENTITY,
+        }]);
+        let positions = vec![[0.0f32, 0.0, 0.0]];
+        let normals = vec![[0.0f32, 1.0, 0.0]];
+        let weights = single_vertex_weights(0, 1.0);
+        let mesh_id = crate::resources::mesh_store::MeshId(0);
+
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(SkeletonPlugin::new(sk, mesh_id, positions, normals, weights));
+
+        // Insert a pose so the plugin fires.
+        runtime.resources_mut().insert(Pose::identity(1));
+
+        let output = run_one_frame(&mut runtime);
+        assert_eq!(output.skinned_mesh_updates.len(), 1);
+        assert_eq!(output.skinned_mesh_updates[0].mesh_id, mesh_id);
+    }
+
+    #[test]
+    fn test_skinned_mesh_updates_empty_without_pose() {
+        let sk = Skeleton::new(vec![Joint {
+            name: "root".into(),
+            parent: None,
+            inverse_bind: glam::Affine3A::IDENTITY,
+        }]);
+        let mesh_id = crate::resources::mesh_store::MeshId(0);
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(SkeletonPlugin::new(
+                sk,
+                mesh_id,
+                vec![[0.0f32; 3]],
+                vec![[0.0f32, 1.0, 0.0]],
+                single_vertex_weights(0, 1.0),
+            ));
+        // No Pose inserted -> no update.
+        let output = run_one_frame(&mut runtime);
+        assert!(output.skinned_mesh_updates.is_empty());
+    }
+
+    #[test]
+    fn test_skinned_mesh_updates_cleared_each_frame() {
+        let sk = Skeleton::new(vec![Joint {
+            name: "root".into(),
+            parent: None,
+            inverse_bind: glam::Affine3A::IDENTITY,
+        }]);
+        let mesh_id = crate::resources::mesh_store::MeshId(0);
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(SkeletonPlugin::new(
+                sk,
+                mesh_id,
+                vec![[0.0f32; 3]],
+                vec![[0.0f32, 1.0, 0.0]],
+                single_vertex_weights(0, 1.0),
+            ));
+        runtime.resources_mut().insert(Pose::identity(1));
+
+        run_one_frame(&mut runtime);
+        let output2 = run_one_frame(&mut runtime);
+        // Each frame produces exactly 1 update, not 2.
+        assert_eq!(output2.skinned_mesh_updates.len(), 1);
     }
 }
 

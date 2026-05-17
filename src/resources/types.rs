@@ -150,6 +150,20 @@ pub enum BuiltinColourmap {
     RdBu = 9,
 }
 
+/// Per-vertex joint influence data for CPU linear blend skinning.
+///
+/// Each vertex has up to 4 joint influences. Weights per vertex must sum to
+/// 1.0; unused slots should carry weight 0.0 and index 0.
+/// Both `joint_indices` and `joint_weights` must be the same length as the
+/// `positions` array of the `MeshData` they accompany.
+#[derive(Clone)]
+pub struct SkinWeights {
+    /// Joint indices for each vertex: 4 per vertex, parallel to positions.
+    pub joint_indices: Vec<[u8; 4]>,
+    /// Blend weights for each vertex: 4 per vertex, normalized to sum 1.0.
+    pub joint_weights: Vec<[f32; 4]>,
+}
+
 /// Raw mesh data for upload to the GPU. Framework-agnostic representation.
 #[non_exhaustive]
 pub struct MeshData {
@@ -171,6 +185,13 @@ pub struct MeshData {
     /// Keys are user-defined attribute names (e.g. `"pressure"`, `"velocity_mag"`).
     /// Cell attributes are averaged to vertices at upload time.
     pub attributes: std::collections::HashMap<String, AttributeData>,
+    /// Per-vertex skin weights for skeletal animation. `None` for static meshes.
+    ///
+    /// When supplied, the CPU skinning path in [`crate::runtime::skeleton`] can
+    /// deform this mesh each frame from a [`crate::runtime::Pose`] and upload
+    /// updated positions/normals via
+    /// [`crate::ViewportGpuResources::write_mesh_positions_normals`].
+    pub skin_weights: Option<SkinWeights>,
 }
 
 impl Default for MeshData {
@@ -182,6 +203,7 @@ impl Default for MeshData {
             uvs: None,
             tangents: None,
             attributes: std::collections::HashMap::new(),
+            skin_weights: None,
         }
     }
 }

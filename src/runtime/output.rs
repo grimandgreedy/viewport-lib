@@ -2,6 +2,7 @@
 
 use crate::camera::camera::{Camera, CameraTarget};
 use crate::interaction::selection::{NodeId, Selection};
+use crate::resources::mesh_store::MeshId;
 use super::events::RuntimeEventBus;
 
 /// Write buffer for transform changes produced by plugins.
@@ -135,6 +136,26 @@ pub enum CameraCommand {
     },
 }
 
+/// A per-mesh deformation update produced by a skinning plugin.
+///
+/// Returned in [`RuntimeOutput::skinned_mesh_updates`]. Apply after `step()`:
+///
+/// ```rust,ignore
+/// for u in &output.skinned_mesh_updates {
+///     renderer.resources_mut()
+///         .write_mesh_positions_normals(queue, u.mesh_id, &u.positions, &u.normals)
+///         .ok();
+/// }
+/// ```
+pub struct SkinnedMeshUpdate {
+    /// The mesh to deform.
+    pub mesh_id: MeshId,
+    /// Skinned vertex positions in local space.
+    pub positions: Vec<[f32; 3]>,
+    /// Skinned vertex normals.
+    pub normals: Vec<[f32; 3]>,
+}
+
 /// Output produced by one call to [`super::ViewportRuntime::step`].
 ///
 /// `node_transform_ops` have already been applied to the scene and the snapshot
@@ -168,6 +189,10 @@ pub struct RuntimeOutput {
     /// `output.events.drain::<MyEvent>()`. Events are cleared each frame because
     /// `RuntimeOutput` is constructed fresh on every `step` call.
     pub events: RuntimeEventBus,
+    /// Per-mesh deformation updates from skinning plugins. Apply after `step()` by
+    /// calling `write_mesh_positions_normals` on each entry. Empty when no
+    /// [`super::plugins::SkeletonPlugin`] is active.
+    pub skinned_mesh_updates: Vec<SkinnedMeshUpdate>,
 }
 
 impl RuntimeOutput {

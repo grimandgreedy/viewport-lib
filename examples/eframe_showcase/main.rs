@@ -64,6 +64,7 @@ mod showcase_43_scene_runtime;
 mod showcase_44_runtime_interaction;
 mod showcase_45_simulation;
 mod showcase_46_debug_draw;
+mod showcase_47_skinned_animation;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -211,6 +212,7 @@ fn main() -> eframe::Result {
                 rt_interact_state: showcase_44_runtime_interaction::RtInteractState::default(),
                 sim45_state: showcase_45_simulation::Sim45State::default(),
                 dbg_draw_state: showcase_46_debug_draw::DbgDrawState::default(),
+                skin47_state: showcase_47_skinned_animation::Skin47State::default(),
             }))
         }),
     )
@@ -270,6 +272,7 @@ enum ShowcaseMode {
     SceneRuntimeInteract,
     Simulation,
     DebugDraw,
+    SkinnedAnimation,
 }
 
 impl ShowcaseMode {
@@ -321,6 +324,7 @@ impl ShowcaseMode {
             Self::SceneRuntimeInteract => "44: Runtime Interaction",
             Self::Simulation => "45: Simulation & Animation",
             Self::DebugDraw => "46: Debug Draw",
+            Self::SkinnedAnimation => "47: Skeletal Animation",
         }
     }
 }
@@ -485,6 +489,9 @@ pub(crate) struct App {
 
     // --- Showcase 46 ---
     pub(crate) dbg_draw_state: showcase_46_debug_draw::DbgDrawState,
+
+    // --- Showcase 47 ---
+    pub(crate) skin47_state: showcase_47_skinned_animation::Skin47State,
 }
 
 // ---------------------------------------------------------------------------
@@ -663,6 +670,8 @@ impl eframe::App for App {
                     ShowcaseMode::SceneRuntime,
                     ShowcaseMode::SceneRuntimeInteract,
                     ShowcaseMode::Simulation,
+                    ShowcaseMode::DebugDraw,
+                    ShowcaseMode::SkinnedAnimation,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1338,6 +1347,12 @@ impl eframe::App for App {
                     showcase_42_gaussian_splats::update_gaussian_splats(self, dt);
                     ctx.request_repaint();
                 }
+                // ----- Skinned animation: step runtime -----
+                if self.mode == ShowcaseMode::SkinnedAnimation && self.skin47_state.built {
+                    let dt = ctx.input(|i| i.stable_dt.min(0.25));
+                    showcase_47_skinned_animation::update_skin47(self, dt);
+                    ctx.request_repaint();
+                }
                 // ----- Debug draw: step simulation -----
                 if self.mode == ShowcaseMode::DebugDraw && self.dbg_draw_state.built {
                     let dt = ctx.input(|i| i.stable_dt.min(0.25));
@@ -1402,7 +1417,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 46] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 47] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1449,6 +1464,7 @@ impl App {
             ShowcaseMode::SceneRuntimeInteract,
             ShowcaseMode::Simulation,
             ShowcaseMode::DebugDraw,
+            ShowcaseMode::SkinnedAnimation,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1577,6 +1593,7 @@ impl App {
             ShowcaseMode::SceneRuntimeInteract => !self.rt_interact_state.built,
             ShowcaseMode::Simulation => !self.sim45_state.built,
             ShowcaseMode::DebugDraw => !self.dbg_draw_state.built,
+            ShowcaseMode::SkinnedAnimation => !self.skin47_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -2010,6 +2027,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::SkinnedAnimation => {
+                showcase_47_skinned_animation::build_skin47_scene(self, renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::new(0.0, 0.0, 2.0),
+                    distance: 12.0,
+                    orientation: glam::Quat::from_rotation_z(0.5)
+                        * glam::Quat::from_rotation_x(1.0),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2111,6 +2138,9 @@ impl App {
             }
             ShowcaseMode::DebugDraw => {
                 showcase_46_debug_draw::controls_dbg_draw(self, ui)
+            }
+            ShowcaseMode::SkinnedAnimation => {
+                showcase_47_skinned_animation::controls_skin47(self, ui)
             }
         }
     }
@@ -2863,6 +2893,29 @@ impl App {
                     ..LightingSettings::default()
                 };
                 let sg = self.dbg_draw_state.scene.version();
+                (items, Some(BG_COLOUR), lighting, sg, 0)
+            }
+
+            ShowcaseMode::SkinnedAnimation => {
+                // Apply pending skinned mesh updates to GPU before collecting render items.
+                let rs = frame.wgpu_render_state().expect("wgpu required");
+                let mut guard = rs.renderer.write();
+                if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
+                    showcase_47_skinned_animation::apply_skin47_updates(self, renderer);
+                }
+                drop(guard);
+                let items = if self.skin47_state.built {
+                    showcase_47_skinned_animation::skin47_scene_items(self)
+                } else {
+                    Vec::new()
+                };
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.5,
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [0.7, 0.7, 0.7],
+                    ..LightingSettings::default()
+                };
+                let sg = self.skin47_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
         };

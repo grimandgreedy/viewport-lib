@@ -217,14 +217,15 @@ pub use resources::{
     CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, ComputeFilterResult, FontError,
     FontHandle, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode,
     ImplicitPrimitive, LightUniform, LightsUniform, MatcapId, MeshData, ProjectedTetId,
-    SingleLightUniform, ViewportGpuResources, VolumeGpuId, VolumeId, lerp_attributes,
+    SingleLightUniform, SkinWeights, ViewportGpuResources, VolumeGpuId, VolumeId, lerp_attributes,
 };
 
 pub use runtime::{
     AnimationPlugin, AnimationTrack, CameraFollow, Constraint, ConstraintPlugin, ContactEvent,
-    DebugDraw, DebugLayer, DebugPrim, FixedStepIter, FixedTimestep, Keyframe,
-    ManipulationSystem, NodeTransformOp, PhysicsBody, PhysicsLitePlugin, RuntimeFrameContext,
+    DebugDraw, DebugLayer, DebugPrim, FixedStepIter, FixedTimestep, Joint, JointMatrices, Keyframe,
+    ManipulationSystem, NodeTransformOp, PhysicsBody, PhysicsLitePlugin, Pose, RuntimeFrameContext,
     RuntimeOutput, RuntimePhase, RuntimePlugin, RuntimeStepContext, SceneRuntimeMode,
-    SelectionOp, SelectionSystem, SimulationStepContext, TransformSnapshot,
-    TransformSnapshotTable, TransformWriteback, ViewportRuntime,
+    SelectionOp, SelectionSystem, SimulationStepContext, Skeleton, SkeletonPlugin,
+    SkinnedMeshUpdate, TransformSnapshot, TransformSnapshotTable, TransformWriteback,
+    ViewportRuntime, apply_skin,
 };

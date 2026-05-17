@@ -6,7 +6,9 @@
 pub mod animation;
 pub mod constraint;
 pub mod physics_lite;
+pub mod skeleton_plugin;
 
 pub use animation::{AnimationPlugin, AnimationTrack, Keyframe};
 pub use constraint::{Constraint, ConstraintPlugin};
 pub use physics_lite::{PhysicsBody, PhysicsLitePlugin};
+pub use skeleton_plugin::SkeletonPlugin;
