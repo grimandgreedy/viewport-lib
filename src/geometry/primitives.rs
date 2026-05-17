@@ -143,7 +143,7 @@ pub fn plane(width: f32, depth: f32) -> MeshData {
     }
 }
 
-/// Cylinder centered at the origin, axis along Y.
+/// Cylinder centered at the origin, axis along Z.
 ///
 /// `radius` : circle radius. `height` : total height. `sectors` : circumference subdivisions (minimum 3).
 pub fn cylinder(radius: f32, height: f32, sectors: u32) -> MeshData {
@@ -156,13 +156,13 @@ pub fn cylinder(radius: f32, height: f32, sectors: u32) -> MeshData {
     let mut indices: Vec<u32> = Vec::new();
 
     // Side vertices: two rings (bottom then top)
-    for &y in &[-half_h, half_h] {
+    for &z in &[-half_h, half_h] {
         for j in 0..sectors {
             let angle = j as f32 * step;
             let x = radius * angle.cos();
-            let z = radius * angle.sin();
+            let y = radius * angle.sin();
             positions.push([x, y, z]);
-            normals.push([angle.cos(), 0.0, angle.sin()]);
+            normals.push([angle.cos(), angle.sin(), 0.0]);
         }
     }
 
@@ -172,40 +172,40 @@ pub fn cylinder(radius: f32, height: f32, sectors: u32) -> MeshData {
         let next = (j + 1) % sectors;
         let t = j + sectors;
         let t_next = next + sectors;
-        indices.extend_from_slice(&[b, t_next, next, b, t, t_next]);
+        indices.extend_from_slice(&[b, next, t_next, b, t_next, t]);
     }
 
     // Cap centers
     let bottom_center = positions.len() as u32;
-    positions.push([0.0, -half_h, 0.0]);
-    normals.push([0.0, -1.0, 0.0]);
+    positions.push([0.0, 0.0, -half_h]);
+    normals.push([0.0, 0.0, -1.0]);
 
     let top_center = positions.len() as u32;
-    positions.push([0.0, half_h, 0.0]);
-    normals.push([0.0, 1.0, 0.0]);
+    positions.push([0.0, 0.0, half_h]);
+    normals.push([0.0, 0.0, 1.0]);
 
     // Cap rim vertices (separate so normals point up/down)
     let bottom_rim_start = positions.len() as u32;
     for j in 0..sectors {
         let angle = j as f32 * step;
-        positions.push([radius * angle.cos(), -half_h, radius * angle.sin()]);
-        normals.push([0.0, -1.0, 0.0]);
+        positions.push([radius * angle.cos(), radius * angle.sin(), -half_h]);
+        normals.push([0.0, 0.0, -1.0]);
     }
 
     let top_rim_start = positions.len() as u32;
     for j in 0..sectors {
         let angle = j as f32 * step;
-        positions.push([radius * angle.cos(), half_h, radius * angle.sin()]);
-        normals.push([0.0, 1.0, 0.0]);
+        positions.push([radius * angle.cos(), radius * angle.sin(), half_h]);
+        normals.push([0.0, 0.0, 1.0]);
     }
 
     // Cap faces
     for j in 0..sectors as u32 {
         let next = (j + 1) % sectors as u32;
         // Bottom
-        indices.extend_from_slice(&[bottom_center, bottom_rim_start + j, bottom_rim_start + next]);
+        indices.extend_from_slice(&[bottom_center, bottom_rim_start + next, bottom_rim_start + j]);
         // Top
-        indices.extend_from_slice(&[top_center, top_rim_start + next, top_rim_start + j]);
+        indices.extend_from_slice(&[top_center, top_rim_start + j, top_rim_start + next]);
     }
 
     MeshData {
@@ -268,7 +268,7 @@ pub fn cuboid(width: f32, height: f32, depth: f32) -> MeshData {
     }
 }
 
-/// Cone with tip at +Y and base at −Y, centered at the origin.
+/// Cone with tip at +Z and base at −Z, centered at the origin.
 ///
 /// `radius` : base radius. `height` : total height. `sectors` : circumference subdivisions (minimum 3).
 pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
@@ -276,9 +276,9 @@ pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
     let half_h = height / 2.0;
     let step = 2.0 * std::f32::consts::PI / sectors as f32;
 
-    // Side normal components: outward radial and upward Y.
+    // Side normal components: outward radial and upward Z.
     let hyp = (radius * radius + height * height).sqrt();
-    let ny = radius / hyp;
+    let nz = radius / hyp;
     let nr = height / hyp;
 
     let mut positions: Vec<[f32; 3]> = Vec::new();
@@ -292,32 +292,32 @@ pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
         let amid = (a0 + a1) * 0.5;
         let base = positions.len() as u32;
 
-        positions.push([0.0, half_h, 0.0]);
-        normals.push([nr * amid.cos(), ny, nr * amid.sin()]);
+        positions.push([0.0, 0.0, half_h]);
+        normals.push([nr * amid.cos(), nr * amid.sin(), nz]);
 
-        positions.push([radius * a0.cos(), -half_h, radius * a0.sin()]);
-        normals.push([nr * a0.cos(), ny, nr * a0.sin()]);
+        positions.push([radius * a0.cos(), radius * a0.sin(), -half_h]);
+        normals.push([nr * a0.cos(), nr * a0.sin(), nz]);
 
-        positions.push([radius * a1.cos(), -half_h, radius * a1.sin()]);
-        normals.push([nr * a1.cos(), ny, nr * a1.sin()]);
+        positions.push([radius * a1.cos(), radius * a1.sin(), -half_h]);
+        normals.push([nr * a1.cos(), nr * a1.sin(), nz]);
 
-        indices.extend_from_slice(&[base, base + 2, base + 1]);
+        indices.extend_from_slice(&[base, base + 1, base + 2]);
     }
 
     // Bottom cap
     let bottom_center = positions.len() as u32;
-    positions.push([0.0, -half_h, 0.0]);
-    normals.push([0.0, -1.0, 0.0]);
+    positions.push([0.0, 0.0, -half_h]);
+    normals.push([0.0, 0.0, -1.0]);
 
     let rim_start = positions.len() as u32;
     for j in 0..sectors {
         let a = j as f32 * step;
-        positions.push([radius * a.cos(), -half_h, radius * a.sin()]);
-        normals.push([0.0, -1.0, 0.0]);
+        positions.push([radius * a.cos(), radius * a.sin(), -half_h]);
+        normals.push([0.0, 0.0, -1.0]);
     }
     for j in 0..sectors as u32 {
         let next = (j + 1) % sectors as u32;
-        indices.extend_from_slice(&[bottom_center, rim_start + j, rim_start + next]);
+        indices.extend_from_slice(&[bottom_center, rim_start + next, rim_start + j]);
     }
 
     MeshData {
@@ -328,7 +328,7 @@ pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
     }
 }
 
-/// Capsule (cylinder body with hemispherical caps) centered at the origin, axis along Y.
+/// Capsule (cylinder body with hemispherical caps) centered at the origin, axis along Z.
 ///
 /// `radius` : sphere cap radius. `height` : total height (clamped so body ≥ 0).
 /// `sectors` : longitude subdivisions (minimum 3). `stacks` : latitude subdivisions (minimum 2).
@@ -352,13 +352,13 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
         for j in 0..=sectors {
             let theta = j as f32 * std::f32::consts::TAU / sectors as f32;
             let nx = cos_phi * theta.cos();
-            let nz = cos_phi * theta.sin();
-            positions.push([radius * nx, half_body + radius * sin_phi, radius * nz]);
-            normals.push([nx, sin_phi, nz]);
+            let ny = cos_phi * theta.sin();
+            positions.push([radius * nx, radius * ny, half_body + radius * sin_phi]);
+            normals.push([nx, ny, sin_phi]);
         }
     }
 
-    // Bottom hemisphere (equator at i=0, tip at i=hemi_stacks, offset center −half_body)
+    // Bottom hemisphere (equator at i=0, tip at i=hemi_stacks, offset center -half_body)
     let bottom_off = (hemi_stacks + 1) as u32;
     for i in 0..=hemi_stacks {
         let phi = -std::f32::consts::FRAC_PI_2 * i as f32 / hemi_stacks as f32;
@@ -367,9 +367,9 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
         for j in 0..=sectors {
             let theta = j as f32 * std::f32::consts::TAU / sectors as f32;
             let nx = cos_phi * theta.cos();
-            let nz = cos_phi * theta.sin();
-            positions.push([radius * nx, -half_body + radius * sin_phi, radius * nz]);
-            normals.push([nx, sin_phi, nz]);
+            let ny = cos_phi * theta.sin();
+            positions.push([radius * nx, radius * ny, -half_body + radius * sin_phi]);
+            normals.push([nx, ny, sin_phi]);
         }
     }
 
@@ -379,9 +379,9 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
         let k2 = k1 + cols;
         for j in 0..sectors {
             if i != 0 {
-                indices.extend_from_slice(&[k1 + j, k1 + j + 1, k2 + j]);
+                indices.extend_from_slice(&[k1 + j, k2 + j, k1 + j + 1]);
             }
-            indices.extend_from_slice(&[k1 + j + 1, k2 + j + 1, k2 + j]);
+            indices.extend_from_slice(&[k1 + j + 1, k2 + j, k2 + j + 1]);
         }
     }
 
@@ -392,11 +392,11 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
         for j in 0..sectors {
             indices.extend_from_slice(&[
                 k1 + j,
-                k1 + j + 1,
                 k2 + j,
                 k1 + j + 1,
+                k1 + j + 1,
+                k2 + j,
                 k2 + j + 1,
-                k2 + j,
             ]);
         }
     }
@@ -406,9 +406,9 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
         let k1 = (bottom_off + i) * cols;
         let k2 = k1 + cols;
         for j in 0..sectors {
-            indices.extend_from_slice(&[k1 + j, k1 + j + 1, k2 + j]);
+            indices.extend_from_slice(&[k1 + j, k2 + j, k1 + j + 1]);
             if i != hemi_stacks - 1 {
-                indices.extend_from_slice(&[k1 + j + 1, k2 + j + 1, k2 + j]);
+                indices.extend_from_slice(&[k1 + j + 1, k2 + j, k2 + j + 1]);
             }
         }
     }
@@ -421,7 +421,7 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
     }
 }
 
-/// Torus centered at the origin, lying in the XZ plane.
+/// Torus centered at the origin, lying in the XY plane.
 ///
 /// `major_radius` : distance from the torus centre to the tube centre.
 /// `minor_radius` : radius of the tube.
@@ -440,22 +440,23 @@ pub fn torus(major_radius: f32, minor_radius: f32, sectors: u32, stacks: u32) ->
         let phi = i as f32 * std::f32::consts::TAU / stacks as f32;
         let cos_phi = phi.cos();
         let sin_phi = phi.sin();
-        let cx = major_radius * cos_phi;
-        let cz = major_radius * sin_phi;
+        let ring_x = major_radius * cos_phi;
+        let ring_y = major_radius * sin_phi;
 
         for j in 0..=sectors {
             let theta = j as f32 * std::f32::consts::TAU / sectors as f32;
             let cos_theta = theta.cos();
             let sin_theta = theta.sin();
 
+            // Tube cross-section normal in XY-plane torus.
             let nx = cos_phi * cos_theta;
-            let ny = sin_theta;
-            let nz = sin_phi * cos_theta;
+            let ny = sin_phi * cos_theta;
+            let nz = sin_theta;
 
             positions.push([
-                cx + minor_radius * nx,
-                minor_radius * ny,
-                cz + minor_radius * nz,
+                ring_x + minor_radius * nx,
+                ring_y + minor_radius * ny,
+                minor_radius * nz,
             ]);
             normals.push([nx, ny, nz]);
             uvs.push([j as f32 / sectors as f32, i as f32 / stacks as f32]);
@@ -469,11 +470,11 @@ pub fn torus(major_radius: f32, minor_radius: f32, sectors: u32, stacks: u32) ->
         for j in 0..sectors {
             indices.extend_from_slice(&[
                 k1 + j,
-                k1 + j + 1,
                 k2 + j,
                 k1 + j + 1,
+                k1 + j + 1,
+                k2 + j,
                 k2 + j + 1,
-                k2 + j,
             ]);
         }
     }
@@ -589,11 +590,11 @@ fn ico_midpoint(
     idx
 }
 
-/// Arrow along +Y, centered at the origin (total length 1).
+/// Arrow along +Z, centered at the origin (total length 1).
 ///
 /// `shaft_radius` : cylinder shaft radius.
 /// `head_radius` : cone head base radius.
-/// `head_fraction` : fraction of total length occupied by the cone head (clamped to 0.1–0.9).
+/// `head_fraction` : fraction of total length occupied by the cone head (clamped to 0.1-0.9).
 /// `sectors` : circumference subdivisions (minimum 3).
 pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u32) -> MeshData {
     let sectors = sectors.max(3);
@@ -611,38 +612,38 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
     let mut indices: Vec<u32> = Vec::new();
 
     // Shaft side rings (bottom then top)
-    for &y in &[shaft_bot, shaft_top] {
+    for &z in &[shaft_bot, shaft_top] {
         for j in 0..sectors {
             let a = j as f32 * step;
-            positions.push([shaft_radius * a.cos(), y, shaft_radius * a.sin()]);
-            normals.push([a.cos(), 0.0, a.sin()]);
+            positions.push([shaft_radius * a.cos(), shaft_radius * a.sin(), z]);
+            normals.push([a.cos(), a.sin(), 0.0]);
         }
     }
     for j in 0..sectors {
         let next = (j + 1) % sectors;
         let t = j + sectors;
         let t_next = next + sectors;
-        indices.extend_from_slice(&[j, t_next, next, j, t, t_next]);
+        indices.extend_from_slice(&[j, next, t_next, j, t_next, t]);
     }
 
     // Shaft bottom cap
     let sb_center = positions.len() as u32;
-    positions.push([0.0, shaft_bot, 0.0]);
-    normals.push([0.0, -1.0, 0.0]);
+    positions.push([0.0, 0.0, shaft_bot]);
+    normals.push([0.0, 0.0, -1.0]);
     let sb_rim = positions.len() as u32;
     for j in 0..sectors {
         let a = j as f32 * step;
-        positions.push([shaft_radius * a.cos(), shaft_bot, shaft_radius * a.sin()]);
-        normals.push([0.0, -1.0, 0.0]);
+        positions.push([shaft_radius * a.cos(), shaft_radius * a.sin(), shaft_bot]);
+        normals.push([0.0, 0.0, -1.0]);
     }
     for j in 0..sectors as u32 {
         let next = (j + 1) % sectors as u32;
-        indices.extend_from_slice(&[sb_center, sb_rim + j, sb_rim + next]);
+        indices.extend_from_slice(&[sb_center, sb_rim + next, sb_rim + j]);
     }
 
     // Cone head side (one duplicated tip per sector)
     let cone_hyp = (head_radius * head_radius + head_h * head_h).sqrt();
-    let cny = head_radius / cone_hyp;
+    let cnz = head_radius / cone_hyp;
     let cnr = head_h / cone_hyp;
     for j in 0..sectors {
         let a0 = j as f32 * step;
@@ -650,31 +651,31 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
         let amid = (a0 + a1) * 0.5;
         let base = positions.len() as u32;
 
-        positions.push([0.0, head_top, 0.0]);
-        normals.push([cnr * amid.cos(), cny, cnr * amid.sin()]);
+        positions.push([0.0, 0.0, head_top]);
+        normals.push([cnr * amid.cos(), cnr * amid.sin(), cnz]);
 
-        positions.push([head_radius * a0.cos(), head_bot, head_radius * a0.sin()]);
-        normals.push([cnr * a0.cos(), cny, cnr * a0.sin()]);
+        positions.push([head_radius * a0.cos(), head_radius * a0.sin(), head_bot]);
+        normals.push([cnr * a0.cos(), cnr * a0.sin(), cnz]);
 
-        positions.push([head_radius * a1.cos(), head_bot, head_radius * a1.sin()]);
-        normals.push([cnr * a1.cos(), cny, cnr * a1.sin()]);
+        positions.push([head_radius * a1.cos(), head_radius * a1.sin(), head_bot]);
+        normals.push([cnr * a1.cos(), cnr * a1.sin(), cnz]);
 
-        indices.extend_from_slice(&[base, base + 2, base + 1]);
+        indices.extend_from_slice(&[base, base + 1, base + 2]);
     }
 
     // Cone base cap
     let hb_center = positions.len() as u32;
-    positions.push([0.0, head_bot, 0.0]);
-    normals.push([0.0, -1.0, 0.0]);
+    positions.push([0.0, 0.0, head_bot]);
+    normals.push([0.0, 0.0, -1.0]);
     let hb_rim = positions.len() as u32;
     for j in 0..sectors {
         let a = j as f32 * step;
-        positions.push([head_radius * a.cos(), head_bot, head_radius * a.sin()]);
-        normals.push([0.0, -1.0, 0.0]);
+        positions.push([head_radius * a.cos(), head_radius * a.sin(), head_bot]);
+        normals.push([0.0, 0.0, -1.0]);
     }
     for j in 0..sectors as u32 {
         let next = (j + 1) % sectors as u32;
-        indices.extend_from_slice(&[hb_center, hb_rim + j, hb_rim + next]);
+        indices.extend_from_slice(&[hb_center, hb_rim + next, hb_rim + j]);
     }
 
     MeshData {
@@ -685,7 +686,7 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
     }
 }
 
-/// Flat disk in the XZ plane, centered at the origin, normal pointing +Y.
+/// Flat disk in the XY plane, centered at the origin, normal pointing +Z.
 ///
 /// `radius` : disk radius. `sectors` : circumference subdivisions (minimum 3).
 pub fn disk(radius: f32, sectors: u32) -> MeshData {
@@ -693,18 +694,18 @@ pub fn disk(radius: f32, sectors: u32) -> MeshData {
     let step = std::f32::consts::TAU / sectors as f32;
 
     let mut positions: Vec<[f32; 3]> = vec![[0.0, 0.0, 0.0]];
-    let mut normals: Vec<[f32; 3]> = vec![[0.0, 1.0, 0.0]];
+    let mut normals: Vec<[f32; 3]> = vec![[0.0, 0.0, 1.0]];
     let mut indices: Vec<u32> = Vec::new();
 
     for j in 0..sectors {
         let a = j as f32 * step;
-        positions.push([radius * a.cos(), 0.0, radius * a.sin()]);
-        normals.push([0.0, 1.0, 0.0]);
+        positions.push([radius * a.cos(), radius * a.sin(), 0.0]);
+        normals.push([0.0, 0.0, 1.0]);
     }
 
     for j in 0..sectors as u32 {
         let next = (j + 1) % sectors as u32;
-        indices.extend_from_slice(&[0, next + 1, j + 1]);
+        indices.extend_from_slice(&[0, j + 1, next + 1]);
     }
 
     MeshData {
@@ -782,7 +783,7 @@ pub fn frustum(fov_y: f32, aspect: f32, near: f32, far: f32) -> MeshData {
     }
 }
 
-/// Hemisphere (upper half of a UV sphere) centered at the origin, dome facing +Y.
+/// Hemisphere (upper half of a UV sphere) centered at the origin, dome facing +Z.
 ///
 /// `radius` : sphere radius.
 /// `sectors` : longitude subdivisions (minimum 3). `stacks` : latitude subdivisions (minimum 1).
@@ -801,9 +802,9 @@ pub fn hemisphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
         for j in 0..=sectors {
             let theta = j as f32 * std::f32::consts::TAU / sectors as f32;
             let nx = cos_phi * theta.cos();
-            let nz = cos_phi * theta.sin();
-            positions.push([radius * nx, radius * sin_phi, radius * nz]);
-            normals.push([nx, sin_phi, nz]);
+            let ny = cos_phi * theta.sin();
+            positions.push([radius * nx, radius * ny, radius * sin_phi]);
+            normals.push([nx, ny, sin_phi]);
         }
     }
 
@@ -813,25 +814,25 @@ pub fn hemisphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
         let k2 = k1 + cols;
         for j in 0..sectors {
             if i != 0 {
-                indices.extend_from_slice(&[k1 + j, k1 + j + 1, k2 + j]);
+                indices.extend_from_slice(&[k1 + j, k2 + j, k1 + j + 1]);
             }
-            indices.extend_from_slice(&[k1 + j + 1, k2 + j + 1, k2 + j]);
+            indices.extend_from_slice(&[k1 + j + 1, k2 + j, k2 + j + 1]);
         }
     }
 
-    // Equator disk cap (faces −Y)
+    // Equator disk cap (faces -Z)
     let center = positions.len() as u32;
     positions.push([0.0, 0.0, 0.0]);
-    normals.push([0.0, -1.0, 0.0]);
+    normals.push([0.0, 0.0, -1.0]);
     let rim_start = positions.len() as u32;
     for j in 0..sectors {
         let theta = j as f32 * std::f32::consts::TAU / sectors as f32;
-        positions.push([radius * theta.cos(), 0.0, radius * theta.sin()]);
-        normals.push([0.0, -1.0, 0.0]);
+        positions.push([radius * theta.cos(), radius * theta.sin(), 0.0]);
+        normals.push([0.0, 0.0, -1.0]);
     }
     for j in 0..sectors as u32 {
         let next = (j + 1) % sectors as u32;
-        indices.extend_from_slice(&[center, rim_start + j, rim_start + next]);
+        indices.extend_from_slice(&[center, rim_start + next, rim_start + j]);
     }
 
     MeshData {
@@ -842,7 +843,7 @@ pub fn hemisphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
     }
 }
 
-/// Flat ring (annulus) in the XZ plane, centered at the origin, normal pointing +Y.
+/// Flat ring (annulus) in the XY plane, centered at the origin, normal pointing +Z.
 ///
 /// `inner_radius` : inner edge. `outer_radius` : outer edge. `sectors` : circumference subdivisions (minimum 3).
 pub fn ring(inner_radius: f32, outer_radius: f32, sectors: u32) -> MeshData {
@@ -858,10 +859,10 @@ pub fn ring(inner_radius: f32, outer_radius: f32, sectors: u32) -> MeshData {
         let a = j as f32 * step;
         let cos_a = a.cos();
         let sin_a = a.sin();
-        positions.push([inner_radius * cos_a, 0.0, inner_radius * sin_a]);
-        normals.push([0.0, 1.0, 0.0]);
-        positions.push([outer_radius * cos_a, 0.0, outer_radius * sin_a]);
-        normals.push([0.0, 1.0, 0.0]);
+        positions.push([inner_radius * cos_a, inner_radius * sin_a, 0.0]);
+        normals.push([0.0, 0.0, 1.0]);
+        positions.push([outer_radius * cos_a, outer_radius * sin_a, 0.0]);
+        normals.push([0.0, 0.0, 1.0]);
     }
 
     for j in 0..sectors as u32 {
@@ -869,7 +870,7 @@ pub fn ring(inner_radius: f32, outer_radius: f32, sectors: u32) -> MeshData {
         let o0 = i0 + 1;
         let i1 = i0 + 2;
         let o1 = i0 + 3;
-        indices.extend_from_slice(&[i0, i1, o0, i1, o1, o0]);
+        indices.extend_from_slice(&[i0, o0, i1, i1, o0, o1]);
     }
 
     MeshData {
@@ -944,9 +945,9 @@ pub fn ellipsoid(rx: f32, ry: f32, rz: f32, sectors: u32, stacks: u32) -> MeshDa
     }
 }
 
-/// Helical spring centered at the origin, axis along Y.
+/// Helical spring centered at the origin, axis along Z.
 ///
-/// `radius` : distance from Y axis to tube centre.
+/// `radius` : distance from Z axis to tube centre.
 /// `coil_radius` : cross-section tube radius.
 /// `turns` : number of complete coil turns.
 /// `sectors` : tube cross-section subdivisions (minimum 3).
@@ -965,20 +966,20 @@ pub fn spring(radius: f32, coil_radius: f32, turns: f32, sectors: u32) -> MeshDa
         let t = seg as f32 / n_segs as f32 * total_t;
 
         let cx = radius * t.cos();
-        let cy = t / std::f32::consts::TAU * pitch - height * 0.5;
-        let cz = radius * t.sin();
+        let cy = radius * t.sin();
+        let cz = t / std::f32::consts::TAU * pitch - height * 0.5;
 
         // Helix tangent
         let dtx = -radius * t.sin();
-        let dty = pitch / std::f32::consts::TAU;
-        let dtz = radius * t.cos();
+        let dty = radius * t.cos();
+        let dtz = pitch / std::f32::consts::TAU;
         let dt_len = (dtx * dtx + dty * dty + dtz * dtz).sqrt();
         let (tx, ty, tz) = (dtx / dt_len, dty / dt_len, dtz / dt_len);
 
-        // Principal normal: inward radial toward helix axis
+        // Principal normal: inward radial toward Z axis
         let pnx = -t.cos();
-        let pny = 0.0f32;
-        let pnz = -t.sin();
+        let pny = -t.sin();
+        let pnz = 0.0f32;
 
         // Binormal = T × principal_normal
         let bx = ty * pnz - tz * pny;
@@ -1027,9 +1028,9 @@ pub fn spring(radius: f32, coil_radius: f32, turns: f32, sectors: u32) -> MeshDa
     }
 }
 
-/// Subdivided plane in the XZ plane, centered at the origin, normal pointing +Y.
+/// Subdivided plane in the XY plane, centered at the origin, normal pointing +Z.
 ///
-/// `width` : X extent. `depth` : Z extent.
+/// `width` : X extent. `depth` : Y extent.
 /// `cols` : column subdivisions (minimum 1). `rows` : row subdivisions (minimum 1).
 pub fn grid_plane(width: f32, depth: f32, cols: u32, rows: u32) -> MeshData {
     let cols = cols.max(1);
@@ -1042,11 +1043,11 @@ pub fn grid_plane(width: f32, depth: f32, cols: u32, rows: u32) -> MeshData {
     let mut indices: Vec<u32> = Vec::new();
 
     for row in 0..=rows {
-        let z = -hd + row as f32 / rows as f32 * depth;
+        let y = -hd + row as f32 / rows as f32 * depth;
         for col in 0..=cols {
             let x = -hw + col as f32 / cols as f32 * width;
-            positions.push([x, 0.0, z]);
-            normals.push([0.0, 1.0, 0.0]);
+            positions.push([x, y, 0.0]);
+            normals.push([0.0, 0.0, 1.0]);
         }
     }
 
@@ -1057,7 +1058,7 @@ pub fn grid_plane(width: f32, depth: f32, cols: u32, rows: u32) -> MeshData {
             let tr = tl + 1;
             let bl = tl + v_cols;
             let br = bl + 1;
-            indices.extend_from_slice(&[tl, bl, tr, tr, bl, br]);
+            indices.extend_from_slice(&[tl, tr, bl, tr, br, bl]);
         }
     }
 
@@ -1319,7 +1320,7 @@ mod tests {
         let m = cylinder(r, 3.0, 16);
         // Side vertices are first 2*sectors entries
         for (i, p) in m.positions.iter().take(32).enumerate() {
-            let radial = (p[0] * p[0] + p[2] * p[2]).sqrt();
+            let radial = (p[0] * p[0] + p[1] * p[1]).sqrt();
             assert!(
                 (radial - r).abs() < 1e-4,
                 "cylinder side vertex[{i}] at radial dist {radial}, expected {r}"
@@ -1328,14 +1329,14 @@ mod tests {
     }
 
     #[test]
-    fn cylinder_y_bounded() {
+    fn cylinder_z_bounded() {
         let h = 4.0;
         let m = cylinder(1.0, h, 12);
         for (i, p) in m.positions.iter().enumerate() {
             assert!(
-                p[1].abs() <= h / 2.0 + 1e-5,
-                "cylinder vertex[{i}] Y = {} exceeds half height",
-                p[1]
+                p[2].abs() <= h / 2.0 + 1e-5,
+                "cylinder vertex[{i}] Z = {} exceeds half height",
+                p[2]
             );
         }
     }
@@ -1354,12 +1355,12 @@ mod tests {
     // ---- cone ----
 
     #[test]
-    fn cone_tip_at_positive_y() {
+    fn cone_tip_at_positive_z() {
         let h = 3.0;
         let m = cone(1.0, h, 12);
-        let tip_y = h / 2.0;
-        let has_tip = m.positions.iter().any(|p| (p[1] - tip_y).abs() < 1e-5);
-        assert!(has_tip, "cone should have a tip vertex at Y = {tip_y}");
+        let tip_z = h / 2.0;
+        let has_tip = m.positions.iter().any(|p| (p[2] - tip_z).abs() < 1e-5);
+        assert!(has_tip, "cone should have a tip vertex at Z = {tip_z}");
     }
 
     #[test]
@@ -1367,10 +1368,10 @@ mod tests {
         let r = 2.0;
         let h = 3.0;
         let m = cone(r, h, 16);
-        let base_y = -h / 2.0;
+        let base_z = -h / 2.0;
         for (i, p) in m.positions.iter().enumerate() {
-            if (p[1] - base_y).abs() < 1e-5 && p[0].abs() > 1e-5 {
-                let radial = (p[0] * p[0] + p[2] * p[2]).sqrt();
+            if (p[2] - base_z).abs() < 1e-5 && p[0].abs() > 1e-5 {
+                let radial = (p[0] * p[0] + p[1] * p[1]).sqrt();
                 assert!(
                     (radial - r).abs() < 1e-4,
                     "cone base vertex[{i}] at radial {radial}, expected {r}"
@@ -1389,9 +1390,9 @@ mod tests {
         let half_body = (h - 2.0 * r).max(0.0) / 2.0;
         for (i, p) in m.positions.iter().enumerate() {
             // Each vertex should be within radius of the closest point on the capsule axis
-            let axis_y = p[1].clamp(-half_body, half_body);
-            let dy = p[1] - axis_y;
-            let dist = (p[0] * p[0] + dy * dy + p[2] * p[2]).sqrt();
+            let axis_z = p[2].clamp(-half_body, half_body);
+            let dz = p[2] - axis_z;
+            let dist = (p[0] * p[0] + p[1] * p[1] + dz * dz).sqrt();
             assert!(
                 dist <= r + 1e-3,
                 "capsule vertex[{i}] at dist {dist} from axis, expected <= {r}"
@@ -1415,10 +1416,10 @@ mod tests {
         let minor = 0.5;
         let m = torus(major, minor, 12, 12);
         for (i, p) in m.positions.iter().enumerate() {
-            let radial_xz = (p[0] * p[0] + p[2] * p[2]).sqrt();
+            let radial_xy = (p[0] * p[0] + p[1] * p[1]).sqrt();
             assert!(
-                radial_xz >= major - minor - 1e-3 && radial_xz <= major + minor + 1e-3,
-                "torus vertex[{i}] radial_xz = {radial_xz}, expected in [{}, {}]",
+                radial_xy >= major - minor - 1e-3 && radial_xy <= major + minor + 1e-3,
+                "torus vertex[{i}] radial_xy = {radial_xy}, expected in [{}, {}]",
                 major - minor,
                 major + minor
             );
@@ -1469,20 +1470,20 @@ mod tests {
     #[test]
     fn arrow_total_height_is_one() {
         let m = arrow(0.1, 0.3, 0.3, 12);
-        let min_y = m
+        let min_z = m
             .positions
             .iter()
-            .map(|p| p[1])
+            .map(|p| p[2])
             .fold(f32::INFINITY, f32::min);
-        let max_y = m
+        let max_z = m
             .positions
             .iter()
-            .map(|p| p[1])
+            .map(|p| p[2])
             .fold(f32::NEG_INFINITY, f32::max);
         assert!(
-            ((max_y - min_y) - 1.0).abs() < 1e-4,
+            ((max_z - min_z) - 1.0).abs() < 1e-4,
             "arrow total height = {}, expected 1.0",
-            max_y - min_y
+            max_z - min_z
         );
     }
 
@@ -1511,12 +1512,12 @@ mod tests {
         let r = 2.0;
         let m = disk(r, 16);
         for (i, p) in m.positions.iter().skip(1).enumerate() {
-            let dist = (p[0] * p[0] + p[2] * p[2]).sqrt();
+            let dist = (p[0] * p[0] + p[1] * p[1]).sqrt();
             assert!(
                 (dist - r).abs() < 1e-4,
                 "disk rim vertex[{i}] at dist {dist}, expected {r}"
             );
-            assert!(p[1].abs() < 1e-6, "disk vertex should be at Y=0");
+            assert!(p[2].abs() < 1e-6, "disk vertex should be at Z=0");
         }
     }
 
@@ -1561,15 +1562,15 @@ mod tests {
     // ---- hemisphere ----
 
     #[test]
-    fn hemisphere_all_dome_vertices_non_negative_y() {
+    fn hemisphere_all_dome_vertices_non_negative_z() {
         let m = hemisphere(1.0, 12, 6);
-        // Dome vertices (before cap) should have Y >= 0
+        // Dome vertices (before cap) should have Z >= 0
         let dome_count = (6 + 1) * (12 + 1);
         for (i, p) in m.positions.iter().take(dome_count as usize).enumerate() {
             assert!(
-                p[1] >= -1e-5,
-                "hemisphere dome vertex[{i}] has Y = {}",
-                p[1]
+                p[2] >= -1e-5,
+                "hemisphere dome vertex[{i}] has Z = {}",
+                p[2]
             );
         }
     }
@@ -1582,12 +1583,12 @@ mod tests {
         let outer = 2.0;
         let m = ring(inner, outer, 16);
         for (i, p) in m.positions.iter().enumerate() {
-            let dist = (p[0] * p[0] + p[2] * p[2]).sqrt();
+            let dist = (p[0] * p[0] + p[1] * p[1]).sqrt();
             assert!(
                 dist >= inner - 1e-4 && dist <= outer + 1e-4,
                 "ring vertex[{i}] radial = {dist}, expected in [{inner}, {outer}]"
             );
-            assert!(p[1].abs() < 1e-6, "ring vertex should be at Y=0");
+            assert!(p[2].abs() < 1e-6, "ring vertex should be at Z=0");
         }
     }
 
@@ -1636,10 +1637,10 @@ mod tests {
     }
 
     #[test]
-    fn grid_plane_all_y_zero() {
+    fn grid_plane_all_z_zero() {
         let m = grid_plane(5.0, 3.0, 8, 6);
         for (i, p) in m.positions.iter().enumerate() {
-            assert!(p[1].abs() < 1e-6, "grid_plane vertex[{i}] Y = {}", p[1]);
+            assert!(p[2].abs() < 1e-6, "grid_plane vertex[{i}] Z = {}", p[2]);
         }
     }
 
@@ -1647,7 +1648,7 @@ mod tests {
     fn grid_plane_extents() {
         let (w, d) = (4.0, 6.0);
         let m = grid_plane(w, d, 4, 4);
-        assert_positions_bounded("grid_plane", &m, [w / 2.0, 0.0, d / 2.0]);
+        assert_positions_bounded("grid_plane", &m, [w / 2.0, d / 2.0, 0.0]);
     }
 
     #[test]
