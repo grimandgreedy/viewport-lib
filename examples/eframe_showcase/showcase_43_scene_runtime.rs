@@ -12,8 +12,9 @@
 use eframe::egui;
 use viewport_lib::{
     ActionFrame, FixedTimestep, Material, MeshId,
-    RuntimeFrameContext, RuntimePhase, RuntimePlugin, RuntimeStepContext, SceneRenderItem,
+    RuntimeFrameContext, RuntimePlugin, RuntimeStepContext, SceneRenderItem,
     ViewportRuntime,
+    runtime::plugin::phase,
     scene::Scene,
     selection::Selection,
 };
@@ -50,8 +51,8 @@ impl OrbitPlugin {
 }
 
 impl RuntimePlugin for OrbitPlugin {
-    fn phase(&self) -> RuntimePhase {
-        RuntimePhase::Simulate
+    fn priority(&self) -> i32 {
+        phase::SIMULATE
     }
 
     fn step(&mut self, ctx: &mut RuntimeStepContext) {

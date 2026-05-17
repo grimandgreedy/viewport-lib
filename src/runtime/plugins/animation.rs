@@ -2,7 +2,7 @@
 
 use crate::interaction::selection::NodeId;
 use crate::runtime::context::RuntimeStepContext;
-use crate::runtime::plugin::{RuntimePhase, RuntimePlugin};
+use crate::runtime::plugin::{phase, RuntimePlugin};
 
 /// A single keyframe: a time value and the transform at that time.
 #[derive(Debug, Clone)]
@@ -165,11 +165,11 @@ impl AnimationPlugin {
 }
 
 impl RuntimePlugin for AnimationPlugin {
-    fn phase(&self) -> RuntimePhase {
-        RuntimePhase::Animate
+    fn priority(&self) -> i32 {
+        phase::ANIMATE
     }
 
-    fn step(&mut self, ctx: &mut RuntimeStepContext) {
+    fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
         if self.playing {
             self.time += ctx.dt * self.speed;
         }

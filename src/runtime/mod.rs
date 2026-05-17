@@ -1,6 +1,6 @@
 //! Scene runtime: per-frame orchestration layer between [`Scene`] and [`ViewportRenderer`].
 //!
-//! [`ViewportRuntime`] runs registered plugins in a defined phase order each frame,
+//! [`ViewportRuntime`] runs registered plugins in a defined priority order each frame,
 //! drives a fixed timestep accumulator for physics, and flushes accumulated transform
 //! writes back to the scene. It does not own the scene, selection, or GPU resources.
 //!
@@ -56,7 +56,7 @@ pub use camera_follow::CameraFollow;
 pub use context::{RuntimeFrameContext, RuntimeStepContext, SimulationStepContext};
 pub use mode::SceneRuntimeMode;
 pub use output::{ContactEvent, NodeTransformOp, RuntimeOutput, SelectionOp, TransformWriteback};
-pub use plugin::{RuntimePhase, RuntimePlugin};
+pub use plugin::{phase, RuntimeEvent, RuntimePhase, RuntimePlugin};
 pub use plugins::{
     AnimationPlugin, AnimationTrack, Constraint, ConstraintPlugin, Keyframe, PhysicsBody,
     PhysicsLitePlugin,
@@ -67,6 +67,36 @@ pub use timestep::{FixedStepIter, FixedTimestep};
 
 use crate::interaction::selection::Selection;
 use crate::scene::scene::Scene;
+
+// ---- free function ----------------------------------------------------------
+
+/// Run all plugins whose priority is in `[min, max)`, in the order they appear
+/// in the slice.
+fn run_range(
+    plugins: &mut Vec<Box<dyn RuntimePlugin>>,
+    min: i32,
+    max: i32,
+    dt: f32,
+    frame: &RuntimeFrameContext,
+    scene: &Scene,
+    writeback: &mut TransformWriteback,
+    output: &mut RuntimeOutput,
+) {
+    for plugin in plugins.iter_mut() {
+        let p = plugin.priority();
+        if p >= min && p < max {
+            let mut ctx = RuntimeStepContext {
+                priority: p,
+                dt,
+                scene,
+                writeback,
+                output,
+                pick_hit: frame.pick_hit,
+            };
+            plugin.step(&mut ctx);
+        }
+    }
+}
 
 // ---- tests ------------------------------------------------------------------
 
@@ -96,33 +126,33 @@ mod tests {
         }
     }
 
-    // Records (phase, id) each time step() is called.
+    // Records (priority, id) each time step() is called.
     struct OrderTracker {
-        phase: RuntimePhase,
+        priority: i32,
         id: u32,
-        log: Arc<Mutex<Vec<(RuntimePhase, u32)>>>,
+        log: Arc<Mutex<Vec<(i32, u32)>>>,
     }
 
     impl RuntimePlugin for OrderTracker {
-        fn phase(&self) -> RuntimePhase {
-            self.phase
+        fn priority(&self) -> i32 {
+            self.priority
         }
-        fn step(&mut self, _ctx: &mut RuntimeStepContext) {
-            self.log.lock().unwrap().push((self.phase, self.id));
+        fn step(&mut self, _ctx: &mut RuntimeStepContext<'_>) {
+            self.log.lock().unwrap().push((self.priority, self.id));
         }
     }
 
     // Counts total step() calls.
     struct CallCounter {
-        phase: RuntimePhase,
+        priority: i32,
         count: Arc<Mutex<u32>>,
     }
 
     impl RuntimePlugin for CallCounter {
-        fn phase(&self) -> RuntimePhase {
-            self.phase
+        fn priority(&self) -> i32 {
+            self.priority
         }
-        fn step(&mut self, _ctx: &mut RuntimeStepContext) {
+        fn step(&mut self, _ctx: &mut RuntimeStepContext<'_>) {
             *self.count.lock().unwrap() += 1;
         }
     }
@@ -134,10 +164,10 @@ mod tests {
     }
 
     impl RuntimePlugin for WritebackPlugin {
-        fn phase(&self) -> RuntimePhase {
-            RuntimePhase::Simulate
+        fn priority(&self) -> i32 {
+            phase::SIMULATE
         }
-        fn step(&mut self, ctx: &mut RuntimeStepContext) {
+        fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
             ctx.writeback.set(self.node_id, self.transform);
         }
     }
@@ -148,23 +178,23 @@ mod tests {
     }
 
     impl RuntimePlugin for DtRecorder {
-        fn phase(&self) -> RuntimePhase {
-            RuntimePhase::Simulate
+        fn priority(&self) -> i32 {
+            phase::SIMULATE
         }
-        fn step(&mut self, ctx: &mut RuntimeStepContext) {
+        fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
             self.dts.lock().unwrap().push(ctx.dt);
         }
     }
 
     #[test]
     fn test_phase_execution_order() {
-        // Register plugins in a scrambled order; verify they execute in phase order.
-        let log = Arc::new(Mutex::new(Vec::<(RuntimePhase, u32)>::new()));
+        // Register plugins in a scrambled order; verify they execute in priority order.
+        let log = Arc::new(Mutex::new(Vec::<(i32, u32)>::new()));
         let mut runtime = ViewportRuntime::new()
-            .with_plugin(OrderTracker { phase: RuntimePhase::Writeback, id: 3, log: log.clone() })
-            .with_plugin(OrderTracker { phase: RuntimePhase::Simulate,  id: 2, log: log.clone() })
-            .with_plugin(OrderTracker { phase: RuntimePhase::Animate,   id: 1, log: log.clone() })
-            .with_plugin(OrderTracker { phase: RuntimePhase::Prepare,   id: 0, log: log.clone() });
+            .with_plugin(OrderTracker { priority: phase::WRITEBACK, id: 3, log: log.clone() })
+            .with_plugin(OrderTracker { priority: phase::SIMULATE,  id: 2, log: log.clone() })
+            .with_plugin(OrderTracker { priority: phase::ANIMATE,   id: 1, log: log.clone() })
+            .with_plugin(OrderTracker { priority: phase::PREPARE,   id: 0, log: log.clone() });
 
         let camera = Camera::default();
         let input = ActionFrame::default();
@@ -173,25 +203,21 @@ mod tests {
         runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
 
         let calls = log.lock().unwrap();
-        let phases: Vec<RuntimePhase> = calls.iter().map(|(p, _)| *p).collect();
-        assert_eq!(
-            phases,
-            vec![
-                RuntimePhase::Prepare,
-                RuntimePhase::Animate,
-                RuntimePhase::Simulate,
-                RuntimePhase::Writeback,
-            ]
-        );
+        let priorities: Vec<i32> = calls.iter().map(|(p, _)| *p).collect();
+        // Verify priorities are in ascending order.
+        for w in priorities.windows(2) {
+            assert!(w[0] <= w[1], "expected ascending order, got {:?}", priorities);
+        }
+        assert_eq!(priorities.len(), 4);
     }
 
     #[test]
     fn test_registration_order_within_phase() {
-        // Two plugins in the same phase must execute in registration order.
-        let log = Arc::new(Mutex::new(Vec::<(RuntimePhase, u32)>::new()));
+        // Two plugins at the same priority must execute in registration order.
+        let log = Arc::new(Mutex::new(Vec::<(i32, u32)>::new()));
         let mut runtime = ViewportRuntime::new()
-            .with_plugin(OrderTracker { phase: RuntimePhase::Simulate, id: 0, log: log.clone() })
-            .with_plugin(OrderTracker { phase: RuntimePhase::Simulate, id: 1, log: log.clone() });
+            .with_plugin(OrderTracker { priority: phase::SIMULATE, id: 0, log: log.clone() })
+            .with_plugin(OrderTracker { priority: phase::SIMULATE, id: 1, log: log.clone() });
 
         let camera = Camera::default();
         let input = ActionFrame::default();
@@ -208,7 +234,7 @@ mod tests {
     fn test_simulate_runs_once_without_fixed_timestep() {
         let count = Arc::new(Mutex::new(0u32));
         let mut runtime = ViewportRuntime::new()
-            .with_plugin(CallCounter { phase: RuntimePhase::Simulate, count: count.clone() });
+            .with_plugin(CallCounter { priority: phase::SIMULATE, count: count.clone() });
 
         let camera = Camera::default();
         let input = ActionFrame::default();
@@ -226,7 +252,7 @@ mod tests {
         let step_dt = 1.0 / hz;
         let mut runtime = ViewportRuntime::new()
             .with_fixed_timestep(FixedTimestep::new(hz))
-            .with_plugin(CallCounter { phase: RuntimePhase::Simulate, count: count.clone() });
+            .with_plugin(CallCounter { priority: phase::SIMULATE, count: count.clone() });
 
         let camera = Camera::default();
         let input = ActionFrame::default();
@@ -352,6 +378,162 @@ mod tests {
         let snap = runtime.snapshots().get(node_id).expect("snapshot missing");
         assert!((snap.curr.translation.x - 7.0).abs() < 1e-5);
     }
+
+    // ---- new tests ----------------------------------------------------------
+
+    #[test]
+    fn test_post_sim_runs_after_simulate() {
+        let log = Arc::new(Mutex::new(Vec::<(i32, u32)>::new()));
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(OrderTracker { priority: phase::POST_SIM,  id: 1, log: log.clone() })
+            .with_plugin(OrderTracker { priority: phase::SIMULATE,  id: 0, log: log.clone() });
+
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+
+        let calls = log.lock().unwrap();
+        let ids: Vec<u32> = calls.iter().map(|(_, id)| *id).collect();
+        assert_eq!(ids, vec![0, 1], "simulate must run before post_sim");
+    }
+
+    #[test]
+    fn test_plugin_between_bands() {
+        let log = Arc::new(Mutex::new(Vec::<(i32, u32)>::new()));
+        let mid = phase::ANIMATE + 50;
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(OrderTracker { priority: phase::SIMULATE, id: 2, log: log.clone() })
+            .with_plugin(OrderTracker { priority: mid,             id: 1, log: log.clone() })
+            .with_plugin(OrderTracker { priority: phase::ANIMATE,  id: 0, log: log.clone() });
+
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+
+        let calls = log.lock().unwrap();
+        let ids: Vec<u32> = calls.iter().map(|(_, id)| *id).collect();
+        assert_eq!(ids, vec![0, 1, 2], "plugins must execute in priority order");
+    }
+
+    // Plugin that records RuntimeEvent::NodeAdded / NodeRemoved calls.
+    struct EventRecorder {
+        added: Arc<Mutex<Vec<NodeId>>>,
+        removed: Arc<Mutex<Vec<NodeId>>>,
+    }
+
+    impl RuntimePlugin for EventRecorder {
+        fn priority(&self) -> i32 {
+            phase::PREPARE
+        }
+        fn on_event(&mut self, event: &RuntimeEvent, _ctx: &mut RuntimeStepContext<'_>) {
+            match event {
+                RuntimeEvent::NodeAdded(id)   => self.added.lock().unwrap().push(*id),
+                RuntimeEvent::NodeRemoved(id) => self.removed.lock().unwrap().push(*id),
+            }
+        }
+        fn step(&mut self, _ctx: &mut RuntimeStepContext<'_>) {}
+    }
+
+    #[test]
+    fn test_lifecycle_events_node_added() {
+        let added = Arc::new(Mutex::new(Vec::<NodeId>::new()));
+        let removed = Arc::new(Mutex::new(Vec::<NodeId>::new()));
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(EventRecorder { added: added.clone(), removed: removed.clone() });
+
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+
+        // First step: initializes snapshot, no events.
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        assert!(added.lock().unwrap().is_empty(), "no events on first step");
+
+        // Add a node, then step.
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+
+        let a = added.lock().unwrap();
+        assert!(a.contains(&node_id), "expected NodeAdded event for {:?}", node_id);
+        assert!(removed.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_lifecycle_events_node_removed() {
+        let added = Arc::new(Mutex::new(Vec::<NodeId>::new()));
+        let removed = Arc::new(Mutex::new(Vec::<NodeId>::new()));
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(EventRecorder { added: added.clone(), removed: removed.clone() });
+
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+
+        let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+
+        // First step with the node present.
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        added.lock().unwrap().clear();
+
+        // Remove the node, then step.
+        scene.remove(node_id);
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+
+        let r = removed.lock().unwrap();
+        assert!(r.contains(&node_id), "expected NodeRemoved event for {:?}", node_id);
+    }
+
+    // Plugin that records which of submit, step, collect were called each frame.
+    #[derive(Default)]
+    struct LifecycleRecorder {
+        log: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl RuntimePlugin for LifecycleRecorder {
+        fn priority(&self) -> i32 {
+            phase::PREPARE
+        }
+        fn submit(&mut self, _ctx: &RuntimeStepContext<'_>) {
+            self.log.lock().unwrap().push("submit");
+        }
+        fn step(&mut self, _ctx: &mut RuntimeStepContext<'_>) {
+            self.log.lock().unwrap().push("step");
+        }
+        fn collect(&mut self, _ctx: &mut RuntimeStepContext<'_>) {
+            self.log.lock().unwrap().push("collect");
+        }
+    }
+
+    #[test]
+    fn test_submit_collect_called() {
+        let log = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(LifecycleRecorder { log: log.clone() });
+
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+
+        let calls = log.lock().unwrap();
+        assert!(calls.contains(&"submit"),  "submit must be called");
+        assert!(calls.contains(&"step"),    "step must be called");
+        assert!(calls.contains(&"collect"), "collect must be called");
+        // submit before step before collect.
+        let si = calls.iter().position(|&s| s == "submit").unwrap();
+        let st = calls.iter().position(|&s| s == "step").unwrap();
+        let co = calls.iter().position(|&s| s == "collect").unwrap();
+        assert!(si < st, "submit must come before step");
+        assert!(st < co, "step must come before collect");
+    }
 }
 
 /// Per-frame scene orchestration layer.
@@ -359,19 +541,15 @@ mod tests {
 /// Owns plugins, an optional fixed timestep accumulator, and a transform snapshot
 /// table. Does not own the scene, selection, GPU resources, or window.
 ///
-/// # Phase execution order
+/// # Priority execution order
 ///
-/// Each call to [`step`](Self::step) executes phases in this order:
+/// Each call to [`step`](Self::step) executes plugins in ascending priority order:
 ///
-/// 1. `Prepare` -- once, at wall dt
-/// 2. `Pick` -- once, at wall dt
-/// 3. `Select` -- once, at wall dt (built-in SelectionSystem runs first if enabled)
-/// 4. `Manipulate` -- once, at wall dt (built-in ManipulationSystem runs first if enabled)
-/// 5. `Animate` -- once, at wall dt
-/// 6. `Simulate` -- once per fixed step (may be 0, 1, or N times); once at wall
-///    dt if no fixed timestep is configured
-/// 7. `Writeback` -- once; the runtime then flushes transform ops to the scene
-///    and updates the snapshot table
+/// 1. `[i32::MIN, SELECT)` -- Prepare (100), Pick (200): once, at wall dt
+/// 2. `[SELECT, MANIPULATE)` -- Select (300): once (built-in SelectionSystem runs first)
+/// 3. `[MANIPULATE, SIMULATE)` -- Manipulate (400), Animate (500): once
+/// 4. `[SIMULATE, POST_SIM)` -- Simulate (600): once per fixed step or once at wall dt
+/// 5. `[POST_SIM, i32::MAX]` -- PostSim (700), Writeback (800): once at wall dt
 pub struct ViewportRuntime {
     mode: SceneRuntimeMode,
     plugins: Vec<Box<dyn RuntimePlugin>>,
@@ -381,6 +559,10 @@ pub struct ViewportRuntime {
     selection_system: Option<SelectionSystem>,
     manipulation_system: Option<ManipulationSystem>,
     camera_follow: Option<CameraFollow>,
+    /// Node IDs present at the end of the previous frame.
+    prev_node_ids: std::collections::HashSet<crate::interaction::selection::NodeId>,
+    /// False on the very first step call; after that, lifecycle events are emitted.
+    scene_initialized: bool,
 }
 
 impl Default for ViewportRuntime {
@@ -401,6 +583,8 @@ impl ViewportRuntime {
             selection_system: None,
             manipulation_system: None,
             camera_follow: None,
+            prev_node_ids: std::collections::HashSet::new(),
+            scene_initialized: false,
         }
     }
 
@@ -444,8 +628,8 @@ impl ViewportRuntime {
         self
     }
 
-    /// Register a plugin. Plugins run in their declared [`RuntimePhase`] order.
-    /// Within a phase, plugins run in registration order.
+    /// Register a plugin. Plugins run in ascending priority order each frame.
+    /// Plugins with equal priority run in registration order (stable sort).
     pub fn with_plugin(mut self, plugin: impl RuntimePlugin) -> Self {
         self.plugins.push(Box::new(plugin));
         self
@@ -453,8 +637,9 @@ impl ViewportRuntime {
 
     /// Enable fixed-timestep accumulation for physics plugins.
     ///
-    /// When set, the `Simulate` phase runs once per accumulated fixed step rather
-    /// than once per frame at the wall dt. All other phases always run once per frame.
+    /// When set, plugins in the `[SIMULATE, POST_SIM)` range run once per
+    /// accumulated fixed step rather than once per frame at wall dt. All other
+    /// priority ranges always run once per frame.
     pub fn with_fixed_timestep(mut self, ts: FixedTimestep) -> Self {
         self.fixed_timestep = Some(ts);
         self
@@ -468,7 +653,7 @@ impl ViewportRuntime {
         self.fixed_timestep = Some(ts);
     }
 
-    /// Remove the fixed timestep, reverting to one `Simulate` call per frame at wall dt.
+    /// Remove the fixed timestep, reverting to one simulate call per frame at wall dt.
     pub fn clear_fixed_timestep(&mut self) {
         self.fixed_timestep = None;
     }
@@ -496,7 +681,7 @@ impl ViewportRuntime {
 
     /// Monotonically increasing simulation step counter.
     ///
-    /// Incremented once per `Simulate` execution. With a fixed timestep this
+    /// Incremented once per simulate execution. With a fixed timestep this
     /// means it may increment multiple times per rendered frame. Wraps on overflow.
     pub fn step_index(&self) -> u64 {
         self.step_index
@@ -529,10 +714,11 @@ impl ViewportRuntime {
 
     /// Run one frame of the runtime.
     ///
-    /// Phases `Prepare` through `Animate` run once at `frame.dt`. `Simulate`
-    /// runs once per accumulated fixed step (or once at `frame.dt` when no fixed
-    /// timestep is configured). `Writeback` runs once; transform ops are then
-    /// flushed to `scene` and the snapshot table is updated.
+    /// Plugins run in ascending priority order. The simulate range
+    /// `[SIMULATE, POST_SIM)` runs once per accumulated fixed step (or once at
+    /// `frame.dt` when no fixed timestep is configured). All other ranges run
+    /// once per frame. Transform ops are flushed to `scene` and the snapshot
+    /// table is updated after the writeback range.
     ///
     /// Selection ops produced by plugins are applied to `selection` before returning.
     /// Contact events and the applied transform ops are returned in [`RuntimeOutput`].
@@ -545,17 +731,70 @@ impl ViewportRuntime {
         let mut output = RuntimeOutput::default();
         let mut writeback = TransformWriteback::default();
 
-        // Phases before Select run unconditionally once per frame.
-        for phase in [RuntimePhase::Prepare, RuntimePhase::Pick] {
-            self.run_phase(phase, frame.dt, frame, scene, &mut writeback, &mut output);
+        // --- Lifecycle event detection ---------------------------------------
+        // Collect current node IDs from the scene.
+        let current_ids: std::collections::HashSet<crate::interaction::selection::NodeId> =
+            scene.nodes().map(|n| n.id()).collect();
+
+        if self.scene_initialized {
+            // Diff against previous frame and dispatch events.
+            let mut events: Vec<RuntimeEvent> = Vec::new();
+            for &id in current_ids.difference(&self.prev_node_ids) {
+                events.push(RuntimeEvent::NodeAdded(id));
+            }
+            for &id in self.prev_node_ids.difference(&current_ids) {
+                events.push(RuntimeEvent::NodeRemoved(id));
+            }
+
+            if !events.is_empty() {
+                // Take plugins out to avoid aliasing self while dispatching.
+                let mut plugins = std::mem::take(&mut self.plugins);
+                for event in &events {
+                    for plugin in plugins.iter_mut() {
+                        let mut ctx = RuntimeStepContext {
+                            priority: plugin.priority(),
+                            dt: frame.dt,
+                            scene,
+                            writeback: &mut writeback,
+                            output: &mut output,
+                            pick_hit: frame.pick_hit,
+                        };
+                        plugin.on_event(event, &mut ctx);
+                    }
+                }
+                self.plugins = plugins;
+            }
+        } else {
+            self.scene_initialized = true;
+        }
+        self.prev_node_ids = current_ids;
+
+        // --- Sort plugins by priority (stable: preserves registration order within a band).
+        self.plugins.sort_by_key(|p| p.priority());
+
+        // Take plugins out so we can access self freely during the step loop.
+        let mut plugins = std::mem::take(&mut self.plugins);
+
+        // --- Submit pass: all plugins in priority order ----------------------
+        for plugin in plugins.iter_mut() {
+            let ctx = RuntimeStepContext {
+                priority: plugin.priority(),
+                dt: frame.dt,
+                scene,
+                writeback: &mut writeback,
+                output: &mut output,
+                pick_hit: frame.pick_hit,
+            };
+            plugin.submit(&ctx);
         }
 
-        // Built-in selection system runs before the Select phase.
-        if let Some(sel_sys) = &self.selection_system {
-            sel_sys.step(frame, &mut output);
-        }
-        self.run_phase(
-            RuntimePhase::Select,
+        // --- Step loop -------------------------------------------------------
+
+        // Prepare + Pick: [MIN, SELECT)
+        run_range(
+            &mut plugins,
+            i32::MIN,
+            phase::SELECT,
             frame.dt,
             frame,
             scene,
@@ -563,15 +802,33 @@ impl ViewportRuntime {
             &mut output,
         );
 
-        // Built-in manipulation system runs before the Manipulate phase.
+        // Built-in selection system runs before the Select range.
+        if let Some(sel_sys) = &self.selection_system {
+            sel_sys.step(frame, &mut output);
+        }
+        // Select: [SELECT, MANIPULATE)
+        run_range(
+            &mut plugins,
+            phase::SELECT,
+            phase::MANIPULATE,
+            frame.dt,
+            frame,
+            scene,
+            &mut writeback,
+            &mut output,
+        );
+
+        // Built-in manipulation system runs before the Manipulate range.
         if self.manipulation_system.is_some() {
-            // Take the system out temporarily to satisfy the borrow checker.
             let mut manip_sys = self.manipulation_system.take().unwrap();
             manip_sys.step(frame, scene, selection, &mut writeback, &mut output);
             self.manipulation_system = Some(manip_sys);
         }
-        self.run_phase(
-            RuntimePhase::Manipulate,
+        // Manipulate + Animate: [MANIPULATE, SIMULATE)
+        run_range(
+            &mut plugins,
+            phase::MANIPULATE,
+            phase::SIMULATE,
             frame.dt,
             frame,
             scene,
@@ -579,22 +836,14 @@ impl ViewportRuntime {
             &mut output,
         );
 
-        self.run_phase(
-            RuntimePhase::Animate,
-            frame.dt,
-            frame,
-            scene,
-            &mut writeback,
-            &mut output,
-        );
-
-        // Simulate: runs once per fixed step, or once at wall dt if no fixed timestep.
+        // Simulate: [SIMULATE, POST_SIM) -- once per fixed step or once at wall dt.
         if self.fixed_timestep.is_some() {
-            // Take the timestep out so we can borrow self.plugins separately.
             let mut ts = self.fixed_timestep.take().unwrap();
             for step_dt in ts.advance(frame.dt) {
-                self.run_phase(
-                    RuntimePhase::Simulate,
+                run_range(
+                    &mut plugins,
+                    phase::SIMULATE,
+                    phase::POST_SIM,
                     step_dt,
                     frame,
                     scene,
@@ -605,8 +854,10 @@ impl ViewportRuntime {
             }
             self.fixed_timestep = Some(ts);
         } else {
-            self.run_phase(
-                RuntimePhase::Simulate,
+            run_range(
+                &mut plugins,
+                phase::SIMULATE,
+                phase::POST_SIM,
                 frame.dt,
                 frame,
                 scene,
@@ -616,9 +867,11 @@ impl ViewportRuntime {
             self.step_index = self.step_index.wrapping_add(1);
         }
 
-        // Writeback phase.
-        self.run_phase(
-            RuntimePhase::Writeback,
+        // PostSim + Writeback: [POST_SIM, MAX]
+        run_range(
+            &mut plugins,
+            phase::POST_SIM,
+            i32::MAX,
             frame.dt,
             frame,
             scene,
@@ -626,7 +879,23 @@ impl ViewportRuntime {
             &mut output,
         );
 
-        // Flush accumulated transform ops to the scene and snapshot table.
+        // --- Collect pass: all plugins in priority order ---------------------
+        for plugin in plugins.iter_mut() {
+            let mut ctx = RuntimeStepContext {
+                priority: plugin.priority(),
+                dt: frame.dt,
+                scene,
+                writeback: &mut writeback,
+                output: &mut output,
+                pick_hit: frame.pick_hit,
+            };
+            plugin.collect(&mut ctx);
+        }
+
+        // Restore plugins.
+        self.plugins = plugins;
+
+        // --- Flush writeback -------------------------------------------------
         let ops = writeback.into_ops();
         for op in &ops {
             scene.set_local_transform(op.id, glam::Mat4::from(op.transform));
@@ -642,10 +911,7 @@ impl ViewportRuntime {
             op.apply_to(selection);
         }
 
-        // Compute camera follow target. Use the interpolated snapshot position so
-        // the camera tracks the same point that the renderer draws, not the raw
-        // post-step scene position. This avoids jitter at low simulation rates
-        // when interpolation is enabled.
+        // Compute camera follow target.
         if let Some(CameraFollow::Node { id, offset, .. }) = &self.camera_follow {
             let id = *id;
             let offset = *offset;
@@ -665,30 +931,5 @@ impl ViewportRuntime {
         }
 
         output
-    }
-
-    /// Run all plugins registered for `phase`, in registration order.
-    fn run_phase(
-        &mut self,
-        phase: RuntimePhase,
-        dt: f32,
-        frame: &RuntimeFrameContext,
-        scene: &Scene,
-        writeback: &mut TransformWriteback,
-        output: &mut RuntimeOutput,
-    ) {
-        for plugin in &mut self.plugins {
-            if plugin.phase() == phase {
-                let mut ctx = RuntimeStepContext {
-                    phase,
-                    dt,
-                    scene,
-                    writeback,
-                    output,
-                    pick_hit: frame.pick_hit,
-                };
-                plugin.step(&mut ctx);
-            }
-        }
     }
 }

@@ -3,7 +3,7 @@
 use crate::interaction::selection::NodeId;
 use crate::runtime::context::RuntimeStepContext;
 use crate::runtime::output::ContactEvent;
-use crate::runtime::plugin::{RuntimePhase, RuntimePlugin};
+use crate::runtime::plugin::{phase, RuntimePlugin};
 use crate::scene::aabb::Aabb;
 
 /// A single physics body managed by [`PhysicsLitePlugin`].
@@ -126,11 +126,11 @@ impl PhysicsLitePlugin {
 }
 
 impl RuntimePlugin for PhysicsLitePlugin {
-    fn phase(&self) -> RuntimePhase {
-        RuntimePhase::Simulate
+    fn priority(&self) -> i32 {
+        phase::SIMULATE
     }
 
-    fn step(&mut self, ctx: &mut RuntimeStepContext) {
+    fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
         for body in &mut self.bodies {
             let Some(node) = ctx.scene.node(body.node_id) else {
                 continue;

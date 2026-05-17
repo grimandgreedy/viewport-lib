@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::interaction::selection::NodeId;
 use crate::runtime::context::RuntimeStepContext;
-use crate::runtime::plugin::{RuntimePhase, RuntimePlugin};
+use crate::runtime::plugin::{phase, RuntimePlugin};
 
 /// A positional constraint applied to a scene node.
 #[derive(Debug, Clone)]
@@ -93,11 +93,11 @@ impl ConstraintPlugin {
 }
 
 impl RuntimePlugin for ConstraintPlugin {
-    fn phase(&self) -> RuntimePhase {
-        RuntimePhase::Animate
+    fn priority(&self) -> i32 {
+        phase::ANIMATE + 50
     }
 
-    fn step(&mut self, ctx: &mut RuntimeStepContext) {
+    fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
         for constraint in &self.constraints {
             let id = constraint.node_id();
             let Some(node) = ctx.scene.node(id) else {

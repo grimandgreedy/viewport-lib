@@ -5,7 +5,6 @@ use crate::interaction::input::ActionFrame;
 use crate::scene::scene::Scene;
 
 use super::output::{RuntimeOutput, TransformWriteback};
-use super::plugin::RuntimePhase;
 
 /// Per-frame inputs to [`super::ViewportRuntime::step`].
 pub struct RuntimeFrameContext<'a> {
@@ -34,21 +33,21 @@ pub struct RuntimeFrameContext<'a> {
     pub shift_held: bool,
 }
 
-/// Context passed to each plugin during its execution phase.
+/// Context passed to each plugin during its execution step.
 ///
 /// Provides read-only scene access and write access to the transform writeback
 /// buffer and output accumulator. To write transforms, call
 /// [`TransformWriteback::set`] on `self.writeback`.
 pub struct RuntimeStepContext<'a> {
-    /// The phase this plugin is executing in.
-    pub phase: RuntimePhase,
-    /// Delta time for this step. For `Simulate` with a fixed timestep this is
-    /// the fixed step size, not the wall dt.
+    /// The numeric priority of the plugin executing in this context.
+    pub priority: i32,
+    /// Delta time for this step. For plugins in the simulate range with a fixed
+    /// timestep this is the fixed step size, not the wall dt.
     pub dt: f32,
     /// Read-only scene access. To write transforms, use `writeback`.
     pub scene: &'a Scene,
     /// Accumulate transform writes here. The runtime flushes them to the scene
-    /// after the `Writeback` phase.
+    /// after the writeback phase.
     pub writeback: &'a mut TransformWriteback,
     /// Accumulate selection changes and contact events here.
     pub output: &'a mut RuntimeOutput,
@@ -73,7 +72,7 @@ impl<'a> RuntimeStepContext<'a> {
 
 /// Narrower context for simulation plugins that need a per-step index.
 ///
-/// Constructed via [`RuntimeStepContext::as_simulation`] inside a `Simulate`-phase
+/// Constructed via [`RuntimeStepContext::as_simulation`] inside a simulate-range
 /// plugin to get the current simulation step count alongside scene and writeback access.
 pub struct SimulationStepContext<'a> {
     /// Fixed step size in seconds.
