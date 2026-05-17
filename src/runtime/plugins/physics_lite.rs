@@ -191,6 +191,7 @@ impl RuntimePlugin for PhysicsLitePlugin {
                         node_b: NodeId::MAX,
                         world_normal: normal,
                         impulse: body.velocity.length() * (1.0 + body.restitution),
+                        contact_point: pos,
                     });
                 }
             }

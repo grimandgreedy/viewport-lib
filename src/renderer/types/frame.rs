@@ -443,8 +443,38 @@ impl SceneFrame {
     /// The `Vec` is converted to an `Arc<[SceneRenderItem]>` so callers that
     /// submit the same list repeatedly can cheaply clone the `Arc` instead of
     /// cloning the underlying data.
+    ///
+    /// The frame's `generation` defaults to `0`. If items change every frame
+    /// (e.g. from physics writeback or snapshot interpolation), chain
+    /// [`with_generation`](Self::with_generation) to supply a value that
+    /// changes with the content -- otherwise the renderer's instance-buffer
+    /// cache will treat every frame as identical after the first upload:
+    ///
+    /// ```rust,ignore
+    /// // Static scene -- generation 0 is fine, items never change.
+    /// SceneFrame::from_surface_items(items)
+    ///
+    /// // Dynamic scene -- pass a value that increments when content changes.
+    /// // scene.version() is the right source when writeback drives the items.
+    /// SceneFrame::from_surface_items(items).with_generation(scene.version())
+    /// ```
     pub fn from_surface_items(items: Vec<SceneRenderItem>) -> Self {
         Self::new(SurfaceSubmission::Flat(items.into()))
+    }
+
+    /// Override the generation stamp on a scene frame.
+    ///
+    /// The renderer compares `generation` against the previous frame to decide
+    /// whether to rebuild and re-upload the instance buffer. A generation of
+    /// `0` (the default for [`from_surface_items`](Self::from_surface_items))
+    /// causes the cache to hit on every frame after the first, freezing
+    /// rendered objects even if item transforms have changed.
+    ///
+    /// Pass any value that changes when content changes. `scene.version()` is
+    /// the natural choice when items are derived from scene writeback.
+    pub fn with_generation(mut self, generation: u64) -> Self {
+        self.generation = generation;
+        self
     }
 
     /// Build a scene frame from an already-allocated shared slice.

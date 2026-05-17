@@ -92,6 +92,12 @@ pub struct ContactEvent {
     pub world_normal: glam::Vec3,
     /// Magnitude of the impulse applied at the contact point.
     pub impulse: f32,
+    /// World-space position of the contact point.
+    ///
+    /// Use this for placing sound sources, particle effects, or decals at the
+    /// collision site. Simple plugins that do not compute a contact point may
+    /// leave this as `Vec3::ZERO`.
+    pub contact_point: glam::Vec3,
 }
 
 /// Output produced by one call to [`super::ViewportRuntime::step`].

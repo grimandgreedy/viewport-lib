@@ -117,22 +117,22 @@ pub fn sphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
     }
 }
 
-/// Flat XZ plane centered at the origin.
+/// Flat XY plane centered at the origin (Z-up world: this is the ground plane).
 ///
-/// `width` : extent along X. `depth` : extent along Z.
+/// `width` : extent along X. `depth` : extent along Y. Normal points +Z.
 pub fn plane(width: f32, depth: f32) -> MeshData {
     let hw = width / 2.0;
     let hd = depth / 2.0;
 
     let positions = vec![
-        [-hw, 0.0, -hd],
-        [hw, 0.0, -hd],
-        [hw, 0.0, hd],
-        [-hw, 0.0, hd],
+        [-hw, -hd, 0.0],
+        [hw, -hd, 0.0],
+        [hw, hd, 0.0],
+        [-hw, hd, 0.0],
     ];
-    let normals = vec![[0.0, 1.0, 0.0]; 4];
-    let uvs = vec![[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]];
-    let indices = vec![0, 2, 1, 0, 3, 2];
+    let normals = vec![[0.0, 0.0, 1.0]; 4];
+    let uvs = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+    let indices = vec![0, 1, 2, 0, 2, 3];
 
     MeshData {
         positions,
@@ -1290,10 +1290,10 @@ mod tests {
     // ---- plane ----
 
     #[test]
-    fn plane_all_y_zero() {
+    fn plane_all_z_zero() {
         let m = plane(5.0, 3.0);
         for (i, p) in m.positions.iter().enumerate() {
-            assert!(p[1].abs() < 1e-6, "plane vertex[{i}] has Y = {}", p[1]);
+            assert!(p[2].abs() < 1e-6, "plane vertex[{i}] has Z = {}", p[2]);
         }
     }
 
@@ -1302,7 +1302,7 @@ mod tests {
         let w = 4.0;
         let d = 6.0;
         let m = plane(w, d);
-        assert_positions_bounded("plane", &m, [w / 2.0, 0.0, d / 2.0]);
+        assert_positions_bounded("plane", &m, [w / 2.0, d / 2.0, 0.0]);
     }
 
     #[test]
