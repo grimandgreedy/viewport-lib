@@ -77,3 +77,7 @@ path = "examples/eframe_showcase/main.rs"
 [[example]]
 name = "winit-multi-viewport"
 path = "examples/winit_multi_viewport/main.rs"
+
+[[example]]
+name = "runtime-resources"
+path = "examples/runtime_resources/main.rs"

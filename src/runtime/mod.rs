@@ -47,6 +47,7 @@ pub mod output;
 pub mod plugin;
 /// Built-in animation, constraint, and physics plugins.
 pub mod plugins;
+pub mod resources;
 pub mod snapshot;
 /// Built-in interaction systems: SelectionSystem and ManipulationSystem.
 pub mod systems;
@@ -61,6 +62,7 @@ pub use plugins::{
     AnimationPlugin, AnimationTrack, Constraint, ConstraintPlugin, Keyframe, PhysicsBody,
     PhysicsLitePlugin,
 };
+pub use resources::RuntimeResources;
 pub use snapshot::{TransformSnapshot, TransformSnapshotTable};
 pub use systems::{ManipulationSystem, SelectionSystem};
 pub use timestep::{FixedStepIter, FixedTimestep};
@@ -81,6 +83,7 @@ fn run_range(
     scene: &Scene,
     writeback: &mut TransformWriteback,
     output: &mut RuntimeOutput,
+    resources: &mut RuntimeResources,
 ) {
     for plugin in plugins.iter_mut() {
         let p = plugin.priority();
@@ -92,6 +95,7 @@ fn run_range(
                 writeback,
                 output,
                 pick_hit: frame.pick_hit,
+                resources,
             };
             plugin.step(&mut ctx);
         }
@@ -534,6 +538,124 @@ mod tests {
         assert!(si < st, "submit must come before step");
         assert!(st < co, "step must come before collect");
     }
+
+    // ---- resource tests -----------------------------------------------------
+
+    #[test]
+    fn test_resource_insert_get() {
+        let mut res = RuntimeResources::new();
+        res.insert(42u32);
+        assert_eq!(res.get::<u32>(), Some(&42));
+        assert!(res.get::<u64>().is_none());
+    }
+
+    #[test]
+    fn test_resource_insert_overwrites() {
+        let mut res = RuntimeResources::new();
+        res.insert(1u32);
+        res.insert(2u32);
+        assert_eq!(res.get::<u32>(), Some(&2));
+    }
+
+    #[test]
+    fn test_resource_get_mut() {
+        let mut res = RuntimeResources::new();
+        res.insert(0u32);
+        *res.get_mut::<u32>().unwrap() = 99;
+        assert_eq!(res.get::<u32>(), Some(&99));
+    }
+
+    #[test]
+    fn test_resource_remove() {
+        let mut res = RuntimeResources::new();
+        res.insert(7u32);
+        assert!(res.contains::<u32>());
+        let val = res.remove::<u32>();
+        assert_eq!(val, Some(7));
+        assert!(!res.contains::<u32>());
+        // remove again returns None
+        assert!(res.remove::<u32>().is_none());
+    }
+
+    #[test]
+    fn test_resource_missing_returns_none() {
+        let res = RuntimeResources::new();
+        assert!(res.get::<u32>().is_none());
+        assert!(!res.contains::<u32>());
+    }
+
+    // Plugin that inserts a counter resource in step().
+    struct CounterWriter {
+        value: u32,
+    }
+
+    impl RuntimePlugin for CounterWriter {
+        fn priority(&self) -> i32 { phase::ANIMATE }
+        fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
+            ctx.resources.insert(self.value);
+        }
+    }
+
+    // Plugin that reads the counter resource and records it.
+    struct CounterReader {
+        recorded: Arc<Mutex<Vec<u32>>>,
+    }
+
+    impl RuntimePlugin for CounterReader {
+        fn priority(&self) -> i32 { phase::POST_SIM }
+        fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
+            if let Some(&v) = ctx.resources.get::<u32>() {
+                self.recorded.lock().unwrap().push(v);
+            }
+        }
+    }
+
+    #[test]
+    fn test_resource_shared_across_plugins_same_frame() {
+        // CounterWriter runs at ANIMATE, CounterReader at POST_SIM.
+        // The value written by CounterWriter must be visible to CounterReader in the same frame.
+        let recorded = Arc::new(Mutex::new(Vec::<u32>::new()));
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(CounterWriter { value: 42 })
+            .with_plugin(CounterReader { recorded: recorded.clone() });
+
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+
+        let vals = recorded.lock().unwrap();
+        assert_eq!(vals.as_slice(), &[42], "reader must see value written by writer in the same frame");
+    }
+
+    #[test]
+    fn test_resource_persists_across_frames() {
+        // A resource inserted in frame 1 must still be present in frame 2 if not removed.
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(CounterWriter { value: 10 });
+
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        assert!(runtime.resources().contains::<u32>(), "resource must persist after step");
+    }
+
+    #[test]
+    fn test_runtime_works_without_resources() {
+        // A runtime with no plugins and no resource usage must compile and step correctly.
+        let mut runtime = ViewportRuntime::new();
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+        let output = runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        assert!(output.contact_events.is_empty());
+        assert!(output.node_transform_ops.is_empty());
+    }
 }
 
 /// Per-frame scene orchestration layer.
@@ -559,6 +681,8 @@ pub struct ViewportRuntime {
     selection_system: Option<SelectionSystem>,
     manipulation_system: Option<ManipulationSystem>,
     camera_follow: Option<CameraFollow>,
+    /// Typed resource registry shared across plugins each frame.
+    resources: RuntimeResources,
     /// Node IDs present at the end of the previous frame.
     prev_node_ids: std::collections::HashSet<crate::interaction::selection::NodeId>,
     /// False on the very first step call; after that, lifecycle events are emitted.
@@ -583,6 +707,7 @@ impl ViewportRuntime {
             selection_system: None,
             manipulation_system: None,
             camera_follow: None,
+            resources: RuntimeResources::new(),
             prev_node_ids: std::collections::HashSet::new(),
             scene_initialized: false,
         }
@@ -669,6 +794,22 @@ impl ViewportRuntime {
     /// blend factor to [`TransformSnapshotTable::interpolated`].
     pub fn snapshots(&self) -> &TransformSnapshotTable {
         &self.snapshots
+    }
+
+    /// Read access to the shared resource registry.
+    ///
+    /// Use this after `step` to inspect resources without running the frame loop.
+    /// During the frame loop, access resources through `RuntimeStepContext::resources`.
+    pub fn resources(&self) -> &RuntimeResources {
+        &self.resources
+    }
+
+    /// Write access to the shared resource registry.
+    ///
+    /// Use this to pre-populate resources before the first `step`, or to inject
+    /// resources from outside the plugin system (e.g. from the application).
+    pub fn resources_mut(&mut self) -> &mut RuntimeResources {
+        &mut self.resources
     }
 
     /// Blend factor for rendering interpolation between fixed steps.
@@ -758,6 +899,7 @@ impl ViewportRuntime {
                             writeback: &mut writeback,
                             output: &mut output,
                             pick_hit: frame.pick_hit,
+                            resources: &mut self.resources,
                         };
                         plugin.on_event(event, &mut ctx);
                     }
@@ -784,6 +926,7 @@ impl ViewportRuntime {
                 writeback: &mut writeback,
                 output: &mut output,
                 pick_hit: frame.pick_hit,
+                resources: &mut self.resources,
             };
             plugin.submit(&ctx);
         }
@@ -800,6 +943,7 @@ impl ViewportRuntime {
             scene,
             &mut writeback,
             &mut output,
+            &mut self.resources,
         );
 
         // Built-in selection system runs before the Select range.
@@ -816,6 +960,7 @@ impl ViewportRuntime {
             scene,
             &mut writeback,
             &mut output,
+            &mut self.resources,
         );
 
         // Built-in manipulation system runs before the Manipulate range.
@@ -834,6 +979,7 @@ impl ViewportRuntime {
             scene,
             &mut writeback,
             &mut output,
+            &mut self.resources,
         );
 
         // Simulate: [SIMULATE, POST_SIM) -- once per fixed step or once at wall dt.
@@ -849,6 +995,7 @@ impl ViewportRuntime {
                     scene,
                     &mut writeback,
                     &mut output,
+                    &mut self.resources,
                 );
                 self.step_index = self.step_index.wrapping_add(1);
             }
@@ -863,6 +1010,7 @@ impl ViewportRuntime {
                 scene,
                 &mut writeback,
                 &mut output,
+                &mut self.resources,
             );
             self.step_index = self.step_index.wrapping_add(1);
         }
@@ -877,6 +1025,7 @@ impl ViewportRuntime {
             scene,
             &mut writeback,
             &mut output,
+            &mut self.resources,
         );
 
         // --- Collect pass: all plugins in priority order ---------------------
@@ -888,6 +1037,7 @@ impl ViewportRuntime {
                 writeback: &mut writeback,
                 output: &mut output,
                 pick_hit: frame.pick_hit,
+                resources: &mut self.resources,
             };
             plugin.collect(&mut ctx);
         }

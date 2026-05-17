@@ -5,6 +5,7 @@ use crate::interaction::input::ActionFrame;
 use crate::scene::scene::Scene;
 
 use super::output::{RuntimeOutput, TransformWriteback};
+use super::resources::RuntimeResources;
 
 /// Per-frame inputs to [`super::ViewportRuntime::step`].
 pub struct RuntimeFrameContext<'a> {
@@ -36,8 +37,9 @@ pub struct RuntimeFrameContext<'a> {
 /// Context passed to each plugin during its execution step.
 ///
 /// Provides read-only scene access and write access to the transform writeback
-/// buffer and output accumulator. To write transforms, call
-/// [`TransformWriteback::set`] on `self.writeback`.
+/// buffer, output accumulator, and shared resource registry. To write transforms,
+/// call [`TransformWriteback::set`] on `self.writeback`. To share state between
+/// plugins, use `self.resources`.
 pub struct RuntimeStepContext<'a> {
     /// The numeric priority of the plugin executing in this context.
     pub priority: i32,
@@ -53,6 +55,14 @@ pub struct RuntimeStepContext<'a> {
     pub output: &'a mut RuntimeOutput,
     /// Forwarded from RuntimeFrameContext for plugins that need the current pick result.
     pub pick_hit: Option<crate::interaction::picking::PickHit>,
+    /// Shared typed resource registry. Plugins use this to coordinate through
+    /// engine-owned state without custom wiring in the application.
+    ///
+    /// In `submit` (called with `&RuntimeStepContext`), only `get` and `contains`
+    /// are accessible through the shared reference. In `step`, `collect`, and
+    /// `on_event` (called with `&mut RuntimeStepContext`), full insert/get_mut/remove
+    /// access is available.
+    pub resources: &'a mut RuntimeResources,
 }
 
 impl<'a> RuntimeStepContext<'a> {
