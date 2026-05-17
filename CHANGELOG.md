@@ -4,6 +4,7 @@
 
 ### Runtime
 
+- Generic typed event bus: plugins can emit events of any type via `ctx.output.events.emit(MyEvent { .. })`. Events accumulate during the frame and are returned in `RuntimeOutput::events`. Read them with `output.events.read::<T>()` (shared reference) or `output.events.drain::<T>()` (owned). Events from one plugin are visible to later plugins in the same frame via `ctx.output.events.read`. All existing `RuntimeOutput` fields (`contact_events`, `selection_ops`, etc.) are unchanged.
 - Shared resource registry: plugins can now coordinate through typed engine-owned state without custom wiring in the application. `RuntimeResources` stores one value per type and persists across frames. Access it via `ctx.resources` in `step`, `collect`, and `on_event`; read-only access is available in `submit`. Pre-populate or inspect the registry outside the frame loop via `runtime.resources()` and `runtime.resources_mut()`.
 - Scene runtime layer: a formal per-frame orchestration layer now sits between the scene graph and the renderer. Register plugins that run in a defined phase order (prepare, pick, select, manipulate, animate, simulate, writeback), drive a fixed-timestep accumulator for physics, and receive flushed transform results back from the runtime without managing that loop yourself.
     - The fixed timestep accumulator handles the common physics pattern of accumulating wall-clock time and running zero, one, or several fixed steps per frame. After iterating, a blend factor is available for interpolating transforms when rendering between steps.

@@ -42,6 +42,7 @@
 
 pub mod camera_follow;
 pub mod context;
+pub mod events;
 pub mod mode;
 pub mod output;
 pub mod plugin;
@@ -55,6 +56,7 @@ pub mod timestep;
 
 pub use camera_follow::CameraFollow;
 pub use context::{RuntimeFrameContext, RuntimeStepContext, SimulationStepContext};
+pub use events::RuntimeEventBus;
 pub use mode::SceneRuntimeMode;
 pub use output::{ContactEvent, NodeTransformOp, RuntimeOutput, SelectionOp, TransformWriteback};
 pub use plugin::{phase, RuntimeEvent, RuntimePhase, RuntimePlugin};
@@ -655,6 +657,168 @@ mod tests {
         let output = runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
         assert!(output.contact_events.is_empty());
         assert!(output.node_transform_ops.is_empty());
+    }
+
+    // ---- event bus tests ----------------------------------------------------
+
+    // Two distinct event types to verify typed routing.
+    #[derive(Debug, PartialEq)]
+    struct GameplayEvent { id: u32 }
+
+    #[derive(Debug, PartialEq)]
+    struct DiagnosticsEvent { frame_ms: f32 }
+
+    // Plugin that emits GameplayEvents.
+    struct GameplayEmitter { count: u32 }
+
+    impl RuntimePlugin for GameplayEmitter {
+        fn priority(&self) -> i32 { phase::SIMULATE }
+        fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
+            for i in 0..self.count {
+                ctx.output.events.emit(GameplayEvent { id: i });
+            }
+        }
+    }
+
+    // Plugin that emits DiagnosticsEvents.
+    struct DiagnosticsEmitter;
+
+    impl RuntimePlugin for DiagnosticsEmitter {
+        fn priority(&self) -> i32 { phase::POST_SIM }
+        fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
+            ctx.output.events.emit(DiagnosticsEvent { frame_ms: ctx.dt * 1000.0 });
+        }
+    }
+
+    // Plugin that reads GameplayEvents from the bus during its own step.
+    struct GameplayReader {
+        seen: Arc<Mutex<Vec<u32>>>,
+    }
+
+    impl RuntimePlugin for GameplayReader {
+        fn priority(&self) -> i32 { phase::WRITEBACK }
+        fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
+            for ev in ctx.output.events.read::<GameplayEvent>() {
+                self.seen.lock().unwrap().push(ev.id);
+            }
+        }
+    }
+
+    fn run_one_frame(runtime: &mut ViewportRuntime) -> RuntimeOutput {
+        let camera = Camera::default();
+        let input = ActionFrame::default();
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0))
+    }
+
+    #[test]
+    fn test_event_bus_emit_and_read() {
+        let mut bus = RuntimeEventBus::new();
+        bus.emit(GameplayEvent { id: 1 });
+        bus.emit(GameplayEvent { id: 2 });
+        let ids: Vec<u32> = bus.read::<GameplayEvent>().map(|e| e.id).collect();
+        assert_eq!(ids, vec![1, 2]);
+    }
+
+    #[test]
+    fn test_event_bus_typed_isolation() {
+        // Reading a different type returns nothing even when other types have events.
+        let mut bus = RuntimeEventBus::new();
+        bus.emit(GameplayEvent { id: 42 });
+        assert!(!bus.has::<DiagnosticsEvent>());
+        assert_eq!(bus.count::<DiagnosticsEvent>(), 0);
+        let diag: Vec<_> = bus.read::<DiagnosticsEvent>().collect();
+        assert!(diag.is_empty());
+    }
+
+    #[test]
+    fn test_event_bus_drain() {
+        let mut bus = RuntimeEventBus::new();
+        bus.emit(GameplayEvent { id: 7 });
+        bus.emit(GameplayEvent { id: 8 });
+        let drained = bus.drain::<GameplayEvent>();
+        assert_eq!(drained, vec![GameplayEvent { id: 7 }, GameplayEvent { id: 8 }]);
+        // Second drain returns empty.
+        assert!(bus.drain::<GameplayEvent>().is_empty());
+        assert!(!bus.has::<GameplayEvent>());
+    }
+
+    #[test]
+    fn test_event_bus_has_and_count() {
+        let mut bus = RuntimeEventBus::new();
+        assert!(!bus.has::<GameplayEvent>());
+        assert_eq!(bus.count::<GameplayEvent>(), 0);
+        bus.emit(GameplayEvent { id: 1 });
+        bus.emit(GameplayEvent { id: 2 });
+        assert!(bus.has::<GameplayEvent>());
+        assert_eq!(bus.count::<GameplayEvent>(), 2);
+    }
+
+    #[test]
+    fn test_event_bus_is_empty() {
+        let mut bus = RuntimeEventBus::new();
+        assert!(bus.is_empty());
+        bus.emit(GameplayEvent { id: 0 });
+        assert!(!bus.is_empty());
+    }
+
+    #[test]
+    fn test_events_emitted_by_plugin_visible_in_output() {
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(GameplayEmitter { count: 3 });
+        let output = run_one_frame(&mut runtime);
+        assert_eq!(output.events.count::<GameplayEvent>(), 3);
+        let ids: Vec<u32> = output.events.read::<GameplayEvent>().map(|e| e.id).collect();
+        assert_eq!(ids, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_events_typed_routing_across_plugins() {
+        // GameplayEmitter (SIMULATE) emits GameplayEvents; GameplayReader (WRITEBACK)
+        // reads them in the same frame via ctx.output.events.
+        let seen = Arc::new(Mutex::new(Vec::<u32>::new()));
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(GameplayEmitter { count: 2 })
+            .with_plugin(GameplayReader { seen: seen.clone() });
+        run_one_frame(&mut runtime);
+        let ids = seen.lock().unwrap();
+        assert_eq!(ids.as_slice(), &[0, 1]);
+    }
+
+    #[test]
+    fn test_multiple_event_types_do_not_interfere() {
+        // Both GameplayEmitter and DiagnosticsEmitter emit; each type is independent.
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(GameplayEmitter { count: 2 })
+            .with_plugin(DiagnosticsEmitter);
+        let output = run_one_frame(&mut runtime);
+        assert_eq!(output.events.count::<GameplayEvent>(), 2);
+        assert_eq!(output.events.count::<DiagnosticsEvent>(), 1);
+    }
+
+    #[test]
+    fn test_events_cleared_each_frame() {
+        // Events from frame N must not appear in frame N+1.
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(GameplayEmitter { count: 1 });
+        run_one_frame(&mut runtime);
+        let output2 = run_one_frame(&mut runtime);
+        // The second frame also emits 1 event, but it must be exactly 1, not 2.
+        assert_eq!(output2.events.count::<GameplayEvent>(), 1);
+    }
+
+    #[test]
+    fn test_existing_output_fields_unaffected() {
+        // Backward-compat: contact_events, selection_ops, node_transform_ops,
+        // and camera_follow_target continue to work with no changes.
+        let mut runtime = ViewportRuntime::new();
+        let output = run_one_frame(&mut runtime);
+        assert!(output.contact_events.is_empty());
+        assert!(output.selection_ops.is_empty());
+        assert!(output.node_transform_ops.is_empty());
+        assert!(output.camera_follow_target.is_none());
+        assert!(output.events.is_empty());
     }
 }
 

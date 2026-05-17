@@ -1,6 +1,7 @@
-//! Runtime output types: transform ops, selection ops, and contact events.
+//! Runtime output types: transform ops, selection ops, contact events, and generic events.
 
 use crate::interaction::selection::{NodeId, Selection};
+use super::events::RuntimeEventBus;
 
 /// Write buffer for transform changes produced by plugins.
 ///
@@ -105,7 +106,10 @@ pub struct ContactEvent {
 /// `node_transform_ops` have already been applied to the scene and the snapshot
 /// table when this is returned. The other fields are for the app to read and
 /// act on as needed.
-#[derive(Debug, Default)]
+///
+/// Plugin-authored events of any type are collected in `events`. Use
+/// `output.events.read::<T>()` or `output.events.drain::<T>()` to consume them.
+#[derive(Default)]
 pub struct RuntimeOutput {
     /// Transform ops applied to the scene during this step.
     pub node_transform_ops: Vec<NodeTransformOp>,
@@ -120,4 +124,9 @@ pub struct RuntimeOutput {
     /// when no follow binding is set or the target node was not found. Apply to
     /// `camera.center` for orbit-camera follow behavior.
     pub camera_follow_target: Option<glam::Vec3>,
+    /// Generic typed event bus. Plugins emit events via `ctx.output.events.emit(MyEvent { .. })`.
+    /// The app reads them after `step()` via `output.events.read::<MyEvent>()` or
+    /// `output.events.drain::<MyEvent>()`. Events are cleared each frame because
+    /// `RuntimeOutput` is constructed fresh on every `step` call.
+    pub events: RuntimeEventBus,
 }
