@@ -45,6 +45,8 @@ pub mod context;
 /// Debug draw accumulator for runtime plugins.
 pub mod debug_draw;
 pub mod events;
+/// Async job handoff types for runtime plugins.
+pub mod jobs;
 pub mod mode;
 pub mod output;
 pub mod plugin;
@@ -60,6 +62,7 @@ pub use camera_follow::CameraFollow;
 pub use context::{RuntimeFrameContext, RuntimeStepContext, SimulationStepContext};
 pub use debug_draw::{DebugDraw, DebugLayer, DebugPrim};
 pub use events::RuntimeEventBus;
+pub use jobs::{JobPoll, JobSender, JobSlot};
 pub use mode::SceneRuntimeMode;
 pub use output::{CameraCommand, ContactEvent, NodeTransformOp, RuntimeOutput, SelectionOp, TransformWriteback};
 pub use plugin::{phase, RuntimeEvent, RuntimePhase, RuntimePlugin};
@@ -822,6 +825,198 @@ mod tests {
         assert!(output.node_transform_ops.is_empty());
         assert!(output.camera_follow_target.is_none());
         assert!(output.events.is_empty());
+    }
+
+    // ---- job handoff tests --------------------------------------------------
+
+    use crate::runtime::jobs::{JobPoll, JobSlot};
+
+    #[test]
+    fn test_job_slot_empty_by_default() {
+        let slot: JobSlot<u32> = JobSlot::empty();
+        assert!(slot.is_empty());
+        assert!(!slot.is_pending());
+        assert!(!slot.is_ready());
+    }
+
+    #[test]
+    fn test_job_slot_pending_after_new() {
+        let (slot, _sender) = JobSlot::<u32>::new();
+        assert!(slot.is_pending());
+        assert!(!slot.is_empty());
+        assert!(!slot.is_ready());
+    }
+
+    #[test]
+    fn test_job_handoff_complete() {
+        let (mut slot, sender) = JobSlot::<u32>::new();
+        assert!(slot.is_pending());
+        sender.complete(42);
+        assert!(slot.is_ready());
+        match slot.take() {
+            JobPoll::Ready(v) => assert_eq!(v, 42),
+            _ => panic!("expected Ready, got other variant"),
+        }
+        // Slot resets to empty after taking the result.
+        assert!(slot.is_empty());
+    }
+
+    #[test]
+    fn test_job_handoff_fail() {
+        let (mut slot, sender) = JobSlot::<u32>::new();
+        sender.fail("disk error");
+        match slot.take() {
+            JobPoll::Failed(msg) => assert_eq!(msg, "disk error"),
+            _ => panic!("expected Failed"),
+        }
+        assert!(slot.is_empty());
+    }
+
+    #[test]
+    fn test_job_handoff_cancel() {
+        let (mut slot, sender) = JobSlot::<u32>::new();
+        sender.cancel();
+        match slot.take() {
+            JobPoll::Cancelled => {}
+            _ => panic!("expected Cancelled"),
+        }
+        assert!(slot.is_empty());
+    }
+
+    #[test]
+    fn test_job_sender_drop_cancels() {
+        let (mut slot, sender) = JobSlot::<u32>::new();
+        drop(sender);
+        match slot.take() {
+            JobPoll::Cancelled => {}
+            _ => panic!("expected Cancelled after sender drop"),
+        }
+        assert!(slot.is_empty());
+    }
+
+    #[test]
+    fn test_job_take_on_empty_returns_empty() {
+        let mut slot: JobSlot<u32> = JobSlot::empty();
+        match slot.take() {
+            JobPoll::Empty => {}
+            _ => panic!("expected Empty"),
+        }
+    }
+
+    #[test]
+    fn test_job_take_while_pending_returns_pending() {
+        let (mut slot, _sender) = JobSlot::<u32>::new();
+        match slot.take() {
+            JobPoll::Pending => {}
+            _ => panic!("expected Pending"),
+        }
+        // Still pending after a non-consuming poll.
+        assert!(slot.is_pending());
+    }
+
+    #[test]
+    fn test_job_async_handoff_across_frames() {
+        // Plugin holds a JobSlot. Frame 1: start job. Frame 2+: result arrives.
+        struct LoaderPlugin {
+            slot: JobSlot<u32>,
+            result: Arc<Mutex<Option<u32>>>,
+        }
+
+        impl RuntimePlugin for LoaderPlugin {
+            fn priority(&self) -> i32 { phase::PREPARE }
+
+            fn submit(&mut self, _ctx: &RuntimeStepContext<'_>) {
+                if self.slot.is_empty() {
+                    let (new_slot, sender) = JobSlot::new();
+                    self.slot = new_slot;
+                    // Inline completion simulating a fast background thread.
+                    sender.complete(99);
+                }
+            }
+
+            fn collect(&mut self, _ctx: &mut RuntimeStepContext<'_>) {
+                if let JobPoll::Ready(v) = self.slot.take() {
+                    *self.result.lock().unwrap() = Some(v);
+                }
+            }
+
+            fn step(&mut self, _ctx: &mut RuntimeStepContext<'_>) {}
+        }
+
+        let result = Arc::new(Mutex::new(None::<u32>));
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(LoaderPlugin { slot: JobSlot::empty(), result: result.clone() });
+
+        run_one_frame(&mut runtime);
+        assert_eq!(*result.lock().unwrap(), Some(99));
+    }
+
+    #[test]
+    fn test_job_staged_resource_update_ordering() {
+        // A low-priority plugin integrates a job result into resources in collect.
+        // A high-priority plugin's collect must NOT see it (runs first due to sort order).
+        // A later-running plugin's collect DOES see it.
+
+        struct Integrator {
+            slot: JobSlot<u32>,
+        }
+
+        impl RuntimePlugin for Integrator {
+            fn priority(&self) -> i32 { phase::PREPARE }  // low number = runs early in collect
+
+            fn submit(&mut self, _ctx: &RuntimeStepContext<'_>) {
+                if self.slot.is_empty() {
+                    let (s, sender) = JobSlot::new();
+                    self.slot = s;
+                    sender.complete(77);
+                }
+            }
+
+            fn collect(&mut self, ctx: &mut RuntimeStepContext<'_>) {
+                if let JobPoll::Ready(v) = self.slot.take() {
+                    ctx.resources.insert(v);
+                }
+            }
+
+            fn step(&mut self, _ctx: &mut RuntimeStepContext<'_>) {}
+        }
+
+        struct Reader {
+            seen: Arc<Mutex<Option<u32>>>,
+        }
+
+        impl RuntimePlugin for Reader {
+            fn priority(&self) -> i32 { phase::POST_SIM }  // higher number = runs later in collect
+
+            fn collect(&mut self, ctx: &mut RuntimeStepContext<'_>) {
+                *self.seen.lock().unwrap() = ctx.resources.get::<u32>().copied();
+            }
+
+            fn step(&mut self, _ctx: &mut RuntimeStepContext<'_>) {}
+        }
+
+        let seen = Arc::new(Mutex::new(None::<u32>));
+        let mut runtime = ViewportRuntime::new()
+            .with_plugin(Integrator { slot: JobSlot::empty() })
+            .with_plugin(Reader { seen: seen.clone() });
+
+        run_one_frame(&mut runtime);
+        // Integrator (PREPARE) integrates into resources in collect before Reader (POST_SIM) collect.
+        assert_eq!(*seen.lock().unwrap(), Some(77));
+    }
+
+    #[test]
+    fn test_job_slot_in_resources() {
+        // A JobSlot stored in RuntimeResources is accessible to other plugins.
+        let (slot, sender) = JobSlot::<u32>::new();
+        let mut res = RuntimeResources::new();
+        res.insert(slot);
+        sender.complete(55);
+        let found = res.get_mut::<JobSlot<u32>>().unwrap();
+        match found.take() {
+            JobPoll::Ready(v) => assert_eq!(v, 55),
+            _ => panic!("expected Ready"),
+        }
     }
 }
 
