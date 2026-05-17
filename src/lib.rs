@@ -222,9 +222,9 @@ pub use resources::{
 
 pub use runtime::{
     AnimationPlugin, AnimationTrack, CameraFollow, Constraint, ConstraintPlugin, ContactEvent,
-    FixedStepIter, FixedTimestep, Keyframe, ManipulationSystem, NodeTransformOp,
-    PhysicsBody, PhysicsLitePlugin, RuntimeFrameContext, RuntimeOutput, RuntimePhase,
-    RuntimePlugin, RuntimeStepContext, SceneRuntimeMode, SelectionOp, SelectionSystem,
-    SimulationStepContext, TransformSnapshot, TransformSnapshotTable, TransformWriteback,
-    ViewportRuntime,
+    DebugDraw, DebugLayer, DebugPrim, FixedStepIter, FixedTimestep, Keyframe,
+    ManipulationSystem, NodeTransformOp, PhysicsBody, PhysicsLitePlugin, RuntimeFrameContext,
+    RuntimeOutput, RuntimePhase, RuntimePlugin, RuntimeStepContext, SceneRuntimeMode,
+    SelectionOp, SelectionSystem, SimulationStepContext, TransformSnapshot,
+    TransformSnapshotTable, TransformWriteback, ViewportRuntime,
 };

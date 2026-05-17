@@ -63,6 +63,7 @@ mod showcase_42_gaussian_splats;
 mod showcase_43_scene_runtime;
 mod showcase_44_runtime_interaction;
 mod showcase_45_simulation;
+mod showcase_46_debug_draw;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -209,6 +210,7 @@ fn main() -> eframe::Result {
                 rt_state: showcase_43_scene_runtime::RtDemoState::default(),
                 rt_interact_state: showcase_44_runtime_interaction::RtInteractState::default(),
                 sim45_state: showcase_45_simulation::Sim45State::default(),
+                dbg_draw_state: showcase_46_debug_draw::DbgDrawState::default(),
             }))
         }),
     )
@@ -267,6 +269,7 @@ enum ShowcaseMode {
     SceneRuntime,
     SceneRuntimeInteract,
     Simulation,
+    DebugDraw,
 }
 
 impl ShowcaseMode {
@@ -317,6 +320,7 @@ impl ShowcaseMode {
             Self::SceneRuntime => "43: Scene Runtime",
             Self::SceneRuntimeInteract => "44: Runtime Interaction",
             Self::Simulation => "45: Simulation & Animation",
+            Self::DebugDraw => "46: Debug Draw",
         }
     }
 }
@@ -478,6 +482,9 @@ pub(crate) struct App {
 
     // --- Showcase 45 ---
     pub(crate) sim45_state: showcase_45_simulation::Sim45State,
+
+    // --- Showcase 46 ---
+    pub(crate) dbg_draw_state: showcase_46_debug_draw::DbgDrawState,
 }
 
 // ---------------------------------------------------------------------------
@@ -1331,6 +1338,12 @@ impl eframe::App for App {
                     showcase_42_gaussian_splats::update_gaussian_splats(self, dt);
                     ctx.request_repaint();
                 }
+                // ----- Debug draw: step simulation -----
+                if self.mode == ShowcaseMode::DebugDraw && self.dbg_draw_state.built {
+                    let dt = ctx.input(|i| i.stable_dt.min(0.25));
+                    showcase_46_debug_draw::update_dbg_draw(self, dt);
+                    ctx.request_repaint();
+                }
                 // ----- Scene runtime: step simulation -----
                 if self.mode == ShowcaseMode::SceneRuntime && self.rt_state.built {
                     let dt = ctx.input(|i| i.stable_dt.min(0.25));
@@ -1389,7 +1402,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 45] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 46] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1435,6 +1448,7 @@ impl App {
             ShowcaseMode::SceneRuntime,
             ShowcaseMode::SceneRuntimeInteract,
             ShowcaseMode::Simulation,
+            ShowcaseMode::DebugDraw,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1562,6 +1576,7 @@ impl App {
             ShowcaseMode::SceneRuntime => !self.rt_state.built,
             ShowcaseMode::SceneRuntimeInteract => !self.rt_interact_state.built,
             ShowcaseMode::Simulation => !self.sim45_state.built,
+            ShowcaseMode::DebugDraw => !self.dbg_draw_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -1985,6 +2000,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::DebugDraw => {
+                showcase_46_debug_draw::build_dbg_draw_scene(self, renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::new(0.0, 0.0, 4.0),
+                    distance: 18.0,
+                    orientation: glam::Quat::from_rotation_z(0.5)
+                        * glam::Quat::from_rotation_x(1.0),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2083,6 +2108,9 @@ impl App {
             }
             ShowcaseMode::Simulation => {
                 showcase_45_simulation::controls_sim45(self, ui)
+            }
+            ShowcaseMode::DebugDraw => {
+                showcase_46_debug_draw::controls_dbg_draw(self, ui)
             }
         }
     }
@@ -2821,6 +2849,22 @@ impl App {
                 let sg = self.sim45_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
+
+            ShowcaseMode::DebugDraw => {
+                let items = if self.dbg_draw_state.built {
+                    showcase_46_debug_draw::dbg_draw_scene_items(self)
+                } else {
+                    Vec::new()
+                };
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.5,
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [0.7, 0.7, 0.7],
+                    ..LightingSettings::default()
+                };
+                let sg = self.dbg_draw_state.scene.version();
+                (items, Some(BG_COLOUR), lighting, sg, 0)
+            }
         };
 
         // Gizmo matrices for Interaction, ClipVolumes, and SceneRuntimeInteract modes.
@@ -2989,6 +3033,11 @@ impl App {
         // Picking Levels (Showcase 33).
         if self.mode == ShowcaseMode::PickLevels {
             showcase_33_picking_levels::submit_pl_items(self, &mut fd);
+        }
+
+        // Debug Draw (Showcase 46): polylines, points, and labels from DebugDraw resource.
+        if self.mode == ShowcaseMode::DebugDraw && self.dbg_draw_state.built {
+            showcase_46_debug_draw::submit_dbg_draw_items(self, &mut fd);
         }
 
 

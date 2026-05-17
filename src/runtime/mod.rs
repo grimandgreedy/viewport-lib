@@ -42,6 +42,8 @@
 
 pub mod camera_follow;
 pub mod context;
+/// Debug draw accumulator for runtime plugins.
+pub mod debug_draw;
 pub mod events;
 pub mod mode;
 pub mod output;
@@ -56,6 +58,7 @@ pub mod timestep;
 
 pub use camera_follow::CameraFollow;
 pub use context::{RuntimeFrameContext, RuntimeStepContext, SimulationStepContext};
+pub use debug_draw::{DebugDraw, DebugLayer, DebugPrim};
 pub use events::RuntimeEventBus;
 pub use mode::SceneRuntimeMode;
 pub use output::{CameraCommand, ContactEvent, NodeTransformOp, RuntimeOutput, SelectionOp, TransformWriteback};
