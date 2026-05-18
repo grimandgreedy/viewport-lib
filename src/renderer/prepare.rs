@@ -4535,10 +4535,12 @@ impl ViewportRenderer {
                         let layout = self.resources.glyph_atlas.layout_text(
                             text,
                             bar.font_size,
-                            None,
+                            bar.font,
                             device,
                         );
-                        let ascent = self.resources.glyph_atlas.font_ascent(0, bar.font_size);
+                        let font_index = bar.font.map_or(0, |h| h.0);
+                        let ascent =
+                            self.resources.glyph_atlas.font_ascent(font_index, bar.font_size);
                         let label_gap = 5.0;
                         let lx = bar_x + bar.width_px * 0.5 - layout.total_width * 0.5;
                         let ly = match bar.anchor {
