@@ -158,6 +158,15 @@ impl ViewportRenderer {
                 }
             }
         }
+        // Overlay rects (drawn before labels so they act as backgrounds).
+        if let Some(ref rr) = self.overlay_rect_gpu_data {
+            if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, &rr.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, rr.vertex_buf.slice(..));
+                render_pass.draw(0..rr.vertex_count, 0..1);
+            }
+        }
         // Overlay labels (always on top, after screen images).
         if let Some(ref ld) = self.label_gpu_data {
             if let Some(pipeline) = &self.resources.overlay_text_pipeline {
@@ -361,6 +370,15 @@ impl ViewportRenderer {
                     render_pass.set_bind_group(0, &gpu.bind_group, &[]);
                     render_pass.draw(0..6, 0..1);
                 }
+            }
+        }
+        // Overlay rects (drawn before labels so they act as backgrounds).
+        if let Some(ref rr) = self.overlay_rect_gpu_data {
+            if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, &rr.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, rr.vertex_buf.slice(..));
+                render_pass.draw(0..rr.vertex_count, 0..1);
             }
         }
         // Overlay labels (always on top, after screen images).
@@ -599,6 +617,15 @@ impl ViewportRenderer {
                         render_pass.set_bind_group(0, &gpu.bind_group, &[]);
                         render_pass.draw(0..6, 0..1);
                     }
+                }
+            }
+            // Overlay rects (drawn before labels so they act as backgrounds).
+            if let Some(ref rr) = self.overlay_rect_gpu_data {
+                if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_bind_group(0, &rr.bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, rr.vertex_buf.slice(..));
+                    render_pass.draw(0..rr.vertex_count, 0..1);
                 }
             }
             // Overlay labels.
@@ -1089,6 +1116,15 @@ impl ViewportRenderer {
                             }
                             render_pass.draw(0..6, 0..1);
                         }
+                    }
+                }
+                // Overlay rects (LDR fallback).
+                if let Some(ref rr) = self.overlay_rect_gpu_data {
+                    if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                        render_pass.set_pipeline(pipeline);
+                        render_pass.set_bind_group(0, &rr.bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, rr.vertex_buf.slice(..));
+                        render_pass.draw(0..rr.vertex_count, 0..1);
                     }
                 }
                 // Overlay labels (LDR fallback: inside the same render pass).
@@ -2823,8 +2859,9 @@ impl ViewportRenderer {
             }
         }
 
-        // Overlay labels, scalar bars, rulers, and overlay images (HDR path): drawn last.
-        let has_overlay = self.label_gpu_data.is_some()
+        // Overlay rects, labels, scalar bars, rulers, and overlay images (HDR path): drawn last.
+        let has_overlay = self.overlay_rect_gpu_data.is_some()
+            || self.label_gpu_data.is_some()
             || self.scalar_bar_gpu_data.is_some()
             || self.ruler_gpu_data.is_some()
             || self.loading_bar_gpu_data.is_some()
@@ -2859,6 +2896,11 @@ impl ViewportRenderer {
             });
             if let Some(pipeline) = &self.resources.overlay_text_pipeline {
                 overlay_pass.set_pipeline(pipeline);
+                if let Some(ref rr) = self.overlay_rect_gpu_data {
+                    overlay_pass.set_bind_group(0, &rr.bind_group, &[]);
+                    overlay_pass.set_vertex_buffer(0, rr.vertex_buf.slice(..));
+                    overlay_pass.draw(0..rr.vertex_count, 0..1);
+                }
                 if let Some(ref ld) = self.label_gpu_data {
                     overlay_pass.set_bind_group(0, &ld.bind_group, &[]);
                     overlay_pass.set_vertex_buffer(0, ld.vertex_buf.slice(..));

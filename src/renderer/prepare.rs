@@ -4631,6 +4631,98 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
+        // Overlay rects
+        // ------------------------------------------------------------------
+        self.overlay_rect_gpu_data = None;
+        if !frame.overlays.rects.is_empty() {
+            self.resources.ensure_overlay_text_pipeline(device);
+            let vp_w = frame.camera.viewport_size[0];
+            let vp_h = frame.camera.viewport_size[1];
+            if vp_w > 0.0 && vp_h > 0.0 {
+                let mut verts: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+
+                let mut sorted: Vec<&crate::renderer::types::OverlayRectItem> =
+                    frame.overlays.rects.iter().collect();
+                sorted.sort_by_key(|r| r.z_order);
+
+                for rect in &sorted {
+                    if rect.opacity <= 0.0 {
+                        continue;
+                    }
+                    let x0 = rect.position[0];
+                    let y0 = rect.position[1];
+                    let x1 = x0 + rect.size[0];
+                    let y1 = y0 + rect.size[1];
+
+                    // Border: slightly expanded rect drawn behind the fill.
+                    if rect.border_width > 0.0 {
+                        let bw = rect.border_width;
+                        let mut bc = rect.border_colour;
+                        bc[3] *= rect.opacity;
+                        emit_rounded_quad(
+                            &mut verts,
+                            x0 - bw,
+                            y0 - bw,
+                            x1 + bw,
+                            y1 + bw,
+                            rect.corner_radius + bw,
+                            bc,
+                            vp_w,
+                            vp_h,
+                        );
+                    }
+
+                    // Fill.
+                    let mut fc = rect.colour;
+                    fc[3] *= rect.opacity;
+                    emit_rounded_quad(
+                        &mut verts,
+                        x0,
+                        y0,
+                        x1,
+                        y1,
+                        rect.corner_radius,
+                        fc,
+                        vp_w,
+                        vp_h,
+                    );
+                }
+
+                if !verts.is_empty() {
+                    let vertex_buf =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("overlay_rect_vbuf"),
+                            contents: bytemuck::cast_slice(&verts),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        });
+                    let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
+                    let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
+                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("overlay_rect_bg"),
+                        layout: bgl,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(
+                                    &self.resources.glyph_atlas.view,
+                                ),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(sampler),
+                            },
+                        ],
+                    });
+                    self.overlay_rect_gpu_data = Some(crate::resources::LabelGpuData {
+                        vertex_buf,
+                        vertex_count: verts.len() as u32,
+                        bind_group,
+                    });
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
         // Gaussian splat: per-viewport GPU sort.
         // ------------------------------------------------------------------
         self.gaussian_splat_draw_data.clear();

@@ -20,7 +20,8 @@ pub use self::types::{
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GaussianSplatData, GaussianSplatId,
     GaussianSplatItem, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode, ImageAnchor,
     ImageSliceItem, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
-    LightingSettings, LoadingBarAnchor, LoadingBarItem, OverlayFrame, OverlayImageItem, PickId,
+    LightingSettings, LoadingBarAnchor, LoadingBarItem, OverlayFrame, OverlayImageItem,
+    OverlayRectItem, PickId,
     PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings, RenderCamera, RibbonItem,
     RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, SceneEffects, SceneFrame,
     SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpriteItem,
@@ -273,6 +274,8 @@ pub struct ViewportRenderer {
     ruler_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-frame loading bar GPU data, rebuilt in prepare(), consumed in paint().
     loading_bar_gpu_data: Option<crate::resources::LabelGpuData>,
+    /// Per-frame overlay rect GPU data, rebuilt in prepare(), consumed in paint().
+    overlay_rect_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-viewport GPU state slots.
     ///
     /// Indexed by `FrameData::camera.viewport_index`. Each slot owns independent
@@ -457,6 +460,7 @@ impl ViewportRenderer {
             scalar_bar_gpu_data: None,
             ruler_gpu_data: None,
             loading_bar_gpu_data: None,
+            overlay_rect_gpu_data: None,
             viewport_slots: Vec::new(),
             compute_filter_results: Vec::new(),
             wireframe_uniform_bufs: Vec::new(),
