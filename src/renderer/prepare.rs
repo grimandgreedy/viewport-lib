@@ -371,6 +371,11 @@ impl ViewportRenderer {
             );
         }
 
+        // Per-frame batch upload counters.  Populated inside the instancing
+        // block and folded into FrameStats at the end of prepare_scene_internal.
+        let mut batches_reuploaded = 0u32;
+        let mut batches_skipped = 0u32;
+
         // -- Instancing preparation --
         // Determine instancing mode BEFORE per-object uniforms so we can skip them.
         let visible_count = scene_items.iter().filter(|i| !i.appearance.hidden).count();
@@ -831,12 +836,73 @@ impl ViewportRenderer {
                     }
                 }
 
+                // Partial upload: when the batch structure is unchanged (same
+                // count, same offsets and sizes per batch), compare each
+                // batch's instance data against the cached CPU copy and only
+                // write the sub-ranges that actually differ.  This avoids
+                // re-uploading the full buffer when only a small fraction of
+                // objects changed (e.g. one animated object in a large static
+                // scene).
+                //
+                // A forced full upload (via `force_dirty()`) or any structural
+                // change (different batch count, different instance counts)
+                // falls back to the original full-upload path.
+                let structure_preserved = !self.cached_instance_data.is_empty()
+                    && all_instances.len() == self.cached_instance_data.len()
+                    && instanced_batches.len() == self.cached_instanced_batches.len()
+                    && instanced_batches
+                        .iter()
+                        .zip(&self.cached_instanced_batches)
+                        .all(|(a, b)| {
+                            a.mesh_id == b.mesh_id
+                                && a.instance_offset == b.instance_offset
+                                && a.instance_count == b.instance_count
+                        });
+                let force = std::mem::replace(&mut self.force_full_upload, false);
+
+                if structure_preserved && !force {
+                    let inst_stride = std::mem::size_of::<InstanceData>() as u64;
+                    let aabb_stride = std::mem::size_of::<InstanceAabb>() as u64;
+                    for batch in &instanced_batches {
+                        let start = batch.instance_offset as usize;
+                        let end = start + batch.instance_count as usize;
+                        let new_bytes = bytemuck::cast_slice::<InstanceData, u8>(
+                            &all_instances[start..end],
+                        );
+                        let old_bytes = bytemuck::cast_slice::<InstanceData, u8>(
+                            &self.cached_instance_data[start..end],
+                        );
+                        if new_bytes != old_bytes {
+                            if let Some(buf) = resources.instance_storage_buf.as_ref() {
+                                queue.write_buffer(
+                                    buf,
+                                    batch.instance_offset as u64 * inst_stride,
+                                    new_bytes,
+                                );
+                            }
+                            if let Some(aabb_buf) = resources.instance_aabb_buf.as_ref() {
+                                let aabb_bytes = bytemuck::cast_slice::<InstanceAabb, u8>(
+                                    &all_aabbs[start..end],
+                                );
+                                queue.write_buffer(
+                                    aabb_buf,
+                                    batch.instance_offset as u64 * aabb_stride,
+                                    aabb_bytes,
+                                );
+                            }
+                            batches_reuploaded += 1;
+                        } else {
+                            batches_skipped += 1;
+                        }
+                    }
+                } else {
+                    resources.upload_instance_data(device, queue, &all_instances);
+                    resources.upload_aabb_and_batch_meta(device, queue, &all_aabbs, &batch_metas);
+                    batches_reuploaded = instanced_batches.len() as u32;
+                }
+
                 self.cached_instance_data = all_instances;
                 self.cached_instanced_batches = instanced_batches;
-
-                resources.upload_instance_data(device, queue, &self.cached_instance_data);
-                resources.upload_aabb_and_batch_meta(device, queue, &all_aabbs, &batch_metas);
-
                 self.instanced_batches = self.cached_instanced_batches.clone();
 
                 self.last_scene_generation = frame.scene.generation;
@@ -1528,6 +1594,8 @@ impl ViewportRenderer {
                 culled_objects: total.saturating_sub(visible),
                 draw_calls,
                 instanced_batches: instanced_batch_count,
+                batches_reuploaded,
+                batches_skipped,
                 triangles_submitted: triangles,
                 shadow_draw_calls: 0, // Updated below in shadow pass.
                 gpu_culling_active: self.gpu_culling_enabled,

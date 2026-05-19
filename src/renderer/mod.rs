@@ -224,6 +224,9 @@ pub struct ViewportRenderer {
     cached_instance_data: Vec<InstanceData>,
     /// Cached instanced batch descriptors from last rebuild.
     cached_instanced_batches: Vec<InstancedBatch>,
+    /// When true, the next cache-miss forces a full buffer upload instead of the
+    /// per-batch partial-upload path. Set by `force_dirty()` and consumed once.
+    force_full_upload: bool,
     /// Per-frame point cloud GPU data, rebuilt in prepare(), consumed in paint().
     point_cloud_gpu_data: Vec<crate::resources::PointCloudGpuData>,
     /// Per-frame glyph GPU data, rebuilt in prepare(), consumed in paint().
@@ -435,6 +438,7 @@ impl ViewportRenderer {
             last_instancable_count: usize::MAX,
             cached_instance_data: Vec::new(),
             cached_instanced_batches: Vec::new(),
+            force_full_upload: false,
             point_cloud_gpu_data: Vec::new(),
             glyph_gpu_data: Vec::new(),
             tensor_glyph_gpu_data: Vec::new(),
@@ -523,6 +527,21 @@ impl ViewportRenderer {
     /// (culling is already disabled on those devices).
     pub fn disable_gpu_driven_culling(&mut self) {
         self.gpu_culling_enabled = false;
+    }
+
+    /// Force a full instance buffer upload on the next frame.
+    ///
+    /// Normally the renderer skips GPU writes for instanced batches whose data
+    /// has not changed since the last upload. Call this when you have mutated
+    /// batch-relevant state through a path the renderer cannot observe (for
+    /// example, directly modifying GPU buffer contents or scene items after
+    /// `collect_render_items` runs). The flag is consumed once and resets
+    /// automatically after the next `prepare` call.
+    pub fn force_dirty(&mut self) {
+        self.force_full_upload = true;
+        // Also invalidate the generation cache so the next prepare is guaranteed
+        // to enter the rebuild path even if the scene generation is unchanged.
+        self.last_scene_generation = u64::MAX;
     }
 
     /// Re-enable GPU-driven culling after a call to `disable_gpu_driven_culling`.

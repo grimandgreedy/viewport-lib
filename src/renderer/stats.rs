@@ -152,6 +152,20 @@ pub struct FrameStats {
     pub draw_calls: u32,
     /// Number of instanced batches (0 when using per-object path).
     pub instanced_batches: u32,
+    /// Instanced batches whose GPU sub-range was re-uploaded this frame.
+    ///
+    /// Non-zero only on cache-miss frames where at least one batch's instance
+    /// data changed. Zero on cache-hit frames and when the per-object path is
+    /// active. Together with `batches_skipped`, this lets callers measure how
+    /// effective the dirty-flagging optimisation is for their scene.
+    pub batches_reuploaded: u32,
+    /// Instanced batches whose GPU sub-range was reused unchanged this frame.
+    ///
+    /// Non-zero only on cache-miss frames where at least one batch compared
+    /// equal to the cached data and its write was skipped. Zero on cache-hit
+    /// frames (no upload attempted at all) and when the per-object path is
+    /// active.
+    pub batches_skipped: u32,
     /// Total triangles submitted to the GPU.
     pub triangles_submitted: u64,
     /// Number of draw calls in the shadow pass.
@@ -231,6 +245,8 @@ mod tests {
         assert_eq!(stats.culled_objects, 0);
         assert_eq!(stats.draw_calls, 0);
         assert_eq!(stats.instanced_batches, 0);
+        assert_eq!(stats.batches_reuploaded, 0);
+        assert_eq!(stats.batches_skipped, 0);
         assert_eq!(stats.triangles_submitted, 0);
         assert_eq!(stats.shadow_draw_calls, 0);
         assert_eq!(stats.cpu_prepare_ms, 0.0);
