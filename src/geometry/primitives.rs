@@ -208,10 +208,31 @@ pub fn cylinder(radius: f32, height: f32, sectors: u32) -> MeshData {
         indices.extend_from_slice(&[top_center, top_rim_start + j, top_rim_start + next]);
     }
 
+    // UVs follow the same vertex order as the position build above.
+    // Side UVs have a single-edge seam (u wraps at j=0/j=sectors) — accepted for non-seam geometry.
+    let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(4 * sectors as usize + 2);
+    for j in 0..sectors {
+        uvs.push([j as f32 / sectors as f32, 0.0]);
+    }
+    for j in 0..sectors {
+        uvs.push([j as f32 / sectors as f32, 1.0]);
+    }
+    uvs.push([0.5, 0.5]); // bottom center
+    uvs.push([0.5, 0.5]); // top center
+    for j in 0..sectors {
+        let a = j as f32 * step;
+        uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
+    }
+    for j in 0..sectors {
+        let a = j as f32 * step;
+        uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
+    }
+
     MeshData {
         positions,
         normals,
         indices,
+        uvs: Some(uvs),
         ..MeshData::default()
     }
 }
@@ -260,10 +281,16 @@ pub fn cuboid(width: f32, height: f32, depth: f32) -> MeshData {
         })
         .collect();
 
+    // Each face gets the same quad UVs as cube.
+    let uvs: Vec<[f32; 2]> = (0..6)
+        .flat_map(|_| [[0.0f32, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
+        .collect();
+
     MeshData {
         positions,
         normals,
         indices,
+        uvs: Some(uvs),
         ..MeshData::default()
     }
 }
@@ -320,10 +347,27 @@ pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
         indices.extend_from_slice(&[bottom_center, rim_start + next, rim_start + j]);
     }
 
+    let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(4 * sectors as usize + 1);
+    let tau = std::f32::consts::TAU;
+    for j in 0..sectors {
+        let a0 = j as f32 * step;
+        let a1 = (j + 1) as f32 * step;
+        let amid = (a0 + a1) * 0.5;
+        uvs.push([amid / tau, 1.0]); // tip
+        uvs.push([a0 / tau, 0.0]);   // base left
+        uvs.push([a1 / tau, 0.0]);   // base right
+    }
+    uvs.push([0.5, 0.5]); // bottom center
+    for j in 0..sectors {
+        let a = j as f32 * step;
+        uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
+    }
+
     MeshData {
         positions,
         normals,
         indices,
+        uvs: Some(uvs),
         ..MeshData::default()
     }
 }
@@ -413,10 +457,32 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
         }
     }
 
+    // V mapped proportionally to Z so UVs flow smoothly from bottom tip (v=0) to top tip (v=1).
+    let total_h = 2.0 * radius + body_height;
+    let z_min = -(half_body + radius);
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
+    for i in 0..=hemi_stacks {
+        let phi = std::f32::consts::FRAC_PI_2 * (1.0 - i as f32 / hemi_stacks as f32);
+        let z = half_body + radius * phi.sin();
+        let v = if total_h > 0.0 { (z - z_min) / total_h } else { 1.0 };
+        for j in 0..=sectors {
+            uvs.push([j as f32 / sectors as f32, v]);
+        }
+    }
+    for i in 0..=hemi_stacks {
+        let phi = -std::f32::consts::FRAC_PI_2 * i as f32 / hemi_stacks as f32;
+        let z = -half_body + radius * phi.sin();
+        let v = if total_h > 0.0 { (z - z_min) / total_h } else { 0.0 };
+        for j in 0..=sectors {
+            uvs.push([j as f32 / sectors as f32, v]);
+        }
+    }
+
     MeshData {
         positions,
         normals,
         indices,
+        uvs: Some(uvs),
         ..MeshData::default()
     }
 }
@@ -556,10 +622,22 @@ pub fn icosphere(radius: f32, subdivisions: u32) -> MeshData {
         .collect();
     let indices: Vec<u32> = faces.iter().flat_map(|f| f.iter().copied()).collect();
 
+    // Spherical UV projection. Triangles that span the antimeridian will have a
+    // seam artefact — unavoidable without duplicating vertices at the seam.
+    let uvs: Vec<[f32; 2]> = verts
+        .iter()
+        .map(|p| {
+            let u = (p[2].atan2(p[0]) + std::f32::consts::PI) / std::f32::consts::TAU;
+            let lat = p[1].clamp(-1.0, 1.0).acos() / std::f32::consts::PI;
+            [u, lat]
+        })
+        .collect();
+
     MeshData {
         positions,
         normals,
         indices,
+        uvs: Some(uvs),
         ..MeshData::default()
     }
 }
@@ -678,10 +756,40 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
         indices.extend_from_slice(&[hb_center, hb_rim + next, hb_rim + j]);
     }
 
+    // V is proportional to Z: shaft_bot → 0, head_top → 1.
+    let v_shaft_top = 1.0 - head_fraction; // head_fraction already clamped
+    let tau = std::f32::consts::TAU;
+    let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(7 * sectors as usize + 2);
+    for j in 0..sectors {
+        uvs.push([j as f32 / sectors as f32, 0.0]);
+    }
+    for j in 0..sectors {
+        uvs.push([j as f32 / sectors as f32, v_shaft_top]);
+    }
+    uvs.push([0.5, 0.5]); // sb_center
+    for j in 0..sectors {
+        let a = j as f32 * step;
+        uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
+    }
+    for j in 0..sectors {
+        let a0 = j as f32 * step;
+        let a1 = (j + 1) as f32 * step;
+        let amid = (a0 + a1) * 0.5;
+        uvs.push([amid / tau, 1.0]);
+        uvs.push([a0 / tau, v_shaft_top]);
+        uvs.push([a1 / tau, v_shaft_top]);
+    }
+    uvs.push([0.5, 0.5]); // hb_center
+    for j in 0..sectors {
+        let a = j as f32 * step;
+        uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
+    }
+
     MeshData {
         positions,
         normals,
         indices,
+        uvs: Some(uvs),
         ..MeshData::default()
     }
 }
@@ -708,10 +816,18 @@ pub fn disk(radius: f32, sectors: u32) -> MeshData {
         indices.extend_from_slice(&[0, j + 1, next + 1]);
     }
 
+    let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(sectors as usize + 1);
+    uvs.push([0.5, 0.5]);
+    for j in 0..sectors {
+        let a = j as f32 * step;
+        uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
+    }
+
     MeshData {
         positions,
         normals,
         indices,
+        uvs: Some(uvs),
         ..MeshData::default()
     }
 }
@@ -775,10 +891,15 @@ pub fn frustum(fov_y: f32, aspect: f32, near: f32, far: f32) -> MeshData {
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
+    let uvs: Vec<[f32; 2]> = (0..6)
+        .flat_map(|_| [[0.0f32, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
+        .collect();
+
     MeshData {
         positions,
         normals,
         indices,
+        uvs: Some(uvs),
         ..MeshData::default()
     }
 }
@@ -835,10 +956,23 @@ pub fn hemisphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
         indices.extend_from_slice(&[center, rim_start + next, rim_start + j]);
     }
 
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
+    for i in 0..=stacks {
+        for j in 0..=sectors {
+            uvs.push([j as f32 / sectors as f32, i as f32 / stacks as f32]);
+        }
+    }
+    uvs.push([0.5, 0.5]); // cap center
+    for j in 0..sectors {
+        let a = j as f32 * std::f32::consts::TAU / sectors as f32;
+        uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
+    }
+
     MeshData {
         positions,
         normals,
         indices,
+        uvs: Some(uvs),
         ..MeshData::default()
     }
 }
@@ -873,10 +1007,19 @@ pub fn ring(inner_radius: f32, outer_radius: f32, sectors: u32) -> MeshData {
         indices.extend_from_slice(&[i0, o0, i1, i1, o0, o1]);
     }
 
+    // Inner edge v=0, outer edge v=1; u wraps 0→1 around the ring.
+    let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(2 * (sectors as usize + 1));
+    for j in 0..=sectors {
+        let u = j as f32 / sectors as f32;
+        uvs.push([u, 0.0]); // inner
+        uvs.push([u, 1.0]); // outer
+    }
+
     MeshData {
         positions,
         normals,
         indices,
+        uvs: Some(uvs),
         ..MeshData::default()
     }
 }
@@ -937,10 +1080,18 @@ pub fn ellipsoid(rx: f32, ry: f32, rz: f32, sectors: u32, stacks: u32) -> MeshDa
         }
     }
 
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
+    for i in 0..=stacks {
+        for j in 0..=sectors {
+            uvs.push([j as f32 / sectors as f32, i as f32 / stacks as f32]);
+        }
+    }
+
     MeshData {
         positions,
         normals,
         indices,
+        uvs: Some(uvs),
         ..MeshData::default()
     }
 }
@@ -1020,10 +1171,20 @@ pub fn spring(radius: f32, coil_radius: f32, turns: f32, sectors: u32) -> MeshDa
         }
     }
 
+    // u: around the tube cross-section; v: along the helix from 0 to 1.
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
+    for seg in 0..=n_segs {
+        let v = seg as f32 / n_segs as f32;
+        for sec in 0..=sectors {
+            uvs.push([sec as f32 / sectors as f32, v]);
+        }
+    }
+
     MeshData {
         positions,
         normals,
         indices,
+        uvs: Some(uvs),
         ..MeshData::default()
     }
 }
@@ -1062,10 +1223,18 @@ pub fn grid_plane(width: f32, depth: f32, cols: u32, rows: u32) -> MeshData {
         }
     }
 
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
+    for row in 0..=rows {
+        for col in 0..=cols {
+            uvs.push([col as f32 / cols as f32, row as f32 / rows as f32]);
+        }
+    }
+
     MeshData {
         positions,
         normals,
         indices,
+        uvs: Some(uvs),
         ..MeshData::default()
     }
 }
