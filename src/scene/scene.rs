@@ -11,8 +11,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::interaction::selection::{NodeId, Selection};
 use crate::renderer::{PickId, SceneRenderItem};
 use crate::resources::mesh_store::MeshId;
+use crate::scene::aabb::Aabb;
 use crate::scene::material::Material;
+use crate::scene::spatial_index::SpatialIndex;
 use crate::scene::traits::ViewportObject;
+
+/// Node count above which `collect_render_items_culled` uses the octree
+/// spatial index instead of the flat walk.
+const SPATIAL_THRESHOLD: usize = 500;
 
 // ---------------------------------------------------------------------------
 // Layer
@@ -186,6 +192,20 @@ impl ViewportObject for SceneNode {
 }
 
 // ---------------------------------------------------------------------------
+// SceneStats
+// ---------------------------------------------------------------------------
+
+/// Per-frame diagnostics from `collect_render_items_culled`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SceneStats {
+    /// Number of nodes currently held in the spatial index.
+    /// Zero when the flat walk is active (scene below the threshold).
+    pub spatial_index_nodes: u32,
+    /// Time spent in the frustum cull traversal, in milliseconds.
+    pub frustum_cull_traversal_ms: f32,
+}
+
+// ---------------------------------------------------------------------------
 // Scene
 // ---------------------------------------------------------------------------
 
@@ -204,6 +224,10 @@ pub struct Scene {
     /// Monotonically increasing generation counter. Incremented on every mutation.
     /// Callers can compare against a cached value to detect changes without hashing.
     version: u64,
+    spatial: SpatialIndex,
+    /// True after the first full octree build. Incremental updates apply from here.
+    spatial_built: bool,
+    last_scene_stats: SceneStats,
 }
 
 /// Global monotonic clock for scene versions.
@@ -236,6 +260,9 @@ impl Scene {
             groups: Vec::new(),
             next_group_id: 0,
             version: base,
+            spatial: SpatialIndex::new(),
+            spatial_built: false,
+            last_scene_stats: SceneStats::default(),
         }
     }
 
@@ -287,6 +314,9 @@ impl Scene {
         self.nodes.insert(id, node);
         self.roots.push(id);
         self.version = self.version.wrapping_add(1);
+        if self.spatial_built {
+            self.spatial.mark_dirty(id);
+        }
         id
     }
 
@@ -303,6 +333,13 @@ impl Scene {
             }
         } else {
             self.roots.retain(|r| *r != id);
+        }
+
+        // Remove from spatial index before nodes are gone.
+        if self.spatial_built {
+            for &rid in &removed {
+                self.spatial.remove_node(rid);
+            }
         }
 
         // Actually remove nodes.
@@ -360,6 +397,9 @@ impl Scene {
             node.dirty = true;
         }
         self.version = self.version.wrapping_add(1);
+        if self.spatial_built {
+            self.mark_spatial_dirty_subtree(child_id);
+        }
     }
 
     /// Children of a node.
@@ -390,6 +430,9 @@ impl Scene {
         }
         self.mark_descendants_dirty(id);
         self.version = self.version.wrapping_add(1);
+        if self.spatial_built {
+            self.mark_spatial_dirty_subtree(id);
+        }
     }
 
     /// Set node visibility.
@@ -398,6 +441,9 @@ impl Scene {
             node.visible = visible;
         }
         self.version = self.version.wrapping_add(1);
+        if self.spatial_built {
+            self.spatial.mark_dirty(id);
+        }
     }
 
     /// Set node material.
@@ -422,6 +468,9 @@ impl Scene {
             node.mesh_id = mesh_id;
         }
         self.version = self.version.wrapping_add(1);
+        if self.spatial_built {
+            self.spatial.mark_dirty(id);
+        }
     }
 
     /// Set node name.
@@ -658,6 +707,73 @@ impl Scene {
         }
     }
 
+    /// Mark `id` and all of its descendants dirty in the spatial index.
+    fn mark_spatial_dirty_subtree(&mut self, id: NodeId) {
+        self.spatial.mark_dirty(id);
+        let children = self
+            .nodes
+            .get(&id)
+            .map(|n| n.children.clone())
+            .unwrap_or_default();
+        for child_id in children {
+            self.mark_spatial_dirty_subtree(child_id);
+        }
+    }
+
+    /// Build the spatial index from scratch using all currently visible nodes
+    /// that have a mesh. World transforms must be up to date before calling.
+    fn build_spatial_index_from(&mut self, mesh_aabb_fn: &impl Fn(MeshId) -> Option<Aabb>) {
+        let entries: Vec<(NodeId, Aabb)> = self
+            .nodes
+            .values()
+            .filter(|n| n.visible && n.mesh_id.is_some())
+            .filter_map(|n| {
+                let local_aabb = mesh_aabb_fn(n.mesh_id.unwrap())?;
+                let world_aabb = local_aabb.transformed(&n.world_transform);
+                Some((n.id, world_aabb))
+            })
+            .collect();
+        self.spatial.rebuild(&entries);
+        self.spatial_built = true;
+    }
+
+    /// Process all pending dirty entries in the spatial index.
+    /// World transforms must be up to date before calling.
+    fn flush_spatial_dirty(&mut self, mesh_aabb_fn: &impl Fn(MeshId) -> Option<Aabb>) {
+        let dirty = self.spatial.drain_dirty();
+        for id in dirty {
+            self.spatial.remove_entry(id);
+            let new_aabb = self.nodes.get(&id).and_then(|node| {
+                if !node.visible {
+                    return None;
+                }
+                let mesh_id = node.mesh_id?;
+                let local_aabb = mesh_aabb_fn(mesh_id)?;
+                Some(local_aabb.transformed(&node.world_transform))
+            });
+            if let Some(aabb) = new_aabb {
+                self.spatial.insert_entry(id, aabb);
+            }
+        }
+    }
+
+    // -- Spatial index public API --
+
+    /// Rebuild the spatial index from scratch.
+    ///
+    /// Call this after bulk scene construction (level load, import) to avoid
+    /// accumulating many incremental dirty updates. The index is maintained
+    /// automatically from this point on.
+    pub fn rebuild_spatial_index(&mut self, mesh_aabb_fn: impl Fn(MeshId) -> Option<Aabb>) {
+        self.update_transforms();
+        self.build_spatial_index_from(&mesh_aabb_fn);
+    }
+
+    /// Diagnostic statistics from the most recent `collect_render_items_culled` call.
+    pub fn scene_stats(&self) -> SceneStats {
+        self.last_scene_stats
+    }
+
     // -- Render collection --
 
     /// Update transforms and collect render items for all visible nodes.
@@ -714,68 +830,133 @@ impl Scene {
     /// Like `collect_render_items`, but skips objects whose world-space AABB is
     /// entirely outside the given frustum. `mesh_aabb_fn` should return the
     /// local-space AABB for a given `MeshId` (typically read from `GpuMesh::aabb`).
+    ///
+    /// When the scene has at least 500 nodes, a loose octree spatial index is
+    /// used to prune subtrees that are entirely outside the frustum. Below that
+    /// threshold the existing flat walk is used.
     pub fn collect_render_items_culled(
         &mut self,
         selection: &Selection,
         frustum: &crate::camera::frustum::Frustum,
-        mesh_aabb_fn: impl Fn(MeshId) -> Option<crate::scene::aabb::Aabb>,
+        mesh_aabb_fn: impl Fn(MeshId) -> Option<Aabb>,
     ) -> (Vec<SceneRenderItem>, crate::camera::frustum::CullStats) {
         self.update_transforms();
 
         let layer_visible: HashMap<LayerId, bool> =
             self.layers.iter().map(|l| (l.id, l.visible)).collect();
-
         let layer_locked: HashMap<LayerId, bool> =
             self.layers.iter().map(|l| (l.id, l.locked)).collect();
 
         let mut items = Vec::new();
         let mut stats = crate::camera::frustum::CullStats::default();
 
-        for node in self.nodes.values() {
-            if !node.visible {
-                continue;
+        if self.nodes.len() >= SPATIAL_THRESHOLD {
+            // -- Octree path --
+            if !self.spatial_built {
+                self.build_spatial_index_from(&mesh_aabb_fn);
+            } else {
+                self.flush_spatial_dirty(&mesh_aabb_fn);
             }
-            if !layer_visible.get(&node.layer).copied().unwrap_or(true) {
-                continue;
-            }
-            let Some(mesh_id) = node.mesh_id else {
-                continue;
-            };
 
-            stats.total += 1;
+            let t0 = std::time::Instant::now();
+            let mut candidate_ids = Vec::new();
+            self.spatial.collect_visible(frustum, &mut candidate_ids, &mut stats);
+            let traversal_ms = t0.elapsed().as_secs_f32() * 1000.0;
 
-            // Frustum cull using world-space AABB.
-            if let Some(local_aabb) = mesh_aabb_fn(mesh_id) {
-                let world_aabb = local_aabb.transformed(&node.world_transform);
-                if frustum.cull_aabb(&world_aabb) {
-                    stats.culled += 1;
+            for id in candidate_ids {
+                let Some(node) = self.nodes.get(&id) else {
+                    continue;
+                };
+                if !node.visible {
                     continue;
                 }
+                if !layer_visible.get(&node.layer).copied().unwrap_or(true) {
+                    continue;
+                }
+                let Some(mesh_id) = node.mesh_id else {
+                    continue;
+                };
+                let locked = layer_locked.get(&node.layer).copied().unwrap_or(false);
+                items.push(SceneRenderItem {
+                    mesh_id,
+                    model: node.world_transform.to_cols_array_2d(),
+                    selected: if locked {
+                        false
+                    } else {
+                        selection.contains(node.id)
+                    },
+                    appearance: node.appearance,
+                    show_normals: node.show_normals,
+                    material: node.material,
+                    active_attribute: None,
+                    scalar_range: None,
+                    colourmap_id: None,
+                    nan_colour: None,
+                    pick_id: PickId(node.id),
+                    warp_attribute: None,
+                    warp_scale: 1.0,
+                });
             }
 
-            let locked = layer_locked.get(&node.layer).copied().unwrap_or(false);
-            stats.visible += 1;
-            items.push(SceneRenderItem {
-                mesh_id,
-                model: node.world_transform.to_cols_array_2d(),
-                selected: if locked {
-                    false
-                } else {
-                    selection.contains(node.id)
-                },
-                appearance: node.appearance,
-                show_normals: node.show_normals,
-                material: node.material,
-                active_attribute: None,
-                scalar_range: None,
-                colourmap_id: None,
-                nan_colour: None,
-                pick_id: PickId(node.id),
+            self.last_scene_stats = SceneStats {
+                spatial_index_nodes: self.spatial.node_count(),
+                frustum_cull_traversal_ms: traversal_ms,
+            };
+        } else {
+            // -- Flat walk --
+            let t0 = std::time::Instant::now();
 
-                warp_attribute: None,
-                warp_scale: 1.0,
-            });
+            for node in self.nodes.values() {
+                if !node.visible {
+                    continue;
+                }
+                if !layer_visible.get(&node.layer).copied().unwrap_or(true) {
+                    continue;
+                }
+                let Some(mesh_id) = node.mesh_id else {
+                    continue;
+                };
+
+                stats.total += 1;
+
+                // Frustum cull using world-space AABB.
+                if let Some(local_aabb) = mesh_aabb_fn(mesh_id) {
+                    let world_aabb = local_aabb.transformed(&node.world_transform);
+                    if frustum.cull_aabb(&world_aabb) {
+                        stats.culled += 1;
+                        continue;
+                    }
+                }
+
+                let locked = layer_locked.get(&node.layer).copied().unwrap_or(false);
+                stats.visible += 1;
+                items.push(SceneRenderItem {
+                    mesh_id,
+                    model: node.world_transform.to_cols_array_2d(),
+                    selected: if locked {
+                        false
+                    } else {
+                        selection.contains(node.id)
+                    },
+                    appearance: node.appearance,
+                    show_normals: node.show_normals,
+                    material: node.material,
+                    active_attribute: None,
+                    scalar_range: None,
+                    colourmap_id: None,
+                    nan_colour: None,
+                    pick_id: PickId(node.id),
+                    warp_attribute: None,
+                    warp_scale: 1.0,
+                });
+            }
+
+            self.last_scene_stats = SceneStats {
+                spatial_index_nodes: 0,
+                frustum_cull_traversal_ms: t0.elapsed().as_secs_f32() * 1000.0,
+            };
         }
+
         (items, stats)
     }
 
@@ -1204,5 +1385,116 @@ mod tests {
         assert_eq!(walk[1], (child_a, 1));
         assert_eq!(walk[2], (grandchild, 2));
         assert_eq!(walk[3], (child_b, 1));
+    }
+
+    // --- Octree spatial index tests ---
+
+    fn make_test_frustum() -> crate::camera::frustum::Frustum {
+        let view = glam::Mat4::look_at_rh(
+            glam::Vec3::new(0.0, 0.0, 300.0),
+            glam::Vec3::ZERO,
+            glam::Vec3::Y,
+        );
+        let proj = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 1.0, 400.0);
+        crate::camera::frustum::Frustum::from_view_proj(&(proj * view))
+    }
+
+    fn unit_aabb() -> crate::scene::aabb::Aabb {
+        crate::scene::aabb::Aabb {
+            min: glam::Vec3::splat(-0.5),
+            max: glam::Vec3::splat(0.5),
+        }
+    }
+
+    /// Octree path produces the same visible set as the flat walk.
+    ///
+    /// 100 nodes at the origin (visible) + 500 nodes far behind the camera
+    /// (culled). With 600 total the octree path is active.
+    #[test]
+    fn test_octree_parity_with_known_counts() {
+        let mut scene = Scene::new();
+        let frustum = make_test_frustum();
+
+        // 100 visible nodes at origin.
+        for _ in 0..100 {
+            scene.add(Some(MeshId(0)), glam::Mat4::IDENTITY, Material::default());
+        }
+        // 500 culled nodes behind camera (z >> 300 far plane).
+        for _ in 0..500 {
+            let mat = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 9000.0));
+            scene.add(Some(MeshId(0)), mat, Material::default());
+        }
+
+        assert!(scene.node_count() >= SPATIAL_THRESHOLD);
+
+        let sel = Selection::new();
+        let (items, stats) =
+            scene.collect_render_items_culled(&sel, &frustum, |_| Some(unit_aabb()));
+
+        assert_eq!(items.len(), 100, "expected 100 visible items, got {}", items.len());
+        assert_eq!(stats.visible, 100);
+        let scene_stats = scene.scene_stats();
+        assert!(scene_stats.spatial_index_nodes > 0, "spatial index should be active");
+    }
+
+    /// After moving nodes outside the frustum via set_local_transform, the
+    /// octree reflects the update without a full rebuild.
+    #[test]
+    fn test_octree_incremental_transform_update() {
+        let mut scene = Scene::new();
+        let frustum = make_test_frustum();
+
+        let mut ids = Vec::new();
+        // 600 nodes all at origin (all visible).
+        for _ in 0..600 {
+            let id = scene.add(Some(MeshId(0)), glam::Mat4::IDENTITY, Material::default());
+            ids.push(id);
+        }
+
+        let sel = Selection::new();
+        let (items, _) =
+            scene.collect_render_items_culled(&sel, &frustum, |_| Some(unit_aabb()));
+        assert_eq!(items.len(), 600, "all 600 should be visible initially");
+
+        // Move the first 300 nodes behind the camera.
+        let behind = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 9000.0));
+        for &id in &ids[..300] {
+            scene.set_local_transform(id, behind);
+        }
+
+        let (items2, _) =
+            scene.collect_render_items_culled(&sel, &frustum, |_| Some(unit_aabb()));
+        assert_eq!(
+            items2.len(),
+            300,
+            "300 nodes should be visible after moving the others out"
+        );
+    }
+
+    /// Removing nodes from a large scene updates the octree correctly.
+    #[test]
+    fn test_octree_node_removal() {
+        let mut scene = Scene::new();
+        let frustum = make_test_frustum();
+
+        let mut ids = Vec::new();
+        for _ in 0..600 {
+            let id = scene.add(Some(MeshId(0)), glam::Mat4::IDENTITY, Material::default());
+            ids.push(id);
+        }
+
+        let sel = Selection::new();
+        let (items, _) =
+            scene.collect_render_items_culled(&sel, &frustum, |_| Some(unit_aabb()));
+        assert_eq!(items.len(), 600);
+
+        // Remove 150 nodes.
+        for &id in &ids[..150] {
+            scene.remove(id);
+        }
+
+        let (items2, _) =
+            scene.collect_render_items_culled(&sel, &frustum, |_| Some(unit_aabb()));
+        assert_eq!(items2.len(), 450, "should have 450 after removing 150");
     }
 }

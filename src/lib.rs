@@ -119,7 +119,7 @@ pub use scene::material::{
     AppearanceSettings, BackfacePattern, BackfacePolicy, Material, ParamVis, ParamVisMode,
     PatternConfig,
 };
-pub use scene::scene::{Group, GroupId, Layer, LayerId, Scene, SceneNode};
+pub use scene::scene::{Group, GroupId, Layer, LayerId, Scene, SceneNode, SceneStats};
 pub use scene::traits::{RenderMode, ViewportObject};
 
 pub use geometry::bvh::PickAccelerator;
