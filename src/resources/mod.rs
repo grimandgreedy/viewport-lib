@@ -46,10 +46,11 @@ pub use self::types::ClipVolumeUniform;
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
     CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, GpuMesh, GpuTexture,
-    LightUniform, LightsUniform, MatcapId, MeshData, OverlayVertex, PointCloudGpuData,
-    PolylineGpuData, ProjectedTetId, ScreenImageGpuData, SingleLightUniform, SkinWeights, Vertex,
-    ViewportGpuResources, VolumeGpuData, VolumeId,
+    LightUniform, LightsUniform, MatcapId, MeshData, OverlayVertex, PendingTextureId,
+    PointCloudGpuData, PolylineGpuData, ProjectedTetId, ScreenImageGpuData, SingleLightUniform,
+    SkinWeights, TextureMemoryStats, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
 };
+pub(crate) use self::types::PendingUploadEntry;
 pub(crate) use self::types::{
     BatchMeta, BloomUniform, ClipPlanesUniform, ContactShadowUniform, CurveMeshOutlineItem,
     DofUniform, DualPipeline,

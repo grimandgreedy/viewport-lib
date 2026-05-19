@@ -94,6 +94,7 @@ impl ViewportGpuResources {
         });
 
         let id = self.textures.len() as u64;
+        self.texture_allocated_bytes += (width * height * 4) as u64;
         self.textures.push(GpuTexture {
             texture,
             view,
@@ -193,6 +194,7 @@ impl ViewportGpuResources {
         });
 
         let id = self.textures.len() as u64;
+        self.texture_allocated_bytes += (width * height * 4) as u64;
         self.textures.push(GpuTexture {
             texture,
             view,
@@ -201,6 +203,270 @@ impl ViewportGpuResources {
         });
         tracing::debug!(texture_id = id, width, height, "normal map uploaded");
         Ok(id)
+    }
+
+    // -----------------------------------------------------------------------
+    // Async texture upload (Phase 2)
+    // -----------------------------------------------------------------------
+
+    /// Non-blocking texture upload.
+    ///
+    /// Writes RGBA data into a staging buffer on the calling thread. The GPU
+    /// copy is submitted on the next `prepare_scene` call. The texture is
+    /// invisible for exactly one frame.
+    ///
+    /// ```text
+    /// Frame N:   upload_texture_async(...) -> PendingTextureId
+    /// Frame N+1: is_upload_ready(id) -> true
+    ///            promote_texture(id) -> Some(texture_id)
+    /// ```
+    ///
+    /// `rgba` must be exactly `width * height * 4` bytes in RGBA8 format.
+    pub fn upload_texture_async(
+        &mut self,
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> crate::error::ViewportResult<PendingTextureId> {
+        let expected = (width * height * 4) as usize;
+        if rgba.len() != expected {
+            return Err(crate::error::ViewportError::InvalidTextureData {
+                expected,
+                actual: rgba.len(),
+            });
+        }
+
+        // Compute the row stride aligned to the GPU copy requirement.
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let raw_bpr = width * 4;
+        let aligned_bytes_per_row = (raw_bpr + align - 1) / align * align;
+        let staging_size = aligned_bytes_per_row as u64 * height as u64;
+
+        // Allocate a staging buffer with mapped_at_creation: the data is written
+        // synchronously on the calling thread with no async mapping roundtrip.
+        let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("async_texture_staging"),
+            size: staging_size,
+            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
+            mapped_at_creation: true,
+        });
+        {
+            let mut mapped = staging_buf.slice(..).get_mapped_range_mut();
+            if aligned_bytes_per_row == raw_bpr {
+                // No padding needed -- copy in one shot.
+                mapped[..rgba.len()].copy_from_slice(rgba);
+            } else {
+                // Write each row, leaving padding bytes uninitialised.
+                for row in 0..height as usize {
+                    let src = row * raw_bpr as usize..(row + 1) * raw_bpr as usize;
+                    let dst_start = row * aligned_bytes_per_row as usize;
+                    mapped[dst_start..dst_start + raw_bpr as usize]
+                        .copy_from_slice(&rgba[src]);
+                }
+            }
+        }
+        staging_buf.unmap();
+
+        // Create the GPU texture. It will be filled by a copy_buffer_to_texture
+        // command issued at the start of the next prepare_scene call.
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("async_user_texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("async_user_texture_sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("async_user_texture_bg"),
+            layout: &self.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(
+                        &self.fallback_normal_map_view,
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&self.fallback_ao_map_view),
+                },
+            ],
+        });
+
+        let pending_id = self.next_pending_texture_id;
+        self.next_pending_texture_id += 1;
+
+        self.pending_texture_uploads.push(PendingUploadEntry {
+            pending_id,
+            gpu_texture: GpuTexture {
+                texture,
+                view,
+                sampler,
+                bind_group,
+            },
+            staging_buf,
+            width,
+            height,
+            aligned_bytes_per_row,
+            data_bytes: expected as u64,
+            copy_submitted: false,
+            ready: false,
+        });
+
+        tracing::debug!(pending_id, width, height, "async texture upload queued");
+        Ok(PendingTextureId(pending_id))
+    }
+
+    /// Check whether the GPU copy for `id` has completed.
+    ///
+    /// Returns `false` on the frame the upload was submitted (the frame
+    /// containing the `prepare_scene` call following `upload_texture_async`).
+    /// Returns `true` on all subsequent frames. Stays `true` until
+    /// `promote_texture` consumes the entry.
+    pub fn is_upload_ready(&self, id: PendingTextureId) -> bool {
+        self.pending_texture_uploads
+            .iter()
+            .find(|e| e.pending_id == id.0)
+            .map_or(false, |e| e.ready)
+    }
+
+    /// Promote a completed async upload to a live texture ID.
+    ///
+    /// Returns the `u64` ID to store in `Material::texture_id`.
+    /// Returns `None` if `id` is unknown or `is_upload_ready` is still false.
+    pub fn promote_texture(&mut self, id: PendingTextureId) -> Option<u64> {
+        let pos = self
+            .pending_texture_uploads
+            .iter()
+            .position(|e| e.pending_id == id.0 && e.ready)?;
+
+        // swap_remove is O(1) and preserves correctness since entries are
+        // identified by pending_id, not position.
+        let entry = self.pending_texture_uploads.swap_remove(pos);
+        // staging_buf is dropped here; the GPU copy completed one frame ago.
+
+        let texture_id = self.textures.len() as u64;
+        self.texture_allocated_bytes += entry.data_bytes;
+        self.textures.push(entry.gpu_texture);
+
+        tracing::debug!(
+            texture_id,
+            width = entry.width,
+            height = entry.height,
+            "async texture promoted"
+        );
+        Some(texture_id)
+    }
+
+    // -----------------------------------------------------------------------
+    // VRAM budget query (Phase 3)
+    // -----------------------------------------------------------------------
+
+    /// Current GPU memory usage for user-uploaded textures.
+    ///
+    /// Counts bytes from `upload_texture`, `upload_normal_map`, and
+    /// `promote_texture`. Internal resources (shadow maps, colourmaps,
+    /// IBL, post-processing targets) are not included.
+    pub fn texture_memory_stats(&self) -> TextureMemoryStats {
+        TextureMemoryStats {
+            used_bytes: self.texture_allocated_bytes,
+            texture_count: self.textures.len() as u32,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Per-frame async upload processing (called from prepare_scene_internal)
+    // -----------------------------------------------------------------------
+
+    /// Advance the async texture upload state machine.
+    ///
+    /// Called at the start of each `prepare_scene_internal`:
+    /// 1. Marks entries whose copy was submitted on the previous frame as ready.
+    /// 2. Submits `copy_buffer_to_texture` commands for newly queued entries.
+    pub(crate) fn submit_pending_texture_uploads(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) {
+        if self.pending_texture_uploads.is_empty() {
+            return;
+        }
+
+        // Step 1: entries submitted last frame are now safe to promote.
+        for entry in &mut self.pending_texture_uploads {
+            if entry.copy_submitted && !entry.ready {
+                entry.ready = true;
+            }
+        }
+
+        // Step 2: submit copy commands for entries not yet issued.
+        let has_new = self
+            .pending_texture_uploads
+            .iter()
+            .any(|e| !e.copy_submitted);
+        if !has_new {
+            return;
+        }
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("async_texture_copy"),
+        });
+
+        for entry in &mut self.pending_texture_uploads {
+            if entry.copy_submitted {
+                continue;
+            }
+            encoder.copy_buffer_to_texture(
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &entry.staging_buf,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(entry.aligned_bytes_per_row),
+                        rows_per_image: Some(entry.height),
+                    },
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &entry.gpu_texture.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: entry.width,
+                    height: entry.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+            entry.copy_submitted = true;
+        }
+
+        queue.submit(std::iter::once(encoder.finish()));
     }
 
     /// Get or create a cached material bind group for (albedo, normal_map, ao_map) texture combo.

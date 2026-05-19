@@ -1229,6 +1229,56 @@ pub struct GpuTexture {
 }
 
 // ---------------------------------------------------------------------------
+// Async texture upload types (Phase 2 / Phase 3)
+// ---------------------------------------------------------------------------
+
+/// Handle to a texture being uploaded asynchronously.
+///
+/// Returned by [`ViewportGpuResources::upload_texture_async`]. Poll
+/// [`ViewportGpuResources::is_upload_ready`] each frame until it returns
+/// true, then call [`ViewportGpuResources::promote_texture`] to get the
+/// live texture ID.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PendingTextureId(pub u64);
+
+/// Texture memory usage reported by [`ViewportGpuResources::texture_memory_stats`].
+///
+/// Counts bytes and textures uploaded via both the sync and async paths.
+/// Internal resources (shadow maps, colourmaps, post-process targets) are
+/// not included.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TextureMemoryStats {
+    /// Bytes currently allocated on the GPU for user-uploaded textures.
+    pub used_bytes: u64,
+    /// Number of live user-uploaded textures.
+    pub texture_count: u32,
+}
+
+/// An in-flight async texture upload.
+///
+/// Held in `ViewportGpuResources::pending_texture_uploads` from the call to
+/// `upload_texture_async` until `promote_texture` moves it to the live
+/// texture list.
+pub(crate) struct PendingUploadEntry {
+    pub pending_id: u64,
+    pub gpu_texture: GpuTexture,
+    /// Staging buffer with RGBA data written and unmapped.
+    /// Dropped once `promote_texture` is called (GPU copy is complete by then).
+    pub staging_buf: wgpu::Buffer,
+    pub width: u32,
+    pub height: u32,
+    /// Row stride used in the staging buffer (>= width * 4, aligned to 256).
+    pub aligned_bytes_per_row: u32,
+    /// Actual texture bytes (width * height * 4). Used for memory accounting.
+    pub data_bytes: u64,
+    /// True once `copy_buffer_to_texture` has been issued in a command buffer.
+    pub copy_submitted: bool,
+    /// True once `copy_submitted` has been true for a full frame.
+    /// When true, the GPU copy is complete and `promote_texture` is valid.
+    pub ready: bool,
+}
+
+// ---------------------------------------------------------------------------
 // GpuMesh: per-object GPU buffers
 // ---------------------------------------------------------------------------
 
@@ -1947,6 +1997,13 @@ pub struct ViewportGpuResources {
     pub(crate) material_bind_groups: std::collections::HashMap<(u64, u64, u64), wgpu::BindGroup>,
     /// User-uploaded textures, indexed by `texture_id` in Material.
     pub textures: Vec<GpuTexture>,
+    /// In-flight async texture uploads not yet promoted to the live texture list.
+    pub(crate) pending_texture_uploads: Vec<PendingUploadEntry>,
+    /// Counter for assigning unique PendingTextureId values.
+    pub(crate) next_pending_texture_id: u64,
+    /// Bytes allocated on the GPU for user-uploaded textures.
+    /// Incremented by `upload_texture`, `upload_normal_map`, and `promote_texture`.
+    pub(crate) texture_allocated_bytes: u64,
 
     // --- Matcap texture system ---
     /// Matcap textures (256×256 RGBA), indexed by `MatcapId::index`.

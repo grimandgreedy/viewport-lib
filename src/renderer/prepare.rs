@@ -18,6 +18,11 @@ impl ViewportRenderer {
         frame: &FrameData,
         scene_fx: &SceneEffects<'_>,
     ) {
+        // Submit copy commands for async texture uploads queued since last frame,
+        // and advance ready state for uploads submitted on the previous frame.
+        self.resources
+            .submit_pending_texture_uploads(device, queue);
+
         // Phase G : GPU compute filtering.
         // Dispatch before the render pass. Completely skipped when list is empty (zero overhead).
         if !scene_fx.compute_filter_items.is_empty() {
