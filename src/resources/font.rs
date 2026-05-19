@@ -22,7 +22,7 @@ const DEFAULT_FONT_BYTES: &[u8] = include_bytes!("../fonts/Inter-Regular.ttf");
 /// Pass `None` (or omit the field) on overlay items to use the built-in default
 /// font.  Pass `Some(handle)` to use a user-supplied TTF font.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FontHandle(pub(crate) usize);
+pub struct FontHandle(pub usize);
 
 // ---------------------------------------------------------------------------
 // GlyphKey / GlyphEntry : atlas bookkeeping
