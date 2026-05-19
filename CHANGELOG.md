@@ -22,6 +22,8 @@
 - Camera tracking: the runtime can follow a scene node and return a suggested camera center each frame. The orbit camera pivot moves with the followed object; distance and orientation are unaffected. Tracking can be set or cleared at any time and works alongside any combination of other plugins.
 
 ### Improvements
+- Async texture upload: `ViewportGpuResources::upload_texture_async` writes RGBA data into a CPU-side staging buffer on the calling thread and defers the GPU copy to the next `prepare_scene` call. This avoids the per-call staging allocation overhead of `queue.write_texture` during burst uploads (for example, streaming a new zone or loading a large material set). The texture is invisible for exactly one frame. Call `is_upload_ready(PendingTextureId)` each frame until it returns true, then call `promote_texture` to obtain the live texture ID. The existing synchronous `upload_texture` path is unchanged for callers that upload at startup.
+- VRAM budget query: `ViewportGpuResources::texture_memory_stats()` returns a `TextureMemoryStats` with `used_bytes` and `texture_count` for user-uploaded textures. The counter is updated by both the sync and async upload paths. Callers can poll this each frame and apply their own eviction logic when usage exceeds a threshold.
 - The wire grid and the checkerboard ground plane now each accept explicit colours:
     - The wire grid colour can be set per-frame via `ViewportFrame::grid_colour`. When unset the grid renders slightly lighter than before.
     - The checkerboard ground plane now takes two independent tile colours instead of deriving both from a single tint. Set the second colour via `GroundPlane::tile_colour2`; the default is white and black.
