@@ -1642,6 +1642,25 @@ impl ViewportRenderer {
                             }
                         }
                     }
+
+                    // Normal-line overlays for instanced items with show_normals set.
+                    // Instanced batch draws skip per-item logic, so these are drawn
+                    // here after all batches finish.
+                    if let Some(hdr_wf) = &resources.hdr_wireframe_pipeline {
+                        for item in scene_items.iter().filter(|i| i.show_normals && !i.appearance.hidden) {
+                            let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
+                                continue;
+                            };
+                            if let Some(ref nl_buf) = mesh.normal_line_buffer {
+                                if mesh.normal_line_count > 0 {
+                                    render_pass.set_pipeline(hdr_wf);
+                                    render_pass.set_bind_group(1, &mesh.normal_bind_group, &[]);
+                                    render_pass.set_vertex_buffer(0, nl_buf.slice(..));
+                                    render_pass.draw(0..mesh.normal_line_count, 0..1);
+                                }
+                            }
+                        }
+                    }
                 } else {
                     // Per-object path.
                     let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);

@@ -414,6 +414,7 @@ impl ViewportRenderer {
         let has_matcap_items = scene_items.iter().any(|i| i.material.matcap_id.is_some());
         let has_param_vis_items = scene_items.iter().any(|i| i.material.param_vis.is_some());
         let has_wireframe_items = scene_items.iter().any(|i| i.appearance.wireframe);
+        let has_normal_vis_items = scene_items.iter().any(|i| i.show_normals);
         // Collect per-item uniforms when wireframe mode is on so we can give each
         // visible item its own bind group (the mesh's shared object_uniform_buf gets
         // overwritten when multiple items reference the same MeshId).
@@ -426,6 +427,7 @@ impl ViewportRenderer {
             || has_matcap_items
             || has_param_vis_items
             || has_wireframe_items
+            || has_normal_vis_items
         {
             for item in scene_items {
                 // When instancing is active, skip items that will be rendered
@@ -440,6 +442,7 @@ impl ViewportRenderer {
                     && item.material.param_vis.is_none()
                     && !item.appearance.wireframe
                     && item.warp_attribute.is_none()
+                    && !item.show_normals
                 {
                     continue;
                 }
