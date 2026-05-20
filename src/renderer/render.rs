@@ -1737,6 +1737,20 @@ impl ViewportRenderer {
                                     render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                                 }
                             }
+                            if item.show_normals {
+                                if let Some(ref nl_buf) = mesh.normal_line_buffer {
+                                    if mesh.normal_line_count > 0 {
+                                        render_pass.set_pipeline(wf_pl);
+                                        render_pass.set_bind_group(
+                                            1,
+                                            &mesh.normal_bind_group,
+                                            &[],
+                                        );
+                                        render_pass.set_vertex_buffer(0, nl_buf.slice(..));
+                                        render_pass.draw(0..mesh.normal_line_count, 0..1);
+                                    }
+                                }
+                            }
                         };
 
                     // NOTE: only opaque items are drawn here. Transparent items are
