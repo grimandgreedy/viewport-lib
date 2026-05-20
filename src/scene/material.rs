@@ -176,6 +176,27 @@ impl Default for BackfacePolicy {
     }
 }
 
+/// Alpha blending mode for a material, matching the glTF `alphaMode` field.
+///
+/// Controls how the fragment alpha value is interpreted by the renderer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum AlphaMode {
+    /// Alpha is ignored; the surface is always fully opaque. Default.
+    Opaque,
+    /// Fragments with alpha below the cutoff are discarded; others are fully opaque.
+    /// The f32 value is the cutoff threshold in [0, 1].
+    Mask(f32),
+    /// Standard alpha blending through the OIT pass.
+    Blend,
+}
+
+impl Default for AlphaMode {
+    fn default() -> Self {
+        AlphaMode::Opaque
+    }
+}
+
 /// Per-object material properties for Blinn-Phong and PBR shading.
 ///
 /// Materials carry all shading parameters that were previously global in `LightingSettings`.
@@ -214,6 +235,26 @@ pub struct Material {
     /// The AO map R channel encodes cavity factor (0=fully occluded, 1=fully lit).
     /// Applied multiplicatively to ambient and diffuse terms.
     pub ao_map_id: Option<u64>,
+    /// Optional combined metallic-roughness texture (ORM layout). Default None.
+    ///
+    /// Matches the glTF `metallicRoughnessTexture`: G channel encodes roughness,
+    /// B channel encodes metallic. Each channel is multiplied by the corresponding
+    /// scalar factor (`roughness`, `metallic`). Only sampled when `use_pbr` is true.
+    pub metallic_roughness_texture_id: Option<u64>,
+    /// Self-illumination colour added after lighting. Default [0.0, 0.0, 0.0].
+    ///
+    /// Matches glTF `emissiveFactor`. Applied to both Blinn-Phong and PBR paths.
+    /// When `emissive_texture_id` is set, this value is multiplied by the texture sample.
+    pub emissive: [f32; 3],
+    /// Optional emissive texture identifier. Default None.
+    ///
+    /// Matches glTF `emissiveTexture`. Sampled and multiplied by `emissive`.
+    pub emissive_texture_id: Option<u64>,
+    /// Alpha handling mode. Default [`AlphaMode::Opaque`].
+    ///
+    /// `Mask(cutoff)` discards fragments below the cutoff using the alpha channel.
+    /// `Blend` routes the mesh through the OIT transparent pass.
+    pub alpha_mode: AlphaMode,
     /// Use Cook-Torrance PBR shading instead of Blinn-Phong. Default false.
     ///
     /// When true, `metallic` and `roughness` drive the GGX BRDF.
@@ -252,6 +293,10 @@ impl Default for Material {
             texture_id: None,
             normal_map_id: None,
             ao_map_id: None,
+            metallic_roughness_texture_id: None,
+            emissive: [0.0, 0.0, 0.0],
+            emissive_texture_id: None,
+            alpha_mode: AlphaMode::Opaque,
             use_pbr: false,
             matcap_id: None,
             param_vis: None,
@@ -264,6 +309,11 @@ impl Material {
     /// Returns `true` if the backface policy makes back faces visible.
     pub fn is_two_sided(&self) -> bool {
         !matches!(self.backface_policy, BackfacePolicy::Cull)
+    }
+
+    /// Returns `true` if this material uses alpha blending and should go through the OIT pass.
+    pub fn is_blend(&self) -> bool {
+        matches!(self.alpha_mode, AlphaMode::Blend)
     }
 
     /// Construct from a plain colour, all other parameters at their defaults.

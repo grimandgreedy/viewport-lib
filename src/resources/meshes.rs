@@ -26,6 +26,8 @@ impl ViewportGpuResources {
             &self.fallback_texture.view,
             &self.fallback_face_colour_buf,
             &self.fallback_warp_buf,
+            &self.fallback_metallic_roughness_texture_view,
+            &self.fallback_emissive_texture_view,
             vertices,
             indices,
         );
@@ -100,6 +102,8 @@ impl ViewportGpuResources {
             &self.fallback_texture.view,
             &self.fallback_face_colour_buf,
             &self.fallback_warp_buf,
+            &self.fallback_metallic_roughness_texture_view,
+            &self.fallback_emissive_texture_view,
             &vertices,
             &data.indices,
             Some(&normal_line_verts),
@@ -405,6 +409,8 @@ impl ViewportGpuResources {
             &self.fallback_texture.view,
             &self.fallback_face_colour_buf,
             &self.fallback_warp_buf,
+            &self.fallback_metallic_roughness_texture_view,
+            &self.fallback_emissive_texture_view,
             &vertices,
             &data.indices,
             Some(&normal_line_verts),
@@ -1114,6 +1120,8 @@ impl ViewportGpuResources {
         fallback_matcap_view: &wgpu::TextureView,
         fallback_face_colour_buf: &wgpu::Buffer,
         fallback_warp_buf: &wgpu::Buffer,
+        fallback_metallic_roughness_view: &wgpu::TextureView,
+        fallback_emissive_view: &wgpu::TextureView,
         vertices: &[Vertex],
         indices: &[u32],
     ) -> GpuMesh {
@@ -1130,6 +1138,8 @@ impl ViewportGpuResources {
             fallback_matcap_view,
             fallback_face_colour_buf,
             fallback_warp_buf,
+            fallback_metallic_roughness_view,
+            fallback_emissive_view,
             vertices,
             indices,
             None,
@@ -1149,6 +1159,8 @@ impl ViewportGpuResources {
         fallback_matcap_view: &wgpu::TextureView,
         fallback_face_colour_buf: &wgpu::Buffer,
         fallback_warp_buf: &wgpu::Buffer,
+        fallback_metallic_roughness_view: &wgpu::TextureView,
+        fallback_emissive_view: &wgpu::TextureView,
         vertices: &[Vertex],
         indices: &[u32],
         normal_line_verts: Option<&[Vertex]>,
@@ -1232,6 +1244,12 @@ impl ViewportGpuResources {
             has_warp: 0,
             warp_scale: 1.0,
             _pad_warp: [0; 2],
+            emissive: [0.0; 3],
+            _pad_emissive: 0,
+            alpha_mode: 0,
+            alpha_cutoff: 0.5,
+            has_metallic_roughness_tex: 0,
+            has_emissive_tex: 0,
         };
         let object_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
@@ -1293,6 +1311,14 @@ impl ViewportGpuResources {
                     binding: 10,
                     resource: wgpu::BindingResource::Sampler(lut_sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: wgpu::BindingResource::TextureView(fallback_metallic_roughness_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: wgpu::BindingResource::TextureView(fallback_emissive_view),
+                },
             ],
         });
 
@@ -1328,6 +1354,12 @@ impl ViewportGpuResources {
             has_warp: 0,
             warp_scale: 1.0,
             _pad_warp: [0; 2],
+            emissive: [0.0; 3],
+            _pad_emissive: 0,
+            alpha_mode: 0,
+            alpha_cutoff: 0.5,
+            has_metallic_roughness_tex: 0,
+            has_emissive_tex: 0,
         };
         let normal_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),
@@ -1389,6 +1421,14 @@ impl ViewportGpuResources {
                     binding: 10,
                     resource: wgpu::BindingResource::Sampler(lut_sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: wgpu::BindingResource::TextureView(fallback_metallic_roughness_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: wgpu::BindingResource::TextureView(fallback_emissive_view),
+                },
             ],
         });
 
@@ -1428,6 +1468,8 @@ impl ViewportGpuResources {
             object_uniform_buf,
             object_bind_group,
             last_tex_key: (
+                u64::MAX,
+                u64::MAX,
                 u64::MAX,
                 u64::MAX,
                 u64::MAX,

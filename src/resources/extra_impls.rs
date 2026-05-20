@@ -456,6 +456,8 @@ impl ViewportGpuResources {
             u64::MAX, // attribute hash component
             gpu_mesh.last_tex_key.5,
             gpu_mesh.last_tex_key.6,
+            gpu_mesh.last_tex_key.7,
+            gpu_mesh.last_tex_key.8,
         );
 
         Ok(())

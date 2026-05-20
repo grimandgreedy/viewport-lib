@@ -534,6 +534,19 @@ impl ViewportRenderer {
                     has_warp: if item.warp_attribute.is_some() { 1 } else { 0 },
                     warp_scale: item.warp_scale,
                     _pad_warp: [0; 2],
+                    emissive: m.emissive,
+                    _pad_emissive: 0,
+                    alpha_mode: match m.alpha_mode {
+                        crate::scene::material::AlphaMode::Opaque => 0,
+                        crate::scene::material::AlphaMode::Mask(_) => 1,
+                        crate::scene::material::AlphaMode::Blend => 2,
+                    },
+                    alpha_cutoff: match m.alpha_mode {
+                        crate::scene::material::AlphaMode::Mask(c) => c,
+                        _ => 0.5,
+                    },
+                    has_metallic_roughness_tex: if m.metallic_roughness_texture_id.is_some() { 1 } else { 0 },
+                    has_emissive_tex: if m.emissive_texture_id.is_some() { 1 } else { 0 },
                 };
 
                 let normal_obj_uniform = ObjectUniform {
@@ -568,6 +581,12 @@ impl ViewportRenderer {
                     has_warp: 0,
                     warp_scale: 1.0,
                     _pad_warp: [0; 2],
+                    emissive: [0.0; 3],
+                    _pad_emissive: 0,
+                    alpha_mode: 0,
+                    alpha_cutoff: 0.5,
+                    has_metallic_roughness_tex: 0,
+                    has_emissive_tex: 0,
                 };
 
                 // Collect per-item uniform for wireframe per-item bind groups.
@@ -601,6 +620,8 @@ impl ViewportRenderer {
                     item.active_attribute.as_ref().map(|a| a.name.as_str()),
                     item.material.matcap_id,
                     item.warp_attribute.as_deref(),
+                    item.material.metallic_roughness_texture_id,
+                    item.material.emissive_texture_id,
                 );
             }
         }
@@ -679,6 +700,18 @@ impl ViewportRenderer {
                         wgpu::BindGroupEntry {
                             binding: 10,
                             resource: wgpu::BindingResource::Sampler(&resources.lut_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 11,
+                            resource: wgpu::BindingResource::TextureView(
+                                &resources.fallback_metallic_roughness_texture_view,
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 12,
+                            resource: wgpu::BindingResource::TextureView(
+                                &resources.fallback_emissive_texture_view,
+                            ),
                         },
                     ],
                 });
@@ -776,6 +809,15 @@ impl ViewportRenderer {
                             let instance_offset = all_instances.len() as u32;
                             let is_transparent = rep.appearance.opacity < 1.0;
 
+                            // All items in a batch share the same mesh_id (batch key).
+                            // Look up the mesh once and reuse it for both index_count and
+                            // per-instance AABB transforms, avoiding N redundant hash map
+                            // lookups inside the inner loop.
+                            let batch_idx = instanced_batches.len() as u32;
+                            let batch_mesh = resources.mesh_store.get(rep.mesh_id);
+                            let mesh_index_count =
+                                batch_mesh.map(|m| m.index_count).unwrap_or(0);
+
                             for item in batch_items {
                                 let m = &item.material;
                                 all_instances.push(InstanceData {
@@ -801,19 +843,7 @@ impl ViewportRenderer {
                                     unlit: if item.appearance.unlit { 1 } else { 0 },
                                     _pad_inst: [0; 3],
                                 });
-                            }
-
-                            // Build per-instance AABBs alongside instance data.
-                            // All items in a batch share the same mesh_id (batch key), so
-                            // mesh.index_count is the same for every item — look it up once.
-                            let batch_idx = instanced_batches.len() as u32;
-                            let mesh_index_count = resources
-                                .mesh_store
-                                .get(rep.mesh_id)
-                                .map(|m| m.index_count)
-                                .unwrap_or(0);
-                            for item in batch_items {
-                                if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
+                                if let Some(mesh) = batch_mesh {
                                     let model = glam::Mat4::from_cols_array_2d(&item.model);
                                     let world_aabb = mesh.aabb.transformed(&model);
                                     all_aabbs.push(InstanceAabb {
@@ -1579,6 +1609,18 @@ impl ViewportRenderer {
                     wgpu::BindGroupEntry {
                         binding: 10,
                         resource: wgpu::BindingResource::Sampler(&resources.lut_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 11,
+                        resource: wgpu::BindingResource::TextureView(
+                            &resources.fallback_metallic_roughness_texture_view,
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 12,
+                        resource: wgpu::BindingResource::TextureView(
+                            &resources.fallback_emissive_texture_view,
+                        ),
                     },
                 ],
             });

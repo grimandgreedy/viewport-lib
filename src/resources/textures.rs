@@ -549,6 +549,8 @@ impl ViewportGpuResources {
         active_attr: Option<&str>,
         matcap_id: Option<crate::resources::MatcapId>,
         warp_attr: Option<&str>,
+        metallic_roughness_id: Option<u64>,
+        emissive_texture_id: Option<u64>,
     ) {
         let hash_str = |name: &str| -> u64 {
             use std::hash::{Hash, Hasher};
@@ -567,6 +569,8 @@ impl ViewportGpuResources {
             attr_hash,
             matcap_id.map(|id| id.index as u64).unwrap_or(u64::MAX),
             warp_hash,
+            metallic_roughness_id.unwrap_or(u64::MAX),
+            emissive_texture_id.unwrap_or(u64::MAX),
         );
 
         {
@@ -635,6 +639,15 @@ impl ViewportGpuResources {
             None => &self.fallback_warp_buf,
         };
 
+        let metallic_roughness_view: &wgpu::TextureView = match metallic_roughness_id {
+            Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+            _ => &self.fallback_metallic_roughness_texture_view,
+        };
+        let emissive_view: &wgpu::TextureView = match emissive_texture_id {
+            Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+            _ => &self.fallback_emissive_texture_view,
+        };
+
         mesh.object_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("object_bind_group"),
             layout: &self.object_bind_group_layout,
@@ -682,6 +695,14 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 10,
                     resource: wgpu::BindingResource::Sampler(&self.lut_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: wgpu::BindingResource::TextureView(metallic_roughness_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: wgpu::BindingResource::TextureView(emissive_view),
                 },
             ],
         });

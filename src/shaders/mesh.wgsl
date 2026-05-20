@@ -8,7 +8,8 @@
 // Group 1: Object uniform (per-object model matrix, material properties,
 //          selection flag, wireframe flag, PBR params)
 //          + Albedo texture (binding 1) + sampler (binding 2)
-//          + normal map (binding 3) + AO map (binding 4).
+//          + normal map (binding 3) + AO map (binding 4)
+//          + metallic-roughness texture (binding 11) + emissive texture (binding 12).
 //
 // Lighting: Blinn-Phong (ambient + diffuse + specular) with multi-light support.
 //           Cook-Torrance PBR when object.use_pbr != 0.
@@ -80,7 +81,7 @@ struct ShadowAtlas {
     atlas_rects: array<vec4<f32>, 8>,     // 128 bytes
 };
 
-// Per-object uniform : 208 bytes.
+// Per-object uniform : 256 bytes.
 struct Object {
     model: mat4x4<f32>,
     colour: vec4<f32>,
@@ -100,20 +101,26 @@ struct Object {
     scalar_min: f32,
     scalar_max: f32,
     _pad_scalar: u32,
-    nan_colour: vec4<f32>,       // offset 144
-    use_nan_colour: u32,         // offset 160
-    use_matcap: u32,            // offset 164
-    matcap_blendable: u32,      // offset 168
-    unlit: u32,                 // offset 172
-    use_face_colour: u32,        // offset 176
-    uv_vis_mode: u32,           // offset 180 : 0=off 1=checker 2=grid 3=localcheck 4=localrad
-    uv_vis_scale: f32,          // offset 184 : tile frequency multiplier
-    backface_policy: u32,       // offset 188 : 0=Cull 1=Identical 2=DiffColour 3=Tint 4..7=Pattern
-    backface_colour: vec4<f32>,  // offset 192
-    has_warp: u32,              // offset 208
-    warp_scale: f32,            // offset 212
-    _pad_warp0: u32,            // offset 216
-    _pad_warp1: u32,            // offset 220
+    nan_colour: vec4<f32>,                  // offset 144
+    use_nan_colour: u32,                    // offset 160
+    use_matcap: u32,                       // offset 164
+    matcap_blendable: u32,                 // offset 168
+    unlit: u32,                            // offset 172
+    use_face_colour: u32,                   // offset 176
+    uv_vis_mode: u32,                      // offset 180 : 0=off 1=checker 2=grid 3=localcheck 4=localrad
+    uv_vis_scale: f32,                     // offset 184 : tile frequency multiplier
+    backface_policy: u32,                  // offset 188 : 0=Cull 1=Identical 2=DiffColour 3=Tint 4..7=Pattern
+    backface_colour: vec4<f32>,             // offset 192
+    has_warp: u32,                         // offset 208
+    warp_scale: f32,                       // offset 212
+    _pad_warp0: u32,                       // offset 216
+    _pad_warp1: u32,                       // offset 220
+    emissive: vec3<f32>,                   // offset 224
+    _pad_emissive: u32,                    // offset 236
+    alpha_mode: u32,                       // offset 240 : 0=Opaque 1=Mask 2=Blend
+    alpha_cutoff: f32,                     // offset 244
+    has_metallic_roughness_tex: u32,       // offset 248
+    has_emissive_tex: u32,                 // offset 252
 };
 
 struct ClipVolumeEntry {
@@ -190,6 +197,8 @@ fn clip_volume_test(p: vec3<f32>) -> bool {
 @group(1) @binding(8) var<storage, read> face_colour_buffer: array<vec4<f32>>;
 @group(1) @binding(9) var<storage, read> warp_buffer: array<f32>;
 @group(1) @binding(10) var lut_sampler: sampler;
+@group(1) @binding(11) var metallic_roughness_tex: texture_2d<f32>;
+@group(1) @binding(12) var emissive_tex: texture_2d<f32>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -592,6 +601,12 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     }
     let obj_colour = vec4<f32>(object.colour.rgb * in.colour.rgb * tex_colour.rgb,
                                object.colour.a   * in.colour.a   * tex_colour.a);
+
+    // Alpha MASK: discard fragments whose alpha is below the cutoff.
+    if object.alpha_mode == 1u && obj_colour.a < object.alpha_cutoff {
+        discard;
+    }
+
     var base_colour = obj_colour.rgb;
 
     // Scalar attribute colour override: sample LUT when has_attribute is set.
@@ -730,8 +745,14 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
 
     if object.use_pbr != 0u {
         // Cook-Torrance PBR path
-        let metallic  = clamp(object.metallic,  0.0, 1.0);
-        let roughness = max(object.roughness, 0.04);
+        var metallic  = clamp(object.metallic,  0.0, 1.0);
+        var roughness = max(object.roughness, 0.04);
+        if object.has_metallic_roughness_tex != 0u {
+            // glTF ORM texture: G=roughness factor, B=metallic factor.
+            let mr = textureSample(metallic_roughness_tex, obj_sampler, in.uv);
+            metallic  = clamp(mr.b * metallic,  0.0, 1.0);
+            roughness = max(mr.g * roughness, 0.04);
+        }
         let F0 = mix(vec3<f32>(0.04), base_colour, metallic);
 
         var Lo = vec3<f32>(0.0);
@@ -860,5 +881,11 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         final_rgb = clamp(lit_rgb * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
-    return vec4<f32>(final_rgb, obj_colour.a);
+    // Emissive term: added after lighting so it can push HDR values above 1.0.
+    var emissive = object.emissive;
+    if object.has_emissive_tex != 0u {
+        emissive = emissive * textureSample(emissive_tex, obj_sampler, in.uv).rgb;
+    }
+
+    return vec4<f32>(final_rgb + emissive, obj_colour.a);
 }

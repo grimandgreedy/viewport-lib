@@ -408,36 +408,45 @@ pub type LightUniform = LightsUniform;
 
 /// Per-object uniform: world transform, material properties, selection state, and wireframe mode.
 ///
-/// Layout (208 bytes, 16-byte aligned):
-/// - model:           [[f32;4];4] = 64 bytes  offset   0
-/// - colour:            [f32;4]   = 16 bytes  offset  64  (base_colour.xyz + opacity)
-/// - selected:          u32      =  4 bytes  offset  80
-/// - wireframe:         u32      =  4 bytes  offset  84
-/// - ambient:           f32      =  4 bytes  offset  88
-/// - diffuse:           f32      =  4 bytes  offset  92
-/// - specular:          f32      =  4 bytes  offset  96
-/// - shininess:         f32      =  4 bytes  offset 100
-/// - has_texture:       u32      =  4 bytes  offset 104
-/// - use_pbr:           u32      =  4 bytes  offset 108
-/// - metallic:          f32      =  4 bytes  offset 112
-/// - roughness:         f32      =  4 bytes  offset 116
-/// - has_normal_map:    u32      =  4 bytes  offset 120
-/// - has_ao_map:        u32      =  4 bytes  offset 124
-/// - has_attribute:     u32      =  4 bytes  offset 128
-/// - scalar_min:        f32      =  4 bytes  offset 132
-/// - scalar_max:        f32      =  4 bytes  offset 136
-/// - _pad_scalar:       u32      =  4 bytes  offset 140
-/// - nan_colour:        [f32;4]   = 16 bytes  offset 144
-/// - use_nan_colour:     u32      =  4 bytes  offset 160
-/// - use_matcap:        u32      =  4 bytes  offset 164
-/// - matcap_blendable:  u32      =  4 bytes  offset 168
-/// - _pad2:             u32      =  4 bytes  offset 172
-/// - use_face_colour:    u32      =  4 bytes  offset 176
-/// - uv_vis_mode:       u32      =  4 bytes  offset 180  (0=off 1=checker 2=grid 3=localcheck 4=localrad)
-/// - uv_vis_scale:      f32      =  4 bytes  offset 184
-/// - backface_policy:   u32      =  4 bytes  offset 188  (0=Cull 1=Identical 2=DifferentColour)
-/// - backface_colour:   [f32;4]   = 16 bytes  offset 192
-/// Total: 208 bytes
+/// Layout (256 bytes, 16-byte aligned):
+/// - model:                    [[f32;4];4] = 64 bytes  offset   0
+/// - colour:                     [f32;4]   = 16 bytes  offset  64  (base_colour.xyz + opacity)
+/// - selected:                   u32      =  4 bytes  offset  80
+/// - wireframe:                  u32      =  4 bytes  offset  84
+/// - ambient:                    f32      =  4 bytes  offset  88
+/// - diffuse:                    f32      =  4 bytes  offset  92
+/// - specular:                   f32      =  4 bytes  offset  96
+/// - shininess:                  f32      =  4 bytes  offset 100
+/// - has_texture:                u32      =  4 bytes  offset 104
+/// - use_pbr:                    u32      =  4 bytes  offset 108
+/// - metallic:                   f32      =  4 bytes  offset 112
+/// - roughness:                  f32      =  4 bytes  offset 116
+/// - has_normal_map:             u32      =  4 bytes  offset 120
+/// - has_ao_map:                 u32      =  4 bytes  offset 124
+/// - has_attribute:              u32      =  4 bytes  offset 128
+/// - scalar_min:                 f32      =  4 bytes  offset 132
+/// - scalar_max:                 f32      =  4 bytes  offset 136
+/// - _pad_scalar:                u32      =  4 bytes  offset 140
+/// - nan_colour:                 [f32;4]   = 16 bytes  offset 144
+/// - use_nan_colour:              u32      =  4 bytes  offset 160
+/// - use_matcap:                 u32      =  4 bytes  offset 164
+/// - matcap_blendable:           u32      =  4 bytes  offset 168
+/// - unlit:                      u32      =  4 bytes  offset 172
+/// - use_face_colour:             u32      =  4 bytes  offset 176
+/// - uv_vis_mode:                u32      =  4 bytes  offset 180  (0=off 1=checker 2=grid 3=localcheck 4=localrad)
+/// - uv_vis_scale:               f32      =  4 bytes  offset 184
+/// - backface_policy:            u32      =  4 bytes  offset 188  (0=Cull 1=Identical 2=DifferentColour)
+/// - backface_colour:            [f32;4]   = 16 bytes  offset 192
+/// - has_warp:                   u32      =  4 bytes  offset 208
+/// - warp_scale:                 f32      =  4 bytes  offset 212
+/// - _pad_warp:                  [u32;2]  =  8 bytes  offset 216
+/// - emissive:                   [f32;3]  = 12 bytes  offset 224
+/// - _pad_emissive:              u32      =  4 bytes  offset 236
+/// - alpha_mode:                 u32      =  4 bytes  offset 240  (0=Opaque, 1=Mask, 2=Blend)
+/// - alpha_cutoff:               f32      =  4 bytes  offset 244
+/// - has_metallic_roughness_tex: u32      =  4 bytes  offset 248
+/// - has_emissive_tex:           u32      =  4 bytes  offset 252
+/// Total: 256 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ObjectUniform {
@@ -469,12 +478,18 @@ pub(crate) struct ObjectUniform {
     pub(crate) uv_vis_scale: f32,        //   4 bytes, offset 184
     pub(crate) backface_policy: u32, //   4 bytes, offset 188  (0=Cull 1=Identical 2=DifferentColour)
     pub(crate) backface_colour: [f32; 4], //  16 bytes, offset 192
-    pub(crate) has_warp: u32,        //   4 bytes, offset 208
-    pub(crate) warp_scale: f32,      //   4 bytes, offset 212
-    pub(crate) _pad_warp: [u32; 2],  //   8 bytes, offset 216
+    pub(crate) has_warp: u32,                    //   4 bytes, offset 208
+    pub(crate) warp_scale: f32,                  //   4 bytes, offset 212
+    pub(crate) _pad_warp: [u32; 2],              //   8 bytes, offset 216
+    pub(crate) emissive: [f32; 3],               //  12 bytes, offset 224
+    pub(crate) _pad_emissive: u32,               //   4 bytes, offset 236
+    pub(crate) alpha_mode: u32,                  //   4 bytes, offset 240  (0=Opaque, 1=Mask, 2=Blend)
+    pub(crate) alpha_cutoff: f32,                //   4 bytes, offset 244
+    pub(crate) has_metallic_roughness_tex: u32,  //   4 bytes, offset 248
+    pub(crate) has_emissive_tex: u32,            //   4 bytes, offset 252
 }
 
-const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 224);
+const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 256);
 
 /// Per-instance GPU data for instanced rendering. Matches the WGSL `InstanceData` struct.
 ///
@@ -1400,9 +1415,9 @@ pub struct GpuMesh {
     /// Texture views are the fallback 1×1 textures by default; rebuilt when material
     /// texture assignment changes (tracked via `last_tex_key`).
     pub object_bind_group: wgpu::BindGroup,
-    /// Last texture/attribute key `(albedo_id, normal_map_id, ao_map_id, lut_id, attr_name_hash, matcap_id, warp_attr_hash)`
-    /// used to build `object_bind_group`. `u64::MAX` = fallback / none for that slot.
-    pub(crate) last_tex_key: (u64, u64, u64, u64, u64, u64, u64),
+    /// Last texture/attribute key used to build `object_bind_group`. `u64::MAX` = fallback / none.
+    /// Fields: `(albedo, normal_map, ao_map, lut, attr_hash, matcap, warp_hash, metallic_roughness, emissive)`
+    pub(crate) last_tex_key: (u64, u64, u64, u64, u64, u64, u64, u64, u64),
     /// Per-named-attribute GPU storage buffers (f32 per vertex, STORAGE usage).
     pub attribute_buffers: std::collections::HashMap<String, wgpu::Buffer>,
     /// Scalar range `(min, max)` per attribute, computed at upload time.
@@ -2081,6 +2096,13 @@ pub struct ViewportGpuResources {
     /// Fallback 1×1 AO map [255,255,255,255] (no occlusion).
     pub(crate) fallback_ao_map: wgpu::Texture,
     pub(crate) fallback_ao_map_view: wgpu::TextureView,
+    /// Fallback 1×1 metallic-roughness texture [0, 255, 255, 255].
+    /// G=1.0 and B=1.0 so scalar factors pass through unchanged when no ORM texture is set.
+    pub(crate) fallback_metallic_roughness_texture: wgpu::Texture,
+    pub(crate) fallback_metallic_roughness_texture_view: wgpu::TextureView,
+    /// Fallback 1×1 emissive texture [0, 0, 0, 255] (no emission).
+    pub(crate) fallback_emissive_texture: wgpu::Texture,
+    pub(crate) fallback_emissive_texture_view: wgpu::TextureView,
     /// Shared linear-repeat sampler for material textures.
     pub(crate) material_sampler: wgpu::Sampler,
     /// Shared linear-clamp sampler for colourmap LUT lookups.

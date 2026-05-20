@@ -1609,7 +1609,7 @@ impl ViewportRenderer {
                     ) {
                         for item in excluded_items
                             .into_iter()
-                            .filter(|item| item.appearance.opacity >= 1.0)
+                            .filter(|item| item.appearance.opacity >= 1.0 && !item.material.is_blend())
                         {
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                                 continue;
@@ -1644,7 +1644,7 @@ impl ViewportRenderer {
                         if item.appearance.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
                             continue;
                         }
-                        if item.appearance.opacity < 1.0 {
+                        if item.appearance.opacity < 1.0 || item.material.is_blend() {
                             transparent.push(item);
                         } else {
                             opaque.push(item);
@@ -2107,7 +2107,7 @@ impl ViewportRenderer {
                     if let Some(ref pipeline) = self.resources.oit_pipeline {
                         oit_pass.set_pipeline(pipeline);
                         for item in scene_items {
-                            if item.appearance.hidden || item.appearance.opacity >= 1.0 {
+                            if item.appearance.hidden || (item.appearance.opacity >= 1.0 && !item.material.is_blend()) {
                                 continue;
                             }
                             if item.active_attribute.is_none()

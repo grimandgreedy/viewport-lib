@@ -275,6 +275,28 @@ impl ViewportGpuResources {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // binding 11: metallic-roughness ORM texture (FRAGMENT, filterable)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 11,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // binding 12: emissive texture (FRAGMENT, filterable)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 12,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -1456,6 +1478,48 @@ impl ViewportGpuResources {
             fallback_ao_map.create_view(&wgpu::TextureViewDescriptor::default());
 
         // ------------------------------------------------------------------
+        // Fallback metallic-roughness texture: 1×1 Rgba8Unorm.
+        // Content is uninitialized: shader only samples when has_metallic_roughness_tex != 0.
+        // ------------------------------------------------------------------
+        let fallback_metallic_roughness_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("fallback_metallic_roughness_texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let fallback_metallic_roughness_texture_view =
+            fallback_metallic_roughness_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // ------------------------------------------------------------------
+        // Fallback emissive texture: 1×1 Rgba8Unorm.
+        // Content is uninitialized: shader only samples when has_emissive_tex != 0.
+        // ------------------------------------------------------------------
+        let fallback_emissive_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("fallback_emissive_texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let fallback_emissive_texture_view =
+            fallback_emissive_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // ------------------------------------------------------------------
         // Fallback texture: 1×1 white RGBA (used when no albedo texture is assigned)
         // ------------------------------------------------------------------
         let fallback_texture = {
@@ -1592,6 +1656,8 @@ impl ViewportGpuResources {
             &fallback_texture.view,
             &fallback_face_colour_buf,
             &fallback_warp_buf,
+            &fallback_metallic_roughness_texture_view,
+            &fallback_emissive_texture_view,
             &cube_verts,
             &cube_indices,
         );
@@ -2000,6 +2066,10 @@ impl ViewportGpuResources {
             fallback_normal_map_view,
             fallback_ao_map,
             fallback_ao_map_view,
+            fallback_metallic_roughness_texture,
+            fallback_metallic_roughness_texture_view,
+            fallback_emissive_texture,
+            fallback_emissive_texture_view,
             material_sampler,
             lut_sampler,
             material_bind_groups: std::collections::HashMap::new(),
