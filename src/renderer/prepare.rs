@@ -776,12 +776,24 @@ impl ViewportRenderer {
                     .collect();
 
                 sorted_items.sort_unstable_by_key(|item| {
+                    // Hash the model matrix as a final tiebreaker so that items
+                    // with equal (mesh, texture, pick_id) keys still sort
+                    // deterministically even when the input slice order varies
+                    // between frames. Without this, sort_unstable leaves tied
+                    // items in input order, which can differ frame-to-frame when
+                    // the caller builds scene_items from a HashMap or similar
+                    // unordered source, causing spurious hash mismatches in the
+                    // partial-upload path and constant batch re-uploads on
+                    // otherwise-static varied_mesh scenes.
+                    let model_hash =
+                        hash_instance_bytes(bytemuck::bytes_of(&item.model));
                     (
                         item.mesh_id.index(),
                         item.material.texture_id,
                         item.material.normal_map_id,
                         item.material.ao_map_id,
                         item.pick_id.0,
+                        model_hash,
                     )
                 });
 
