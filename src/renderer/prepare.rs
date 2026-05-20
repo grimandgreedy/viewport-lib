@@ -776,24 +776,27 @@ impl ViewportRenderer {
                     .collect();
 
                 sorted_items.sort_unstable_by_key(|item| {
-                    // Hash the model matrix as a final tiebreaker so that items
-                    // with equal (mesh, texture, pick_id) keys still sort
-                    // deterministically even when the input slice order varies
-                    // between frames. Without this, sort_unstable leaves tied
-                    // items in input order, which can differ frame-to-frame when
-                    // the caller builds scene_items from a HashMap or similar
-                    // unordered source, causing spurious hash mismatches in the
-                    // partial-upload path and constant batch re-uploads on
-                    // otherwise-static varied_mesh scenes.
-                    let model_hash =
-                        hash_instance_bytes(bytemuck::bytes_of(&item.model));
+                    // Use the world-space translation (model column 3) as a
+                    // final tiebreaker via f32::to_bits(). This breaks ties for
+                    // items that share (mesh, texture, pick_id) but sit at
+                    // different positions, which covers all practical cases in
+                    // multi-object same-batch scenes.
+                    //
+                    // to_bits() is guaranteed deterministic (no hash function,
+                    // no per-process randomness), and sorting by translation
+                    // keeps spatially close instances adjacent in the buffer,
+                    // which is cache-friendly for the GPU visibility-index
+                    // indirection used by the culled draw path.
+                    let t = &item.model[3];
                     (
                         item.mesh_id.index(),
                         item.material.texture_id,
                         item.material.normal_map_id,
                         item.material.ao_map_id,
                         item.pick_id.0,
-                        model_hash,
+                        t[0].to_bits(),
+                        t[1].to_bits(),
+                        t[2].to_bits(),
                     )
                 });
 
