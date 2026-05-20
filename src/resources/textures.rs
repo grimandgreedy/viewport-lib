@@ -243,14 +243,9 @@ impl ViewportGpuResources {
         let aligned_bytes_per_row = (raw_bpr + align - 1) / align * align;
         let staging_size = aligned_bytes_per_row as u64 * height as u64;
 
-        // Allocate a staging buffer with mapped_at_creation: the data is written
-        // synchronously on the calling thread with no async mapping roundtrip.
-        let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("async_texture_staging"),
-            size: staging_size,
-            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
-            mapped_at_creation: true,
-        });
+        // Acquire a staging buffer from the pool (or allocate fresh on first use).
+        // The returned buffer is already mapped for writing.
+        let (staging_buf, pool_band) = self.staging_pool.acquire(device, staging_size);
         {
             let mut mapped = staging_buf.slice(..).get_mapped_range_mut();
             if aligned_bytes_per_row == raw_bpr {
@@ -331,6 +326,7 @@ impl ViewportGpuResources {
                 bind_group,
             },
             staging_buf,
+            pool_band,
             width,
             height,
             aligned_bytes_per_row,
@@ -369,7 +365,8 @@ impl ViewportGpuResources {
         // swap_remove is O(1) and preserves correctness since entries are
         // identified by pending_id, not position.
         let entry = self.pending_texture_uploads.swap_remove(pos);
-        // staging_buf is dropped here; the GPU copy completed one frame ago.
+        // Return the staging buffer to the pool; the GPU copy completed one frame ago.
+        self.staging_pool.release(entry.staging_buf, entry.pool_band);
 
         let texture_id = self.textures.len() as u64;
         self.texture_allocated_bytes += entry.data_bytes;

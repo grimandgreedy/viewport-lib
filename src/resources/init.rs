@@ -2007,6 +2007,7 @@ impl ViewportGpuResources {
             pending_texture_uploads: Vec::new(),
             next_pending_texture_id: 0,
             texture_allocated_bytes: 0,
+            staging_pool: crate::resources::types::StagingBufferPool::new(),
             matcap_textures: Vec::new(),
             matcap_views: Vec::new(),
             matcap_sampler: None,

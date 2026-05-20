@@ -737,6 +737,7 @@ impl ViewportRenderer {
                         item.material.texture_id,
                         item.material.normal_map_id,
                         item.material.ao_map_id,
+                        item.pick_id.0,
                     )
                 });
 
