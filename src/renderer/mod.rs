@@ -220,8 +220,12 @@ pub struct ViewportRenderer {
     /// non-instanced items (e.g. one two-sided mesh + 10k static boxes) still hit
     /// the instanced batch cache on frames where the filtered set is unchanged.
     last_instancable_count: usize,
-    /// Cached instance data from last rebuild (mirrors the GPU buffer contents).
-    cached_instance_data: Vec<InstanceData>,
+    /// Total instance count from the last rebuild. Used as a fast length check
+    /// in `structure_preserved` and as `instance_count` for GPU cull dispatches.
+    cached_instance_count: usize,
+    /// Per-batch content hash from the last rebuild, indexed by batch position.
+    /// A hash mismatch triggers a `write_buffer` for that batch; a match skips it.
+    cached_instance_hashes: Vec<u64>,
     /// Cached instanced batch descriptors from last rebuild.
     cached_instanced_batches: Vec<InstancedBatch>,
     /// When true, the next cache-miss forces a full buffer upload instead of the
@@ -436,7 +440,8 @@ impl ViewportRenderer {
             last_selection_generation: u64::MAX,
             last_scene_items_count: usize::MAX,
             last_instancable_count: usize::MAX,
-            cached_instance_data: Vec::new(),
+            cached_instance_count: 0,
+            cached_instance_hashes: Vec::new(),
             cached_instanced_batches: Vec::new(),
             force_full_upload: false,
             point_cloud_gpu_data: Vec::new(),

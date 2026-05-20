@@ -3,6 +3,17 @@ use super::*;
 use crate::resources::CurveMeshOutlineItem;
 use wgpu::util::DeviceExt;
 
+/// Hash a byte slice for per-batch dirty detection.
+///
+/// Used by the partial-upload path to avoid reading back the cached instance
+/// buffer: a hash mismatch means the batch changed; a match means it is clean.
+fn hash_instance_bytes(bytes: &[u8]) -> u64 {
+    use std::hash::Hasher;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    h.write(bytes);
+    h.finish()
+}
+
 impl ViewportRenderer {
     /// Scene-global prepare stage: compute filters, lighting, shadow pass, batching, scivis.
     ///
@@ -853,8 +864,8 @@ impl ViewportRenderer {
                 // A forced full upload (via `force_dirty()`) or any structural
                 // change (different batch count, different instance counts)
                 // falls back to the original full-upload path.
-                let structure_preserved = !self.cached_instance_data.is_empty()
-                    && all_instances.len() == self.cached_instance_data.len()
+                let structure_preserved = self.cached_instance_count > 0
+                    && all_instances.len() == self.cached_instance_count
                     && instanced_batches.len() == self.cached_instanced_batches.len()
                     && instanced_batches
                         .iter()
@@ -869,16 +880,19 @@ impl ViewportRenderer {
                 if structure_preserved && !force {
                     let inst_stride = std::mem::size_of::<InstanceData>() as u64;
                     let aabb_stride = std::mem::size_of::<InstanceAabb>() as u64;
-                    for batch in &instanced_batches {
+                    // Ensure the hash vec is the right length (it should already be,
+                    // but guard against a first-run edge case).
+                    if self.cached_instance_hashes.len() != instanced_batches.len() {
+                        self.cached_instance_hashes.resize(instanced_batches.len(), 0);
+                    }
+                    for (bi, batch) in instanced_batches.iter().enumerate() {
                         let start = batch.instance_offset as usize;
                         let end = start + batch.instance_count as usize;
                         let new_bytes = bytemuck::cast_slice::<InstanceData, u8>(
                             &all_instances[start..end],
                         );
-                        let old_bytes = bytemuck::cast_slice::<InstanceData, u8>(
-                            &self.cached_instance_data[start..end],
-                        );
-                        if new_bytes != old_bytes {
+                        let new_hash = hash_instance_bytes(new_bytes);
+                        if new_hash != self.cached_instance_hashes[bi] {
                             if let Some(buf) = resources.instance_storage_buf.as_ref() {
                                 queue.write_buffer(
                                     buf,
@@ -896,6 +910,7 @@ impl ViewportRenderer {
                                     aabb_bytes,
                                 );
                             }
+                            self.cached_instance_hashes[bi] = new_hash;
                             batches_reuploaded += 1;
                         } else {
                             batches_skipped += 1;
@@ -905,9 +920,17 @@ impl ViewportRenderer {
                     resources.upload_instance_data(device, queue, &all_instances);
                     resources.upload_aabb_and_batch_meta(device, queue, &all_aabbs, &batch_metas);
                     batches_reuploaded = instanced_batches.len() as u32;
+                    // Rebuild the hash cache so the next partial-upload check is seeded.
+                    self.cached_instance_hashes.clear();
+                    for batch in &instanced_batches {
+                        let start = batch.instance_offset as usize;
+                        let end = start + batch.instance_count as usize;
+                        let bytes = bytemuck::cast_slice::<InstanceData, u8>(&all_instances[start..end]);
+                        self.cached_instance_hashes.push(hash_instance_bytes(bytes));
+                    }
                 }
 
-                self.cached_instance_data = all_instances;
+                self.cached_instance_count = all_instances.len();
                 self.cached_instanced_batches = instanced_batches;
                 self.instanced_batches = self.cached_instanced_batches.clone();
 
@@ -943,9 +966,9 @@ impl ViewportRenderer {
             // ------------------------------------------------------------------
             if self.gpu_culling_enabled
                 && !self.instanced_batches.is_empty()
-                && !self.cached_instance_data.is_empty()
+                && self.cached_instance_count > 0
             {
-                let instance_count = self.cached_instance_data.len() as u32;
+                let instance_count = self.cached_instance_count as u32;
                 let batch_count = self.instanced_batches.len() as u32;
 
                 // Do all mutable borrows before taking immutable borrows from resources.
@@ -1658,7 +1681,7 @@ impl ViewportRenderer {
             if self.gpu_culling_enabled
                 && self.use_instancing
                 && !self.instanced_batches.is_empty()
-                && !self.cached_instance_data.is_empty()
+                && self.cached_instance_count > 0
             {
                 // Mutable operations first.
                 if self.cull_resources.is_none() {
@@ -1670,7 +1693,7 @@ impl ViewportRenderer {
                     resources.get_shadow_cull_instance_bind_group(device, c);
                 }
 
-                let instance_count = self.cached_instance_data.len() as u32;
+                let instance_count = self.cached_instance_count as u32;
                 let batch_count = self.instanced_batches.len() as u32;
 
                 if let (Some(aabb_buf), Some(meta_buf), Some(counter_buf)) = (
