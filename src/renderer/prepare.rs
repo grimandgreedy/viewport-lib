@@ -214,11 +214,14 @@ impl ViewportRenderer {
         let atlas_res = lighting.shadow_atlas_resolution.max(64);
         let tile_size = atlas_res / 2;
 
+        let dist = frame.camera.render_camera.distance;
+        let shadow_near = (dist * 0.1).max(frame.camera.render_camera.near);
+        let shadow_far = (dist * 1.5).max(10.0).min(frame.camera.render_camera.far);
         let cascade_splits = compute_cascade_splits(
-            frame.camera.render_camera.near.max(0.01),
-            frame.camera.render_camera.far.max(1.0),
+            shadow_near,
+            shadow_far,
             cascade_count as u32,
-            lighting.cascade_split_lambda,
+            0.75,
         );
 
         let light_dir_for_csm = if light_count > 0 {

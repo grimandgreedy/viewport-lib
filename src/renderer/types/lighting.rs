@@ -97,9 +97,6 @@ pub struct LightingSettings {
 
     /// Number of cascaded shadow map splits (1–4). Default: 4.
     pub shadow_cascade_count: u32,
-    /// Blend factor between logarithmic and linear cascade splits (0.0 = linear, 1.0 = log).
-    /// Default: 0.75. Higher values allocate more resolution near the camera.
-    pub cascade_split_lambda: f32,
     /// Shadow atlas resolution (width = height). Default: 4096.
     /// Each cascade tile is `atlas_resolution / 2`.
     pub shadow_atlas_resolution: u32,
@@ -120,7 +117,6 @@ impl Default for LightingSettings {
             hemisphere_intensity: 0.5,
             shadow_extent_override: None,
             shadow_cascade_count: 4,
-            cascade_split_lambda: 0.75,
             shadow_atlas_resolution: 4096,
             shadow_filter: ShadowFilter::Pcf,
             pcss_light_radius: 0.02,

@@ -22,6 +22,7 @@
 - Camera tracking: the runtime can follow a scene node and return a suggested camera center each frame. The orbit camera pivot moves with the followed object; distance and orientation are unaffected. Tracking can be set or cleared at any time and works alongside any combination of other plugins.
 
 ### Fixes
+- Shadow cascade quality now tracks camera zoom automatically. `RenderCamera` carries an orbit `distance` field; `prepare.rs` derives the cascade split window from it (`distance * 0.1` to `distance * 1.5`) rather than from the full camera near/far range. This eliminates the shadow-blurriness-on-zoom-out problem that previously required manual `cascade_split_lambda` tuning. `cascade_split_lambda` has been removed from `LightingSettings`; the split is now computed internally with lambda 0.75.
 - `show_normals` now draws normal-line overlays in the HDR path. Previously normal lines were only drawn on the LDR path; switching to HDR/PBR mode silently dropped them.
 - Compute-filtered geometry (index buffer overrides produced by GPU compute passes) is now applied in the HDR per-object draw path. Previously the HDR path always drew the full mesh index buffer, so filtered views differed from LDR when `PostProcessSettings::enabled = true`. Both the per-object path and the excluded-items path (active-attribute, two-sided, and matcap materials drawn outside instanced batches) are fixed.
 

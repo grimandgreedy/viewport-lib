@@ -80,14 +80,12 @@ fn main() -> eframe::Result {
 // Cascade split formula (mirrors shadows.rs so we can show live splits)
 // ---------------------------------------------------------------------------
 
-fn cascade_splits(near: f32, far: f32, count: u32, lambda: f32) -> Vec<f32> {
+fn cascade_splits(near: f32, far: f32, count: u32) -> Vec<f32> {
     let n = count.min(4) as usize;
     (1..=n)
         .map(|i| {
             let p = i as f32 / n as f32;
-            let log = near * (far / near).powf(p);
-            let lin = near + (far - near) * p;
-            lambda * log + (1.0 - lambda) * lin
+            near * (far / near).powf(p)
         })
         .collect()
 }
@@ -130,7 +128,6 @@ impl App {
         }];
         lighting.hemisphere_intensity = 0.4;
         lighting.shadow_cascade_count = 4;
-        lighting.cascade_split_lambda = 0.75;
         lighting.shadows_enabled = true;
 
         Self {
@@ -251,11 +248,6 @@ impl eframe::App for App {
                     self.lighting.shadow_cascade_count = cc as u32;
                 }
 
-                ui.label("Split lambda (0=linear, 1=log)");
-                ui.add(egui::Slider::new(
-                    &mut self.lighting.cascade_split_lambda,
-                    0.0..=1.0,
-                ));
 
                 ui.label("Shadow bias");
                 ui.add(
@@ -299,11 +291,11 @@ impl eframe::App for App {
 
                 ui.separator();
                 ui.label("Cascade splits (world depth)");
+                let shadow_far = (self.camera.distance * 3.0).max(10.0).min(eff_far);
                 let splits = cascade_splits(
                     eff_near,
-                    eff_far,
+                    shadow_far,
                     self.lighting.shadow_cascade_count,
-                    self.lighting.cascade_split_lambda,
                 );
                 let mut prev = eff_near;
                 for (i, &s) in splits.iter().enumerate() {
@@ -314,15 +306,13 @@ impl eframe::App for App {
                 ui.separator();
                 if ui.button("Log cascade matrices (P)").clicked() || self.log_next_frame {
                     self.log_next_frame = false;
-                    // Print the cascade split state to stderr so it shows in the terminal.
                     eprintln!("=== CASCADE STATE ===");
                     eprintln!("  camera distance: {:.2}", dist);
-                    eprintln!("  near: {:.4}  far: {:.2}", eff_near, eff_far);
+                    eprintln!("  near: {:.4}  shadow_far: {:.2}", eff_near, shadow_far);
                     let splits = cascade_splits(
                         eff_near,
-                        eff_far,
+                        shadow_far,
                         self.lighting.shadow_cascade_count,
-                        self.lighting.cascade_split_lambda,
                     );
                     for (i, &s) in splits.iter().enumerate() {
                         let lo = if i == 0 { eff_near } else { splits[i - 1] };

@@ -55,6 +55,10 @@ name = "eframe-minimal"
 path = "examples/eframe_minimal/main.rs"
 
 [[example]]
+name = "eframe-lighting-shadows"
+path = "examples/eframe_lighting_shadows/main.rs"
+
+[[example]]
 name = "eframe-testing"
 path = "examples/eframe_testing/main.rs"
 
@@ -77,6 +81,10 @@ path = "examples/eframe_showcase/main.rs"
 [[example]]
 name = "winit-multi-viewport"
 path = "examples/winit_multi_viewport/main.rs"
+
+[[example]]
+name = "winit-hdr"
+path = "examples/winit_hdr/main.rs"
 
 [[example]]
 name = "runtime-jobs"
