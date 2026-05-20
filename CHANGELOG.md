@@ -21,6 +21,9 @@
     - Simple physics: bodies with linear velocity, gravity scale, and restitution. The runtime integrates velocity each simulate step, applies per-body gravity, and reflects bodies off optional bounding box walls. Contacts with bounds produce events available in the runtime output each frame.
 - Camera tracking: the runtime can follow a scene node and return a suggested camera center each frame. The orbit camera pivot moves with the followed object; distance and orientation are unaffected. Tracking can be set or cleared at any time and works alongside any combination of other plugins.
 
+### Fixes
+- Compute-filtered geometry (index buffer overrides produced by GPU compute passes) is now applied in the HDR per-object draw path. Previously the HDR path always drew the full mesh index buffer, so filtered views differed from LDR when `PostProcessSettings::enabled = true`. Both the per-object path and the excluded-items path (active-attribute, two-sided, and matcap materials drawn outside instanced batches) are fixed.
+
 ### Improvements
 - Render scale and dynamic resolution now work in both the LDR and HDR paths. Previously, `PerformancePolicy::preset`, `set_render_scale`, and `allow_dynamic_resolution` had no effect when `PostProcessSettings::enabled = true` -- the HDR render target was always allocated at native resolution and `FrameStats::render_scale` always reported `1.0`. All scene-side textures (HDR colour, depth, bloom, SSAO, DoF, contact shadows, LIC, outlines) are now allocated at `render_scale * surface_size`; the tone-map pass upscales to native resolution. A depth blit pass copies the scene-resolution depth buffer to a native-resolution copy before post-tone-map passes (grid, ground plane, gizmos, axes, overlays) so those passes continue to draw at full resolution. `FrameStats::render_scale` now reflects the actual scale in both modes.
 

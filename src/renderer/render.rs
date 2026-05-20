@@ -1477,6 +1477,7 @@ impl ViewportRenderer {
 
             let use_instancing = self.use_instancing;
             let batches = &self.instanced_batches;
+            let compute_filter_results = &self.compute_filter_results;
 
             if !scene_items.is_empty() {
                 if use_instancing && !batches.is_empty() {
@@ -1623,11 +1624,22 @@ impl ViewportRenderer {
                             render_pass.set_pipeline(pipeline);
                             render_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
                             render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                            render_pass.set_index_buffer(
-                                mesh.index_buffer.slice(..),
-                                wgpu::IndexFormat::Uint32,
-                            );
-                            render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                            let filter = compute_filter_results
+                                .iter()
+                                .find(|r| r.mesh_id == item.mesh_id);
+                            if let Some(fr) = filter {
+                                render_pass.set_index_buffer(
+                                    fr.index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
+                                render_pass.draw_indexed(0..fr.index_count, 0, 0..1);
+                            } else {
+                                render_pass.set_index_buffer(
+                                    mesh.index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
+                                render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                            }
                         }
                     }
                 } else {
@@ -1700,22 +1712,30 @@ impl ViewportRenderer {
                                     render_pass.set_vertex_buffer(0, fvb.slice(..));
                                     render_pass.draw(0..mesh.index_count, 0..1);
                                 }
-                            } else if item.appearance.opacity < 1.0 {
-                                render_pass.set_pipeline(trans_pl);
-                                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                                render_pass.set_index_buffer(
-                                    mesh.index_buffer.slice(..),
-                                    wgpu::IndexFormat::Uint32,
-                                );
-                                render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                             } else {
-                                render_pass.set_pipeline(solid_pl);
+                                let filter = compute_filter_results
+                                    .iter()
+                                    .find(|r| r.mesh_id == item.mesh_id);
+                                let pl = if item.appearance.opacity < 1.0 {
+                                    trans_pl
+                                } else {
+                                    solid_pl
+                                };
+                                render_pass.set_pipeline(pl);
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                                render_pass.set_index_buffer(
-                                    mesh.index_buffer.slice(..),
-                                    wgpu::IndexFormat::Uint32,
-                                );
-                                render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                                if let Some(fr) = filter {
+                                    render_pass.set_index_buffer(
+                                        fr.index_buffer.slice(..),
+                                        wgpu::IndexFormat::Uint32,
+                                    );
+                                    render_pass.draw_indexed(0..fr.index_count, 0, 0..1);
+                                } else {
+                                    render_pass.set_index_buffer(
+                                        mesh.index_buffer.slice(..),
+                                        wgpu::IndexFormat::Uint32,
+                                    );
+                                    render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                                }
                             }
                         };
 
