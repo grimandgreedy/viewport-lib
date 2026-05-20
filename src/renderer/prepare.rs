@@ -1492,7 +1492,7 @@ impl ViewportRenderer {
                 .as_ref()
             {
                 if let Some(first) = frame.scene.lic_items.first() {
-                    let [vw, vh] = hdr.size;
+                    let [vw, vh] = hdr.scene_size;
                     let u = crate::resources::LicAdvectUniform {
                         steps: first.config.steps,
                         step_size: first.config.step_size,
@@ -3514,16 +3514,18 @@ impl ViewportRenderer {
                 w.max(1),
                 h.max(1),
                 frame.effects.post_process.ssaa_factor.max(1),
+                self.current_render_scale,
             );
 
             // Write edge-detection uniform (colour, radius, viewport size).
             {
                 let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+                let [scene_w, scene_h] = slot_hdr.scene_size;
                 let edge_uniform = OutlineEdgeUniform {
                     colour: frame.interaction.outline_colour,
                     radius: frame.interaction.outline_width_px,
-                    viewport_w: w as f32,
-                    viewport_h: h as f32,
+                    viewport_w: scene_w as f32,
+                    viewport_h: scene_h as f32,
                     _pad: 0.0,
                 };
                 queue.write_buffer(
@@ -5124,18 +5126,11 @@ impl ViewportRenderer {
             self.current_render_scale = eff_max_scale;
         }
 
-        // HDR path detection: post_process.enabled means render()/render_viewport()
-        // will be called. Dynamic resolution is not implemented for the HDR path
-        // (post-tonemap passes pair output_view with hdr_depth_view and require
-        // matching dimensions). Suppress the controller and pin render_scale to 1.0
-        // so FrameStats does not report a misleading value.
-        let hdr_active = frame.effects.post_process.enabled;
-
         // When a preset is active, clamp current_render_scale to the preset's bounds
         // immediately, without requiring allow_dynamic_resolution. This ensures the
         // preset has a visible effect even when the adaptation controller is off.
         // The controller can still adjust within these bounds when enabled.
-        if !in_capture && !hdr_active && policy.preset.is_some() {
+        if !in_capture && policy.preset.is_some() {
             self.current_render_scale = self
                 .current_render_scale
                 .clamp(eff_min_scale, eff_max_scale);
@@ -5147,8 +5142,7 @@ impl ViewportRenderer {
         // reached its minimum (nothing more the controller can reduce).
         // The tier retreats one step per frame that is comfortably under budget,
         // reversing the ladder in the same order (effects first).
-        // Capture mode resets the tier; HDR path leaves it unchanged but flags
-        // are suppressed below regardless.
+        // Capture mode resets the tier; otherwise advance/retreat based on budget.
         let missed_prev = self.last_stats.missed_budget;
         let under_prev = !self.last_stats.missed_budget
             && policy
@@ -5164,7 +5158,7 @@ impl ViewportRenderer {
                 .unwrap_or(true);
         if in_capture {
             self.degradation_tier = 0;
-        } else if !hdr_active {
+        } else {
             let at_min = !policy.allow_dynamic_resolution
                 || self.current_render_scale <= eff_min_scale + 0.001;
             if missed_prev && at_min {
@@ -5226,9 +5220,8 @@ impl ViewportRenderer {
 
         // Adaptation controller: adjust render scale within effective bounds when enabled.
         // Uses controller_ms from the previous frame (gpu_frame_ms when available,
-        // otherwise total_frame_ms). Paused in Capture mode and when the HDR path is
-        // active (see hdr_active above).
-        if policy.allow_dynamic_resolution && !in_capture && !hdr_active {
+        // otherwise total_frame_ms). Paused in Capture mode.
+        if policy.allow_dynamic_resolution && !in_capture {
             if let Some(budget) = budget_ms {
                 if controller_ms > budget {
                     // Over budget: step down quickly.
@@ -5245,13 +5238,7 @@ impl ViewportRenderer {
         self.last_prepare_instant = Some(prepare_start);
         self.frame_counter = self.frame_counter.wrapping_add(1);
 
-        // On the HDR path the render_scale has no effect on output; report 1.0
-        // so consumers are not misled by a value that is changing but doing nothing.
-        let reported_render_scale = if hdr_active {
-            1.0
-        } else {
-            self.current_render_scale
-        };
+        let reported_render_scale = self.current_render_scale;
 
         let stats = crate::renderer::stats::FrameStats {
             cpu_prepare_ms,

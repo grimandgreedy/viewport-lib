@@ -1970,9 +1970,77 @@ impl ViewportGpuResources {
                 self.lic_advect_pipeline = Some(pipeline);
             }
         }
+
+        // --- Depth blit pipeline (lazily created once) ---
+        // Copies a scene-resolution depth texture to a native-resolution depth-only target.
+        // Used when render_scale < 1.0 so post-tone-map passes can use a native-res depth buf.
+        if self.depth_blit_bgl.is_none() {
+            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("depth_blit_bgl"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                }],
+            });
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("depth_blit_shader"),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("../shaders/depth_blit.wgsl").into(),
+                ),
+            });
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("depth_blit_layout"),
+                bind_group_layouts: &[&bgl],
+                push_constant_ranges: &[],
+            });
+            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("depth_blit_pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Always,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+            self.depth_blit_bgl = Some(bgl);
+            self.depth_blit_pipeline = Some(pipeline);
+        }
     }
 
     /// Create a fresh [`ViewportHdrState`] for the given viewport dimensions.
+    ///
+    /// `w, h` are the native output dimensions. `scene_w, scene_h` are the effective
+    /// render target dimensions after applying render scale (equal to `w, h` when
+    /// render_scale = 1.0). Scene-side textures (HDR colour, depth, bloom, SSAO, etc.)
+    /// are allocated at `scene_w x scene_h`; output-side textures (FXAA) remain at
+    /// `w x h`. The tone map pass upscales from scene to output resolution.
     ///
     /// [`ensure_hdr_shared`](Self::ensure_hdr_shared) must have been called first so that
     /// BGLs, samplers, and placeholder textures are available on `self`.
@@ -1983,12 +2051,17 @@ impl ViewportGpuResources {
         output_format: wgpu::TextureFormat,
         w: u32,
         h: u32,
+        scene_w: u32,
+        scene_h: u32,
         ssaa_factor: u32,
     ) -> ViewportHdrState {
         let w = w.max(1);
         let h = h.max(1);
-        let hw = (w / 2).max(1);
-        let hh = (h / 2).max(1);
+        let scene_w = scene_w.max(1);
+        let scene_h = scene_h.max(1);
+        // Half-resolution for bloom ping/pong -- based on scene size.
+        let hw = (scene_w / 2).max(1);
+        let hh = (scene_h / 2).max(1);
         let ssaa_factor = ssaa_factor.max(1);
 
         let make_tex = |label: &str,
@@ -2014,20 +2087,20 @@ impl ViewportGpuResources {
             })
         };
 
-        // HDR
+        // HDR scene colour and depth -- at scene resolution (render_scale * output).
         let hdr_tex = make_tex(
             "hdr_texture",
             wgpu::TextureFormat::Rgba16Float,
-            w,
-            h,
+            scene_w,
+            scene_h,
             wgpu::TextureUsages::empty(),
         );
         let hdr_view = hdr_tex.create_view(&wgpu::TextureViewDescriptor::default());
         let hdr_depth_tex = make_tex(
             "hdr_depth_texture",
             wgpu::TextureFormat::Depth24PlusStencil8,
-            w,
-            h,
+            scene_w,
+            scene_h,
             wgpu::TextureUsages::empty(),
         );
         let hdr_depth_view = hdr_depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
@@ -2036,12 +2109,12 @@ impl ViewportGpuResources {
             ..Default::default()
         });
 
-        // Bloom
+        // Bloom -- at scene resolution (hw/hh are scene_w/2, scene_h/2).
         let bloom_threshold_tex = make_tex(
             "bloom_threshold_texture",
             wgpu::TextureFormat::Rgba16Float,
-            w,
-            h,
+            scene_w,
+            scene_h,
             wgpu::TextureUsages::empty(),
         );
         let bloom_threshold_view =
@@ -2063,40 +2136,40 @@ impl ViewportGpuResources {
         );
         let bloom_pong_view = bloom_pong_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // SSAO
+        // SSAO -- at scene resolution.
         let ssao_tex = make_tex(
             "ssao_texture",
             wgpu::TextureFormat::R8Unorm,
-            w,
-            h,
+            scene_w,
+            scene_h,
             wgpu::TextureUsages::empty(),
         );
         let ssao_view = ssao_tex.create_view(&wgpu::TextureViewDescriptor::default());
         let ssao_blur_tex = make_tex(
             "ssao_blur_texture",
             wgpu::TextureFormat::R8Unorm,
-            w,
-            h,
+            scene_w,
+            scene_h,
             wgpu::TextureUsages::empty(),
         );
         let ssao_blur_view = ssao_blur_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Depth of field output texture (same format as HDR).
+        // Depth of field -- at scene resolution.
         let dof_tex = make_tex(
             "dof_texture",
             wgpu::TextureFormat::Rgba16Float,
-            w,
-            h,
+            scene_w,
+            scene_h,
             wgpu::TextureUsages::empty(),
         );
         let dof_view = dof_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Contact shadow
+        // Contact shadow -- at scene resolution.
         let cs_tex = make_tex(
             "contact_shadow_texture",
             wgpu::TextureFormat::R8Unorm,
-            w,
-            h,
+            scene_w,
+            scene_h,
             wgpu::TextureUsages::empty(),
         );
         let cs_view = cs_tex.create_view(&wgpu::TextureViewDescriptor::default());
@@ -2118,12 +2191,12 @@ impl ViewportGpuResources {
         });
         let fxaa_view = fxaa_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Outline offscreen : mask (R8), colour (target_format), and depth.
+        // Outline offscreen : mask (R8), colour (target_format), and depth -- at scene resolution.
         let outline_mask_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("outline_mask_texture"),
             size: wgpu::Extent3d {
-                width: w,
-                height: h,
+                width: scene_w,
+                height: scene_h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -2138,8 +2211,8 @@ impl ViewportGpuResources {
         let outline_colour_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("outline_colour_texture"),
             size: wgpu::Extent3d {
-                width: w,
-                height: h,
+                width: scene_w,
+                height: scene_h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -2154,8 +2227,8 @@ impl ViewportGpuResources {
         let outline_depth_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("outline_depth_texture"),
             size: wgpu::Extent3d {
-                width: w,
-                height: h,
+                width: scene_w,
+                height: scene_h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -2626,8 +2699,8 @@ impl ViewportGpuResources {
             ssaa_resolve_bind_group,
             ssaa_uniform_buf,
         ) = if ssaa_factor > 1 {
-            let sw = w * ssaa_factor;
-            let sh = h * ssaa_factor;
+            let sw = scene_w * ssaa_factor;
+            let sh = scene_h * ssaa_factor;
             let ssaa_colour_tex = make_tex(
                 "ssaa_colour_texture",
                 wgpu::TextureFormat::Rgba16Float,
@@ -2706,12 +2779,12 @@ impl ViewportGpuResources {
             (None, None, None, None, None, None)
         };
 
-        // --- Surface LIC per-viewport textures and bind group ---
+        // --- Surface LIC per-viewport textures and bind group -- at scene resolution ---
         let lic_vector_tex = make_tex(
             "lic_vector",
             wgpu::TextureFormat::Rgba8Unorm,
-            w,
-            h,
+            scene_w,
+            scene_h,
             wgpu::TextureUsages::RENDER_ATTACHMENT,
         );
         let lic_vector_view = lic_vector_tex.create_view(&wgpu::TextureViewDescriptor::default());
@@ -2719,16 +2792,14 @@ impl ViewportGpuResources {
         let lic_output_tex = make_tex(
             "lic_output",
             wgpu::TextureFormat::R8Unorm,
-            w,
-            h,
+            scene_w,
+            scene_h,
             wgpu::TextureUsages::RENDER_ATTACHMENT,
         );
         let lic_output_view = lic_output_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Per-pixel white noise: one independent R8Unorm random value per screen pixel.
-        // Sampled with textureLoad (nearest) in lic_advect.wgsl to produce directional LIC
-        // contrast. Viewport-sized so one texel = one screen pixel -- no tiling artifacts.
-        let lic_noise_data: Vec<u8> = (0u32..w * h)
+        // Per-pixel white noise at scene resolution.
+        let lic_noise_data: Vec<u8> = (0u32..scene_w * scene_h)
             .map(|i| {
                 // xorshift32 mix of pixel index -- uniform [0,255] distribution.
                 let mut v = i.wrapping_add(1).wrapping_mul(2246822519);
@@ -2741,8 +2812,8 @@ impl ViewportGpuResources {
         let lic_noise_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("lic_noise"),
             size: wgpu::Extent3d {
-                width: w,
-                height: h,
+                width: scene_w,
+                height: scene_h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -2762,12 +2833,12 @@ impl ViewportGpuResources {
             &lic_noise_data,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(w),
-                rows_per_image: Some(h),
+                bytes_per_row: Some(scene_w),
+                rows_per_image: Some(scene_h),
             },
             wgpu::Extent3d {
-                width: w,
-                height: h,
+                width: scene_w,
+                height: scene_h,
                 depth_or_array_layers: 1,
             },
         );
@@ -2810,6 +2881,44 @@ impl ViewportGpuResources {
                 },
             ],
         });
+
+        // Output-resolution depth for post-tone-map passes.
+        // When render scale = 1.0 (scene == output), reuse hdr_depth as a second view.
+        // When render scale < 1.0, allocate a separate native-res texture and create a
+        // bind group so the depth blit pass can copy hdr_depth into it each frame.
+        let (output_depth_texture, output_depth_view, depth_blit_bind_group) =
+            if scene_w != w || scene_h != h {
+                let tex = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("output_depth_texture"),
+                    size: wgpu::Extent3d {
+                        width: w,
+                        height: h,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                });
+                let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                let bg = self.depth_blit_bgl.as_ref().map(|bgl| {
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("depth_blit_bg"),
+                        layout: bgl,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&hdr_depth_only_view),
+                        }],
+                    })
+                });
+                (Some(tex), view, bg)
+            } else {
+                let view = hdr_depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
+                (None, view, None)
+            };
 
         ViewportHdrState {
             hdr_texture: hdr_tex,
@@ -2881,7 +2990,11 @@ impl ViewportGpuResources {
             lic_noise_view,
             lic_advect_bind_group,
             lic_uniform_buf,
-            size: [w, h],
+            output_size: [w, h],
+            scene_size: [scene_w, scene_h],
+            output_depth_texture,
+            output_depth_view,
+            depth_blit_bind_group,
         }
     }
 

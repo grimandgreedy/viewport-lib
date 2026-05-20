@@ -930,7 +930,7 @@ impl ViewportRenderer {
 
         // Ensure per-viewport HDR targets. Provides a depth buffer for both LDR and HDR paths.
         let ssaa_factor = frame.effects.post_process.ssaa_factor.max(1);
-        self.ensure_viewport_hdr(device, queue, vp_idx, w.max(1), h.max(1), ssaa_factor);
+        self.ensure_viewport_hdr(device, queue, vp_idx, w.max(1), h.max(1), ssaa_factor, self.current_render_scale);
 
         // Phase 4 : lazy-initialize GPU timestamp resources on first render call when supported.
         if self.ts_query_set.is_none()
@@ -1330,7 +1330,7 @@ impl ViewportRenderer {
         if pp.dof_enabled {
             let (w, h) = {
                 let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
-                (hdr.size[0] as f32, hdr.size[1] as f32)
+                (hdr.scene_size[0] as f32, hdr.scene_size[1] as f32)
             };
             let dof_uniform = crate::resources::DofUniform {
                 focal_distance: pp.dof_focal_distance,
@@ -1382,8 +1382,9 @@ impl ViewportRenderer {
                 .any(|i| !i.appearance.hidden);
             if needs_oit {
                 let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
+                let [sw, sh] = hdr.scene_size;
                 self.resources
-                    .ensure_viewport_oit(device, hdr, w.max(1), h.max(1));
+                    .ensure_viewport_oit(device, hdr, sw, sh);
             }
         }
 
@@ -2609,6 +2610,39 @@ impl ViewportRenderer {
             }
         }
 
+        // Depth blit pass: when render_scale < 1.0, the scene depth texture is
+        // smaller than the output surface. Copy it to output_depth_texture (native
+        // resolution) so the post-tone-map passes below can attach output_depth_view
+        // alongside output_view without a size mismatch. Skipped when render_scale
+        // is 1.0 (output_depth_view is just a second view of hdr_depth_texture).
+        {
+            let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+            if let Some(blit_bg) = &slot_hdr.depth_blit_bind_group {
+                if let Some(blit_pipeline) = &self.resources.depth_blit_pipeline {
+                    let mut blit_pass =
+                        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("depth_blit_pass"),
+                            color_attachments: &[],
+                            depth_stencil_attachment: Some(
+                                wgpu::RenderPassDepthStencilAttachment {
+                                    view: &slot_hdr.output_depth_view,
+                                    depth_ops: Some(wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(1.0),
+                                        store: wgpu::StoreOp::Store,
+                                    }),
+                                    stencil_ops: None,
+                                },
+                            ),
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                        });
+                    blit_pass.set_pipeline(blit_pipeline);
+                    blit_pass.set_bind_group(0, blit_bg, &[]);
+                    blit_pass.draw(0..3, 0..1);
+                }
+            }
+        }
+
         // Grid pass (HDR path): draw the existing analytical grid on the final
         // output after tone mapping / FXAA, reusing the scene depth buffer so
         // scene geometry still occludes the grid exactly as in the LDR path.
@@ -2628,7 +2662,7 @@ impl ViewportRenderer {
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &slot_hdr.hdr_depth_view,
+                    view: &slot_hdr.output_depth_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -2663,7 +2697,7 @@ impl ViewportRenderer {
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &slot_hdr.hdr_depth_view,
+                    view: &slot_hdr.output_depth_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -2701,7 +2735,7 @@ impl ViewportRenderer {
                         depth_slice: None,
                     })],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &slot_hdr.hdr_depth_view,
+                        view: &slot_hdr.output_depth_view,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Load,
                             store: wgpu::StoreOp::Discard,
@@ -2750,7 +2784,7 @@ impl ViewportRenderer {
                         depth_slice: None,
                     })],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &slot_hdr.hdr_depth_view,
+                        view: &slot_hdr.output_depth_view,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Load,
                             store: wgpu::StoreOp::Discard,
@@ -2843,7 +2877,7 @@ impl ViewportRenderer {
                         depth_slice: None,
                     })],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &slot_hdr.hdr_depth_view,
+                        view: &slot_hdr.output_depth_view,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Load,
                             store: wgpu::StoreOp::Discard,
@@ -2871,7 +2905,7 @@ impl ViewportRenderer {
                 .hdr
                 .as_ref()
                 .unwrap()
-                .hdr_depth_view;
+                .output_depth_view;
             let mut overlay_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("overlay_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {

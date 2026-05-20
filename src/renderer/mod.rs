@@ -1163,17 +1163,26 @@ impl ViewportRenderer {
         w: u32,
         h: u32,
         ssaa_factor: u32,
+        render_scale: f32,
     ) {
         let format = self.resources.target_format;
         // Ensure shared infrastructure (pipelines, BGLs, samplers) exists.
         self.resources.ensure_hdr_shared(device, queue, format);
+        // Compute the scene-resolution render target size.
+        let scale = render_scale.clamp(0.1, 1.0);
+        let scene_w = ((w as f32) * scale).round() as u32;
+        let scene_h = ((h as f32) * scale).round() as u32;
         // Ensure the slot exists.
         self.ensure_viewport_slot(device, viewport_index);
         let slot = &mut self.viewport_slots[viewport_index];
         // Create or resize the per-viewport HDR state.
         let needs_create = match &slot.hdr {
             None => true,
-            Some(h_state) => h_state.size != [w, h] || h_state.ssaa_factor != ssaa_factor,
+            Some(s) => {
+                s.output_size != [w, h]
+                    || s.scene_size != [scene_w.max(1), scene_h.max(1)]
+                    || s.ssaa_factor != ssaa_factor
+            }
         };
         if needs_create {
             slot.hdr = Some(self.resources.create_hdr_viewport_state(
@@ -1182,6 +1191,8 @@ impl ViewportRenderer {
                 format,
                 w,
                 h,
+                scene_w.max(1),
+                scene_h.max(1),
                 ssaa_factor,
             ));
         }

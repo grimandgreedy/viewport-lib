@@ -96,13 +96,12 @@ pub struct PerformancePolicy {
     /// unavailable it falls back to `total_frame_ms`, which reflects wall-clock frame
     /// duration and correctly fires over-budget at low frame rates.
     ///
-    /// **LDR path only.** Dynamic resolution applies when the scene is rendered
-    /// via [`crate::ViewportRenderer::paint_to`] or
-    /// [`crate::ViewportRenderer::paint_viewport`] (i.e.
-    /// `PostProcessSettings::enabled` is `false`). When the HDR post-processing
-    /// path is active (`render` / `render_viewport`), render scale has no effect
-    /// on output quality and the adaptation controller is suppressed.
-    /// `FrameStats::render_scale` will report 1.0 in that case.
+    /// Works in both the LDR path (`paint_to` / `paint_viewport`) and the HDR
+    /// path (`render` / `render_viewport`). In HDR mode, the scene textures
+    /// (HDR colour, depth, bloom, SSAO, DoF, etc.) are allocated at
+    /// `render_scale * resolution`; the tone-map pass upscales to native
+    /// resolution. `FrameStats::render_scale` reflects the actual scale in both
+    /// modes.
     pub allow_dynamic_resolution: bool,
     /// Allow the viewport to skip the shadow pass under load.
     ///

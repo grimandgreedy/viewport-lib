@@ -1958,8 +1958,23 @@ pub(crate) struct ViewportHdrState {
     pub ssao_uniform_buf: wgpu::Buffer,
     pub contact_shadow_uniform_buf: wgpu::Buffer,
 
-    /// Current [width, height] of all size-dependent textures.
-    pub size: [u32; 2],
+    // --- Post-tone-map depth buffer (native resolution) ---
+    // When scene_size == output_size (render_scale = 1.0) this is None and
+    // hdr_depth_view is used directly for post-tone-map passes.
+    // When scene_size != output_size the scene depth is blitted into this
+    // native-resolution texture so that post-tone-map passes (grid, gizmos,
+    // axes, etc.) can use it as a depth attachment alongside output_view.
+    pub output_depth_texture: Option<wgpu::Texture>,
+    pub output_depth_view: wgpu::TextureView,
+    /// Bind group for the depth blit pass (reads hdr_depth_only_view).
+    /// None when scene_size == output_size (no blit needed).
+    pub depth_blit_bind_group: Option<wgpu::BindGroup>,
+
+    /// Native output resolution [width, height].
+    pub output_size: [u32; 2],
+    /// Effective scene resolution after render scale: [output_size * render_scale].
+    /// Equals output_size when render_scale = 1.0.
+    pub scene_size: [u32; 2],
 }
 
 // ---------------------------------------------------------------------------
@@ -2690,6 +2705,12 @@ pub struct ViewportGpuResources {
     pub(crate) overlay_text_bgl: Option<wgpu::BindGroupLayout>,
     /// Linear sampler for the glyph atlas texture.
     pub(crate) overlay_text_sampler: Option<wgpu::Sampler>,
+
+    // --- Depth blit pipeline (lazily created, shared across all viewports) ---
+    // Copies a scene-resolution depth texture to a native-resolution depth-only target.
+    // Used by the HDR path when render_scale < 1.0.
+    pub(crate) depth_blit_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) depth_blit_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- Dynamic resolution render target (lazily created) ---
     // Upscale pipeline: renders the scaled intermediate colour texture to the surface.
