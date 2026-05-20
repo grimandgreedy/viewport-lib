@@ -775,29 +775,45 @@ impl ViewportRenderer {
                     })
                     .collect();
 
-                sorted_items.sort_unstable_by_key(|item| {
-                    // Use the world-space translation (model column 3) as a
-                    // final tiebreaker via f32::to_bits(). This breaks ties for
-                    // items that share (mesh, texture, pick_id) but sit at
-                    // different positions, which covers all practical cases in
-                    // multi-object same-batch scenes.
-                    //
-                    // to_bits() is guaranteed deterministic (no hash function,
-                    // no per-process randomness), and sorting by translation
-                    // keeps spatially close instances adjacent in the buffer,
-                    // which is cache-friendly for the GPU visibility-index
-                    // indirection used by the culled draw path.
-                    let t = &item.model[3];
-                    (
-                        item.mesh_id.index(),
-                        item.material.texture_id,
-                        item.material.normal_map_id,
-                        item.material.ao_map_id,
-                        item.pick_id.0,
-                        t[0].to_bits(),
-                        t[1].to_bits(),
-                        t[2].to_bits(),
+                sorted_items.sort_unstable_by(|a, b| {
+                    // Batch grouping key (must match the batch-split condition).
+                    let batch_ord = (
+                        a.mesh_id.index(),
+                        a.material.texture_id,
+                        a.material.normal_map_id,
+                        a.material.ao_map_id,
                     )
+                    .cmp(&(
+                        b.mesh_id.index(),
+                        b.material.texture_id,
+                        b.material.normal_map_id,
+                        b.material.ao_map_id,
+                    ));
+                    if batch_ord != std::cmp::Ordering::Equal {
+                        return batch_ord;
+                    }
+                    // Within a batch, sort by model matrix for spatial coherence:
+                    // column 3 (translation) first, then columns 0-2.  This keeps
+                    // spatially close instances adjacent in the buffer, which
+                    // reduces GPU cache pressure through the visibility-index
+                    // indirection in the culled draw path.
+                    for col in [3, 0, 1, 2] {
+                        for row in 0..4 {
+                            let ord = a.model[col][row]
+                                .to_bits()
+                                .cmp(&b.model[col][row].to_bits());
+                            if ord != std::cmp::Ordering::Equal {
+                                return ord;
+                            }
+                        }
+                    }
+                    // Final tiebreaker: pick_id is a stable, application-assigned
+                    // per-object identity that is guaranteed unique for every
+                    // pickable object. Placing it last (rather than in the batch
+                    // key) ensures that any two objects with identical transforms
+                    // still sort deterministically, regardless of the order they
+                    // appear in the caller's scene_items slice.
+                    a.pick_id.0.cmp(&b.pick_id.0)
                 });
 
                 let mut all_instances: Vec<InstanceData> = Vec::with_capacity(sorted_items.len());
