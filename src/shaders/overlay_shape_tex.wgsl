@@ -2,7 +2,7 @@
 //
 // Same SDF logic as overlay_shape.wgsl, but the interior samples from a
 // bound texture instead of a solid fill colour. fill_colour acts as a tint
-// multiplied with each texel.
+// multiplied with each texel. Supports optional outer shadow/glow.
 
 @group(0) @binding(0) var t_fill: texture_2d<f32>;
 @group(0) @binding(1) var s_fill: sampler;
@@ -17,6 +17,8 @@ struct VertexInput {
     @location(6) border_width:  f32,
     @location(7) shape_type:    f32,        // 0=rounded rect, 1=circle, 2=ellipse, 3=capsule, 4=ring, 5=arc, 6=triangle
     @location(8) uv:            vec2<f32>,  // texture UV: (0,0)=top-left, (1,1)=bottom-right
+    @location(9) shadow_colour: vec4<f32>,  // RGBA shadow colour
+    @location(10) shadow_params: vec4<f32>, // x=radius, y=offset_x, z=offset_y
 };
 
 struct VertexOutput {
@@ -29,6 +31,8 @@ struct VertexOutput {
     @location(5) border_width:  f32,
     @location(6) shape_type:    f32,
     @location(7) uv:            vec2<f32>,
+    @location(8) shadow_colour: vec4<f32>,
+    @location(9) shadow_params: vec4<f32>,
 };
 
 @vertex
@@ -43,6 +47,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.border_width  = in.border_width;
     out.shape_type    = in.shape_type;
     out.uv            = in.uv;
+    out.shadow_colour = in.shadow_colour;
+    out.shadow_params = in.shadow_params;
     return out;
 }
 
@@ -143,32 +149,28 @@ fn sd_triangle(p: vec2<f32>, hs: vec2<f32>) -> f32 {
     return max(d_edge, d_base);
 }
 
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let p = in.local_pos;
-    let hs = in.half_size;
-
-    var d: f32;
-    let st = i32(in.shape_type + 0.5);
+// Evaluate the SDF for the current shape type at position p.
+fn eval_sdf(p: vec2<f32>, hs: vec2<f32>, shape_type: f32, radii: vec4<f32>) -> f32 {
+    let st = i32(shape_type + 0.5);
 
     switch (st) {
         case 1: {
-            d = sd_circle(p, min(hs.x, hs.y));
+            return sd_circle(p, min(hs.x, hs.y));
         }
         case 2: {
-            d = sd_ellipse(p, hs);
+            return sd_ellipse(p, hs);
         }
         case 3: {
-            d = sd_capsule(p, hs);
+            return sd_capsule(p, hs);
         }
         case 4: {
-            d = sd_ring(p, min(hs.x, hs.y), in.radii.x);
+            return sd_ring(p, min(hs.x, hs.y), radii.x);
         }
         case 5: {
-            d = sd_arc(p, min(hs.x, hs.y), in.radii.x, in.radii.y, in.radii.z);
+            return sd_arc(p, min(hs.x, hs.y), radii.x, radii.y, radii.z);
         }
         case 6: {
-            let dir = i32(in.radii.x + 0.5);
+            let dir = i32(radii.x + 0.5);
             var tp = p;
             if (dir == 1) {
                 tp.y = -tp.y;
@@ -181,24 +183,51 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             if (dir >= 2) {
                 ths = vec2<f32>(hs.y, hs.x);
             }
-            d = sd_triangle(tp, ths);
+            return sd_triangle(tp, ths);
         }
         default: {
-            d = sd_rounded_box(p, hs, in.radii);
+            return sd_rounded_box(p, hs, radii);
         }
     }
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let p = in.local_pos;
+    let hs = in.half_size;
+
+    let d = eval_sdf(p, hs, in.shape_type, in.radii);
 
     let aa = 1.0;
 
+    // Shadow/glow behind the fill.
+    let shadow_r = in.shadow_params.x;
+    let shadow_off = vec2<f32>(in.shadow_params.y, in.shadow_params.z);
+    var shadow_a = 0.0;
+    if (shadow_r > 0.0 && in.shadow_colour.a > 0.0) {
+        let sd = eval_sdf(p - shadow_off, hs, in.shape_type, in.radii);
+        shadow_a = in.shadow_colour.a * (1.0 - smoothstep(0.0, shadow_r, sd));
+    }
+
     let fill_alpha = 1.0 - smoothstep(-aa, 0.0, d);
-    if (fill_alpha <= 0.0) {
+
+    if (fill_alpha <= 0.0 && shadow_a <= 0.0) {
         discard;
     }
 
-    // Sample texture and apply tint.
-    let tex_sample = textureSample(t_fill, s_fill, in.uv);
-    let tinted = tex_sample * in.fill_colour;
-    var colour = vec4<f32>(tinted.rgb, tinted.a * fill_alpha);
+    // Start with the shadow layer.
+    var colour = vec4<f32>(in.shadow_colour.rgb, shadow_a);
+
+    // Composite textured fill on top of shadow.
+    if (fill_alpha > 0.0) {
+        let tex_sample = textureSample(t_fill, s_fill, in.uv);
+        let tinted = tex_sample * in.fill_colour;
+        let fc = vec4<f32>(tinted.rgb, tinted.a * fill_alpha);
+        colour = vec4<f32>(
+            mix(colour.rgb, fc.rgb, fc.a),
+            fc.a + colour.a * (1.0 - fc.a),
+        );
+    }
 
     // Border: blend border colour in the band near d = 0.
     if (in.border_width > 0.0) {

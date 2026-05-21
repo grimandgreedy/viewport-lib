@@ -2,7 +2,7 @@
 //
 // Each shape is a bounding quad whose vertices carry the shape parameters.
 // The fragment shader evaluates a signed-distance function to produce
-// anti-aliased fill and border regions.
+// anti-aliased fill and border regions, with an optional outer shadow/glow.
 
 struct VertexInput {
     @location(0) position:        vec2<f32>,  // NDC xy
@@ -15,6 +15,8 @@ struct VertexInput {
     @location(7) shape_type:      f32,        // 0=rounded rect, 1=circle, 2=ellipse, 3=capsule, 4=ring, 5=arc, 6=triangle
     @location(8) fill_colour2:    vec4<f32>,  // end colour for gradient (equals fill_colour for solid)
     @location(9) gradient_params: vec2<f32>,  // x=type (0=solid, 1=linear), y=angle radians
+    @location(10) shadow_colour:  vec4<f32>,  // RGBA shadow colour
+    @location(11) shadow_params:  vec4<f32>,  // x=radius, y=offset_x, z=offset_y
 };
 
 struct VertexOutput {
@@ -28,6 +30,8 @@ struct VertexOutput {
     @location(6) shape_type:      f32,
     @location(7) fill_colour2:    vec4<f32>,
     @location(8) gradient_params: vec2<f32>,
+    @location(9) shadow_colour:   vec4<f32>,
+    @location(10) shadow_params:  vec4<f32>,
 };
 
 @vertex
@@ -43,6 +47,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.shape_type      = in.shape_type;
     out.fill_colour2    = in.fill_colour2;
     out.gradient_params = in.gradient_params;
+    out.shadow_colour   = in.shadow_colour;
+    out.shadow_params   = in.shadow_params;
     return out;
 }
 
@@ -170,63 +176,73 @@ fn sd_triangle(p: vec2<f32>, hs: vec2<f32>) -> f32 {
     return max(d_edge, d_base);
 }
 
+// Evaluate the SDF for the current shape type at position p.
+fn eval_sdf(p: vec2<f32>, hs: vec2<f32>, shape_type: f32, radii: vec4<f32>) -> f32 {
+    let st = i32(shape_type + 0.5);
+
+    switch (st) {
+        case 1: {
+            return sd_circle(p, min(hs.x, hs.y));
+        }
+        case 2: {
+            return sd_ellipse(p, hs);
+        }
+        case 3: {
+            return sd_capsule(p, hs);
+        }
+        case 4: {
+            return sd_ring(p, min(hs.x, hs.y), radii.x);
+        }
+        case 5: {
+            return sd_arc(p, min(hs.x, hs.y), radii.x, radii.y, radii.z);
+        }
+        case 6: {
+            let dir = i32(radii.x + 0.5);
+            var tp = p;
+            if (dir == 1) {
+                tp.y = -tp.y;
+            } else if (dir == 2) {
+                tp = vec2<f32>(tp.y, tp.x);
+            } else if (dir == 3) {
+                tp = vec2<f32>(-tp.y, tp.x);
+            }
+            var ths = hs;
+            if (dir >= 2) {
+                ths = vec2<f32>(hs.y, hs.x);
+            }
+            return sd_triangle(tp, ths);
+        }
+        default: {
+            return sd_rounded_box(p, hs, radii);
+        }
+    }
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let p = in.local_pos;
     let hs = in.half_size;
 
-    var d: f32;
-    let st = i32(in.shape_type + 0.5);
-
-    switch (st) {
-        case 1: {
-            // Circle
-            d = sd_circle(p, min(hs.x, hs.y));
-        }
-        case 2: {
-            // Ellipse
-            d = sd_ellipse(p, hs);
-        }
-        case 3: {
-            // Capsule
-            d = sd_capsule(p, hs);
-        }
-        case 4: {
-            // Ring
-            d = sd_ring(p, min(hs.x, hs.y), in.radii.x);
-        }
-        case 5: {
-            // Arc
-            d = sd_arc(p, min(hs.x, hs.y), in.radii.x, in.radii.y, in.radii.z);
-        }
-        case 6: {
-            // Triangle: radii.x encodes direction (0=up,1=down,2=left,3=right).
-            let dir = i32(in.radii.x + 0.5);
-            var tp = p;
-            if (dir == 1) {
-                tp.y = -tp.y;  // down: flip y
-            } else if (dir == 2) {
-                tp = vec2<f32>(tp.y, tp.x);  // left: swap axes
-            } else if (dir == 3) {
-                tp = vec2<f32>(-tp.y, tp.x); // right: swap + flip
-            }
-            var ths = hs;
-            if (dir >= 2) {
-                ths = vec2<f32>(hs.y, hs.x); // swap half_size for horizontal
-            }
-            d = sd_triangle(tp, ths);
-        }
-        default: {
-            // Rounded rect (type 0 and fallback)
-            d = sd_rounded_box(p, hs, in.radii);
-        }
-    }
+    let d = eval_sdf(p, hs, in.shape_type, in.radii);
 
     // Anti-aliasing: 1 pixel smoothstep at the boundary.
     let aa = 1.0;
 
+    // Shadow/glow: draw behind the fill using a separate SDF evaluation at
+    // the offset position. The shadow fades from shadow_colour at the shape
+    // edge to transparent at shadow_radius pixels out.
+    let shadow_r = in.shadow_params.x;
+    let shadow_off = vec2<f32>(in.shadow_params.y, in.shadow_params.z);
+    var shadow_a = 0.0;
+    if (shadow_r > 0.0 && in.shadow_colour.a > 0.0) {
+        let sd = eval_sdf(p - shadow_off, hs, in.shape_type, in.radii);
+        shadow_a = in.shadow_colour.a * (1.0 - smoothstep(0.0, shadow_r, sd));
+    }
+
     let fill_alpha = 1.0 - smoothstep(-aa, 0.0, d);
-    if (fill_alpha <= 0.0) {
+
+    // If neither fill nor shadow contributes, discard.
+    if (fill_alpha <= 0.0 && shadow_a <= 0.0) {
         discard;
     }
 
@@ -244,7 +260,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         fill_col = in.fill_colour;
     }
 
-    var colour = vec4<f32>(fill_col.rgb, fill_col.a * fill_alpha);
+    // Start with the shadow layer.
+    var colour = vec4<f32>(in.shadow_colour.rgb, shadow_a);
+
+    // Composite fill on top of shadow.
+    if (fill_alpha > 0.0) {
+        let fc = vec4<f32>(fill_col.rgb, fill_col.a * fill_alpha);
+        colour = vec4<f32>(
+            mix(colour.rgb, fc.rgb, fc.a),
+            fc.a + colour.a * (1.0 - fc.a),
+        );
+    }
 
     // Border: blend border colour in the band near d = 0.
     if (in.border_width > 0.0) {

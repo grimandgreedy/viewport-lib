@@ -654,6 +654,13 @@ pub struct OverlayShapeItem {
     /// via `ViewportGpuResources::upload_overlay_texture`, clipped by the SDF
     /// boundary. `fill` acts as a tint when this is `Some`.
     pub texture: Option<OverlayTextureId>,
+    /// RGBA colour of the outer shadow/glow halo. Default: transparent (no shadow).
+    pub shadow_colour: [f32; 4],
+    /// Blur spread of the shadow in logical pixels. `0.0` disables the shadow.
+    pub shadow_radius: f32,
+    /// Offset of the shadow centre from the shape centre in logical pixels.
+    /// Positive X shifts right, positive Y shifts down. Default: `[0.0, 0.0]`.
+    pub shadow_offset: [f32; 2],
 }
 
 impl Default for OverlayShapeItem {
@@ -668,6 +675,9 @@ impl Default for OverlayShapeItem {
             border_width: 0.0,
             z_order: 0,
             texture: None,
+            shadow_colour: [0.0, 0.0, 0.0, 0.0],
+            shadow_radius: 0.0,
+            shadow_offset: [0.0, 0.0],
         }
     }
 }

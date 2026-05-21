@@ -553,6 +553,91 @@ pub(crate) fn build_overlay_frame(
             });
             let _ = x3;
         }
+
+        // ---------------------------------------------------------------------------
+        // Shadow/glow shapes (fourth row).
+        // ---------------------------------------------------------------------------
+        {
+            let row4_h = 70.0_f32;
+            let y4_mid = 20.0 + row_h + 24.0 + 90.0 + 24.0 + 70.0 + 24.0 + row4_h * 0.5;
+            let mut x4 = 20.0_f32;
+
+            // Rounded rect with drop shadow.
+            shapes.push(OverlayShapeItem {
+                position: [x4, y4_mid - row4_h * 0.5],
+                size: [120.0, row4_h],
+                shape: OverlayShape::Rect { corner_radius: cr },
+                fill: OverlayFill::Solid([0.15, 0.15, 0.2, 0.95]),
+                border_colour: [0.5, 0.5, 0.6, 0.8],
+                border_width: bw,
+                shadow_colour: [0.0, 0.0, 0.0, 0.5],
+                shadow_radius: 12.0,
+                shadow_offset: [4.0, 4.0],
+                ..Default::default()
+            });
+            x4 += 120.0 + gap + 16.0; // extra gap for shadow bleed
+
+            // Circle with blue glow (no offset).
+            let sz = row4_h;
+            shapes.push(OverlayShapeItem {
+                position: [x4, y4_mid - sz * 0.5],
+                size: [sz, sz],
+                shape: OverlayShape::Circle,
+                fill: OverlayFill::Solid([0.1, 0.15, 0.35, 0.95]),
+                border_colour: [0.3, 0.5, 1.0, 0.9],
+                border_width: bw,
+                shadow_colour: [0.2, 0.4, 1.0, 0.6],
+                shadow_radius: 16.0,
+                shadow_offset: [0.0, 0.0],
+                ..Default::default()
+            });
+            x4 += sz + gap + 16.0;
+
+            // Capsule with warm glow.
+            shapes.push(OverlayShapeItem {
+                position: [x4, y4_mid - 20.0],
+                size: [120.0, 40.0],
+                shape: OverlayShape::Capsule,
+                fill: OverlayFill::Solid([0.3, 0.15, 0.05, 0.95]),
+                border_colour: [1.0, 0.6, 0.2, 0.9],
+                border_width: bw,
+                shadow_colour: [1.0, 0.5, 0.1, 0.45],
+                shadow_radius: 14.0,
+                shadow_offset: [0.0, 2.0],
+                ..Default::default()
+            });
+            x4 += 120.0 + gap + 16.0;
+
+            // Ellipse with offset shadow.
+            shapes.push(OverlayShapeItem {
+                position: [x4, y4_mid - 30.0],
+                size: [120.0, 60.0],
+                shape: OverlayShape::Ellipse,
+                fill: OverlayFill::Solid([0.2, 0.3, 0.15, 0.95]),
+                border_colour: [0.5, 0.9, 0.3, 0.9],
+                border_width: bw,
+                shadow_colour: [0.0, 0.0, 0.0, 0.45],
+                shadow_radius: 10.0,
+                shadow_offset: [3.0, 5.0],
+                ..Default::default()
+            });
+            x4 += 120.0 + gap + 16.0;
+
+            // Triangle with green glow.
+            shapes.push(OverlayShapeItem {
+                position: [x4, y4_mid - row4_h * 0.5],
+                size: [60.0, row4_h],
+                shape: OverlayShape::Triangle { direction: TriangleDirection::Up },
+                fill: OverlayFill::Solid([0.05, 0.25, 0.1, 0.95]),
+                border_colour: [0.3, 1.0, 0.4, 0.9],
+                border_width: bw,
+                shadow_colour: [0.1, 0.8, 0.2, 0.5],
+                shadow_radius: 14.0,
+                shadow_offset: [0.0, 0.0],
+                ..Default::default()
+            });
+            let _ = x4;
+        }
     }
 
     (shapes, labels, bar, ruler)

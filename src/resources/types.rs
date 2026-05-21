@@ -1193,6 +1193,10 @@ pub(crate) struct OverlayShapeVertex {
     pub fill_colour2: [f32; 4],
     /// Gradient parameters: x = type (0=solid, 1=linear), y = angle in radians.
     pub gradient_params: [f32; 2],
+    /// RGBA shadow colour (pre-multiplied opacity).
+    pub shadow_colour: [f32; 4],
+    /// Shadow parameters: x = radius (pixels), y = offset_x, z = offset_y.
+    pub shadow_params: [f32; 4],
 }
 
 impl OverlayShapeVertex {
@@ -1261,6 +1265,18 @@ impl OverlayShapeVertex {
                     shader_location: 9,
                     format: wgpu::VertexFormat::Float32x2,
                 },
+                // location 10: shadow_colour vec4f
+                wgpu::VertexAttribute {
+                    offset: 104,
+                    shader_location: 10,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 11: shadow_params vec4f (radius, offset_x, offset_y, unused)
+                wgpu::VertexAttribute {
+                    offset: 120,
+                    shader_location: 11,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
             ],
         }
     }
@@ -1293,6 +1309,10 @@ pub(crate) struct OverlayShapeTexVertex {
     /// Texture UV coordinates. (0,0) = top-left of image, (1,1) = bottom-right.
     /// Slightly outside [0,1] in the border/AA padding region.
     pub uv: [f32; 2],
+    /// RGBA shadow colour (pre-multiplied opacity).
+    pub shadow_colour: [f32; 4],
+    /// Shadow parameters: x = radius (pixels), y = offset_x, z = offset_y.
+    pub shadow_params: [f32; 4],
 }
 
 impl OverlayShapeTexVertex {
@@ -1354,6 +1374,18 @@ impl OverlayShapeTexVertex {
                     offset: 80,
                     shader_location: 8,
                     format: wgpu::VertexFormat::Float32x2,
+                },
+                // location 9: shadow_colour vec4f
+                wgpu::VertexAttribute {
+                    offset: 88,
+                    shader_location: 9,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 10: shadow_params vec4f (radius, offset_x, offset_y, unused)
+                wgpu::VertexAttribute {
+                    offset: 104,
+                    shader_location: 10,
+                    format: wgpu::VertexFormat::Float32x4,
                 },
             ],
         }

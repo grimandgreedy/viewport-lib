@@ -4847,9 +4847,14 @@ impl ViewportRenderer {
                     let cx = shape.position[0] + hw;
                     let cy = shape.position[1] + hh;
 
-                    // Expand the bounding quad by border width so the SDF
-                    // border doesn't get clipped at the edges.
-                    let pad = shape.border_width + 1.0; // +1 for AA
+                    // Expand the bounding quad by border width, shadow extent,
+                    // and AA so nothing gets clipped at the edges.
+                    let shadow_pad = if shape.shadow_radius > 0.0 {
+                        shape.shadow_radius + shape.shadow_offset[0].abs().max(shape.shadow_offset[1].abs())
+                    } else {
+                        0.0
+                    };
+                    let pad = shape.border_width + shadow_pad + 1.0; // +1 for AA
                     let ex = hw + pad;
                     let ey = hh + pad;
 
@@ -4912,6 +4917,10 @@ impl ViewportRenderer {
 
                     let half_size = [hw, hh];
 
+                    let mut sc = shape.shadow_colour;
+                    sc[3] *= shape.opacity;
+                    let shadow_params = [shape.shadow_radius, shape.shadow_offset[0], shape.shadow_offset[1], 0.0];
+
                     // Emit 6 vertices (two triangles) for the bounding quad.
                     let corners_px = [
                         (cx - ex, cy - ey, -ex, -ey),
@@ -4952,6 +4961,8 @@ impl ViewportRenderer {
                                     (lx + hw_s) / (2.0 * hw_s),
                                     (ly + hh_s) / (2.0 * hh_s),
                                 ],
+                                shadow_colour: sc,
+                                shadow_params,
                             });
                         }
                     } else {
@@ -4967,6 +4978,8 @@ impl ViewportRenderer {
                                 shape_type,
                                 fill_colour2: fc2,
                                 gradient_params,
+                                shadow_colour: sc,
+                                shadow_params,
                             });
                         }
                     }
