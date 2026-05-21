@@ -2342,6 +2342,7 @@ impl ViewportGpuResources {
             overlay_text_pipeline: None,
             overlay_text_bgl: None,
             overlay_text_sampler: None,
+            overlay_shape_pipeline: None,
             frame_upload_bytes: 0,
             depth_blit_pipeline: None,
             depth_blit_bgl: None,

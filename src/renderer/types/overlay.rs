@@ -475,6 +475,103 @@ impl Default for OverlayRectItem {
     }
 }
 
+/// Shape type for an `OverlayShapeItem`.
+///
+/// Each variant maps to a signed-distance function evaluated per fragment
+/// on the GPU. The bounding quad is defined by `OverlayShapeItem::position`
+/// and `size`; the shape variant controls which SDF is used and how the
+/// extra `radii` parameters are interpreted.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OverlayShape {
+    /// Axis-aligned rectangle with a uniform corner radius.
+    Rect {
+        /// Corner radius in logical pixels. `0.0` produces sharp corners.
+        corner_radius: f32,
+    },
+    /// Axis-aligned rectangle with independent corner radii.
+    /// Order: top-left, top-right, bottom-right, bottom-left.
+    RoundedRect {
+        /// Per-corner radii in logical pixels.
+        radii: [f32; 4],
+    },
+    /// Circle inscribed in the bounding box (the smaller dimension wins).
+    Circle,
+    /// Ellipse filling the bounding box.
+    Ellipse,
+    /// Pill / capsule shape: fully rounded along the shorter axis.
+    Capsule,
+}
+
+impl Default for OverlayShape {
+    fn default() -> Self {
+        OverlayShape::Rect { corner_radius: 0.0 }
+    }
+}
+
+/// A screen-space overlay shape rendered with a signed-distance function.
+///
+/// Each item becomes a single bounding quad on the GPU. The fragment shader
+/// evaluates an SDF to produce anti-aliased fill, border, and discard regions.
+///
+/// # Examples
+///
+/// ```rust
+/// # use viewport_lib::{OverlayShapeItem, OverlayShape};
+/// // Rounded-rect panel background.
+/// let panel = OverlayShapeItem {
+///     position: [20.0, 20.0],
+///     size: [300.0, 200.0],
+///     shape: OverlayShape::Rect { corner_radius: 8.0 },
+///     colour: [0.1, 0.1, 0.1, 0.85],
+///     border_width: 1.0,
+///     border_colour: [0.4, 0.4, 0.4, 1.0],
+///     ..Default::default()
+/// };
+///
+/// // Circle indicator.
+/// let dot = OverlayShapeItem {
+///     position: [100.0, 100.0],
+///     size: [16.0, 16.0],
+///     shape: OverlayShape::Circle,
+///     colour: [0.0, 1.0, 0.3, 1.0],
+///     ..Default::default()
+/// };
+/// ```
+#[derive(Debug, Clone)]
+pub struct OverlayShapeItem {
+    /// Top-left position in logical pixels from the viewport top-left.
+    pub position: [f32; 2],
+    /// Width and height in logical pixels.
+    pub size: [f32; 2],
+    /// Which SDF shape to render.
+    pub shape: OverlayShape,
+    /// RGBA fill colour in linear float format.
+    pub colour: [f32; 4],
+    /// Overall opacity multiplier applied to both fill and border. Range 0.0-1.0.
+    pub opacity: f32,
+    /// RGBA border colour in linear float format.
+    pub border_colour: [f32; 4],
+    /// Border thickness in logical pixels. `0.0` disables the border.
+    pub border_width: f32,
+    /// Draw order relative to other shapes. Lower values render first (further back).
+    pub z_order: i32,
+}
+
+impl Default for OverlayShapeItem {
+    fn default() -> Self {
+        Self {
+            position: [0.0, 0.0],
+            size: [100.0, 100.0],
+            shape: OverlayShape::default(),
+            colour: [0.0, 0.0, 0.0, 0.55],
+            opacity: 1.0,
+            border_colour: [1.0, 1.0, 1.0, 1.0],
+            border_width: 0.0,
+            z_order: 0,
+        }
+    }
+}
+
 /// Semantic overlays rendered after post-processing: labels, scalar bars,
 /// rulers, screen-space images, and loading bars.
 ///
@@ -482,6 +579,9 @@ impl Default for OverlayRectItem {
 /// in front of the 3D scene and must not be affected by tone-mapping or bloom.
 #[derive(Debug, Clone, Default)]
 pub struct OverlayFrame {
+    /// SDF-based shapes rendered before labels. Supports rounded rects,
+    /// circles, ellipses, and capsules with anti-aliased edges and borders.
+    pub shapes: Vec<OverlayShapeItem>,
     /// Solid filled rectangles rendered before labels. Useful for panel
     /// backgrounds, scrims, and full-screen fades.
     pub rects: Vec<OverlayRectItem>,

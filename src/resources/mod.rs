@@ -19,6 +19,7 @@ pub mod matcap_data;
 /// Slotted GPU mesh storage with free-list removal.
 pub mod mesh_store;
 mod meshes;
+mod overlay_shape;
 mod overlay_text;
 mod overlays;
 mod postprocess;
@@ -57,7 +58,8 @@ pub(crate) use self::types::{
     FrustumPlane, FrustumUniform, GaussianSplatDrawData, GlyphBaseMesh, GlyphGpuData,
     GpuProjectedTetMesh, GridUniform, GroundPlaneUniform, ImageSliceGpuData, InstanceAabb,
     InstanceData, LabelGpuData, LicAdvectUniform, LicObjectUniform, LicSurfaceGpuData,
-    ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, OverlayTextVertex,
+    ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform,
+    OverlayShapeGpuData, OverlayShapeVertex, OverlayTextVertex,
     OverlayUniform, PickInstance, ProjectedTetUniform, RawGeomOutlineBuffers, SHADOW_ATLAS_SIZE,
     ScreenRectOutlineBuffers, ShadowAtlasUniform, SplatOutlineBuffers, SplatOutlineMaskUniform,
     SpriteGpuData, SsaoUniform, StreamtubeGpuData, SubHighlightGpuData, TensorGlyphGpuData,

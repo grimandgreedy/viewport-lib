@@ -4812,6 +4812,111 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
+        // SDF overlay shapes
+        // ------------------------------------------------------------------
+        self.overlay_shape_gpu_data = None;
+        if !frame.overlays.shapes.is_empty() {
+            self.resources.ensure_overlay_shape_pipeline(device);
+            let vp_w = frame.camera.viewport_size[0];
+            let vp_h = frame.camera.viewport_size[1];
+            if vp_w > 0.0 && vp_h > 0.0 {
+                let mut verts: Vec<crate::resources::OverlayShapeVertex> = Vec::new();
+
+                let mut sorted: Vec<&crate::renderer::types::OverlayShapeItem> =
+                    frame.overlays.shapes.iter().collect();
+                sorted.sort_by_key(|s| s.z_order);
+
+                for shape in &sorted {
+                    if shape.opacity <= 0.0 {
+                        continue;
+                    }
+
+                    let hw = shape.size[0] * 0.5;
+                    let hh = shape.size[1] * 0.5;
+                    let cx = shape.position[0] + hw;
+                    let cy = shape.position[1] + hh;
+
+                    // Expand the bounding quad by border width so the SDF
+                    // border doesn't get clipped at the edges.
+                    let pad = shape.border_width + 1.0; // +1 for AA
+                    let ex = hw + pad;
+                    let ey = hh + pad;
+
+                    // Encode shape type and radii.
+                    let (shape_type, radii) = match shape.shape {
+                        crate::renderer::types::OverlayShape::Rect { corner_radius } => {
+                            let r = corner_radius.min(hw).min(hh).max(0.0);
+                            (0.0, [r, r, r, r])
+                        }
+                        crate::renderer::types::OverlayShape::RoundedRect { radii: r } => {
+                            // Input: [tl, tr, br, bl].
+                            // Shader expects iq convention: [tr, br, bl, tl].
+                            let clamped = [
+                                r[1].min(hw).min(hh).max(0.0), // top-right
+                                r[2].min(hw).min(hh).max(0.0), // bottom-right
+                                r[3].min(hw).min(hh).max(0.0), // bottom-left
+                                r[0].min(hw).min(hh).max(0.0), // top-left
+                            ];
+                            (0.0, clamped)
+                        }
+                        crate::renderer::types::OverlayShape::Circle => {
+                            (1.0, [0.0; 4])
+                        }
+                        crate::renderer::types::OverlayShape::Ellipse => {
+                            (2.0, [0.0; 4])
+                        }
+                        crate::renderer::types::OverlayShape::Capsule => {
+                            (3.0, [0.0; 4])
+                        }
+                    };
+
+                    let mut fc = shape.colour;
+                    fc[3] *= shape.opacity;
+                    let mut bc = shape.border_colour;
+                    bc[3] *= shape.opacity;
+
+                    let half_size = [hw, hh];
+
+                    // Emit 6 vertices (two triangles) for the bounding quad.
+                    let corners_px = [
+                        (cx - ex, cy - ey, -ex, -ey),
+                        (cx + ex, cy - ey, ex, -ey),
+                        (cx + ex, cy + ey, ex, ey),
+                        (cx - ex, cy - ey, -ex, -ey),
+                        (cx + ex, cy + ey, ex, ey),
+                        (cx - ex, cy + ey, -ex, ey),
+                    ];
+                    for (px, py, lx, ly) in corners_px {
+                        verts.push(crate::resources::OverlayShapeVertex {
+                            position: px_to_ndc(px, py, vp_w, vp_h),
+                            local_pos: [lx, ly],
+                            fill_colour: fc,
+                            border_colour: bc,
+                            half_size,
+                            radii,
+                            border_width: shape.border_width,
+                            shape_type,
+                        });
+                    }
+                }
+
+                if !verts.is_empty() {
+                    let vertex_buf =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("overlay_shape_vbuf"),
+                            contents: bytemuck::cast_slice(&verts),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        });
+                    self.overlay_shape_gpu_data =
+                        Some(crate::resources::OverlayShapeGpuData {
+                            vertex_buf,
+                            vertex_count: verts.len() as u32,
+                        });
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
         // Overlay rects
         // ------------------------------------------------------------------
         self.overlay_rect_gpu_data = None;

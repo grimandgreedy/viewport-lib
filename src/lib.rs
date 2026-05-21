@@ -186,7 +186,7 @@ pub use renderer::{
     GaussianSplatItem, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode, ImageAnchor,
     ImageSliceItem, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
     LightingSettings, LoadingBarAnchor, LoadingBarItem, OverlayFrame, OverlayImageItem,
-    OverlayRectItem, PickId,
+    OverlayRectItem, OverlayShape, OverlayShapeItem, PickId,
     PickRectResult, PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings,
     RenderCamera, RibbonItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
     SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, SliceAxis,

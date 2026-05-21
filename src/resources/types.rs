@@ -1163,6 +1163,99 @@ pub(crate) struct LabelGpuData {
     pub bind_group: wgpu::BindGroup,
 }
 
+/// Per-vertex data for SDF overlay shapes.
+///
+/// Each shape is a bounding quad (6 vertices). The fragment shader uses
+/// `local_pos` and `half_size` to evaluate a signed-distance function,
+/// producing anti-aliased fill and border.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct OverlayShapeVertex {
+    /// NDC position (xy).
+    pub position: [f32; 2],
+    /// Position relative to shape centre, in logical pixels.
+    pub local_pos: [f32; 2],
+    /// RGBA fill colour (pre-multiplied opacity).
+    pub fill_colour: [f32; 4],
+    /// RGBA border colour (pre-multiplied opacity).
+    pub border_colour: [f32; 4],
+    /// Half-extents of the shape bounding box in logical pixels.
+    pub half_size: [f32; 2],
+    /// Shape-specific radii. For RoundedRect: [top-left, top-right,
+    /// bottom-right, bottom-left]. For Rect: uniform radius in [0].
+    /// Unused components are zero.
+    pub radii: [f32; 4],
+    /// Border thickness in logical pixels.
+    pub border_width: f32,
+    /// Encoded shape type: 0 = Rect/RoundedRect, 1 = Circle, 2 = Ellipse, 3 = Capsule.
+    pub shape_type: f32,
+}
+
+impl OverlayShapeVertex {
+    pub fn buffer_layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<OverlayShapeVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                // location 0: position vec2f
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // location 1: local_pos vec2f
+                wgpu::VertexAttribute {
+                    offset: 8,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // location 2: fill_colour vec4f
+                wgpu::VertexAttribute {
+                    offset: 16,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 3: border_colour vec4f
+                wgpu::VertexAttribute {
+                    offset: 32,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 4: half_size vec2f
+                wgpu::VertexAttribute {
+                    offset: 48,
+                    shader_location: 4,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // location 5: radii vec4f
+                wgpu::VertexAttribute {
+                    offset: 56,
+                    shader_location: 5,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 6: border_width f32
+                wgpu::VertexAttribute {
+                    offset: 72,
+                    shader_location: 6,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                // location 7: shape_type f32
+                wgpu::VertexAttribute {
+                    offset: 76,
+                    shader_location: 7,
+                    format: wgpu::VertexFormat::Float32,
+                },
+            ],
+        }
+    }
+}
+
+/// Per-frame GPU data for batched SDF overlay shape rendering.
+pub(crate) struct OverlayShapeGpuData {
+    pub vertex_buf: wgpu::Buffer,
+    pub vertex_count: u32,
+}
+
 /// Uniform buffer layout for the full-screen ground plane shader.
 ///
 /// Matches `GroundPlaneUniform` in `ground_plane.wgsl` exactly (256 bytes, 16-byte aligned).
@@ -2712,6 +2805,11 @@ pub struct ViewportGpuResources {
     pub(crate) overlay_text_bgl: Option<wgpu::BindGroupLayout>,
     /// Linear sampler for the glyph atlas texture.
     pub(crate) overlay_text_sampler: Option<wgpu::Sampler>,
+
+    // --- SDF overlay shape pipeline (lazily created) ---
+    /// Render pipeline for screen-space SDF shapes (rounded rects, circles, etc.).
+    /// `None` until the first frame with non-empty `OverlayFrame.shapes`.
+    pub(crate) overlay_shape_pipeline: Option<wgpu::RenderPipeline>,
 
     // --- Depth blit pipeline (lazily created, shared across all viewports) ---
     // Copies a scene-resolution depth texture to a native-resolution depth-only target.

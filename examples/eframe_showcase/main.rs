@@ -3216,7 +3216,8 @@ impl App {
             fd.overlays.scalar_bars = vec![self.scalar_bar_item()];
         }
         if self.mode == ShowcaseMode::Overlay {
-            let (labels, bar, ruler) = showcase_35_overlay::build_overlay_frame(self);
+            let (shapes, labels, bar, ruler) = showcase_35_overlay::build_overlay_frame(self);
+            fd.overlays.shapes = shapes;
             fd.overlays.labels = labels;
             fd.overlays.scalar_bars = vec![bar];
             if let Some(r) = ruler {

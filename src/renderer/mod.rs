@@ -21,7 +21,7 @@ pub use self::types::{
     GaussianSplatItem, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode, ImageAnchor,
     ImageSliceItem, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
     LightingSettings, LoadingBarAnchor, LoadingBarItem, OverlayFrame, OverlayImageItem,
-    OverlayRectItem, PickId,
+    OverlayRectItem, OverlayShape, OverlayShapeItem, PickId,
     PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings, RenderCamera, RibbonItem,
     RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, SceneEffects, SceneFrame,
     SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpriteItem,
@@ -283,6 +283,8 @@ pub struct ViewportRenderer {
     loading_bar_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-frame overlay rect GPU data, rebuilt in prepare(), consumed in paint().
     overlay_rect_gpu_data: Option<crate::resources::LabelGpuData>,
+    /// Per-frame SDF overlay shape GPU data, rebuilt in prepare(), consumed in paint().
+    overlay_shape_gpu_data: Option<crate::resources::OverlayShapeGpuData>,
     /// Per-viewport GPU state slots.
     ///
     /// Indexed by `FrameData::camera.viewport_index`. Each slot owns independent
@@ -470,6 +472,7 @@ impl ViewportRenderer {
             ruler_gpu_data: None,
             loading_bar_gpu_data: None,
             overlay_rect_gpu_data: None,
+            overlay_shape_gpu_data: None,
             viewport_slots: Vec::new(),
             compute_filter_results: Vec::new(),
             wireframe_uniform_bufs: Vec::new(),

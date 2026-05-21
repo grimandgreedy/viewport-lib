@@ -158,6 +158,14 @@ impl ViewportRenderer {
                 }
             }
         }
+        // SDF overlay shapes (drawn before rects and labels).
+        if let Some(ref sd) = self.overlay_shape_gpu_data {
+            if let Some(pipeline) = &self.resources.overlay_shape_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_vertex_buffer(0, sd.vertex_buf.slice(..));
+                render_pass.draw(0..sd.vertex_count, 0..1);
+            }
+        }
         // Overlay rects (drawn before labels so they act as backgrounds).
         if let Some(ref rr) = self.overlay_rect_gpu_data {
             if let Some(pipeline) = &self.resources.overlay_text_pipeline {
@@ -370,6 +378,14 @@ impl ViewportRenderer {
                     render_pass.set_bind_group(0, &gpu.bind_group, &[]);
                     render_pass.draw(0..6, 0..1);
                 }
+            }
+        }
+        // SDF overlay shapes (drawn before rects and labels).
+        if let Some(ref sd) = self.overlay_shape_gpu_data {
+            if let Some(pipeline) = &self.resources.overlay_shape_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_vertex_buffer(0, sd.vertex_buf.slice(..));
+                render_pass.draw(0..sd.vertex_count, 0..1);
             }
         }
         // Overlay rects (drawn before labels so they act as backgrounds).
@@ -617,6 +633,14 @@ impl ViewportRenderer {
                         render_pass.set_bind_group(0, &gpu.bind_group, &[]);
                         render_pass.draw(0..6, 0..1);
                     }
+                }
+            }
+            // SDF overlay shapes (drawn before rects and labels).
+            if let Some(ref sd) = self.overlay_shape_gpu_data {
+                if let Some(pipeline) = &self.resources.overlay_shape_pipeline {
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_vertex_buffer(0, sd.vertex_buf.slice(..));
+                    render_pass.draw(0..sd.vertex_count, 0..1);
                 }
             }
             // Overlay rects (drawn before labels so they act as backgrounds).
@@ -1143,6 +1167,14 @@ impl ViewportRenderer {
                             }
                             render_pass.draw(0..6, 0..1);
                         }
+                    }
+                }
+                // SDF overlay shapes (LDR fallback).
+                if let Some(ref sd) = self.overlay_shape_gpu_data {
+                    if let Some(pipeline) = &self.resources.overlay_shape_pipeline {
+                        render_pass.set_pipeline(pipeline);
+                        render_pass.set_vertex_buffer(0, sd.vertex_buf.slice(..));
+                        render_pass.draw(0..sd.vertex_count, 0..1);
                     }
                 }
                 // Overlay rects (LDR fallback).
@@ -3016,8 +3048,9 @@ impl ViewportRenderer {
             }
         }
 
-        // Overlay rects, labels, scalar bars, rulers, and overlay images (HDR path): drawn last.
-        let has_overlay = self.overlay_rect_gpu_data.is_some()
+        // Overlay shapes, rects, labels, scalar bars, rulers, and overlay images (HDR path): drawn last.
+        let has_overlay = self.overlay_shape_gpu_data.is_some()
+            || self.overlay_rect_gpu_data.is_some()
             || self.label_gpu_data.is_some()
             || self.scalar_bar_gpu_data.is_some()
             || self.ruler_gpu_data.is_some()
@@ -3051,6 +3084,14 @@ impl ViewportRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+            // SDF overlay shapes (HDR path).
+            if let Some(ref sd) = self.overlay_shape_gpu_data {
+                if let Some(pipeline) = &self.resources.overlay_shape_pipeline {
+                    overlay_pass.set_pipeline(pipeline);
+                    overlay_pass.set_vertex_buffer(0, sd.vertex_buf.slice(..));
+                    overlay_pass.draw(0..sd.vertex_count, 0..1);
+                }
+            }
             if let Some(pipeline) = &self.resources.overlay_text_pipeline {
                 overlay_pass.set_pipeline(pipeline);
                 if let Some(ref rr) = self.overlay_rect_gpu_data {

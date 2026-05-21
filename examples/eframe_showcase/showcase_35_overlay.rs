@@ -11,6 +11,9 @@ pub(crate) struct OvlState {
     pub bg_colour: [f32; 4],
     pub show_ruler: bool,
     pub show_labels: bool,
+    pub show_shapes: bool,
+    pub shape_corner_radius: f32,
+    pub shape_border_width: f32,
     pub cloud_positions: Vec<[f32; 3]>,
     pub cloud_scalars: Vec<f32>,
     pub cloud_built: bool,
@@ -27,6 +30,9 @@ impl Default for OvlState {
             bg_colour: [0.0, 0.0, 0.0, 0.63],
             show_ruler: true,
             show_labels: true,
+            show_shapes: true,
+            shape_corner_radius: 8.0,
+            shape_border_width: 1.5,
             cloud_positions: Vec::new(),
             cloud_scalars: Vec::new(),
             cloud_built: false,
@@ -39,8 +45,8 @@ impl Default for OvlState {
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BuiltinColourmap, ColourmapId, LabelAnchor, LabelItem, RulerItem, ScalarBarAnchor, ScalarBarItem,
-    ScalarBarOrientation,
+    BuiltinColourmap, ColourmapId, LabelAnchor, LabelItem, OverlayShape, OverlayShapeItem,
+    RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
 };
 
 const ALL_COLOURMAPS: &[(BuiltinColourmap, &str)] = &[
@@ -138,6 +144,17 @@ pub(crate) fn controls_overlay(app: &mut App, ui: &mut egui::Ui) {
     ui.separator();
     ui.checkbox(&mut app.ovl_state.show_ruler, "Show ruler");
     ui.checkbox(&mut app.ovl_state.show_labels, "Show callout labels");
+    ui.checkbox(&mut app.ovl_state.show_shapes, "Show SDF shapes");
+    if app.ovl_state.show_shapes {
+        ui.add(
+            egui::Slider::new(&mut app.ovl_state.shape_corner_radius, 0.0..=40.0)
+                .text("Corner radius"),
+        );
+        ui.add(
+            egui::Slider::new(&mut app.ovl_state.shape_border_width, 0.0..=6.0)
+                .text("Border width"),
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -170,7 +187,9 @@ pub(crate) fn build_ovl_cloud() -> (Vec<[f32; 3]>, Vec<f32>) {
 // Frame overlay items
 // ---------------------------------------------------------------------------
 
-pub(crate) fn build_overlay_frame(app: &App) -> (Vec<LabelItem>, ScalarBarItem, Option<RulerItem>) {
+pub(crate) fn build_overlay_frame(
+    app: &App,
+) -> (Vec<OverlayShapeItem>, Vec<LabelItem>, ScalarBarItem, Option<RulerItem>) {
     let colourmap_id = ColourmapId(app.ovl_state.colourmap as usize);
 
     let bar = ScalarBarItem {
@@ -227,5 +246,61 @@ pub(crate) fn build_overlay_frame(app: &App) -> (Vec<LabelItem>, ScalarBarItem, 
         None
     };
 
-    (labels, bar, ruler)
+    // SDF overlay shapes: a row of five shapes, vertically centred on a
+    // common midline with equal spacing between them.
+    let mut shapes = Vec::new();
+    if app.ovl_state.show_shapes {
+        let cr = app.ovl_state.shape_corner_radius;
+        let bw = app.ovl_state.shape_border_width;
+
+        let row_h = 70.0_f32; // row height all shapes centre on
+        let y_mid = 20.0 + row_h * 0.5; // vertical midpoint
+        let gap = 16.0_f32; // horizontal gap between shapes
+        let mut x = 20.0_f32; // running left edge
+
+        // Helper: push a shape centred vertically on y_mid, advance x.
+        let mut items: Vec<(f32, f32, OverlayShape, [f32; 4], [f32; 4])> = vec![
+            // Rounded rect
+            (120.0, 70.0,
+             OverlayShape::Rect { corner_radius: cr },
+             [0.12, 0.12, 0.18, 0.85],
+             [0.8, 0.8, 0.8, 0.9]),
+            // Per-corner radii rect
+            (120.0, 70.0,
+             OverlayShape::RoundedRect { radii: [cr, 0.0, cr, 0.0] },
+             [0.05, 0.15, 0.25, 0.85],
+             [0.3, 0.7, 1.0, 0.9]),
+            // Circle
+            (70.0, 70.0,
+             OverlayShape::Circle,
+             [0.2, 0.5, 0.15, 0.85],
+             [0.4, 1.0, 0.3, 0.9]),
+            // Ellipse
+            (120.0, 60.0,
+             OverlayShape::Ellipse,
+             [0.3, 0.1, 0.3, 0.85],
+             [0.8, 0.4, 1.0, 0.9]),
+            // Capsule
+            (120.0, 40.0,
+             OverlayShape::Capsule,
+             [0.3, 0.2, 0.05, 0.85],
+             [1.0, 0.8, 0.3, 0.9]),
+        ];
+
+        for (w, h, shape, colour, border_colour) in items.drain(..) {
+            shapes.push(OverlayShapeItem {
+                position: [x, y_mid - h * 0.5],
+                size: [w, h],
+                shape,
+                colour,
+                border_colour,
+                border_width: bw,
+                z_order: 0,
+                ..Default::default()
+            });
+            x += w + gap;
+        }
+    }
+
+    (shapes, labels, bar, ruler)
 }
