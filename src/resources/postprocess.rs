@@ -1427,100 +1427,6 @@ impl ViewportGpuResources {
             cache: None,
         });
 
-        let (hdr_solid_instanced_pipeline, hdr_transparent_instanced_pipeline) =
-            if let Some(ref instance_bgl) = self.instance_bind_group_layout {
-                let inst_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("mesh_instanced_shader_hdr"),
-                    source: wgpu::ShaderSource::Wgsl(
-                        include_str!("../shaders/mesh_instanced.wgsl").into(),
-                    ),
-                });
-                let inst_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("hdr_instanced_pipeline_layout"),
-                    bind_group_layouts: &[&self.camera_bind_group_layout, instance_bgl],
-                    push_constant_ranges: &[],
-                });
-                let solid = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("hdr_solid_instanced_pipeline"),
-                    layout: Some(&inst_layout),
-                    vertex: wgpu::VertexState {
-                        module: &inst_shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[Vertex::buffer_layout()],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &inst_shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba16Float,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        cull_mode: Some(wgpu::Face::Back),
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: wgpu::TextureFormat::Depth24PlusStencil8,
-                        depth_write_enabled: true,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
-                    }),
-                    multisample: wgpu::MultisampleState {
-                        count: 1,
-                        ..Default::default()
-                    },
-                    multiview: None,
-                    cache: None,
-                });
-                let trans = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("hdr_transparent_instanced_pipeline"),
-                    layout: Some(&inst_layout),
-                    vertex: wgpu::VertexState {
-                        module: &inst_shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[Vertex::buffer_layout()],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &inst_shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba16Float,
-                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        cull_mode: None,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: wgpu::TextureFormat::Depth24PlusStencil8,
-                        depth_write_enabled: false,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
-                    }),
-                    multisample: wgpu::MultisampleState {
-                        count: 1,
-                        ..Default::default()
-                    },
-                    multiview: None,
-                    cache: None,
-                });
-                (Some(solid), Some(trans))
-            } else {
-                (None, None)
-            };
-
         // Outline composite pipelines
         let outline_comp_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("outline_composite_shader"),
@@ -1765,12 +1671,6 @@ impl ViewportGpuResources {
         self.hdr_transparent_pipeline = Some(hdr_transparent_pipeline);
         self.hdr_wireframe_pipeline = Some(hdr_wireframe_pipeline);
         self.hdr_overlay_pipeline = Some(hdr_overlay_pipeline);
-        if let Some(p) = hdr_solid_instanced_pipeline {
-            self.hdr_solid_instanced_pipeline = Some(p);
-        }
-        if let Some(p) = hdr_transparent_instanced_pipeline {
-            self.hdr_transparent_instanced_pipeline = Some(p);
-        }
         self.outline_composite_pipeline_single = Some(outline_composite_pipeline_single);
         self.outline_composite_pipeline_msaa = Some(outline_composite_pipeline_msaa);
         self.outline_composite_pipeline_hdr = Some(outline_composite_pipeline_hdr);

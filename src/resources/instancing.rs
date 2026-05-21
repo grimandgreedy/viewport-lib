@@ -251,6 +251,112 @@ impl ViewportGpuResources {
         self.shadow_instanced_pipeline = Some(shadow_instanced);
     }
 
+    /// Ensure the HDR instanced pipelines exist. Called after
+    /// `ensure_instanced_pipelines` so that `instance_bind_group_layout` is
+    /// available. Idempotent: returns immediately if the pipelines already
+    /// exist or if the BGL hasn't been created yet.
+    pub(crate) fn ensure_hdr_instanced_pipelines(&mut self, device: &wgpu::Device) {
+        if self.hdr_solid_instanced_pipeline.is_some() {
+            return;
+        }
+        let Some(ref instance_bgl) = self.instance_bind_group_layout else {
+            return;
+        };
+
+        let inst_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("mesh_instanced_shader_hdr"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/mesh_instanced.wgsl").into(),
+            ),
+        });
+        let inst_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("hdr_instanced_pipeline_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, instance_bgl],
+            push_constant_ranges: &[],
+        });
+
+        let solid = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("hdr_solid_instanced_pipeline"),
+            layout: Some(&inst_layout),
+            vertex: wgpu::VertexState {
+                module: &inst_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &inst_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        let trans = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("hdr_transparent_instanced_pipeline"),
+            layout: Some(&inst_layout),
+            vertex: wgpu::VertexState {
+                module: &inst_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &inst_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        self.hdr_solid_instanced_pipeline = Some(solid);
+        self.hdr_transparent_instanced_pipeline = Some(trans);
+    }
+
     /// Upload instance data to the storage buffer, resizing if needed.
     /// Returns the bind group for the instance storage buffer.
     pub(crate) fn upload_instance_data(
