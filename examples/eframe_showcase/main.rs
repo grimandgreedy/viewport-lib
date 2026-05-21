@@ -3231,6 +3231,7 @@ impl App {
             fd.overlays.scalar_bars = vec![self.scalar_bar_item()];
         }
         if self.mode == ShowcaseMode::Overlay {
+            fd.overlays.time = self.ovl_state.start_time.elapsed().as_secs_f64();
             let (shapes, labels, bar, ruler) = showcase_35_overlay::build_overlay_frame(self);
             fd.overlays.shapes = shapes;
             fd.overlays.labels = labels;

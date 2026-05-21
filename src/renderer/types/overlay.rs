@@ -514,6 +514,63 @@ impl Default for OverlayFill {
     }
 }
 
+/// Border placement relative to the shape edge.
+///
+/// Controls whether the border band sits inside, outside, or centred on the
+/// SDF zero-crossing. `Inset` matches the default behaviour from earlier
+/// phases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum BorderMode {
+    /// Border sits inside the fill edge (default). The fill area shrinks by
+    /// `border_width`.
+    #[default]
+    Inset,
+    /// Border sits outside the fill edge. The fill area is unaffected; the
+    /// border extends outward.
+    Outer,
+    /// Border is centred on the fill edge (half inside, half outside).
+    Center,
+}
+
+/// Animation applied to shape opacity each frame.
+///
+/// The animation is resolved during `prepare()` using the `time` field on
+/// `OverlayFrame`. All `start_time` and `time` values share the same
+/// application-defined epoch (e.g. seconds since app launch).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OverlayAnimation {
+    /// No animation; use `opacity` as-is.
+    None,
+    /// Fade from 0 to `opacity` over `duration` seconds.
+    FadeIn {
+        /// Absolute time when the fade starts.
+        start_time: f64,
+        /// Duration of the fade in seconds.
+        duration: f32,
+    },
+    /// Fade from `opacity` to 0 over `duration` seconds.
+    FadeOut {
+        /// Absolute time when the fade starts.
+        start_time: f64,
+        /// Duration of the fade in seconds.
+        duration: f32,
+    },
+    /// Oscillate opacity between 0 and `opacity` with a sinusoidal wave.
+    Pulse {
+        /// Absolute time when the pulse starts.
+        start_time: f64,
+        /// Period of one full oscillation in seconds.
+        period: f32,
+    },
+}
+
+impl Default for OverlayAnimation {
+    fn default() -> Self {
+        OverlayAnimation::None
+    }
+}
+
 /// Shape type for an `OverlayShapeItem`.
 ///
 /// Each variant maps to a signed-distance function evaluated per fragment
@@ -648,6 +705,8 @@ pub struct OverlayShapeItem {
     pub border_colour: [f32; 4],
     /// Border thickness in logical pixels. `0.0` disables the border.
     pub border_width: f32,
+    /// Where the border sits relative to the shape edge. Default: `Inset`.
+    pub border_mode: BorderMode,
     /// Draw order relative to other shapes. Lower values render first (further back).
     pub z_order: i32,
     /// Optional texture fill. When set the shape samples the image uploaded
@@ -661,6 +720,9 @@ pub struct OverlayShapeItem {
     /// Offset of the shadow centre from the shape centre in logical pixels.
     /// Positive X shifts right, positive Y shifts down. Default: `[0.0, 0.0]`.
     pub shadow_offset: [f32; 2],
+    /// Opacity animation. Resolved each frame during `prepare()` using
+    /// `OverlayFrame::time`. Default: `OverlayAnimation::None`.
+    pub animation: OverlayAnimation,
 }
 
 impl Default for OverlayShapeItem {
@@ -673,11 +735,13 @@ impl Default for OverlayShapeItem {
             opacity: 1.0,
             border_colour: [1.0, 1.0, 1.0, 1.0],
             border_width: 0.0,
+            border_mode: BorderMode::Inset,
             z_order: 0,
             texture: None,
             shadow_colour: [0.0, 0.0, 0.0, 0.0],
             shadow_radius: 0.0,
             shadow_offset: [0.0, 0.0],
+            animation: OverlayAnimation::None,
         }
     }
 }
@@ -1002,6 +1066,10 @@ mod tests {
 /// in front of the 3D scene and must not be affected by tone-mapping or bloom.
 #[derive(Debug, Clone, Default)]
 pub struct OverlayFrame {
+    /// Current time in seconds, used to resolve [`OverlayAnimation`] on
+    /// shapes. Use the same epoch as the `start_time` values in your
+    /// animations (e.g. seconds since app launch). Default: `0.0`.
+    pub time: f64,
     /// SDF-based shapes rendered before labels. Supports rounded rects,
     /// circles, ellipses, and capsules with anti-aliased edges and borders.
     pub shapes: Vec<OverlayShapeItem>,

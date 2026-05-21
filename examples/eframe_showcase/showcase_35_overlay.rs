@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 pub(crate) struct OvlState {
+    pub start_time: std::time::Instant,
     pub colourmap: viewport_lib::BuiltinColourmap,
     pub bar_orientation: viewport_lib::ScalarBarOrientation,
     pub bar_anchor: viewport_lib::ScalarBarAnchor,
@@ -25,6 +26,7 @@ pub(crate) struct OvlState {
 impl Default for OvlState {
     fn default() -> Self {
         Self {
+            start_time: std::time::Instant::now(),
             colourmap: viewport_lib::BuiltinColourmap::Viridis,
             bar_orientation: viewport_lib::ScalarBarOrientation::Vertical,
             bar_anchor: viewport_lib::ScalarBarAnchor::BottomRight,
@@ -51,9 +53,9 @@ impl Default for OvlState {
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BuiltinColourmap, ColourmapId, LabelAnchor, LabelItem, OverlayFill, OverlayShape,
-    OverlayShapeItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
-    TriangleDirection,
+    BorderMode, BuiltinColourmap, ColourmapId, LabelAnchor, LabelItem, OverlayAnimation,
+    OverlayFill, OverlayShape, OverlayShapeItem, RulerItem, ScalarBarAnchor, ScalarBarItem,
+    ScalarBarOrientation, TriangleDirection,
 };
 
 const ALL_COLOURMAPS: &[(BuiltinColourmap, &str)] = &[
@@ -637,6 +639,89 @@ pub(crate) fn build_overlay_frame(
                 ..Default::default()
             });
             let _ = x4;
+        }
+
+        // ---------------------------------------------------------------------------
+        // Border mode + animation shapes (fifth row).
+        // ---------------------------------------------------------------------------
+        {
+            let row5_h = 70.0_f32;
+            let y5_mid = 20.0 + row_h + 24.0 + 90.0 + 24.0 + 70.0 + 24.0 + 70.0 + 24.0 + row5_h * 0.5;
+            let mut x5 = 20.0_f32;
+
+            // Inset border (default).
+            shapes.push(OverlayShapeItem {
+                position: [x5, y5_mid - row5_h * 0.5],
+                size: [100.0, row5_h],
+                shape: OverlayShape::Rect { corner_radius: cr },
+                fill: OverlayFill::Solid([0.15, 0.15, 0.2, 0.9]),
+                border_colour: [0.9, 0.9, 0.3, 1.0],
+                border_width: 3.0,
+                border_mode: BorderMode::Inset,
+                ..Default::default()
+            });
+            x5 += 100.0 + gap;
+
+            // Outer border.
+            shapes.push(OverlayShapeItem {
+                position: [x5, y5_mid - row5_h * 0.5],
+                size: [100.0, row5_h],
+                shape: OverlayShape::Rect { corner_radius: cr },
+                fill: OverlayFill::Solid([0.15, 0.15, 0.2, 0.9]),
+                border_colour: [0.3, 0.9, 0.5, 1.0],
+                border_width: 3.0,
+                border_mode: BorderMode::Outer,
+                ..Default::default()
+            });
+            x5 += 100.0 + gap;
+
+            // Center border on a circle.
+            shapes.push(OverlayShapeItem {
+                position: [x5, y5_mid - row5_h * 0.5],
+                size: [row5_h, row5_h],
+                shape: OverlayShape::Circle,
+                fill: OverlayFill::Solid([0.15, 0.15, 0.2, 0.9]),
+                border_colour: [0.5, 0.5, 1.0, 1.0],
+                border_width: 3.0,
+                border_mode: BorderMode::Center,
+                ..Default::default()
+            });
+            x5 += row5_h + gap;
+
+            // Pulsing circle.
+            shapes.push(OverlayShapeItem {
+                position: [x5, y5_mid - row5_h * 0.5],
+                size: [row5_h, row5_h],
+                shape: OverlayShape::Circle,
+                fill: OverlayFill::Solid([0.2, 0.5, 1.0, 0.9]),
+                border_colour: [0.4, 0.7, 1.0, 0.9],
+                border_width: bw,
+                animation: OverlayAnimation::Pulse {
+                    start_time: 0.0,
+                    period: 2.0,
+                },
+                ..Default::default()
+            });
+            x5 += row5_h + gap;
+
+            // Repeating fade-in capsule: restarts every 4 seconds.
+            let now = app.ovl_state.start_time.elapsed().as_secs_f64();
+            let cycle = 4.0;
+            let fade_start = (now / cycle).floor() * cycle;
+            shapes.push(OverlayShapeItem {
+                position: [x5, y5_mid - 20.0],
+                size: [120.0, 40.0],
+                shape: OverlayShape::Capsule,
+                fill: OverlayFill::Solid([0.6, 0.2, 0.1, 0.9]),
+                border_colour: [1.0, 0.5, 0.3, 0.9],
+                border_width: bw,
+                animation: OverlayAnimation::FadeIn {
+                    start_time: fade_start,
+                    duration: 3.0,
+                },
+                ..Default::default()
+            });
+            let _ = x5;
         }
     }
 

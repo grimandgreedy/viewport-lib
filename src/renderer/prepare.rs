@@ -4837,8 +4837,28 @@ impl ViewportRenderer {
                 let mut tex_groups: Vec<(u64, Vec<crate::resources::OverlayShapeTexVertex>)> =
                     Vec::new();
 
+                let overlay_time = frame.overlays.time;
+
                 for shape in &sorted {
-                    if shape.opacity <= 0.0 {
+                    // Resolve animation to final opacity.
+                    let resolved_opacity = match shape.animation {
+                        crate::renderer::types::OverlayAnimation::None => shape.opacity,
+                        crate::renderer::types::OverlayAnimation::FadeIn { start_time, duration } => {
+                            let t = ((overlay_time - start_time) as f32 / duration.max(1e-6)).clamp(0.0, 1.0);
+                            shape.opacity * t
+                        }
+                        crate::renderer::types::OverlayAnimation::FadeOut { start_time, duration } => {
+                            let t = ((overlay_time - start_time) as f32 / duration.max(1e-6)).clamp(0.0, 1.0);
+                            shape.opacity * (1.0 - t)
+                        }
+                        crate::renderer::types::OverlayAnimation::Pulse { start_time, period } => {
+                            let t = ((overlay_time - start_time) as f32) / period.max(1e-6);
+                            let wave = (t * std::f32::consts::TAU).sin() * 0.5 + 0.5;
+                            shape.opacity * wave
+                        }
+                    };
+
+                    if resolved_opacity <= 0.0 {
                         continue;
                     }
 
@@ -4909,17 +4929,22 @@ impl ViewportRenderer {
                             } => (start_colour, end_colour, [1.0f32, angle]),
                         };
                     let mut fc = start_colour;
-                    fc[3] *= shape.opacity;
+                    fc[3] *= resolved_opacity;
                     let mut fc2 = end_colour;
-                    fc2[3] *= shape.opacity;
+                    fc2[3] *= resolved_opacity;
                     let mut bc = shape.border_colour;
-                    bc[3] *= shape.opacity;
+                    bc[3] *= resolved_opacity;
 
                     let half_size = [hw, hh];
 
                     let mut sc = shape.shadow_colour;
-                    sc[3] *= shape.opacity;
-                    let shadow_params = [shape.shadow_radius, shape.shadow_offset[0], shape.shadow_offset[1], 0.0];
+                    sc[3] *= resolved_opacity;
+                    let border_mode_f = match shape.border_mode {
+                        crate::renderer::types::BorderMode::Inset => 0.0,
+                        crate::renderer::types::BorderMode::Outer => 1.0,
+                        crate::renderer::types::BorderMode::Center => 2.0,
+                    };
+                    let shadow_params = [shape.shadow_radius, shape.shadow_offset[0], shape.shadow_offset[1], border_mode_f];
 
                     // Emit 6 vertices (two triangles) for the bounding quad.
                     let corners_px = [

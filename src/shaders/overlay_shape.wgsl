@@ -272,12 +272,29 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         );
     }
 
-    // Border: blend border colour in the band near d = 0.
+    // Border: blend border colour in a band near d = 0.
+    // border_mode (shadow_params.w): 0=inset, 1=outer, 2=center.
     if (in.border_width > 0.0) {
         let bw = in.border_width;
-        // Border band occupies [-bw, 0] in SDF space (inside the fill edge).
-        let border_alpha = (1.0 - smoothstep(-aa, 0.0, d)) * smoothstep(-bw - aa, -bw, d);
-        colour = mix(colour, vec4<f32>(in.border_colour.rgb, in.border_colour.a * fill_alpha), border_alpha);
+        let bm = i32(in.shadow_params.w + 0.5);
+        var lo: f32;
+        var hi: f32;
+        if (bm == 1) {
+            // Outer: band [0, bw]
+            lo = 0.0;
+            hi = bw;
+        } else if (bm == 2) {
+            // Center: band [-bw/2, bw/2]
+            lo = -bw * 0.5;
+            hi = bw * 0.5;
+        } else {
+            // Inset: band [-bw, 0]
+            lo = -bw;
+            hi = 0.0;
+        }
+        let border_alpha = (1.0 - smoothstep(hi, hi + aa, d)) * smoothstep(lo - aa, lo, d);
+        let border_ref_alpha = 1.0 - smoothstep(-aa, 0.0, d - hi);
+        colour = mix(colour, vec4<f32>(in.border_colour.rgb, in.border_colour.a * border_ref_alpha), border_alpha);
     }
 
     return colour;
