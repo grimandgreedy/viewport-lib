@@ -51,8 +51,8 @@ impl Default for OvlState {
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BuiltinColourmap, ColourmapId, LabelAnchor, LabelItem, OverlayShape, OverlayShapeItem,
-    RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
+    BuiltinColourmap, ColourmapId, LabelAnchor, LabelItem, OverlayFill, OverlayShape,
+    OverlayShapeItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
     TriangleDirection,
 };
 
@@ -382,7 +382,7 @@ pub(crate) fn build_overlay_frame(
                 position: [x, y_mid - h * 0.5],
                 size: [w, h],
                 shape,
-                colour,
+                fill: OverlayFill::Solid(colour),
                 border_colour,
                 border_width: bw,
                 z_order: 0,
@@ -408,7 +408,7 @@ pub(crate) fn build_overlay_frame(
                     position: [x2, y2_mid - sz * 0.5],
                     size: [sz, sz],
                     shape: OverlayShape::Circle,
-                    colour: [1.0, 1.0, 1.0, 1.0],
+                    fill: OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]),
                     border_colour: [1.0, 1.0, 1.0, 0.9],
                     border_width: bw2,
                     texture: Some(tid),
@@ -423,13 +423,135 @@ pub(crate) fn build_overlay_frame(
                     position: [x2, y2_mid - row2_h * 0.5],
                     size: [140.0, row2_h],
                     shape: OverlayShape::Rect { corner_radius: cr },
-                    colour: [1.0, 1.0, 1.0, 1.0],
+                    fill: OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]),
                     border_colour: [0.8, 0.8, 0.8, 0.9],
                     border_width: bw2,
                     texture: Some(tid),
                     ..Default::default()
                 });
             }
+        }
+
+        // ---------------------------------------------------------------------------
+        // Gradient fill shapes (third row).
+        // ---------------------------------------------------------------------------
+        {
+            use std::f32::consts::PI;
+            let row3_h = 70.0_f32;
+            let y3_mid = 20.0 + row_h + 24.0 + 90.0 + 24.0 + row3_h * 0.5;
+            let mut x3 = 20.0_f32;
+
+            // Rounded rect: left-to-right blue-to-teal gradient.
+            shapes.push(OverlayShapeItem {
+                position: [x3, y3_mid - row3_h * 0.5],
+                size: [120.0, row3_h],
+                shape: OverlayShape::Rect { corner_radius: cr },
+                fill: OverlayFill::LinearGradient {
+                    start_colour: [0.05, 0.15, 0.55, 0.9],
+                    end_colour:   [0.05, 0.65, 0.65, 0.9],
+                    angle: 0.0,
+                },
+                border_colour: [0.3, 0.7, 1.0, 0.8],
+                border_width: bw,
+                ..Default::default()
+            });
+            x3 += 120.0 + gap;
+
+            // Per-corner rect: diagonal gradient (PI/4 = 45 degrees).
+            shapes.push(OverlayShapeItem {
+                position: [x3, y3_mid - row3_h * 0.5],
+                size: [120.0, row3_h],
+                shape: OverlayShape::RoundedRect { radii: [cr, 0.0, cr, 0.0] },
+                fill: OverlayFill::LinearGradient {
+                    start_colour: [0.5, 0.05, 0.15, 0.9],
+                    end_colour:   [1.0, 0.6, 0.1, 0.9],
+                    angle: PI / 4.0,
+                },
+                border_colour: [1.0, 0.5, 0.2, 0.8],
+                border_width: bw,
+                ..Default::default()
+            });
+            x3 += 120.0 + gap;
+
+            // Circle: top-to-bottom (angle = PI/2) dark-to-bright gradient.
+            shapes.push(OverlayShapeItem {
+                position: [x3, y3_mid - row3_h * 0.5],
+                size: [row3_h, row3_h],
+                shape: OverlayShape::Circle,
+                fill: OverlayFill::LinearGradient {
+                    start_colour: [0.05, 0.35, 0.05, 0.9],
+                    end_colour:   [0.5, 1.0, 0.3, 0.9],
+                    angle: PI / 2.0,
+                },
+                border_colour: [0.4, 1.0, 0.3, 0.8],
+                border_width: bw,
+                ..Default::default()
+            });
+            x3 += row3_h + gap;
+
+            // Ellipse: horizontal gradient, purple-to-pink.
+            shapes.push(OverlayShapeItem {
+                position: [x3, y3_mid - 30.0],
+                size: [120.0, 60.0],
+                shape: OverlayShape::Ellipse,
+                fill: OverlayFill::LinearGradient {
+                    start_colour: [0.35, 0.05, 0.55, 0.9],
+                    end_colour:   [0.9, 0.3, 0.6, 0.9],
+                    angle: 0.0,
+                },
+                border_colour: [0.8, 0.4, 1.0, 0.8],
+                border_width: bw,
+                ..Default::default()
+            });
+            x3 += 120.0 + gap;
+
+            // Capsule: horizontal gradient, dark grey to white.
+            shapes.push(OverlayShapeItem {
+                position: [x3, y3_mid - 20.0],
+                size: [120.0, 40.0],
+                shape: OverlayShape::Capsule,
+                fill: OverlayFill::LinearGradient {
+                    start_colour: [0.15, 0.15, 0.15, 0.9],
+                    end_colour:   [0.85, 0.85, 0.85, 0.9],
+                    angle: 0.0,
+                },
+                border_colour: [0.6, 0.6, 0.6, 0.8],
+                border_width: bw,
+                ..Default::default()
+            });
+            x3 += 120.0 + gap;
+
+            // Ring: diagonal gradient creates a highlight effect.
+            shapes.push(OverlayShapeItem {
+                position: [x3, y3_mid - row3_h * 0.5],
+                size: [row3_h, row3_h],
+                shape: OverlayShape::Ring { inner_radius_frac: 0.65 },
+                fill: OverlayFill::LinearGradient {
+                    start_colour: [0.1, 0.3, 0.6, 0.9],
+                    end_colour:   [0.7, 0.9, 1.0, 0.9],
+                    angle: -PI / 4.0,
+                },
+                border_colour: [0.3, 0.7, 1.0, 0.8],
+                border_width: bw,
+                ..Default::default()
+            });
+            x3 += row3_h + gap;
+
+            // Triangle: bottom-to-top warm gradient.
+            shapes.push(OverlayShapeItem {
+                position: [x3, y3_mid - row3_h * 0.5],
+                size: [60.0, row3_h],
+                shape: OverlayShape::Triangle { direction: TriangleDirection::Up },
+                fill: OverlayFill::LinearGradient {
+                    start_colour: [0.7, 0.15, 0.05, 0.9],
+                    end_colour:   [1.0, 0.9, 0.1, 0.9],
+                    angle: PI / 2.0,
+                },
+                border_colour: [1.0, 0.6, 0.2, 0.8],
+                border_width: bw,
+                ..Default::default()
+            });
+            let _ = x3;
         }
     }
 

@@ -4892,8 +4892,21 @@ impl ViewportRenderer {
                         }
                     };
 
-                    let mut fc = shape.colour;
+                    let (start_colour, end_colour, gradient_params) =
+                        match shape.fill {
+                            crate::renderer::types::OverlayFill::Solid(c) => {
+                                (c, c, [0.0f32, 0.0])
+                            }
+                            crate::renderer::types::OverlayFill::LinearGradient {
+                                start_colour,
+                                end_colour,
+                                angle,
+                            } => (start_colour, end_colour, [1.0f32, angle]),
+                        };
+                    let mut fc = start_colour;
                     fc[3] *= shape.opacity;
+                    let mut fc2 = end_colour;
+                    fc2[3] *= shape.opacity;
                     let mut bc = shape.border_colour;
                     bc[3] *= shape.opacity;
 
@@ -4952,6 +4965,8 @@ impl ViewportRenderer {
                                 radii,
                                 border_width: shape.border_width,
                                 shape_type,
+                                fill_colour2: fc2,
+                                gradient_params,
                             });
                         }
                     }

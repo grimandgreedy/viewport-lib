@@ -5,38 +5,44 @@
 // anti-aliased fill and border regions.
 
 struct VertexInput {
-    @location(0) position:      vec2<f32>,  // NDC xy
-    @location(1) local_pos:     vec2<f32>,  // pixels from shape centre
-    @location(2) fill_colour:   vec4<f32>,
-    @location(3) border_colour: vec4<f32>,
-    @location(4) half_size:     vec2<f32>,  // shape half-extents in pixels
-    @location(5) radii:         vec4<f32>,  // shape-specific params
-    @location(6) border_width:  f32,
-    @location(7) shape_type:    f32,        // 0=rounded rect, 1=circle, 2=ellipse, 3=capsule, 4=ring, 5=arc, 6=triangle
+    @location(0) position:        vec2<f32>,  // NDC xy
+    @location(1) local_pos:       vec2<f32>,  // pixels from shape centre
+    @location(2) fill_colour:     vec4<f32>,  // start colour (or solid colour)
+    @location(3) border_colour:   vec4<f32>,
+    @location(4) half_size:       vec2<f32>,  // shape half-extents in pixels
+    @location(5) radii:           vec4<f32>,  // shape-specific params
+    @location(6) border_width:    f32,
+    @location(7) shape_type:      f32,        // 0=rounded rect, 1=circle, 2=ellipse, 3=capsule, 4=ring, 5=arc, 6=triangle
+    @location(8) fill_colour2:    vec4<f32>,  // end colour for gradient (equals fill_colour for solid)
+    @location(9) gradient_params: vec2<f32>,  // x=type (0=solid, 1=linear), y=angle radians
 };
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) local_pos:     vec2<f32>,
-    @location(1) fill_colour:   vec4<f32>,
-    @location(2) border_colour: vec4<f32>,
-    @location(3) half_size:     vec2<f32>,
-    @location(4) radii:         vec4<f32>,
-    @location(5) border_width:  f32,
-    @location(6) shape_type:    f32,
+    @location(0) local_pos:       vec2<f32>,
+    @location(1) fill_colour:     vec4<f32>,
+    @location(2) border_colour:   vec4<f32>,
+    @location(3) half_size:       vec2<f32>,
+    @location(4) radii:           vec4<f32>,
+    @location(5) border_width:    f32,
+    @location(6) shape_type:      f32,
+    @location(7) fill_colour2:    vec4<f32>,
+    @location(8) gradient_params: vec2<f32>,
 };
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = vec4<f32>(in.position, 0.0, 1.0);
-    out.local_pos     = in.local_pos;
-    out.fill_colour   = in.fill_colour;
-    out.border_colour = in.border_colour;
-    out.half_size     = in.half_size;
-    out.radii         = in.radii;
-    out.border_width  = in.border_width;
-    out.shape_type    = in.shape_type;
+    out.clip_position   = vec4<f32>(in.position, 0.0, 1.0);
+    out.local_pos       = in.local_pos;
+    out.fill_colour     = in.fill_colour;
+    out.border_colour   = in.border_colour;
+    out.half_size       = in.half_size;
+    out.radii           = in.radii;
+    out.border_width    = in.border_width;
+    out.shape_type      = in.shape_type;
+    out.fill_colour2    = in.fill_colour2;
+    out.gradient_params = in.gradient_params;
     return out;
 }
 
@@ -224,8 +230,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    var colour = in.fill_colour;
-    colour = vec4<f32>(colour.rgb, colour.a * fill_alpha);
+    // Compute fill colour: solid or linear gradient.
+    var fill_col: vec4<f32>;
+    if (in.gradient_params.x > 0.5) {
+        // Linear gradient: project local_pos onto gradient direction and
+        // map to [0, 1] over the bounding box extent along that axis.
+        let angle = in.gradient_params.y;
+        let dir = vec2<f32>(cos(angle), sin(angle));
+        let max_proj = abs(hs.x * dir.x) + abs(hs.y * dir.y);
+        let t = clamp(dot(p, dir) / max(max_proj, 0.001) * 0.5 + 0.5, 0.0, 1.0);
+        fill_col = mix(in.fill_colour, in.fill_colour2, t);
+    } else {
+        fill_col = in.fill_colour;
+    }
+
+    var colour = vec4<f32>(fill_col.rgb, fill_col.a * fill_alpha);
 
     // Border: blend border colour in the band near d = 0.
     if (in.border_width > 0.0) {

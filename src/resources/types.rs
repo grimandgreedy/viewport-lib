@@ -1189,6 +1189,10 @@ pub(crate) struct OverlayShapeVertex {
     pub border_width: f32,
     /// Encoded shape type: 0 = Rect/RoundedRect, 1 = Circle, 2 = Ellipse, 3 = Capsule.
     pub shape_type: f32,
+    /// RGBA end colour for linear gradient (equals fill_colour for solid fill).
+    pub fill_colour2: [f32; 4],
+    /// Gradient parameters: x = type (0=solid, 1=linear), y = angle in radians.
+    pub gradient_params: [f32; 2],
 }
 
 impl OverlayShapeVertex {
@@ -1244,6 +1248,18 @@ impl OverlayShapeVertex {
                     offset: 76,
                     shader_location: 7,
                     format: wgpu::VertexFormat::Float32,
+                },
+                // location 8: fill_colour2 vec4f (end colour for gradient)
+                wgpu::VertexAttribute {
+                    offset: 80,
+                    shader_location: 8,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 9: gradient_params vec2f (x=type, y=angle)
+                wgpu::VertexAttribute {
+                    offset: 96,
+                    shader_location: 9,
+                    format: wgpu::VertexFormat::Float32x2,
                 },
             ],
         }

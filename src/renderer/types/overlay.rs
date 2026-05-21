@@ -483,6 +483,37 @@ impl Default for OverlayRectItem {
     }
 }
 
+/// Fill style for an [`OverlayShapeItem`].
+///
+/// `Solid` is the default and matches the previous single-colour behaviour.
+/// `LinearGradient` interpolates between two colours along an angled axis.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OverlayFill {
+    /// Uniform solid colour in linear RGBA float format.
+    Solid([f32; 4]),
+    /// Linear gradient between two colours.
+    ///
+    /// The gradient runs along `angle` across the bounding box. `angle = 0.0`
+    /// goes left-to-right (`start_colour` on the left, `end_colour` on the
+    /// right). Positive angles rotate the direction counter-clockwise in math
+    /// coordinates; because screen Y points downward, `angle = PI/2` produces
+    /// a top-to-bottom gradient (start at top, end at bottom).
+    LinearGradient {
+        /// RGBA colour at the start of the gradient (left when angle is 0).
+        start_colour: [f32; 4],
+        /// RGBA colour at the end of the gradient (right when angle is 0).
+        end_colour: [f32; 4],
+        /// Gradient direction in radians. `0.0` = left-to-right.
+        angle: f32,
+    },
+}
+
+impl Default for OverlayFill {
+    fn default() -> Self {
+        OverlayFill::Solid([0.0, 0.0, 0.0, 0.55])
+    }
+}
+
 /// Shape type for an `OverlayShapeItem`.
 ///
 /// Each variant maps to a signed-distance function evaluated per fragment
@@ -562,32 +593,39 @@ impl Default for OverlayShape {
 /// Each item becomes a single bounding quad on the GPU. The fragment shader
 /// evaluates an SDF to produce anti-aliased fill, border, and discard regions.
 ///
+/// `fill` controls the interior colour. Use `OverlayFill::Solid` for a flat
+/// colour or `OverlayFill::LinearGradient` for a two-colour gradient.
+///
 /// When `texture` is set the shape samples the uploaded image as its fill.
-/// `colour` then acts as a tint multiplied with each texel; set it to
-/// `[1.0, 1.0, 1.0, 1.0]` for no tint. The SDF boundary, border, and AA all
-/// apply in the same way as for a solid fill.
+/// In that case `fill` must be `OverlayFill::Solid`; the solid colour acts as
+/// a tint multiplied with each texel. Use `[1.0, 1.0, 1.0, 1.0]` for no tint.
+/// The SDF boundary, border, and AA apply the same way regardless of fill mode.
 ///
 /// # Examples
 ///
 /// ```rust
-/// # use viewport_lib::{OverlayShapeItem, OverlayShape};
+/// # use viewport_lib::{OverlayShapeItem, OverlayShape, OverlayFill};
 /// // Rounded-rect panel background.
 /// let panel = OverlayShapeItem {
 ///     position: [20.0, 20.0],
 ///     size: [300.0, 200.0],
 ///     shape: OverlayShape::Rect { corner_radius: 8.0 },
-///     colour: [0.1, 0.1, 0.1, 0.85],
+///     fill: OverlayFill::Solid([0.1, 0.1, 0.1, 0.85]),
 ///     border_width: 1.0,
 ///     border_colour: [0.4, 0.4, 0.4, 1.0],
 ///     ..Default::default()
 /// };
 ///
-/// // Circle indicator.
-/// let dot = OverlayShapeItem {
+/// // Circle with a left-to-right gradient.
+/// let grad_dot = OverlayShapeItem {
 ///     position: [100.0, 100.0],
-///     size: [16.0, 16.0],
+///     size: [60.0, 60.0],
 ///     shape: OverlayShape::Circle,
-///     colour: [0.0, 1.0, 0.3, 1.0],
+///     fill: OverlayFill::LinearGradient {
+///         start_colour: [0.0, 0.4, 1.0, 1.0],
+///         end_colour: [0.0, 1.0, 0.5, 1.0],
+///         angle: 0.0,
+///     },
 ///     ..Default::default()
 /// };
 /// ```
@@ -599,12 +637,11 @@ pub struct OverlayShapeItem {
     pub size: [f32; 2],
     /// Which SDF shape to render.
     pub shape: OverlayShape,
-    /// RGBA fill colour in linear float format.
+    /// Fill style: solid colour or linear gradient.
     ///
-    /// When `texture` is `None` this is used as the solid fill.
-    /// When `texture` is `Some`, this is multiplied with each texture sample
-    /// as a tint; use `[1.0, 1.0, 1.0, 1.0]` for no colour shift.
-    pub colour: [f32; 4],
+    /// When `texture` is `Some` only `OverlayFill::Solid` is used; the colour
+    /// becomes a tint multiplied with each texture sample.
+    pub fill: OverlayFill,
     /// Overall opacity multiplier applied to both fill and border. Range 0.0-1.0.
     pub opacity: f32,
     /// RGBA border colour in linear float format.
@@ -615,7 +652,7 @@ pub struct OverlayShapeItem {
     pub z_order: i32,
     /// Optional texture fill. When set the shape samples the image uploaded
     /// via `ViewportGpuResources::upload_overlay_texture`, clipped by the SDF
-    /// boundary. `colour` acts as a tint when this is `Some`.
+    /// boundary. `fill` acts as a tint when this is `Some`.
     pub texture: Option<OverlayTextureId>,
 }
 
@@ -625,7 +662,7 @@ impl Default for OverlayShapeItem {
             position: [0.0, 0.0],
             size: [100.0, 100.0],
             shape: OverlayShape::default(),
-            colour: [0.0, 0.0, 0.0, 0.55],
+            fill: OverlayFill::default(),
             opacity: 1.0,
             border_colour: [1.0, 1.0, 1.0, 1.0],
             border_width: 0.0,
