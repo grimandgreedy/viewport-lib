@@ -2074,12 +2074,13 @@ impl ViewportGpuResources {
         );
         let cs_view = cs_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // FXAA
+        // FXAA -- at scene resolution so the whole post-process chain runs at
+        // the scaled size when render_scale < 1.0.
         let fxaa_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("fxaa_texture"),
             size: wgpu::Extent3d {
-                width: w,
-                height: h,
+                width: scene_w,
+                height: scene_h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -2820,6 +2821,48 @@ impl ViewportGpuResources {
                 (None, view, None)
             };
 
+        // HDR upscale target: when scene_size != output_size, tone-map and FXAA
+        // run at scene resolution and write to this texture. An upscale-blit pass
+        // then copies the result to output_view at native resolution.
+        let (upscale_texture, upscale_view, upscale_bind_group) =
+            if scene_w != w || scene_h != h {
+                let tex = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("hdr_upscale_texture"),
+                    size: wgpu::Extent3d {
+                        width: scene_w,
+                        height: scene_h,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: output_format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                });
+                let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                let bgl = self.dyn_res_upscale_bgl.as_ref().unwrap();
+                let sampler = self.dyn_res_linear_sampler.as_ref().unwrap();
+                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("hdr_upscale_bg"),
+                    layout: bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(sampler),
+                        },
+                    ],
+                });
+                (Some(tex), Some(view), Some(bg))
+            } else {
+                (None, None, None)
+            };
+
         ViewportHdrState {
             hdr_texture: hdr_tex,
             hdr_view,
@@ -2895,6 +2938,9 @@ impl ViewportGpuResources {
             output_depth_texture,
             output_depth_view,
             depth_blit_bind_group,
+            upscale_texture,
+            upscale_view,
+            upscale_bind_group,
         }
     }
 

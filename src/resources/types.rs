@@ -1970,6 +1970,13 @@ pub(crate) struct ViewportHdrState {
     /// None when scene_size == output_size (no blit needed).
     pub depth_blit_bind_group: Option<wgpu::BindGroup>,
 
+    // --- HDR upscale (allocated when scene_size != output_size) ---
+    // When render_scale < 1.0, tone-map and FXAA run at scene resolution.
+    // The result is written to upscale_texture, then upscale-blitted to output_view.
+    pub upscale_texture: Option<wgpu::Texture>,
+    pub upscale_view: Option<wgpu::TextureView>,
+    pub upscale_bind_group: Option<wgpu::BindGroup>,
+
     /// Native output resolution [width, height].
     pub output_size: [u32; 2],
     /// Effective scene resolution after render scale: [output_size * render_scale].

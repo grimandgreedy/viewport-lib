@@ -601,8 +601,9 @@ impl ViewportRenderer {
     ///
     /// The value is clamped to `[policy.min_render_scale, policy.max_render_scale]`.
     ///
-    /// Has no effect on the HDR render path (`render` / `render_viewport` with
-    /// `PostProcessSettings::enabled = true`). See `allow_dynamic_resolution`.
+    /// Works on both the LDR and HDR render paths. On the HDR path, the scene,
+    /// bloom, SSAO, tone-map, and FXAA all run at the scaled resolution; the
+    /// result is upscale-blitted to native resolution before overlays and grid.
     pub fn set_render_scale(&mut self, scale: f32) {
         self.current_render_scale = scale.clamp(
             self.performance_policy.min_render_scale,
@@ -1168,6 +1169,11 @@ impl ViewportRenderer {
         let format = self.resources.target_format;
         // Ensure shared infrastructure (pipelines, BGLs, samplers) exists.
         self.resources.ensure_hdr_shared(device, queue, format);
+        // When render_scale < 1.0, the HDR upscale path needs the dyn_res
+        // pipeline and sampler for the final upscale-blit to output resolution.
+        if render_scale < 1.0 - 0.001 {
+            self.resources.ensure_dyn_res_pipeline(device);
+        }
         // Compute the scene-resolution render target size.
         let scale = render_scale.clamp(0.1, 1.0);
         let scene_w = ((w as f32) * scale).round() as u32;

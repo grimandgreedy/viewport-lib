@@ -785,6 +785,33 @@ impl ViewportRenderer {
         }
     }
 
+    /// Blit the HDR intermediate texture into a render pass with no depth-stencil attachment.
+    ///
+    /// Identical to [`paint_hdr_blit`](Self::paint_hdr_blit) but uses the pipeline variant
+    /// compiled without a depth-stencil state, making it compatible with render passes that
+    /// carry no depth attachment (e.g. a raw winit surface pass).
+    ///
+    /// Call after [`prepare_hdr_callback`](Self::prepare_hdr_callback) for the same frame
+    /// and viewport.
+    pub fn paint_hdr_blit_no_ds<'rp>(
+        &'rp self,
+        render_pass: &mut wgpu::RenderPass<'rp>,
+        frame: &FrameData,
+    ) {
+        let vp_idx = frame.camera.viewport_index;
+        if let Some(hc) = self
+            .viewport_slots
+            .get(vp_idx)
+            .and_then(|s| s.hdr_callback.as_ref())
+        {
+            if let Some(pipeline) = &self.resources.dyn_res_upscale_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, &hc.blit_bind_group, &[]);
+                render_pass.draw(0..3, 0..1);
+            }
+        }
+    }
+
     /// Unified prepare step for the eframe `CallbackTrait::prepare` method.
     ///
     /// Replaces manual `prepare` + `prepare_ldr_dyn_res` or `prepare_hdr_callback`
@@ -2608,12 +2635,19 @@ impl ViewportRenderer {
         }
 
         // -----------------------------------------------------------------------
-        // Tone map pass: HDR + bloom + AO -> (fxaa_texture if FXAA) or output_view.
+        // Tone map pass: HDR + bloom + AO -> tone-mapped LDR.
+        //
+        // When render_scale < 1.0 the entire post-process chain runs at scene
+        // resolution. The result lands in upscale_view (scene-res) and is then
+        // upscale-blitted to output_view at native resolution.
         // -----------------------------------------------------------------------
         let use_fxaa = pp.fxaa;
+        let use_hdr_upscale = slot_hdr.upscale_bind_group.is_some();
         if let Some(tone_map_pipeline) = &self.resources.tone_map_pipeline {
             let tone_target: &wgpu::TextureView = if use_fxaa {
                 &slot_hdr.fxaa_view
+            } else if use_hdr_upscale {
+                slot_hdr.upscale_view.as_ref().unwrap()
             } else {
                 output_view
             };
@@ -2638,14 +2672,19 @@ impl ViewportRenderer {
         }
 
         // -----------------------------------------------------------------------
-        // FXAA pass: fxaa_texture -> output_view (only when FXAA is enabled).
+        // FXAA pass: fxaa_texture -> upscale_view (scaled) or output_view (1:1).
         // -----------------------------------------------------------------------
         if use_fxaa {
             if let Some(fxaa_pipeline) = &self.resources.fxaa_pipeline {
+                let fxaa_target: &wgpu::TextureView = if use_hdr_upscale {
+                    slot_hdr.upscale_view.as_ref().unwrap()
+                } else {
+                    output_view
+                };
                 let mut fxaa_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("fxaa_pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: output_view,
+                        view: fxaa_target,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -2660,6 +2699,37 @@ impl ViewportRenderer {
                 fxaa_pass.set_pipeline(fxaa_pipeline);
                 fxaa_pass.set_bind_group(0, &slot_hdr.fxaa_bind_group, &[]);
                 fxaa_pass.draw(0..3, 0..1);
+            }
+        }
+
+        // -----------------------------------------------------------------------
+        // HDR upscale pass: blit scene-resolution post-processed output to native
+        // output_view. Only runs when render_scale < 1.0.
+        // -----------------------------------------------------------------------
+        if use_hdr_upscale {
+            let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+            if let Some(upscale_bg) = &slot_hdr.upscale_bind_group {
+                if let Some(pipeline) = &self.resources.dyn_res_upscale_pipeline {
+                    let mut upscale_pass =
+                        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("hdr_upscale_pass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: output_view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                                depth_slice: None,
+                            })],
+                            depth_stencil_attachment: None,
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                        });
+                    upscale_pass.set_pipeline(pipeline);
+                    upscale_pass.set_bind_group(0, upscale_bg, &[]);
+                    upscale_pass.draw(0..3, 0..1);
+                }
             }
         }
 
