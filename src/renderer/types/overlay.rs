@@ -500,6 +500,47 @@ pub enum OverlayShape {
     Ellipse,
     /// Pill / capsule shape: fully rounded along the shorter axis.
     Capsule,
+    /// Hollow circle (annulus). The ring wall occupies the space between
+    /// the outer edge (defined by `size`) and the inner hole.
+    Ring {
+        /// Inner radius as a fraction of the inscribed radius. `0.0` produces
+        /// a solid circle; `0.9` produces a thin ring. Clamped to 0.0..1.0.
+        inner_radius_frac: f32,
+    },
+    /// Arc (pie-slice or annular sector). Combines a ring with an angular
+    /// range so you can draw progress indicators, radial menus, and pie
+    /// charts.
+    Arc {
+        /// Inner radius as a fraction of the inscribed radius. `0.0` gives a
+        /// solid pie slice; values near `1.0` give a thin arc stroke.
+        inner_radius_frac: f32,
+        /// Start angle in radians. `0.0` points right, angles increase
+        /// counter-clockwise.
+        start_angle: f32,
+        /// End angle in radians. The filled region sweeps CCW from
+        /// `start_angle` to `end_angle`.
+        end_angle: f32,
+    },
+    /// Triangle oriented in one of four cardinal directions, fitted to the
+    /// bounding box.
+    Triangle {
+        /// Which direction the triangle points.
+        direction: TriangleDirection,
+    },
+}
+
+/// Cardinal direction for `OverlayShape::Triangle`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum TriangleDirection {
+    /// Apex points upward (toward the top of the viewport).
+    #[default]
+    Up,
+    /// Apex points downward.
+    Down,
+    /// Apex points left.
+    Left,
+    /// Apex points right.
+    Right,
 }
 
 impl Default for OverlayShape {

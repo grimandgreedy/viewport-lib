@@ -46,7 +46,7 @@ use crate::App;
 use eframe::egui;
 use viewport_lib::{
     BuiltinColourmap, ColourmapId, LabelAnchor, LabelItem, OverlayShape, OverlayShapeItem,
-    RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
+    RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, TriangleDirection,
 };
 
 const ALL_COLOURMAPS: &[(BuiltinColourmap, &str)] = &[
@@ -285,6 +285,25 @@ pub(crate) fn build_overlay_frame(
              OverlayShape::Capsule,
              [0.3, 0.2, 0.05, 0.85],
              [1.0, 0.8, 0.3, 0.9]),
+            // Ring
+            (70.0, 70.0,
+             OverlayShape::Ring { inner_radius_frac: 0.65 },
+             [0.15, 0.35, 0.5, 0.85],
+             [0.3, 0.8, 1.0, 0.9]),
+            // Arc (270-degree sweep)
+            (70.0, 70.0,
+             OverlayShape::Arc {
+                 inner_radius_frac: 0.6,
+                 start_angle: 0.0,
+                 end_angle: std::f32::consts::PI * 1.5,
+             },
+             [0.5, 0.2, 0.1, 0.85],
+             [1.0, 0.5, 0.2, 0.9]),
+            // Triangle (pointing up)
+            (60.0, 60.0,
+             OverlayShape::Triangle { direction: TriangleDirection::Up },
+             [0.4, 0.4, 0.1, 0.85],
+             [1.0, 1.0, 0.3, 0.9]),
         ];
 
         for (w, h, shape, colour, border_colour) in items.drain(..) {

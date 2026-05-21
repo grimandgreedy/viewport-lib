@@ -4868,6 +4868,25 @@ impl ViewportRenderer {
                         crate::renderer::types::OverlayShape::Capsule => {
                             (3.0, [0.0; 4])
                         }
+                        crate::renderer::types::OverlayShape::Ring { inner_radius_frac } => {
+                            (4.0, [inner_radius_frac.clamp(0.0, 1.0), 0.0, 0.0, 0.0])
+                        }
+                        crate::renderer::types::OverlayShape::Arc {
+                            inner_radius_frac,
+                            start_angle,
+                            end_angle,
+                        } => {
+                            (5.0, [inner_radius_frac.clamp(0.0, 1.0), start_angle, end_angle, 0.0])
+                        }
+                        crate::renderer::types::OverlayShape::Triangle { direction } => {
+                            let dir_f = match direction {
+                                crate::renderer::types::TriangleDirection::Up => 0.0,
+                                crate::renderer::types::TriangleDirection::Down => 1.0,
+                                crate::renderer::types::TriangleDirection::Left => 2.0,
+                                crate::renderer::types::TriangleDirection::Right => 3.0,
+                            };
+                            (6.0, [dir_f, 0.0, 0.0, 0.0])
+                        }
                     };
 
                     let mut fc = shape.colour;
