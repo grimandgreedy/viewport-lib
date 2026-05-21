@@ -21,6 +21,9 @@
     - Simple physics: bodies with linear velocity, gravity scale, and restitution. The runtime integrates velocity each simulate step, applies per-body gravity, and reflects bodies off optional bounding box walls. Contacts with bounds produce events available in the runtime output each frame.
 - Camera tracking: the runtime can follow a scene node and return a suggested camera center each frame. The orbit camera pivot moves with the followed object; distance and orientation are unaffected. Tracking can be set or cleared at any time and works alongside any combination of other plugins.
 
+### Added
+- SDF overlay shapes: `OverlayShapeItem` renders screen-space shapes with signed-distance functions evaluated per fragment, producing anti-aliased edges and inset borders without CPU tessellation. Five shape types are supported through the `OverlayShape` enum: `Rect` (uniform corner radius), `RoundedRect` (per-corner radii), `Circle`, `Ellipse`, and `Capsule`. Submit shapes via `OverlayFrame::shapes`; they are drawn before rects and labels in all render paths. The existing `OverlayRectItem` is unchanged.
+
 ### Fixes
 - Shadow cascade quality now tracks camera zoom automatically. `RenderCamera` carries an orbit `distance` field; `prepare.rs` derives the cascade split window from it (`distance * 0.1` to `distance * 1.5`) rather than from the full camera near/far range. This eliminates the shadow-blurriness-on-zoom-out problem that previously required manual `cascade_split_lambda` tuning. `cascade_split_lambda` has been removed from `LightingSettings`; the split is now computed internally with lambda 0.75.
 - `show_normals` now draws normal-line overlays in the HDR path. Previously normal lines were only drawn on the LDR path; switching to HDR/PBR mode silently dropped them.
