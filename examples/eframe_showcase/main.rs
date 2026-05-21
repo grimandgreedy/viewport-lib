@@ -1913,6 +1913,21 @@ impl App {
                 self.ovl_state.cloud_positions = positions;
                 self.ovl_state.cloud_scalars = scalars;
                 self.ovl_state.cloud_built = true;
+                let (tw, th, tdata) = showcase_35_overlay::build_demo_texture();
+                self.ovl_state.tex_id = Some(
+                    renderer.resources_mut().upload_overlay_texture(
+                        &rs.device, &rs.queue, tw, th, &tdata,
+                    ),
+                );
+                self.ovl_state.carlgauss_tex_id = Some(
+                    renderer.resources_mut().upload_overlay_texture(
+                        &rs.device,
+                        &rs.queue,
+                        showcase_35_overlay::CARLGAUSS_WIDTH,
+                        showcase_35_overlay::CARLGAUSS_HEIGHT,
+                        showcase_35_overlay::CARLGAUSS_RGBA,
+                    ),
+                );
                 self.camera = Camera {
                     center: glam::Vec3::new(0.0, 1.57, 0.0),
                     distance: 9.0,

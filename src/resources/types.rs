@@ -1250,10 +1250,123 @@ impl OverlayShapeVertex {
     }
 }
 
-/// Per-frame GPU data for batched SDF overlay shape rendering.
-pub(crate) struct OverlayShapeGpuData {
+/// Per-vertex data for SDF textured overlay shapes.
+///
+/// Same layout as `OverlayShapeVertex` with an additional UV field at the end.
+/// Used by the texture pipeline; `fill_colour` acts as a tint multiplied with
+/// the sampled texel.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct OverlayShapeTexVertex {
+    /// NDC position (xy).
+    pub position: [f32; 2],
+    /// Position relative to shape centre, in logical pixels.
+    pub local_pos: [f32; 2],
+    /// RGBA tint colour (pre-multiplied opacity). Multiplied with texture sample.
+    pub fill_colour: [f32; 4],
+    /// RGBA border colour (pre-multiplied opacity).
+    pub border_colour: [f32; 4],
+    /// Half-extents of the shape bounding box in logical pixels.
+    pub half_size: [f32; 2],
+    /// Shape-specific radii (same encoding as `OverlayShapeVertex`).
+    pub radii: [f32; 4],
+    /// Border thickness in logical pixels.
+    pub border_width: f32,
+    /// Encoded shape type (same values as `OverlayShapeVertex`).
+    pub shape_type: f32,
+    /// Texture UV coordinates. (0,0) = top-left of image, (1,1) = bottom-right.
+    /// Slightly outside [0,1] in the border/AA padding region.
+    pub uv: [f32; 2],
+}
+
+impl OverlayShapeTexVertex {
+    pub fn buffer_layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<OverlayShapeTexVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                // location 0: position vec2f
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // location 1: local_pos vec2f
+                wgpu::VertexAttribute {
+                    offset: 8,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // location 2: fill_colour vec4f (tint)
+                wgpu::VertexAttribute {
+                    offset: 16,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 3: border_colour vec4f
+                wgpu::VertexAttribute {
+                    offset: 32,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 4: half_size vec2f
+                wgpu::VertexAttribute {
+                    offset: 48,
+                    shader_location: 4,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // location 5: radii vec4f
+                wgpu::VertexAttribute {
+                    offset: 56,
+                    shader_location: 5,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 6: border_width f32
+                wgpu::VertexAttribute {
+                    offset: 72,
+                    shader_location: 6,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                // location 7: shape_type f32
+                wgpu::VertexAttribute {
+                    offset: 76,
+                    shader_location: 7,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                // location 8: uv vec2f
+                wgpu::VertexAttribute {
+                    offset: 80,
+                    shader_location: 8,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+            ],
+        }
+    }
+}
+
+/// One batch of textured SDF overlay shapes sharing a single texture.
+pub(crate) struct OverlayShapeTexBatch {
     pub vertex_buf: wgpu::Buffer,
     pub vertex_count: u32,
+    pub bind_group: wgpu::BindGroup,
+}
+
+/// Persistent texture entry for an overlay shape texture fill.
+///
+/// Stored in `ViewportGpuResources::overlay_textures`.
+pub(crate) struct OverlayShapeTextureEntry {
+    pub _texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+}
+
+/// Per-frame GPU data for batched SDF overlay shape rendering.
+pub(crate) struct OverlayShapeGpuData {
+    /// Vertex buffer for solid (non-textured) shapes. `None` when all shapes are textured.
+    pub vertex_buf: Option<wgpu::Buffer>,
+    /// Number of solid vertices. Zero when all shapes are textured.
+    pub vertex_count: u32,
+    /// One batch per unique texture, drawn after solid shapes.
+    pub tex_batches: Vec<OverlayShapeTexBatch>,
 }
 
 /// Uniform buffer layout for the full-screen ground plane shader.
@@ -2810,6 +2923,15 @@ pub struct ViewportGpuResources {
     /// Render pipeline for screen-space SDF shapes (rounded rects, circles, etc.).
     /// `None` until the first frame with non-empty `OverlayFrame.shapes`.
     pub(crate) overlay_shape_pipeline: Option<wgpu::RenderPipeline>,
+    /// Render pipeline for SDF shapes with texture fill.
+    /// `None` until the first frame that references an `OverlayTextureId`.
+    pub(crate) overlay_shape_tex_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for the texture pipeline (group 0: texture + sampler).
+    pub(crate) overlay_shape_tex_bgl: Option<wgpu::BindGroupLayout>,
+    /// Clamp-to-edge linear sampler shared across all texture shape bind groups.
+    pub(crate) overlay_shape_tex_sampler: Option<wgpu::Sampler>,
+    /// Persistent textures uploaded via `upload_overlay_texture`.
+    pub(crate) overlay_textures: Vec<OverlayShapeTextureEntry>,
 
     // --- Depth blit pipeline (lazily created, shared across all viewports) ---
     // Copies a scene-resolution depth texture to a native-resolution depth-only target.

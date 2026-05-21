@@ -160,10 +160,24 @@ impl ViewportRenderer {
         }
         // SDF overlay shapes (drawn before rects and labels).
         if let Some(ref sd) = self.overlay_shape_gpu_data {
-            if let Some(pipeline) = &self.resources.overlay_shape_pipeline {
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_vertex_buffer(0, sd.vertex_buf.slice(..));
-                render_pass.draw(0..sd.vertex_count, 0..1);
+            if sd.vertex_count > 0 {
+                if let Some(pipeline) = &self.resources.overlay_shape_pipeline {
+                    if let Some(vbuf) = &sd.vertex_buf {
+                        render_pass.set_pipeline(pipeline);
+                        render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                        render_pass.draw(0..sd.vertex_count, 0..1);
+                    }
+                }
+            }
+            if !sd.tex_batches.is_empty() {
+                if let Some(pipeline) = &self.resources.overlay_shape_tex_pipeline {
+                    render_pass.set_pipeline(pipeline);
+                    for batch in &sd.tex_batches {
+                        render_pass.set_bind_group(0, &batch.bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, batch.vertex_buf.slice(..));
+                        render_pass.draw(0..batch.vertex_count, 0..1);
+                    }
+                }
             }
         }
         // Overlay rects (drawn before labels so they act as backgrounds).
@@ -382,10 +396,24 @@ impl ViewportRenderer {
         }
         // SDF overlay shapes (drawn before rects and labels).
         if let Some(ref sd) = self.overlay_shape_gpu_data {
-            if let Some(pipeline) = &self.resources.overlay_shape_pipeline {
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_vertex_buffer(0, sd.vertex_buf.slice(..));
-                render_pass.draw(0..sd.vertex_count, 0..1);
+            if sd.vertex_count > 0 {
+                if let Some(pipeline) = &self.resources.overlay_shape_pipeline {
+                    if let Some(vbuf) = &sd.vertex_buf {
+                        render_pass.set_pipeline(pipeline);
+                        render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                        render_pass.draw(0..sd.vertex_count, 0..1);
+                    }
+                }
+            }
+            if !sd.tex_batches.is_empty() {
+                if let Some(pipeline) = &self.resources.overlay_shape_tex_pipeline {
+                    render_pass.set_pipeline(pipeline);
+                    for batch in &sd.tex_batches {
+                        render_pass.set_bind_group(0, &batch.bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, batch.vertex_buf.slice(..));
+                        render_pass.draw(0..batch.vertex_count, 0..1);
+                    }
+                }
             }
         }
         // Overlay rects (drawn before labels so they act as backgrounds).
@@ -637,10 +665,24 @@ impl ViewportRenderer {
             }
             // SDF overlay shapes (drawn before rects and labels).
             if let Some(ref sd) = self.overlay_shape_gpu_data {
-                if let Some(pipeline) = &self.resources.overlay_shape_pipeline {
-                    render_pass.set_pipeline(pipeline);
-                    render_pass.set_vertex_buffer(0, sd.vertex_buf.slice(..));
-                    render_pass.draw(0..sd.vertex_count, 0..1);
+                if sd.vertex_count > 0 {
+                    if let Some(pipeline) = &self.resources.overlay_shape_pipeline {
+                        if let Some(vbuf) = &sd.vertex_buf {
+                            render_pass.set_pipeline(pipeline);
+                            render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                            render_pass.draw(0..sd.vertex_count, 0..1);
+                        }
+                    }
+                }
+                if !sd.tex_batches.is_empty() {
+                    if let Some(pipeline) = &self.resources.overlay_shape_tex_pipeline {
+                        render_pass.set_pipeline(pipeline);
+                        for batch in &sd.tex_batches {
+                            render_pass.set_bind_group(0, &batch.bind_group, &[]);
+                            render_pass.set_vertex_buffer(0, batch.vertex_buf.slice(..));
+                            render_pass.draw(0..batch.vertex_count, 0..1);
+                        }
+                    }
                 }
             }
             // Overlay rects (drawn before labels so they act as backgrounds).
@@ -1171,10 +1213,24 @@ impl ViewportRenderer {
                 }
                 // SDF overlay shapes (LDR fallback).
                 if let Some(ref sd) = self.overlay_shape_gpu_data {
-                    if let Some(pipeline) = &self.resources.overlay_shape_pipeline {
-                        render_pass.set_pipeline(pipeline);
-                        render_pass.set_vertex_buffer(0, sd.vertex_buf.slice(..));
-                        render_pass.draw(0..sd.vertex_count, 0..1);
+                    if sd.vertex_count > 0 {
+                        if let Some(pipeline) = &self.resources.overlay_shape_pipeline {
+                            if let Some(vbuf) = &sd.vertex_buf {
+                                render_pass.set_pipeline(pipeline);
+                                render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                                render_pass.draw(0..sd.vertex_count, 0..1);
+                            }
+                        }
+                    }
+                    if !sd.tex_batches.is_empty() {
+                        if let Some(pipeline) = &self.resources.overlay_shape_tex_pipeline {
+                            render_pass.set_pipeline(pipeline);
+                            for batch in &sd.tex_batches {
+                                render_pass.set_bind_group(0, &batch.bind_group, &[]);
+                                render_pass.set_vertex_buffer(0, batch.vertex_buf.slice(..));
+                                render_pass.draw(0..batch.vertex_count, 0..1);
+                            }
+                        }
                     }
                 }
                 // Overlay rects (LDR fallback).
@@ -3086,10 +3142,24 @@ impl ViewportRenderer {
             });
             // SDF overlay shapes (HDR path).
             if let Some(ref sd) = self.overlay_shape_gpu_data {
-                if let Some(pipeline) = &self.resources.overlay_shape_pipeline {
-                    overlay_pass.set_pipeline(pipeline);
-                    overlay_pass.set_vertex_buffer(0, sd.vertex_buf.slice(..));
-                    overlay_pass.draw(0..sd.vertex_count, 0..1);
+                if sd.vertex_count > 0 {
+                    if let Some(pipeline) = &self.resources.overlay_shape_pipeline {
+                        if let Some(vbuf) = &sd.vertex_buf {
+                            overlay_pass.set_pipeline(pipeline);
+                            overlay_pass.set_vertex_buffer(0, vbuf.slice(..));
+                            overlay_pass.draw(0..sd.vertex_count, 0..1);
+                        }
+                    }
+                }
+                if !sd.tex_batches.is_empty() {
+                    if let Some(pipeline) = &self.resources.overlay_shape_tex_pipeline {
+                        overlay_pass.set_pipeline(pipeline);
+                        for batch in &sd.tex_batches {
+                            overlay_pass.set_bind_group(0, &batch.bind_group, &[]);
+                            overlay_pass.set_vertex_buffer(0, batch.vertex_buf.slice(..));
+                            overlay_pass.draw(0..batch.vertex_count, 0..1);
+                        }
+                    }
                 }
             }
             if let Some(pipeline) = &self.resources.overlay_text_pipeline {

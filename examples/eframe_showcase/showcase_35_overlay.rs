@@ -14,6 +14,9 @@ pub(crate) struct OvlState {
     pub show_shapes: bool,
     pub shape_corner_radius: f32,
     pub shape_border_width: f32,
+    pub show_tex_shapes: bool,
+    pub tex_id: Option<viewport_lib::OverlayTextureId>,
+    pub carlgauss_tex_id: Option<viewport_lib::OverlayTextureId>,
     pub cloud_positions: Vec<[f32; 3]>,
     pub cloud_scalars: Vec<f32>,
     pub cloud_built: bool,
@@ -33,6 +36,9 @@ impl Default for OvlState {
             show_shapes: true,
             shape_corner_radius: 8.0,
             shape_border_width: 1.5,
+            show_tex_shapes: true,
+            tex_id: None,
+            carlgauss_tex_id: None,
             cloud_positions: Vec::new(),
             cloud_scalars: Vec::new(),
             cloud_built: false,
@@ -46,7 +52,8 @@ use crate::App;
 use eframe::egui;
 use viewport_lib::{
     BuiltinColourmap, ColourmapId, LabelAnchor, LabelItem, OverlayShape, OverlayShapeItem,
-    RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, TriangleDirection,
+    RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
+    TriangleDirection,
 };
 
 const ALL_COLOURMAPS: &[(BuiltinColourmap, &str)] = &[
@@ -61,6 +68,65 @@ const ALL_COLOURMAPS: &[(BuiltinColourmap, &str)] = &[
     (BuiltinColourmap::Jet, "Jet"),
     (BuiltinColourmap::RdBu, "RdBu"),
 ];
+
+// ---------------------------------------------------------------------------
+// Demo texture generation
+// ---------------------------------------------------------------------------
+
+// Carl Gauss portrait: pre-converted raw RGBA (1500 x 1000).
+pub(crate) const CARLGAUSS_WIDTH: u32 = 1500;
+pub(crate) const CARLGAUSS_HEIGHT: u32 = 1000;
+pub(crate) const CARLGAUSS_RGBA: &[u8] = include_bytes!("carlgauss.rgba");
+
+/// Generate a 128x128 RGBA8 image for the texture masking demo.
+///
+/// The image is a smooth colour-wheel gradient: hue rotates with angle and
+/// brightness increases from centre to edge, producing a ring-like look that
+/// shows up well under all SDF shapes.
+pub(crate) fn build_demo_texture() -> (u32, u32, Vec<u8>) {
+    let size: u32 = 128;
+    let mut pixels = Vec::with_capacity((size * size * 4) as usize);
+    for y in 0..size {
+        for x in 0..size {
+            // Normalised coords in [-1, 1].
+            let nx = (x as f32 / (size - 1) as f32) * 2.0 - 1.0;
+            let ny = (y as f32 / (size - 1) as f32) * 2.0 - 1.0;
+
+            // Hue from angle (0..1).
+            let angle = ny.atan2(nx); // -pi..pi
+            let hue = (angle / (2.0 * std::f32::consts::PI) + 0.5).fract();
+
+            // Saturation ramps up from centre.
+            let r = (nx * nx + ny * ny).sqrt().min(1.0);
+            let sat = r;
+
+            // HSV to RGB (value = 1).
+            let [red, green, blue] = hsv_to_rgb(hue, sat, 1.0);
+
+            pixels.push((red * 255.0) as u8);
+            pixels.push((green * 255.0) as u8);
+            pixels.push((blue * 255.0) as u8);
+            pixels.push(255u8); // fully opaque
+        }
+    }
+    (size, size, pixels)
+}
+
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
+    let i = (h * 6.0).floor() as u32 % 6;
+    let f = h * 6.0 - (h * 6.0).floor();
+    let p = v * (1.0 - s);
+    let q = v * (1.0 - f * s);
+    let t = v * (1.0 - (1.0 - f) * s);
+    match i {
+        0 => [v, t, p],
+        1 => [q, v, p],
+        2 => [p, v, t],
+        3 => [p, q, v],
+        4 => [t, p, v],
+        _ => [v, p, q],
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Controls
@@ -155,15 +221,21 @@ pub(crate) fn controls_overlay(app: &mut App, ui: &mut egui::Ui) {
                 .text("Border width"),
         );
     }
+
+    ui.separator();
+    ui.checkbox(&mut app.ovl_state.show_tex_shapes, "Show texture-masked shapes");
+    if app.ovl_state.tex_id.is_none() {
+        ui.label(egui::RichText::new("(texture not yet uploaded)").weak());
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Point cloud geometry (built once)
 // ---------------------------------------------------------------------------
 
-/// Generate a sinusoidal wave surface sampled on a 70×70 grid.
+/// Generate a sinusoidal wave surface sampled on a 70x70 grid.
 ///
-/// x ∈ [-π/2, π/2], y ∈ [0, π], z = sin(x) * 1.5.
+/// x in [-pi/2, pi/2], y in [0, pi], z = sin(x) * 1.5.
 /// Returns (positions, scalars) where scalar = z, matching the bar range [-1.5, 1.5].
 pub(crate) fn build_ovl_cloud() -> (Vec<[f32; 3]>, Vec<f32>) {
     use std::f32::consts::PI;
@@ -258,7 +330,6 @@ pub(crate) fn build_overlay_frame(
         let gap = 16.0_f32; // horizontal gap between shapes
         let mut x = 20.0_f32; // running left edge
 
-        // Helper: push a shape centred vertically on y_mid, advance x.
         let mut items: Vec<(f32, f32, OverlayShape, [f32; 4], [f32; 4])> = vec![
             // Rounded rect
             (120.0, 70.0,
@@ -318,6 +389,47 @@ pub(crate) fn build_overlay_frame(
                 ..Default::default()
             });
             x += w + gap;
+        }
+
+        // ---------------------------------------------------------------------------
+        // Texture-masked shapes (second row, below the solid shapes).
+        // These demonstrate upload_overlay_texture + OverlayShapeItem::texture.
+        // ---------------------------------------------------------------------------
+        if app.ovl_state.show_tex_shapes {
+            let bw2 = bw;
+            let row2_h = 90.0_f32;
+            let y2_mid = 20.0 + row_h + 24.0 + row2_h * 0.5;
+            let mut x2 = 20.0_f32;
+
+            // Circle: colour-wheel gradient texture, white border.
+            if let Some(tid) = app.ovl_state.tex_id {
+                let sz = 90.0_f32;
+                shapes.push(OverlayShapeItem {
+                    position: [x2, y2_mid - sz * 0.5],
+                    size: [sz, sz],
+                    shape: OverlayShape::Circle,
+                    colour: [1.0, 1.0, 1.0, 1.0],
+                    border_colour: [1.0, 1.0, 1.0, 0.9],
+                    border_width: bw2,
+                    texture: Some(tid),
+                    ..Default::default()
+                });
+                x2 += sz + gap;
+            }
+
+            // Rounded rect: Carl Gauss portrait.
+            if let Some(tid) = app.ovl_state.carlgauss_tex_id {
+                shapes.push(OverlayShapeItem {
+                    position: [x2, y2_mid - row2_h * 0.5],
+                    size: [140.0, row2_h],
+                    shape: OverlayShape::Rect { corner_radius: cr },
+                    colour: [1.0, 1.0, 1.0, 1.0],
+                    border_colour: [0.8, 0.8, 0.8, 0.9],
+                    border_width: bw2,
+                    texture: Some(tid),
+                    ..Default::default()
+                });
+            }
         }
     }
 

@@ -4,6 +4,14 @@ use super::*;
 // OverlayFrame and overlay item stubs
 // ---------------------------------------------------------------------------
 
+/// Handle to a texture uploaded via `ViewportGpuResources::upload_overlay_texture`.
+///
+/// Pass this to `OverlayShapeItem::texture` to use the image as fill. The
+/// handle remains valid for the lifetime of the `ViewportGpuResources` it
+/// came from; using it after the resources are dropped is a logic error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct OverlayTextureId(pub(crate) u64);
+
 /// Horizontal alignment of a label relative to its anchor point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -554,6 +562,11 @@ impl Default for OverlayShape {
 /// Each item becomes a single bounding quad on the GPU. The fragment shader
 /// evaluates an SDF to produce anti-aliased fill, border, and discard regions.
 ///
+/// When `texture` is set the shape samples the uploaded image as its fill.
+/// `colour` then acts as a tint multiplied with each texel; set it to
+/// `[1.0, 1.0, 1.0, 1.0]` for no tint. The SDF boundary, border, and AA all
+/// apply in the same way as for a solid fill.
+///
 /// # Examples
 ///
 /// ```rust
@@ -587,6 +600,10 @@ pub struct OverlayShapeItem {
     /// Which SDF shape to render.
     pub shape: OverlayShape,
     /// RGBA fill colour in linear float format.
+    ///
+    /// When `texture` is `None` this is used as the solid fill.
+    /// When `texture` is `Some`, this is multiplied with each texture sample
+    /// as a tint; use `[1.0, 1.0, 1.0, 1.0]` for no colour shift.
     pub colour: [f32; 4],
     /// Overall opacity multiplier applied to both fill and border. Range 0.0-1.0.
     pub opacity: f32,
@@ -596,6 +613,10 @@ pub struct OverlayShapeItem {
     pub border_width: f32,
     /// Draw order relative to other shapes. Lower values render first (further back).
     pub z_order: i32,
+    /// Optional texture fill. When set the shape samples the image uploaded
+    /// via `ViewportGpuResources::upload_overlay_texture`, clipped by the SDF
+    /// boundary. `colour` acts as a tint when this is `Some`.
+    pub texture: Option<OverlayTextureId>,
 }
 
 impl Default for OverlayShapeItem {
@@ -609,6 +630,7 @@ impl Default for OverlayShapeItem {
             border_colour: [1.0, 1.0, 1.0, 1.0],
             border_width: 0.0,
             z_order: 0,
+            texture: None,
         }
     }
 }

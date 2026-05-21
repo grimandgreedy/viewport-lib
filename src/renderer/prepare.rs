@@ -4816,15 +4816,26 @@ impl ViewportRenderer {
         // ------------------------------------------------------------------
         self.overlay_shape_gpu_data = None;
         if !frame.overlays.shapes.is_empty() {
-            self.resources.ensure_overlay_shape_pipeline(device);
             let vp_w = frame.camera.viewport_size[0];
             let vp_h = frame.camera.viewport_size[1];
             if vp_w > 0.0 && vp_h > 0.0 {
-                let mut verts: Vec<crate::resources::OverlayShapeVertex> = Vec::new();
-
                 let mut sorted: Vec<&crate::renderer::types::OverlayShapeItem> =
                     frame.overlays.shapes.iter().collect();
                 sorted.sort_by_key(|s| s.z_order);
+
+                let has_solid = sorted.iter().any(|s| s.texture.is_none());
+                let has_tex = sorted.iter().any(|s| s.texture.is_some());
+                if has_solid {
+                    self.resources.ensure_overlay_shape_pipeline(device);
+                }
+                if has_tex {
+                    self.resources.ensure_overlay_shape_tex_pipeline(device);
+                }
+
+                let mut solid_verts: Vec<crate::resources::OverlayShapeVertex> = Vec::new();
+                // One vertex list per unique texture ID, in order of first appearance.
+                let mut tex_groups: Vec<(u64, Vec<crate::resources::OverlayShapeTexVertex>)> =
+                    Vec::new();
 
                 for shape in &sorted {
                     if shape.opacity <= 0.0 {
@@ -4859,15 +4870,9 @@ impl ViewportRenderer {
                             ];
                             (0.0, clamped)
                         }
-                        crate::renderer::types::OverlayShape::Circle => {
-                            (1.0, [0.0; 4])
-                        }
-                        crate::renderer::types::OverlayShape::Ellipse => {
-                            (2.0, [0.0; 4])
-                        }
-                        crate::renderer::types::OverlayShape::Capsule => {
-                            (3.0, [0.0; 4])
-                        }
+                        crate::renderer::types::OverlayShape::Circle => (1.0, [0.0; 4]),
+                        crate::renderer::types::OverlayShape::Ellipse => (2.0, [0.0; 4]),
+                        crate::renderer::types::OverlayShape::Capsule => (3.0, [0.0; 4]),
                         crate::renderer::types::OverlayShape::Ring { inner_radius_frac } => {
                             (4.0, [inner_radius_frac.clamp(0.0, 1.0), 0.0, 0.0, 0.0])
                         }
@@ -4875,9 +4880,7 @@ impl ViewportRenderer {
                             inner_radius_frac,
                             start_angle,
                             end_angle,
-                        } => {
-                            (5.0, [inner_radius_frac.clamp(0.0, 1.0), start_angle, end_angle, 0.0])
-                        }
+                        } => (5.0, [inner_radius_frac.clamp(0.0, 1.0), start_angle, end_angle, 0.0]),
                         crate::renderer::types::OverlayShape::Triangle { direction } => {
                             let dir_f = match direction {
                                 crate::renderer::types::TriangleDirection::Up => 0.0,
@@ -4905,31 +4908,117 @@ impl ViewportRenderer {
                         (cx + ex, cy + ey, ex, ey),
                         (cx - ex, cy + ey, -ex, ey),
                     ];
-                    for (px, py, lx, ly) in corners_px {
-                        verts.push(crate::resources::OverlayShapeVertex {
-                            position: px_to_ndc(px, py, vp_w, vp_h),
-                            local_pos: [lx, ly],
-                            fill_colour: fc,
-                            border_colour: bc,
-                            half_size,
-                            radii,
-                            border_width: shape.border_width,
-                            shape_type,
-                        });
+
+                    if let Some(crate::renderer::types::OverlayTextureId(tid)) = shape.texture {
+                        // Find or create a group for this texture ID.
+                        let group_idx = tex_groups
+                            .iter()
+                            .position(|(id, _)| *id == tid)
+                            .unwrap_or_else(|| {
+                                tex_groups.push((tid, Vec::new()));
+                                tex_groups.len() - 1
+                            });
+                        let group_verts = &mut tex_groups[group_idx].1;
+
+                        // UV maps local_pos to [0,1] over the shape content area.
+                        // hw/hh safe-guarded so we never divide by zero.
+                        let hw_s = if hw > 0.0 { hw } else { 1.0 };
+                        let hh_s = if hh > 0.0 { hh } else { 1.0 };
+
+                        for (px, py, lx, ly) in corners_px {
+                            group_verts.push(crate::resources::OverlayShapeTexVertex {
+                                position: px_to_ndc(px, py, vp_w, vp_h),
+                                local_pos: [lx, ly],
+                                fill_colour: fc,
+                                border_colour: bc,
+                                half_size,
+                                radii,
+                                border_width: shape.border_width,
+                                shape_type,
+                                uv: [
+                                    (lx + hw_s) / (2.0 * hw_s),
+                                    (ly + hh_s) / (2.0 * hh_s),
+                                ],
+                            });
+                        }
+                    } else {
+                        for (px, py, lx, ly) in corners_px {
+                            solid_verts.push(crate::resources::OverlayShapeVertex {
+                                position: px_to_ndc(px, py, vp_w, vp_h),
+                                local_pos: [lx, ly],
+                                fill_colour: fc,
+                                border_colour: bc,
+                                half_size,
+                                radii,
+                                border_width: shape.border_width,
+                                shape_type,
+                            });
+                        }
                     }
                 }
 
-                if !verts.is_empty() {
-                    let vertex_buf =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("overlay_shape_vbuf"),
-                            contents: bytemuck::cast_slice(&verts),
-                            usage: wgpu::BufferUsages::VERTEX,
-                        });
+                let solid_vbuf = if !solid_verts.is_empty() {
+                    Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("overlay_shape_vbuf"),
+                        contents: bytemuck::cast_slice(&solid_verts),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    }))
+                } else {
+                    None
+                };
+
+                let mut tex_batches = Vec::new();
+                if has_tex {
+                    if let (Some(bgl), Some(sampler)) = (
+                        self.resources.overlay_shape_tex_bgl.as_ref(),
+                        self.resources.overlay_shape_tex_sampler.as_ref(),
+                    ) {
+                        for (tid, verts) in &tex_groups {
+                            if verts.is_empty() {
+                                continue;
+                            }
+                            let tidx = *tid as usize;
+                            if tidx >= self.resources.overlay_textures.len() {
+                                continue;
+                            }
+                            let view = &self.resources.overlay_textures[tidx].view;
+                            let bind_group =
+                                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                    label: Some("overlay_shape_tex_bg"),
+                                    layout: bgl,
+                                    entries: &[
+                                        wgpu::BindGroupEntry {
+                                            binding: 0,
+                                            resource: wgpu::BindingResource::TextureView(view),
+                                        },
+                                        wgpu::BindGroupEntry {
+                                            binding: 1,
+                                            resource: wgpu::BindingResource::Sampler(sampler),
+                                        },
+                                    ],
+                                });
+                            let vertex_buf = device.create_buffer_init(
+                                &wgpu::util::BufferInitDescriptor {
+                                    label: Some("overlay_shape_tex_vbuf"),
+                                    contents: bytemuck::cast_slice(verts),
+                                    usage: wgpu::BufferUsages::VERTEX,
+                                },
+                            );
+                            tex_batches.push(crate::resources::OverlayShapeTexBatch {
+                                vertex_buf,
+                                vertex_count: verts.len() as u32,
+                                bind_group,
+                            });
+                        }
+                    }
+                }
+
+                if solid_vbuf.is_some() || !tex_batches.is_empty() {
                     self.overlay_shape_gpu_data =
                         Some(crate::resources::OverlayShapeGpuData {
-                            vertex_buf,
-                            vertex_count: verts.len() as u32,
+                            vertex_buf: solid_vbuf,
+                            vertex_count: solid_verts.len() as u32,
+                            tex_batches,
                         });
                 }
             }
