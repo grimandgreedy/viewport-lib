@@ -682,6 +682,319 @@ impl Default for OverlayShapeItem {
     }
 }
 
+// ---------------------------------------------------------------------------
+// CPU-side SDF evaluation (mirrors the GPU shader functions)
+// ---------------------------------------------------------------------------
+
+fn sd_rounded_box(p: [f32; 2], b: [f32; 2], r: [f32; 4]) -> f32 {
+    // r: [top-right, bottom-right, bottom-left, top-left] (iq convention).
+    let chosen = if p[0] > 0.0 {
+        if p[1] > 0.0 { r[1] } else { r[0] } // right: bottom-right or top-right
+    } else {
+        if p[1] > 0.0 { r[2] } else { r[3] } // left: bottom-left or top-left
+    };
+    let qx = (p[0].abs() - b[0] + chosen).max(0.0);
+    let qy = (p[1].abs() - b[1] + chosen).max(0.0);
+    let outer = (qx * qx + qy * qy).sqrt();
+    let inner = (p[0].abs() - b[0] + chosen).max(p[1].abs() - b[1] + chosen).min(0.0);
+    inner + outer - chosen
+}
+
+fn sd_circle(p: [f32; 2], r: f32) -> f32 {
+    (p[0] * p[0] + p[1] * p[1]).sqrt() - r
+}
+
+fn sd_ellipse(p: [f32; 2], ab: [f32; 2]) -> f32 {
+    let pa = [p[0].abs(), p[1].abs()];
+    let ei = [1.0 / ab[0], 1.0 / ab[1]];
+    let e2 = [ab[0] * ab[0], ab[1] * ab[1]];
+    let ve = [ei[0] * (e2[0] - e2[1]), ei[1] * (e2[1] - e2[0])];
+
+    let mut t = [std::f32::consts::FRAC_1_SQRT_2; 2];
+    for _ in 0..3 {
+        let v = [ve[0] * t[0] * t[0] * t[0], ve[1] * t[1] * t[1] * t[1]];
+        let diff = [pa[0] - v[0], pa[1] - v[1]];
+        let diff_len = (diff[0] * diff[0] + diff[1] * diff[1]).sqrt();
+        let tab_v = [t[0] * ab[0] - v[0], t[1] * ab[1] - v[1]];
+        let tab_v_len = (tab_v[0] * tab_v[0] + tab_v[1] * tab_v[1]).sqrt();
+        let u = if diff_len > 0.0 {
+            let s = tab_v_len / diff_len;
+            [diff[0] * s, diff[1] * s]
+        } else {
+            [0.0, 0.0]
+        };
+        let w = [ei[0] * (v[0] + u[0]), ei[1] * (v[1] + u[1])];
+        let wc = [w[0].clamp(0.0, 1.0), w[1].clamp(0.0, 1.0)];
+        let wlen = (wc[0] * wc[0] + wc[1] * wc[1]).sqrt();
+        t = if wlen > 0.0 { [wc[0] / wlen, wc[1] / wlen] } else { t };
+    }
+    let nearest = [t[0] * ab[0], t[1] * ab[1]];
+    let dx = pa[0] - nearest[0];
+    let dy = pa[1] - nearest[1];
+    let d = (dx * dx + dy * dy).sqrt();
+    let np = [pa[0] / ab[0], pa[1] / ab[1]];
+    let inside = np[0] * np[0] + np[1] * np[1];
+    if inside < 1.0 { -d } else { d }
+}
+
+fn sd_capsule(p: [f32; 2], hs: [f32; 2]) -> f32 {
+    let r = hs[0].min(hs[1]);
+    let mut qx = p[0].abs();
+    let mut qy = p[1].abs();
+    if hs[0] > hs[1] {
+        qx -= hs[0] - r;
+    } else {
+        qy -= hs[1] - r;
+    }
+    (qx.max(0.0) * qx.max(0.0) + qy.max(0.0) * qy.max(0.0)).sqrt() - r
+}
+
+fn sd_ring(p: [f32; 2], outer_r: f32, inner_frac: f32) -> f32 {
+    let wall = outer_r * (1.0 - inner_frac) * 0.5;
+    let mid_r = outer_r - wall;
+    ((p[0] * p[0] + p[1] * p[1]).sqrt() - mid_r).abs() - wall
+}
+
+fn sd_arc(p: [f32; 2], outer_r: f32, inner_frac: f32, sa: f32, ea: f32) -> f32 {
+    let d_ring = sd_ring(p, outer_r, inner_frac);
+
+    let angle = p[1].atan2(p[0]);
+    let two_pi = std::f32::consts::TAU;
+    let sweep = ((ea - sa) % two_pi + two_pi) % two_pi;
+    let a = ((angle - sa) % two_pi + two_pi) % two_pi;
+
+    if a <= sweep {
+        return d_ring;
+    }
+
+    let wall = outer_r * (1.0 - inner_frac) * 0.5;
+    let mid_r = outer_r - wall;
+    let inner_r = mid_r - wall;
+    let outer_edge = mid_r + wall;
+
+    let cs = [sa.cos(), sa.sin()];
+    let ce = [ea.cos(), ea.sin()];
+
+    let dot_s = (p[0] * cs[0] + p[1] * cs[1]).clamp(inner_r, outer_edge);
+    let dot_e = (p[0] * ce[0] + p[1] * ce[1]).clamp(inner_r, outer_edge);
+
+    let dsx = p[0] - cs[0] * dot_s;
+    let dsy = p[1] - cs[1] * dot_s;
+    let ds = (dsx * dsx + dsy * dsy).sqrt();
+
+    let dex = p[0] - ce[0] * dot_e;
+    let dey = p[1] - ce[1] * dot_e;
+    let de = (dex * dex + dey * dey).sqrt();
+
+    ds.min(de)
+}
+
+fn sd_triangle(p: [f32; 2], hs: [f32; 2]) -> f32 {
+    let q = [p[0].abs(), p[1]];
+    let e = [hs[0], 2.0 * hs[1]];
+    let elen = (e[0] * e[0] + e[1] * e[1]).sqrt();
+    let en = [e[0] / elen, e[1] / elen];
+    let n = [en[1], -en[0]];
+    let d_edge = (q[0] - 0.0) * n[0] + (q[1] - (-hs[1])) * n[1];
+    let d_base = q[1] - hs[1];
+    d_edge.max(d_base)
+}
+
+impl OverlayShapeItem {
+    /// Signed distance from a screen-space point to the shape boundary.
+    ///
+    /// The point is in logical pixels from the top-left of the viewport (the
+    /// same coordinate space as `position`). Negative values mean the point is
+    /// inside the shape; positive values mean it is outside.
+    ///
+    /// This evaluates the same SDF used by the GPU shader, so the boundary
+    /// matches what is rendered on screen (ignoring sub-pixel AA).
+    pub fn distance(&self, point: [f32; 2]) -> f32 {
+        let hw = self.size[0] * 0.5;
+        let hh = self.size[1] * 0.5;
+        let cx = self.position[0] + hw;
+        let cy = self.position[1] + hh;
+        let p = [point[0] - cx, point[1] - cy];
+        let hs = [hw, hh];
+
+        match self.shape {
+            OverlayShape::Rect { corner_radius } => {
+                let r = corner_radius.min(hw).min(hh).max(0.0);
+                sd_rounded_box(p, hs, [r, r, r, r])
+            }
+            OverlayShape::RoundedRect { radii: r } => {
+                // Input: [tl, tr, br, bl]. iq convention: [tr, br, bl, tl].
+                let clamped = [
+                    r[1].min(hw).min(hh).max(0.0),
+                    r[2].min(hw).min(hh).max(0.0),
+                    r[3].min(hw).min(hh).max(0.0),
+                    r[0].min(hw).min(hh).max(0.0),
+                ];
+                sd_rounded_box(p, hs, clamped)
+            }
+            OverlayShape::Circle => sd_circle(p, hw.min(hh)),
+            OverlayShape::Ellipse => sd_ellipse(p, hs),
+            OverlayShape::Capsule => sd_capsule(p, hs),
+            OverlayShape::Ring { inner_radius_frac } => {
+                sd_ring(p, hw.min(hh), inner_radius_frac.clamp(0.0, 1.0))
+            }
+            OverlayShape::Arc {
+                inner_radius_frac,
+                start_angle,
+                end_angle,
+            } => sd_arc(
+                p,
+                hw.min(hh),
+                inner_radius_frac.clamp(0.0, 1.0),
+                start_angle,
+                end_angle,
+            ),
+            OverlayShape::Triangle { direction } => {
+                let (tp, ths) = match direction {
+                    TriangleDirection::Up => (p, hs),
+                    TriangleDirection::Down => ([p[0], -p[1]], hs),
+                    TriangleDirection::Left => ([p[1], p[0]], [hh, hw]),
+                    TriangleDirection::Right => ([-p[1], p[0]], [hh, hw]),
+                };
+                sd_triangle(tp, ths)
+            }
+        }
+    }
+
+    /// Returns `true` if the screen-space point falls inside the shape boundary.
+    ///
+    /// The point is in logical pixels from the top-left of the viewport.
+    /// Equivalent to `self.distance(point) <= 0.0`.
+    pub fn contains(&self, point: [f32; 2]) -> bool {
+        self.distance(point) <= 0.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn shape_at(x: f32, y: f32, w: f32, h: f32, shape: OverlayShape) -> OverlayShapeItem {
+        OverlayShapeItem {
+            position: [x, y],
+            size: [w, h],
+            shape,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn rect_centre_is_inside() {
+        let s = shape_at(100.0, 100.0, 80.0, 60.0, OverlayShape::Rect { corner_radius: 0.0 });
+        assert!(s.contains([140.0, 130.0])); // centre
+        assert!(s.distance([140.0, 130.0]) < 0.0);
+    }
+
+    #[test]
+    fn rect_outside() {
+        let s = shape_at(100.0, 100.0, 80.0, 60.0, OverlayShape::Rect { corner_radius: 0.0 });
+        assert!(!s.contains([50.0, 130.0])); // left of shape
+        assert!(!s.contains([200.0, 130.0])); // right of shape
+    }
+
+    #[test]
+    fn rect_edge_distance() {
+        let s = shape_at(0.0, 0.0, 100.0, 100.0, OverlayShape::Rect { corner_radius: 0.0 });
+        // Centre is at (50, 50), half-size 50x50. Point on the right edge:
+        let d = s.distance([100.0, 50.0]);
+        assert!(d.abs() < 0.01, "edge distance should be ~0, got {d}");
+    }
+
+    #[test]
+    fn rounded_rect_corner_is_outside() {
+        let s = shape_at(0.0, 0.0, 100.0, 100.0, OverlayShape::Rect { corner_radius: 20.0 });
+        // The very corner pixel should be outside the rounded shape.
+        assert!(!s.contains([1.0, 1.0]));
+        // But interior should still be inside.
+        assert!(s.contains([50.0, 50.0]));
+    }
+
+    #[test]
+    fn circle_contains() {
+        let s = shape_at(0.0, 0.0, 100.0, 100.0, OverlayShape::Circle);
+        assert!(s.contains([50.0, 50.0])); // centre
+        assert!(!s.contains([1.0, 1.0])); // corner
+        // Just inside the circle edge (radius = 50, point at distance ~49):
+        assert!(s.contains([50.0, 1.5]));
+    }
+
+    #[test]
+    fn ellipse_contains() {
+        let s = shape_at(0.0, 0.0, 200.0, 100.0, OverlayShape::Ellipse);
+        assert!(s.contains([100.0, 50.0])); // centre
+        assert!(!s.contains([1.0, 1.0])); // corner
+    }
+
+    #[test]
+    fn capsule_contains() {
+        let s = shape_at(0.0, 0.0, 120.0, 40.0, OverlayShape::Capsule);
+        assert!(s.contains([60.0, 20.0])); // centre
+        // Corner outside the rounded end:
+        assert!(!s.contains([1.0, 1.0]));
+    }
+
+    #[test]
+    fn ring_hole_is_outside() {
+        let s = shape_at(0.0, 0.0, 100.0, 100.0, OverlayShape::Ring { inner_radius_frac: 0.7 });
+        // Centre of the ring (the hole) should be outside.
+        assert!(!s.contains([50.0, 50.0]));
+        // Point in the wall area should be inside.
+        assert!(s.contains([50.0, 8.0]));
+    }
+
+    #[test]
+    fn arc_inside_sweep() {
+        let s = shape_at(
+            0.0, 0.0, 100.0, 100.0,
+            OverlayShape::Arc {
+                inner_radius_frac: 0.6,
+                start_angle: 0.0,
+                end_angle: std::f32::consts::PI,
+            },
+        );
+        // Point in the right half of the ring (angle ~0), within the sweep:
+        assert!(s.contains([92.0, 50.0]));
+        // Point above centre in screen coords (local y = -42, angle ~ -PI/2),
+        // outside the [0, PI] sweep:
+        assert!(!s.contains([50.0, 8.0]));
+    }
+
+    #[test]
+    fn triangle_centre_inside() {
+        let s = shape_at(0.0, 0.0, 60.0, 60.0, OverlayShape::Triangle {
+            direction: TriangleDirection::Up,
+        });
+        assert!(s.contains([30.0, 35.0])); // slightly below centre
+        assert!(!s.contains([1.0, 1.0])); // top-left corner
+    }
+
+    #[test]
+    fn triangle_directions() {
+        for dir in [
+            TriangleDirection::Up,
+            TriangleDirection::Down,
+            TriangleDirection::Left,
+            TriangleDirection::Right,
+        ] {
+            let s = shape_at(0.0, 0.0, 60.0, 60.0, OverlayShape::Triangle { direction: dir });
+            // Centre-ish should always be inside.
+            assert!(s.contains([30.0, 30.0]), "centre should be inside for {dir:?}");
+        }
+    }
+
+    #[test]
+    fn distance_is_negative_inside_positive_outside() {
+        let s = shape_at(0.0, 0.0, 100.0, 100.0, OverlayShape::Circle);
+        assert!(s.distance([50.0, 50.0]) < 0.0, "centre should be negative");
+        assert!(s.distance([0.0, 0.0]) > 0.0, "far corner should be positive");
+    }
+}
+
 /// Semantic overlays rendered after post-processing: labels, scalar bars,
 /// rulers, screen-space images, and loading bars.
 ///
