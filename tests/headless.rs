@@ -164,6 +164,7 @@ fn prepare_empty_scene_no_panic() {
         orientation: cam.orientation,
         near: cam.effective_znear(),
         far: cam.zfar,
+        distance: cam.distance,
         fov: cam.fov_y,
         aspect: cam.aspect,
     };
@@ -269,6 +270,7 @@ fn render_offscreen_produces_rgba_pixels() {
         orientation: cam.orientation,
         near: cam.effective_znear(),
         far: cam.zfar,
+        distance: cam.distance,
         fov: cam.fov_y,
         aspect: 1.0,
     };
