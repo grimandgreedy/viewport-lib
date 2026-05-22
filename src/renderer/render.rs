@@ -2,248 +2,7 @@ use super::*;
 use wgpu::util::DeviceExt;
 
 impl ViewportRenderer {
-    /// Issue draw calls for the viewport. Call inside a `wgpu::RenderPass`.
-    ///
-    /// This method requires a `'static` render pass (as provided by egui's
-    /// `CallbackTrait`). For non-static render passes (iced, manual wgpu),
-    /// use [`paint_to`](Self::paint_to).
-    pub(crate) fn paint<'rp>(&'rp self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
-        let vp_idx = frame.camera.viewport_index;
-        let camera_bg = self.viewport_camera_bind_group(vp_idx);
-        let grid_bg = self.viewport_grid_bind_group(vp_idx);
-        let vp_slot = self.viewport_slots.get(vp_idx);
-        emit_draw_calls!(
-            &self.resources,
-            &mut *render_pass,
-            frame,
-            self.use_instancing,
-            &self.instanced_batches,
-            camera_bg,
-            grid_bg,
-            &self.compute_filter_results,
-            vp_slot,
-            &self.wireframe_bind_groups
-        );
-        emit_scivis_draw_calls!(
-            &self.resources,
-            &mut *render_pass,
-            &self.point_cloud_gpu_data,
-            &self.glyph_gpu_data,
-            &self.polyline_gpu_data,
-            &self.volume_gpu_data,
-            &self.streamtube_gpu_data,
-            camera_bg,
-            &self.tube_gpu_data,
-            &self.image_slice_gpu_data,
-            &self.tensor_glyph_gpu_data,
-            &self.ribbon_gpu_data,
-            &self.volume_surface_slice_gpu_data,
-            &self.sprite_gpu_data,
-            false
-        );
-        // Gaussian splats (alpha-blended, back-to-front sorted, no depth write).
-        if !self.gaussian_splat_draw_data.is_empty() {
-            if let Some(ref dual) = self.resources.gaussian_splat_pipeline {
-                render_pass.set_pipeline(dual.for_format(false));
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for dd in &self.gaussian_splat_draw_data {
-                    if dd.wireframe {
-                        continue;
-                    }
-                    if let Some(set) = self.resources.gaussian_splat_store.get(dd.store_index) {
-                        if let Some(Some(vp_sort)) = set.viewport_sort.get(dd.viewport_index) {
-                            render_pass.set_bind_group(1, &vp_sort.render_bg, &[]);
-                            render_pass.draw(0..6, 0..dd.count);
-                        }
-                    }
-                }
-            }
-        }
-        // TransparentVolumeMesh boundary wireframe overlay.
-        if !self.tvm_wireframe_draws.is_empty() {
-            if let Some(ref tvm_bg) = self.tvm_wireframe_bg {
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for mesh_id in &self.tvm_wireframe_draws {
-                    if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
-                        render_pass.set_pipeline(&self.resources.wireframe_pipeline);
-                        render_pass.set_bind_group(1, tvm_bg, &[]);
-                        render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                        render_pass.set_index_buffer(
-                            mesh.edge_index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
-                    }
-                }
-            }
-        }
-        // Phase 16 : GPU implicit surface (depth-writes enabled, LessEqual compare).
-        if !self.implicit_gpu_data.is_empty() {
-            if let Some(ref dual) = self.resources.implicit_pipeline {
-                render_pass.set_pipeline(dual.for_format(false));
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for gpu in &self.implicit_gpu_data {
-                    render_pass.set_bind_group(1, &gpu.bind_group, &[]);
-                    render_pass.draw(0..6, 0..1);
-                }
-            }
-        }
-        // Phase 17 : GPU marching cubes indirect draw.
-        if !self.mc_gpu_data.is_empty() {
-            render_pass.set_bind_group(0, camera_bg, &[]);
-            for mc in &self.mc_gpu_data {
-                let vol = &self.resources.mc_volumes[mc.volume_idx];
-                if mc.wireframe || frame.viewport.wireframe_mode {
-                    if let Some(ref dual) = self.resources.mc_wireframe_pipeline {
-                        render_pass.set_pipeline(dual.for_format(false));
-                        for (slab, wire_bg) in
-                            vol.slabs.iter().zip(mc.wire_slab_bgs.iter())
-                        {
-                            render_pass.set_bind_group(1, wire_bg, &[]);
-                            render_pass.draw_indirect(&slab.wire_indirect_buf, 0);
-                        }
-                    }
-                } else if let Some(ref dual) = self.resources.mc_surface_pipeline {
-                    render_pass.set_pipeline(dual.for_format(false));
-                    render_pass.set_bind_group(1, &mc.render_bg, &[]);
-                    for slab in &vol.slabs {
-                        render_pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
-                        render_pass.draw_indirect(&slab.indirect_buf, 0);
-                    }
-                }
-            }
-        }
-        // Outline composite after all scene content so translucent layers don't overdraw.
-        emit_outline_composite!(&self.resources, &mut *render_pass, vp_slot);
-        // Sub-object highlight (LDR path) : face fill, edge lines, vertex/point sprites.
-        if let Some(sub_hl) = self
-            .viewport_slots
-            .get(vp_idx)
-            .and_then(|s| s.sub_highlight.as_ref())
-        {
-            if let (Some(fill_pl), Some(edge_pl), Some(sprite_pl)) = (
-                &self.resources.sub_highlight_fill_ldr_pipeline,
-                &self.resources.sub_highlight_edge_ldr_pipeline,
-                &self.resources.sub_highlight_sprite_ldr_pipeline,
-            ) {
-                if sub_hl.fill_vertex_count > 0 {
-                    render_pass.set_pipeline(fill_pl);
-                    render_pass.set_bind_group(0, camera_bg, &[]);
-                    render_pass.set_bind_group(1, &sub_hl.fill_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, sub_hl.fill_vertex_buf.slice(..));
-                    render_pass.draw(0..sub_hl.fill_vertex_count, 0..1);
-                }
-                if sub_hl.edge_segment_count > 0 {
-                    render_pass.set_pipeline(edge_pl);
-                    render_pass.set_bind_group(0, camera_bg, &[]);
-                    render_pass.set_bind_group(1, &sub_hl.edge_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, sub_hl.edge_vertex_buf.slice(..));
-                    render_pass.draw(0..6, 0..sub_hl.edge_segment_count);
-                }
-                if sub_hl.sprite_point_count > 0 {
-                    render_pass.set_pipeline(sprite_pl);
-                    render_pass.set_bind_group(0, camera_bg, &[]);
-                    render_pass.set_bind_group(1, &sub_hl.sprite_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, sub_hl.sprite_vertex_buf.slice(..));
-                    render_pass.draw(0..6, 0..sub_hl.sprite_point_count);
-                }
-            }
-        }
-        // Phase 10B : screen-space image overlays (always on top, no depth test).
-        if !self.screen_image_gpu_data.is_empty() {
-            if let Some(pipeline) = &self.resources.screen_image_pipeline {
-                render_pass.set_pipeline(pipeline);
-                for gpu in &self.screen_image_gpu_data {
-                    render_pass.set_bind_group(0, &gpu.bind_group, &[]);
-                    render_pass.draw(0..6, 0..1);
-                }
-            }
-        }
-        // SDF overlay shapes (drawn before rects and labels).
-        if let Some(ref sd) = self.overlay_shape_gpu_data {
-            if sd.vertex_count > 0 {
-                if let Some(pipeline) = &self.resources.overlay_shape_pipeline {
-                    if let Some(vbuf) = &sd.vertex_buf {
-                        render_pass.set_pipeline(pipeline);
-                        render_pass.set_vertex_buffer(0, vbuf.slice(..));
-                        render_pass.draw(0..sd.vertex_count, 0..1);
-                    }
-                }
-            }
-            if !sd.tex_batches.is_empty() {
-                if let Some(pipeline) = &self.resources.overlay_shape_tex_pipeline {
-                    render_pass.set_pipeline(pipeline);
-                    for batch in &sd.tex_batches {
-                        render_pass.set_bind_group(0, &batch.bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, batch.vertex_buf.slice(..));
-                        render_pass.draw(0..batch.vertex_count, 0..1);
-                    }
-                }
-            }
-        }
-        // Overlay rects (drawn before labels so they act as backgrounds).
-        if let Some(ref rr) = self.overlay_rect_gpu_data {
-            if let Some(pipeline) = &self.resources.overlay_text_pipeline {
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_bind_group(0, &rr.bind_group, &[]);
-                render_pass.set_vertex_buffer(0, rr.vertex_buf.slice(..));
-                render_pass.draw(0..rr.vertex_count, 0..1);
-            }
-        }
-        // Overlay labels (always on top, after screen images).
-        if let Some(ref ld) = self.label_gpu_data {
-            if let Some(pipeline) = &self.resources.overlay_text_pipeline {
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_bind_group(0, &ld.bind_group, &[]);
-                render_pass.set_vertex_buffer(0, ld.vertex_buf.slice(..));
-                render_pass.draw(0..ld.vertex_count, 0..1);
-            }
-        }
-        // Scalar bars (drawn after labels).
-        if let Some(ref sb) = self.scalar_bar_gpu_data {
-            if let Some(pipeline) = &self.resources.overlay_text_pipeline {
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_bind_group(0, &sb.bind_group, &[]);
-                render_pass.set_vertex_buffer(0, sb.vertex_buf.slice(..));
-                render_pass.draw(0..sb.vertex_count, 0..1);
-            }
-        }
-        // Rulers (drawn after scalar bars).
-        if let Some(ref rd) = self.ruler_gpu_data {
-            if let Some(pipeline) = &self.resources.overlay_text_pipeline {
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_bind_group(0, &rd.bind_group, &[]);
-                render_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
-                render_pass.draw(0..rd.vertex_count, 0..1);
-            }
-        }
-        // Loading bars (drawn after rulers).
-        if let Some(ref lb) = self.loading_bar_gpu_data {
-            if let Some(pipeline) = &self.resources.overlay_text_pipeline {
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_bind_group(0, &lb.bind_group, &[]);
-                render_pass.set_vertex_buffer(0, lb.vertex_buf.slice(..));
-                render_pass.draw(0..lb.vertex_count, 0..1);
-            }
-        }
-        // Phase 7 : overlay images (OverlayFrame, drawn last, no depth test).
-        if !self.overlay_image_gpu_data.is_empty() {
-            if let Some(pipeline) = &self.resources.screen_image_pipeline {
-                render_pass.set_pipeline(pipeline);
-                for gpu in &self.overlay_image_gpu_data {
-                    render_pass.set_bind_group(0, &gpu.bind_group, &[]);
-                    render_pass.draw(0..6, 0..1);
-                }
-            }
-        }
-    }
-
-    /// Issue draw calls into a render pass with any lifetime.
-    ///
-    /// Identical to [`paint`](Self::paint) but accepts a render pass with a
-    /// non-`'static` lifetime, making it usable from iced, raw wgpu, or any
-    /// framework that creates its own render pass.
-    pub(crate) fn paint_to<'rp>(&'rp self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
+    pub(crate) fn paint_to<'rp>(&self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
         let vp_idx = frame.camera.viewport_index;
         let camera_bg = self.viewport_camera_bind_group(vp_idx);
         let grid_bg = self.viewport_grid_bind_group(vp_idx);
@@ -752,7 +511,7 @@ impl ViewportRenderer {
     /// [`prepare_ldr_dyn_res`](Self::prepare_ldr_dyn_res) returned `true` for the same
     /// frame. Emits a fullscreen upscale quad into `render_pass`.
     pub(crate) fn paint_dyn_res_blit<'rp>(
-        &'rp self,
+        &self,
         render_pass: &mut wgpu::RenderPass<'rp>,
         frame: &FrameData,
     ) {
@@ -837,7 +596,7 @@ impl ViewportRenderer {
     /// Call from `CallbackTrait::paint` after
     /// [`prepare_hdr_callback`](Self::prepare_hdr_callback) has been called for the
     /// same frame and viewport. Emits a fullscreen triangle into `render_pass`.
-    pub(crate) fn paint_hdr_blit<'rp>(&'rp self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
+    pub(crate) fn paint_hdr_blit<'rp>(&self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
         let vp_idx = frame.camera.viewport_index;
         if let Some(hc) = self
             .viewport_slots
@@ -845,33 +604,6 @@ impl ViewportRenderer {
             .and_then(|s| s.hdr_callback.as_ref())
         {
             if let Some(pipeline) = &self.resources.dyn_res_upscale_ds_pipeline {
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_bind_group(0, &hc.blit_bind_group, &[]);
-                render_pass.draw(0..3, 0..1);
-            }
-        }
-    }
-
-    /// Blit the HDR intermediate texture into a render pass with no depth-stencil attachment.
-    ///
-    /// Identical to [`paint_hdr_blit`](Self::paint_hdr_blit) but uses the pipeline variant
-    /// compiled without a depth-stencil state, making it compatible with render passes that
-    /// carry no depth attachment (e.g. a raw winit surface pass).
-    ///
-    /// Call after [`prepare_hdr_callback`](Self::prepare_hdr_callback) for the same frame
-    /// and viewport.
-    pub(crate) fn paint_hdr_blit_no_ds<'rp>(
-        &'rp self,
-        render_pass: &mut wgpu::RenderPass<'rp>,
-        frame: &FrameData,
-    ) {
-        let vp_idx = frame.camera.viewport_index;
-        if let Some(hc) = self
-            .viewport_slots
-            .get(vp_idx)
-            .and_then(|s| s.hdr_callback.as_ref())
-        {
-            if let Some(pipeline) = &self.resources.dyn_res_upscale_pipeline {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, &hc.blit_bind_group, &[]);
                 render_pass.draw(0..3, 0..1);
@@ -920,7 +652,7 @@ impl ViewportRenderer {
     /// Call after [`prepare_callback`](Self::prepare_callback) for the same frame.
     /// Dispatches internally to `paint_hdr_blit`, `paint_dyn_res_blit`, or `paint`
     /// based on which path `prepare_callback` activated.
-    pub(crate) fn paint_callback<'rp>(&'rp self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
+    pub(crate) fn paint_callback<'rp>(&self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
         let vp_idx = frame.camera.viewport_index;
         if frame.effects.post_process.enabled {
             if self
@@ -942,7 +674,7 @@ impl ViewportRenderer {
         {
             self.paint_dyn_res_blit(render_pass, frame);
         } else {
-            self.paint(render_pass, frame);
+            self.paint_to(render_pass, frame);
         }
     }
 

@@ -17,9 +17,19 @@ pub struct OwnedPath<'r> {
 /// into the caller-provided render pass.
 ///
 /// Use this with eframe (`CallbackTrait`), iced, or any framework that hands
-/// you a render pass.
+/// you a render pass. For the eframe `paint` callback where only a `&` reference
+/// to the renderer is available, use [`ViewportRenderer::pass_view`] instead.
 pub struct PassPath<'r> {
     pub(super) renderer: &'r mut ViewportRenderer,
+}
+
+/// Read-only paint view returned by [`ViewportRenderer::pass_view`].
+///
+/// Identical to [`PassPath`] but constructed from a shared reference, making it
+/// usable in framework paint callbacks where only `&` access to the renderer is
+/// available (e.g. eframe's `CallbackTrait::paint`).
+pub struct PassView<'r> {
+    pub(super) renderer: &'r ViewportRenderer,
 }
 
 impl<'r> OwnedPath<'r> {
@@ -92,7 +102,7 @@ impl<'r> PassPath<'r> {
     /// dynamic-resolution blit, or direct draw based on which path `prepare`
     /// activated. The render pass is expected to have a depth-stencil attachment,
     /// as provided by eframe and most GUI frameworks.
-    pub fn paint<'rp>(&'rp self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
+    pub fn paint<'rp>(&self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
         self.renderer.paint_callback(render_pass, frame);
     }
 
@@ -123,7 +133,24 @@ impl<'r> PassPath<'r> {
     /// Set the render pass viewport and scissor rect to the correct region
     /// before calling. Call after `prepare_scene` and `prepare_viewport`.
     pub fn paint_viewport<'rp>(
-        &'rp self,
+        &self,
+        render_pass: &mut wgpu::RenderPass<'rp>,
+        id: ViewportId,
+        frame: &FrameData,
+    ) {
+        self.renderer.paint_viewport_to(render_pass, id, frame);
+    }
+}
+
+impl<'r> PassView<'r> {
+    /// Single viewport: issue draw calls into `render_pass`.
+    pub fn paint<'rp>(&self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
+        self.renderer.paint_callback(render_pass, frame);
+    }
+
+    /// Multi-viewport: issue draw calls for `id` into `render_pass`.
+    pub fn paint_viewport<'rp>(
+        &self,
         render_pass: &mut wgpu::RenderPass<'rp>,
         id: ViewportId,
         frame: &FrameData,

@@ -39,7 +39,7 @@ impl eframe::egui_wgpu::CallbackTrait for MultiViewportCallback {
         render_pass: &mut eframe::wgpu::RenderPass<'static>,
         callback_resources: &eframe::egui_wgpu::CallbackResources,
     ) {
-        if let Some(renderer) = callback_resources.get_mut::<ViewportRenderer>() {
+        if let Some(renderer) = callback_resources.get::<ViewportRenderer>() {
             // Obtain the physical-pixel rect of the full callback area.
             let vp = info.viewport_in_pixels();
             let fx = vp.left_px.max(0) as u32;
@@ -67,7 +67,7 @@ impl eframe::egui_wgpu::CallbackTrait for MultiViewportCallback {
                 }
                 render_pass.set_viewport(qx as f32, qy as f32, qw as f32, qh as f32, 0.0, 1.0);
                 render_pass.set_scissor_rect(qx, qy, qw, qh);
-                renderer.pass().paint_viewport(render_pass, self.viewports[i], &self.frames[i]);
+                renderer.pass_view().paint_viewport(render_pass, self.viewports[i], &self.frames[i]);
             }
         }
     }

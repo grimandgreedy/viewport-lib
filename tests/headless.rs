@@ -173,7 +173,7 @@ fn prepare_empty_scene_no_panic() {
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
     // Should not panic.
-    renderer.prepare(&device, &queue, &frame);
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
 }
 
 #[test]

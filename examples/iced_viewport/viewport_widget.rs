@@ -269,7 +269,7 @@ impl shader::Primitive for ViewportPrimitive {
             1.0,
         );
 
-        pipeline.renderer.pass().paint(&mut render_pass, &frame_data);
+        pipeline.renderer.pass_view().paint(&mut render_pass, &frame_data);
     }
 }
 

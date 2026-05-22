@@ -551,7 +551,7 @@ impl ApplicationHandler for App {
                         rp.set_scissor_rect(ox, oy, qw, qh);
                         state
                             .renderer
-                            .pass()
+                            .pass_view()
                             .paint_viewport(&mut rp, state.viewports[i], frame);
                     }
                 }

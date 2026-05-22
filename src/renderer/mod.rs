@@ -8,7 +8,7 @@
 mod types;
 mod indirect;
 mod paths;
-pub use paths::{OwnedPath, PassPath};
+pub use paths::{OwnedPath, PassPath, PassView};
 mod picking;
 pub use picking::PickRectResult;
 mod prepare;
@@ -918,6 +918,15 @@ impl ViewportRenderer {
         PassPath { renderer: self }
     }
 
+    /// Returns a read-only paint view for framework paint callbacks.
+    ///
+    /// Use this in callbacks where only a shared reference to the renderer is
+    /// available (e.g. eframe's `CallbackTrait::paint` where `callback_resources`
+    /// is `&CallbackResources`). Exposes only the paint methods, not prepare.
+    pub fn pass_view(&self) -> PassView<'_> {
+        PassView { renderer: self }
+    }
+
     /// Prepare shared scene data.  Call **once per frame**, before any
     /// [`prepare_viewport`](Self::prepare_viewport) calls.
     ///
@@ -963,99 +972,13 @@ impl ViewportRenderer {
         self.prepare_viewport_internal(device, queue, frame, &viewport_fx);
     }
 
-    /// Issue draw calls for `id` into a `'static` render pass (as provided by egui callbacks).
-    ///
-    /// This is the method to use from an egui/eframe `CallbackTrait::paint` implementation.
-    /// Call [`prepare_scene`](Self::prepare_scene) and [`prepare_viewport`](Self::prepare_viewport)
-    /// first (in `CallbackTrait::prepare`), then set the render pass viewport/scissor to confine
-    /// drawing to the correct quadrant, and call this method.
-    ///
-    /// For non-`'static` render passes (winit, iced, manual wgpu), use
-    /// [`paint_viewport_to`](Self::paint_viewport_to).
-    pub(crate) fn paint_viewport(
-        &self,
-        render_pass: &mut wgpu::RenderPass<'static>,
-        id: ViewportId,
-        frame: &FrameData,
-    ) {
-        let vp_idx = id.0;
-        let camera_bg = self.viewport_camera_bind_group(vp_idx);
-        let grid_bg = self.viewport_grid_bind_group(vp_idx);
-        let vp_slot = self.viewport_slots.get(vp_idx);
-        emit_draw_calls!(
-            &self.resources,
-            &mut *render_pass,
-            frame,
-            self.use_instancing,
-            &self.instanced_batches,
-            camera_bg,
-            grid_bg,
-            &self.compute_filter_results,
-            vp_slot,
-            &self.wireframe_bind_groups
-        );
-        emit_scivis_draw_calls!(
-            &self.resources,
-            &mut *render_pass,
-            &self.point_cloud_gpu_data,
-            &self.glyph_gpu_data,
-            &self.polyline_gpu_data,
-            &self.volume_gpu_data,
-            &self.streamtube_gpu_data,
-            camera_bg,
-            &self.tube_gpu_data,
-            &self.image_slice_gpu_data,
-            &self.tensor_glyph_gpu_data,
-            &self.ribbon_gpu_data,
-            &self.volume_surface_slice_gpu_data,
-            &self.sprite_gpu_data,
-            false
-        );
-        // Gaussian splats (alpha-blended, back-to-front sorted, no depth write).
-        if !self.gaussian_splat_draw_data.is_empty() {
-            if let Some(ref dual) = self.resources.gaussian_splat_pipeline {
-                render_pass.set_pipeline(dual.for_format(false));
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for dd in &self.gaussian_splat_draw_data {
-                    if dd.wireframe {
-                        continue;
-                    }
-                    if let Some(set) = self.resources.gaussian_splat_store.get(dd.store_index) {
-                        if let Some(Some(vp_sort)) = set.viewport_sort.get(dd.viewport_index) {
-                            render_pass.set_bind_group(1, &vp_sort.render_bg, &[]);
-                            render_pass.draw(0..6, 0..dd.count);
-                        }
-                    }
-                }
-            }
-        }
-        // TransparentVolumeMesh boundary wireframe overlay.
-        if !self.tvm_wireframe_draws.is_empty() {
-            if let Some(ref tvm_bg) = self.tvm_wireframe_bg {
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for mesh_id in &self.tvm_wireframe_draws {
-                    if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
-                        render_pass.set_pipeline(&self.resources.wireframe_pipeline);
-                        render_pass.set_bind_group(1, tvm_bg, &[]);
-                        render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                        render_pass.set_index_buffer(
-                            mesh.edge_index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
-                    }
-                }
-            }
-        }
-    }
-
     /// Issue draw calls for `id` into a render pass with any lifetime.
     ///
     /// Identical to [`paint_viewport`](Self::paint_viewport) but accepts a render pass with a
     /// non-`'static` lifetime, making it usable from winit, iced, or raw wgpu where the encoder
     /// creates its own render pass.
     pub(crate) fn paint_viewport_to<'rp>(
-        &'rp self,
+        &self,
         render_pass: &mut wgpu::RenderPass<'rp>,
         id: ViewportId,
         frame: &FrameData,
