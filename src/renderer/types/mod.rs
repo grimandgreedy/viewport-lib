@@ -282,6 +282,10 @@ macro_rules! emit_draw_calls {
                             wf_idx += 1;
                         }
                     } else {
+                        // LDR draws all excluded items here, including transparent ones
+                        // using the transparent (alpha-blend) pipeline. HDR instead routes
+                        // transparent excluded items to the OIT pass in render_frame_internal
+                        // so they composite correctly with the HDR transparency model.
                         for item in &excluded_items {
                             let Some(mesh) = resources
                                 .mesh_store

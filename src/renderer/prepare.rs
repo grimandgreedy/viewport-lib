@@ -745,13 +745,16 @@ impl ViewportRenderer {
             // instance data is now viewport-agnostic.
             //
             // Items with active_attribute, two-sided policy, matcap, or param_vis are
-            // excluded from the instanced batch filter. These flags are set on render
-            // items AFTER collect_render_items() (per-frame mutations), so they do NOT
-            // bump the scene generation. Use last_instancable_count as a cache key
-            // instead of a blanket has_per_frame_mutations flag; this allows scenes
-            // that mix instanced and non-instanced items (e.g. one two-sided mesh +
-            // many static boxes) to still hit the instanced batch cache on frames
-            // where the filtered set is unchanged.
+            // excluded from the instanced batch filter. Items whose mesh has an active
+            // compute filter result are also excluded so the per-object path can apply
+            // the filtered index buffer (instanced draws always use the full index buffer).
+            // These flags are set on render items AFTER collect_render_items() (per-frame
+            // mutations), so they do NOT bump the scene generation. Use last_instancable_count
+            // as a cache key instead of a blanket has_per_frame_mutations flag; this allows
+            // scenes that mix instanced and non-instanced items (e.g. one two-sided mesh +
+            // many static boxes) to still hit the instanced batch cache on frames where the
+            // filtered set is unchanged.
+            let compute_filter_results = &self.compute_filter_results;
             let instancable_count = scene_items
                 .iter()
                 .filter(|item| {
@@ -761,6 +764,7 @@ impl ViewportRenderer {
                         && item.material.matcap_id.is_none()
                         && item.material.param_vis.is_none()
                         && resources.mesh_store.get(item.mesh_id).is_some()
+                        && !compute_filter_results.iter().any(|r| r.mesh_id == item.mesh_id)
                 })
                 .count();
             let cache_valid = instancable_count == self.last_instancable_count
@@ -779,6 +783,7 @@ impl ViewportRenderer {
                             && item.material.matcap_id.is_none()
                             && item.material.param_vis.is_none()
                             && resources.mesh_store.get(item.mesh_id).is_some()
+                            && !compute_filter_results.iter().any(|r| r.mesh_id == item.mesh_id)
                     })
                     .collect();
 

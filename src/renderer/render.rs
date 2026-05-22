@@ -1878,6 +1878,11 @@ impl ViewportRenderer {
                         &resources.hdr_solid_pipeline,
                         &resources.hdr_solid_two_sided_pipeline,
                     ) {
+                        // Only opaque excluded items are drawn in the scene pass; transparent
+                        // excluded items go to the OIT pass below. LDR draws all excluded
+                        // items inline (including transparent ones) using the transparent
+                        // pipeline -- an intentional divergence since HDR uses OIT for
+                        // transparency throughout.
                         for item in excluded_items
                             .into_iter()
                             .filter(|item| item.appearance.opacity >= 1.0 && !item.material.is_blend())
@@ -2283,7 +2288,18 @@ impl ViewportRenderer {
         // Completely skipped when no transparent items exist (zero overhead).
         // -----------------------------------------------------------------------
         let has_transparent = if self.use_instancing && !self.instanced_batches.is_empty() {
+            // Transparent instanced batches go through OIT. Transparent excluded items
+            // (two-sided, active-attribute, matcap) are not in any instanced batch, so
+            // they must also be checked here -- otherwise the OIT pass is skipped and
+            // those items are invisible.
             self.instanced_batches.iter().any(|b| b.is_transparent)
+                || scene_items.iter().any(|i| {
+                    !i.appearance.hidden
+                        && (i.appearance.opacity < 1.0 || i.material.is_blend())
+                        && (i.active_attribute.is_some()
+                            || i.material.is_two_sided()
+                            || i.material.matcap_id.is_some())
+                })
         } else {
             scene_items
                 .iter()
