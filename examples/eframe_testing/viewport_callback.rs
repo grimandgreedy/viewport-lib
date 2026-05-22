@@ -20,7 +20,7 @@ impl eframe::egui_wgpu::CallbackTrait for ViewportCallback {
             } else {
                 renderer.disable_gpu_driven_culling();
             }
-            renderer.prepare(device, queue, &self.frame);
+            renderer.pass().prepare(device, queue, &self.frame);
         }
         Vec::new()
     }
@@ -31,8 +31,8 @@ impl eframe::egui_wgpu::CallbackTrait for ViewportCallback {
         render_pass: &mut eframe::wgpu::RenderPass<'static>,
         callback_resources: &eframe::egui_wgpu::CallbackResources,
     ) {
-        if let Some(renderer) = callback_resources.get::<ViewportRenderer>() {
-            renderer.paint(render_pass, &self.frame);
+        if let Some(renderer) = callback_resources.get_mut::<ViewportRenderer>() {
+            renderer.pass().paint(render_pass, &self.frame);
         }
     }
 }

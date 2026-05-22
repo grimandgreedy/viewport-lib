@@ -197,7 +197,7 @@ impl shader::Primitive for ViewportPrimitive {
         frame_data.viewport.grid_z = -0.5; // bottom face of unit boxes
         frame_data.viewport.show_axes_indicator = true;
 
-        pipeline.renderer.prepare(device, queue, &frame_data);
+        pipeline.renderer.pass().prepare(device, queue, &frame_data);
     }
 
     fn render(
@@ -269,7 +269,7 @@ impl shader::Primitive for ViewportPrimitive {
             1.0,
         );
 
-        pipeline.renderer.paint_to(&mut render_pass, &frame_data);
+        pipeline.renderer.pass().paint(&mut render_pass, &frame_data);
     }
 }
 

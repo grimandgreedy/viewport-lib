@@ -497,9 +497,10 @@ impl ApplicationHandler for App {
                 let (scene_fx, _) = frames[0].effects.split();
                 state
                     .renderer
+                    .pass()
                     .prepare_scene(&state.device, &state.queue, &frames[0], &scene_fx);
                 for (i, frame) in frames.iter().enumerate() {
-                    state.renderer.prepare_viewport(
+                    state.renderer.pass().prepare_viewport(
                         &state.device,
                         &state.queue,
                         state.viewports[i],
@@ -550,7 +551,8 @@ impl ApplicationHandler for App {
                         rp.set_scissor_rect(ox, oy, qw, qh);
                         state
                             .renderer
-                            .paint_viewport_to(&mut rp, state.viewports[i], frame);
+                            .pass()
+                            .paint_viewport(&mut rp, state.viewports[i], frame);
                     }
                 }
 

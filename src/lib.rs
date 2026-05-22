@@ -5,19 +5,31 @@
 //! the renderer, camera, picking, and interaction code; host applications keep
 //! their own windowing and event loop.
 //!
-//! # Quick start (single viewport)
+//! # Quick start (single viewport, pass-based)
 //!
 //! 1. Create a [`ViewportRenderer`] from a `wgpu::Device` and target format.
 //! 2. Upload meshes or volumes through [`ViewportGpuResources`].
 //! 3. Build a [`FrameData`] each frame (camera via [`CameraFrame`] and
 //!    [`RenderCamera`], scene content via [`SceneFrame`], viewport chrome via
 //!    [`ViewportFrame`], etc.).
-//! 4. Call [`ViewportRenderer::prepare`] and then [`ViewportRenderer::paint_to`].
+//! 4. Call [`PassPath::prepare`] then [`PassPath::paint`] via `renderer.pass()`.
+//!
+//! # Quick start (single viewport, owned-encoder)
+//!
+//! Use `renderer.owned().render(device, queue, &output_view, &frame)` when you
+//! own the wgpu encoder (winit, raw wgpu). The call handles prepare and draw
+//! internally and returns a [`wgpu::CommandBuffer`] to submit.
+//!
+//! # Rendering paths
+//!
+//! [`ViewportRenderer::pass`] returns a [`PassPath`] for framework callbacks
+//! that hand you a render pass (eframe, iced). [`ViewportRenderer::owned`]
+//! returns an [`OwnedPath`] for setups where you own the encoder (winit, raw wgpu).
 //!
 //! # Multi-viewport rendering
 //!
 //! To render the same scene from multiple independent cameras (e.g. a CAD
-//! quad-view layout), use the split prepare/paint API:
+//! quad-view layout):
 //!
 //! ```rust,ignore
 //! // --- Setup (once at startup) ---
@@ -36,30 +48,26 @@
 //!
 //! // 2. Prepare scene data once (lighting, shadows, batching).
 //! let (scene_fx, _) = frame_persp.effects.split();
-//! renderer.prepare_scene(&device, &queue, &frame_persp, &scene_fx);
+//! renderer.pass().prepare_scene(&device, &queue, &frame_persp, &scene_fx);
 //!
 //! // 3. Prepare per-viewport state (camera uniforms, clip planes, overlays).
-//! renderer.prepare_viewport(&device, &queue, vp_persp, &frame_persp);
-//! renderer.prepare_viewport(&device, &queue, vp_top,   &frame_top);
-//! renderer.prepare_viewport(&device, &queue, vp_front, &frame_front);
+//! renderer.pass().prepare_viewport(&device, &queue, vp_persp, &frame_persp);
+//! renderer.pass().prepare_viewport(&device, &queue, vp_top,   &frame_top);
+//! renderer.pass().prepare_viewport(&device, &queue, vp_front, &frame_front);
 //!
 //! // 4a. LDR path : single render pass with viewport/scissor rects.
 //! let mut rp = encoder.begin_render_pass(...);
 //! rp.set_viewport(0.0, 0.0, half_w, half_h, 0.0, 1.0);
-//! renderer.paint_viewport(&mut rp, vp_persp, &frame_persp);
+//! renderer.pass().paint_viewport(&mut rp, vp_persp, &frame_persp);
 //! rp.set_viewport(half_w, 0.0, half_w, half_h, 0.0, 1.0);
-//! renderer.paint_viewport(&mut rp, vp_top, &frame_top);
+//! renderer.pass().paint_viewport(&mut rp, vp_top, &frame_top);
 //! // ...
 //!
 //! // 4b. HDR path : one command buffer per viewport, each into its own texture.
-//! let cmd0 = renderer.render_viewport(&device, &queue, &view0, vp_persp, &frame_persp);
-//! let cmd1 = renderer.render_viewport(&device, &queue, &view1, vp_top,   &frame_top);
+//! let cmd0 = renderer.owned().render_viewport(&device, &queue, &view0, vp_persp, &frame_persp);
+//! let cmd1 = renderer.owned().render_viewport(&device, &queue, &view1, vp_top,   &frame_top);
 //! queue.submit([cmd0, cmd1]);
 //! ```
-//!
-//! Single-viewport applications require zero code changes:
-//! [`prepare`](ViewportRenderer::prepare), [`paint_to`](ViewportRenderer::paint_to), and
-//! [`render`](ViewportRenderer::render) continue to work as before.
 
 /// Error types for the viewport library.
 pub mod error;
@@ -185,9 +193,9 @@ pub use renderer::{
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GaussianSplatData, GaussianSplatId,
     GaussianSplatItem, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode, ImageAnchor,
     ImageSliceItem, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
-    LightingSettings, LoadingBarAnchor, LoadingBarItem, OverlayFrame, OverlayImageItem,
+    LightingSettings, LoadingBarAnchor, LoadingBarItem, OwnedPath, OverlayFrame, OverlayImageItem,
     OverlayAnimation, OverlayFill, OverlayRectItem, OverlayShape, OverlayShapeItem,
-    OverlayTextureId, BorderMode, LineCap, PickId, TriangleDirection,
+    OverlayTextureId, BorderMode, LineCap, PassPath, PickId, TriangleDirection,
     PickRectResult, PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings,
     RenderCamera, RibbonItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
     SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, SliceAxis,

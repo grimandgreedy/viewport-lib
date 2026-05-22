@@ -7,6 +7,8 @@
 #[macro_use]
 mod types;
 mod indirect;
+mod paths;
+pub use paths::{OwnedPath, PassPath};
 mod picking;
 pub use picking::PickRectResult;
 mod prepare;
@@ -900,6 +902,22 @@ impl ViewportRenderer {
         }
     }
 
+    /// Returns the owned-encoder rendering path.
+    ///
+    /// Use when you own the window loop and wgpu encoder (winit, raw wgpu).
+    /// See [`OwnedPath`] for available methods.
+    pub fn owned(&mut self) -> OwnedPath<'_> {
+        OwnedPath { renderer: self }
+    }
+
+    /// Returns the pass-based rendering path.
+    ///
+    /// Use when a framework provides you with a render pass (eframe, iced).
+    /// See [`PassPath`] for available methods.
+    pub fn pass(&mut self) -> PassPath<'_> {
+        PassPath { renderer: self }
+    }
+
     /// Prepare shared scene data.  Call **once per frame**, before any
     /// [`prepare_viewport`](Self::prepare_viewport) calls.
     ///
@@ -911,7 +929,7 @@ impl ViewportRenderer {
     /// `scene_effects` carries the scene-global effects: lighting, environment
     /// map, and compute filters.  Obtain it by constructing [`SceneEffects`]
     /// directly or via [`EffectsFrame::split`].
-    pub fn prepare_scene(
+    pub(crate) fn prepare_scene(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -928,7 +946,7 @@ impl ViewportRenderer {
     /// `id` must have been obtained from [`create_viewport`](Self::create_viewport).
     /// `frame.camera.viewport_index` must equal `id.0`; use
     /// [`CameraFrame::with_viewport_index`] when building the frame.
-    pub fn prepare_viewport(
+    pub(crate) fn prepare_viewport(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -954,7 +972,7 @@ impl ViewportRenderer {
     ///
     /// For non-`'static` render passes (winit, iced, manual wgpu), use
     /// [`paint_viewport_to`](Self::paint_viewport_to).
-    pub fn paint_viewport(
+    pub(crate) fn paint_viewport(
         &self,
         render_pass: &mut wgpu::RenderPass<'static>,
         id: ViewportId,
@@ -1036,7 +1054,7 @@ impl ViewportRenderer {
     /// Identical to [`paint_viewport`](Self::paint_viewport) but accepts a render pass with a
     /// non-`'static` lifetime, making it usable from winit, iced, or raw wgpu where the encoder
     /// creates its own render pass.
-    pub fn paint_viewport_to<'rp>(
+    pub(crate) fn paint_viewport_to<'rp>(
         &'rp self,
         render_pass: &mut wgpu::RenderPass<'rp>,
         id: ViewportId,

@@ -322,6 +322,7 @@ impl ApplicationHandler for App {
 
                 state
                     .renderer
+                    .pass()
                     .prepare(&state.device, &state.queue, &frame_data);
 
                 let mut encoder =
@@ -361,7 +362,7 @@ impl ApplicationHandler for App {
                     });
 
                     render_pass.set_viewport(0.0, 0.0, w, h, 0.0, 1.0);
-                    state.renderer.paint_to(&mut render_pass, &frame_data);
+                    state.renderer.pass().paint(&mut render_pass, &frame_data);
                 }
 
                 state.queue.submit(std::iter::once(encoder.finish()));

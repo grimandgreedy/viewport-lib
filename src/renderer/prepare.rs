@@ -5352,7 +5352,7 @@ impl ViewportRenderer {
     /// Call before `paint()`.
     ///
     /// Returns [`crate::FrameStats`] with per-frame timing and upload metrics.
-    pub fn prepare(
+    pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,

@@ -7,7 +7,7 @@ impl ViewportRenderer {
     /// This method requires a `'static` render pass (as provided by egui's
     /// `CallbackTrait`). For non-static render passes (iced, manual wgpu),
     /// use [`paint_to`](Self::paint_to).
-    pub fn paint(&self, render_pass: &mut wgpu::RenderPass<'static>, frame: &FrameData) {
+    pub(crate) fn paint<'rp>(&'rp self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
         let vp_idx = frame.camera.viewport_index;
         let camera_bg = self.viewport_camera_bind_group(vp_idx);
         let grid_bg = self.viewport_grid_bind_group(vp_idx);
@@ -243,7 +243,7 @@ impl ViewportRenderer {
     /// Identical to [`paint`](Self::paint) but accepts a render pass with a
     /// non-`'static` lifetime, making it usable from iced, raw wgpu, or any
     /// framework that creates its own render pass.
-    pub fn paint_to<'rp>(&'rp self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
+    pub(crate) fn paint_to<'rp>(&'rp self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
         let vp_idx = frame.camera.viewport_index;
         let camera_bg = self.viewport_camera_bind_group(vp_idx);
         let grid_bg = self.viewport_grid_bind_group(vp_idx);
@@ -488,7 +488,7 @@ impl ViewportRenderer {
     ///
     /// The `egui_encoder` is submitted before the surface render pass begins, so the
     /// intermediate texture is fully written before the blit reads it.
-    pub fn prepare_ldr_dyn_res(
+    pub(crate) fn prepare_ldr_dyn_res(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         device: &wgpu::Device,
@@ -751,9 +751,9 @@ impl ViewportRenderer {
     /// Call from `CallbackTrait::paint` when
     /// [`prepare_ldr_dyn_res`](Self::prepare_ldr_dyn_res) returned `true` for the same
     /// frame. Emits a fullscreen upscale quad into `render_pass`.
-    pub fn paint_dyn_res_blit(
-        &self,
-        render_pass: &mut wgpu::RenderPass<'static>,
+    pub(crate) fn paint_dyn_res_blit<'rp>(
+        &'rp self,
+        render_pass: &mut wgpu::RenderPass<'rp>,
         frame: &FrameData,
     ) {
         let vp_idx = frame.camera.viewport_index;
@@ -786,7 +786,7 @@ impl ViewportRenderer {
     ///
     /// Call [`paint_hdr_blit`](Self::paint_hdr_blit) from `CallbackTrait::paint` to
     /// composite the intermediate texture into the egui render pass.
-    pub fn prepare_hdr_callback(
+    pub(crate) fn prepare_hdr_callback(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -837,7 +837,7 @@ impl ViewportRenderer {
     /// Call from `CallbackTrait::paint` after
     /// [`prepare_hdr_callback`](Self::prepare_hdr_callback) has been called for the
     /// same frame and viewport. Emits a fullscreen triangle into `render_pass`.
-    pub fn paint_hdr_blit(&self, render_pass: &mut wgpu::RenderPass<'static>, frame: &FrameData) {
+    pub(crate) fn paint_hdr_blit<'rp>(&'rp self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
         let vp_idx = frame.camera.viewport_index;
         if let Some(hc) = self
             .viewport_slots
@@ -860,7 +860,7 @@ impl ViewportRenderer {
     ///
     /// Call after [`prepare_hdr_callback`](Self::prepare_hdr_callback) for the same frame
     /// and viewport.
-    pub fn paint_hdr_blit_no_ds<'rp>(
+    pub(crate) fn paint_hdr_blit_no_ds<'rp>(
         &'rp self,
         render_pass: &mut wgpu::RenderPass<'rp>,
         frame: &FrameData,
@@ -892,7 +892,7 @@ impl ViewportRenderer {
     ///   pass). Returns an empty `Vec` when dyn-res is inactive.
     ///
     /// Call [`paint_callback`](Self::paint_callback) from `CallbackTrait::paint`.
-    pub fn prepare_callback(
+    pub(crate) fn prepare_callback(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -920,7 +920,7 @@ impl ViewportRenderer {
     /// Call after [`prepare_callback`](Self::prepare_callback) for the same frame.
     /// Dispatches internally to `paint_hdr_blit`, `paint_dyn_res_blit`, or `paint`
     /// based on which path `prepare_callback` activated.
-    pub fn paint_callback(&self, render_pass: &mut wgpu::RenderPass<'static>, frame: &FrameData) {
+    pub(crate) fn paint_callback<'rp>(&'rp self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
         let vp_idx = frame.camera.viewport_index;
         if frame.effects.post_process.enabled {
             if self
@@ -959,7 +959,7 @@ impl ViewportRenderer {
     /// 3. Call `render_viewport` for each viewport with its own `output_view`.
     ///
     /// Returns a [`wgpu::CommandBuffer`] ready to submit.
-    pub fn render_viewport(
+    pub(crate) fn render_viewport(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -977,7 +977,7 @@ impl ViewportRenderer {
     /// pass targeting `output_view` directly.
     ///
     /// Returns a `CommandBuffer` ready to submit.
-    pub fn render(
+    pub(crate) fn render(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,

@@ -1,27 +1,29 @@
-//! Minimal viewport-lib example using winit + wgpu.
+//! winit-hdr: exercises the renderer.render() path against a raw wgpu surface.
+//!
+//! renderer.render() owns the full pipeline: uploads uniforms, runs the shadow
+//! pass, renders the scene into an internal HDR texture, applies post-process
+//! (bloom, tone mapping, FXAA), and blits the final image to the provided
+//! output view. No manual render pass or depth buffer needed from the caller.
 //!
 //! Navigation:
 //!   Left drag / Middle drag   : orbit
 //!   Right drag                : pan
 //!   Scroll                    : zoom
 //!
-//! Object manipulation (click a primitive to select it):
-//!   G / R / S                 : grab / rotate / scale
-//!   X / Y / Z                 : constrain to axis
-//!   Enter or click            : confirm
-//!   Escape                    : cancel
+//! Press B to toggle bloom, F to toggle FXAA, S to toggle SSAO.
 
 use std::sync::Arc;
 
 use viewport_lib::{
-    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, ManipResult,
-    ManipulationContext, ManipulationController, Material, MeshId, OrbitCameraController,
+    ButtonState, Camera, CameraFrame, EffectsFrame, FrameData, LightingSettings, Material, MeshId,
+    OrbitCameraController, OverlayFill, OverlayShape, OverlayShapeItem, PostProcessSettings,
     SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer,
     primitives,
 };
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowAttributes, WindowId};
 
 #[derive(Default)]
@@ -35,47 +37,19 @@ struct AppState {
     device: wgpu::Device,
     queue: wgpu::Queue,
     surface_config: wgpu::SurfaceConfiguration,
-    depth_view: wgpu::TextureView,
     renderer: ViewportRenderer,
     camera: Camera,
     controller: OrbitCameraController,
-    manip: ManipulationController,
 
-    // Scene state
     scene_items: Vec<SceneRenderItem>,
-    /// Index of the selected primitive, if any.
-    selected: Option<usize>,
-    /// Snapshot of transforms taken when a manipulation starts.
-    transforms_snapshot: Vec<[[f32; 4]; 4]>,
 
-    // Per-frame cursor tracking (needed for ManipulationContext)
-    cursor_pos: Option<glam::Vec2>,
-    cursor_prev: Option<glam::Vec2>,
-    left_pressed_this_frame: bool,
-    left_held: bool,
-    drag_started_this_frame: bool,
-    clicked_this_frame: bool,
-    /// Approximate pixel threshold for click vs drag detection.
-    press_origin: Option<glam::Vec2>,
-}
+    // Post-process toggles
+    bloom: bool,
+    fxaa: bool,
+    ssao: bool,
 
-fn make_depth_view(device: &wgpu::Device, w: u32, h: u32) -> wgpu::TextureView {
-    device
-        .create_texture(&wgpu::TextureDescriptor {
-            label: Some("depth"),
-            size: wgpu::Extent3d {
-                width: w.max(1),
-                height: h.max(1),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth24PlusStencil8,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        })
-        .create_view(&wgpu::TextureViewDescriptor::default())
+    // Diagnostics toggle (D key)
+    diag: bool,
 }
 
 impl ApplicationHandler for App {
@@ -88,7 +62,7 @@ impl ApplicationHandler for App {
             event_loop
                 .create_window(
                     WindowAttributes::default()
-                        .with_title("viewport-lib : Minimal")
+                        .with_title("viewport-lib : HDR (render)")
                         .with_inner_size(winit::dpi::LogicalSize::new(1280u32, 720u32)),
                 )
                 .expect("window"),
@@ -102,12 +76,25 @@ impl ApplicationHandler for App {
             ..Default::default()
         }))
         .expect("adapter");
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-                .expect("device");
+        let required_features = if adapter
+            .features()
+            .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE)
+        {
+            wgpu::Features::INDIRECT_FIRST_INSTANCE
+        } else {
+            eprintln!("INDIRECT_FIRST_INSTANCE not supported -- GPU culling will be disabled");
+            wgpu::Features::empty()
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features,
+            ..Default::default()
+        }))
+        .expect("device");
 
         let size = window.inner_size();
         let caps = surface.get_capabilities(&adapter);
+        // Prefer sRGB: the tone mapper outputs linear values and relies on the
+        // hardware sRGB write conversion to encode gamma correctly.
         let format = caps
             .formats
             .iter()
@@ -125,7 +112,6 @@ impl ApplicationHandler for App {
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
-        let depth_view = make_depth_view(&device, config.width, config.height);
 
         let mut renderer = ViewportRenderer::new(&device, format);
         let res = renderer.resources_mut();
@@ -145,7 +131,10 @@ impl ApplicationHandler for App {
             item.mesh_id = mesh_id;
             item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
             item.material = Material::from_colour(colour);
-            item.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
+            // Mild emissive just above 1.0 puts a small amount of HDR energy into
+            // the scene. Bloom extracts this and makes the glow visible without
+            // washing out the object colour.
+            item.material.emissive = [colour[0] * 1.2, colour[1] * 1.2, colour[2] * 1.2];
             item
         };
 
@@ -173,21 +162,14 @@ impl ApplicationHandler for App {
             device,
             queue,
             surface_config: config,
-            depth_view,
             renderer,
             camera,
             controller,
-            manip: ManipulationController::new(),
             scene_items,
-            selected: None,
-            transforms_snapshot: Vec::new(),
-            cursor_pos: None,
-            cursor_prev: None,
-            left_pressed_this_frame: false,
-            left_held: false,
-            drag_started_this_frame: false,
-            clicked_this_frame: false,
-            press_origin: None,
+            bloom: true,
+            fxaa: false,
+            ssao: false,
+            diag: false,
         });
     }
 
@@ -211,7 +193,6 @@ impl ApplicationHandler for App {
                     state
                         .surface
                         .configure(&state.device, &state.surface_config);
-                    state.depth_view = make_depth_view(&state.device, sz.width, sz.height);
                     state.window.request_redraw();
                 }
             }
@@ -237,46 +218,20 @@ impl ApplicationHandler for App {
                     MouseButton::Right => viewport_lib::MouseButton::Right,
                     _ => return,
                 };
-                let pressed = btn_state == ElementState::Pressed;
-                let vp_state = if pressed {
+                let vp_state = if btn_state == ElementState::Pressed {
                     ButtonState::Pressed
                 } else {
                     ButtonState::Released
                 };
-
                 state.controller.push_event(ViewportEvent::MouseButton {
                     button: vp_button,
                     state: vp_state,
                 });
-
-                if button == MouseButton::Left {
-                    if pressed {
-                        state.left_held = true;
-                        state.press_origin = state.cursor_pos;
-                        state.drag_started_this_frame = true;
-                        state.left_pressed_this_frame = true;
-                    } else {
-                        // Distinguish click from drag by displacement.
-                        let is_click = state
-                            .press_origin
-                            .zip(state.cursor_pos)
-                            .map(|(o, c)| (c - o).length() < 5.0)
-                            .unwrap_or(false);
-                        if is_click {
-                            state.clicked_this_frame = true;
-                        }
-                        state.left_held = false;
-                        state.press_origin = None;
-                    }
-                }
-
                 state.window.request_redraw();
             }
 
             WindowEvent::CursorMoved { position, .. } => {
                 let pos = glam::Vec2::new(position.x as f32, position.y as f32);
-                state.cursor_prev = state.cursor_pos;
-                state.cursor_pos = Some(pos);
                 state
                     .controller
                     .push_event(ViewportEvent::PointerMoved { position: pos });
@@ -284,7 +239,6 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::CursorLeft { .. } => {
-                state.cursor_pos = None;
                 state.controller.push_event(ViewportEvent::PointerLeft);
             }
 
@@ -308,6 +262,31 @@ impl ApplicationHandler for App {
                 state.window.request_redraw();
             }
 
+            WindowEvent::KeyboardInput { event, .. } => {
+                if event.state == ElementState::Pressed {
+                    match event.physical_key {
+                        PhysicalKey::Code(KeyCode::KeyB) => {
+                            state.bloom = !state.bloom;
+                            eprintln!("bloom: {}", state.bloom);
+                        }
+                        PhysicalKey::Code(KeyCode::KeyF) => {
+                            state.fxaa = !state.fxaa;
+                            eprintln!("fxaa: {}", state.fxaa);
+                        }
+                        PhysicalKey::Code(KeyCode::KeyS) => {
+                            state.ssao = !state.ssao;
+                            eprintln!("ssao: {}", state.ssao);
+                        }
+                        PhysicalKey::Code(KeyCode::KeyD) => {
+                            state.diag = !state.diag;
+                            eprintln!("diagnostics: {}", state.diag);
+                        }
+                        _ => {}
+                    }
+                    state.window.request_redraw();
+                }
+            }
+
             WindowEvent::RedrawRequested => {
                 let frame = match state.surface.get_current_texture() {
                     Ok(f) => f,
@@ -329,125 +308,59 @@ impl ApplicationHandler for App {
                 let w = state.surface_config.width as f32;
                 let h = state.surface_config.height as f32;
 
-                // Build ManipulationContext for this frame.
-                let selection_center = state.selected.map(|i| {
-                    let col = state.scene_items[i].model[3];
-                    glam::Vec3::new(col[0], col[1], col[2])
-                });
-                let pointer_delta = state
-                    .cursor_pos
-                    .zip(state.cursor_prev)
-                    .map(|(c, p)| c - p)
-                    .unwrap_or(glam::Vec2::ZERO);
-
-                let manip_ctx = ManipulationContext {
-                    camera: state.camera.clone(),
-                    viewport_size: glam::Vec2::new(w, h),
-                    cursor_viewport: state.cursor_pos,
-                    pointer_delta,
-                    selection_center,
-                    gizmo: None,
-                    drag_started: state.drag_started_this_frame,
-                    dragging: state.left_held,
-                    clicked: state.clicked_this_frame,
-                };
-
-                // Drive manipulation : suppress orbit while active.
-                let action_frame = if state.manip.is_active() {
-                    let frame = state.controller.resolve();
-                    state.camera.set_aspect_ratio(w, h);
-                    frame
-                } else {
-                    let frame = state.controller.apply_to_camera(&mut state.camera);
-                    state.camera.set_aspect_ratio(w, h);
-                    frame
-                };
-
-                match state.manip.update(&action_frame, manip_ctx) {
-                    ManipResult::Update(delta) => {
-                        if let Some(idx) = state.selected {
-                            let current =
-                                glam::Mat4::from_cols_array_2d(&state.scene_items[idx].model);
-                            let delta_mat = glam::Mat4::from_scale_rotation_translation(
-                                delta.scale,
-                                delta.rotation,
-                                delta.translation,
-                            );
-                            state.scene_items[idx].model = (delta_mat * current).to_cols_array_2d();
-                        }
-                    }
-                    ManipResult::Commit => {}
-                    ManipResult::Cancel | ManipResult::ConstraintChanged => {
-                        for (item, snap) in state
-                            .scene_items
-                            .iter_mut()
-                            .zip(state.transforms_snapshot.iter())
-                        {
-                            item.model = *snap;
-                        }
-                    }
-                    ManipResult::None => {
-                        // Take a fresh snapshot each frame while idle.
-                        state.transforms_snapshot =
-                            state.scene_items.iter().map(|i| i.model).collect();
-                    }
-                }
-
-                // Reset per-frame flags.
-                state.drag_started_this_frame = false;
-                state.clicked_this_frame = false;
-                state.left_pressed_this_frame = false;
+                state.controller.apply_to_camera(&mut state.camera);
+                state.camera.set_aspect_ratio(w, h);
 
                 let mut frame_data = FrameData::new(
                     CameraFrame::from_camera(&state.camera, [w, h]),
                     SceneFrame::from_surface_items(state.scene_items.clone()),
                 );
-                frame_data.effects.lighting = LightingSettings::default();
+                let mut effects = EffectsFrame::default();
+                effects.lighting = LightingSettings::default();
+                effects.post_process = PostProcessSettings {
+                    enabled: true,
+                    bloom: state.bloom,
+                    bloom_threshold: 1.0,
+                    bloom_intensity: 0.15,
+                    fxaa: state.fxaa,
+                    ssao: state.ssao,
+                    ..PostProcessSettings::default()
+                };
+                frame_data.effects = effects;
 
-                state
+                // Backdrop blur demo: a large frosted-glass circle in the centre.
+                frame_data.overlays.shapes.push(OverlayShapeItem {
+                    position: [w * 0.5 - 100.0, h * 0.5 - 100.0],
+                    size: [200.0, 200.0],
+                    shape: OverlayShape::Circle,
+                    fill: OverlayFill::Solid([1.0, 1.0, 1.0, 0.1]),
+                    border_colour: [1.0, 1.0, 1.0, 0.4],
+                    border_width: 1.5,
+                    backdrop_blur: 20.0,
+                    ..Default::default()
+                });
+
+                // render() owns the full HDR pipeline:
+                //   prepare -> shadow pass -> HDR scene -> post-process -> tone map -> output_view
+                // It returns a CommandBuffer ready to submit.
+                let cmd = state
                     .renderer
-                    .pass()
-                    .prepare(&state.device, &state.queue, &frame_data);
+                    .owned()
+                    .render(&state.device, &state.queue, &view, &frame_data);
 
-                let mut encoder = state
-                    .device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-
-                {
-                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: None,
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: 0.09,
-                                    g: 0.09,
-                                    b: 0.11,
-                                    a: 1.0,
-                                }),
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        })],
-                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                            view: &state.depth_view,
-                            depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(1.0),
-                                store: wgpu::StoreOp::Discard,
-                            }),
-                            stencil_ops: None,
-                        }),
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
-
-                    pass.set_viewport(0.0, 0.0, w, h, 0.0, 1.0);
-                    state.renderer.pass().paint(&mut pass, &frame_data);
-                }
-
-                state.queue.submit(std::iter::once(encoder.finish()));
+                state.queue.submit(std::iter::once(cmd));
                 frame.present();
+
+                if state.diag {
+                    let s = state.renderer.last_frame_stats();
+                    eprintln!(
+                        "cull_active={} visible={:?} draws={} batches={}",
+                        s.gpu_culling_active,
+                        s.gpu_visible_instances,
+                        s.draw_calls,
+                        s.instanced_batches,
+                    );
+                }
 
                 state.controller.begin_frame(ViewportContext {
                     hovered: true,
