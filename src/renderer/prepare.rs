@@ -4883,8 +4883,17 @@ impl ViewportRenderer {
                         0.0
                     };
                     let pad = shape.border_width + shadow_pad + 1.0; // +1 for AA
-                    let ex = hw + pad;
-                    let ey = hh + pad;
+
+                    // Extra quad expansion for shapes whose stroke extends
+                    // beyond the item's position/size bounding box.
+                    let extra_expand = match shape.shape {
+                        crate::renderer::types::OverlayShape::Line { thickness, .. } => {
+                            thickness * 0.5
+                        }
+                        _ => 0.0,
+                    };
+                    let ex = hw + pad + extra_expand;
+                    let ey = hh + pad + extra_expand;
 
                     // Encode shape type and radii.
                     let (shape_type, radii) = match shape.shape {
@@ -4922,6 +4931,24 @@ impl ViewportRenderer {
                                 crate::renderer::types::TriangleDirection::Right => 3.0,
                             };
                             (6.0, [dir_f, 0.0, 0.0, 0.0])
+                        }
+                        crate::renderer::types::OverlayShape::Line { thickness, cap } => {
+                            let cap_f = match cap {
+                                crate::renderer::types::LineCap::Round => 0.0,
+                                crate::renderer::types::LineCap::Square => 1.0,
+                            };
+                            (7.0, [thickness * 0.5, cap_f, 0.0, 0.0])
+                        }
+                        crate::renderer::types::OverlayShape::Star { points, inner_radius_frac } => {
+                            let n = points.max(3) as f32;
+                            (8.0, [n, inner_radius_frac.clamp(0.0, 1.0), 0.0, 0.0])
+                        }
+                        crate::renderer::types::OverlayShape::RegularPolygon { sides } => {
+                            let n = sides.max(3) as f32;
+                            (9.0, [n, 0.0, 0.0, 0.0])
+                        }
+                        crate::renderer::types::OverlayShape::Cross { arm_width_frac } => {
+                            (10.0, [arm_width_frac.clamp(0.0, 1.0), 0.0, 0.0, 0.0])
                         }
                     };
 

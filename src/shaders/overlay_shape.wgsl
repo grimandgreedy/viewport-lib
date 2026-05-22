@@ -12,7 +12,7 @@ struct VertexInput {
     @location(4) half_size:       vec2<f32>,  // shape half-extents in pixels
     @location(5) radii:           vec4<f32>,  // shape-specific params
     @location(6) border_width:    f32,
-    @location(7) shape_type:      f32,        // 0=rounded rect, 1=circle, 2=ellipse, 3=capsule, 4=ring, 5=arc, 6=triangle
+    @location(7) shape_type:      f32,        // 0=rect, 1=circle, 2=ellipse, 3=capsule, 4=ring, 5=arc, 6=triangle, 7=line, 8=star, 9=ngon, 10=cross
     @location(8) fill_colour2:    vec4<f32>,  // end colour for gradient (equals fill_colour for solid)
     @location(9) gradient_params: vec2<f32>,  // x=type (0=solid, 1=linear), y=angle radians
     @location(10) shadow_colour:  vec4<f32>,  // RGBA shadow colour
@@ -176,6 +176,85 @@ fn sd_triangle(p: vec2<f32>, hs: vec2<f32>) -> f32 {
     return max(d_edge, d_base);
 }
 
+// Signed distance to a line segment from -hs to +hs with stroke radius r.
+// radii.x = stroke radius, radii.y = 0 (round cap) or 1 (square cap).
+fn sd_line(p: vec2<f32>, hs: vec2<f32>, r: f32, square: bool) -> f32 {
+    if (square) {
+        // Rotate into segment frame, then use a box SDF.
+        let seg_len = length(hs);
+        if (seg_len < 0.0001) {
+            return length(p) - r;
+        }
+        let d = hs / seg_len;
+        let along = dot(p, d);
+        let perp  = dot(p, vec2<f32>(-d.y, d.x));
+        let q = abs(vec2<f32>(along, perp)) - vec2<f32>(seg_len, r);
+        return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0);
+    } else {
+        // Capsule: segment from (-hs.x, -hs.y) to (hs.x, hs.y).
+        let ba = 2.0 * hs;
+        let pa = p + hs;
+        let h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+        return length(pa - ba * h) - r;
+    }
+}
+
+// Signed distance to an N-pointed star with outer radius r and inner/outer ratio rf.
+// radii.x = n (number of points), radii.y = rf.
+fn sd_star_n(p: vec2<f32>, r: f32, n: f32, rf: f32) -> f32 {
+    let ri = r * rf;
+    let an = 3.14159265 / n;
+    let two_an = 2.0 * an;
+
+    let a = atan2(p.y, p.x);
+    let a_mod = ((a % two_an) + two_an) % two_an;
+    let a_abs = select(a_mod, two_an - a_mod, a_mod > an);
+
+    let rp = length(p);
+    let q = rp * vec2<f32>(cos(a_abs), sin(a_abs));
+
+    // Edge from outer tip (r, 0) to inner valley.
+    let outer = vec2<f32>(r, 0.0);
+    let inner = vec2<f32>(ri * cos(an), ri * sin(an));
+    let ba = inner - outer;
+    let qa = q - outer;
+    let t = clamp(dot(qa, ba) / dot(ba, ba), 0.0, 1.0);
+    let d = length(qa - ba * t);
+    let cross_val = qa.x * ba.y - qa.y * ba.x;
+    return d * select(1.0, -1.0, cross_val < 0.0);
+}
+
+// Signed distance to a regular N-gon with circumradius r.
+// radii.x = n (number of sides).
+fn sd_ngon(p: vec2<f32>, r: f32, n: f32) -> f32 {
+    let an = 3.14159265 / n;
+    let two_an = 2.0 * an;
+    let a = atan2(p.y, p.x) + an;
+    let a_mod = ((a % two_an) + two_an) % two_an;
+    let a_abs = select(a_mod, two_an - a_mod, a_mod > an);
+
+    let rp = length(p);
+    let q = rp * vec2<f32>(cos(a_abs), sin(a_abs));
+
+    let he = r * cos(an); // apothem
+    let hv = r * sin(an); // half vertex extent
+
+    let dx = q.x - he;
+    let dy = max(q.y - hv, 0.0);
+    return select(dx, sqrt(dx * dx + dy * dy), dy > 0.0);
+}
+
+// Signed distance to a plus/cross shape.
+// radii.x = arm_width_frac (fraction of min(hs.x, hs.y)).
+fn sd_cross(p: vec2<f32>, hs: vec2<f32>, arm_frac: f32) -> f32 {
+    let arm_w = arm_frac * min(hs.x, hs.y);
+    let q_h = abs(p) - vec2<f32>(hs.x, arm_w);
+    let q_v = abs(p) - vec2<f32>(arm_w, hs.y);
+    let d_h = length(max(q_h, vec2<f32>(0.0))) + min(max(q_h.x, q_h.y), 0.0);
+    let d_v = length(max(q_v, vec2<f32>(0.0))) + min(max(q_v.x, q_v.y), 0.0);
+    return min(d_h, d_v);
+}
+
 // Evaluate the SDF for the current shape type at position p.
 fn eval_sdf(p: vec2<f32>, hs: vec2<f32>, shape_type: f32, radii: vec4<f32>) -> f32 {
     let st = i32(shape_type + 0.5);
@@ -211,6 +290,26 @@ fn eval_sdf(p: vec2<f32>, hs: vec2<f32>, shape_type: f32, radii: vec4<f32>) -> f
                 ths = vec2<f32>(hs.y, hs.x);
             }
             return sd_triangle(tp, ths);
+        }
+        case 7: {
+            // Line: radii.x = stroke radius, radii.y = 0 (round) or 1 (square).
+            let r = radii.x;
+            let square = radii.y > 0.5;
+            return sd_line(p, hs, r, square);
+        }
+        case 8: {
+            // Star: radii.x = n (points), radii.y = inner_radius_frac.
+            let r = min(hs.x, hs.y);
+            return sd_star_n(p, r, radii.x, radii.y);
+        }
+        case 9: {
+            // RegularPolygon: radii.x = n (sides).
+            let r = min(hs.x, hs.y);
+            return sd_ngon(p, r, radii.x);
+        }
+        case 10: {
+            // Cross: radii.x = arm_width_frac.
+            return sd_cross(p, hs, radii.x);
         }
         default: {
             return sd_rounded_box(p, hs, radii);

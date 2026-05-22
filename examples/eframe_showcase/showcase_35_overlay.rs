@@ -55,7 +55,7 @@ impl Default for OvlState {
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BorderMode, BuiltinColourmap, ColourmapId, LabelAnchor, LabelItem, OverlayAnimation,
+    BorderMode, BuiltinColourmap, ColourmapId, LabelAnchor, LabelItem, LineCap, OverlayAnimation,
     OverlayFill, OverlayShape, OverlayShapeItem, RulerItem, ScalarBarAnchor, ScalarBarItem,
     ScalarBarOrientation, TriangleDirection,
 };
@@ -731,6 +731,116 @@ pub(crate) fn build_overlay_frame(
                 ..Default::default()
             });
             let _ = x5;
+        }
+
+        // ---------------------------------------------------------------------------
+        // New shape types (row 6): Line, Star, RegularPolygon, Cross.
+        // ---------------------------------------------------------------------------
+        {
+            let row6_h = 70.0_f32;
+            let y6_mid = 20.0 + row_h + 24.0 + 90.0 + 24.0 + 70.0 + 24.0 + 70.0
+                + 24.0 + 70.0 + 24.0 + row6_h * 0.5;
+            let mut x6 = 20.0_f32;
+
+            // Diagonal line (round cap).
+            shapes.push(OverlayShapeItem {
+                position: [x6, y6_mid - row6_h * 0.5],
+                size: [100.0, row6_h],
+                shape: OverlayShape::Line { thickness: 6.0, cap: LineCap::Round },
+                fill: OverlayFill::Solid([0.2, 0.7, 1.0, 0.9]),
+                border_colour: [0.5, 0.9, 1.0, 0.9],
+                border_width: bw,
+                ..Default::default()
+            });
+            x6 += 100.0 + gap;
+
+            // Horizontal line (square cap): thin 3px stroke.
+            shapes.push(OverlayShapeItem {
+                position: [x6, y6_mid - 2.0],
+                size: [120.0, 4.0],
+                shape: OverlayShape::Line { thickness: 4.0, cap: LineCap::Square },
+                fill: OverlayFill::Solid([1.0, 0.6, 0.2, 0.9]),
+                border_colour: [1.0, 0.8, 0.4, 0.9],
+                border_width: 0.0,
+                ..Default::default()
+            });
+            x6 += 120.0 + gap;
+
+            // 5-pointed star.
+            shapes.push(OverlayShapeItem {
+                position: [x6, y6_mid - row6_h * 0.5],
+                size: [row6_h, row6_h],
+                shape: OverlayShape::Star { points: 5, inner_radius_frac: 0.45 },
+                fill: OverlayFill::Solid([1.0, 0.85, 0.1, 0.9]),
+                border_colour: [1.0, 1.0, 0.5, 0.9],
+                border_width: bw,
+                ..Default::default()
+            });
+            x6 += row6_h + gap;
+
+            // 6-pointed star.
+            shapes.push(OverlayShapeItem {
+                position: [x6, y6_mid - row6_h * 0.5],
+                size: [row6_h, row6_h],
+                shape: OverlayShape::Star { points: 6, inner_radius_frac: 0.5 },
+                fill: OverlayFill::Solid([0.9, 0.3, 0.9, 0.9]),
+                border_colour: [1.0, 0.6, 1.0, 0.9],
+                border_width: bw,
+                ..Default::default()
+            });
+            x6 += row6_h + gap;
+
+            // Pentagon.
+            shapes.push(OverlayShapeItem {
+                position: [x6, y6_mid - row6_h * 0.5],
+                size: [row6_h, row6_h],
+                shape: OverlayShape::RegularPolygon { sides: 5 },
+                fill: OverlayFill::Solid([0.2, 0.8, 0.4, 0.9]),
+                border_colour: [0.4, 1.0, 0.6, 0.9],
+                border_width: bw,
+                ..Default::default()
+            });
+            x6 += row6_h + gap;
+
+            // Hexagon.
+            shapes.push(OverlayShapeItem {
+                position: [x6, y6_mid - row6_h * 0.5],
+                size: [row6_h, row6_h],
+                shape: OverlayShape::RegularPolygon { sides: 6 },
+                fill: OverlayFill::Solid([0.1, 0.5, 0.9, 0.9]),
+                border_colour: [0.3, 0.7, 1.0, 0.9],
+                border_width: bw,
+                ..Default::default()
+            });
+            x6 += row6_h + gap;
+
+            // Cross (wide arms).
+            shapes.push(OverlayShapeItem {
+                position: [x6, y6_mid - row6_h * 0.5],
+                size: [row6_h, row6_h],
+                shape: OverlayShape::Cross { arm_width_frac: 0.35 },
+                fill: OverlayFill::Solid([0.9, 0.2, 0.2, 0.9]),
+                border_colour: [1.0, 0.5, 0.5, 0.9],
+                border_width: bw,
+                ..Default::default()
+            });
+            x6 += row6_h + gap;
+
+            // Cross with gradient fill and thin arms.
+            shapes.push(OverlayShapeItem {
+                position: [x6, y6_mid - row6_h * 0.5],
+                size: [row6_h, row6_h],
+                shape: OverlayShape::Cross { arm_width_frac: 0.2 },
+                fill: OverlayFill::LinearGradient {
+                    start_colour: [1.0, 0.3, 0.1, 0.9],
+                    end_colour: [0.1, 0.3, 1.0, 0.9],
+                    angle: std::f32::consts::PI * 0.25,
+                },
+                border_colour: [0.8, 0.8, 0.8, 0.9],
+                border_width: bw,
+                ..Default::default()
+            });
+            let _ = x6;
         }
 
         // Backdrop blur circle (top-right area, 140px : 2x the normal shape size).

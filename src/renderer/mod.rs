@@ -22,7 +22,7 @@ pub use self::types::{
     ImageSliceItem, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
     LightingSettings, LoadingBarAnchor, LoadingBarItem, OverlayFrame, OverlayImageItem,
     OverlayAnimation, OverlayFill, OverlayRectItem, OverlayShape, OverlayShapeItem,
-    OverlayTextureId, BorderMode, PickId, TriangleDirection,
+    OverlayTextureId, BorderMode, LineCap, PickId, TriangleDirection,
     PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings, RenderCamera, RibbonItem,
     RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, SceneEffects, SceneFrame,
     SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpriteItem,
