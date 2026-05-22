@@ -221,8 +221,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Composite textured fill on top of shadow.
     if (fill_alpha > 0.0) {
         let tex_sample = textureSample(t_fill, s_fill, in.uv);
-        let tinted = tex_sample * in.fill_colour;
-        let fc = vec4<f32>(tinted.rgb, tinted.a * fill_alpha);
+        var fc: vec4<f32>;
+        if (tex_sample.a >= 1.0) {
+            // Backdrop blur: scene is opaque. Overlay the tint on top of the
+            // blurred scene, then mask by the SDF.
+            let tint = in.fill_colour;
+            let blended_rgb = mix(tex_sample.rgb, tint.rgb, tint.a);
+            fc = vec4<f32>(blended_rgb, fill_alpha);
+        } else {
+            // Regular texture fill: multiply by tint colour.
+            let tinted = tex_sample * in.fill_colour;
+            fc = vec4<f32>(tinted.rgb, tinted.a * fill_alpha);
+        }
         colour = vec4<f32>(
             mix(colour.rgb, fc.rgb, fc.a),
             fc.a + colour.a * (1.0 - fc.a),

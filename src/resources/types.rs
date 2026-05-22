@@ -1415,6 +1415,39 @@ pub(crate) struct OverlayShapeGpuData {
     pub vertex_count: u32,
     /// One batch per unique texture, drawn after solid shapes.
     pub tex_batches: Vec<OverlayShapeTexBatch>,
+    /// Vertex buffer for backdrop-blur shapes (frosted glass). Uses the same
+    /// vertex layout as `OverlayShapeTexVertex` with screen-space UVs.
+    /// The bind group is created at render time once the blurred scene texture
+    /// is available.
+    pub blur_vertex_buf: Option<wgpu::Buffer>,
+    /// Number of blur backdrop vertices.
+    pub blur_vertex_count: u32,
+    /// Maximum `backdrop_blur` value across all blur shapes this frame.
+    /// Used as the spread parameter for the Gaussian blur passes.
+    pub max_blur_radius: f32,
+}
+
+/// Cached GPU textures for the backdrop blur (frosted glass) effect.
+///
+/// Stored on `ViewportRenderer` and recreated when the viewport size changes.
+/// Contains a full-resolution intermediate (for rendering the scene when the
+/// output surface lacks `TEXTURE_BINDING`), two half-resolution ping-pong
+/// textures for the separable blur passes, and pre-built bind groups.
+pub(crate) struct BackdropBlurState {
+    /// Full-resolution intermediate render target. The scene is rendered here
+    /// instead of directly to the surface so the result can be sampled.
+    pub intermediate_texture: wgpu::Texture,
+    pub intermediate_view: wgpu::TextureView,
+    /// Half-resolution blur ping-pong texture A.
+    pub blur_a_texture: wgpu::Texture,
+    pub blur_a_view: wgpu::TextureView,
+    /// Half-resolution blur ping-pong texture B.
+    pub blur_b_texture: wgpu::Texture,
+    pub blur_b_view: wgpu::TextureView,
+    /// Viewport physical size the textures were created for.
+    pub size: [u32; 2],
+    /// Format the textures were created with.
+    pub format: wgpu::TextureFormat,
 }
 
 /// Uniform buffer layout for the full-screen ground plane shader.
@@ -2980,6 +3013,15 @@ pub struct ViewportGpuResources {
     pub(crate) overlay_shape_tex_sampler: Option<wgpu::Sampler>,
     /// Persistent textures uploaded via `upload_overlay_texture`.
     pub(crate) overlay_textures: Vec<OverlayShapeTextureEntry>,
+
+    // --- Backdrop blur pipeline (lazily created) ---
+    /// Fullscreen separable Gaussian blur pipeline used to produce the blurred
+    /// scene texture for `backdrop_blur` overlay shapes.
+    pub(crate) backdrop_blur_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for the blur pipeline (group 0: source texture + sampler + uniforms).
+    pub(crate) backdrop_blur_bgl: Option<wgpu::BindGroupLayout>,
+    /// Linear clamp sampler shared by blur passes.
+    pub(crate) backdrop_blur_sampler: Option<wgpu::Sampler>,
 
     // --- Depth blit pipeline (lazily created, shared across all viewports) ---
     // Copies a scene-resolution depth texture to a native-resolution depth-only target.

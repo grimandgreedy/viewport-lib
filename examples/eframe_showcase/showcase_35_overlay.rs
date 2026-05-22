@@ -15,6 +15,7 @@ pub(crate) struct OvlState {
     pub show_shapes: bool,
     pub shape_corner_radius: f32,
     pub shape_border_width: f32,
+    pub backdrop_blur_radius: f32,
     pub show_tex_shapes: bool,
     pub tex_id: Option<viewport_lib::OverlayTextureId>,
     pub carlgauss_tex_id: Option<viewport_lib::OverlayTextureId>,
@@ -38,6 +39,7 @@ impl Default for OvlState {
             show_shapes: true,
             shape_corner_radius: 8.0,
             shape_border_width: 1.5,
+            backdrop_blur_radius: 14.0,
             show_tex_shapes: true,
             tex_id: None,
             carlgauss_tex_id: None,
@@ -223,6 +225,13 @@ pub(crate) fn controls_overlay(app: &mut App, ui: &mut egui::Ui) {
                 .text("Border width"),
         );
     }
+
+    ui.separator();
+    ui.label("Backdrop blur:");
+    ui.add(
+        egui::Slider::new(&mut app.ovl_state.backdrop_blur_radius, 0.0..=40.0)
+            .text("radius"),
+    );
 
     ui.separator();
     ui.checkbox(&mut app.ovl_state.show_tex_shapes, "Show texture-masked shapes");
@@ -722,6 +731,20 @@ pub(crate) fn build_overlay_frame(
                 ..Default::default()
             });
             let _ = x5;
+        }
+
+        // Backdrop blur circle (top-right area, 140px : 2x the normal shape size).
+        if app.ovl_state.backdrop_blur_radius > 0.0 {
+            shapes.push(OverlayShapeItem {
+                position: [x + gap, 20.0],
+                size: [140.0, 140.0],
+                shape: OverlayShape::Circle,
+                fill: OverlayFill::Solid([1.0, 1.0, 1.0, 0.12]),
+                border_colour: [1.0, 1.0, 1.0, 0.3],
+                border_width: 1.0,
+                backdrop_blur: app.ovl_state.backdrop_blur_radius,
+                ..Default::default()
+            });
         }
     }
 

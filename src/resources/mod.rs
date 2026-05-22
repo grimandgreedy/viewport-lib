@@ -59,6 +59,7 @@ pub(crate) use self::types::{
     GpuProjectedTetMesh, GridUniform, GroundPlaneUniform, ImageSliceGpuData, InstanceAabb,
     InstanceData, LabelGpuData, LicAdvectUniform, LicObjectUniform, LicSurfaceGpuData,
     ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform,
+    BackdropBlurState,
     OverlayShapeGpuData, OverlayShapeTexBatch, OverlayShapeTexVertex,
     OverlayShapeVertex, OverlayTextVertex,
     OverlayUniform, PickInstance, ProjectedTetUniform, RawGeomOutlineBuffers, SHADOW_ATLAS_SIZE,

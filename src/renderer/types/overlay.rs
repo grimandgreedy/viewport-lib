@@ -538,6 +538,10 @@ pub enum BorderMode {
 /// The animation is resolved during `prepare()` using the `time` field on
 /// `OverlayFrame`. All `start_time` and `time` values share the same
 /// application-defined epoch (e.g. seconds since app launch).
+///
+/// viewport-lib does not own the event loop. The host application must
+/// request continuous repaints while animations are active so that
+/// `prepare()` is called often enough to produce smooth updates.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OverlayAnimation {
     /// No animation; use `opacity` as-is.
@@ -723,6 +727,13 @@ pub struct OverlayShapeItem {
     /// Opacity animation. Resolved each frame during `prepare()` using
     /// `OverlayFrame::time`. Default: `OverlayAnimation::None`.
     pub animation: OverlayAnimation,
+    /// Backdrop blur radius in logical pixels. When greater than zero the scene
+    /// content behind the shape is blurred (frosted glass effect) and the
+    /// `fill` colour is composited on top as a tint. `0.0` disables the
+    /// effect. Only active in render paths where the renderer owns the command
+    /// encoder (`render`, `render_viewport`); in `paint`/`paint_to` paths
+    /// blur shapes fall back to a regular solid fill.
+    pub backdrop_blur: f32,
 }
 
 impl Default for OverlayShapeItem {
@@ -742,6 +753,7 @@ impl Default for OverlayShapeItem {
             shadow_radius: 0.0,
             shadow_offset: [0.0, 0.0],
             animation: OverlayAnimation::None,
+            backdrop_blur: 0.0,
         }
     }
 }

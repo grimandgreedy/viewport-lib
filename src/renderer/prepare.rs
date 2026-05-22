@@ -4823,19 +4823,27 @@ impl ViewportRenderer {
                     frame.overlays.shapes.iter().collect();
                 sorted.sort_by_key(|s| s.z_order);
 
-                let has_solid = sorted.iter().any(|s| s.texture.is_none());
+                let has_solid = sorted.iter().any(|s| s.texture.is_none() && s.backdrop_blur <= 0.0);
                 let has_tex = sorted.iter().any(|s| s.texture.is_some());
+                let has_blur = sorted.iter().any(|s| s.backdrop_blur > 0.0 && s.texture.is_none());
                 if has_solid {
                     self.resources.ensure_overlay_shape_pipeline(device);
                 }
-                if has_tex {
+                if has_tex || has_blur {
                     self.resources.ensure_overlay_shape_tex_pipeline(device);
+                }
+                if has_blur {
+                    self.resources.ensure_backdrop_blur_pipeline(device);
+                    self.resources.ensure_dyn_res_pipeline(device);
                 }
 
                 let mut solid_verts: Vec<crate::resources::OverlayShapeVertex> = Vec::new();
                 // One vertex list per unique texture ID, in order of first appearance.
                 let mut tex_groups: Vec<(u64, Vec<crate::resources::OverlayShapeTexVertex>)> =
                     Vec::new();
+                // Blur backdrop vertices (share the tex vertex layout with screen UVs).
+                let mut blur_verts: Vec<crate::resources::OverlayShapeTexVertex> = Vec::new();
+                let mut max_blur_radius: f32 = 0.0;
 
                 let overlay_time = frame.overlays.time;
 
@@ -4990,6 +4998,24 @@ impl ViewportRenderer {
                                 shadow_params,
                             });
                         }
+                    } else if shape.backdrop_blur > 0.0 {
+                        max_blur_radius = max_blur_radius.max(shape.backdrop_blur);
+                        // Blur backdrop: same tex vertex layout but UV is screen-space.
+                        for (px, py, lx, ly) in corners_px {
+                            blur_verts.push(crate::resources::OverlayShapeTexVertex {
+                                position: px_to_ndc(px, py, vp_w, vp_h),
+                                local_pos: [lx, ly],
+                                fill_colour: fc,
+                                border_colour: bc,
+                                half_size,
+                                radii,
+                                border_width: shape.border_width,
+                                shape_type,
+                                uv: [px / vp_w, py / vp_h],
+                                shadow_colour: sc,
+                                shadow_params,
+                            });
+                        }
                     } else {
                         for (px, py, lx, ly) in corners_px {
                             solid_verts.push(crate::resources::OverlayShapeVertex {
@@ -5066,12 +5092,25 @@ impl ViewportRenderer {
                     }
                 }
 
-                if solid_vbuf.is_some() || !tex_batches.is_empty() {
+                let blur_vbuf = if !blur_verts.is_empty() {
+                    Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("overlay_shape_blur_vbuf"),
+                        contents: bytemuck::cast_slice(&blur_verts),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    }))
+                } else {
+                    None
+                };
+
+                if solid_vbuf.is_some() || !tex_batches.is_empty() || blur_vbuf.is_some() {
                     self.overlay_shape_gpu_data =
                         Some(crate::resources::OverlayShapeGpuData {
                             vertex_buf: solid_vbuf,
                             vertex_count: solid_verts.len() as u32,
                             tex_batches,
+                            blur_vertex_buf: blur_vbuf,
+                            blur_vertex_count: blur_verts.len() as u32,
+                            max_blur_radius,
                         });
                 }
             }

@@ -286,6 +286,9 @@ pub struct ViewportRenderer {
     overlay_rect_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-frame SDF overlay shape GPU data, rebuilt in prepare(), consumed in paint().
     overlay_shape_gpu_data: Option<crate::resources::OverlayShapeGpuData>,
+    /// Cached GPU textures for the backdrop blur effect (frosted glass).
+    /// Recreated when the viewport size changes.
+    backdrop_blur_state: Option<crate::resources::BackdropBlurState>,
     /// Per-viewport GPU state slots.
     ///
     /// Indexed by `FrameData::camera.viewport_index`. Each slot owns independent
@@ -474,6 +477,7 @@ impl ViewportRenderer {
             loading_bar_gpu_data: None,
             overlay_rect_gpu_data: None,
             overlay_shape_gpu_data: None,
+            backdrop_blur_state: None,
             viewport_slots: Vec::new(),
             compute_filter_results: Vec::new(),
             wireframe_uniform_bufs: Vec::new(),

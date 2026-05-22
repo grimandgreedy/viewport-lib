@@ -1,4 +1,5 @@
 use super::*;
+use wgpu::util::DeviceExt;
 
 impl ViewportRenderer {
     /// Issue draw calls for the viewport. Call inside a `wgpu::RenderPass`.
@@ -1058,11 +1059,19 @@ impl ViewportRenderer {
             });
 
             let use_dyn_res = self.current_render_scale < 1.0 - 0.001;
+            let needs_blur = self.has_backdrop_blur_shapes();
 
             if use_dyn_res {
                 let sw = ((w as f32 * self.current_render_scale) as u32).max(1);
                 let sh = ((h as f32 * self.current_render_scale) as u32).max(1);
                 self.ensure_dyn_res_target(device, vp_idx, [sw, sh], [w.max(1), h.max(1)]);
+            }
+
+            // When blur backdrops are needed and we'd otherwise render directly
+            // to the surface (no dyn_res), force an intermediate so it can be
+            // sampled for the blur passes.
+            if needs_blur && !use_dyn_res {
+                self.ensure_backdrop_blur_state(device, w.max(1), h.max(1));
             }
 
             {
@@ -1072,11 +1081,14 @@ impl ViewportRenderer {
                 );
                 let camera_bg = &slot.camera_bind_group;
                 let grid_bg = &slot.grid_bind_group;
-                // Choose render target: dyn_res intermediate or directly output_view.
+                // Choose render target: dyn_res intermediate, backdrop intermediate, or output_view.
                 let (scene_colour_view, scene_depth_view): (&wgpu::TextureView, &wgpu::TextureView) =
                     if use_dyn_res {
                         let dr = slot.dyn_res.as_ref().unwrap();
                         (&dr.colour_view, &dr.depth_view)
+                    } else if needs_blur {
+                        let bs = self.backdrop_blur_state.as_ref().unwrap();
+                        (&bs.intermediate_view, &slot_hdr.outline_depth_view)
                     } else {
                         (output_view, &slot_hdr.outline_depth_view)
                     };
@@ -1211,71 +1223,183 @@ impl ViewportRenderer {
                         }
                     }
                 }
-                // SDF overlay shapes (LDR fallback).
-                if let Some(ref sd) = self.overlay_shape_gpu_data {
-                    if sd.vertex_count > 0 {
-                        if let Some(pipeline) = &self.resources.overlay_shape_pipeline {
-                            if let Some(vbuf) = &sd.vertex_buf {
+                // When blur backdrops are needed, skip overlays here. They'll
+                // be drawn in a second pass after the blur is applied.
+                if !needs_blur {
+                    // SDF overlay shapes (LDR fallback).
+                    if let Some(ref sd) = self.overlay_shape_gpu_data {
+                        if sd.vertex_count > 0 {
+                            if let Some(pipeline) = &self.resources.overlay_shape_pipeline {
+                                if let Some(vbuf) = &sd.vertex_buf {
+                                    render_pass.set_pipeline(pipeline);
+                                    render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                                    render_pass.draw(0..sd.vertex_count, 0..1);
+                                }
+                            }
+                        }
+                        if !sd.tex_batches.is_empty() {
+                            if let Some(pipeline) = &self.resources.overlay_shape_tex_pipeline {
                                 render_pass.set_pipeline(pipeline);
-                                render_pass.set_vertex_buffer(0, vbuf.slice(..));
-                                render_pass.draw(0..sd.vertex_count, 0..1);
+                                for batch in &sd.tex_batches {
+                                    render_pass.set_bind_group(0, &batch.bind_group, &[]);
+                                    render_pass.set_vertex_buffer(0, batch.vertex_buf.slice(..));
+                                    render_pass.draw(0..batch.vertex_count, 0..1);
+                                }
                             }
                         }
                     }
-                    if !sd.tex_batches.is_empty() {
-                        if let Some(pipeline) = &self.resources.overlay_shape_tex_pipeline {
+                    // Overlay rects (LDR fallback).
+                    if let Some(ref rr) = self.overlay_rect_gpu_data {
+                        if let Some(pipeline) = &self.resources.overlay_text_pipeline {
                             render_pass.set_pipeline(pipeline);
-                            for batch in &sd.tex_batches {
-                                render_pass.set_bind_group(0, &batch.bind_group, &[]);
-                                render_pass.set_vertex_buffer(0, batch.vertex_buf.slice(..));
-                                render_pass.draw(0..batch.vertex_count, 0..1);
+                            render_pass.set_bind_group(0, &rr.bind_group, &[]);
+                            render_pass.set_vertex_buffer(0, rr.vertex_buf.slice(..));
+                            render_pass.draw(0..rr.vertex_count, 0..1);
+                        }
+                    }
+                    // Overlay labels (LDR fallback: inside the same render pass).
+                    if let Some(ref ld) = self.label_gpu_data {
+                        if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                            render_pass.set_pipeline(pipeline);
+                            render_pass.set_bind_group(0, &ld.bind_group, &[]);
+                            render_pass.set_vertex_buffer(0, ld.vertex_buf.slice(..));
+                            render_pass.draw(0..ld.vertex_count, 0..1);
+                        }
+                    }
+                    // Scalar bars (LDR fallback).
+                    if let Some(ref sb) = self.scalar_bar_gpu_data {
+                        if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                            render_pass.set_pipeline(pipeline);
+                            render_pass.set_bind_group(0, &sb.bind_group, &[]);
+                            render_pass.set_vertex_buffer(0, sb.vertex_buf.slice(..));
+                            render_pass.draw(0..sb.vertex_count, 0..1);
+                        }
+                    }
+                    // Rulers (LDR fallback).
+                    if let Some(ref rd) = self.ruler_gpu_data {
+                        if let Some(pipeline) = &self.resources.overlay_text_pipeline {
+                            render_pass.set_pipeline(pipeline);
+                            render_pass.set_bind_group(0, &rd.bind_group, &[]);
+                            render_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
+                            render_pass.draw(0..rd.vertex_count, 0..1);
+                        }
+                    }
+                    // Phase 7 : overlay images (OverlayFrame, LDR fallback, drawn last).
+                    if !self.overlay_image_gpu_data.is_empty() {
+                        if let Some(pipeline) = &self.resources.screen_image_pipeline {
+                            render_pass.set_pipeline(pipeline);
+                            for gpu in &self.overlay_image_gpu_data {
+                                render_pass.set_bind_group(0, &gpu.bind_group, &[]);
+                                render_pass.draw(0..6, 0..1);
                             }
                         }
                     }
                 }
-                // Overlay rects (LDR fallback).
-                if let Some(ref rr) = self.overlay_rect_gpu_data {
-                    if let Some(pipeline) = &self.resources.overlay_text_pipeline {
-                        render_pass.set_pipeline(pipeline);
-                        render_pass.set_bind_group(0, &rr.bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, rr.vertex_buf.slice(..));
-                        render_pass.draw(0..rr.vertex_count, 0..1);
+            }
+            // -- End of scene render pass (dropped above). ---
+
+            // Backdrop blur: capture scene, run blur, then draw overlays in a
+            // second render pass so blur shapes can sample the blurred result.
+            if needs_blur {
+                let spread = self.overlay_shape_gpu_data.as_ref()
+                    .map(|d| d.max_blur_radius)
+                    .unwrap_or(1.0);
+                let blur_bg = {
+                    let source = if use_dyn_res {
+                        &self.viewport_slots[vp_idx].dyn_res.as_ref().unwrap().colour_view
+                    } else {
+                        &self.backdrop_blur_state.as_ref().unwrap().intermediate_view
+                    };
+                    self.run_backdrop_blur(&mut encoder, device, queue, source, spread)
+                };
+
+                // Second render pass for overlays (Load to preserve scene content).
+                let slot = &self.viewport_slots[vp_idx];
+                let slot_hdr = slot.hdr.as_ref().unwrap();
+                let overlay_colour_view: &wgpu::TextureView = if use_dyn_res {
+                    &slot.dyn_res.as_ref().unwrap().colour_view
+                } else {
+                    &self.backdrop_blur_state.as_ref().unwrap().intermediate_view
+                };
+                let overlay_depth_view: &wgpu::TextureView = if use_dyn_res {
+                    &slot.dyn_res.as_ref().unwrap().depth_view
+                } else {
+                    &slot_hdr.outline_depth_view
+                };
+                {
+                    let mut overlay_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("ldr_overlay_blur_pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: overlay_colour_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                            depth_slice: None,
+                        })],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: overlay_depth_view,
+                            depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Discard }),
+                            stencil_ops: None,
+                        }),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    // Draw blur backdrop shapes first.
+                    self.draw_blur_shapes(&mut overlay_pass, &blur_bg);
+                    // Then normal shapes.
+                    if let Some(ref sd) = self.overlay_shape_gpu_data {
+                        if sd.vertex_count > 0 {
+                            if let Some(pipeline) = &self.resources.overlay_shape_pipeline {
+                                if let Some(vbuf) = &sd.vertex_buf {
+                                    overlay_pass.set_pipeline(pipeline);
+                                    overlay_pass.set_vertex_buffer(0, vbuf.slice(..));
+                                    overlay_pass.draw(0..sd.vertex_count, 0..1);
+                                }
+                            }
+                        }
+                        if !sd.tex_batches.is_empty() {
+                            if let Some(pipeline) = &self.resources.overlay_shape_tex_pipeline {
+                                overlay_pass.set_pipeline(pipeline);
+                                for batch in &sd.tex_batches {
+                                    overlay_pass.set_bind_group(0, &batch.bind_group, &[]);
+                                    overlay_pass.set_vertex_buffer(0, batch.vertex_buf.slice(..));
+                                    overlay_pass.draw(0..batch.vertex_count, 0..1);
+                                }
+                            }
+                        }
                     }
-                }
-                // Overlay labels (LDR fallback: inside the same render pass).
-                if let Some(ref ld) = self.label_gpu_data {
                     if let Some(pipeline) = &self.resources.overlay_text_pipeline {
-                        render_pass.set_pipeline(pipeline);
-                        render_pass.set_bind_group(0, &ld.bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, ld.vertex_buf.slice(..));
-                        render_pass.draw(0..ld.vertex_count, 0..1);
+                        if let Some(ref rr) = self.overlay_rect_gpu_data {
+                            overlay_pass.set_pipeline(pipeline);
+                            overlay_pass.set_bind_group(0, &rr.bind_group, &[]);
+                            overlay_pass.set_vertex_buffer(0, rr.vertex_buf.slice(..));
+                            overlay_pass.draw(0..rr.vertex_count, 0..1);
+                        }
+                        if let Some(ref ld) = self.label_gpu_data {
+                            overlay_pass.set_pipeline(pipeline);
+                            overlay_pass.set_bind_group(0, &ld.bind_group, &[]);
+                            overlay_pass.set_vertex_buffer(0, ld.vertex_buf.slice(..));
+                            overlay_pass.draw(0..ld.vertex_count, 0..1);
+                        }
+                        if let Some(ref sb) = self.scalar_bar_gpu_data {
+                            overlay_pass.set_pipeline(pipeline);
+                            overlay_pass.set_bind_group(0, &sb.bind_group, &[]);
+                            overlay_pass.set_vertex_buffer(0, sb.vertex_buf.slice(..));
+                            overlay_pass.draw(0..sb.vertex_count, 0..1);
+                        }
+                        if let Some(ref rd) = self.ruler_gpu_data {
+                            overlay_pass.set_pipeline(pipeline);
+                            overlay_pass.set_bind_group(0, &rd.bind_group, &[]);
+                            overlay_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
+                            overlay_pass.draw(0..rd.vertex_count, 0..1);
+                        }
                     }
-                }
-                // Scalar bars (LDR fallback).
-                if let Some(ref sb) = self.scalar_bar_gpu_data {
-                    if let Some(pipeline) = &self.resources.overlay_text_pipeline {
-                        render_pass.set_pipeline(pipeline);
-                        render_pass.set_bind_group(0, &sb.bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, sb.vertex_buf.slice(..));
-                        render_pass.draw(0..sb.vertex_count, 0..1);
-                    }
-                }
-                // Rulers (LDR fallback).
-                if let Some(ref rd) = self.ruler_gpu_data {
-                    if let Some(pipeline) = &self.resources.overlay_text_pipeline {
-                        render_pass.set_pipeline(pipeline);
-                        render_pass.set_bind_group(0, &rd.bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
-                        render_pass.draw(0..rd.vertex_count, 0..1);
-                    }
-                }
-                // Phase 7 : overlay images (OverlayFrame, LDR fallback, drawn last).
-                if !self.overlay_image_gpu_data.is_empty() {
-                    if let Some(pipeline) = &self.resources.screen_image_pipeline {
-                        render_pass.set_pipeline(pipeline);
-                        for gpu in &self.overlay_image_gpu_data {
-                            render_pass.set_bind_group(0, &gpu.bind_group, &[]);
-                            render_pass.draw(0..6, 0..1);
+                    if !self.overlay_image_gpu_data.is_empty() {
+                        if let Some(pipeline) = &self.resources.screen_image_pipeline {
+                            overlay_pass.set_pipeline(pipeline);
+                            for gpu in &self.overlay_image_gpu_data {
+                                overlay_pass.set_bind_group(0, &gpu.bind_group, &[]);
+                                overlay_pass.draw(0..6, 0..1);
+                            }
                         }
                     }
                 }
@@ -1318,6 +1442,36 @@ impl ViewportRenderer {
                     upscale_pass.set_pipeline(pipeline);
                     upscale_pass.set_bind_group(0, upscale_bg, &[]);
                     upscale_pass.draw(0..3, 0..1);
+                }
+            } else if needs_blur {
+                // Blit backdrop intermediate to the output surface.
+                let bs = self.backdrop_blur_state.as_ref().unwrap();
+                let blit_bgl = self.resources.dyn_res_upscale_bgl.as_ref().unwrap();
+                let blit_sampler = self.resources.dyn_res_linear_sampler.as_ref().unwrap();
+                let blit_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("backdrop_blit_bg"),
+                    layout: blit_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&bs.intermediate_view) },
+                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(blit_sampler) },
+                    ],
+                });
+                let mut blit_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("backdrop_blit_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: output_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                if let Some(pipeline) = &self.resources.dyn_res_upscale_pipeline {
+                    blit_pass.set_pipeline(pipeline);
+                    blit_pass.set_bind_group(0, &blit_bg, &[]);
+                    blit_pass.draw(0..3, 0..1);
                 }
             }
 
@@ -3112,6 +3266,35 @@ impl ViewportRenderer {
             || self.ruler_gpu_data.is_some()
             || self.loading_bar_gpu_data.is_some()
             || !self.overlay_image_gpu_data.is_empty();
+
+        // HDR backdrop blur: the tonemapped scene is on an intermediate so we
+        // can sample it for the blur. When blur is needed we redirect the
+        // tonemapped output to a managed intermediate, blur it, then draw
+        // overlays there and blit to output_view at the end.
+        let needs_hdr_blur = self.has_backdrop_blur_shapes();
+        let hdr_blur_bg: Option<wgpu::BindGroup> = if needs_hdr_blur && has_overlay {
+            self.ensure_backdrop_blur_state(device, w.max(1), h.max(1));
+            // Blit output_view content to the intermediate so we have a
+            // samplable copy. We already have the tonemapped result on
+            // output_view. Unfortunately surface textures can't be sampled,
+            // so we blit to our intermediate first.
+            //
+            // Actually for HDR: the tone-map wrote to output_view (or
+            // upscale_view). We need the scene in a samplable texture. The
+            // HDR colour texture (hdr_colour_view) is samplable but it's HDR.
+            // For simplicity, use the HDR colour texture as the blur source;
+            // the blur result will be HDR-ish but clamped by the LDR target
+            // format of the blur textures. This looks acceptable in practice.
+            let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+            let source = &slot_hdr.hdr_view;
+            let spread = self.overlay_shape_gpu_data.as_ref()
+                .map(|d| d.max_blur_radius)
+                .unwrap_or(8.0);
+            Some(self.run_backdrop_blur(&mut encoder, device, queue, source, spread))
+        } else {
+            None
+        };
+
         if has_overlay {
             let hdr_depth_view = &self.viewport_slots[vp_idx]
                 .hdr
@@ -3140,6 +3323,10 @@ impl ViewportRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+            // Blur backdrop shapes drawn first (behind normal shapes).
+            if let Some(ref bg) = hdr_blur_bg {
+                self.draw_blur_shapes(&mut overlay_pass, bg);
+            }
             // SDF overlay shapes (HDR path).
             if let Some(ref sd) = self.overlay_shape_gpu_data {
                 if sd.vertex_count > 0 {
@@ -3352,5 +3539,228 @@ impl ViewportRenderer {
         }
 
         pixels
+    }
+
+    // ------------------------------------------------------------------
+    // Backdrop blur helpers
+    // ------------------------------------------------------------------
+
+    /// Ensure the backdrop blur state textures exist at the right size.
+    fn ensure_backdrop_blur_state(
+        &mut self,
+        device: &wgpu::Device,
+        w: u32,
+        h: u32,
+    ) {
+        let need_recreate = match &self.backdrop_blur_state {
+            Some(s) => s.size != [w, h] || s.format != self.resources.target_format,
+            None => true,
+        };
+        if !need_recreate {
+            return;
+        }
+
+        let format = self.resources.target_format;
+        let blur_w = (w / 2).max(1);
+        let blur_h = (h / 2).max(1);
+
+        let intermediate_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("backdrop_intermediate"),
+            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let intermediate_view = intermediate_texture.create_view(&Default::default());
+
+        let make_blur_tex = |label: &str| {
+            let t = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d { width: blur_w, height: blur_h, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let v = t.create_view(&Default::default());
+            (t, v)
+        };
+        let (blur_a_texture, blur_a_view) = make_blur_tex("backdrop_blur_a");
+        let (blur_b_texture, blur_b_view) = make_blur_tex("backdrop_blur_b");
+
+        self.backdrop_blur_state = Some(crate::resources::BackdropBlurState {
+            intermediate_texture,
+            intermediate_view,
+            blur_a_texture,
+            blur_a_view,
+            blur_b_texture,
+            blur_b_view,
+            size: [w, h],
+            format,
+        });
+    }
+
+    /// Run the backdrop blur pipeline: blit scene to half-res, then H blur, then V blur.
+    /// Returns the bind group that can be used to draw blur overlay shapes with the
+    /// texture pipeline.
+    fn run_backdrop_blur(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        source_view: &wgpu::TextureView,
+        spread: f32,
+    ) -> wgpu::BindGroup {
+        let bs = self.backdrop_blur_state.as_ref().unwrap();
+        let blur_bgl = self.resources.backdrop_blur_bgl.as_ref().unwrap();
+        let blur_sampler = self.resources.backdrop_blur_sampler.as_ref().unwrap();
+        let blur_pipeline = self.resources.backdrop_blur_pipeline.as_ref().unwrap();
+        // Reuse dyn_res blit pipeline and BGL for the downsample pass.
+        let blit_pipeline = self.resources.dyn_res_upscale_pipeline.as_ref().unwrap();
+        let blit_bgl = self.resources.dyn_res_upscale_bgl.as_ref().unwrap();
+        let blit_sampler = self.resources.dyn_res_linear_sampler.as_ref().unwrap();
+
+        // Step 1: downsample source -> blur_a (half-res) using bilinear blit.
+        let downsample_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("backdrop_downsample_bg"),
+            layout: blit_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(source_view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(blit_sampler) },
+            ],
+        });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("backdrop_downsample"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &bs.blur_a_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(blit_pipeline);
+            pass.set_bind_group(0, &downsample_bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+
+        // Spread scaled for half-res: each texel covers 2 screen pixels.
+        let effective_spread = (spread / 2.0).max(1.0);
+
+        // Step 2: horizontal blur: blur_a -> blur_b.
+        let h_uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("blur_h_uniform"),
+            contents: bytemuck::cast_slice(&[1u32, effective_spread.to_bits(), 0u32, 0u32]),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let h_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("blur_h_bg"),
+            layout: blur_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&bs.blur_a_view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(blur_sampler) },
+                wgpu::BindGroupEntry { binding: 2, resource: h_uniform.as_entire_binding() },
+            ],
+        });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("backdrop_blur_h"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &bs.blur_b_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(blur_pipeline);
+            pass.set_bind_group(0, &h_bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+
+        // Step 3: vertical blur: blur_b -> blur_a.
+        let v_uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("blur_v_uniform"),
+            contents: bytemuck::cast_slice(&[0u32, effective_spread.to_bits(), 0u32, 0u32]),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let v_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("blur_v_bg"),
+            layout: blur_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&bs.blur_b_view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(blur_sampler) },
+                wgpu::BindGroupEntry { binding: 2, resource: v_uniform.as_entire_binding() },
+            ],
+        });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("backdrop_blur_v"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &bs.blur_a_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(blur_pipeline);
+            pass.set_bind_group(0, &v_bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+
+        // Build the bind group for overlay shape drawing. Uses the overlay_shape_tex
+        // bind group layout (texture + sampler) so blur shapes can be drawn with the
+        // existing texture pipeline.
+        let tex_bgl = self.resources.overlay_shape_tex_bgl.as_ref().unwrap();
+        let tex_sampler = self.resources.overlay_shape_tex_sampler.as_ref().unwrap();
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("backdrop_blur_overlay_bg"),
+            layout: tex_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&bs.blur_a_view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(tex_sampler) },
+            ],
+        })
+    }
+
+    /// Returns true if the current frame has overlay shapes that need backdrop blur.
+    fn has_backdrop_blur_shapes(&self) -> bool {
+        self.overlay_shape_gpu_data
+            .as_ref()
+            .map_or(false, |sd| sd.blur_vertex_count > 0)
+    }
+
+    /// Draw blur overlay shapes into the given render pass using the texture pipeline.
+    fn draw_blur_shapes<'rp>(
+        &'rp self,
+        render_pass: &mut wgpu::RenderPass<'rp>,
+        blur_bind_group: &'rp wgpu::BindGroup,
+    ) {
+        if let Some(ref sd) = self.overlay_shape_gpu_data {
+            if sd.blur_vertex_count > 0 {
+                if let (Some(pipeline), Some(vbuf)) = (
+                    &self.resources.overlay_shape_tex_pipeline,
+                    &sd.blur_vertex_buf,
+                ) {
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_bind_group(0, blur_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                    render_pass.draw(0..sd.blur_vertex_count, 0..1);
+                }
+            }
+        }
     }
 }

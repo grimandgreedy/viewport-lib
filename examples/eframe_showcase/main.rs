@@ -3233,6 +3233,11 @@ impl App {
         if self.mode == ShowcaseMode::Overlay {
             fd.overlays.time = self.ovl_state.start_time.elapsed().as_secs_f64();
             let (shapes, labels, bar, ruler) = showcase_35_overlay::build_overlay_frame(self);
+            // Enable HDR callback path so the renderer owns the encoder and can
+            // run backdrop blur passes.
+            if shapes.iter().any(|s| s.backdrop_blur > 0.0) {
+                fd.effects.post_process.enabled = true;
+            }
             fd.overlays.shapes = shapes;
             fd.overlays.labels = labels;
             fd.overlays.scalar_bars = vec![bar];
