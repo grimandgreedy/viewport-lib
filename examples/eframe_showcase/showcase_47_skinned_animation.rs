@@ -18,11 +18,11 @@
 
 use eframe::egui;
 use viewport_lib::{
-    ActionFrame, AnimationClip, Channel, ClipPlayerPlugin, Interpolation, Joint, Material,
-    MeshId, MeshData, Pose, RuntimeFrameContext, RuntimePlugin, RuntimeStepContext, Sampler,
-    Skeleton, SkeletonPlugin, SkinnedActor, SkinnedActorPart, SkinnedActorPlugin,
-    SkinnedMeshUpdate, SkinnedPoseUpdate, SkinningPath, SkinWeights, Track, TrackValues,
-    ViewportRuntime,
+    ActionFrame, AnimationClip, BuiltinMatcap, Channel, ClipPlayerPlugin, Interpolation, Joint,
+    Material, MatcapId, MeshId, MeshData, Pose, RuntimeFrameContext, RuntimePlugin,
+    RuntimeStepContext, Sampler, Skeleton, SkeletonPlugin, SkinnedActor, SkinnedActorPart,
+    SkinnedActorPlugin, SkinnedMeshUpdate, SkinnedPoseUpdate, SkinningPath, SkinWeights, Track,
+    TrackValues, ViewportRuntime,
     runtime::plugin::phase,
     scene::{Scene, material::BackfacePolicy},
     selection::Selection,
@@ -254,6 +254,32 @@ pub(crate) struct Skin47State {
     /// Highest count ever requested. Used to size the existing actor pool so
     /// the slider can scale up to that without re-uploading.
     pub crowd_max_uploaded: usize,
+
+    // -----------------------------------------------------------------------
+    // Appearance toggles (Phase 5.3 demo)
+    //
+    // Apply to every skinned node currently in the scene. Bumping
+    // `appearance_version` re-stamps the scene on the next frame.
+    // -----------------------------------------------------------------------
+    /// Per-item opacity. < 1.0 routes draws through the skinned transparent
+    /// pipeline (and HDR OIT when HDR is the active path).
+    pub opacity: f32,
+    /// Force-wireframe per node (independent of viewport.wireframe_mode).
+    pub per_item_wireframe: bool,
+    /// `use_pbr` on the material. Exercises the Cook-Torrance fragment branch
+    /// reused by the skinned variant.
+    pub use_pbr: bool,
+    /// When true, set the material's matcap to a built-in matcap. Exercises
+    /// the matcap fragment branch through the skinned variant.
+    pub use_matcap: bool,
+    /// When true, set `backface_policy = Tint(0.4)` so the skinned two-sided
+    /// pipeline takes over.
+    pub two_sided: bool,
+    /// Bumped whenever any of the above changes. The per-frame update applies
+    /// the new values to all skinned nodes when this differs from
+    /// `applied_appearance_version`.
+    pub appearance_version: u32,
+    pub applied_appearance_version: u32,
 }
 
 impl Default for Skin47State {
@@ -286,6 +312,13 @@ impl Default for Skin47State {
             crowd_count: 6,
             crowd_count_active: 0,
             crowd_max_uploaded: 0,
+            opacity: 1.0,
+            per_item_wireframe: false,
+            use_pbr: false,
+            use_matcap: false,
+            two_sided: true,
+            appearance_version: 0,
+            applied_appearance_version: 0,
         }
     }
 }
@@ -342,6 +375,12 @@ pub(crate) fn build_skin47_scene(app: &mut App, renderer: &mut viewport_lib::Vie
     );
     app.skin47_state.active_demo = app.skin47_state.demo;
     populate_scene_for_demo(&mut app.skin47_state);
+
+    // Force the appearance toggles to apply on the first frame, otherwise
+    // the scene shows whatever material build_skin47_scene set and ignores
+    // the sidebar defaults until the user toggles something.
+    app.skin47_state.appearance_version =
+        app.skin47_state.appearance_version.wrapping_add(1);
 
     app.skin47_state.built = true;
 }
@@ -845,6 +884,10 @@ pub(crate) fn update_skin47(app: &mut App, dt: f32) {
             app.skin47_state.active_path = app.skin47_state.path;
             populate_scene_for_demo(&mut app.skin47_state);
             restamp_skin_instances(&mut app.skin47_state);
+            // New nodes need the current appearance toggles applied on next
+            // pass through `apply_skin47_updates`.
+            app.skin47_state.applied_appearance_version =
+                app.skin47_state.appearance_version.wrapping_sub(1);
         }
     }
 
@@ -878,6 +921,54 @@ pub(crate) fn update_skin47(app: &mut App, dt: f32) {
     // Hand the right update channel through to build_frame_data.
     app.skin47_state.pending_updates = output.skinned_mesh_updates;
     app.skin47_state.pending_pose_updates = output.skinned_pose_updates;
+}
+
+/// Apply the current appearance toggles to every scene node belonging to the
+/// active demo. Re-stamps each frame only when the appearance version bumps,
+/// so unchanged frames pay no cost.
+fn apply_skin47_appearance(state: &mut Skin47State, renderer: &viewport_lib::ViewportRenderer) {
+    if state.appearance_version == state.applied_appearance_version {
+        return;
+    }
+    state.applied_appearance_version = state.appearance_version;
+
+    let matcap_id: Option<MatcapId> = if state.use_matcap {
+        Some(renderer.resources().builtin_matcap_id(BuiltinMatcap::Jade))
+    } else {
+        None
+    };
+
+    // Each (node, base_colour) pair gets its own material so the per-node
+    // colour set by build_skin47_scene / populate_scene_for_demo survives the
+    // re-stamp. Read the colour back off the existing material so a future
+    // edit to the base palette doesn't have to come back to this function.
+    let mut nodes: Vec<viewport_lib::NodeId> = Vec::new();
+    if let Some(arm) = state.arm_node {
+        nodes.push(arm);
+    }
+    nodes.extend(state.gltf_nodes.iter().copied());
+    nodes.extend(state.crowd_nodes.iter().copied());
+
+    for node_id in nodes {
+        let Some(node) = state.scene.node(node_id) else {
+            continue;
+        };
+        let base_colour = node.material().base_colour;
+        let mut mat = Material::from_colour(base_colour);
+        mat.use_pbr = state.use_pbr;
+        mat.matcap_id = matcap_id;
+        mat.backface_policy = if state.two_sided {
+            BackfacePolicy::Tint(0.4)
+        } else {
+            BackfacePolicy::Cull
+        };
+        state.scene.set_material(node_id, mat);
+
+        let mut app = viewport_lib::scene::material::AppearanceSettings::default();
+        app.opacity = state.opacity;
+        app.wireframe = state.per_item_wireframe;
+        state.scene.set_appearance(node_id, app);
+    }
 }
 
 /// Stamp `skin_instance` on every scene node that participates in the active
@@ -946,8 +1037,14 @@ pub(crate) fn apply_skin47_updates(app: &mut App, renderer: &mut viewport_lib::V
         }
         populate_scene_for_demo(&mut app.skin47_state);
         restamp_skin_instances(&mut app.skin47_state);
+        app.skin47_state.applied_appearance_version =
+            app.skin47_state.appearance_version.wrapping_sub(1);
         app.skin47_state.crowd_count_active = desired;
     }
+
+    // Apply appearance toggles (opacity, wireframe, PBR, matcap, two-sided)
+    // to every skinned node in the active demo.
+    apply_skin47_appearance(&mut app.skin47_state, renderer);
 
     // CPU path: blit deformed positions/normals back into the bind-pose
     // vertex buffer for every emitted mesh.
@@ -1051,6 +1148,54 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
         ));
         ui.small("CPU: re-uploads vertex buffers each frame.");
         ui.small("GPU: uploads joint palette only; shader does LBS.");
+        ui.add_space(6.0);
+        ui.separator();
+
+        ui.label("Appearance (skinned pipeline coverage):");
+        ui.small("Toggles apply to every node in the active demo.");
+        ui.small("Use these with GPU path to exercise the 5.3 variants.");
+        ui.add_space(4.0);
+        let mut changed = false;
+        let mut opacity = app.skin47_state.opacity;
+        if ui
+            .add(egui::Slider::new(&mut opacity, 0.05..=1.0).text("Opacity"))
+            .changed()
+        {
+            app.skin47_state.opacity = opacity;
+            changed = true;
+        }
+        if ui
+            .checkbox(&mut app.skin47_state.per_item_wireframe, "Wireframe")
+            .changed()
+        {
+            changed = true;
+        }
+        if ui
+            .checkbox(&mut app.skin47_state.use_pbr, "PBR shading")
+            .changed()
+        {
+            changed = true;
+        }
+        if ui
+            .checkbox(&mut app.skin47_state.use_matcap, "Matcap (Jade)")
+            .changed()
+        {
+            changed = true;
+        }
+        if ui
+            .checkbox(&mut app.skin47_state.two_sided, "Two-sided (Tint)")
+            .changed()
+        {
+            changed = true;
+        }
+        if changed {
+            app.skin47_state.appearance_version =
+                app.skin47_state.appearance_version.wrapping_add(1);
+        }
+        ui.small("Opacity < 1 -> skinned transparent pipeline.");
+        ui.small("Wireframe -> skinned wireframe pipeline.");
+        ui.small("PBR / Matcap -> fragment-stage branches (shared with static).");
+        ui.small("Two-sided -> skinned two-sided pipeline.");
         ui.add_space(6.0);
         ui.separator();
 
