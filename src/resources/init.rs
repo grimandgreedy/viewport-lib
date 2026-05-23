@@ -2105,6 +2105,101 @@ impl ViewportGpuResources {
             cache: None,
         });
 
+        let skinned_transparent_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("skinned_transparent_pipeline"),
+                layout: Some(&skinned_solid_layout),
+                vertex: wgpu::VertexState {
+                    module: &skinned_mesh_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: Some(wgpu::BlendState {
+                            color: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::SrcAlpha,
+                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                            alpha: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::One,
+                                dst_factor: wgpu::BlendFactor::Zero,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                        }),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    unclipped_depth: false,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            });
+
+        let skinned_wireframe_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("skinned_wireframe_pipeline"),
+                layout: Some(&skinned_solid_layout),
+                vertex: wgpu::VertexState {
+                    module: &skinned_mesh_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::LineList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    unclipped_depth: false,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    conservative: false,
+                },
+                depth_stencil: Some(depth_stencil.clone()),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            });
+
         let skinned_shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shadow_skinned_shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/shadow_skinned.wgsl").into()),
@@ -2162,6 +2257,8 @@ impl ViewportGpuResources {
             skinning,
             skinned_solid_pipeline,
             skinned_solid_two_sided_pipeline,
+            skinned_transparent_pipeline,
+            skinned_wireframe_pipeline,
             skinned_shadow_pipeline,
             solid_two_sided_pipeline,
             transparent_pipeline,
@@ -2355,6 +2452,9 @@ impl ViewportGpuResources {
             hdr_solid_pipeline: None,
             hdr_skinned_solid_pipeline: None,
             hdr_skinned_solid_two_sided_pipeline: None,
+            hdr_skinned_transparent_pipeline: None,
+            hdr_skinned_wireframe_pipeline: None,
+            skinned_oit_pipeline: None,
             hdr_solid_two_sided_pipeline: None,
             hdr_transparent_pipeline: None,
             hdr_wireframe_pipeline: None,

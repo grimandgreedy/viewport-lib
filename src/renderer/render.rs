@@ -1583,7 +1583,6 @@ impl ViewportRenderer {
 
                     if frame.viewport.wireframe_mode {
                         if let Some(ref hdr_wf) = resources.hdr_wireframe_pipeline {
-                            render_pass.set_pipeline(hdr_wf);
                             let mut wf_idx = 0usize;
                             for item in scene_items {
                                 if item.appearance.hidden {
@@ -1592,6 +1591,17 @@ impl ViewportRenderer {
                                 let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                                     continue;
                                 };
+                                let skin_bg = item.skin_instance.and_then(|inst| {
+                                    resources.skin_instance_bind_group(item.mesh_id, inst)
+                                });
+                                if let (Some(bg), Some(hdr_skinned_wf)) =
+                                    (skin_bg, resources.hdr_skinned_wireframe_pipeline.as_ref())
+                                {
+                                    render_pass.set_pipeline(hdr_skinned_wf);
+                                    render_pass.set_bind_group(2, bg, &[]);
+                                } else {
+                                    render_pass.set_pipeline(hdr_wf);
+                                }
                                 let bg = self
                                     .wireframe_bind_groups
                                     .get(wf_idx)
@@ -1622,12 +1632,27 @@ impl ViewportRenderer {
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                                 continue;
                             };
-                            let pipeline = if item.material.is_two_sided() {
-                                hdr_solid_two_sided
+                            let skin_bg = item.skin_instance.and_then(|inst| {
+                                resources.skin_instance_bind_group(item.mesh_id, inst)
+                            });
+                            if let (Some(bg), Some(hdr_skinned_pl)) = (
+                                skin_bg,
+                                if item.material.is_two_sided() {
+                                    resources.hdr_skinned_solid_two_sided_pipeline.as_ref()
+                                } else {
+                                    resources.hdr_skinned_solid_pipeline.as_ref()
+                                },
+                            ) {
+                                render_pass.set_pipeline(hdr_skinned_pl);
+                                render_pass.set_bind_group(2, bg, &[]);
                             } else {
-                                hdr_solid
-                            };
-                            render_pass.set_pipeline(pipeline);
+                                let pipeline = if item.material.is_two_sided() {
+                                    hdr_solid_two_sided
+                                } else {
+                                    hdr_solid
+                                };
+                                render_pass.set_pipeline(pipeline);
+                            }
                             render_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
                             render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             let filter = compute_filter_results
@@ -1727,7 +1752,14 @@ impl ViewportRenderer {
                                 )
                             });
                             if frame.viewport.wireframe_mode {
-                                render_pass.set_pipeline(wf_pl);
+                                if let (Some(bg), Some(hdr_skinned_wf)) =
+                                    (skin_bg, resources.hdr_skinned_wireframe_pipeline.as_ref())
+                                {
+                                    render_pass.set_pipeline(hdr_skinned_wf);
+                                    render_pass.set_bind_group(2, bg, &[]);
+                                } else {
+                                    render_pass.set_pipeline(wf_pl);
+                                }
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 render_pass.set_index_buffer(
                                     mesh.edge_index_buffer.slice(..),
@@ -1754,7 +1786,11 @@ impl ViewportRenderer {
                                 } else {
                                     solid_pl
                                 };
-                                let hdr_skinned_pl = if item.material.is_two_sided() {
+                                let is_blended = item.appearance.opacity < 1.0
+                                    || item.material.is_blend();
+                                let hdr_skinned_pl = if is_blended {
+                                    resources.hdr_skinned_transparent_pipeline.as_ref()
+                                } else if item.material.is_two_sided() {
                                     resources.hdr_skinned_solid_two_sided_pipeline.as_ref()
                                 } else {
                                     resources.hdr_skinned_solid_pipeline.as_ref()
@@ -2196,11 +2232,16 @@ impl ViewportRenderer {
                     // Render them here individually so they are not invisible at opacity < 1.
                     if let Some(ref pipeline) = self.resources.oit_pipeline {
                         oit_pass.set_pipeline(pipeline);
+                        let mut last_skinned = false;
                         for item in scene_items {
                             if item.appearance.hidden || (item.appearance.opacity >= 1.0 && !item.material.is_blend()) {
                                 continue;
                             }
-                            if item.active_attribute.is_none()
+                            let skin_bg = item.skin_instance.and_then(|inst| {
+                                self.resources.skin_instance_bind_group(item.mesh_id, inst)
+                            });
+                            if skin_bg.is_none()
+                                && item.active_attribute.is_none()
                                 && !item.material.is_two_sided()
                                 && item.material.matcap_id.is_none()
                             {
@@ -2209,7 +2250,22 @@ impl ViewportRenderer {
                             let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
                                 continue;
                             };
+                            let want_skinned = skin_bg.is_some()
+                                && self.resources.skinned_oit_pipeline.is_some();
+                            if want_skinned != last_skinned {
+                                if want_skinned {
+                                    oit_pass.set_pipeline(
+                                        self.resources.skinned_oit_pipeline.as_ref().unwrap(),
+                                    );
+                                } else {
+                                    oit_pass.set_pipeline(pipeline);
+                                }
+                                last_skinned = want_skinned;
+                            }
                             oit_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
+                            if let Some(bg) = skin_bg {
+                                oit_pass.set_bind_group(2, bg, &[]);
+                            }
                             oit_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             oit_pass.set_index_buffer(
                                 mesh.index_buffer.slice(..),
@@ -2220,6 +2276,7 @@ impl ViewportRenderer {
                     }
                 } else if let Some(ref pipeline) = self.resources.oit_pipeline {
                     oit_pass.set_pipeline(pipeline);
+                    let mut last_skinned = false;
                     for item in scene_items {
                         if item.appearance.hidden || item.appearance.opacity >= 1.0 {
                             continue;
@@ -2227,7 +2284,25 @@ impl ViewportRenderer {
                         let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
                             continue;
                         };
+                        let skin_bg = item.skin_instance.and_then(|inst| {
+                            self.resources.skin_instance_bind_group(item.mesh_id, inst)
+                        });
+                        let want_skinned = skin_bg.is_some()
+                            && self.resources.skinned_oit_pipeline.is_some();
+                        if want_skinned != last_skinned {
+                            if want_skinned {
+                                oit_pass.set_pipeline(
+                                    self.resources.skinned_oit_pipeline.as_ref().unwrap(),
+                                );
+                            } else {
+                                oit_pass.set_pipeline(pipeline);
+                            }
+                            last_skinned = want_skinned;
+                        }
                         oit_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
+                        if let Some(bg) = skin_bg {
+                            oit_pass.set_bind_group(2, bg, &[]);
+                        }
                         oit_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                         oit_pass.set_index_buffer(
                             mesh.index_buffer.slice(..),

@@ -784,6 +784,12 @@ impl ViewportRenderer {
                             && item.material.param_vis.is_none()
                             && resources.mesh_store.get(item.mesh_id).is_some()
                             && !compute_filter_results.iter().any(|r| r.mesh_id == item.mesh_id)
+                            // Skinned items go through the per-object skinned
+                            // pipeline. Batched skinning with palette-array
+                            // lookup is a future optimisation; see
+                            // docs/plans/skeletal-animation-plan.md Phase 5.3.
+                            && !(item.skin_instance.is_some()
+                                && resources.is_skinned_mesh(item.mesh_id))
                     })
                     .collect();
 
@@ -1993,6 +1999,58 @@ impl ViewportRenderer {
                                         ..batch.instance_offset + batch.instance_count,
                                 );
                                 shadow_draws += 1;
+                            }
+
+                            // Skinned items are excluded from instanced
+                            // batches; draw them per-object through the
+                            // skinned shadow pipeline so they still cast
+                            // shadows while the instanced path runs. The
+                            // skinned shadow pipeline uses a different group-0
+                            // layout (shadow_camera_bgl with dynamic offset),
+                            // so rebind group 0 + 1 around the per-object loop
+                            // and restore the instanced bindings after.
+                            let mut drew_skinned = false;
+                            for item in scene_items.iter() {
+                                if item.appearance.hidden
+                                    || item.appearance.opacity < 1.0
+                                {
+                                    continue;
+                                }
+                                let Some(skin_bg) = item.skin_instance.and_then(|inst| {
+                                    resources
+                                        .skin_instance_bind_group(item.mesh_id, inst)
+                                }) else {
+                                    continue;
+                                };
+                                let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
+                                    continue;
+                                };
+                                if !drew_skinned {
+                                    shadow_pass
+                                        .set_pipeline(&resources.skinned_shadow_pipeline);
+                                    shadow_pass.set_bind_group(
+                                        0,
+                                        &resources.shadow_bind_group,
+                                        &[cascade as u32 * 256],
+                                    );
+                                    drew_skinned = true;
+                                }
+                                shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
+                                shadow_pass.set_bind_group(2, skin_bg, &[]);
+                                shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                shadow_pass.set_index_buffer(
+                                    mesh.index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
+                                shadow_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                                shadow_draws += 1;
+                            }
+                            // Restore the instanced bind groups for the next
+                            // cascade so the instanced path keeps working.
+                            if drew_skinned {
+                                shadow_pass.set_pipeline(pipeline);
+                                shadow_pass.set_bind_group(0, cascade_bg, &[]);
+                                shadow_pass.set_bind_group(1, instance_bg, &[]);
                             }
                         }
                     }

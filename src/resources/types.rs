@@ -2344,6 +2344,13 @@ pub struct ViewportGpuResources {
     /// Skinned two-sided variant (cull_mode = None). Selected when a skinned
     /// mesh's material requests a non-Cull backface policy.
     pub skinned_solid_two_sided_pipeline: wgpu::RenderPipeline,
+    /// Skinned variant of [`Self::transparent_pipeline`]: alpha blending,
+    /// no back-face culling, no depth write. Selected for skinned items
+    /// with opacity < 1.0 or a blended material.
+    pub skinned_transparent_pipeline: wgpu::RenderPipeline,
+    /// Skinned variant of [`Self::wireframe_pipeline`]: LineList topology
+    /// over the mesh's edge index buffer.
+    pub skinned_wireframe_pipeline: wgpu::RenderPipeline,
     /// Skinned variant of [`Self::shadow_pipeline`] used when a skinned mesh
     /// casts shadows.
     pub skinned_shadow_pipeline: wgpu::RenderPipeline,
@@ -2716,6 +2723,14 @@ pub struct ViewportGpuResources {
     pub(crate) hdr_skinned_solid_pipeline: Option<wgpu::RenderPipeline>,
     /// HDR skinned two-sided variant (cull_mode: None).
     pub(crate) hdr_skinned_solid_two_sided_pipeline: Option<wgpu::RenderPipeline>,
+    /// HDR skinned transparent variant (alpha blending, no depth write).
+    pub(crate) hdr_skinned_transparent_pipeline: Option<wgpu::RenderPipeline>,
+    /// HDR skinned wireframe variant (LineList over edge index buffer).
+    pub(crate) hdr_skinned_wireframe_pipeline: Option<wgpu::RenderPipeline>,
+    /// Skinned variant of [`Self::oit_pipeline`]. Same OIT accumulate /
+    /// reveal output as the static OIT pipeline; vertex stage is the skinned
+    /// LBS from `mesh_skinned.wgsl`. HDR-only: OIT is not used in LDR.
+    pub(crate) skinned_oit_pipeline: Option<wgpu::RenderPipeline>,
     /// HDR two-sided variant (cull_mode: None) for analytical surfaces.
     pub(crate) hdr_solid_two_sided_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) hdr_transparent_pipeline: Option<wgpu::RenderPipeline>,

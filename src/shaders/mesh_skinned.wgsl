@@ -71,6 +71,13 @@ struct Object {
 };
 
 @group(1) @binding(0) var<uniform> object: Object;
+// Per-vertex storage buffers consumed by the vertex stage. Bindings match
+// `mesh.wgsl`'s declarations exactly so the same `object_bgl` works for both
+// pipeline variants. Texture bindings (1..5, 7, 11, 12) are read by
+// `mesh.wgsl`'s `fs_main` and not declared here.
+@group(1) @binding(6) var<storage, read> scalar_buffer: array<f32>;
+@group(1) @binding(8) var<storage, read> face_colour_buffer: array<vec4<f32>>;
+@group(1) @binding(9) var<storage, read> warp_buffer: array<f32>;
 
 // One entry per vertex: 4 weights, then joint indices packed as two u32s
 // (low/high u16 pair). Field order matches `PackedSkinVertex` in
@@ -138,9 +145,24 @@ fn skin_matrix(vertex_index: u32) -> mat4x4<f32> {
 fn vs_main(in: VertexIn) -> VertexOut {
     var out: VertexOut;
 
+    // Warp is applied to the bind-pose position before skinning so a warped
+    // vertex follows its joint cleanly. Mirrors mesh.wgsl's vs_main behaviour
+    // for warp + skinning composition.
+    var bind_local = in.position;
+    if object.has_warp != 0u {
+        let wi = in.vertex_index * 3u;
+        let warp_len = arrayLength(&warp_buffer);
+        if wi + 2u < warp_len {
+            bind_local += vec3<f32>(
+                warp_buffer[wi],
+                warp_buffer[wi + 1u],
+                warp_buffer[wi + 2u],
+            ) * object.warp_scale;
+        }
+    }
+
     let skin = skin_matrix(in.vertex_index);
-    let bind_pos = vec4<f32>(in.position, 1.0);
-    let local_pos = (skin * bind_pos).xyz;
+    let local_pos = (skin * vec4<f32>(bind_local, 1.0)).xyz;
 
     let skin3 = mat3x3<f32>(
         skin[0].xyz,
@@ -164,13 +186,31 @@ fn vs_main(in: VertexIn) -> VertexOut {
     out.world_tangent = vec4<f32>(normalize(model3 * local_tangent), in.tangent.w);
     out.uv = in.uv;
 
-    // Scalar / face-colour overrides are not skinned-aware in this vertical
-    // slice. Default to inert values so the fragment stage produces ordinary
-    // lit output. Phase 5.3 wires the full per-vertex attribute set through
-    // the skinned pipeline variants.
-    out.scalar_val = 0.0;
-    out.is_nan_scalar = 0.0;
-    out.face_colour = vec4<f32>(1.0, 1.0, 1.0, 1.0);
+    // Per-vertex scalar attribute, guarded by has_attribute + buffer length.
+    // Detect NaN before interpolation can corrupt the bit pattern. Mirrors
+    // mesh.wgsl::vs_main.
+    let buf_len = arrayLength(&scalar_buffer);
+    let idx = in.vertex_index;
+    let has_attr = object.has_attribute != 0u && buf_len > 0u;
+    let safe_idx = min(idx, select(0u, buf_len - 1u, buf_len > 0u));
+    let raw_scalar = scalar_buffer[safe_idx];
+    out.scalar_val = select(0.0, raw_scalar, has_attr);
+    let sv_bits = bitcast<u32>(raw_scalar);
+    let sv_is_nan = has_attr
+        && (sv_bits & 0x7F800000u) == 0x7F800000u
+        && (sv_bits & 0x007FFFFFu) != 0u;
+    out.is_nan_scalar = select(0.0, 1.0, sv_is_nan);
+
+    // Per-face RGBA colour (FaceColour attribute kind). Indexed by
+    // vertex_index which equals the sequential draw invocation counter for
+    // non-indexed face draws.
+    let fc_len = arrayLength(&face_colour_buffer);
+    let fc_idx = min(idx, select(0u, fc_len - 1u, fc_len > 0u));
+    out.face_colour = select(
+        vec4<f32>(1.0),
+        face_colour_buffer[fc_idx],
+        object.use_face_colour != 0u && fc_len > 0u,
+    );
 
     return out;
 }

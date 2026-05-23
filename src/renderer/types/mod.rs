@@ -196,7 +196,9 @@ macro_rules! emit_draw_calls {
                             !item.appearance.hidden
                                 && (item.active_attribute.is_some()
                                     || item.material.is_two_sided()
-                                    || item.material.param_vis.is_some())
+                                    || item.material.param_vis.is_some()
+                                    || (item.skin_instance.is_some()
+                                        && resources.is_skinned_mesh(item.mesh_id)))
                                 && resources
                                     .mesh_store
                                     .get(item.mesh_id)
@@ -272,7 +274,15 @@ macro_rules! emit_draw_calls {
                         for item in scene_items {
                             if item.appearance.hidden { continue; }
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else { continue };
-                            render_pass.set_pipeline(&resources.wireframe_pipeline);
+                            let skin_bg = item.skin_instance.and_then(|inst| {
+                                resources.skin_instance_bind_group(item.mesh_id, inst)
+                            });
+                            if let Some(bg) = skin_bg {
+                                render_pass.set_pipeline(&resources.skinned_wireframe_pipeline);
+                                render_pass.set_bind_group(2, bg, &[]);
+                            } else {
+                                render_pass.set_pipeline(&resources.wireframe_pipeline);
+                            }
                             let bg = wireframe_bind_groups.get(wf_idx)
                                 .unwrap_or(&mesh.object_bind_group);
                             render_pass.set_bind_group(1, bg, &[]);
@@ -293,7 +303,21 @@ macro_rules! emit_draw_calls {
                             else {
                                 continue;
                             };
-                            let pipeline = if item.appearance.opacity < 1.0 {
+                            let skin_bg = item.skin_instance.and_then(|inst| {
+                                resources.skin_instance_bind_group(item.mesh_id, inst)
+                            });
+                            let is_blended = item.appearance.opacity < 1.0
+                                || item.material.is_blend();
+                            let pipeline: &wgpu::RenderPipeline = if let Some(bg) = skin_bg {
+                                render_pass.set_bind_group(2, bg, &[]);
+                                if is_blended {
+                                    &resources.skinned_transparent_pipeline
+                                } else if item.material.is_two_sided() {
+                                    &resources.skinned_solid_two_sided_pipeline
+                                } else {
+                                    &resources.skinned_solid_pipeline
+                                }
+                            } else if is_blended {
                                 &resources.transparent_pipeline
                             } else if item.material.is_two_sided() {
                                 &resources.solid_two_sided_pipeline
@@ -382,7 +406,13 @@ macro_rules! emit_draw_calls {
                         });
 
                         if frame.viewport.wireframe_mode {
-                            render_pass.set_pipeline(&resources.wireframe_pipeline);
+                            let wf_pl = if let Some(bg) = skin_bg {
+                                render_pass.set_bind_group(2, bg, &[]);
+                                &resources.skinned_wireframe_pipeline
+                            } else {
+                                &resources.wireframe_pipeline
+                            };
+                            render_pass.set_pipeline(wf_pl);
                             render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             render_pass.set_index_buffer(
                                 mesh.edge_index_buffer.slice(..),
@@ -402,7 +432,11 @@ macro_rules! emit_draw_calls {
                                 .iter()
                                 .find(|r| r.mesh_id == item.mesh_id);
                             if let Some(bg) = skin_bg {
-                                let skinned_pl = if item.material.is_two_sided() {
+                                let is_blended = item.appearance.opacity < 1.0
+                                    || item.material.is_blend();
+                                let skinned_pl = if is_blended {
+                                    &resources.skinned_transparent_pipeline
+                                } else if item.material.is_two_sided() {
                                     &resources.skinned_solid_two_sided_pipeline
                                 } else {
                                     &resources.skinned_solid_pipeline
