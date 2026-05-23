@@ -72,6 +72,38 @@ impl Aabb {
         (self.max - self.min).max_element()
     }
 
+    /// Grow the AABB outward by `margin` on each axis.
+    ///
+    /// The same margin is applied to both `min` and `max`, so total size grows
+    /// by `2 * margin` per axis. Negative components are allowed but the
+    /// resulting box may become inverted; callers are expected to pass
+    /// non-negative values.
+    ///
+    /// Used by skinned-mesh picking to grow a bind-pose AABB into a
+    /// conservative deformation envelope (see [`crate::PickAccelerator`]).
+    pub fn expanded(&self, margin: glam::Vec3) -> Self {
+        Self {
+            min: self.min - margin,
+            max: self.max + margin,
+        }
+    }
+
+    /// Grow the AABB outward by the same margin on every axis.
+    pub fn expanded_uniform(&self, margin: f32) -> Self {
+        self.expanded(glam::Vec3::splat(margin))
+    }
+
+    /// Grow the AABB outward by a fraction of its longest side.
+    ///
+    /// Convenient for skinned meshes where the bind-pose AABB is known but the
+    /// deformation envelope is not. A `factor` of `0.25` adds 25% of the
+    /// longest side as padding on every axis. Pick the smallest factor that
+    /// still covers the worst-case pose.
+    pub fn expanded_relative(&self, factor: f32) -> Self {
+        let margin = self.longest_side() * factor;
+        self.expanded_uniform(margin)
+    }
+
     /// Returns true if the plane (defined by unit normal + signed distance)
     /// intersects this AABB : i.e., the AABB spans both sides of the plane.
     pub fn intersects_plane(&self, normal: glam::Vec3, distance: f32) -> bool {
@@ -162,6 +194,26 @@ mod tests {
         assert!(!aabb.intersects_plane(glam::Vec3::X, -2.0));
         // Plane at x=-2.0 : entirely on other side
         assert!(!aabb.intersects_plane(glam::Vec3::X, 2.0));
+    }
+
+    #[test]
+    fn test_expanded_uniform() {
+        let aabb = Aabb::from_positions(&unit_cube_positions());
+        let padded = aabb.expanded_uniform(0.25);
+        assert!((padded.min - glam::Vec3::splat(-0.75)).length() < 1e-5);
+        assert!((padded.max - glam::Vec3::splat(0.75)).length() < 1e-5);
+    }
+
+    #[test]
+    fn test_expanded_relative() {
+        let aabb = Aabb {
+            min: glam::Vec3::new(0.0, 0.0, 0.0),
+            max: glam::Vec3::new(2.0, 1.0, 1.0),
+        };
+        // longest side is 2.0; factor 0.5 -> margin 1.0 on every axis.
+        let padded = aabb.expanded_relative(0.5);
+        assert!((padded.min - glam::Vec3::new(-1.0, -1.0, -1.0)).length() < 1e-5);
+        assert!((padded.max - glam::Vec3::new(3.0, 2.0, 2.0)).length() < 1e-5);
     }
 
     #[test]

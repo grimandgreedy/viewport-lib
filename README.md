@@ -20,7 +20,6 @@
 `viewport-lib` covers rendering, cameras, and post-processing. Your application owns the window, event loop, and tool state.
 
 
-
 **WARNING**: The viewport has only recently been extracted as a stand-alone library from a separate project and the API is still somewhat unstable. When things become more solid I will release v1.0.0
 
 ## Core features
@@ -57,7 +56,6 @@ In a typical app you will need to use both the renderer (to build and submit a `
 
 ### Rendering
 ```rust
-use glam::{Mat4, vec3};
 use viewport_lib::{
     Camera,
     CameraFrame,
@@ -68,13 +66,13 @@ use viewport_lib::{
 };
 
 // Upload the cube primitive mesh once at startup
-let mesh_index = renderer.resources_mut().upload_mesh_data(&device, &primitives::cube(1.0))?;
+let mesh_id = renderer.resources_mut().upload_mesh_data(&device, &primitives::cube(1.0))?;
 
 // Build a frame each render tick
 let camera = Camera::default();
 let model = glam::Mat4::from_translation(glam::vec3(1.0, 2.0, 0.0));
 let item = SceneRenderItem {
-    mesh_index,
+    mesh_id,
     model: model.to_cols_array_2d(),
     ..SceneRenderItem::default()
 };
@@ -84,9 +82,12 @@ let fd = FrameData::new(
     SceneFrame::from_surface_items(vec![item]),
 );
 
-renderer.prepare(&device, &queue, &fd);
-// then call the renderer -- this will depend on what GUI you are using
-// renderer.paint_to(&mut render_pass, &fd);
+// prepare once per frame (uploads uniforms, batches instances)
+renderer.pass().prepare(&device, &queue, &fd);
+
+// then paint into a render pass -- exact call depends on your GUI framework:
+// renderer.pass_view().paint(&mut render_pass, &fd);  // eframe / iced / raw wgpu
+// renderer.owned().render(&device, &queue, &output_view, &fd);  // winit HDR
 
 ```
 

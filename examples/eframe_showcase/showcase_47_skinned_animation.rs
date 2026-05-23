@@ -19,12 +19,12 @@
 use eframe::egui;
 use viewport_lib::{
     ActionFrame, AnimationClip, BuiltinMatcap, Channel, ClipPlayerPlugin, Interpolation, Joint,
-    Material, MatcapId, MeshId, MeshData, Pose, RuntimeFrameContext, RuntimePlugin,
-    RuntimeStepContext, Sampler, Skeleton, SkeletonPlugin, SkinnedActor, SkinnedActorPart,
-    SkinnedActorPlugin, SkinnedMeshUpdate, SkinnedPoseUpdate, SkinningPath, SkinWeights, Track,
-    TrackValues, ViewportRuntime,
+    Material, MatcapId, MeshId, MeshData, PickAccelerator, Pose, RuntimeFrameContext,
+    RuntimePlugin, RuntimeStepContext, Sampler, Skeleton, SkeletonPlugin, SkinnedActor,
+    SkinnedActorPart, SkinnedActorPlugin, SkinnedMeshUpdate, SkinnedPoseUpdate, SkinningPath,
+    SkinWeights, Track, TrackValues, ViewportRuntime,
     runtime::plugin::phase,
-    scene::{Scene, material::BackfacePolicy},
+    scene::{Scene, aabb::Aabb, material::BackfacePolicy},
     selection::Selection,
 };
 
@@ -70,6 +70,49 @@ impl Skin47Demo {
         ]
     }
 }
+
+/// Picking strategy exercised by the crowd demo. Showcases Phase 6's two
+/// supported approaches to clicking on a skinned mesh; `Off` disables the
+/// click handler entirely.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum CrowdPickStrategy {
+    /// No CPU picking. Clicks do nothing.
+    Off,
+    /// BVH built once against the bind-pose AABBs grown by a padding factor
+    /// (see [`PickAccelerator::build_from_scene_skin_aware`]). Triangle tests
+    /// run against the bind-pose mesh: cheap, but clicks land on the
+    /// bind-pose silhouette, not the rendered (deformed) one.
+    BindPosePadded,
+    /// Triangle tests run against the deformed positions captured each frame
+    /// from `SkinnedMeshUpdate`. Picks the rendered silhouette, paying CPU
+    /// cost every frame. Only usable on `SkinningPath::Cpu` (the GPU path
+    /// never sends deformed positions back to the CPU).
+    RefreshPerFrame,
+}
+
+impl CrowdPickStrategy {
+    fn label(self) -> &'static str {
+        match self {
+            CrowdPickStrategy::Off => "Off",
+            CrowdPickStrategy::BindPosePadded => "Bind-pose + padded AABB",
+            CrowdPickStrategy::RefreshPerFrame => "Per-frame refresh (CPU)",
+        }
+    }
+
+    fn all() -> [CrowdPickStrategy; 3] {
+        [
+            CrowdPickStrategy::Off,
+            CrowdPickStrategy::BindPosePadded,
+            CrowdPickStrategy::RefreshPerFrame,
+        ]
+    }
+}
+
+/// Padding factor used by the `BindPosePadded` strategy. 0.35 grows the
+/// bind-pose AABB by 35% of its longest side on every axis, which covers the
+/// glTF character's typical deformation envelope without becoming wastefully
+/// large. The sidebar slider lets the viewer dial this for the demo.
+const DEFAULT_CROWD_PICK_PADDING: f32 = 0.35;
 
 /// Path the glTF character demo looks for. Drop a `.glb` (or `.gltf` with its
 /// buffers/textures next to it) at this path to enable the demo. See the
@@ -280,6 +323,36 @@ pub(crate) struct Skin47State {
     /// `applied_appearance_version`.
     pub appearance_version: u32,
     pub applied_appearance_version: u32,
+
+    // -----------------------------------------------------------------------
+    // Crowd picking (Phase 6 demo)
+    // -----------------------------------------------------------------------
+    /// Which picking strategy the crowd demo uses. Switching strategies
+    /// rebuilds the accelerator on the next frame.
+    pub crowd_pick_strategy: CrowdPickStrategy,
+    /// Padding factor applied to skinned-mesh AABBs in the `BindPosePadded`
+    /// strategy.
+    pub crowd_pick_padding: f32,
+    /// BVH used to accelerate crowd picking. Rebuilt when the crowd is
+    /// rebuilt, when the strategy changes, or when padding changes.
+    pub crowd_pick_acc: Option<PickAccelerator>,
+    /// Strategy currently reflected in `crowd_pick_acc`. Differs from
+    /// `crowd_pick_strategy` between a UI change and the next frame.
+    pub crowd_pick_strategy_active: CrowdPickStrategy,
+    /// Padding currently reflected in `crowd_pick_acc`.
+    pub crowd_pick_padding_active: f32,
+    /// Indices for each crowd mesh part keyed by `MeshId`. Built once from
+    /// the gltf asset and reused on every pick.
+    pub crowd_pick_indices: std::collections::HashMap<MeshId, Vec<u32>>,
+    /// Bind-pose positions for each crowd mesh part keyed by `MeshId`.
+    pub crowd_pick_bind_positions: std::collections::HashMap<MeshId, Vec<[f32; 3]>>,
+    /// Deformed positions captured this frame from CPU-path SkinnedMeshUpdates,
+    /// keyed by `MeshId`. Drained into `mesh_lookup` on `RefreshPerFrame`
+    /// picks, then cleared.
+    pub crowd_pick_deformed_positions:
+        std::collections::HashMap<MeshId, Vec<[f32; 3]>>,
+    /// Most recent pick result: (clicked node id, actor index, strategy used).
+    pub crowd_last_pick: Option<(viewport_lib::NodeId, u32, CrowdPickStrategy)>,
 }
 
 impl Default for Skin47State {
@@ -319,6 +392,15 @@ impl Default for Skin47State {
             two_sided: true,
             appearance_version: 0,
             applied_appearance_version: 0,
+            crowd_pick_strategy: CrowdPickStrategy::BindPosePadded,
+            crowd_pick_padding: DEFAULT_CROWD_PICK_PADDING,
+            crowd_pick_acc: None,
+            crowd_pick_strategy_active: CrowdPickStrategy::Off,
+            crowd_pick_padding_active: DEFAULT_CROWD_PICK_PADDING,
+            crowd_pick_indices: std::collections::HashMap::new(),
+            crowd_pick_bind_positions: std::collections::HashMap::new(),
+            crowd_pick_deformed_positions: std::collections::HashMap::new(),
+            crowd_last_pick: None,
         }
     }
 }
@@ -855,7 +937,13 @@ fn build_bend_clip() -> AnimationClip {
 // Per-frame update
 // ---------------------------------------------------------------------------
 
-pub(crate) fn update_skin47(app: &mut App, dt: f32) {
+pub(crate) fn update_skin47(
+    app: &mut App,
+    dt: f32,
+    cursor: glam::Vec2,
+    viewport_size: glam::Vec2,
+    clicked: bool,
+) {
     // Rebuild the runtime if the user selected a different demo or switched
     // CPU/GPU path. Path change also re-stamps `skin_instance` on the scene
     // nodes so the renderer routes through the skinned pipeline variant on
@@ -921,6 +1009,51 @@ pub(crate) fn update_skin47(app: &mut App, dt: f32) {
     // Hand the right update channel through to build_frame_data.
     app.skin47_state.pending_updates = output.skinned_mesh_updates;
     app.skin47_state.pending_pose_updates = output.skinned_pose_updates;
+
+    // Crowd picking: capture this frame's deformed positions (if any) so the
+    // `RefreshPerFrame` strategy can test against them, then run a pick when
+    // the user clicked. Strategy / padding changes are reflected on the next
+    // frame by rebuilding the accelerator from scratch.
+    if app.skin47_state.demo == Skin47Demo::Crowd {
+        app.skin47_state.crowd_pick_deformed_positions.clear();
+        if app.skin47_state.crowd_pick_strategy == CrowdPickStrategy::RefreshPerFrame {
+            for u in &app.skin47_state.pending_updates {
+                app.skin47_state
+                    .crowd_pick_deformed_positions
+                    .insert(u.mesh_id, u.positions.clone());
+            }
+        }
+
+        let strategy_changed = app.skin47_state.crowd_pick_strategy
+            != app.skin47_state.crowd_pick_strategy_active
+            || (app.skin47_state.crowd_pick_padding
+                - app.skin47_state.crowd_pick_padding_active)
+                .abs()
+                > f32::EPSILON;
+        if strategy_changed {
+            rebuild_crowd_pick_acc(&mut app.skin47_state);
+        }
+
+        if clicked && app.skin47_state.crowd_pick_acc.is_some() {
+            let camera = app.camera.clone();
+            let mut selection = std::mem::take(&mut app.skin47_state.selection);
+            pick_crowd(
+                &mut app.skin47_state,
+                &mut selection,
+                cursor,
+                viewport_size,
+                &camera,
+            );
+            app.skin47_state.selection = selection;
+        }
+    } else if app.skin47_state.crowd_pick_acc.is_some() {
+        // Leaving the crowd demo: drop pick state so it doesn't survive a
+        // demo switch (it would be stale anyway because crowd nodes change).
+        app.skin47_state.crowd_pick_acc = None;
+        app.skin47_state.crowd_pick_strategy_active = CrowdPickStrategy::Off;
+        app.skin47_state.crowd_last_pick = None;
+        app.skin47_state.selection.clear();
+    }
 }
 
 /// Apply the current appearance toggles to every scene node belonging to the
@@ -998,6 +1131,173 @@ fn restamp_skin_instances(state: &mut Skin47State) {
     }
 }
 
+/// Build the pick BVH for the active crowd. Computes a bind-pose AABB per
+/// crowd `MeshId` from the asset's positions, then either uses
+/// `build_from_scene_skin_aware` (BindPosePadded) or `build_from_scene` with
+/// unpadded AABBs (RefreshPerFrame: triangle tests against deformed positions
+/// already cover the deformation envelope tightly).
+///
+/// Populates `crowd_pick_indices` and `crowd_pick_bind_positions` as a side
+/// effect so subsequent picks can build `mesh_lookup` without touching the
+/// gltf asset again.
+fn rebuild_crowd_pick_acc(state: &mut Skin47State) {
+    state.crowd_pick_acc = None;
+    state.crowd_pick_indices.clear();
+    state.crowd_pick_bind_positions.clear();
+    state.crowd_last_pick = None;
+
+    if state.crowd_pick_strategy == CrowdPickStrategy::Off {
+        state.crowd_pick_strategy_active = CrowdPickStrategy::Off;
+        return;
+    }
+
+    let Some(asset) = state.gltf_asset.as_ref() else {
+        return;
+    };
+    if state.crowd_actor_meshes.is_empty() || state.crowd_nodes.is_empty() {
+        return;
+    }
+
+    // Per-part bind-pose AABBs (one per asset part, shared across actors).
+    let part_aabbs: Vec<Aabb> = asset
+        .parts
+        .iter()
+        .map(|p| Aabb::from_positions(&p.bind_positions))
+        .collect();
+
+    // Cache positions and indices per MeshId so `pick` can build mesh_lookup
+    // without re-cloning the asset arrays every frame.
+    for actor_meshes in &state.crowd_actor_meshes {
+        for (part_idx, mid) in actor_meshes.iter().enumerate() {
+            if let Some(part) = asset.parts.get(part_idx) {
+                state
+                    .crowd_pick_bind_positions
+                    .insert(*mid, part.bind_positions.clone());
+                state
+                    .crowd_pick_indices
+                    .insert(*mid, part.mesh_data.indices.clone());
+            }
+        }
+    }
+
+    // Per-mesh AABB lookup: which actor/part does this MeshId belong to?
+    let mut mesh_to_part: std::collections::HashMap<MeshId, usize> =
+        std::collections::HashMap::new();
+    for actor_meshes in &state.crowd_actor_meshes {
+        for (part_idx, mid) in actor_meshes.iter().enumerate() {
+            mesh_to_part.insert(*mid, part_idx);
+        }
+    }
+    let mesh_aabb_fn = |mid: MeshId| -> Option<Aabb> {
+        mesh_to_part.get(&mid).and_then(|&i| part_aabbs.get(i).copied())
+    };
+
+    let acc = match state.crowd_pick_strategy {
+        CrowdPickStrategy::Off => unreachable!(),
+        CrowdPickStrategy::BindPosePadded => {
+            // Every crowd MeshId is a skinned mesh; pad all of them.
+            let padding = state.crowd_pick_padding;
+            PickAccelerator::build_from_scene_skin_aware(
+                &state.scene,
+                mesh_aabb_fn,
+                |mid| mesh_to_part.contains_key(&mid),
+                padding,
+            )
+        }
+        CrowdPickStrategy::RefreshPerFrame => {
+            PickAccelerator::build_from_scene(&state.scene, mesh_aabb_fn)
+        }
+    };
+    state.crowd_pick_acc = Some(acc);
+    state.crowd_pick_strategy_active = state.crowd_pick_strategy;
+    state.crowd_pick_padding_active = state.crowd_pick_padding;
+}
+
+/// Look up which actor a `mesh_id` belongs to by scanning `crowd_actor_meshes`.
+fn actor_index_for_mesh(state: &Skin47State, mesh_id: MeshId) -> Option<u32> {
+    state
+        .crowd_actor_meshes
+        .iter()
+        .position(|parts| parts.iter().any(|m| *m == mesh_id))
+        .map(|i| i as u32)
+}
+
+/// Run a single CPU ray pick against the crowd accelerator. Updates
+/// `crowd_last_pick` and the selection. Honors the active strategy:
+///   - `BindPosePadded`: bind-pose positions + padded AABBs in the BVH.
+///   - `RefreshPerFrame`: deformed positions stashed earlier this frame,
+///     plus invalidating the trimesh cache for any mesh whose pose changed.
+pub(crate) fn pick_crowd(
+    state: &mut Skin47State,
+    selection: &mut Selection,
+    cursor: glam::Vec2,
+    viewport_size: glam::Vec2,
+    camera: &viewport_lib::Camera,
+) {
+    if state.crowd_pick_strategy == CrowdPickStrategy::Off {
+        return;
+    }
+    let Some(acc) = state.crowd_pick_acc.as_mut() else {
+        return;
+    };
+
+    // Choose the position set to feed parry. `RefreshPerFrame` mixes deformed
+    // positions captured this frame; meshes that have no update this frame
+    // fall back to the bind pose (correct: a static pose tests the bind pose
+    // by construction).
+    let mut mesh_lookup: std::collections::HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)> =
+        std::collections::HashMap::new();
+    let use_deformed = state.crowd_pick_strategy == CrowdPickStrategy::RefreshPerFrame;
+    let mut refreshed_ids: Vec<MeshId> = Vec::new();
+    for (mid, indices) in &state.crowd_pick_indices {
+        let positions = if use_deformed {
+            if let Some(p) = state.crowd_pick_deformed_positions.get(mid) {
+                refreshed_ids.push(*mid);
+                p.clone()
+            } else {
+                state.crowd_pick_bind_positions.get(mid).cloned().unwrap_or_default()
+            }
+        } else {
+            state.crowd_pick_bind_positions.get(mid).cloned().unwrap_or_default()
+        };
+        if positions.is_empty() || indices.is_empty() {
+            continue;
+        }
+        mesh_lookup.insert(mid.index() as u64, (positions, indices.clone()));
+    }
+
+    // On the refresh strategy, drop cached `TriMesh`es for meshes whose
+    // positions changed so parry rebuilds against the deformed mesh.
+    if use_deformed {
+        acc.invalidate_skinned_meshes(refreshed_ids);
+    }
+
+    let inv = camera.view_proj_matrix().inverse();
+    let (ray_origin, ray_dir) =
+        viewport_lib::picking::screen_to_ray(cursor, viewport_size, inv);
+    let hit = viewport_lib::bvh::pick_scene_accelerated_cpu(
+        ray_origin,
+        ray_dir,
+        acc,
+        &mesh_lookup,
+    );
+
+    if let Some(hit) = hit {
+        let node_id: viewport_lib::NodeId = hit.id;
+        let actor_idx = state
+            .scene
+            .node(node_id)
+            .and_then(|n| n.mesh_id())
+            .and_then(|mid| actor_index_for_mesh(state, mid))
+            .unwrap_or(u32::MAX);
+        state.crowd_last_pick = Some((node_id, actor_idx, state.crowd_pick_strategy));
+        selection.select_one(node_id);
+    } else {
+        state.crowd_last_pick = None;
+        selection.clear();
+    }
+}
+
 /// Apply pending skinned mesh updates to the GPU. Called from build_frame_data.
 ///
 /// Also performs deferred uploads + runtime rebuilds for the crowd demo, since
@@ -1040,6 +1340,13 @@ pub(crate) fn apply_skin47_updates(app: &mut App, renderer: &mut viewport_lib::V
         app.skin47_state.applied_appearance_version =
             app.skin47_state.appearance_version.wrapping_sub(1);
         app.skin47_state.crowd_count_active = desired;
+
+        // The crowd rebuilt: the pick BVH points at the previous scene's
+        // nodes, so rebuild it next pass.
+        app.skin47_state.crowd_pick_acc = None;
+        app.skin47_state.crowd_pick_strategy_active = CrowdPickStrategy::Off;
+        app.skin47_state.crowd_last_pick = None;
+        rebuild_crowd_pick_acc(&mut app.skin47_state);
     }
 
     // Apply appearance toggles (opacity, wireframe, PBR, matcap, two-sided)
@@ -1321,7 +1628,7 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                 } else {
                     ui.label("Crowd size:");
                     let mut n = app.skin47_state.crowd_count;
-                    let max_n = 32usize;
+                    let max_n = 100usize;
                     if ui
                         .add(egui::Slider::new(&mut n, 1..=max_n).text("actors"))
                         .changed()
@@ -1353,6 +1660,78 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                             app.skin47_state.crowd_count * asset.parts.len(),
                         ));
                     }
+
+                    ui.separator();
+                    ui.label("Picking (Phase 6):");
+                    ui.small("Click a crowd member to pick it. Two CPU strategies:");
+                    let current = app.skin47_state.crowd_pick_strategy;
+                    egui::ComboBox::from_id_salt("skin47_crowd_pick_strategy")
+                        .selected_text(current.label())
+                        .show_ui(ui, |ui| {
+                            for s in CrowdPickStrategy::all() {
+                                let mut allow_select = true;
+                                if s == CrowdPickStrategy::RefreshPerFrame
+                                    && app.skin47_state.path == SkinningPath::Gpu
+                                {
+                                    // GPU path doesn't send deformed positions
+                                    // back; refresh strategy has nothing to
+                                    // test against.
+                                    allow_select = false;
+                                }
+                                ui.add_enabled_ui(allow_select, |ui| {
+                                    ui.selectable_value(
+                                        &mut app.skin47_state.crowd_pick_strategy,
+                                        s,
+                                        s.label(),
+                                    );
+                                });
+                            }
+                        });
+
+                    if app.skin47_state.crowd_pick_strategy
+                        == CrowdPickStrategy::BindPosePadded
+                    {
+                        let mut p = app.skin47_state.crowd_pick_padding;
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut p, 0.0..=1.0)
+                                    .text("AABB padding factor"),
+                            )
+                            .changed()
+                        {
+                            app.skin47_state.crowd_pick_padding = p;
+                        }
+                        ui.small(
+                            "Fraction of longest side added on every axis.",
+                        );
+                        ui.small("Smaller = tighter BVH (may miss extreme poses).");
+                    }
+
+                    if app.skin47_state.crowd_pick_strategy
+                        == CrowdPickStrategy::RefreshPerFrame
+                        && app.skin47_state.path == SkinningPath::Gpu
+                    {
+                        ui.colored_label(
+                            egui::Color32::YELLOW,
+                            "Per-frame refresh needs the CPU path.",
+                        );
+                    }
+
+                    match app.skin47_state.crowd_last_pick {
+                        Some((node_id, actor_idx, strat)) => {
+                            ui.small(format!(
+                                "Last pick: actor {} (node {}) via {}",
+                                actor_idx,
+                                node_id,
+                                strat.label(),
+                            ));
+                        }
+                        None => {
+                            ui.small("Last pick: none");
+                        }
+                    }
+                    ui.small("- Bind-pose + padded AABB: cheap, may miss the deformed silhouette.");
+                    ui.small("- Per-frame refresh: rebuilds TriMeshes from deformed positions, picks the rendered shape.");
 
                     ui.separator();
                     ui.label("How it works:");

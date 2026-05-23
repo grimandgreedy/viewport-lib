@@ -2,6 +2,18 @@
 ///
 /// Uses parry3d 0.26's glam-native API (no nalgebra required).
 /// All conversions are contained here at the picking boundary.
+///
+/// # Skinned meshes
+///
+/// The CPU picking entry points in this module test against whatever
+/// positions are passed in via `mesh_lookup`. On the GPU skinning path the
+/// vertex buffer is never rewritten, so the natural CPU view of a skinned
+/// mesh is the bind pose: clicks land on the bind-pose silhouette. See the
+/// module-level documentation on [`crate::PickAccelerator`] for the two
+/// supported strategies (bind-pose with padded AABBs, or per-frame refresh
+/// against deformed positions). GPU picking
+/// (`crate::renderer::picking`) reads the rasterised object-ID buffer and
+/// therefore picks the deformed silhouette automatically.
 use crate::geometry::marching_cubes::VolumeData;
 use crate::interaction::sub_object::SubObjectRef;
 use crate::resources::volume_mesh::{CELL_SENTINEL, VolumeMeshData};

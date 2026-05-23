@@ -4,6 +4,36 @@
 //! scene objects' world-space AABBs. Ray queries traverse the BVH to quickly
 //! reject non-intersecting subtrees, then test leaf objects with cached
 //! `parry3d::TriMesh` instances.
+//!
+//! # Skinned meshes
+//!
+//! CPU picking against skinned meshes is **bind-pose** by default. The GPU
+//! skinning path keeps the mesh's vertex buffer untouched and applies LBS in
+//! the vertex shader, so the CPU never sees the deformed positions; the BVH
+//! and the cached `TriMesh` both reflect the bind pose. A click registers on
+//! the bind-pose silhouette, not the rendered (deformed) silhouette.
+//!
+//! Two knobs handle this:
+//!
+//! 1. **Padded AABBs.** Use [`build_from_scene_skin_aware`](PickAccelerator::build_from_scene_skin_aware)
+//!    (or pass an already-expanded AABB through the closure to
+//!    [`build_from_scene`](PickAccelerator::build_from_scene)) so the BVH leaf
+//!    covers the deformation envelope, not just the bind pose. Without the
+//!    padding the BVH can reject rays that would actually hit the deformed
+//!    mesh.
+//! 2. **Optional refresh-on-pose-change.** For accurate clicks on the
+//!    deformed silhouette (paying CPU cost every frame), call
+//!    [`invalidate_skinned_meshes`](PickAccelerator::invalidate_skinned_meshes)
+//!    after applying a [`crate::SkinnedMeshUpdate`] and pass the deformed
+//!    positions in the `mesh_lookup` argument of [`pick`](PickAccelerator::pick).
+//!    The next pick rebuilds the cached `TriMesh` against the current pose.
+//!    On the GPU skinning path the CPU does not receive deformed positions,
+//!    so this refresh path is only available when the plugin runs on
+//!    [`crate::SkinningPath::Cpu`].
+//!
+//! GPU picking (`renderer::picking`) reads the rasterised object-ID
+//! framebuffer and therefore needs no skinning awareness here: skinned meshes
+//! pick the same way as static meshes.
 
 use std::collections::HashMap;
 
@@ -93,6 +123,38 @@ impl PickAccelerator {
             root,
             trimesh_cache: HashMap::new(),
         }
+    }
+
+    /// Like [`build_from_scene`](Self::build_from_scene), but pads the local
+    /// AABB of meshes flagged by `is_skinned` before transforming to world
+    /// space.
+    ///
+    /// `padding_factor` is a fraction of the bind-pose AABB's longest side
+    /// added on every axis (see [`Aabb::expanded_relative`]). Pick the
+    /// smallest value that still covers the worst-case pose for your content:
+    /// `0.25` works for a typical character rig; rigs with extreme stretch or
+    /// large limb sweeps need more.
+    ///
+    /// The resulting BVH is conservative: it may queue extra leaves for
+    /// triangle testing, but it will not reject rays that hit the deformed
+    /// mesh. Triangle tests still run against the bind-pose `TriMesh`, so
+    /// picks land on the bind-pose silhouette unless you also call
+    /// [`invalidate_skinned_meshes`](Self::invalidate_skinned_meshes) each
+    /// frame and pass deformed positions in `mesh_lookup`.
+    pub fn build_from_scene_skin_aware(
+        scene: &Scene,
+        mesh_aabb_fn: impl Fn(MeshId) -> Option<Aabb>,
+        is_skinned: impl Fn(MeshId) -> bool,
+        padding_factor: f32,
+    ) -> Self {
+        Self::build_from_scene(scene, |mesh_id| {
+            let aabb = mesh_aabb_fn(mesh_id)?;
+            if is_skinned(mesh_id) {
+                Some(aabb.expanded_relative(padding_factor))
+            } else {
+                Some(aabb)
+            }
+        })
     }
 
     /// Pick the nearest object hit by the ray.
@@ -243,6 +305,30 @@ impl PickAccelerator {
     /// Invalidate the TriMesh cache for a specific mesh (e.g. after re-tessellation).
     pub fn invalidate_mesh(&mut self, mesh_index: usize) {
         self.trimesh_cache.remove(&mesh_index);
+    }
+
+    /// Drop cached `TriMesh` instances for every mesh in `skinned_mesh_ids`.
+    ///
+    /// Call this after applying [`crate::SkinnedMeshUpdate`]s when you want
+    /// CPU picking to test the deformed silhouette rather than the bind pose.
+    /// The next `pick` call will rebuild the `TriMesh` from whatever positions
+    /// are passed in `mesh_lookup` (typically the just-updated, deformed
+    /// positions).
+    ///
+    /// This is the "refresh-on-pose-change" knob mentioned in the
+    /// module-level docs. Each rebuild costs roughly `O(V + T)` per skinned
+    /// mesh in `parry3d::TriMesh::new`; budget accordingly when used every
+    /// frame on heavy rigs.
+    ///
+    /// `skinned_mesh_ids` accepts any iterator of `MeshId`s; pass the ids of
+    /// the meshes whose pose changed this frame. Unknown ids are ignored.
+    pub fn invalidate_skinned_meshes(
+        &mut self,
+        skinned_mesh_ids: impl IntoIterator<Item = MeshId>,
+    ) {
+        for id in skinned_mesh_ids {
+            self.trimesh_cache.remove(&id.index());
+        }
     }
 
     /// Clear all cached data. A full rebuild is needed.
@@ -547,6 +633,65 @@ mod tests {
             &mesh_lookup,
         );
         assert_eq!(accel.trimesh_cache_len(), 1);
+    }
+
+    #[test]
+    fn test_build_from_scene_skin_aware_pads_only_skinned() {
+        let mut scene = Scene::new();
+        scene.add(Some(MeshId(0)), glam::Mat4::IDENTITY, Material::default());
+        scene.add(Some(MeshId(1)), glam::Mat4::IDENTITY, Material::default());
+        scene.update_transforms();
+
+        // Mesh 1 is "skinned", mesh 0 is not. Padding factor 1.0 doubles the
+        // skinned mesh's half-extents.
+        let accel = PickAccelerator::build_from_scene_skin_aware(
+            &scene,
+            |_| Some(unit_aabb()),
+            |mid| mid == MeshId(1),
+            1.0,
+        );
+
+        assert_eq!(accel.entries.len(), 2);
+        let static_entry = accel
+            .entries
+            .iter()
+            .find(|e| e.mesh_index == 0)
+            .expect("static mesh entry");
+        let skinned_entry = accel
+            .entries
+            .iter()
+            .find(|e| e.mesh_index == 1)
+            .expect("skinned mesh entry");
+        // Static mesh keeps its [-0.5, 0.5]^3 box.
+        assert!((static_entry.aabb.min - glam::Vec3::splat(-0.5)).length() < 1e-5);
+        assert!((static_entry.aabb.max - glam::Vec3::splat(0.5)).length() < 1e-5);
+        // Skinned mesh grew by longest_side(1.0) * factor(1.0) on each axis.
+        assert!((skinned_entry.aabb.min - glam::Vec3::splat(-1.5)).length() < 1e-5);
+        assert!((skinned_entry.aabb.max - glam::Vec3::splat(1.5)).length() < 1e-5);
+    }
+
+    #[test]
+    fn test_invalidate_skinned_meshes_clears_cached_trimesh() {
+        let mut scene = Scene::new();
+        scene.add(Some(MeshId(0)), glam::Mat4::IDENTITY, Material::default());
+        scene.update_transforms();
+
+        let mut accel = PickAccelerator::build_from_scene(&scene, |_| Some(unit_aabb()));
+        let (positions, indices) = unit_cube_mesh();
+        let mut mesh_lookup = HashMap::new();
+        mesh_lookup.insert(0u64, (positions, indices));
+
+        // Populate the trimesh cache via a successful pick.
+        let _ = accel.pick(
+            glam::Vec3::new(0.0, 0.0, 5.0),
+            glam::Vec3::new(0.0, 0.0, -1.0),
+            &mesh_lookup,
+        );
+        assert_eq!(accel.trimesh_cache_len(), 1);
+
+        // Invalidating the skinned mesh should drop the cached entry.
+        accel.invalidate_skinned_meshes([MeshId(0)]);
+        assert_eq!(accel.trimesh_cache_len(), 0);
     }
 
     #[test]

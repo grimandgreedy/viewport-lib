@@ -1350,7 +1350,16 @@ impl eframe::App for App {
                 // ----- Skinned animation: step runtime -----
                 if self.mode == ShowcaseMode::SkinnedAnimation && self.skin47_state.built {
                     let dt = ctx.input(|i| i.stable_dt.min(0.25));
-                    showcase_47_skinned_animation::update_skin47(self, dt);
+                    let cursor = self.interact_state.last_cursor_viewport;
+                    let viewport_size = glam::Vec2::new(rect.width(), rect.height());
+                    let clicked = response.clicked();
+                    showcase_47_skinned_animation::update_skin47(
+                        self,
+                        dt,
+                        cursor,
+                        viewport_size,
+                        clicked,
+                    );
                     ctx.request_repaint();
                 }
                 // ----- Debug draw: step simulation -----
