@@ -22,9 +22,32 @@ use viewport_lib::{
     RuntimeStepContext, Skeleton, SkeletonPlugin, SkinnedMeshUpdate, SkinWeights,
     ViewportRuntime,
     runtime::plugin::phase,
-    scene::Scene,
+    scene::{Scene, material::BackfacePolicy},
     selection::Selection,
 };
+
+// ---------------------------------------------------------------------------
+// Demo selector
+// ---------------------------------------------------------------------------
+//
+// Showcase 47 grows additively across the skeletal-animation plan phases.
+// Each phase adds a new entry to this enum and the supporting state on
+// `Skin47State`; earlier entries stay selectable so the showcase remains a
+// running tour of the substrate's capabilities.
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum Skin47Demo {
+    /// Phase 1: hand-written sine-wave pose driving a two-joint arm.
+    SineWaveArm,
+}
+
+impl Skin47Demo {
+    fn label(self) -> &'static str {
+        match self {
+            Skin47Demo::SineWaveArm => "Sine-wave arm",
+        }
+    }
+}
 
 use crate::App;
 
@@ -55,9 +78,13 @@ impl RuntimePlugin for PoseDriver {
         let speed = ctx.resources.get::<BendSpeed>().map(|s| s.0).unwrap_or(self.default_speed);
         self.time += ctx.dt * speed;
         let angle = (self.time).sin() * std::f32::consts::FRAC_PI_4;
-        let local_rot = glam::Affine3A::from_rotation_x(angle);
+        // Joint 1's local transform must reproduce its bind-pose position
+        // (translate(0, 0, JOINT_Z)) before applying the per-frame rotation.
+        // Skipping the bind translation collapses the upper arm onto the lower
+        // one, which is what made earlier versions of this showcase look wrong.
         let mut pose = Pose::identity(2);
-        pose.local_transforms[1] = local_rot;
+        pose.local_transforms[1] = glam::Affine3A::from_translation(glam::Vec3::new(0.0, 0.0, JOINT_Z))
+            * glam::Affine3A::from_rotation_x(angle);
         ctx.resources.insert(pose);
     }
 }
@@ -66,11 +93,12 @@ impl RuntimePlugin for PoseDriver {
 // Mesh generation
 // ---------------------------------------------------------------------------
 
-const RINGS: usize = 20;     // rings along the arm length
-const SIDES: usize = 12;     // vertices per ring
+const RINGS: usize = 64;     // rings along the arm length (dense enough for a smooth bend)
+const SIDES: usize = 20;     // vertices per ring
 const ARM_LENGTH: f32 = 4.0; // total arm length along Z
 const ARM_RADIUS: f32 = 0.35;
 const JOINT_Z: f32 = 2.0;    // world Z where the joint sits
+const BLEND_HALF_WIDTH: f32 = 0.75; // half-width of the joint's blend band along Z
 
 /// Build a ring-stack arm mesh. Returns (positions, normals, indices, skin_weights).
 fn build_arm_mesh() -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>, SkinWeights) {
@@ -84,9 +112,10 @@ fn build_arm_mesh() -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>, SkinWeights) {
     for r in 0..=RINGS {
         let t = r as f32 / RINGS as f32;
         let z = t * ARM_LENGTH;
-        // Weight for joint 1 increases linearly from 0 at z=0 to 1 at z=ARM_LENGTH.
-        // Clamp so below JOINT_Z-0.5 is 0% joint 1, above JOINT_Z+0.5 is 100% joint 1.
-        let w1 = ((z - (JOINT_Z - 0.5)) / 1.0).clamp(0.0, 1.0);
+        // Smoothstep blend across [JOINT_Z - BLEND_HALF_WIDTH, JOINT_Z + BLEND_HALF_WIDTH]
+        // so the seam reads as a soft bend rather than a kink.
+        let u = ((z - (JOINT_Z - BLEND_HALF_WIDTH)) / (2.0 * BLEND_HALF_WIDTH)).clamp(0.0, 1.0);
+        let w1 = u * u * (3.0 - 2.0 * u);
         let w0 = 1.0 - w1;
 
         for s in 0..SIDES {
@@ -150,6 +179,8 @@ pub(crate) struct Skin47State {
     pub bind_positions: Vec<[f32; 3]>,
     pub bind_normals: Vec<[f32; 3]>,
     pub speed: f32,
+    /// Active demo from the sidebar selector.
+    pub demo: Skin47Demo,
     /// Pending deformation updates to apply to the GPU on the next frame.
     pub pending_updates: Vec<SkinnedMeshUpdate>,
 }
@@ -165,6 +196,7 @@ impl Default for Skin47State {
             bind_positions: Vec::new(),
             bind_normals: Vec::new(),
             speed: 1.0,
+            demo: Skin47Demo::SineWaveArm,
             pending_updates: Vec::new(),
         }
     }
@@ -208,8 +240,10 @@ pub(crate) fn build_skin47_scene(app: &mut App, renderer: &mut viewport_lib::Vie
         .with_plugin(pose_driver)
         .with_plugin(plugin);
 
-    // Add the arm to the scene.
-    let mat = Material::from_colour([0.6, 0.75, 0.9]);
+    // Add the arm to the scene. Render both sides so the inside of the bend
+    // stays visible if LBS flips a normal near the seam.
+    let mut mat = Material::from_colour([0.6, 0.75, 0.9]);
+    mat.backface_policy = BackfacePolicy::Tint(0.4);
     app.skin47_state.scene.add(Some(mesh_id), glam::Mat4::IDENTITY, mat);
 
     app.skin47_state.built = true;
@@ -270,28 +304,44 @@ pub(crate) fn skin47_scene_items(app: &mut App) -> Vec<viewport_lib::SceneRender
 
 pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical().show(ui, |ui| {
-        ui.label("Two-joint arm with CPU linear blend skinning.");
+        ui.label("Skeletal animation tour. Demos are added as the substrate grows.");
         ui.add_space(6.0);
         ui.separator();
 
-        ui.label("Bending speed:");
-        let mut speed = app.skin47_state.speed;
-        if ui
-            .add(egui::Slider::new(&mut speed, 0.0..=4.0).text("rad/s"))
-            .changed()
-        {
-            app.skin47_state.speed = speed;
-            // PoseDriver reads BendSpeed from resources each frame.
-            app.skin47_state.runtime.resources_mut().insert(BendSpeed(speed));
+        ui.label("Demo:");
+        let current = app.skin47_state.demo;
+        egui::ComboBox::from_id_salt("skin47_demo")
+            .selected_text(current.label())
+            .show_ui(ui, |ui| {
+                for d in [Skin47Demo::SineWaveArm] {
+                    ui.selectable_value(&mut app.skin47_state.demo, d, d.label());
+                }
+            });
+        ui.add_space(6.0);
+        ui.separator();
+
+        match app.skin47_state.demo {
+            Skin47Demo::SineWaveArm => {
+                ui.label("Bending speed:");
+                let mut speed = app.skin47_state.speed;
+                if ui
+                    .add(egui::Slider::new(&mut speed, 0.0..=4.0).text("rad/s"))
+                    .changed()
+                {
+                    app.skin47_state.speed = speed;
+                    // PoseDriver reads BendSpeed from resources each frame.
+                    app.skin47_state.runtime.resources_mut().insert(BendSpeed(speed));
+                }
+                ui.add_space(6.0);
+
+                ui.separator();
+                ui.label("How it works:");
+                ui.small("- Skeleton: 2 joints (root at origin, forearm at z=2.0).");
+                ui.small("- Pose: child joint rotates around X each frame.");
+                ui.small("- SkeletonPlugin: runs at POST_SIM, reads Pose, runs LBS.");
+                ui.small("- Output: SkinnedMeshUpdate pushed to output.skinned_mesh_updates.");
+                ui.small("- App: calls write_mesh_positions_normals before rendering.");
+            }
         }
-        ui.add_space(6.0);
-
-        ui.separator();
-        ui.label("How it works:");
-        ui.small("- Skeleton: 2 joints (root at origin, forearm at z=2.0).");
-        ui.small("- Pose: child joint rotates around X each frame.");
-        ui.small("- SkeletonPlugin: runs at POST_SIM, reads Pose, runs LBS.");
-        ui.small("- Output: SkinnedMeshUpdate pushed to output.skinned_mesh_updates.");
-        ui.small("- App: calls write_mesh_positions_normals before rendering.");
     });
 }

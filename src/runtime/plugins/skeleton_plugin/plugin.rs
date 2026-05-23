@@ -5,7 +5,7 @@ use crate::resources::SkinWeights;
 use crate::runtime::context::RuntimeStepContext;
 use crate::runtime::output::SkinnedMeshUpdate;
 use crate::runtime::plugin::{RuntimePlugin, phase};
-use crate::runtime::skeleton::{JointMatrices, Pose, Skeleton, apply_skin};
+use super::skeleton::{JointMatrices, Pose, Skeleton, apply_skin};
 
 /// Built-in plugin that applies CPU linear blend skinning each frame.
 ///

@@ -53,8 +53,6 @@ pub mod plugin;
 /// Built-in animation, constraint, and physics plugins.
 pub mod plugins;
 pub mod resources;
-/// Skeleton, pose, and CPU linear blend skinning.
-pub mod skeleton;
 pub mod snapshot;
 /// Built-in interaction systems: SelectionSystem and ManipulationSystem.
 pub mod systems;
@@ -69,10 +67,9 @@ pub use mode::SceneRuntimeMode;
 pub use output::{CameraCommand, ContactEvent, NodeTransformOp, RuntimeOutput, SelectionOp, SkinnedMeshUpdate, TransformWriteback};
 pub use plugin::{phase, RuntimeEvent, RuntimePhase, RuntimePlugin};
 pub use plugins::{
-    AnimationPlugin, AnimationTrack, Constraint, ConstraintPlugin, Keyframe, PhysicsBody,
-    PhysicsLitePlugin, SkeletonPlugin,
+    AnimationPlugin, AnimationTrack, Constraint, ConstraintPlugin, Joint, JointMatrices, Keyframe,
+    PhysicsBody, PhysicsLitePlugin, Pose, Skeleton, SkeletonPlugin, apply_skin,
 };
-pub use skeleton::{Joint, JointMatrices, Pose, Skeleton, apply_skin};
 pub use resources::RuntimeResources;
 pub use snapshot::{TransformSnapshot, TransformSnapshotTable};
 pub use systems::{ManipulationSystem, SelectionSystem};
@@ -1025,8 +1022,9 @@ mod tests {
     // ---- skeleton / skinning tests ------------------------------------------
 
     use crate::resources::SkinWeights;
-    use crate::runtime::skeleton::{Joint, JointMatrices, Pose, Skeleton, apply_skin};
-    use crate::runtime::plugins::SkeletonPlugin;
+    use crate::runtime::plugins::skeleton_plugin::{
+        Joint, JointMatrices, Pose, Skeleton, SkeletonPlugin, apply_skin,
+    };
 
     fn two_joint_skeleton() -> Skeleton {
         Skeleton::new(vec![

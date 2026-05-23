@@ -150,17 +150,33 @@ pub enum BuiltinColourmap {
     RdBu = 9,
 }
 
-/// Per-vertex joint influence data for CPU linear blend skinning.
+/// Per-vertex joint influence data for linear blend skinning.
 ///
-/// Each vertex has up to 4 joint influences. Weights per vertex must sum to
-/// 1.0; unused slots should carry weight 0.0 and index 0.
-/// Both `joint_indices` and `joint_weights` must be the same length as the
-/// `positions` array of the `MeshData` they accompany.
+/// # Invariants
+///
+/// - `joint_indices.len() == joint_weights.len() == positions.len()` on the
+///   accompanying `MeshData`.
+/// - Each vertex carries up to four influences. Unused slots must have weight
+///   `0.0` and a valid (any in-range) index; the CPU path skips entries below
+///   `1e-6`.
+/// - Weights per vertex should sum to `1.0`. The CPU path does not renormalise,
+///   so a vertex whose weights sum to less than 1 will deform with reduced
+///   magnitude. Importers should normalise before constructing this.
+/// - There is no required ordering between the four slots. The CPU path is
+///   order-independent; a future GPU path will be too.
+///
+/// # Migration note (Phase 5 of `docs/plans/skeletal-animation-plan.md`)
+///
+/// This type currently lives as side data on `MeshData`. The GPU skinning path
+/// requires joint indices and weights as first-class vertex attributes in the
+/// bind-pose vertex buffer. When that lands, `SkinWeights` will keep its
+/// current shape as a builder input but will be promoted internally to
+/// `JOINTS_0: [u16; 4]` and `WEIGHTS_0: [f32; 4]` attributes at upload time.
 #[derive(Clone)]
 pub struct SkinWeights {
     /// Joint indices for each vertex: 4 per vertex, parallel to positions.
     pub joint_indices: Vec<[u8; 4]>,
-    /// Blend weights for each vertex: 4 per vertex, normalized to sum 1.0.
+    /// Blend weights for each vertex: 4 per vertex, normalised to sum 1.0.
     pub joint_weights: Vec<[f32; 4]>,
 }
 
@@ -187,7 +203,7 @@ pub struct MeshData {
     pub attributes: std::collections::HashMap<String, AttributeData>,
     /// Per-vertex skin weights for skeletal animation. `None` for static meshes.
     ///
-    /// When supplied, the CPU skinning path in [`crate::runtime::skeleton`] can
+    /// When supplied, the CPU skinning path in [`crate::runtime::plugins::skeleton_plugin`] can
     /// deform this mesh each frame from a [`crate::runtime::Pose`] and upload
     /// updated positions/normals via
     /// [`crate::ViewportGpuResources::write_mesh_positions_normals`].

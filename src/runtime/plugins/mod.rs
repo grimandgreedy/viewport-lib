@@ -11,4 +11,4 @@ pub mod skeleton_plugin;
 pub use animation::{AnimationPlugin, AnimationTrack, Keyframe};
 pub use constraint::{Constraint, ConstraintPlugin};
 pub use physics_lite::{PhysicsBody, PhysicsLitePlugin};
-pub use skeleton_plugin::SkeletonPlugin;
+pub use skeleton_plugin::{Joint, JointMatrices, MAX_JOINTS, Pose, Skeleton, SkeletonPlugin, apply_skin};

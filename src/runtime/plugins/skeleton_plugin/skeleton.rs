@@ -195,3 +195,109 @@ pub fn apply_skin(
 
     (out_pos, out_nrm)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::resources::SkinWeights;
+    use glam::{Affine3A, Vec3};
+
+    fn two_joint_skeleton(joint_z: f32) -> Skeleton {
+        Skeleton::new(vec![
+            Joint {
+                name: "root".into(),
+                parent: None,
+                inverse_bind: Affine3A::IDENTITY,
+            },
+            Joint {
+                name: "child".into(),
+                parent: Some(0),
+                inverse_bind: Affine3A::from_translation(-Vec3::new(0.0, 0.0, joint_z)),
+            },
+        ])
+    }
+
+    /// Returns the pose whose forward kinematics reproduces the bind pose for
+    /// `two_joint_skeleton(joint_z)`. Joint 0 stays at the origin; joint 1
+    /// sits at z=joint_z, which is the inverse of its `inverse_bind`.
+    fn bind_pose(joint_z: f32) -> Pose {
+        let mut p = Pose::identity(2);
+        p.local_transforms[1] = Affine3A::from_translation(Vec3::new(0.0, 0.0, joint_z));
+        p
+    }
+
+    fn approx_eq(a: [f32; 3], b: [f32; 3], eps: f32) -> bool {
+        (a[0] - b[0]).abs() < eps && (a[1] - b[1]).abs() < eps && (a[2] - b[2]).abs() < eps
+    }
+
+    #[test]
+    fn bind_pose_produces_identity_skinning_matrices() {
+        let joint_z = 2.0;
+        let sk = two_joint_skeleton(joint_z);
+        let jm = JointMatrices::compute(&sk, &bind_pose(joint_z));
+        for m in jm.as_slice() {
+            let p = m.transform_point3(Vec3::new(1.0, 2.0, 3.0));
+            assert!(approx_eq(p.to_array(), [1.0, 2.0, 3.0], 1e-5), "got {:?}", p);
+        }
+    }
+
+    #[test]
+    fn apply_skin_at_bind_pose_returns_input() {
+        let joint_z = 2.0;
+        let sk = two_joint_skeleton(joint_z);
+        let jm = JointMatrices::compute(&sk, &bind_pose(joint_z));
+        let positions = vec![[0.0, 0.0, 0.0], [0.5, 0.0, 1.0], [0.0, 0.0, 4.0]];
+        let normals = vec![[1.0, 0.0, 0.0]; 3];
+        let weights = SkinWeights {
+            joint_indices: vec![[0, 1, 0, 0]; 3],
+            joint_weights: vec![[1.0, 0.0, 0.0, 0.0], [0.5, 0.5, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]],
+        };
+        let (out_p, out_n) = apply_skin(&positions, &normals, &weights, &jm);
+        for i in 0..3 {
+            assert!(approx_eq(out_p[i], positions[i], 1e-5), "pos {i}: {:?}", out_p[i]);
+            assert!(approx_eq(out_n[i], normals[i], 1e-5), "nrm {i}: {:?}", out_n[i]);
+        }
+    }
+
+    #[test]
+    fn child_rotation_bends_around_joint() {
+        // Rotating joint 1 by 90 deg around X with the bind transform applied
+        // should swing a child-weighted vertex at (0,0,3) down to (0,-1,2).
+        let joint_z = 2.0;
+        let sk = two_joint_skeleton(joint_z);
+        let mut pose = bind_pose(joint_z);
+        pose.local_transforms[1] = Affine3A::from_translation(Vec3::new(0.0, 0.0, joint_z))
+            * Affine3A::from_rotation_x(std::f32::consts::FRAC_PI_2);
+        let jm = JointMatrices::compute(&sk, &pose);
+
+        let positions = vec![[0.0, 0.0, joint_z + 1.0]];
+        let normals = vec![[0.0, 0.0, 1.0]];
+        let weights = SkinWeights {
+            joint_indices: vec![[0, 1, 0, 0]],
+            joint_weights: vec![[0.0, 1.0, 0.0, 0.0]],
+        };
+        let (out_p, out_n) = apply_skin(&positions, &normals, &weights, &jm);
+        assert!(approx_eq(out_p[0], [0.0, -1.0, joint_z], 1e-4), "got {:?}", out_p[0]);
+        assert!(approx_eq(out_n[0], [0.0, -1.0, 0.0], 1e-4), "got {:?}", out_n[0]);
+    }
+
+    #[test]
+    fn zero_weight_slots_are_skipped() {
+        let joint_z = 2.0;
+        let sk = two_joint_skeleton(joint_z);
+        let mut pose = bind_pose(joint_z);
+        // Add a huge translation to joint 1, but weight 0 for our vertex.
+        pose.local_transforms[1] = pose.local_transforms[1]
+            * Affine3A::from_translation(Vec3::new(100.0, 0.0, 0.0));
+        let jm = JointMatrices::compute(&sk, &pose);
+
+        let positions = vec![[0.0, 0.0, 0.0]];
+        let normals = vec![[1.0, 0.0, 0.0]];
+        let weights = SkinWeights {
+            joint_indices: vec![[0, 1, 1, 1]],
+            joint_weights: vec![[1.0, 0.0, 0.0, 0.0]],
+        };
+        let (out_p, _) = apply_skin(&positions, &normals, &weights, &jm);
+        assert!(approx_eq(out_p[0], [0.0, 0.0, 0.0], 1e-5));
+    }
+}
