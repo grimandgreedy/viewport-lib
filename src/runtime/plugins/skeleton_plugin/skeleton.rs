@@ -32,6 +32,7 @@ use crate::resources::SkinWeights;
 pub const MAX_JOINTS: usize = 128;
 
 /// A single joint in a skeleton hierarchy.
+#[derive(Clone)]
 pub struct Joint {
     /// Display name for the joint.
     pub name: String,
@@ -52,6 +53,7 @@ pub struct Joint {
 /// Joints must be stored in topological order: each joint's parent index is
 /// less than its own. This is the standard glTF/FBX convention and allows
 /// forward kinematics in a single forward pass.
+#[derive(Clone)]
 pub struct Skeleton {
     joints: Vec<Joint>,
 }
@@ -93,6 +95,7 @@ impl Skeleton {
 /// [`Skeleton`]. Store this in [`super::resources::RuntimeResources`] so
 /// animation plugins can write it and [`super::plugins::SkeletonPlugin`] can
 /// read it in the same frame.
+#[derive(Clone)]
 pub struct Pose {
     /// Local-space transform for each joint. Must have the same length as the
     /// skeleton it is paired with.

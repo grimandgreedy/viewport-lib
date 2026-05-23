@@ -232,11 +232,12 @@ pub use resources::{
 };
 
 pub use runtime::{
-    AnimationPlugin, AnimationTrack, CameraFollow, Constraint, ConstraintPlugin, ContactEvent,
-    DebugDraw, DebugLayer, DebugPrim, FixedStepIter, FixedTimestep, Joint, JointMatrices, Keyframe,
-    ManipulationSystem, NodeTransformOp, PhysicsBody, PhysicsLitePlugin, Pose, RuntimeFrameContext,
-    RuntimeOutput, RuntimePhase, RuntimePlugin, RuntimeStepContext, SceneRuntimeMode,
-    SelectionOp, SelectionSystem, SimulationStepContext, Skeleton, SkeletonPlugin,
-    SkinnedMeshUpdate, TransformSnapshot, TransformSnapshotTable, TransformWriteback,
+    AnimationClip, AnimationPlugin, AnimationTrack, CameraFollow, Channel, ClipPlayerPlugin,
+    Constraint, ConstraintPlugin, ContactEvent, DebugDraw, DebugLayer, DebugPrim, FixedStepIter,
+    FixedTimestep, Interpolation, Joint, JointMatrices, Keyframe, ManipulationSystem,
+    NodeTransformOp, PhysicsBody, PhysicsLitePlugin, Pose, RuntimeFrameContext, RuntimeOutput,
+    RuntimePhase, RuntimePlugin, RuntimeStepContext, Sampler, SceneRuntimeMode, SelectionOp,
+    SelectionSystem, SimulationStepContext, Skeleton, SkeletonPlugin, SkinnedMeshUpdate, Track,
+    TrackValue, TrackValues, TransformSnapshot, TransformSnapshotTable, TransformWriteback,
     ViewportRuntime, apply_skin,
 };

@@ -36,6 +36,7 @@ eframe = { version = "=0.33.3", default-features = false, features = ["wgpu", "d
 winit = "0.30"
 pollster = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+viewport-lib-io = { path = "../viewport-lib-io" }
 
 [[example]]
 name = "iced-viewport"

@@ -18,9 +18,9 @@
 
 use eframe::egui;
 use viewport_lib::{
-    ActionFrame, Joint, Material, MeshId, MeshData, Pose, RuntimeFrameContext, RuntimePlugin,
-    RuntimeStepContext, Skeleton, SkeletonPlugin, SkinnedMeshUpdate, SkinWeights,
-    ViewportRuntime,
+    ActionFrame, AnimationClip, Channel, ClipPlayerPlugin, Interpolation, Joint, Material,
+    MeshId, MeshData, Pose, RuntimeFrameContext, RuntimePlugin, RuntimeStepContext, Sampler,
+    Skeleton, SkeletonPlugin, SkinnedMeshUpdate, SkinWeights, Track, TrackValues, ViewportRuntime,
     runtime::plugin::phase,
     scene::{Scene, material::BackfacePolicy},
     selection::Selection,
@@ -39,15 +39,35 @@ use viewport_lib::{
 pub(crate) enum Skin47Demo {
     /// Phase 1: hand-written sine-wave pose driving a two-joint arm.
     SineWaveArm,
+    /// Phase 2: pose sampled from an AnimationClip via ClipPlayerPlugin.
+    ClipDrivenArm,
+    /// Phase 3: skinned mesh imported from a glTF file, animated by one of its
+    /// own clips. Falls back to a placeholder when the asset is missing.
+    GltfCharacter,
 }
 
 impl Skin47Demo {
     fn label(self) -> &'static str {
         match self {
             Skin47Demo::SineWaveArm => "Sine-wave arm",
+            Skin47Demo::ClipDrivenArm => "Clip-driven arm",
+            Skin47Demo::GltfCharacter => "glTF character",
         }
     }
+
+    fn all() -> [Skin47Demo; 3] {
+        [
+            Skin47Demo::SineWaveArm,
+            Skin47Demo::ClipDrivenArm,
+            Skin47Demo::GltfCharacter,
+        ]
+    }
 }
+
+/// Path the glTF character demo looks for. Drop a `.glb` (or `.gltf` with its
+/// buffers/textures next to it) at this path to enable the demo. See the
+/// in-app help text for details.
+pub(crate) const GLTF_DEMO_PATH: &str = "examples/eframe_showcase/assets/character.glb";
 
 use crate::App;
 
@@ -178,11 +198,26 @@ pub(crate) struct Skin47State {
     /// CPU bind-pose vertex data kept for the SkeletonPlugin.
     pub bind_positions: Vec<[f32; 3]>,
     pub bind_normals: Vec<[f32; 3]>,
+    pub bind_skin_weights: Option<SkinWeights>,
     pub speed: f32,
-    /// Active demo from the sidebar selector.
+    /// Demo selected in the sidebar.
     pub demo: Skin47Demo,
+    /// Demo whose runtime is currently active. When `demo != active_demo`,
+    /// the runtime is rebuilt on the next frame.
+    pub active_demo: Skin47Demo,
     /// Pending deformation updates to apply to the GPU on the next frame.
     pub pending_updates: Vec<SkinnedMeshUpdate>,
+    /// Mesh IDs uploaded for each loaded glTF part. Empty when no asset is
+    /// available or the demo file is absent.
+    pub gltf_mesh_ids: Vec<MeshId>,
+    pub gltf_asset: Option<GltfCharacterAsset>,
+    /// True when the glTF demo path was checked and the file was absent.
+    pub gltf_missing: bool,
+    /// Scene node IDs currently present for each demo. Populated lazily when
+    /// a demo becomes active and dropped when it deactivates so the user only
+    /// sees the meshes belonging to the selected demo.
+    pub arm_node: Option<viewport_lib::NodeId>,
+    pub gltf_nodes: Vec<viewport_lib::NodeId>,
 }
 
 impl Default for Skin47State {
@@ -195,9 +230,16 @@ impl Default for Skin47State {
             mesh_id: None,
             bind_positions: Vec::new(),
             bind_normals: Vec::new(),
+            bind_skin_weights: None,
             speed: 1.0,
             demo: Skin47Demo::SineWaveArm,
+            active_demo: Skin47Demo::SineWaveArm,
             pending_updates: Vec::new(),
+            gltf_mesh_ids: Vec::new(),
+            gltf_asset: None,
+            gltf_missing: false,
+            arm_node: None,
+            gltf_nodes: Vec::new(),
         }
     }
 }
@@ -223,30 +265,379 @@ pub(crate) fn build_skin47_scene(app: &mut App, renderer: &mut viewport_lib::Vie
     app.skin47_state.mesh_id = Some(mesh_id);
     app.skin47_state.bind_positions = positions.clone();
     app.skin47_state.bind_normals = normals.clone();
+    app.skin47_state.bind_skin_weights = Some(skin_weights.clone());
 
-    let skeleton = build_arm_skeleton();
+    // Try to upload the glTF character if its asset file is present.
+    let gltf_path = std::path::Path::new(GLTF_DEMO_PATH);
+    if let Some(asset) = try_load_gltf_character(gltf_path) {
+        for part in &asset.parts {
+            let id = renderer
+                .resources_mut()
+                .upload_mesh_data(&app.device, &part.mesh_data)
+                .expect("glTF part mesh upload");
+            app.skin47_state.gltf_mesh_ids.push(id);
+        }
+        app.skin47_state.gltf_asset = Some(asset);
+    } else {
+        app.skin47_state.gltf_missing = true;
+    }
 
-    let plugin = SkeletonPlugin::new(
-        skeleton,
+    app.skin47_state.runtime = build_runtime_for_demo(
+        app.skin47_state.demo,
         mesh_id,
-        positions,
-        normals,
-        skin_weights,
+        &positions,
+        &normals,
+        &skin_weights,
+        &app.skin47_state.gltf_mesh_ids,
+        app.skin47_state.gltf_asset.as_ref(),
+        app.skin47_state.speed,
     );
-
-    let pose_driver = PoseDriver { time: 0.0, default_speed: app.skin47_state.speed };
-
-    app.skin47_state.runtime = ViewportRuntime::new()
-        .with_plugin(pose_driver)
-        .with_plugin(plugin);
-
-    // Add the arm to the scene. Render both sides so the inside of the bend
-    // stays visible if LBS flips a normal near the seam.
-    let mut mat = Material::from_colour([0.6, 0.75, 0.9]);
-    mat.backface_policy = BackfacePolicy::Tint(0.4);
-    app.skin47_state.scene.add(Some(mesh_id), glam::Mat4::IDENTITY, mat);
+    app.skin47_state.active_demo = app.skin47_state.demo;
+    populate_scene_for_demo(&mut app.skin47_state);
 
     app.skin47_state.built = true;
+}
+
+/// Make the scene contain only the meshes belonging to the currently active
+/// demo. Removes whatever the previous demo added and inserts the new demo's
+/// meshes. Idempotent: calling with the same demo is a no-op.
+fn populate_scene_for_demo(state: &mut Skin47State) {
+    let arm_demos = matches!(state.demo, Skin47Demo::SineWaveArm | Skin47Demo::ClipDrivenArm);
+    let gltf_demo = matches!(state.demo, Skin47Demo::GltfCharacter);
+
+    // Drop the arm node if it shouldn't be visible.
+    if !arm_demos {
+        if let Some(id) = state.arm_node.take() {
+            state.scene.remove(id);
+        }
+    }
+    // Drop glTF nodes if they shouldn't be visible.
+    if !gltf_demo {
+        for id in state.gltf_nodes.drain(..) {
+            state.scene.remove(id);
+        }
+    }
+
+    // Add the arm if needed and not already present.
+    if arm_demos && state.arm_node.is_none() {
+        if let Some(mesh_id) = state.mesh_id {
+            let mut mat = Material::from_colour([0.6, 0.75, 0.9]);
+            mat.backface_policy = BackfacePolicy::Tint(0.4);
+            state.arm_node = Some(state.scene.add(Some(mesh_id), glam::Mat4::IDENTITY, mat));
+        }
+    }
+
+    // Add glTF parts if needed and not already present.
+    if gltf_demo && state.gltf_nodes.is_empty() {
+        if let Some(asset) = state.gltf_asset.as_ref() {
+            for (id, part) in state.gltf_mesh_ids.iter().zip(asset.parts.iter()) {
+                let mut gmat = Material::from_colour(part.colour);
+                gmat.backface_policy = BackfacePolicy::Tint(0.4);
+                let node = state.scene.add(Some(*id), part.scene_transform, gmat);
+                state.gltf_nodes.push(node);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Demo wiring
+// ---------------------------------------------------------------------------
+
+/// Build a fresh runtime for a given demo. `SkeletonPlugin` takes ownership of
+/// the bind-pose vertex arrays and skin weights, so the demo state stores its
+/// own copies and clones them in here per rebuild.
+fn build_runtime_for_demo(
+    demo: Skin47Demo,
+    arm_mesh_id: MeshId,
+    arm_positions: &[[f32; 3]],
+    arm_normals: &[[f32; 3]],
+    arm_skin_weights: &SkinWeights,
+    gltf_mesh_ids: &[MeshId],
+    gltf_asset: Option<&GltfCharacterAsset>,
+    speed: f32,
+) -> ViewportRuntime {
+    match demo {
+        Skin47Demo::SineWaveArm => {
+            let skeleton_plugin = SkeletonPlugin::new(
+                build_arm_skeleton(),
+                arm_mesh_id,
+                arm_positions.to_vec(),
+                arm_normals.to_vec(),
+                arm_skin_weights.clone(),
+            );
+            let pose_driver = PoseDriver { time: 0.0, default_speed: speed };
+            ViewportRuntime::new()
+                .with_plugin(pose_driver)
+                .with_plugin(skeleton_plugin)
+        }
+        Skin47Demo::ClipDrivenArm => {
+            let skeleton_plugin = SkeletonPlugin::new(
+                build_arm_skeleton(),
+                arm_mesh_id,
+                arm_positions.to_vec(),
+                arm_normals.to_vec(),
+                arm_skin_weights.clone(),
+            );
+            let bind_pose = bind_pose_for_arm();
+            let clip = build_bend_clip();
+            let player = ClipPlayerPlugin::new(clip, bind_pose).with_speed(speed);
+            ViewportRuntime::new()
+                .with_plugin(player)
+                .with_plugin(skeleton_plugin)
+        }
+        Skin47Demo::GltfCharacter => {
+            // Fall back to an empty runtime when the asset is missing; the
+            // sidebar shows an explanatory message in this state.
+            let Some(asset) = gltf_asset else {
+                return ViewportRuntime::new();
+            };
+            if gltf_mesh_ids.len() != asset.parts.len() {
+                return ViewportRuntime::new();
+            }
+            let clip_idx = asset.active_clip.min(asset.clips.len().saturating_sub(1));
+            let player = ClipPlayerPlugin::new(
+                asset.clips[clip_idx].clone(),
+                asset.bind_pose.clone(),
+            )
+            .with_speed(speed);
+
+            // Build one SkeletonPlugin per mesh part, all sharing the same
+            // skeleton and reading the same Pose written by the player.
+            let mut runtime = ViewportRuntime::new().with_plugin(player);
+            for (gid, part) in gltf_mesh_ids.iter().zip(asset.parts.iter()) {
+                let plugin = SkeletonPlugin::new(
+                    asset.skeleton.clone(),
+                    *gid,
+                    part.bind_positions.clone(),
+                    part.bind_normals.clone(),
+                    part.skin_weights.clone(),
+                );
+                runtime = runtime.with_plugin(plugin);
+            }
+            runtime
+        }
+    }
+}
+
+/// Bind pose for the two-joint arm: joint 0 identity, joint 1 translated to
+/// `(0, 0, JOINT_Z)`. The clip's rotation track only modifies joint 1's
+/// rotation; translation is preserved from this bind pose.
+fn bind_pose_for_arm() -> Pose {
+    let mut p = Pose::identity(2);
+    p.local_transforms[1] = glam::Affine3A::from_translation(glam::Vec3::new(0.0, 0.0, JOINT_Z));
+    p
+}
+
+// ---------------------------------------------------------------------------
+// glTF -> runtime adapter
+// ---------------------------------------------------------------------------
+
+/// One skinned mesh part loaded from a glTF character. Owns the bind data
+/// because SkeletonPlugin takes ownership when constructed.
+pub(crate) struct GltfMeshPart {
+    pub name: String,
+    pub mesh_data: MeshData,
+    pub bind_positions: Vec<[f32; 3]>,
+    pub bind_normals: Vec<[f32; 3]>,
+    pub skin_weights: SkinWeights,
+    pub colour: [f32; 3],
+    /// Scene transform from the io loader. Carries the Y-up -> Z-up rotation
+    /// applied by viewport-lib-io's glTF loader.
+    pub scene_transform: glam::Mat4,
+}
+
+/// What `try_load_gltf_character` produces on success. A character may consist
+/// of many mesh parts that all share one skeleton (common for game-style rigs
+/// with separate meshes per body region).
+pub(crate) struct GltfCharacterAsset {
+    pub parts: Vec<GltfMeshPart>,
+    pub skeleton: Skeleton,
+    pub bind_pose: Pose,
+    pub clips: Vec<AnimationClip>,
+    pub clip_names: Vec<String>,
+    pub active_clip: usize,
+}
+
+/// Load all skinned mesh parts + skeleton + animations from a glTF file via
+/// viewport-lib-io and convert them to runtime types. Returns `None` if the
+/// file is missing or has no skinned mesh.
+fn try_load_gltf_character(path: &std::path::Path) -> Option<GltfCharacterAsset> {
+    use viewport_lib_io::{
+        AnimationChannel as IoChannel, AnimationInterpolation as IoInterp,
+        AnimationTrackValues as IoTrackValues, Joint as IoJoint, Skeleton as IoSkeleton,
+    };
+
+    if !path.exists() {
+        return None;
+    }
+    let scene = viewport_lib_io::loaders::gltf::scene_from_path(path).ok()?;
+
+    // Pick the skeleton that the first skinned mesh references; convert all
+    // mesh parts that target it.
+    let first_skinned = scene
+        .meshes
+        .iter()
+        .find(|m| m.skeleton_index.is_some() && m.mesh.skin_weights.is_some())?;
+    let skeleton_idx = first_skinned.skeleton_index.unwrap();
+    let io_skeleton: &IoSkeleton = scene.skeletons.get(skeleton_idx)?;
+
+    // Convert skeleton.
+    let joints: Vec<Joint> = io_skeleton
+        .joints
+        .iter()
+        .map(|j: &IoJoint| Joint {
+            name: j.name.clone(),
+            parent: j.parent,
+            inverse_bind: glam::Affine3A::from_mat4(j.inverse_bind),
+        })
+        .collect();
+    let skeleton = Skeleton::new(joints);
+    let bind_pose = bind_pose_from_skeleton(&skeleton);
+
+    // Convert every mesh part that targets this skeleton. Assign each a
+    // distinct colour so the rig is readable on screen.
+    const PART_COLOURS: [[f32; 3]; 6] = [
+        [0.85, 0.7, 0.55],
+        [0.70, 0.55, 0.45],
+        [0.55, 0.65, 0.80],
+        [0.80, 0.55, 0.55],
+        [0.55, 0.75, 0.55],
+        [0.75, 0.75, 0.55],
+    ];
+    let mut parts = Vec::new();
+    for io_mesh in scene.meshes.iter() {
+        if io_mesh.skeleton_index != Some(skeleton_idx) {
+            continue;
+        }
+        let io_sw = match io_mesh.mesh.skin_weights.as_ref() {
+            Some(sw) => sw,
+            None => continue,
+        };
+        let skin_weights = SkinWeights {
+            joint_indices: io_sw.joint_indices.clone(),
+            joint_weights: io_sw.joint_weights.clone(),
+        };
+        let mut mesh_data = MeshData::default();
+        mesh_data.positions = io_mesh.mesh.positions.clone();
+        mesh_data.normals = io_mesh.mesh.normals.clone();
+        mesh_data.indices = io_mesh.mesh.indices.clone();
+        mesh_data.skin_weights = Some(skin_weights.clone());
+        let colour = PART_COLOURS[parts.len() % PART_COLOURS.len()];
+        parts.push(GltfMeshPart {
+            name: io_mesh.name.clone(),
+            mesh_data,
+            bind_positions: io_mesh.mesh.positions.clone(),
+            bind_normals: io_mesh.mesh.normals.clone(),
+            skin_weights,
+            colour,
+            scene_transform: io_mesh.transform,
+        });
+    }
+    if parts.is_empty() {
+        return None;
+    }
+
+    // Convert every clip targeting this skeleton.
+    let mut clips = Vec::new();
+    let mut clip_names = Vec::new();
+    for io_clip in scene.animations.iter().filter(|c| c.skeleton_index == skeleton_idx) {
+        let mut tracks = Vec::with_capacity(io_clip.tracks.len());
+        for t in &io_clip.tracks {
+            let interp = match t.sampler.interpolation {
+                IoInterp::Step => Interpolation::Step,
+                IoInterp::Linear => Interpolation::Linear,
+                // CubicSpline is preserved on import but not yet sampled.
+                IoInterp::CubicSpline => continue,
+            };
+            let channel = match t.channel {
+                IoChannel::Translation => Channel::Translation,
+                IoChannel::Rotation => Channel::Rotation,
+                IoChannel::Scale => Channel::Scale,
+            };
+            let values = match &t.sampler.values {
+                IoTrackValues::Vec3(v) => TrackValues::Vec3(v.clone()),
+                IoTrackValues::Quat(v) => TrackValues::Quat(v.clone()),
+            };
+            tracks.push(Track {
+                joint: t.joint,
+                channel,
+                sampler: Sampler {
+                    interpolation: interp,
+                    times: t.sampler.times.clone(),
+                    values,
+                },
+            });
+        }
+        if tracks.is_empty() {
+            continue;
+        }
+        clips.push(AnimationClip {
+            duration: io_clip.duration,
+            tracks,
+        });
+        clip_names.push(io_clip.name.clone());
+    }
+    if clips.is_empty() {
+        return None;
+    }
+
+    Some(GltfCharacterAsset {
+        parts,
+        skeleton,
+        bind_pose,
+        clips,
+        clip_names,
+        active_clip: 0,
+    })
+}
+
+/// Reconstruct the bind pose as local transforms by inverting the bind-world
+/// chain implied by `inverse_bind`. For root joints, local = inverse_bind^-1.
+/// For child joints, local = parent_bind_world^-1 * bind_world.
+fn bind_pose_from_skeleton(skeleton: &Skeleton) -> Pose {
+    let n = skeleton.joint_count();
+    let mut bind_world = vec![glam::Affine3A::IDENTITY; n];
+    let mut pose = Pose::identity(n);
+    for (i, joint) in skeleton.joints().iter().enumerate() {
+        let inverse_bind = joint.inverse_bind;
+        // bind_world = inverse_bind^-1 if the matrix is invertible.
+        let bind_world_i = inverse_bind.inverse();
+        bind_world[i] = bind_world_i;
+        let local = match joint.parent {
+            Some(p) => bind_world[p as usize].inverse() * bind_world_i,
+            None => bind_world_i,
+        };
+        pose.local_transforms[i] = local;
+    }
+    pose
+}
+
+/// A short hand-authored clip that bends the forearm joint back and forth
+/// around the X axis. Two-second loop, +/- 45 deg, linear interpolation.
+fn build_bend_clip() -> AnimationClip {
+    let bend = std::f32::consts::FRAC_PI_4;
+    let rot_keys = vec![
+        glam::Quat::IDENTITY,
+        glam::Quat::from_rotation_x(bend),
+        glam::Quat::IDENTITY,
+        glam::Quat::from_rotation_x(-bend),
+        glam::Quat::IDENTITY,
+    ];
+    let times = vec![0.0, 0.5, 1.0, 1.5, 2.0];
+
+    AnimationClip {
+        duration: 2.0,
+        tracks: vec![Track {
+            joint: 1,
+            channel: Channel::Rotation,
+            sampler: Sampler {
+                interpolation: Interpolation::Linear,
+                times,
+                values: TrackValues::Quat(rot_keys),
+            },
+        }],
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -254,6 +645,27 @@ pub(crate) fn build_skin47_scene(app: &mut App, renderer: &mut viewport_lib::Vie
 // ---------------------------------------------------------------------------
 
 pub(crate) fn update_skin47(app: &mut App, dt: f32) {
+    // Rebuild the runtime if the user selected a different demo.
+    if app.skin47_state.demo != app.skin47_state.active_demo {
+        if let (Some(mesh_id), Some(skin_weights)) = (
+            app.skin47_state.mesh_id,
+            app.skin47_state.bind_skin_weights.clone(),
+        ) {
+            app.skin47_state.runtime = build_runtime_for_demo(
+                app.skin47_state.demo,
+                mesh_id,
+                &app.skin47_state.bind_positions,
+                &app.skin47_state.bind_normals,
+                &skin_weights,
+                &app.skin47_state.gltf_mesh_ids,
+                app.skin47_state.gltf_asset.as_ref(),
+                app.skin47_state.speed,
+            );
+            app.skin47_state.active_demo = app.skin47_state.demo;
+            populate_scene_for_demo(&mut app.skin47_state);
+        }
+    }
+
     let camera = app.camera.clone();
     let frame_ctx = RuntimeFrameContext {
         dt,
@@ -313,7 +725,7 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
         egui::ComboBox::from_id_salt("skin47_demo")
             .selected_text(current.label())
             .show_ui(ui, |ui| {
-                for d in [Skin47Demo::SineWaveArm] {
+                for d in Skin47Demo::all() {
                     ui.selectable_value(&mut app.skin47_state.demo, d, d.label());
                 }
             });
@@ -341,6 +753,95 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                 ui.small("- SkeletonPlugin: runs at POST_SIM, reads Pose, runs LBS.");
                 ui.small("- Output: SkinnedMeshUpdate pushed to output.skinned_mesh_updates.");
                 ui.small("- App: calls write_mesh_positions_normals before rendering.");
+            }
+            Skin47Demo::ClipDrivenArm => {
+                ui.label("Playback speed:");
+                let mut speed = app.skin47_state.speed;
+                if ui
+                    .add(egui::Slider::new(&mut speed, 0.0..=4.0).text("x"))
+                    .changed()
+                {
+                    app.skin47_state.speed = speed;
+                    // Rebuild on the next frame so the new speed takes effect.
+                    app.skin47_state.active_demo = Skin47Demo::SineWaveArm;
+                }
+                ui.add_space(6.0);
+
+                ui.separator();
+                ui.label("How it works:");
+                ui.small("- AnimationClip: one rotation track on the forearm joint.");
+                ui.small("- 5 keyframes over 2 seconds: 0, +45, 0, -45, 0 deg.");
+                ui.small("- ClipPlayerPlugin: samples the clip at the playhead, writes Pose.");
+                ui.small("- SkeletonPlugin: same as before, reads Pose and runs LBS.");
+                ui.small("- Bind pose carries joint 1 translation; clip only animates rotation.");
+            }
+            Skin47Demo::GltfCharacter => {
+                if app.skin47_state.gltf_asset.is_none() {
+                    ui.label("No glTF asset loaded.");
+                    ui.add_space(6.0);
+                    ui.small("Drop a skinned .glb (or .gltf with its buffers next to it) at:");
+                    ui.code(GLTF_DEMO_PATH);
+                    ui.add_space(4.0);
+                    ui.small("Restart the showcase to load it.");
+                    if app.skin47_state.gltf_missing {
+                        ui.add_space(4.0);
+                        ui.small("(File not found on the last startup.)");
+                    }
+                } else {
+                    // Clip selector. Switching clips triggers a runtime
+                    // rebuild on the next frame.
+                    let mut switch_clip: Option<usize> = None;
+                    if let Some(asset) = app.skin47_state.gltf_asset.as_ref() {
+                        ui.label(format!(
+                            "{} mesh parts, {} animation clips",
+                            asset.parts.len(),
+                            asset.clips.len(),
+                        ));
+                        ui.add_space(4.0);
+                        ui.label("Clip:");
+                        let current = asset.active_clip;
+                        let current_name = asset
+                            .clip_names
+                            .get(current)
+                            .cloned()
+                            .unwrap_or_else(|| format!("clip {current}"));
+                        egui::ComboBox::from_id_salt("skin47_gltf_clip")
+                            .selected_text(current_name)
+                            .show_ui(ui, |ui| {
+                                for (i, name) in asset.clip_names.iter().enumerate() {
+                                    if ui.selectable_label(i == current, name).clicked() {
+                                        switch_clip = Some(i);
+                                    }
+                                }
+                            });
+                    }
+                    if let Some(i) = switch_clip {
+                        if let Some(asset) = app.skin47_state.gltf_asset.as_mut() {
+                            asset.active_clip = i;
+                        }
+                        // Force a runtime rebuild next frame.
+                        app.skin47_state.active_demo = Skin47Demo::SineWaveArm;
+                    }
+                    ui.add_space(6.0);
+
+                    ui.label("Playback speed:");
+                    let mut speed = app.skin47_state.speed;
+                    if ui
+                        .add(egui::Slider::new(&mut speed, 0.0..=4.0).text("x"))
+                        .changed()
+                    {
+                        app.skin47_state.speed = speed;
+                        app.skin47_state.active_demo = Skin47Demo::SineWaveArm;
+                    }
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.label("How it works:");
+                    ui.small("- viewport-lib-io decodes the .glb to neutral io types.");
+                    ui.small("- An adapter converts io Skeleton/Clip to runtime types.");
+                    ui.small("- One ClipPlayerPlugin + N SkeletonPlugins (one per mesh part).");
+                    ui.small("- All parts share the skeleton and the Pose written by the player.");
+                    ui.small("- Bone-parented (non-skinned) rigs are auto-converted at import time.");
+                }
             }
         }
     });

@@ -67,8 +67,10 @@ pub use mode::SceneRuntimeMode;
 pub use output::{CameraCommand, ContactEvent, NodeTransformOp, RuntimeOutput, SelectionOp, SkinnedMeshUpdate, TransformWriteback};
 pub use plugin::{phase, RuntimeEvent, RuntimePhase, RuntimePlugin};
 pub use plugins::{
-    AnimationPlugin, AnimationTrack, Constraint, ConstraintPlugin, Joint, JointMatrices, Keyframe,
-    PhysicsBody, PhysicsLitePlugin, Pose, Skeleton, SkeletonPlugin, apply_skin,
+    AnimationClip, AnimationPlugin, AnimationTrack, Channel, ClipPlayerPlugin, Constraint,
+    ConstraintPlugin, Interpolation, Joint, JointMatrices, Keyframe, PhysicsBody,
+    PhysicsLitePlugin, Pose, Sampler, Skeleton, SkeletonPlugin, Track, TrackValue, TrackValues,
+    apply_skin,
 };
 pub use resources::RuntimeResources;
 pub use snapshot::{TransformSnapshot, TransformSnapshotTable};
