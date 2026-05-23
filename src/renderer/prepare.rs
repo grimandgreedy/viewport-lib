@@ -2015,12 +2015,15 @@ impl ViewportRenderer {
                             tile_size,
                         );
 
-                        shadow_pass.set_pipeline(&resources.shadow_pipeline);
                         shadow_pass.set_bind_group(
                             0,
                             &resources.shadow_bind_group,
                             &[cascade as u32 * 256],
                         );
+                        // Track which pipeline is currently bound to avoid
+                        // redundant set_pipeline calls between static and
+                        // skinned meshes during the cascade walk.
+                        let mut last_skinned: Option<bool> = None;
 
                         let cascade_frustum = crate::camera::frustum::Frustum::from_view_proj(
                             &cascade_view_projs[cascade],
@@ -2044,7 +2047,22 @@ impl ViewportRenderer {
                                 continue;
                             }
 
+                            let skin_bg = item.skin_instance.and_then(|inst| {
+                                resources.skin_instance_bind_group(item.mesh_id, inst)
+                            });
+                            let want_skinned = skin_bg.is_some();
+                            if last_skinned != Some(want_skinned) {
+                                shadow_pass.set_pipeline(if want_skinned {
+                                    &resources.skinned_shadow_pipeline
+                                } else {
+                                    &resources.shadow_pipeline
+                                });
+                                last_skinned = Some(want_skinned);
+                            }
                             shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
+                            if let Some(bg) = skin_bg {
+                                shadow_pass.set_bind_group(2, bg, &[]);
+                            }
                             shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             shadow_pass.set_index_buffer(
                                 mesh.index_buffer.slice(..),

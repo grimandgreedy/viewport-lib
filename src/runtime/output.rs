@@ -156,6 +156,29 @@ pub struct SkinnedMeshUpdate {
     pub normals: Vec<[f32; 3]>,
 }
 
+/// A per-instance joint palette update produced by a skinning plugin on the
+/// GPU path.
+///
+/// Returned in [`RuntimeOutput::skinned_pose_updates`]. Apply after `step()`
+/// by calling [`crate::ViewportGpuResources::set_skin_palette`]:
+///
+/// ```rust,ignore
+/// for u in &output.skinned_pose_updates {
+///     renderer.resources_mut()
+///         .set_skin_palette(&queue, u.mesh_id, u.instance_id, &u.joint_matrices);
+/// }
+/// ```
+pub struct SkinnedPoseUpdate {
+    /// The skinned mesh to drive.
+    pub mesh_id: MeshId,
+    /// Which instance of the mesh this palette is for. Use `0` for single-
+    /// instance meshes.
+    pub instance_id: u32,
+    /// Per-joint skinning matrices in topological order, ready for upload to
+    /// the GPU joint palette storage buffer.
+    pub joint_matrices: Vec<glam::Mat4>,
+}
+
 /// Output produced by one call to [`super::ViewportRuntime::step`].
 ///
 /// `node_transform_ops` have already been applied to the scene and the snapshot
@@ -189,10 +212,16 @@ pub struct RuntimeOutput {
     /// `output.events.drain::<MyEvent>()`. Events are cleared each frame because
     /// `RuntimeOutput` is constructed fresh on every `step` call.
     pub events: RuntimeEventBus,
-    /// Per-mesh deformation updates from skinning plugins. Apply after `step()` by
-    /// calling `write_mesh_positions_normals` on each entry. Empty when no
-    /// [`super::plugins::SkeletonPlugin`] is active.
+    /// Per-mesh deformation updates from skinning plugins on the CPU path.
+    /// Apply after `step()` by calling `write_mesh_positions_normals` on each
+    /// entry. Empty when no [`super::plugins::SkeletonPlugin`] is active on the
+    /// CPU path.
     pub skinned_mesh_updates: Vec<SkinnedMeshUpdate>,
+    /// Per-instance joint palette updates from skinning plugins on the GPU
+    /// path. Apply after `step()` by calling
+    /// [`crate::ViewportGpuResources::set_skin_palette`] on each entry. Empty
+    /// when no skinning plugin is active on the GPU path.
+    pub skinned_pose_updates: Vec<SkinnedPoseUpdate>,
 }
 
 impl RuntimeOutput {

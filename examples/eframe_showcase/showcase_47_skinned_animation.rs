@@ -21,7 +21,8 @@ use viewport_lib::{
     ActionFrame, AnimationClip, Channel, ClipPlayerPlugin, Interpolation, Joint, Material,
     MeshId, MeshData, Pose, RuntimeFrameContext, RuntimePlugin, RuntimeStepContext, Sampler,
     Skeleton, SkeletonPlugin, SkinnedActor, SkinnedActorPart, SkinnedActorPlugin,
-    SkinnedMeshUpdate, SkinWeights, Track, TrackValues, ViewportRuntime,
+    SkinnedMeshUpdate, SkinnedPoseUpdate, SkinningPath, SkinWeights, Track, TrackValues,
+    ViewportRuntime,
     runtime::plugin::phase,
     scene::{Scene, material::BackfacePolicy},
     selection::Selection,
@@ -211,8 +212,21 @@ pub(crate) struct Skin47State {
     /// Demo whose runtime is currently active. When `demo != active_demo`,
     /// the runtime is rebuilt on the next frame.
     pub active_demo: Skin47Demo,
-    /// Pending deformation updates to apply to the GPU on the next frame.
+    /// Pending CPU-path deformation updates to apply to the GPU on the next frame.
     pub pending_updates: Vec<SkinnedMeshUpdate>,
+    /// Pending GPU-path joint palette updates from the runtime.
+    pub pending_pose_updates: Vec<SkinnedPoseUpdate>,
+    /// Active deformation path (CPU or GPU). Toggling rebuilds the runtime so
+    /// the plugins emit the right output channel.
+    pub path: SkinningPath,
+    /// Path whose runtime is currently active. Rebuild when `path != active_path`.
+    pub active_path: SkinningPath,
+    /// Mesh IDs for which `set_skin_weights` has already been called. Avoids
+    /// re-uploading the weights buffer on every GPU-path switch.
+    pub skin_weights_uploaded: std::collections::HashSet<MeshId>,
+    /// Rolling per-frame timing (microseconds) of `runtime.step()`, for the
+    /// CPU/GPU comparison readout. Reset on path switch.
+    pub last_step_us: f32,
     /// Mesh IDs uploaded for each loaded glTF part. Empty when no asset is
     /// available or the demo file is absent.
     pub gltf_mesh_ids: Vec<MeshId>,
@@ -257,6 +271,11 @@ impl Default for Skin47State {
             demo: Skin47Demo::SineWaveArm,
             active_demo: Skin47Demo::SineWaveArm,
             pending_updates: Vec::new(),
+            pending_pose_updates: Vec::new(),
+            path: SkinningPath::Cpu,
+            active_path: SkinningPath::Cpu,
+            skin_weights_uploaded: std::collections::HashSet::new(),
+            last_step_us: 0.0,
             gltf_mesh_ids: Vec::new(),
             gltf_asset: None,
             gltf_missing: false,
@@ -282,7 +301,6 @@ pub(crate) fn build_skin47_scene(app: &mut App, renderer: &mut viewport_lib::Vie
     mesh_data.positions = positions.clone();
     mesh_data.normals = normals.clone();
     mesh_data.indices = indices;
-    mesh_data.skin_weights = Some(skin_weights.clone());
 
     let mesh_id = renderer
         .resources_mut()
@@ -320,6 +338,7 @@ pub(crate) fn build_skin47_scene(app: &mut App, renderer: &mut viewport_lib::Vie
         &app.skin47_state.crowd_actor_meshes,
         app.skin47_state.crowd_count,
         app.skin47_state.speed,
+        app.skin47_state.path,
     );
     app.skin47_state.active_demo = app.skin47_state.demo;
     populate_scene_for_demo(&mut app.skin47_state);
@@ -447,6 +466,7 @@ fn build_runtime_for_demo(
     crowd_actor_meshes: &[Vec<MeshId>],
     crowd_count: usize,
     speed: f32,
+    path: SkinningPath,
 ) -> ViewportRuntime {
     match demo {
         Skin47Demo::SineWaveArm => {
@@ -456,7 +476,8 @@ fn build_runtime_for_demo(
                 arm_positions.to_vec(),
                 arm_normals.to_vec(),
                 arm_skin_weights.clone(),
-            );
+            )
+            .with_path(path);
             let pose_driver = PoseDriver { time: 0.0, default_speed: speed };
             ViewportRuntime::new()
                 .with_plugin(pose_driver)
@@ -469,7 +490,8 @@ fn build_runtime_for_demo(
                 arm_positions.to_vec(),
                 arm_normals.to_vec(),
                 arm_skin_weights.clone(),
-            );
+            )
+            .with_path(path);
             let bind_pose = bind_pose_for_arm();
             let clip = build_bend_clip();
             let player = ClipPlayerPlugin::new(clip, bind_pose).with_speed(speed);
@@ -503,7 +525,8 @@ fn build_runtime_for_demo(
                     part.bind_positions.clone(),
                     part.bind_normals.clone(),
                     part.skin_weights.clone(),
-                );
+                )
+                .with_path(path);
                 runtime = runtime.with_plugin(plugin);
             }
             runtime
@@ -547,7 +570,8 @@ fn build_runtime_for_demo(
 
             let plugin =
                 SkinnedActorPlugin::new(asset.skeleton.clone(), asset.bind_pose.clone(), asset.clips.clone())
-                    .with_actors(actors);
+                    .with_actors(actors)
+                    .with_path(path);
             ViewportRuntime::new().with_plugin(plugin)
         }
     }
@@ -671,7 +695,6 @@ fn try_load_gltf_character(path: &std::path::Path) -> Option<GltfCharacterAsset>
         mesh_data.positions = io_mesh.mesh.positions.clone();
         mesh_data.normals = io_mesh.mesh.normals.clone();
         mesh_data.indices = io_mesh.mesh.indices.clone();
-        mesh_data.skin_weights = Some(skin_weights.clone());
         let colour = PART_COLOURS[parts.len() % PART_COLOURS.len()];
         parts.push(GltfMeshPart {
             name: io_mesh.name.clone(),
@@ -794,8 +817,13 @@ fn build_bend_clip() -> AnimationClip {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn update_skin47(app: &mut App, dt: f32) {
-    // Rebuild the runtime if the user selected a different demo.
-    if app.skin47_state.demo != app.skin47_state.active_demo {
+    // Rebuild the runtime if the user selected a different demo or switched
+    // CPU/GPU path. Path change also re-stamps `skin_instance` on the scene
+    // nodes so the renderer routes through the skinned pipeline variant on
+    // GPU and through the static pipeline on CPU.
+    let demo_changed = app.skin47_state.demo != app.skin47_state.active_demo;
+    let path_changed = app.skin47_state.path != app.skin47_state.active_path;
+    if demo_changed || path_changed {
         if let (Some(mesh_id), Some(skin_weights)) = (
             app.skin47_state.mesh_id,
             app.skin47_state.bind_skin_weights.clone(),
@@ -811,9 +839,12 @@ pub(crate) fn update_skin47(app: &mut App, dt: f32) {
                 &app.skin47_state.crowd_actor_meshes,
                 app.skin47_state.crowd_count,
                 app.skin47_state.speed,
+                app.skin47_state.path,
             );
             app.skin47_state.active_demo = app.skin47_state.demo;
+            app.skin47_state.active_path = app.skin47_state.path;
             populate_scene_for_demo(&mut app.skin47_state);
+            restamp_skin_instances(&mut app.skin47_state);
         }
     }
 
@@ -832,14 +863,48 @@ pub(crate) fn update_skin47(app: &mut App, dt: f32) {
         shift_held: false,
     };
 
+    let t0 = std::time::Instant::now();
     let output = app.skin47_state.runtime.step(
         &mut app.skin47_state.scene,
         &mut app.skin47_state.selection,
         &frame_ctx,
     );
+    let step_us = t0.elapsed().as_micros() as f32;
+    // Exponential smoothing so the readout is steady enough to read.
+    let alpha = 0.1_f32;
+    app.skin47_state.last_step_us =
+        alpha * step_us + (1.0 - alpha) * app.skin47_state.last_step_us;
 
-    // Store updates so build_frame_data can apply them to the GPU.
+    // Hand the right update channel through to build_frame_data.
     app.skin47_state.pending_updates = output.skinned_mesh_updates;
+    app.skin47_state.pending_pose_updates = output.skinned_pose_updates;
+}
+
+/// Stamp `skin_instance` on every scene node that participates in the active
+/// demo so the renderer routes them through the skinned pipeline variant on
+/// the GPU path. Clears it on the CPU path so the same nodes fall back to the
+/// static pipeline (CPU writes deformed vertex buffers directly into the
+/// bind-pose mesh).
+fn restamp_skin_instances(state: &mut Skin47State) {
+    let gpu = state.path == SkinningPath::Gpu;
+    if let Some(arm_node) = state.arm_node {
+        state.scene.set_skin_instance(arm_node, gpu.then_some(0));
+    }
+    for node in &state.gltf_nodes {
+        state.scene.set_skin_instance(*node, gpu.then_some(0));
+    }
+    // Crowd: instance id is actor_idx. Nodes are laid out actor-major
+    // (all parts of actor 0, then all parts of actor 1, ...).
+    let parts_per_actor = state
+        .gltf_asset
+        .as_ref()
+        .map(|a| a.parts.len())
+        .unwrap_or(1)
+        .max(1);
+    for (i, node) in state.crowd_nodes.iter().enumerate() {
+        let actor_idx = (i / parts_per_actor) as u32;
+        state.scene.set_skin_instance(*node, gpu.then_some(actor_idx));
+    }
 }
 
 /// Apply pending skinned mesh updates to the GPU. Called from build_frame_data.
@@ -876,17 +941,72 @@ pub(crate) fn apply_skin47_updates(app: &mut App, renderer: &mut viewport_lib::V
                 &app.skin47_state.crowd_actor_meshes,
                 desired,
                 app.skin47_state.speed,
+                app.skin47_state.path,
             );
         }
         populate_scene_for_demo(&mut app.skin47_state);
+        restamp_skin_instances(&mut app.skin47_state);
         app.skin47_state.crowd_count_active = desired;
     }
 
+    // CPU path: blit deformed positions/normals back into the bind-pose
+    // vertex buffer for every emitted mesh.
     for u in app.skin47_state.pending_updates.drain(..) {
         let _ = renderer
             .resources_mut()
             .write_mesh_positions_normals(&app.queue, u.mesh_id, &u.positions, &u.normals);
     }
+
+    // GPU path: lazily upload skin weights the first time we see a mesh on
+    // the GPU path, then push the per-(mesh, instance) joint palette for the
+    // current frame. The renderer's skinned pipeline variant takes over once
+    // both the weights sidecar and the palette are present.
+    if !app.skin47_state.pending_pose_updates.is_empty() {
+        let pose_updates = std::mem::take(&mut app.skin47_state.pending_pose_updates);
+        for u in &pose_updates {
+            if !app.skin47_state.skin_weights_uploaded.contains(&u.mesh_id) {
+                if let Some(w) = weights_for_mesh(&app.skin47_state, u.mesh_id) {
+                    renderer
+                        .resources_mut()
+                        .set_skin_weights(&app.device, u.mesh_id, &w);
+                    app.skin47_state.skin_weights_uploaded.insert(u.mesh_id);
+                }
+            }
+            renderer.resources_mut().set_skin_palette(
+                &app.device,
+                &app.queue,
+                u.mesh_id,
+                u.instance_id,
+                &u.joint_matrices,
+            );
+        }
+    }
+}
+
+/// Lookup the bind-pose skin weights for `mesh_id` across all the assets the
+/// showcase has loaded. Returns `None` if the mesh wasn't recognised; the
+/// caller treats that as "not skinnable this frame" and falls back to the
+/// static pipeline.
+fn weights_for_mesh(state: &Skin47State, mesh_id: MeshId) -> Option<SkinWeights> {
+    if Some(mesh_id) == state.mesh_id {
+        return state.bind_skin_weights.clone();
+    }
+    if let Some(asset) = state.gltf_asset.as_ref() {
+        for (i, id) in state.gltf_mesh_ids.iter().enumerate() {
+            if *id == mesh_id {
+                return Some(asset.parts[i].skin_weights.clone());
+            }
+        }
+        for (actor_idx, mesh_ids) in state.crowd_actor_meshes.iter().enumerate() {
+            let _ = actor_idx;
+            for (i, id) in mesh_ids.iter().enumerate() {
+                if *id == mesh_id {
+                    return Some(asset.parts[i].skin_weights.clone());
+                }
+            }
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -918,6 +1038,19 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                     ui.selectable_value(&mut app.skin47_state.demo, d, d.label());
                 }
             });
+        ui.add_space(6.0);
+
+        ui.label("Skinning path:");
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut app.skin47_state.path, SkinningPath::Cpu, "CPU");
+            ui.selectable_value(&mut app.skin47_state.path, SkinningPath::Gpu, "GPU");
+        });
+        ui.small(format!(
+            "runtime.step() avg: {:.0} us",
+            app.skin47_state.last_step_us
+        ));
+        ui.small("CPU: re-uploads vertex buffers each frame.");
+        ui.small("GPU: uploads joint palette only; shader does LBS.");
         ui.add_space(6.0);
         ui.separator();
 

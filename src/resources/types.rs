@@ -165,13 +165,16 @@ pub enum BuiltinColourmap {
 /// - There is no required ordering between the four slots. The CPU path is
 ///   order-independent; a future GPU path will be too.
 ///
-/// # Migration note (Phase 5 of `docs/plans/skeletal-animation-plan.md`)
+/// # GPU path
 ///
-/// This type currently lives as side data on `MeshData`. The GPU skinning path
-/// requires joint indices and weights as first-class vertex attributes in the
-/// bind-pose vertex buffer. When that lands, `SkinWeights` will keep its
-/// current shape as a builder input but will be promoted internally to
-/// `JOINTS_0: [u16; 4]` and `WEIGHTS_0: [f32; 4]` attributes at upload time.
+/// `SkinWeights` is uploaded to the renderer as a sidecar storage buffer
+/// keyed by `MeshId` via
+/// [`crate::ViewportGpuResources::set_skin_weights`]. The mesh's vertex
+/// buffer is not modified. The skinned vertex shader looks up the
+/// per-vertex joint indices and weights from the storage buffer using
+/// `@builtin(vertex_index)`. Calling `set_skin_weights` on a `mesh_id`
+/// is what marks the mesh as skinnable; skinned draws are then routed
+/// through the skinned pipeline variant.
 #[derive(Clone)]
 pub struct SkinWeights {
     /// Joint indices for each vertex: 4 per vertex, parallel to positions.
@@ -201,13 +204,6 @@ pub struct MeshData {
     /// Keys are user-defined attribute names (e.g. `"pressure"`, `"velocity_mag"`).
     /// Cell attributes are averaged to vertices at upload time.
     pub attributes: std::collections::HashMap<String, AttributeData>,
-    /// Per-vertex skin weights for skeletal animation. `None` for static meshes.
-    ///
-    /// When supplied, the CPU skinning path in [`crate::runtime::plugins::skeleton_plugin`] can
-    /// deform this mesh each frame from a [`crate::runtime::Pose`] and upload
-    /// updated positions/normals via
-    /// [`crate::ViewportGpuResources::write_mesh_positions_normals`].
-    pub skin_weights: Option<SkinWeights>,
 }
 
 impl Default for MeshData {
@@ -219,7 +215,6 @@ impl Default for MeshData {
             uvs: None,
             tangents: None,
             attributes: std::collections::HashMap::new(),
-            skin_weights: None,
         }
     }
 }
@@ -2339,6 +2334,19 @@ pub struct ViewportGpuResources {
     pub object_bind_group_layout: wgpu::BindGroupLayout,
     /// Scene meshes (slotted storage with free-list removal).
     pub(crate) mesh_store: crate::resources::mesh_store::MeshStore,
+    /// GPU skinning sidecar storage: per-mesh skin weights and per-instance
+    /// joint palette buffers. Empty for static meshes.
+    pub(crate) skinning: crate::resources::skin::SkinningState,
+    /// Skinned variant of [`Self::solid_pipeline`]. Same fragment stage as the
+    /// non-skinned pipeline; vertex stage applies LBS from the skinning
+    /// sidecar storage buffers.
+    pub skinned_solid_pipeline: wgpu::RenderPipeline,
+    /// Skinned two-sided variant (cull_mode = None). Selected when a skinned
+    /// mesh's material requests a non-Cull backface policy.
+    pub skinned_solid_two_sided_pipeline: wgpu::RenderPipeline,
+    /// Skinned variant of [`Self::shadow_pipeline`] used when a skinned mesh
+    /// casts shadows.
+    pub skinned_shadow_pipeline: wgpu::RenderPipeline,
 
     // --- Shadow map resources ---
     /// Shadow atlas depth texture (Depth32Float, atlas_size × atlas_size, 2×2 tile grid).
@@ -2702,6 +2710,12 @@ pub struct ViewportGpuResources {
 
     /// HDR-format variants of core scene pipelines.
     pub(crate) hdr_solid_pipeline: Option<wgpu::RenderPipeline>,
+    /// HDR skinned variant (group 2 = skin sidecar). Built alongside
+    /// `hdr_solid_pipeline` so the HDR draw path can render skinned meshes
+    /// without a format mismatch.
+    pub(crate) hdr_skinned_solid_pipeline: Option<wgpu::RenderPipeline>,
+    /// HDR skinned two-sided variant (cull_mode: None).
+    pub(crate) hdr_skinned_solid_two_sided_pipeline: Option<wgpu::RenderPipeline>,
     /// HDR two-sided variant (cull_mode: None) for analytical surfaces.
     pub(crate) hdr_solid_two_sided_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) hdr_transparent_pipeline: Option<wgpu::RenderPipeline>,

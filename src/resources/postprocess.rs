@@ -1666,7 +1666,95 @@ impl ViewportGpuResources {
             self.oit_instanced_pipeline = Some(p);
         }
         self.oit_composite_pipeline = Some(oit_composite_pipeline);
+        // HDR skinned variant: same shape as hdr_solid_pipeline but with the
+        // skinned vertex stage from `mesh_skinned.wgsl` and a 3-group layout
+        // (camera, object, skin sidecar). Fragment stage is shared with the
+        // standard HDR mesh shader.
+        let hdr_skinned_shader =
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("mesh_skinned_shader_hdr"),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("../shaders/mesh_skinned.wgsl").into(),
+                ),
+            });
+        let hdr_skinned_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("hdr_skinned_solid_pipeline_layout"),
+            bind_group_layouts: &[
+                &self.camera_bind_group_layout,
+                &self.object_bind_group_layout,
+                &self.skinning.bind_group_layout,
+            ],
+            push_constant_ranges: &[],
+        });
+        let hdr_skinned_solid_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("hdr_skinned_solid_pipeline"),
+                layout: Some(&hdr_skinned_layout),
+                vertex: wgpu::VertexState {
+                    module: &hdr_skinned_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &hdr_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(hdr_depth_stencil.clone()),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                multiview: None,
+                cache: None,
+            });
+        let hdr_skinned_solid_two_sided_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("hdr_skinned_solid_two_sided_pipeline"),
+                layout: Some(&hdr_skinned_layout),
+                vertex: wgpu::VertexState {
+                    module: &hdr_skinned_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &hdr_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(hdr_depth_stencil.clone()),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                multiview: None,
+                cache: None,
+            });
         self.hdr_solid_pipeline = Some(hdr_solid_pipeline);
+        self.hdr_skinned_solid_pipeline = Some(hdr_skinned_solid_pipeline);
+        self.hdr_skinned_solid_two_sided_pipeline = Some(hdr_skinned_solid_two_sided_pipeline);
         self.hdr_solid_two_sided_pipeline = Some(hdr_solid_two_sided_pipeline);
         self.hdr_transparent_pipeline = Some(hdr_transparent_pipeline);
         self.hdr_wireframe_pipeline = Some(hdr_wireframe_pipeline);

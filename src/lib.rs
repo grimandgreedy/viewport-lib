@@ -238,6 +238,6 @@ pub use runtime::{
     NodeTransformOp, PhysicsBody, PhysicsLitePlugin, Pose, RuntimeFrameContext, RuntimeOutput,
     RuntimePhase, RuntimePlugin, RuntimeStepContext, Sampler, SceneRuntimeMode, SelectionOp,
     SelectionSystem, SimulationStepContext, Skeleton, SkeletonPlugin, SkinnedActor,
-    SkinnedActorPart, SkinnedActorPlugin, SkinnedMeshUpdate, Track, TrackValue, TrackValues,
+    SkinnedActorPart, SkinnedActorPlugin, SkinnedMeshUpdate, SkinnedPoseUpdate, SkinningPath, Track, TrackValue, TrackValues,
     TransformSnapshot, TransformSnapshotTable, TransformWriteback, ViewportRuntime, apply_skin,
 };

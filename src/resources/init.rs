@@ -551,7 +551,7 @@ impl ViewportGpuResources {
                 polygon_mode: wgpu::PolygonMode::Fill,
                 conservative: false,
             },
-            depth_stencil: Some(depth_stencil),
+            depth_stencil: Some(depth_stencil.clone()),
             multisample: wgpu::MultisampleState {
                 count: sample_count,
                 mask: !0,
@@ -2013,10 +2013,156 @@ impl ViewportGpuResources {
             cache: None,
         });
 
+        // ------------------------------------------------------------------
+        // GPU skinning pipelines (Phase 5.2)
+        // ------------------------------------------------------------------
+        let skinning = crate::resources::skin::SkinningState::new(device);
+
+        let skinned_mesh_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("mesh_skinned_shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mesh_skinned.wgsl").into()),
+        });
+
+        let skinned_solid_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("skinned_solid_pipeline_layout"),
+            bind_group_layouts: &[&camera_bgl, &object_bgl, &skinning.bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let skinned_solid_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("skinned_solid_pipeline"),
+            layout: Some(&skinned_solid_layout),
+            vertex: wgpu::VertexState {
+                module: &skinned_mesh_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: Some(depth_stencil.clone()),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        let skinned_solid_two_sided_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("skinned_solid_two_sided_pipeline"),
+            layout: Some(&skinned_solid_layout),
+            vertex: wgpu::VertexState {
+                module: &skinned_mesh_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: Some(depth_stencil.clone()),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        let skinned_shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("shadow_skinned_shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/shadow_skinned.wgsl").into()),
+        });
+
+        let skinned_shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("skinned_shadow_pipeline_layout"),
+            bind_group_layouts: &[&shadow_camera_bgl, &object_bgl, &skinning.bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let skinned_shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("skinned_shadow_pipeline"),
+            layout: Some(&skinned_shadow_layout),
+            vertex: wgpu::VertexState {
+                module: &skinned_shadow_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: None,
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Front),
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: 2,
+                    slope_scale: 0.0,
+                    clamp: 0.0,
+                },
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
         Self {
             target_format,
             sample_count,
             solid_pipeline,
+            skinning,
+            skinned_solid_pipeline,
+            skinned_solid_two_sided_pipeline,
+            skinned_shadow_pipeline,
             solid_two_sided_pipeline,
             transparent_pipeline,
             wireframe_pipeline,
@@ -2207,6 +2353,8 @@ impl ViewportGpuResources {
             pp_linear_sampler: None,
             pp_nearest_sampler: None,
             hdr_solid_pipeline: None,
+            hdr_skinned_solid_pipeline: None,
+            hdr_skinned_solid_two_sided_pipeline: None,
             hdr_solid_two_sided_pipeline: None,
             hdr_transparent_pipeline: None,
             hdr_wireframe_pipeline: None,

@@ -21,5 +21,5 @@ pub mod skeleton;
 pub use actor::{SkinnedActor, SkinnedActorPart, SkinnedActorPlugin};
 pub use clip::{AnimationClip, Channel, Interpolation, Sampler, Track, TrackValue, TrackValues};
 pub use clip_player::ClipPlayerPlugin;
-pub use plugin::SkeletonPlugin;
+pub use plugin::{SkeletonPlugin, SkinningPath};
 pub use skeleton::{Joint, JointMatrices, MAX_JOINTS, Pose, Skeleton, apply_skin};

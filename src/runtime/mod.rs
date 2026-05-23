@@ -64,13 +64,13 @@ pub use debug_draw::{DebugDraw, DebugLayer, DebugPrim};
 pub use events::RuntimeEventBus;
 pub use jobs::{JobPoll, JobSender, JobSlot};
 pub use mode::SceneRuntimeMode;
-pub use output::{CameraCommand, ContactEvent, NodeTransformOp, RuntimeOutput, SelectionOp, SkinnedMeshUpdate, TransformWriteback};
+pub use output::{CameraCommand, ContactEvent, NodeTransformOp, RuntimeOutput, SelectionOp, SkinnedMeshUpdate, SkinnedPoseUpdate, TransformWriteback};
 pub use plugin::{phase, RuntimeEvent, RuntimePhase, RuntimePlugin};
 pub use plugins::{
     AnimationClip, AnimationPlugin, AnimationTrack, Channel, ClipPlayerPlugin, Constraint,
     ConstraintPlugin, Interpolation, Joint, JointMatrices, Keyframe, PhysicsBody,
     PhysicsLitePlugin, Pose, Sampler, Skeleton, SkeletonPlugin, SkinnedActor, SkinnedActorPart,
-    SkinnedActorPlugin, Track, TrackValue, TrackValues, apply_skin,
+    SkinnedActorPlugin, SkinningPath, Track, TrackValue, TrackValues, apply_skin,
 };
 pub use resources::RuntimeResources;
 pub use snapshot::{TransformSnapshot, TransformSnapshotTable};

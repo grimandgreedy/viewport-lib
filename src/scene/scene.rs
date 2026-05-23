@@ -83,6 +83,9 @@ pub struct SceneNode {
     children: Vec<NodeId>,
     layer: LayerId,
     dirty: bool,
+    /// Per-node skinning instance ID. See
+    /// [`SceneRenderItem::skin_instance`](crate::renderer::SceneRenderItem::skin_instance).
+    skin_instance: Option<u32>,
 }
 
 impl SceneNode {
@@ -310,6 +313,7 @@ impl Scene {
             children: Vec::new(),
             layer: DEFAULT_LAYER,
             dirty: true,
+            skin_instance: None,
         };
         self.nodes.insert(id, node);
         self.roots.push(id);
@@ -477,6 +481,19 @@ impl Scene {
     pub fn set_name(&mut self, id: NodeId, name: &str) {
         if let Some(node) = self.nodes.get_mut(&id) {
             node.name = name.to_string();
+        }
+        self.version = self.version.wrapping_add(1);
+    }
+
+    /// Set the GPU skinning instance ID for a node.
+    ///
+    /// `Some(instance_id)` routes the node through the skinned pipeline using
+    /// the joint palette uploaded via
+    /// [`crate::ViewportGpuResources::set_skin_palette`]. `None` treats the
+    /// node as static even if its mesh has skin data attached.
+    pub fn set_skin_instance(&mut self, id: NodeId, instance: Option<u32>) {
+        if let Some(node) = self.nodes.get_mut(&id) {
+            node.skin_instance = instance;
         }
         self.version = self.version.wrapping_add(1);
     }
@@ -820,6 +837,7 @@ impl Scene {
 
                 warp_attribute: None,
                 warp_scale: 1.0,
+                skin_instance: node.skin_instance,
             });
         }
         items
@@ -895,6 +913,7 @@ impl Scene {
                     pick_id: PickId(node.id),
                     warp_attribute: None,
                     warp_scale: 1.0,
+                    skin_instance: node.skin_instance,
                 });
             }
 
@@ -948,6 +967,7 @@ impl Scene {
                     pick_id: PickId(node.id),
                     warp_attribute: None,
                     warp_scale: 1.0,
+                    skin_instance: node.skin_instance,
                 });
             }
 

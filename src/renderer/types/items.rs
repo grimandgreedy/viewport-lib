@@ -66,6 +66,20 @@ pub struct SceneRenderItem {
     pub warp_attribute: Option<String>,
     /// Scale factor applied to the warp vector. Default: 1.0.
     pub warp_scale: f32,
+    /// Which skinning instance palette to use when `mesh_id` has been marked
+    /// skinnable via [`crate::ViewportGpuResources::set_skin_weights`].
+    ///
+    /// - `None`: this item is treated as static even if the mesh has skinning
+    ///   data attached. The standard (non-skinned) pipeline is used.
+    /// - `Some(instance_id)`: the renderer routes this item through the
+    ///   skinned pipeline variant and binds the joint palette uploaded via
+    ///   `set_skin_palette(mesh_id, instance_id, ...)`. If no palette has
+    ///   been uploaded for this `(mesh_id, instance_id)`, the item falls
+    ///   back to the static pipeline for this frame.
+    ///
+    /// Allows multiple `SceneRenderItem`s that share a bind-pose mesh to each
+    /// pose independently (crowd / instanced characters).
+    pub skin_instance: Option<u32>,
 }
 
 impl Default for SceneRenderItem {
@@ -84,6 +98,7 @@ impl Default for SceneRenderItem {
             pick_id: PickId::NONE,
             warp_attribute: None,
             warp_scale: 1.0,
+            skin_instance: None,
         }
     }
 }

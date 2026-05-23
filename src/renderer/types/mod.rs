@@ -361,6 +361,14 @@ macro_rules! emit_draw_calls {
                         let mesh = resources.mesh_store.get(item.mesh_id).unwrap();
                         render_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
 
+                        // Skinned routing: if the mesh has a skin sidecar and
+                        // this item's instance has a palette uploaded, draw
+                        // with the skinned pipeline variant instead of the
+                        // static one. Otherwise fall through to $pipeline.
+                        let skin_bg = item.skin_instance.and_then(|inst| {
+                            resources.skin_instance_bind_group(item.mesh_id, inst)
+                        });
+
                         // mesh.object_bind_group (group 1) already carries the object uniform
                         // and the correct texture views : updated in prepare() if material changed.
                         let is_face_attr = item.active_attribute.as_ref().map_or(false, |a| {
@@ -393,7 +401,17 @@ macro_rules! emit_draw_calls {
                             let filter_result = compute_filter_results
                                 .iter()
                                 .find(|r| r.mesh_id == item.mesh_id);
-                            render_pass.set_pipeline($pipeline);
+                            if let Some(bg) = skin_bg {
+                                let skinned_pl = if item.material.is_two_sided() {
+                                    &resources.skinned_solid_two_sided_pipeline
+                                } else {
+                                    &resources.skinned_solid_pipeline
+                                };
+                                render_pass.set_pipeline(skinned_pl);
+                                render_pass.set_bind_group(2, bg, &[]);
+                            } else {
+                                render_pass.set_pipeline($pipeline);
+                            }
                             if let Some(fr) = filter_result {
                                 render_pass.set_index_buffer(
                                     fr.index_buffer.slice(..),

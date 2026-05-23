@@ -3,9 +3,30 @@
 use crate::resources::mesh_store::MeshId;
 use crate::resources::SkinWeights;
 use crate::runtime::context::RuntimeStepContext;
-use crate::runtime::output::SkinnedMeshUpdate;
+use crate::runtime::output::{SkinnedMeshUpdate, SkinnedPoseUpdate};
 use crate::runtime::plugin::{RuntimePlugin, phase};
 use super::skeleton::{JointMatrices, Pose, Skeleton, apply_skin};
+
+/// Which deformation path a skinning plugin should emit each frame.
+///
+/// `Cpu` runs LBS on the CPU and emits [`SkinnedMeshUpdate`]; the host must
+/// upload deformed positions/normals via `write_mesh_positions_normals`.
+/// `Gpu` emits [`SkinnedPoseUpdate`] carrying joint matrices; the host
+/// uploads them via [`crate::ViewportGpuResources::set_skin_palette`] and the
+/// skinned pipeline variant does LBS in the vertex stage.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SkinningPath {
+    /// CPU LBS, re-upload deformed vertices each frame.
+    Cpu,
+    /// GPU LBS, upload only the joint palette each frame.
+    Gpu,
+}
+
+impl Default for SkinningPath {
+    fn default() -> Self {
+        SkinningPath::Cpu
+    }
+}
 
 /// Built-in plugin that applies CPU linear blend skinning each frame.
 ///
@@ -41,6 +62,11 @@ pub struct SkeletonPlugin {
     pub skeleton: Skeleton,
     /// The GPU mesh to update each frame.
     pub mesh_id: MeshId,
+    /// Which deformation path to emit each frame. Defaults to `Cpu` so existing
+    /// consumers keep working unchanged. Set to `Gpu` when the host has
+    /// uploaded skin weights for `mesh_id` and is draining
+    /// `output.skinned_pose_updates` into `set_skin_palette`.
+    pub path: SkinningPath,
     cpu_positions: Vec<[f32; 3]>,
     cpu_normals: Vec<[f32; 3]>,
     skin_weights: SkinWeights,
@@ -59,7 +85,20 @@ impl SkeletonPlugin {
         normals: Vec<[f32; 3]>,
         skin_weights: SkinWeights,
     ) -> Self {
-        Self { skeleton, mesh_id, cpu_positions: positions, cpu_normals: normals, skin_weights }
+        Self {
+            skeleton,
+            mesh_id,
+            path: SkinningPath::default(),
+            cpu_positions: positions,
+            cpu_normals: normals,
+            skin_weights,
+        }
+    }
+
+    /// Override the deformation path. Builder-style for ergonomic init.
+    pub fn with_path(mut self, path: SkinningPath) -> Self {
+        self.path = path;
+        self
     }
 }
 
@@ -69,19 +108,34 @@ impl RuntimePlugin for SkeletonPlugin {
     }
 
     fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
-        if let Some(pose) = ctx.resources.get::<Pose>() {
-            let matrices = JointMatrices::compute(&self.skeleton, pose);
-            let (positions, normals) = apply_skin(
-                &self.cpu_positions,
-                &self.cpu_normals,
-                &self.skin_weights,
-                &matrices,
-            );
-            ctx.output.skinned_mesh_updates.push(SkinnedMeshUpdate {
-                mesh_id: self.mesh_id,
-                positions,
-                normals,
-            });
+        let Some(pose) = ctx.resources.get::<Pose>() else { return };
+        let matrices = JointMatrices::compute(&self.skeleton, pose);
+        match self.path {
+            SkinningPath::Cpu => {
+                let (positions, normals) = apply_skin(
+                    &self.cpu_positions,
+                    &self.cpu_normals,
+                    &self.skin_weights,
+                    &matrices,
+                );
+                ctx.output.skinned_mesh_updates.push(SkinnedMeshUpdate {
+                    mesh_id: self.mesh_id,
+                    positions,
+                    normals,
+                });
+            }
+            SkinningPath::Gpu => {
+                let joint_matrices: Vec<glam::Mat4> = matrices
+                    .as_slice()
+                    .iter()
+                    .map(|m| glam::Mat4::from(*m))
+                    .collect();
+                ctx.output.skinned_pose_updates.push(SkinnedPoseUpdate {
+                    mesh_id: self.mesh_id,
+                    instance_id: 0,
+                    joint_matrices,
+                });
+            }
         }
     }
 }

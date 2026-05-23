@@ -563,7 +563,6 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u3
             uvs: None,
             tangents: None,
             attributes,
-            skin_weights: None,
         },
         face_to_cell,
     )
@@ -1186,7 +1185,6 @@ pub fn extract_clipped_volume_faces(
             uvs: None,
             tangents: None,
             attributes,
-            skin_weights: None,
         },
         face_to_cell,
     )

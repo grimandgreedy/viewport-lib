@@ -23,10 +23,11 @@
 use crate::resources::SkinWeights;
 use crate::resources::mesh_store::MeshId;
 use crate::runtime::context::RuntimeStepContext;
-use crate::runtime::output::SkinnedMeshUpdate;
+use crate::runtime::output::{SkinnedMeshUpdate, SkinnedPoseUpdate};
 use crate::runtime::plugin::{RuntimePlugin, phase};
 
 use super::clip::AnimationClip;
+use super::plugin::SkinningPath;
 use super::skeleton::{JointMatrices, Pose, Skeleton, apply_skin};
 
 /// One skinned mesh of an actor. All parts of an actor share that actor's
@@ -108,6 +109,11 @@ pub struct SkinnedActorPlugin {
     pub clips: Vec<AnimationClip>,
     /// All actors driven by this plugin.
     pub actors: Vec<SkinnedActor>,
+    /// Which deformation path to emit each frame. On `Gpu`, one
+    /// [`SkinnedPoseUpdate`] is pushed per actor per part. The instance id is
+    /// the actor's index in `actors` so the host can drive the right joint
+    /// palette via `set_skin_palette`.
+    pub path: SkinningPath,
 }
 
 impl SkinnedActorPlugin {
@@ -118,7 +124,14 @@ impl SkinnedActorPlugin {
             bind_pose,
             clips,
             actors: Vec::new(),
+            path: SkinningPath::default(),
         }
+    }
+
+    /// Override the deformation path. Builder-style for ergonomic init.
+    pub fn with_path(mut self, path: SkinningPath) -> Self {
+        self.path = path;
+        self
     }
 
     /// Append an actor.
@@ -140,7 +153,7 @@ impl RuntimePlugin for SkinnedActorPlugin {
     }
 
     fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
-        for actor in &mut self.actors {
+        for (actor_idx, actor) in self.actors.iter_mut().enumerate() {
             let clip = match self.clips.get(actor.clip_index) {
                 Some(c) => c,
                 None => continue,
@@ -162,18 +175,36 @@ impl RuntimePlugin for SkinnedActorPlugin {
             clip.sample_into(actor.playhead, &mut pose);
             let matrices = JointMatrices::compute(&self.skeleton, &pose);
 
-            for part in &actor.parts {
-                let (positions, normals) = apply_skin(
-                    &part.bind_positions,
-                    &part.bind_normals,
-                    &part.skin_weights,
-                    &matrices,
-                );
-                ctx.output.skinned_mesh_updates.push(SkinnedMeshUpdate {
-                    mesh_id: part.mesh_id,
-                    positions,
-                    normals,
-                });
+            match self.path {
+                SkinningPath::Cpu => {
+                    for part in &actor.parts {
+                        let (positions, normals) = apply_skin(
+                            &part.bind_positions,
+                            &part.bind_normals,
+                            &part.skin_weights,
+                            &matrices,
+                        );
+                        ctx.output.skinned_mesh_updates.push(SkinnedMeshUpdate {
+                            mesh_id: part.mesh_id,
+                            positions,
+                            normals,
+                        });
+                    }
+                }
+                SkinningPath::Gpu => {
+                    let joint_matrices: Vec<glam::Mat4> = matrices
+                        .as_slice()
+                        .iter()
+                        .map(|m| glam::Mat4::from(*m))
+                        .collect();
+                    for part in &actor.parts {
+                        ctx.output.skinned_pose_updates.push(SkinnedPoseUpdate {
+                            mesh_id: part.mesh_id,
+                            instance_id: actor_idx as u32,
+                            joint_matrices: joint_matrices.clone(),
+                        });
+                    }
+                }
             }
         }
     }

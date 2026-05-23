@@ -24,6 +24,7 @@ mod overlay_text;
 mod overlays;
 mod postprocess;
 mod scivis;
+mod skin;
 /// Sparse voxel grid topology processing (boundary face extraction).
 pub mod sparse_volume;
 mod textures;

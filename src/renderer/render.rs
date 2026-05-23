@@ -1709,6 +1709,14 @@ impl ViewportRenderer {
                             // mesh.object_bind_group (group 1) already carries the object uniform
                             // and the correct texture views.
                             render_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
+
+                            // Skinned routing: if the mesh has a skin sidecar
+                            // and this item's instance has a palette uploaded,
+                            // switch to the skinned pipeline variant and bind
+                            // group 2. Falls back to the static path otherwise.
+                            let skin_bg = item.skin_instance.and_then(|inst| {
+                                resources.skin_instance_bind_group(item.mesh_id, inst)
+                            });
                             let is_face_attr = item.active_attribute.as_ref().map_or(false, |a| {
                                 matches!(
                                     a.kind,
@@ -1746,7 +1754,18 @@ impl ViewportRenderer {
                                 } else {
                                     solid_pl
                                 };
-                                render_pass.set_pipeline(pl);
+                                let hdr_skinned_pl = if item.material.is_two_sided() {
+                                    resources.hdr_skinned_solid_two_sided_pipeline.as_ref()
+                                } else {
+                                    resources.hdr_skinned_solid_pipeline.as_ref()
+                                };
+                                if let (Some(bg), Some(hdr_skinned)) = (skin_bg, hdr_skinned_pl)
+                                {
+                                    render_pass.set_pipeline(hdr_skinned);
+                                    render_pass.set_bind_group(2, bg, &[]);
+                                } else {
+                                    render_pass.set_pipeline(pl);
+                                }
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 if let Some(fr) = filter {
                                     render_pass.set_index_buffer(
