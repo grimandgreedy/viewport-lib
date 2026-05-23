@@ -3278,6 +3278,11 @@ impl App {
                 }
             }
             ShowcaseMode::BackfacePolicy => {}
+            // Decals require the full HDR pipeline so the decal pass (which reads
+            // scene depth as a texture) runs via render_frame_internal.
+            ShowcaseMode::Decals => {
+                fd.effects.post_process.enabled = true;
+            }
             _ => {}
         }
 

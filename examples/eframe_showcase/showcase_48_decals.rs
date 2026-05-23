@@ -24,7 +24,7 @@
 use eframe::egui;
 use viewport_lib::{
     DecalBlendMode, DecalItem, Material, MeshId, SceneRenderItem,
-    scene::Scene,
+    scene::{Scene, material::BackfacePolicy},
     selection::Selection,
 };
 
@@ -223,24 +223,27 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
         .expect("floor mesh upload");
     app.decal48_state.floor_mesh = Some(floor_id);
 
-    // Wall: 8x4 quad in XZ plane at y=4, rotated so its face normal is -Y.
-    // Build it as an XZ-plane quad: positions in X and Z, normal = -Y.
+    // Wall: 8x4 quad in the XZ plane (vertical, Z-up) at y=4.
+    // Normal = -Y (faces the -Y direction, toward the viewer at y < 4).
+    // Vertices listed so that front face (CCW from -Y side) winds correctly.
+    // Z runs bottom (z=0) to top (z=4), matching the Z-up floor seam at z=0.
     let wall_data = {
         let mut mesh = viewport_lib::MeshData::default();
         mesh.positions = vec![
-            [-4.0_f32, 0.0, 0.0],
-            [ 4.0,     0.0, 0.0],
-            [ 4.0,     0.0, 4.0],
-            [-4.0,     0.0, 4.0],
+            [-4.0_f32, 0.0, 0.0], // 0: left  bottom
+            [ 4.0,     0.0, 0.0], // 1: right bottom
+            [ 4.0,     0.0, 4.0], // 2: right top
+            [-4.0,     0.0, 4.0], // 3: left  top
         ];
         mesh.normals = vec![[0.0_f32, -1.0, 0.0]; 4];
         mesh.uvs = Some(vec![
-            [0.0_f32, 0.0],
-            [1.0,     0.0],
-            [1.0,     1.0],
-            [0.0,     1.0],
+            [0.0_f32, 0.0], // left  bottom
+            [1.0,     0.0], // right bottom
+            [1.0,     1.0], // right top
+            [0.0,     1.0], // left  top
         ]);
-        mesh.indices = vec![0u32, 2, 1, 0, 3, 2];
+        // CCW from the -Y (front) side: 0,1,2 and 0,2,3.
+        mesh.indices = vec![0u32, 1, 2, 0, 2, 3];
         mesh
     };
     let wall_id = res
@@ -250,12 +253,14 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
 
     let scene = &mut app.decal48_state.scene;
 
-    // Floor node: placed at z=0.
-    let floor_mat = Material::from_colour([0.55, 0.52, 0.48]);
+    // Floor node: placed at z=0. DoubleSided so it stays visible from any angle.
+    let mut floor_mat = Material::from_colour([0.55, 0.52, 0.48]);
+    floor_mat.backface_policy = BackfacePolicy::Identical;
     scene.add(Some(floor_id), glam::Mat4::IDENTITY, floor_mat);
 
-    // Wall node: translated to y=4.
-    let wall_mat = Material::from_colour([0.50, 0.48, 0.45]);
+    // Wall node: translated to y=4. DoubleSided for the same reason.
+    let mut wall_mat = Material::from_colour([0.50, 0.48, 0.45]);
+    wall_mat.backface_policy = BackfacePolicy::Identical;
     scene.add(
         Some(wall_id),
         glam::Mat4::from_translation(glam::Vec3::new(0.0, 4.0, 0.0)),
@@ -373,8 +378,11 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
         );
         ui.add(
             egui::Slider::new(&mut app.decal48_state.decal_depth, 0.3..=4.0)
-                .text("Depth"),
+                .text("Proj. depth"),
         );
+        ui.small("Projection depth: box extent along hit normal. Affects curved")
+            .on_hover_text("On flat surfaces all fragments have local.z = 0, so this has no visible effect. Increase it when a decal spans a curved or angled surface where depth variation within the footprint exists.");
+        ui.small("surfaces; no visible effect on flat geometry.");
         ui.add(
             egui::Slider::new(&mut app.decal48_state.alpha, 0.1..=1.0)
                 .text("Alpha"),
