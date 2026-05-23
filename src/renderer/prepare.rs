@@ -1316,7 +1316,12 @@ impl ViewportRenderer {
                 frame.scene.decals.iter().collect();
             sorted.sort_by_key(|d| d.sort_key);
             for item in sorted {
-                let gpu = resources.upload_decal_item(device, item);
+                if item.appearance.hidden { continue; }
+                if item.appearance.opacity <= 0.0 { continue; }
+                // Apply appearance.opacity on top of the item's own alpha.
+                let mut effective = item.clone();
+                effective.alpha *= item.appearance.opacity;
+                let gpu = resources.upload_decal_item(device, &effective);
                 self.decal_gpu_data.push(gpu);
             }
         }

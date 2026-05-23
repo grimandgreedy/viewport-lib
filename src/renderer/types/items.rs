@@ -1616,6 +1616,10 @@ pub struct DecalItem {
     pub uv_offset: [f32; 2],
     /// UV scale applied before texture sampling. Modified by [`DecalAnimation`]. Default: [1, 1].
     pub uv_scale: [f32; 2],
+    /// Visibility and opacity overrides. `hidden` skips the decal entirely; `opacity`
+    /// multiplies the final alpha. `unlit` and `wireframe` are accepted but have no
+    /// effect on decals. Default: all no-op.
+    pub appearance: AppearanceSettings,
 }
 
 impl Default for DecalItem {
@@ -1634,6 +1638,7 @@ impl Default for DecalItem {
             metallic_texture_id: None,
             uv_offset: [0.0, 0.0],
             uv_scale: [1.0, 1.0],
+            appearance: AppearanceSettings::default(),
         }
     }
 }

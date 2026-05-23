@@ -97,24 +97,31 @@ fn make_wet_texture(size: u32) -> Vec<u8> {
 }
 
 /// D4: Diagonal stripe pattern for UV-scroll animation demo (alternating blue/red lines).
+/// A narrow transparent gap at each stripe boundary keeps bilinear filtering from
+/// blending the two colours into a fuzzy edge; instead it blends toward transparent.
 fn make_stripe_texture(size: u32) -> Vec<u8> {
     let mut buf = vec![0u8; (size * size * 4) as usize];
+    // Gap half-width as a fraction of one stripe period.  At size=64 and 4 cycles
+    // this is 64/4 = 16 px per period, so gap = 16 * 0.04 ≈ 0.6 px -- just enough
+    // to give bilinear a transparent target at the boundary.
+    const GAP: f32 = 0.04;
     for y in 0..size {
         for x in 0..size {
             let t = ((x + y) as f32 / size as f32 * 4.0).fract();
             let idx = ((y * size + x) * 4) as usize;
-            if t < 0.5 {
-                // blue stripe
+            let near_edge = t < GAP || (t > 0.5 - GAP && t < 0.5 + GAP) || t > 1.0 - GAP;
+            if near_edge {
+                buf[idx + 3] = 0; // transparent gap
+            } else if t < 0.5 {
                 buf[idx]     = 40;
                 buf[idx + 1] = 80;
                 buf[idx + 2] = 220;
-                buf[idx + 3] = 180;
+                buf[idx + 3] = 255;
             } else {
-                // red stripe
                 buf[idx]     = 220;
                 buf[idx + 1] = 50;
                 buf[idx + 2] = 40;
-                buf[idx + 3] = 180;
+                buf[idx + 3] = 255;
             }
         }
     }
@@ -128,7 +135,8 @@ fn make_stripe_texture(size: u32) -> Vec<u8> {
 /// Build a model matrix for a decal placed at `hit` on a surface with `normal`.
 fn decal_transform(hit: glam::Vec3, normal: glam::Vec3, size: f32, depth: f32) -> [[f32; 4]; 4] {
     let n = normal.normalize();
-    let ref_up = if n.abs_diff_eq(glam::Vec3::Y, 0.9) { glam::Vec3::Z } else { glam::Vec3::Y };
+    // Avoid degenerate cross product when n is nearly parallel to Y (either +Y or -Y).
+    let ref_up = if n.abs().abs_diff_eq(glam::Vec3::Y, 0.1) { glam::Vec3::Z } else { glam::Vec3::Y };
     let tangent = ref_up.cross(n).normalize();
     let bitangent = n.cross(tangent).normalize();
     glam::Mat4::from_cols(
@@ -268,17 +276,24 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
 // Click handling
 // ---------------------------------------------------------------------------
 
-/// Test `ray` against the wall in the XZ plane at y=0 (normal = +Y).
+/// Test `ray` against the wall box. Picks the face the ray enters from.
+/// Wall is a cuboid 8x0.3x4 translated to (0,-0.15,2): top face at y=0, bottom at y=-0.3.
 pub(crate) fn decal48_ray_hit(
     ray_origin: glam::Vec3,
     ray_dir: glam::Vec3,
 ) -> Option<(glam::Vec3, glam::Vec3)> {
     if ray_dir.y.abs() < 1e-6 { return None; }
-    let t = -ray_origin.y / ray_dir.y;
+    // Choose which horizontal face to test based on which side the camera is on.
+    let (face_y, normal) = if ray_origin.y >= -0.15 {
+        (0.0_f32, glam::Vec3::Y)
+    } else {
+        (-0.3_f32, -glam::Vec3::Y)
+    };
+    let t = (face_y - ray_origin.y) / ray_dir.y;
     if t < 0.001 { return None; }
     let hit = ray_origin + ray_dir * t;
     if hit.x.abs() <= 4.0 && hit.z >= 0.0 && hit.z <= 4.0 {
-        Some((hit, glam::Vec3::Y))
+        Some((hit, normal))
     } else {
         None
     }
@@ -348,7 +363,7 @@ pub(crate) fn update_decal48(app: &mut App, dt: f32) {
                 let mut item = DecalItem::default();
                 item.transform  = transform;
                 item.texture_id = stripe;
-                item.alpha      = 0.7;
+                item.alpha      = 1.0;
                 item.sort_key   = -10;  // render below all other decals
                 let handle = st.scene.add_decal_animated(
                     item,

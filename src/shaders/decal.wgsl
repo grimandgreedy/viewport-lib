@@ -97,7 +97,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Estimate the receiver surface normal from world-position screen derivatives.
-    // Used for grazing-angle rejection, D2 normal-map shading, and D3 specular.
+    // Used for D2 normal-map shading and D3 specular -- not for the facing check.
     let ddx_w    = dpdx(world);
     let ddy_w    = dpdy(world);
     let n_raw    = normalize(cross(ddx_w, ddy_w));
@@ -107,9 +107,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Decal projection axis (row 2 of inv_transform = world-space local Z).
     let decal_Z = normalize(vec3<f32>(u.inv_transform[0][2], u.inv_transform[1][2], u.inv_transform[2][2]));
 
-    // Reject fragments on surfaces nearly perpendicular to the projection axis.
-    // Prevents the decal from stretching at grazing angles.
-    if abs(dot(N_recv, decal_Z)) < 0.25 {
+    // Reject fragments where the camera is on the wrong side of the decal projection
+    // axis, or nearly edge-on. view_dir (surface -> camera) is used instead of N_recv
+    // because N_recv is view-corrected to always face the camera, which defeats the
+    // back-face check when the camera is behind the decal.
+    if dot(view_dir, decal_Z) < 0.05 {
         discard;
     }
 
