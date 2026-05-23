@@ -9,12 +9,16 @@
 //! - [`plugin`]: the [`SkeletonPlugin`] `RuntimePlugin` impl.
 //! - [`clip`]: animation clip data model (`AnimationClip`, `Track`, `Sampler`).
 //! - [`clip_player`]: the [`ClipPlayerPlugin`] that drives a `Pose` from a clip.
+//! - [`actor`]: the [`SkinnedActorPlugin`] for many independently-animated
+//!   actors sharing one skeleton (crowds, NPCs, etc.).
 
+pub mod actor;
 pub mod clip;
 pub mod clip_player;
 pub mod plugin;
 pub mod skeleton;
 
+pub use actor::{SkinnedActor, SkinnedActorPart, SkinnedActorPlugin};
 pub use clip::{AnimationClip, Channel, Interpolation, Sampler, Track, TrackValue, TrackValues};
 pub use clip_player::ClipPlayerPlugin;
 pub use plugin::SkeletonPlugin;

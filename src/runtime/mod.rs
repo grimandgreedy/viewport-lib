@@ -69,8 +69,8 @@ pub use plugin::{phase, RuntimeEvent, RuntimePhase, RuntimePlugin};
 pub use plugins::{
     AnimationClip, AnimationPlugin, AnimationTrack, Channel, ClipPlayerPlugin, Constraint,
     ConstraintPlugin, Interpolation, Joint, JointMatrices, Keyframe, PhysicsBody,
-    PhysicsLitePlugin, Pose, Sampler, Skeleton, SkeletonPlugin, Track, TrackValue, TrackValues,
-    apply_skin,
+    PhysicsLitePlugin, Pose, Sampler, Skeleton, SkeletonPlugin, SkinnedActor, SkinnedActorPart,
+    SkinnedActorPlugin, Track, TrackValue, TrackValues, apply_skin,
 };
 pub use resources::RuntimeResources;
 pub use snapshot::{TransformSnapshot, TransformSnapshotTable};

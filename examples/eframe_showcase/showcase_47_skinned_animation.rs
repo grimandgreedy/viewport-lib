@@ -20,7 +20,8 @@ use eframe::egui;
 use viewport_lib::{
     ActionFrame, AnimationClip, Channel, ClipPlayerPlugin, Interpolation, Joint, Material,
     MeshId, MeshData, Pose, RuntimeFrameContext, RuntimePlugin, RuntimeStepContext, Sampler,
-    Skeleton, SkeletonPlugin, SkinnedMeshUpdate, SkinWeights, Track, TrackValues, ViewportRuntime,
+    Skeleton, SkeletonPlugin, SkinnedActor, SkinnedActorPart, SkinnedActorPlugin,
+    SkinnedMeshUpdate, SkinWeights, Track, TrackValues, ViewportRuntime,
     runtime::plugin::phase,
     scene::{Scene, material::BackfacePolicy},
     selection::Selection,
@@ -44,6 +45,9 @@ pub(crate) enum Skin47Demo {
     /// Phase 3: skinned mesh imported from a glTF file, animated by one of its
     /// own clips. Falls back to a placeholder when the asset is missing.
     GltfCharacter,
+    /// Phase 4: N independently-animated copies of the glTF character on a
+    /// grid. One SkinnedActorPlugin owns the shared skeleton and N actors.
+    Crowd,
 }
 
 impl Skin47Demo {
@@ -52,14 +56,16 @@ impl Skin47Demo {
             Skin47Demo::SineWaveArm => "Sine-wave arm",
             Skin47Demo::ClipDrivenArm => "Clip-driven arm",
             Skin47Demo::GltfCharacter => "glTF character",
+            Skin47Demo::Crowd => "Crowd",
         }
     }
 
-    fn all() -> [Skin47Demo; 3] {
+    fn all() -> [Skin47Demo; 4] {
         [
             Skin47Demo::SineWaveArm,
             Skin47Demo::ClipDrivenArm,
             Skin47Demo::GltfCharacter,
+            Skin47Demo::Crowd,
         ]
     }
 }
@@ -218,6 +224,22 @@ pub(crate) struct Skin47State {
     /// sees the meshes belonging to the selected demo.
     pub arm_node: Option<viewport_lib::NodeId>,
     pub gltf_nodes: Vec<viewport_lib::NodeId>,
+    pub crowd_nodes: Vec<viewport_lib::NodeId>,
+    /// Per-actor uploaded mesh IDs for the crowd demo. Outer Vec indexes the
+    /// actor; inner Vec is one MeshId per part. Empty until the crowd demo
+    /// has been activated at least once.
+    pub crowd_actor_meshes: Vec<Vec<MeshId>>,
+    /// Number of actors the user has requested in the crowd demo. The actual
+    /// number lazily grows as the user increases the slider; meshes already
+    /// uploaded are reused on subsequent activations.
+    pub crowd_count: usize,
+    /// Crowd count whose runtime/scene is currently active. Differs from
+    /// `crowd_count` between the slider moving and `apply_skin47_updates`
+    /// running (the latter has renderer access for uploads).
+    pub crowd_count_active: usize,
+    /// Highest count ever requested. Used to size the existing actor pool so
+    /// the slider can scale up to that without re-uploading.
+    pub crowd_max_uploaded: usize,
 }
 
 impl Default for Skin47State {
@@ -240,6 +262,11 @@ impl Default for Skin47State {
             gltf_missing: false,
             arm_node: None,
             gltf_nodes: Vec::new(),
+            crowd_nodes: Vec::new(),
+            crowd_actor_meshes: Vec::new(),
+            crowd_count: 6,
+            crowd_count_active: 0,
+            crowd_max_uploaded: 0,
         }
     }
 }
@@ -290,6 +317,8 @@ pub(crate) fn build_skin47_scene(app: &mut App, renderer: &mut viewport_lib::Vie
         &skin_weights,
         &app.skin47_state.gltf_mesh_ids,
         app.skin47_state.gltf_asset.as_ref(),
+        &app.skin47_state.crowd_actor_meshes,
+        app.skin47_state.crowd_count,
         app.skin47_state.speed,
     );
     app.skin47_state.active_demo = app.skin47_state.demo;
@@ -304,6 +333,7 @@ pub(crate) fn build_skin47_scene(app: &mut App, renderer: &mut viewport_lib::Vie
 fn populate_scene_for_demo(state: &mut Skin47State) {
     let arm_demos = matches!(state.demo, Skin47Demo::SineWaveArm | Skin47Demo::ClipDrivenArm);
     let gltf_demo = matches!(state.demo, Skin47Demo::GltfCharacter);
+    let crowd_demo = matches!(state.demo, Skin47Demo::Crowd);
 
     // Drop the arm node if it shouldn't be visible.
     if !arm_demos {
@@ -314,6 +344,13 @@ fn populate_scene_for_demo(state: &mut Skin47State) {
     // Drop glTF nodes if they shouldn't be visible.
     if !gltf_demo {
         for id in state.gltf_nodes.drain(..) {
+            state.scene.remove(id);
+        }
+    }
+    // Drop crowd nodes whenever we're not showing the crowd OR whenever the
+    // crowd size has changed (the simplest correct behavior).
+    if !crowd_demo {
+        for id in state.crowd_nodes.drain(..) {
             state.scene.remove(id);
         }
     }
@@ -338,6 +375,58 @@ fn populate_scene_for_demo(state: &mut Skin47State) {
             }
         }
     }
+
+    // Add crowd parts. One node per (actor, part); the actor's world
+    // translation is composed on top of the part's import-time transform so
+    // the Z-up rotation still applies.
+    if crowd_demo && state.crowd_nodes.is_empty() {
+        if let Some(asset) = state.gltf_asset.as_ref() {
+            let total = state.crowd_count.min(state.crowd_actor_meshes.len());
+            for actor_idx in 0..total {
+                let translation = crowd_translation(actor_idx, total);
+                let actor_offset = glam::Mat4::from_translation(translation);
+                for (mid, part) in state.crowd_actor_meshes[actor_idx]
+                    .iter()
+                    .zip(asset.parts.iter())
+                {
+                    let mut gmat = Material::from_colour(part.colour);
+                    gmat.backface_policy = BackfacePolicy::Tint(0.4);
+                    let node = state.scene.add(
+                        Some(*mid),
+                        actor_offset * part.scene_transform,
+                        gmat,
+                    );
+                    state.crowd_nodes.push(node);
+                }
+            }
+        }
+    }
+}
+
+/// Upload extra mesh copies for the crowd so each actor has its own GPU
+/// vertex buffer to deform into. Idempotent: already-uploaded actors are
+/// reused; calling with a smaller count is a no-op (extra uploads stay).
+fn ensure_crowd_uploads(
+    state: &mut Skin47State,
+    device: &wgpu::Device,
+    renderer: &mut viewport_lib::ViewportRenderer,
+    desired: usize,
+) {
+    let Some(asset) = state.gltf_asset.as_ref() else {
+        return;
+    };
+    while state.crowd_actor_meshes.len() < desired {
+        let mut actor_meshes = Vec::with_capacity(asset.parts.len());
+        for part in &asset.parts {
+            let id = renderer
+                .resources_mut()
+                .upload_mesh_data(device, &part.mesh_data)
+                .expect("crowd part upload");
+            actor_meshes.push(id);
+        }
+        state.crowd_actor_meshes.push(actor_meshes);
+    }
+    state.crowd_max_uploaded = state.crowd_max_uploaded.max(desired);
 }
 
 // ---------------------------------------------------------------------------
@@ -355,6 +444,8 @@ fn build_runtime_for_demo(
     arm_skin_weights: &SkinWeights,
     gltf_mesh_ids: &[MeshId],
     gltf_asset: Option<&GltfCharacterAsset>,
+    crowd_actor_meshes: &[Vec<MeshId>],
+    crowd_count: usize,
     speed: f32,
 ) -> ViewportRuntime {
     match demo {
@@ -417,7 +508,65 @@ fn build_runtime_for_demo(
             }
             runtime
         }
+        Skin47Demo::Crowd => {
+            let Some(asset) = gltf_asset else {
+                return ViewportRuntime::new();
+            };
+            if crowd_actor_meshes.len() < crowd_count {
+                return ViewportRuntime::new();
+            }
+
+            // Build one SkinnedActorPlugin holding all crowd actors. Each
+            // actor stages its playhead by an even fraction of its clip
+            // duration so the crowd reads as out-of-phase loops.
+            let mut actors: Vec<SkinnedActor> = Vec::with_capacity(crowd_count);
+            for actor_idx in 0..crowd_count {
+                let mesh_ids = &crowd_actor_meshes[actor_idx];
+                let mut parts: Vec<SkinnedActorPart> = Vec::with_capacity(asset.parts.len());
+                for (gid, part) in mesh_ids.iter().zip(asset.parts.iter()) {
+                    parts.push(SkinnedActorPart {
+                        mesh_id: *gid,
+                        bind_positions: part.bind_positions.clone(),
+                        bind_normals: part.bind_normals.clone(),
+                        skin_weights: part.skin_weights.clone(),
+                    });
+                }
+                let clip_index = actor_idx % asset.clips.len();
+                let phase = if asset.clips[clip_index].duration > 0.0 {
+                    (actor_idx as f32 / crowd_count.max(1) as f32) * asset.clips[clip_index].duration
+                } else {
+                    0.0
+                };
+                actors.push(
+                    SkinnedActor::new(parts)
+                        .with_clip(clip_index)
+                        .with_playhead(phase)
+                        .with_speed(speed),
+                );
+            }
+
+            let plugin =
+                SkinnedActorPlugin::new(asset.skeleton.clone(), asset.bind_pose.clone(), asset.clips.clone())
+                    .with_actors(actors);
+            ViewportRuntime::new().with_plugin(plugin)
+        }
     }
+}
+
+/// Grid spacing (in world units) between crowd members. Set roughly to the
+/// character footprint so they read as distinct without overlapping.
+const CROWD_SPACING: f32 = 3.0;
+
+/// Compute a world-space translation for one crowd actor placed on a roughly
+/// square grid centered on the origin.
+fn crowd_translation(actor_idx: usize, total: usize) -> glam::Vec3 {
+    let cols = (total as f32).sqrt().ceil().max(1.0) as usize;
+    let row = (actor_idx / cols) as f32;
+    let col = (actor_idx % cols) as f32;
+    let rows = ((total + cols - 1) / cols).max(1) as f32;
+    let cx = (cols as f32 - 1.0) * 0.5;
+    let cy = (rows - 1.0) * 0.5;
+    glam::Vec3::new((col - cx) * CROWD_SPACING, (row - cy) * CROWD_SPACING, 0.0)
 }
 
 /// Bind pose for the two-joint arm: joint 0 identity, joint 1 translated to
@@ -659,6 +808,8 @@ pub(crate) fn update_skin47(app: &mut App, dt: f32) {
                 &skin_weights,
                 &app.skin47_state.gltf_mesh_ids,
                 app.skin47_state.gltf_asset.as_ref(),
+                &app.skin47_state.crowd_actor_meshes,
+                app.skin47_state.crowd_count,
                 app.skin47_state.speed,
             );
             app.skin47_state.active_demo = app.skin47_state.demo;
@@ -692,7 +843,45 @@ pub(crate) fn update_skin47(app: &mut App, dt: f32) {
 }
 
 /// Apply pending skinned mesh updates to the GPU. Called from build_frame_data.
+///
+/// Also performs deferred uploads + runtime rebuilds for the crowd demo, since
+/// this is the only per-frame hook that has both `device` and `renderer`.
 pub(crate) fn apply_skin47_updates(app: &mut App, renderer: &mut viewport_lib::ViewportRenderer) {
+    // Crowd: respond to slider changes by uploading extra mesh copies (if
+    // needed) and rebuilding the runtime + scene at the new actor count.
+    if app.skin47_state.demo == Skin47Demo::Crowd
+        && app.skin47_state.crowd_count != app.skin47_state.crowd_count_active
+    {
+        let desired = app.skin47_state.crowd_count;
+        ensure_crowd_uploads(&mut app.skin47_state, &app.device, renderer, desired);
+
+        // Drop existing crowd nodes so populate_scene_for_demo rebuilds with
+        // the new count and grid layout.
+        for id in app.skin47_state.crowd_nodes.drain(..) {
+            app.skin47_state.scene.remove(id);
+        }
+
+        if let (Some(mesh_id), Some(skin_weights)) = (
+            app.skin47_state.mesh_id,
+            app.skin47_state.bind_skin_weights.clone(),
+        ) {
+            app.skin47_state.runtime = build_runtime_for_demo(
+                app.skin47_state.demo,
+                mesh_id,
+                &app.skin47_state.bind_positions,
+                &app.skin47_state.bind_normals,
+                &skin_weights,
+                &app.skin47_state.gltf_mesh_ids,
+                app.skin47_state.gltf_asset.as_ref(),
+                &app.skin47_state.crowd_actor_meshes,
+                desired,
+                app.skin47_state.speed,
+            );
+        }
+        populate_scene_for_demo(&mut app.skin47_state);
+        app.skin47_state.crowd_count_active = desired;
+    }
+
     for u in app.skin47_state.pending_updates.drain(..) {
         let _ = renderer
             .resources_mut()
@@ -841,6 +1030,59 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                     ui.small("- One ClipPlayerPlugin + N SkeletonPlugins (one per mesh part).");
                     ui.small("- All parts share the skeleton and the Pose written by the player.");
                     ui.small("- Bone-parented (non-skinned) rigs are auto-converted at import time.");
+                }
+            }
+            Skin47Demo::Crowd => {
+                if app.skin47_state.gltf_asset.is_none() {
+                    ui.label("No glTF asset loaded.");
+                    ui.add_space(6.0);
+                    ui.small("The crowd demo reuses the glTF character; drop a .glb at:");
+                    ui.code(GLTF_DEMO_PATH);
+                    ui.add_space(4.0);
+                    ui.small("Restart the showcase to load it.");
+                } else {
+                    ui.label("Crowd size:");
+                    let mut n = app.skin47_state.crowd_count;
+                    let max_n = 32usize;
+                    if ui
+                        .add(egui::Slider::new(&mut n, 1..=max_n).text("actors"))
+                        .changed()
+                    {
+                        app.skin47_state.crowd_count = n;
+                        // apply_skin47_updates will notice the mismatch and
+                        // upload + rebuild on the next frame.
+                    }
+                    ui.add_space(6.0);
+
+                    ui.label("Playback speed:");
+                    let mut speed = app.skin47_state.speed;
+                    if ui
+                        .add(egui::Slider::new(&mut speed, 0.0..=4.0).text("x"))
+                        .changed()
+                    {
+                        app.skin47_state.speed = speed;
+                        // Force a rebuild on the next apply pass.
+                        app.skin47_state.crowd_count_active =
+                            app.skin47_state.crowd_count_active.wrapping_add(1);
+                    }
+                    ui.add_space(6.0);
+
+                    if let Some(asset) = app.skin47_state.gltf_asset.as_ref() {
+                        ui.label(format!(
+                            "{} actors x {} parts = {} skinned meshes",
+                            app.skin47_state.crowd_count,
+                            asset.parts.len(),
+                            app.skin47_state.crowd_count * asset.parts.len(),
+                        ));
+                    }
+
+                    ui.separator();
+                    ui.label("How it works:");
+                    ui.small("- One SkinnedActorPlugin owns the shared skeleton and N actors.");
+                    ui.small("- Each actor has its own clip choice, playhead, and play state.");
+                    ui.small("- Playheads are staggered around each clip's duration to de-phase.");
+                    ui.small("- N x parts unique GPU meshes; one vertex-buffer write per part per frame.");
+                    ui.small("- Phase 5 (GPU skinning) replaces those writes with one joint-palette upload per actor.");
                 }
             }
         }

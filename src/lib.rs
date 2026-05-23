@@ -237,7 +237,7 @@ pub use runtime::{
     FixedTimestep, Interpolation, Joint, JointMatrices, Keyframe, ManipulationSystem,
     NodeTransformOp, PhysicsBody, PhysicsLitePlugin, Pose, RuntimeFrameContext, RuntimeOutput,
     RuntimePhase, RuntimePlugin, RuntimeStepContext, Sampler, SceneRuntimeMode, SelectionOp,
-    SelectionSystem, SimulationStepContext, Skeleton, SkeletonPlugin, SkinnedMeshUpdate, Track,
-    TrackValue, TrackValues, TransformSnapshot, TransformSnapshotTable, TransformWriteback,
-    ViewportRuntime, apply_skin,
+    SelectionSystem, SimulationStepContext, Skeleton, SkeletonPlugin, SkinnedActor,
+    SkinnedActorPart, SkinnedActorPlugin, SkinnedMeshUpdate, Track, TrackValue, TrackValues,
+    TransformSnapshot, TransformSnapshotTable, TransformWriteback, ViewportRuntime, apply_skin,
 };

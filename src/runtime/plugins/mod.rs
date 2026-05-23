@@ -38,5 +38,6 @@ pub use constraint::{Constraint, ConstraintPlugin};
 pub use physics_lite::{PhysicsBody, PhysicsLitePlugin};
 pub use skeleton_plugin::{
     AnimationClip, Channel, ClipPlayerPlugin, Interpolation, Joint, JointMatrices, MAX_JOINTS,
-    Pose, Sampler, Skeleton, SkeletonPlugin, Track, TrackValue, TrackValues, apply_skin,
+    Pose, Sampler, Skeleton, SkeletonPlugin, SkinnedActor, SkinnedActorPart, SkinnedActorPlugin,
+    Track, TrackValue, TrackValues, apply_skin,
 };
