@@ -3064,7 +3064,9 @@ impl App {
             || (self.mode == ShowcaseMode::PickLevels
                 && showcase_33_picking_levels::pl_outline_selected(self))
             || (self.mode == ShowcaseMode::SceneRuntimeInteract
-                && !self.rt_interact_state.selection.is_empty());
+                && !self.rt_interact_state.selection.is_empty())
+            || (self.mode == ShowcaseMode::SkinnedAnimation
+                && !self.skin47_state.selection.is_empty());
         if scene_graph_outline {
             fd.interaction.outline_width_px = scene_graph_outline_width;
         }

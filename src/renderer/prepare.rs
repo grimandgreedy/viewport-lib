@@ -2452,6 +2452,7 @@ impl ViewportRenderer {
                 outline_object_buffers.push(OutlineObjectBuffers {
                     mesh_id: item.mesh_id,
                     two_sided: item.material.is_two_sided(),
+                    skin_instance: item.skin_instance,
                     _mask_uniform_buf: buf,
                     mask_bind_group: bg,
                 });
@@ -2488,6 +2489,7 @@ impl ViewportRenderer {
                 outline_object_buffers.push(OutlineObjectBuffers {
                     mesh_id,
                     two_sided: false,
+                    skin_instance: None,
                     _mask_uniform_buf: buf,
                     mask_bind_group: bg,
                 });
@@ -2521,6 +2523,7 @@ impl ViewportRenderer {
                 outline_object_buffers.push(OutlineObjectBuffers {
                     mesh_id: item.mesh_id,
                     two_sided: true,
+                    skin_instance: None,
                     _mask_uniform_buf: buf,
                     mask_bind_group: bg,
                 });
@@ -3772,13 +3775,27 @@ impl ViewportRenderer {
                     let Some(mesh) = self.resources.mesh_store.get(outlined.mesh_id) else {
                         continue;
                     };
-                    let pipeline = if outlined.two_sided {
-                        &self.resources.outline_mask_two_sided_pipeline
-                    } else {
-                        &self.resources.outline_mask_pipeline
+                    // Skinned route: only if the node carries a skin_instance,
+                    // the mesh has weights uploaded, and a palette is present
+                    // for this (mesh, instance) pair. Otherwise fall back to
+                    // the unskinned pipeline (drawing against the bind pose).
+                    let skin_bg = outlined.skin_instance.and_then(|inst| {
+                        if !self.resources.is_skinned_mesh(outlined.mesh_id) {
+                            return None;
+                        }
+                        self.resources.skin_instance_bind_group(outlined.mesh_id, inst)
+                    });
+                    let pipeline = match (skin_bg.is_some(), outlined.two_sided) {
+                        (true, true) => &self.resources.outline_mask_skinned_two_sided_pipeline,
+                        (true, false) => &self.resources.outline_mask_skinned_pipeline,
+                        (false, true) => &self.resources.outline_mask_two_sided_pipeline,
+                        (false, false) => &self.resources.outline_mask_pipeline,
                     };
                     pass.set_pipeline(pipeline);
                     pass.set_bind_group(1, &outlined.mask_bind_group, &[]);
+                    if let Some(bg) = skin_bg {
+                        pass.set_bind_group(2, bg, &[]);
+                    }
                     pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                     pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..mesh.index_count, 0, 0..1);

@@ -2018,6 +2018,71 @@ impl ViewportGpuResources {
         // ------------------------------------------------------------------
         let skinning = crate::resources::skin::SkinningState::new(device);
 
+        // Skinned variants of the outline mask pipelines. Layout extends the
+        // unskinned outline layout with the skin bind group (weights + palette)
+        // at group 2 so the vertex stage can apply LBS and the selection
+        // outline tracks the deformed silhouette on the GPU skinning path.
+        let outline_mask_skinned_shader =
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("outline_mask_skinned_shader"),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("../shaders/outline_mask_skinned.wgsl").into(),
+                ),
+            });
+        let outline_skinned_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("outline_skinned_pipeline_layout"),
+                bind_group_layouts: &[&camera_bgl, &outline_bgl, &skinning.bind_group_layout],
+                push_constant_ranges: &[],
+            });
+        let make_outline_skinned_pipeline = |label: &str, cull: Option<wgpu::Face>| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&outline_skinned_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &outline_mask_skinned_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &outline_mask_skinned_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R8Unorm,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: cull,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            })
+        };
+        let outline_mask_skinned_pipeline = make_outline_skinned_pipeline(
+            "outline_mask_skinned_pipeline",
+            Some(wgpu::Face::Back),
+        );
+        let outline_mask_skinned_two_sided_pipeline =
+            make_outline_skinned_pipeline("outline_mask_skinned_two_sided_pipeline", None);
+
         let skinned_mesh_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh_skinned_shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mesh_skinned.wgsl").into()),
@@ -2341,6 +2406,8 @@ impl ViewportGpuResources {
             outline_bind_group_layout: outline_bgl,
             outline_mask_pipeline,
             outline_mask_two_sided_pipeline,
+            outline_mask_skinned_pipeline,
+            outline_mask_skinned_two_sided_pipeline,
             outline_edge_pipeline,
             outline_edge_bgl,
             xray_pipeline,

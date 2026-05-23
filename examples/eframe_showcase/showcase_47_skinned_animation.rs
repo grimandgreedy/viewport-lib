@@ -353,6 +353,13 @@ pub(crate) struct Skin47State {
         std::collections::HashMap<MeshId, Vec<[f32; 3]>>,
     /// Most recent pick result: (clicked node id, actor index, strategy used).
     pub crowd_last_pick: Option<(viewport_lib::NodeId, u32, CrowdPickStrategy)>,
+
+    /// Set when the path switches CPU -> GPU. The CPU path writes deformed
+    /// positions/normals directly into the bind-pose vertex buffer; without
+    /// restoring those buffers before the GPU path starts running, the
+    /// vertex shader applies LBS on top of an already-deformed mesh and the
+    /// result reads as backwards / collapsed limbs.
+    pub needs_bind_pose_restore: bool,
 }
 
 impl Default for Skin47State {
@@ -401,6 +408,7 @@ impl Default for Skin47State {
             crowd_pick_bind_positions: std::collections::HashMap::new(),
             crowd_pick_deformed_positions: std::collections::HashMap::new(),
             crowd_last_pick: None,
+            needs_bind_pose_restore: false,
         }
     }
 }
@@ -950,6 +958,12 @@ pub(crate) fn update_skin47(
     // GPU and through the static pipeline on CPU.
     let demo_changed = app.skin47_state.demo != app.skin47_state.active_demo;
     let path_changed = app.skin47_state.path != app.skin47_state.active_path;
+    // Switching into GPU (from anywhere except a fresh GPU runtime) means
+    // the bind-pose buffers may hold whatever CPU LBS last wrote; restore
+    // them once before the GPU path takes over.
+    if path_changed && app.skin47_state.path == SkinningPath::Gpu {
+        app.skin47_state.needs_bind_pose_restore = true;
+    }
     if demo_changed || path_changed {
         if let (Some(mesh_id), Some(skin_weights)) = (
             app.skin47_state.mesh_id,
@@ -1291,10 +1305,70 @@ pub(crate) fn pick_crowd(
             .and_then(|mid| actor_index_for_mesh(state, mid))
             .unwrap_or(u32::MAX);
         state.crowd_last_pick = Some((node_id, actor_idx, state.crowd_pick_strategy));
-        selection.select_one(node_id);
+
+        // Highlight every part of the picked actor, not just the one piece
+        // the ray happened to land on. crowd_nodes is laid out actor-major:
+        // parts_per_actor consecutive entries per actor.
+        let parts_per_actor = state
+            .gltf_asset
+            .as_ref()
+            .map(|a| a.parts.len())
+            .unwrap_or(1)
+            .max(1);
+        selection.clear();
+        if (actor_idx as usize) < state.crowd_actor_meshes.len() {
+            let start = actor_idx as usize * parts_per_actor;
+            let end = (start + parts_per_actor).min(state.crowd_nodes.len());
+            for n in &state.crowd_nodes[start..end] {
+                selection.add(*n);
+            }
+        } else {
+            selection.select_one(node_id);
+        }
     } else {
         state.crowd_last_pick = None;
         selection.clear();
+    }
+}
+
+/// Re-upload bind-pose positions and normals for every mesh the CPU path
+/// could have written into. Called once on a CPU -> GPU switch so the GPU
+/// vertex shader sees the bind pose instead of last frame's deformed pose.
+fn restore_bind_pose_buffers(
+    state: &mut Skin47State,
+    queue: &wgpu::Queue,
+    renderer: &mut viewport_lib::ViewportRenderer,
+) {
+    // Arm mesh.
+    if let Some(mid) = state.mesh_id {
+        let _ = renderer.resources_mut().write_mesh_positions_normals(
+            queue,
+            mid,
+            &state.bind_positions,
+            &state.bind_normals,
+        );
+    }
+    // glTF character + crowd share the same per-part bind data.
+    let Some(asset) = state.gltf_asset.as_ref() else {
+        return;
+    };
+    for (mid, part) in state.gltf_mesh_ids.iter().zip(asset.parts.iter()) {
+        let _ = renderer.resources_mut().write_mesh_positions_normals(
+            queue,
+            *mid,
+            &part.bind_positions,
+            &part.bind_normals,
+        );
+    }
+    for actor_meshes in &state.crowd_actor_meshes {
+        for (mid, part) in actor_meshes.iter().zip(asset.parts.iter()) {
+            let _ = renderer.resources_mut().write_mesh_positions_normals(
+                queue,
+                *mid,
+                &part.bind_positions,
+                &part.bind_normals,
+            );
+        }
     }
 }
 
@@ -1352,6 +1426,14 @@ pub(crate) fn apply_skin47_updates(app: &mut App, renderer: &mut viewport_lib::V
     // Apply appearance toggles (opacity, wireframe, PBR, matcap, two-sided)
     // to every skinned node in the active demo.
     apply_skin47_appearance(&mut app.skin47_state, renderer);
+
+    // CPU -> GPU transition: re-upload bind-pose positions/normals for every
+    // mesh the CPU path may have stomped, so the GPU shader applies LBS to
+    // the bind pose rather than to last-frame's deformed pose.
+    if app.skin47_state.needs_bind_pose_restore {
+        restore_bind_pose_buffers(&mut app.skin47_state, &app.queue, renderer);
+        app.skin47_state.needs_bind_pose_restore = false;
+    }
 
     // CPU path: blit deformed positions/normals back into the bind-pose
     // vertex buffer for every emitted mesh.

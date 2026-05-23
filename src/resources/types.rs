@@ -871,6 +871,11 @@ pub(crate) struct OutlineUniform {
 pub(crate) struct OutlineObjectBuffers {
     pub mesh_id: crate::resources::mesh_store::MeshId,
     pub two_sided: bool,
+    /// Skin instance id for the picked node, or `None` when the node is not
+    /// skinned. When `Some` and the renderer has a palette for
+    /// `(mesh_id, instance_id)`, the outline mask is drawn via the skinned
+    /// pipeline so the selection halo tracks the deformed silhouette.
+    pub skin_instance: Option<u32>,
     pub _mask_uniform_buf: wgpu::Buffer,
     pub mask_bind_group: wgpu::BindGroup,
 }
@@ -2504,6 +2509,12 @@ pub struct ViewportGpuResources {
     pub(crate) outline_mask_pipeline: wgpu::RenderPipeline,
     /// Two-sided mask-write pipeline for selected meshes rendered without face culling.
     pub(crate) outline_mask_two_sided_pipeline: wgpu::RenderPipeline,
+    /// Skinned variant of `outline_mask_pipeline`. Applies LBS to the bind-pose
+    /// vertex buffer so the selection outline tracks the deformed silhouette
+    /// on the GPU skinning path.
+    pub(crate) outline_mask_skinned_pipeline: wgpu::RenderPipeline,
+    /// Skinned two-sided outline mask pipeline.
+    pub(crate) outline_mask_skinned_two_sided_pipeline: wgpu::RenderPipeline,
     /// Fullscreen edge-detection pipeline: reads mask, outputs anti-aliased outline ring.
     pub(crate) outline_edge_pipeline: wgpu::RenderPipeline,
     /// Bind group layout for the edge-detection pass (mask texture + sampler + uniform).
