@@ -1,30 +1,19 @@
 //! Showcase 48: Screen-Space Decals
 //!
-//! Demonstrates the screen-space decal system (D1 + D2).
+//! Demonstrates the full decal pipeline (D1 through D4).
 //!
-//! Scene: a concrete floor and a wall meeting at a corner. Click anywhere on
-//! the geometry to stamp a decal at the hit point. The decal is oriented with
-//! its projection axis along the surface normal so it lies flat on the surface
-//! it hits.
+//! Scene: a white upright wall in the XZ plane. Click anywhere on it to stamp
+//! a decal at the hit point.
 //!
-//! D2 extension: each decal can optionally use a normal map (bullet-hole
-//! crater). A per-decal blend-strength slider controls how strongly the normal
-//! map perturbs the surface shading. When the normal map toggle is off the
-//! decals are simple alpha-blended stickers (D1 behaviour).
-//!
-//! Controls:
-//! - Click on the floor or wall to stamp a decal.
-//! - Decal list: shows placed decals with a delete button per entry.
-//! - Size / Depth sliders: control the footprint and projection depth.
-//! - Normal map toggle: switches between D1 (sticker) and D2 (crater).
-//! - Normal blend strength slider: scales the D2 shading effect.
-//! - Blend mode selector: Replace (alpha blend) or Multiply.
-//! - Clear All: removes all placed decals.
+//! D1: screen-space projection from the opaque-pass depth buffer.
+//! D2: optional crater normal map that perturbs surface shading.
+//! D3: roughness and metallic controls; sort_key ordering demo.
+//! D4: lifetime-managed fading decals and a UV-scroll animation demo.
 
 use eframe::egui;
 use viewport_lib::{
-    DecalBlendMode, DecalItem, Material, MeshId, SceneRenderItem,
-    scene::{Scene, material::BackfacePolicy},
+    DecalAnimation, DecalBlendMode, DecalHandle, DecalItem, Material, MeshId, SceneRenderItem,
+    scene::Scene,
     selection::Selection,
 };
 
@@ -34,7 +23,7 @@ use crate::App;
 // Procedural textures
 // ---------------------------------------------------------------------------
 
-/// Circular decal albedo: soft white disc on a transparent background.
+/// Circular decal albedo: medium-gray disc on a transparent background.
 fn make_disc_texture(size: u32) -> Vec<u8> {
     let mut buf = vec![0u8; (size * size * 4) as usize];
     let c = size as f32 * 0.5;
@@ -46,9 +35,9 @@ fn make_disc_texture(size: u32) -> Vec<u8> {
             let d = (dx * dx + dy * dy).sqrt();
             let alpha = ((r - d) / (r * 0.15)).clamp(0.0, 1.0);
             let idx = ((y * size + x) * 4) as usize;
-            buf[idx]     = 230;
-            buf[idx + 1] = 220;
-            buf[idx + 2] = 210;
+            buf[idx]     = 120;
+            buf[idx + 1] = 115;
+            buf[idx + 2] = 110;
             buf[idx + 3] = (alpha * 220.0) as u8;
         }
     }
@@ -56,7 +45,6 @@ fn make_disc_texture(size: u32) -> Vec<u8> {
 }
 
 /// Bullet-hole crater normal map: encodes an inward dome shape.
-/// Centre normal points inward (-Z in tangent space), rim normals tilt outward.
 fn make_crater_normal_map(size: u32) -> Vec<u8> {
     let mut buf = vec![0u8; (size * size * 4) as usize];
     let c = size as f32 * 0.5;
@@ -67,16 +55,13 @@ fn make_crater_normal_map(size: u32) -> Vec<u8> {
             let dy = y as f32 - c;
             let d = (dx * dx + dy * dy).sqrt();
             let t = (d / r).clamp(0.0, 1.0);
-            // At the centre: normal points straight in (-Z -> (0,0,-1) in tangent space,
-            // encoded as (0.5, 0.5, 0.0) in the map). At the rim: flat surface (0,0,1).
-            let nz = t;        // 0 at centre, 1 at rim
-            let scale = (1.0 - nz * nz).sqrt(); // length of the XY deflection
+            let nz = t;
+            let scale = (1.0 - nz * nz).sqrt();
             let (nx, ny) = if d > 0.001 {
                 (dx / d * scale * 0.6, dy / d * scale * 0.6)
             } else {
                 (0.0, 0.0)
             };
-            // Re-normalise.
             let len = (nx * nx + ny * ny + nz * nz).sqrt().max(1e-6);
             let (nx, ny, nz) = (nx / len, ny / len, nz / len);
             let idx = ((y * size + x) * 4) as usize;
@@ -89,29 +74,51 @@ fn make_crater_normal_map(size: u32) -> Vec<u8> {
     buf
 }
 
-// ---------------------------------------------------------------------------
-// Geometry helpers
-// ---------------------------------------------------------------------------
+/// D3: Glossy "wet" disc - slightly darker base with a brighter specular look.
+fn make_wet_texture(size: u32) -> Vec<u8> {
+    let mut buf = vec![0u8; (size * size * 4) as usize];
+    let c = size as f32 * 0.5;
+    let r = c * 0.85;
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as f32 - c;
+            let dy = y as f32 - c;
+            let d = (dx * dx + dy * dy).sqrt();
+            let alpha = ((r - d) / (r * 0.1)).clamp(0.0, 1.0);
+            let idx = ((y * size + x) * 4) as usize;
+            // Slightly blue-tinted for a water look.
+            buf[idx]     = 180;
+            buf[idx + 1] = 195;
+            buf[idx + 2] = 210;
+            buf[idx + 3] = (alpha * 200.0) as u8;
+        }
+    }
+    buf
+}
 
-/// Flat quad in the XY plane, centred at the origin, half-extent `e`.
-/// Vertices are in Z-up space; face normal is +Z.
-fn flat_quad(ex: f32, ey: f32) -> viewport_lib::MeshData {
-    let mut mesh = viewport_lib::MeshData::default();
-    mesh.positions = vec![
-        [-ex, -ey, 0.0],
-        [ ex, -ey, 0.0],
-        [ ex,  ey, 0.0],
-        [-ex,  ey, 0.0],
-    ];
-    mesh.normals = vec![[0.0, 0.0, 1.0]; 4];
-    mesh.uvs = Some(vec![
-        [0.0, 0.0],
-        [1.0, 0.0],
-        [1.0, 1.0],
-        [0.0, 1.0],
-    ]);
-    mesh.indices = vec![0, 1, 2, 0, 2, 3];
-    mesh
+/// D4: Diagonal stripe pattern for UV-scroll animation demo (alternating blue/red lines).
+fn make_stripe_texture(size: u32) -> Vec<u8> {
+    let mut buf = vec![0u8; (size * size * 4) as usize];
+    for y in 0..size {
+        for x in 0..size {
+            let t = ((x + y) as f32 / size as f32 * 4.0).fract();
+            let idx = ((y * size + x) * 4) as usize;
+            if t < 0.5 {
+                // blue stripe
+                buf[idx]     = 40;
+                buf[idx + 1] = 80;
+                buf[idx + 2] = 220;
+                buf[idx + 3] = 180;
+            } else {
+                // red stripe
+                buf[idx]     = 220;
+                buf[idx + 1] = 50;
+                buf[idx + 2] = 40;
+                buf[idx + 3] = 180;
+            }
+        }
+    }
+    buf
 }
 
 // ---------------------------------------------------------------------------
@@ -119,15 +126,9 @@ fn flat_quad(ex: f32, ey: f32) -> viewport_lib::MeshData {
 // ---------------------------------------------------------------------------
 
 /// Build a model matrix for a decal placed at `hit` on a surface with `normal`.
-/// `size` controls the footprint; `depth` controls how far the box extends
-/// along the projection axis.
 fn decal_transform(hit: glam::Vec3, normal: glam::Vec3, size: f32, depth: f32) -> [[f32; 4]; 4] {
     let n = normal.normalize();
-    let ref_up = if n.abs_diff_eq(glam::Vec3::Y, 0.9) {
-        glam::Vec3::Z
-    } else {
-        glam::Vec3::Y
-    };
+    let ref_up = if n.abs_diff_eq(glam::Vec3::Y, 0.9) { glam::Vec3::Z } else { glam::Vec3::Y };
     let tangent = ref_up.cross(n).normalize();
     let bitangent = n.cross(tangent).normalize();
     glam::Mat4::from_cols(
@@ -139,7 +140,7 @@ fn decal_transform(hit: glam::Vec3, normal: glam::Vec3, size: f32, depth: f32) -
 }
 
 // ---------------------------------------------------------------------------
-// Per-placed decal record
+// Per-placed decal record (D1-D3, manually managed)
 // ---------------------------------------------------------------------------
 
 pub(crate) struct PlacedDecal {
@@ -157,10 +158,13 @@ pub(crate) struct Decal48State {
     pub built: bool,
     pub scene: Scene,
     pub selection: Selection,
-    pub floor_mesh: Option<MeshId>,
-    pub wall_mesh:  Option<MeshId>,
-    pub albedo_tex: Option<u64>,
-    pub normal_tex: Option<u64>,
+    pub wall_mesh:   Option<MeshId>,
+    pub albedo_tex:  Option<u64>,
+    pub normal_tex:  Option<u64>,
+    pub wet_tex:     Option<u64>,   // D3
+    pub stripe_tex:  Option<u64>,   // D4
+
+    // D1/D2/D3: manually placed decals
     pub decals: Vec<PlacedDecal>,
     pub next_id: u64,
     pub decal_size: f32,
@@ -169,6 +173,18 @@ pub(crate) struct Decal48State {
     pub normal_blend: f32,
     pub blend_mode: DecalBlendMode,
     pub alpha: f32,
+
+    // D3
+    pub decal_roughness: f32,
+    pub decal_metallic: f32,
+    pub show_wet_patch: bool,
+
+    // D4
+    pub fading_mode: bool,
+    pub fade_lifetime: f32,
+    pub fade_out: f32,
+    pub show_scroll: bool,
+    pub scroll_handle: Option<DecalHandle>,
 }
 
 impl Default for Decal48State {
@@ -177,18 +193,27 @@ impl Default for Decal48State {
             built: false,
             scene: Scene::new(),
             selection: Selection::new(),
-            floor_mesh: None,
-            wall_mesh:  None,
-            albedo_tex: None,
-            normal_tex: None,
+            wall_mesh:   None,
+            albedo_tex:  None,
+            normal_tex:  None,
+            wet_tex:     None,
+            stripe_tex:  None,
             decals: Vec::new(),
             next_id: 1,
-            decal_size: 1.2,
+            decal_size: 0.15,
             decal_depth: 1.5,
             use_normal_map: true,
             normal_blend: 0.8,
             blend_mode: DecalBlendMode::Replace,
             alpha: 0.9,
+            decal_roughness: 0.25,
+            decal_metallic: 0.5,
+            show_wet_patch: false,
+            fading_mode: true,
+            fade_lifetime: 4.0,
+            fade_out: 1.5,
+            show_scroll: false,
+            scroll_handle: None,
         }
     }
 }
@@ -202,68 +227,37 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
 
     let res = renderer.resources_mut();
 
-    // Upload textures.
-    let disc = make_disc_texture(128);
     let albedo_id = res
-        .upload_texture(&app.device, &app.queue, 128, 128, &disc)
+        .upload_texture(&app.device, &app.queue, 128, 128, &make_disc_texture(128))
         .expect("decal albedo upload");
-
-    let crater = make_crater_normal_map(128);
     let normal_id = res
-        .upload_texture(&app.device, &app.queue, 128, 128, &crater)
+        .upload_texture(&app.device, &app.queue, 128, 128, &make_crater_normal_map(128))
         .expect("decal normal map upload");
+    let wet_id = res
+        .upload_texture(&app.device, &app.queue, 128, 128, &make_wet_texture(128))
+        .expect("wet texture upload");
+    let stripe_id = res
+        .upload_texture(&app.device, &app.queue, 64, 64, &make_stripe_texture(64))
+        .expect("stripe texture upload");
 
     app.decal48_state.albedo_tex = Some(albedo_id);
     app.decal48_state.normal_tex = Some(normal_id);
+    app.decal48_state.wet_tex    = Some(wet_id);
+    app.decal48_state.stripe_tex = Some(stripe_id);
 
-    // Floor: 8x8 quad in XY plane at z=0.
-    let floor_data = flat_quad(4.0, 4.0);
-    let floor_id = res
-        .upload_mesh_data(&app.device, &floor_data)
-        .expect("floor mesh upload");
-    app.decal48_state.floor_mesh = Some(floor_id);
-
-    // Wall: 8x4 quad in the XZ plane (vertical, Z-up) at y=4.
-    // Normal = -Y (faces the -Y direction, toward the viewer at y < 4).
-    // Vertices listed so that front face (CCW from -Y side) winds correctly.
-    // Z runs bottom (z=0) to top (z=4), matching the Z-up floor seam at z=0.
-    let wall_data = {
-        let mut mesh = viewport_lib::MeshData::default();
-        mesh.positions = vec![
-            [-4.0_f32, 0.0, 0.0], // 0: left  bottom
-            [ 4.0,     0.0, 0.0], // 1: right bottom
-            [ 4.0,     0.0, 4.0], // 2: right top
-            [-4.0,     0.0, 4.0], // 3: left  top
-        ];
-        mesh.normals = vec![[0.0_f32, -1.0, 0.0]; 4];
-        mesh.uvs = Some(vec![
-            [0.0_f32, 0.0], // left  bottom
-            [1.0,     0.0], // right bottom
-            [1.0,     1.0], // right top
-            [0.0,     1.0], // left  top
-        ]);
-        // CCW from the -Y (front) side: 0,1,2 and 0,2,3.
-        mesh.indices = vec![0u32, 1, 2, 0, 2, 3];
-        mesh
-    };
+    // Wall: cuboid 8x0.3x4 (X wide, Y thin, Z tall), centered then translated so
+    // the front face (+Y normal) sits at y=0 and Z spans 0..4.
+    let wall_data = viewport_lib::primitives::cuboid(8.0, 0.3, 4.0);
     let wall_id = res
         .upload_mesh_data(&app.device, &wall_data)
         .expect("wall mesh upload");
     app.decal48_state.wall_mesh = Some(wall_id);
 
     let scene = &mut app.decal48_state.scene;
-
-    // Floor node: placed at z=0. DoubleSided so it stays visible from any angle.
-    let mut floor_mat = Material::from_colour([0.55, 0.52, 0.48]);
-    floor_mat.backface_policy = BackfacePolicy::Identical;
-    scene.add(Some(floor_id), glam::Mat4::IDENTITY, floor_mat);
-
-    // Wall node: translated to y=4. DoubleSided for the same reason.
-    let mut wall_mat = Material::from_colour([0.50, 0.48, 0.45]);
-    wall_mat.backface_policy = BackfacePolicy::Identical;
+    let wall_mat = Material::from_colour([0.95, 0.95, 0.95]);
     scene.add(
         Some(wall_id),
-        glam::Mat4::from_translation(glam::Vec3::new(0.0, 4.0, 0.0)),
+        glam::Mat4::from_translation(glam::Vec3::new(0.0, -0.15, 2.0)),
         wall_mat,
     );
 
@@ -274,63 +268,102 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
 // Click handling
 // ---------------------------------------------------------------------------
 
-/// Test `ray` against the floor (z=0, XY plane) and wall (y=4, XZ plane).
-/// Returns (hit_point, surface_normal) for the closer positive intersection.
+/// Test `ray` against the wall in the XZ plane at y=0 (normal = +Y).
 pub(crate) fn decal48_ray_hit(
     ray_origin: glam::Vec3,
     ray_dir: glam::Vec3,
 ) -> Option<(glam::Vec3, glam::Vec3)> {
-    // Floor: z = 0, normal = +Z.
-    let t_floor = if ray_dir.z.abs() > 1e-6 {
-        let t = -ray_origin.z / ray_dir.z;
-        if t > 0.001 {
-            let hit = ray_origin + ray_dir * t;
-            // Within the floor quad [-4, 4]^2.
-            if hit.x.abs() <= 4.0 && hit.y.abs() <= 4.0 { Some((t, hit, glam::Vec3::Z)) }
-            else { None }
-        } else { None }
-    } else { None };
-
-    // Wall: y = 4, normal = -Y (faces the -Y direction toward viewer).
-    let t_wall = if ray_dir.y.abs() > 1e-6 {
-        let t = (4.0 - ray_origin.y) / ray_dir.y;
-        if t > 0.001 {
-            let hit = ray_origin + ray_dir * t;
-            // Within the wall quad: x in [-4, 4], z in [0, 4].
-            if hit.x.abs() <= 4.0 && hit.z >= 0.0 && hit.z <= 4.0 {
-                Some((t, hit, glam::Vec3::new(0.0, -1.0, 0.0)))
-            } else { None }
-        } else { None }
-    } else { None };
-
-    match (t_floor, t_wall) {
-        (Some((tf, hf, nf)), Some((tw, hw, nw))) => {
-            if tf < tw { Some((hf, nf)) } else { Some((hw, nw)) }
-        }
-        (Some((_, h, n)), None) | (None, Some((_, h, n))) => Some((h, n)),
-        (None, None) => None,
+    if ray_dir.y.abs() < 1e-6 { return None; }
+    let t = -ray_origin.y / ray_dir.y;
+    if t < 0.001 { return None; }
+    let hit = ray_origin + ray_dir * t;
+    if hit.x.abs() <= 4.0 && hit.z >= 0.0 && hit.z <= 4.0 {
+        Some((hit, glam::Vec3::Y))
+    } else {
+        None
     }
 }
 
 /// Place a decal at the clicked viewport position.
-pub(crate) fn decal48_place(
-    app: &mut App,
-    cursor: glam::Vec2,
-    vp_size: glam::Vec2,
-) {
+pub(crate) fn decal48_place(app: &mut App, cursor: glam::Vec2, vp_size: glam::Vec2) {
     if !app.decal48_state.built { return; }
     let vp_inv = app.camera.view_proj_matrix().inverse();
     let (ro, rd) = viewport_lib::picking::screen_to_ray(cursor, vp_size, vp_inv);
-    if let Some((hit, normal)) = decal48_ray_hit(ro, rd) {
-        let id = app.decal48_state.next_id;
-        app.decal48_state.next_id += 1;
-        let surface = if normal.z > 0.5 { "floor" } else { "wall" };
-        app.decal48_state.decals.push(PlacedDecal {
+    let Some((hit, normal)) = decal48_ray_hit(ro, rd) else { return };
+
+    let st = &mut app.decal48_state;
+
+    if st.fading_mode {
+        // D4: add a temporary decal via the scene API.
+        let transform = decal_transform(hit, normal, st.decal_size, st.decal_depth);
+        let Some(albedo) = st.albedo_tex else { return };
+        let mut item = DecalItem::default();
+        item.transform             = transform;
+        item.texture_id            = albedo;
+        item.blend_mode            = st.blend_mode;
+        item.alpha                 = st.alpha;
+        item.normal_texture_id     = if st.use_normal_map { st.normal_tex } else { None };
+        item.normal_blend_strength = st.normal_blend;
+        item.roughness             = st.decal_roughness;
+        item.metallic              = st.decal_metallic;
+        item.sort_key              = 0;
+        let lt = st.fade_lifetime;
+        st.scene.add_decal_with_lifetime(item, lt, st.fade_out);
+    } else {
+        // D1-D3: permanent, manually tracked.
+        let id = st.next_id;
+        st.next_id += 1;
+        st.decals.push(PlacedDecal {
             id,
-            label: format!("#{id} ({surface})"),
+            label: format!("#{id}"),
             hit,
             normal,
         });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame update (D4)
+// ---------------------------------------------------------------------------
+
+/// Advance live decal ages and sync the scroll/wet-patch state with the scene.
+pub(crate) fn update_decal48(app: &mut App, dt: f32) {
+    if !app.decal48_state.built { return; }
+
+    app.decal48_state.scene.update_decals(dt);
+
+    let st = &mut app.decal48_state;
+
+    // Scroll animation: add or remove as the toggle changes.
+    let want_scroll = st.show_scroll;
+    match (want_scroll, st.scroll_handle.is_some()) {
+        (true, false) => {
+            if let Some(stripe) = st.stripe_tex {
+                let transform = decal_transform(
+                    glam::Vec3::new(0.0, 0.0, 2.0),
+                    glam::Vec3::Y,
+                    3.0,
+                    1.5,
+                );
+                let mut item = DecalItem::default();
+                item.transform  = transform;
+                item.texture_id = stripe;
+                item.alpha      = 0.7;
+                item.sort_key   = -10;  // render below all other decals
+                let handle = st.scene.add_decal_animated(
+                    item,
+                    DecalAnimation::UvScroll { vx: 0.2, vy: 0.1 },
+                    None,
+                );
+                st.scroll_handle = Some(handle);
+            }
+        }
+        (false, true) => {
+            if let Some(h) = st.scroll_handle.take() {
+                st.scene.remove_decal(h);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -344,21 +377,49 @@ pub(crate) fn decal48_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
         .collect_render_items(&app.decal48_state.selection)
 }
 
-/// Push placed decals into `fd.scene.decals`.
+/// Push all active decals into `fd.scene.decals`.
 pub(crate) fn submit_decal48_items(app: &App, fd: &mut viewport_lib::FrameData) {
     let st = &app.decal48_state;
     let Some(albedo) = st.albedo_tex else { return };
+
+    // D3: wet patch -- higher sort_key renders on top of placed decals.
+    if st.show_wet_patch {
+        if let Some(wet) = st.wet_tex {
+            let transform = decal_transform(
+                glam::Vec3::new(-1.5, 0.0, 1.5),
+                glam::Vec3::Y,
+                2.0,
+                1.5,
+            );
+            let mut item = DecalItem::default();
+            item.transform  = transform;
+            item.texture_id = wet;
+            item.roughness  = 0.05;
+            item.metallic   = 0.0;
+            item.alpha      = 0.85;
+            item.sort_key   = 10;  // render above bullet holes
+            fd.scene.decals.push(item);
+        }
+    }
+
+    // D1-D3: manually placed permanent decals.
     for placed in &st.decals {
         let transform = decal_transform(placed.hit, placed.normal, st.decal_size, st.decal_depth);
         let mut item = DecalItem::default();
-        item.transform            = transform;
-        item.texture_id           = albedo;
-        item.blend_mode           = st.blend_mode;
-        item.alpha                = st.alpha;
-        item.normal_texture_id    = if st.use_normal_map { st.normal_tex } else { None };
+        item.transform             = transform;
+        item.texture_id            = albedo;
+        item.blend_mode            = st.blend_mode;
+        item.alpha                 = st.alpha;
+        item.normal_texture_id     = if st.use_normal_map { st.normal_tex } else { None };
         item.normal_blend_strength = st.normal_blend;
+        item.roughness             = st.decal_roughness;
+        item.metallic              = st.decal_metallic;
+        item.sort_key              = 0;
         fd.scene.decals.push(item);
     }
+
+    // D4: live decals (fading + animation) from the scene.
+    fd.scene.decals.extend(st.scene.collect_decal_items());
 }
 
 // ---------------------------------------------------------------------------
@@ -367,41 +428,32 @@ pub(crate) fn submit_decal48_items(app: &App, fd: &mut viewport_lib::FrameData) 
 
 pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical().show(ui, |ui| {
-        ui.label("Click on the floor or wall to stamp a decal.");
+        let fading = app.decal48_state.fading_mode;
+        if fading {
+            ui.label("Click to stamp a fading decal (auto-removes).");
+        } else {
+            ui.label("Click on the wall to stamp a permanent decal.");
+        }
         ui.add_space(6.0);
 
         ui.separator();
         ui.label("Decal settings:");
-        ui.add(
-            egui::Slider::new(&mut app.decal48_state.decal_size, 0.3..=3.0)
-                .text("Size"),
-        );
+        ui.add(egui::Slider::new(&mut app.decal48_state.decal_size, 0.01..=3.0).text("Size"));
         ui.add(
             egui::Slider::new(&mut app.decal48_state.decal_depth, 0.3..=4.0)
-                .text("Proj. depth"),
+                .text("Proj. depth")
+                .show_value(true),
         );
-        ui.small("Projection depth: box extent along hit normal. Affects curved")
-            .on_hover_text("On flat surfaces all fragments have local.z = 0, so this has no visible effect. Increase it when a decal spans a curved or angled surface where depth variation within the footprint exists.");
-        ui.small("surfaces; no visible effect on flat geometry.");
-        ui.add(
-            egui::Slider::new(&mut app.decal48_state.alpha, 0.1..=1.0)
-                .text("Alpha"),
-        );
+        ui.add(egui::Slider::new(&mut app.decal48_state.alpha, 0.1..=1.0).text("Alpha"));
 
         ui.add_space(4.0);
         ui.label("Blend mode:");
         ui.horizontal(|ui| {
             let cur = app.decal48_state.blend_mode;
-            if ui
-                .selectable_label(cur == DecalBlendMode::Replace, "Replace")
-                .clicked()
-            {
+            if ui.selectable_label(cur == DecalBlendMode::Replace,  "Replace").clicked()  {
                 app.decal48_state.blend_mode = DecalBlendMode::Replace;
             }
-            if ui
-                .selectable_label(cur == DecalBlendMode::Multiply, "Multiply")
-                .clicked()
-            {
+            if ui.selectable_label(cur == DecalBlendMode::Multiply, "Multiply").clicked() {
                 app.decal48_state.blend_mode = DecalBlendMode::Multiply;
             }
         });
@@ -409,18 +461,49 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
         ui.add_space(6.0);
         ui.separator();
         ui.label("D2 - Normal map:");
-        ui.checkbox(&mut app.decal48_state.use_normal_map, "Enable crater normal map");
+        ui.checkbox(&mut app.decal48_state.use_normal_map, "Crater normal map");
         ui.add(
             egui::Slider::new(&mut app.decal48_state.normal_blend, 0.0..=1.0)
                 .text("Normal blend"),
         );
-        ui.small("When enabled, decals use a crater normal map to perturb");
-        ui.small("shading: the centre appears sunken, the rim raised.");
+
+        ui.add_space(6.0);
+        ui.separator();
+        ui.label("D3 - Roughness / metallic:");
+        ui.add(
+            egui::Slider::new(&mut app.decal48_state.decal_roughness, 0.0..=1.0)
+                .text("Roughness"),
+        );
+        ui.add(
+            egui::Slider::new(&mut app.decal48_state.decal_metallic, 0.0..=1.0)
+                .text("Metallic"),
+        );
+        ui.small("Low roughness adds a tight specular highlight (N.V proxy).");
+        ui.add_space(4.0);
+        ui.checkbox(&mut app.decal48_state.show_wet_patch, "Show wet patch (sort above)");
+        ui.small("Wet patch: roughness 0.05, sort_key +10 (renders above bullets).");
+
+        ui.add_space(6.0);
+        ui.separator();
+        ui.label("D4 - Lifetime / animation:");
+        ui.checkbox(&mut app.decal48_state.fading_mode, "Fading mode (auto-remove)");
+        if app.decal48_state.fading_mode {
+            ui.add(
+                egui::Slider::new(&mut app.decal48_state.fade_lifetime, 2.0..=20.0)
+                    .text("Lifetime (s)"),
+            );
+            let max_fade = app.decal48_state.fade_lifetime;
+            ui.add(
+                egui::Slider::new(&mut app.decal48_state.fade_out, 0.1..=max_fade)
+                    .text("Fade-out (s)"),
+            );
+        }
+        ui.checkbox(&mut app.decal48_state.show_scroll, "UV scroll animation");
+        ui.small("Diagonal stripe decal scrolling across the wall.");
 
         ui.add_space(6.0);
         ui.separator();
         ui.label("Placed decals:");
-
         let mut remove_id: Option<u64> = None;
         for placed in &app.decal48_state.decals {
             ui.horizontal(|ui| {
@@ -433,24 +516,25 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
         if let Some(id) = remove_id {
             app.decal48_state.decals.retain(|d| d.id != id);
         }
-
-        if app.decal48_state.decals.is_empty() {
+        if app.decal48_state.decals.is_empty() && !app.decal48_state.fading_mode {
             ui.small("(none)");
+        }
+        let live_count = app.decal48_state.scene.collect_decal_items().len();
+        if live_count > 0 {
+            ui.small(format!("{live_count} live (fading/animated) decals active."));
         }
 
         ui.add_space(4.0);
-        if ui.button("Clear all").clicked() {
+        if ui.button("Clear all permanent").clicked() {
             app.decal48_state.decals.clear();
         }
 
         ui.add_space(6.0);
         ui.separator();
         ui.label("What this shows:");
-        ui.small("- D1: screen-space projection from scene depth.");
-        ui.small("  Decals span the floor/wall corner seamlessly.");
-        ui.small("- D2: tangent-space normal map perturbs shading.");
-        ui.small("  N.V ratio modulates colour: centre dark, rim bright.");
-        ui.small("- Replace: alpha-blended over the opaque pass.");
-        ui.small("- Multiply: dst.rgb * src.rgb (darkening blend).");
+        ui.small("D1: screen-space projection from scene depth.");
+        ui.small("D2: crater normal map perturbs shading (N.V ratio).");
+        ui.small("D3: roughness/metallic specular; sort_key ordering.");
+        ui.small("D4: lifetime fading; UV-scroll animation via LiveDecal.");
     });
 }

@@ -1306,12 +1306,16 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // D1 : Screen-space decals.
+        // D1 + D3: Screen-space decals, sorted by sort_key (D3).
         // ------------------------------------------------------------------
         self.decal_gpu_data.clear();
         if !frame.scene.decals.is_empty() {
             resources.ensure_decal_pipeline(device);
-            for item in &frame.scene.decals {
+            // Stable sort so equal-key decals stay in submission order.
+            let mut sorted: Vec<&crate::renderer::DecalItem> =
+                frame.scene.decals.iter().collect();
+            sorted.sort_by_key(|d| d.sort_key);
+            for item in sorted {
                 let gpu = resources.upload_decal_item(device, item);
                 self.decal_gpu_data.push(gpu);
             }

@@ -2171,11 +2171,12 @@ impl ViewportGpuResources {
             self.decal_depth_bgl = Some(bgl);
         }
         if self.decal_sampler.is_none() {
+            // Repeat address mode so UV scroll animation tiles correctly.
             let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("decal_sampler"),
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                address_mode_u: wgpu::AddressMode::Repeat,
+                address_mode_v: wgpu::AddressMode::Repeat,
+                address_mode_w: wgpu::AddressMode::Repeat,
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
                 ..Default::default()

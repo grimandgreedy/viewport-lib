@@ -1393,6 +1393,14 @@ impl eframe::App for App {
                         ctx.request_repaint();
                     }
                 }
+                // ----- Decals: advance live decal ages (D4) -----
+                if self.mode == ShowcaseMode::Decals && self.decal48_state.built {
+                    let dt = ctx.input(|i| i.stable_dt.min(1.0 / 30.0));
+                    showcase_48_decals::update_decal48(self, dt);
+                    if self.decal48_state.show_scroll || !self.decal48_state.scene.collect_decal_items().is_empty() {
+                        ctx.request_repaint();
+                    }
+                }
                 // ----- Runtime Interaction: step with input context -----
                 if self.mode == ShowcaseMode::SceneRuntimeInteract && self.rt_interact_state.built {
                     let dt = ctx.input(|i| i.stable_dt.min(1.0 / 30.0));
@@ -2076,11 +2084,14 @@ impl App {
             }
             ShowcaseMode::Decals => {
                 showcase_48_decals::build_decal48_scene(self, renderer);
+                // Wall is in XZ plane at y=0, 8 wide, 4 tall (z 0..4).
+                // Camera orbits from +Y so the wall face (+Y normal) is visible.
                 self.camera = Camera {
-                    center: glam::Vec3::new(0.0, 2.0, 2.0),
-                    distance: 14.0,
-                    orientation: glam::Quat::from_rotation_z(0.0)
-                        * glam::Quat::from_rotation_x(1.1),
+                    center: glam::Vec3::new(0.0, 0.0, 2.0),
+                    distance: 12.0,
+                    orientation: glam::Quat::from_rotation_x(
+                        std::f32::consts::FRAC_PI_2,
+                    ),
                     ..Camera::default()
                 };
             }

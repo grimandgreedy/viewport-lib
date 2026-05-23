@@ -1,4 +1,4 @@
-//! Screen-space decal pipeline (D1).
+//! Screen-space decal pipeline (D1 + D2).
 
 use crate::resources::{DualPipeline, ViewportGpuResources};
 use wgpu::util::DeviceExt as _;
@@ -7,14 +7,24 @@ use wgpu::util::DeviceExt as _;
 // GPU-internal types
 // ---------------------------------------------------------------------------
 
-/// Flat uniform buffer matching the WGSL `DecalUniform` struct (80 bytes).
+/// Flat uniform buffer matching the WGSL `DecalUniform` struct (112 bytes).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct DecalUniformRaw {
-    pub inv_transform: [[f32; 4]; 4],
-    pub blend_mode: u32,
-    pub alpha: f32,
-    pub _pad: [f32; 2],
+    pub inv_transform: [[f32; 4]; 4],   // 64 bytes
+    pub blend_mode: u32,                 //  4
+    pub alpha: f32,                      //  4
+    pub normal_blend_strength: f32,      //  4
+    pub has_normal: u32,                 //  4
+    // D3
+    pub roughness: f32,                  //  4
+    pub metallic: f32,                   //  4
+    pub has_roughness_tex: u32,          //  4
+    pub has_metallic_tex: u32,           //  4
+    // D4 -- vec2 pairs, 8-byte aligned
+    pub uv_offset: [f32; 2],            //  8
+    pub uv_scale: [f32; 2],             //  8
+    // total: 112 bytes
 }
 
 /// Per-draw GPU data for one [`DecalItem`](crate::renderer::DecalItem).
@@ -43,7 +53,24 @@ impl ViewportGpuResources {
             source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/decal.wgsl").into()),
         });
 
-        // Group 2: per-item (uniform buffer + albedo texture + sampler).
+        let tex2d_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
+
+        // Group 2: per-item uniforms + textures.
+        //  0: DecalUniform buffer
+        //  1: albedo texture
+        //  2: sampler (shared by all texture slots)
+        //  3: normal map   (D2; fallback_texture when absent)
+        //  4: roughness map (D3; fallback_texture when absent)
+        //  5: metallic map  (D3; fallback_texture when absent)
         let item_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("decal_item_bgl"),
             entries: &[
@@ -57,22 +84,16 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
+                tex2d_entry(1),
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                tex2d_entry(3), // D2: normal map
+                tex2d_entry(4), // D3: roughness map
+                tex2d_entry(5), // D3: metallic map
             ],
         });
 
@@ -186,11 +207,22 @@ impl ViewportGpuResources {
             crate::renderer::DecalBlendMode::Multiply => 1u32,
         };
 
+        let has_normal        = item.normal_texture_id.is_some()    as u32;
+        let has_roughness_tex = item.roughness_texture_id.is_some() as u32;
+        let has_metallic_tex  = item.metallic_texture_id.is_some()  as u32;
+
         let raw = DecalUniformRaw {
             inv_transform,
             blend_mode: blend_mode_u32,
             alpha: item.alpha,
-            _pad: [0.0; 2],
+            normal_blend_strength: if has_normal != 0 { item.normal_blend_strength } else { 0.0 },
+            has_normal,
+            roughness: item.roughness,
+            metallic: item.metallic,
+            has_roughness_tex,
+            has_metallic_tex,
+            uv_offset: item.uv_offset,
+            uv_scale: item.uv_scale,
         };
 
         let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -199,11 +231,18 @@ impl ViewportGpuResources {
             usage: wgpu::BufferUsages::UNIFORM,
         });
 
-        let tex_view: &wgpu::TextureView = self
-            .textures
-            .get(item.texture_id as usize)
-            .map(|t| &t.view)
-            .unwrap_or(&self.fallback_texture.view);
+        let resolve_tex = |id: Option<u64>| -> &wgpu::TextureView {
+            id.and_then(|i| self.textures.get(i as usize))
+                .map(|t| &t.view)
+                .unwrap_or(&self.fallback_texture.view)
+        };
+
+        let tex_view      = self.textures.get(item.texture_id as usize)
+                                .map(|t| &t.view)
+                                .unwrap_or(&self.fallback_texture.view);
+        let normal_view   = resolve_tex(item.normal_texture_id);
+        let roughness_view = resolve_tex(item.roughness_texture_id);
+        let metallic_view  = resolve_tex(item.metallic_texture_id);
 
         let bgl = self
             .decal_item_bgl
@@ -230,6 +269,18 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(normal_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(roughness_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(metallic_view),
                 },
             ],
         });

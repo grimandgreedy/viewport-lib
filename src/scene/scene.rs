@@ -231,6 +231,9 @@ pub struct Scene {
     /// True after the first full octree build. Incremental updates apply from here.
     spatial_built: bool,
     last_scene_stats: SceneStats,
+    // D4: live decals with lifetime / animation.
+    live_decals: Vec<LiveDecal>,
+    next_decal_id: u64,
 }
 
 /// Global monotonic clock for scene versions.
@@ -266,6 +269,8 @@ impl Scene {
             spatial: SpatialIndex::new(),
             spatial_built: false,
             last_scene_stats: SceneStats::default(),
+            live_decals: Vec::new(),
+            next_decal_id: 0,
         }
     }
 
@@ -1018,6 +1023,156 @@ impl Scene {
 impl Default for Scene {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// D4: Live decals with lifetime and animation.
+// ---------------------------------------------------------------------------
+
+/// Opaque handle returned by [`Scene::add_decal`].
+///
+/// Pass to [`Scene::remove_decal`] to delete the decal before it expires.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DecalHandle(u64);
+
+/// A persistent decal managed by the scene, with optional lifetime and animation.
+///
+/// Created via [`Scene::add_decal`] or [`Scene::add_decal_with_lifetime`].
+/// Call [`Scene::update_decals`] once per frame with the frame delta-time to
+/// advance ages and expire finished decals. Call [`Scene::collect_decal_items`]
+/// to get the current [`DecalItem`] list ready to push into `fd.scene.decals`.
+pub struct LiveDecal {
+    id: u64,
+    /// The base decal parameters. `uv_offset` and `uv_scale` are recomputed
+    /// from `animation` each frame; all other fields are used as-is.
+    pub item: crate::renderer::DecalItem,
+    /// Optional UV animation. See [`DecalAnimation`].
+    pub animation: Option<crate::renderer::DecalAnimation>,
+    /// Total lifetime in seconds. `None` = permanent.
+    pub lifetime: Option<f32>,
+    /// How many seconds the fade-out lasts at the end of the lifetime.
+    /// Must be <= `lifetime`. Default: 20% of lifetime when 0.0.
+    pub fade_duration: f32,
+    /// Elapsed time in seconds since the decal was added.
+    pub age: f32,
+}
+
+impl Scene {
+    /// Add a permanent decal to the scene. Returns a handle for later removal.
+    pub fn add_decal(&mut self, item: crate::renderer::DecalItem) -> DecalHandle {
+        self.add_live_decal(item, None, None, 0.0)
+    }
+
+    /// Add a decal that fades and is automatically removed after `lifetime` seconds.
+    ///
+    /// `fade_duration` controls how many seconds the alpha ramps to zero before
+    /// expiry. Pass `0.0` to use the default (20% of lifetime).
+    pub fn add_decal_with_lifetime(
+        &mut self,
+        item: crate::renderer::DecalItem,
+        lifetime: f32,
+        fade_duration: f32,
+    ) {
+        self.add_live_decal(item, Some(lifetime), None, fade_duration);
+    }
+
+    /// Add a decal with an optional animation and optional lifetime.
+    pub fn add_decal_animated(
+        &mut self,
+        item: crate::renderer::DecalItem,
+        animation: crate::renderer::DecalAnimation,
+        lifetime: Option<f32>,
+    ) -> DecalHandle {
+        self.add_live_decal(item, lifetime, Some(animation), 0.0)
+    }
+
+    /// Remove a decal by handle. No-op if the handle is no longer valid.
+    pub fn remove_decal(&mut self, handle: DecalHandle) {
+        self.live_decals.retain(|d| d.id != handle.0);
+    }
+
+    /// Advance all live decals by `dt` seconds and drop expired ones.
+    ///
+    /// Call once per frame before [`Scene::collect_decal_items`].
+    pub fn update_decals(&mut self, dt: f32) {
+        for ld in &mut self.live_decals {
+            ld.age += dt;
+        }
+        self.live_decals
+            .retain(|ld| ld.lifetime.map_or(true, |lt| ld.age < lt));
+    }
+
+    /// Build the [`DecalItem`] list for this frame's `fd.scene.decals`.
+    ///
+    /// Applies lifetime fading (alpha ramps to 0 in the last 20% of life) and
+    /// computes UV offset/scale for animated decals.
+    pub fn collect_decal_items(&self) -> Vec<crate::renderer::DecalItem> {
+        self.live_decals
+            .iter()
+            .map(|ld| {
+                let mut item = ld.item.clone();
+
+                // Fade out at the end of lifetime.
+                if let Some(lt) = ld.lifetime {
+                    let fade = if ld.fade_duration > 0.0 {
+                        ld.fade_duration.min(lt)
+                    } else {
+                        lt * 0.2
+                    };
+                    let time_left = lt - ld.age;
+                    if time_left < fade {
+                        item.alpha *= (time_left / fade).clamp(0.0, 1.0);
+                    }
+                }
+
+                // Apply animation.
+                if let Some(anim) = &ld.animation {
+                    match anim {
+                        crate::renderer::DecalAnimation::UvScroll { vx, vy } => {
+                            // Accumulate offset from base, wrapping in [0, 1].
+                            item.uv_offset[0] =
+                                (ld.item.uv_offset[0] + vx * ld.age).rem_euclid(1.0);
+                            item.uv_offset[1] =
+                                (ld.item.uv_offset[1] + vy * ld.age).rem_euclid(1.0);
+                        }
+                        crate::renderer::DecalAnimation::SpriteSheet { cols, rows, fps } => {
+                            let total = cols * rows;
+                            let frame = ((ld.age * fps) as u32).rem_euclid(total.max(1));
+                            let col = frame % cols;
+                            let row = frame / cols;
+                            item.uv_scale = [1.0 / *cols as f32, 1.0 / *rows as f32];
+                            item.uv_offset = [
+                                col as f32 / *cols as f32,
+                                row as f32 / *rows as f32,
+                            ];
+                        }
+                    }
+                }
+
+                item
+            })
+            .collect()
+    }
+
+    fn add_live_decal(
+        &mut self,
+        item: crate::renderer::DecalItem,
+        lifetime: Option<f32>,
+        animation: Option<crate::renderer::DecalAnimation>,
+        fade_duration: f32,
+    ) -> DecalHandle {
+        let id = self.next_decal_id;
+        self.next_decal_id += 1;
+        self.live_decals.push(LiveDecal {
+            id,
+            item,
+            animation,
+            lifetime,
+            fade_duration,
+            age: 0.0,
+        });
+        DecalHandle(id)
     }
 }
 

@@ -1514,6 +1514,33 @@ pub enum DecalBlendMode {
     Multiply,
 }
 
+/// UV animation applied to a [`LiveDecal`](crate::scene::LiveDecal).
+///
+/// The renderer computes the effective `uv_offset` and `uv_scale` each frame from
+/// the decal's current age and the animation parameters.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub enum DecalAnimation {
+    /// Continuously scrolls the UV coordinates at the given world-units-per-second velocity.
+    /// The texture wraps (repeat address mode).
+    UvScroll {
+        /// Horizontal scroll velocity in UV units per second.
+        vx: f32,
+        /// Vertical scroll velocity in UV units per second.
+        vy: f32,
+    },
+    /// Cycles through frames of a sprite sheet packed into the texture.
+    /// Columns advance first (left to right), then rows (top to bottom).
+    SpriteSheet {
+        /// Number of columns in the sprite sheet.
+        cols: u32,
+        /// Number of rows in the sprite sheet.
+        rows: u32,
+        /// Playback rate in frames per second.
+        fps: f32,
+    },
+}
+
 /// A screen-space decal projected onto whatever surface lies inside its volume.
 ///
 /// The decal's projection volume is the unit box [-0.5, 0.5]^3 in local space.
@@ -1527,18 +1554,37 @@ pub enum DecalBlendMode {
 /// `texture_id` must be a value returned by
 /// [`ViewportGpuResources::upload_texture`].
 ///
-/// # Example
-/// ```rust,ignore
-/// let tex_id = resources.upload_texture(&device, &queue, &rgba_data, width, height);
-/// let mut decal = DecalItem::default();
-/// decal.transform = glam::Mat4::from_scale_rotation_translation(
-///     glam::Vec3::new(2.0, 2.0, 0.5),
-///     glam::Quat::IDENTITY,
-///     hit_point,
-/// ).to_cols_array_2d();
-/// decal.texture_id = tex_id;
-/// scene_frame.decals.push(decal);
-/// ```
+/// # Normal map (D2)
+///
+/// Set `normal_texture_id` to a tangent-space normal map (same UV space as
+/// `texture_id`). The renderer approximates the receiver surface normal from
+/// depth derivatives, applies the decal normal map in that tangent frame, and
+/// uses the blended normal to modulate the shading. Set `normal_blend_strength`
+/// between 0.0 (no effect) and 1.0 (full decal normal).
+///
+/// # Sorting (D3)
+///
+/// When multiple decals overlap, `sort_key` controls the composite order.
+/// Lower keys render first (underneath); higher keys render on top.
+/// Decals with equal keys render in insertion order.
+///
+/// # Roughness / metallic (D3)
+///
+/// `roughness` and `metallic` add a view-angle specular approximation on top
+/// of the decal colour. Because decals run post-opaque without access to scene
+/// light data, the highlight uses the view direction as a retroreflection proxy:
+/// low roughness produces a tight glossy highlight at near-normal incidence;
+/// high metallic tints the highlight by the albedo colour. This approximation
+/// is sufficient for wet-surface and scuff effects; it is not physically
+/// accurate PBR.
+///
+/// # UV animation (D4)
+///
+/// `uv_offset` and `uv_scale` shift and scale the final UV before texture
+/// sampling. For sprite-sheet and scroll animations, use
+/// [`LiveDecal`](crate::scene::LiveDecal) with a
+/// [`DecalAnimation`]: the scene updates `uv_offset` / `uv_scale` from the
+/// animation each frame.
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct DecalItem {
@@ -1550,6 +1596,26 @@ pub struct DecalItem {
     pub blend_mode: DecalBlendMode,
     /// Overall opacity multiplier applied on top of the texture alpha. Default: 1.0.
     pub alpha: f32,
+    /// Optional tangent-space normal map texture ID (D2). Default: `None`.
+    pub normal_texture_id: Option<u64>,
+    /// How strongly the decal normal map overrides the receiver normal. Range [0, 1]. Default: 1.0.
+    pub normal_blend_strength: f32,
+    // -- D3 fields --
+    /// Draw order key. Lower = rendered first (underneath). Default: 0.
+    pub sort_key: i32,
+    /// Surface roughness in [0, 1]. 0 = mirror-smooth, 1 = fully matte. Default: 1.0.
+    pub roughness: f32,
+    /// Optional per-texel roughness map (single-channel, R component used). Default: `None`.
+    pub roughness_texture_id: Option<u64>,
+    /// Metallic factor in [0, 1]. 0 = dielectric, 1 = metal. Default: 0.0.
+    pub metallic: f32,
+    /// Optional per-texel metallic map (single-channel, R component used). Default: `None`.
+    pub metallic_texture_id: Option<u64>,
+    // -- D4 fields --
+    /// UV offset applied before texture sampling. Modified by [`DecalAnimation`]. Default: [0, 0].
+    pub uv_offset: [f32; 2],
+    /// UV scale applied before texture sampling. Modified by [`DecalAnimation`]. Default: [1, 1].
+    pub uv_scale: [f32; 2],
 }
 
 impl Default for DecalItem {
@@ -1559,6 +1625,15 @@ impl Default for DecalItem {
             texture_id: 0,
             blend_mode: DecalBlendMode::Replace,
             alpha: 1.0,
+            normal_texture_id: None,
+            normal_blend_strength: 1.0,
+            sort_key: 0,
+            roughness: 1.0,
+            roughness_texture_id: None,
+            metallic: 0.0,
+            metallic_texture_id: None,
+            uv_offset: [0.0, 0.0],
+            uv_scale: [1.0, 1.0],
         }
     }
 }
