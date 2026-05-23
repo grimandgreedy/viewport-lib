@@ -65,6 +65,7 @@ mod showcase_44_runtime_interaction;
 mod showcase_45_simulation;
 mod showcase_46_debug_draw;
 mod showcase_47_skinned_animation;
+mod showcase_48_decals;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -213,6 +214,7 @@ fn main() -> eframe::Result {
                 sim45_state: showcase_45_simulation::Sim45State::default(),
                 dbg_draw_state: showcase_46_debug_draw::DbgDrawState::default(),
                 skin47_state: showcase_47_skinned_animation::Skin47State::default(),
+                decal48_state: showcase_48_decals::Decal48State::default(),
             }))
         }),
     )
@@ -273,6 +275,7 @@ enum ShowcaseMode {
     Simulation,
     DebugDraw,
     SkinnedAnimation,
+    Decals,
 }
 
 impl ShowcaseMode {
@@ -325,6 +328,7 @@ impl ShowcaseMode {
             Self::Simulation => "45: Simulation & Animation",
             Self::DebugDraw => "46: Debug Draw",
             Self::SkinnedAnimation => "47: Skeletal Animation",
+            Self::Decals => "48: Decals",
         }
     }
 }
@@ -492,6 +496,9 @@ pub(crate) struct App {
 
     // --- Showcase 47 ---
     pub(crate) skin47_state: showcase_47_skinned_animation::Skin47State,
+
+    // --- Showcase 48 ---
+    pub(crate) decal48_state: showcase_48_decals::Decal48State,
 }
 
 // ---------------------------------------------------------------------------
@@ -672,6 +679,7 @@ impl eframe::App for App {
                     ShowcaseMode::Simulation,
                     ShowcaseMode::DebugDraw,
                     ShowcaseMode::SkinnedAnimation,
+                    ShowcaseMode::Decals,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1156,6 +1164,9 @@ impl eframe::App for App {
                                 pick_pos, vp_size, view_proj, shift, renderer,
                             );
                         }
+                    } else if self.mode == ShowcaseMode::Decals {
+                        let vp_size = glam::Vec2::new(rect.width(), rect.height());
+                        showcase_48_decals::decal48_place(self, pick_pos, vp_size);
                     } else {
                         self.handle_click_select(pick_pos, rect.width(), rect.height());
                     }
@@ -1426,7 +1437,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 47] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 48] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1474,6 +1485,7 @@ impl App {
             ShowcaseMode::Simulation,
             ShowcaseMode::DebugDraw,
             ShowcaseMode::SkinnedAnimation,
+            ShowcaseMode::Decals,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1603,6 +1615,7 @@ impl App {
             ShowcaseMode::Simulation => !self.sim45_state.built,
             ShowcaseMode::DebugDraw => !self.dbg_draw_state.built,
             ShowcaseMode::SkinnedAnimation => !self.skin47_state.built,
+            ShowcaseMode::Decals => !self.decal48_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -2061,6 +2074,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::Decals => {
+                showcase_48_decals::build_decal48_scene(self, renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::new(0.0, 2.0, 2.0),
+                    distance: 14.0,
+                    orientation: glam::Quat::from_rotation_z(0.0)
+                        * glam::Quat::from_rotation_x(1.1),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2165,6 +2188,9 @@ impl App {
             }
             ShowcaseMode::SkinnedAnimation => {
                 showcase_47_skinned_animation::controls_skin47(self, ui)
+            }
+            ShowcaseMode::Decals => {
+                showcase_48_decals::controls_decal48(self, ui)
             }
         }
     }
@@ -2942,6 +2968,22 @@ impl App {
                 let sg = self.skin47_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
+
+            ShowcaseMode::Decals => {
+                let items = if self.decal48_state.built {
+                    showcase_48_decals::decal48_scene_items(self)
+                } else {
+                    Vec::new()
+                };
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.5,
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [0.6, 0.6, 0.6],
+                    ..LightingSettings::default()
+                };
+                let sg = self.decal48_state.scene.version();
+                (items, Some(BG_COLOUR), lighting, sg, 0)
+            }
         };
 
         // Gizmo matrices for Interaction, ClipVolumes, and SceneRuntimeInteract modes.
@@ -3117,6 +3159,11 @@ impl App {
         // Debug Draw (Showcase 46): polylines, points, and labels from DebugDraw resource.
         if self.mode == ShowcaseMode::DebugDraw && self.dbg_draw_state.built {
             showcase_46_debug_draw::submit_dbg_draw_items(self, &mut fd);
+        }
+
+        // Decals (Showcase 48): push placed decals into fd.scene.decals.
+        if self.mode == ShowcaseMode::Decals && self.decal48_state.built {
+            showcase_48_decals::submit_decal48_items(self, &mut fd);
         }
 
 
