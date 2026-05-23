@@ -2,6 +2,13 @@
 
 ## Unreleased changes
 
+### Decals
+
+- Screen-space decal projection (D1): place a texture onto any opaque surface in the scene without modifying the receiver mesh. Add `DecalItem` entries to `SceneFrame::decals` each frame. Each item carries a model `transform` (the local box `[-0.5, 0.5]^3` defines the projection volume), a `texture_id` from `upload_texture`, a `blend_mode`, and an `alpha`. The renderer projects the decal texture onto whatever geometry lies inside the projection box by reading the opaque depth buffer and reconstructing world-space position per pixel. No per-receiver setup or mesh modification is needed.
+- Two blend modes: `DecalBlendMode::Replace` composites the decal colour over the receiver with standard alpha blending; `DecalBlendMode::Multiply` darkens the receiver (grime, weathering, footprints). Further modes can be added without API changes.
+- Decal pass ordering: decals run after the opaque pass and SSAA resolve, before transparent geometry. This means decals are visible beneath transparent surfaces and do not interfere with OIT accumulation.
+- Multiple decals per frame at reasonable cost: each decal is one fullscreen draw call (no vertex buffer). Fifty or more decals draw without measurable frame budget impact at typical viewport sizes.
+
 ### Runtime
 
 - Camera command writeback: plugins can drive the viewport camera through `RuntimeOutput::camera_commands` without ad hoc application glue. Emit `CameraCommand::SetCenter`, `OffsetCenter`, `SetDistance`, `SetOrientation`, or `BlendToward` from any plugin step. Call `output.apply_camera_commands(&mut camera)` after `step()` to apply them in emission order. Each command builds on the result of the previous. `camera_follow_target` is unchanged and the two mechanisms are independent.

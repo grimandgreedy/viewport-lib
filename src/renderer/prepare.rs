@@ -1306,6 +1306,18 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
+        // D1 : Screen-space decals.
+        // ------------------------------------------------------------------
+        self.decal_gpu_data.clear();
+        if !frame.scene.decals.is_empty() {
+            resources.ensure_decal_pipeline(device);
+            for item in &frame.scene.decals {
+                let gpu = resources.upload_decal_item(device, item);
+                self.decal_gpu_data.push(gpu);
+            }
+        }
+
+        // ------------------------------------------------------------------
         // Phase 17 : GPU marching cubes compute dispatch.
         // ------------------------------------------------------------------
         self.mc_gpu_data.clear();

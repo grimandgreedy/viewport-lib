@@ -1499,3 +1499,66 @@ impl Default for GaussianSplatItem {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Decal item (D1)
+// ---------------------------------------------------------------------------
+
+/// How a decal's colour is composited onto the receiver surface.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DecalBlendMode {
+    /// Alpha-blend the decal over the receiver colour (standard transparency).
+    #[default]
+    Replace,
+    /// Multiply the receiver colour by the decal colour (grime, dirt, weathering).
+    Multiply,
+}
+
+/// A screen-space decal projected onto whatever surface lies inside its volume.
+///
+/// The decal's projection volume is the unit box [-0.5, 0.5]^3 in local space.
+/// `transform` maps local space to world space: scale the local box to set the
+/// decal's world-space size, rotate to orient the projection direction, and
+/// translate to position it.
+///
+/// The decal texture is sampled using local XY as UVs. The Z axis of the local
+/// box is the projection direction (front face = +Z in local space).
+///
+/// `texture_id` must be a value returned by
+/// [`ViewportGpuResources::upload_texture`].
+///
+/// # Example
+/// ```rust,ignore
+/// let tex_id = resources.upload_texture(&device, &queue, &rgba_data, width, height);
+/// let mut decal = DecalItem::default();
+/// decal.transform = glam::Mat4::from_scale_rotation_translation(
+///     glam::Vec3::new(2.0, 2.0, 0.5),
+///     glam::Quat::IDENTITY,
+///     hit_point,
+/// ).to_cols_array_2d();
+/// decal.texture_id = tex_id;
+/// scene_frame.decals.push(decal);
+/// ```
+#[derive(Clone)]
+#[non_exhaustive]
+pub struct DecalItem {
+    /// Model matrix: local [-0.5, 0.5]^3 -> world space.
+    pub transform: [[f32; 4]; 4],
+    /// Texture ID from `resources.upload_texture()`.
+    pub texture_id: u64,
+    /// How the decal colour blends with the receiver. Default: `Replace`.
+    pub blend_mode: DecalBlendMode,
+    /// Overall opacity multiplier applied on top of the texture alpha. Default: 1.0.
+    pub alpha: f32,
+}
+
+impl Default for DecalItem {
+    fn default() -> Self {
+        Self {
+            transform: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            texture_id: 0,
+            blend_mode: DecalBlendMode::Replace,
+            alpha: 1.0,
+        }
+    }
+}

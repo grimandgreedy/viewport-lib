@@ -2005,6 +2005,49 @@ impl ViewportRenderer {
         }
 
         // -----------------------------------------------------------------------
+        // Decal pass (D1): projects each decal texture onto opaque surfaces.
+        // Reads scene depth as a texture; no depth attachment.
+        // Runs after opaque geometry and SSAA resolve, before transparent passes.
+        // -----------------------------------------------------------------------
+        if !self.decal_gpu_data.is_empty() {
+            let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+            let camera_bg = &self.viewport_slots[vp_idx].camera_bind_group;
+            let depth_bg = &slot_hdr.decal_depth_bg;
+            let replace_pipeline = self.resources.decal_replace_pipeline.as_ref();
+            let multiply_pipeline = self.resources.decal_multiply_pipeline.as_ref();
+            if replace_pipeline.is_some() || multiply_pipeline.is_some() {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("decal_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &slot_hdr.hdr_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_bind_group(0, camera_bg, &[]);
+                pass.set_bind_group(1, depth_bg, &[]);
+                for gpu in &self.decal_gpu_data {
+                    let pipeline = match gpu.blend_mode {
+                        crate::renderer::DecalBlendMode::Replace => replace_pipeline,
+                        crate::renderer::DecalBlendMode::Multiply => multiply_pipeline,
+                    };
+                    if let Some(pl) = pipeline {
+                        pass.set_pipeline(&pl.hdr);
+                        pass.set_bind_group(2, &gpu.bind_group, &[]);
+                        pass.draw(0..6, 0..1);
+                    }
+                }
+            }
+        }
+
+        // -----------------------------------------------------------------------
         // Sub-object highlight pass: face fill, edge lines, vertex sprites.
         // Runs after opaque geometry (depth buffer is ready) and before OIT so
         // highlights are not occluded by opaque surfaces.
