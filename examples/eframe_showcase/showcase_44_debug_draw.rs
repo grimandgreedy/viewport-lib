@@ -1,4 +1,4 @@
-//! Showcase 46: Debug Draw
+//! Showcase 44: Debug Draw
 //!
 //! Demonstrates the debug draw runtime visualization system. A post-simulation
 //! plugin reads contact events and scene node positions each frame, then submits

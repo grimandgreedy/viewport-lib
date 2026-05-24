@@ -1,4 +1,4 @@
-//! Showcase 47: Skeletal Animation (CPU Skinning)
+//! Showcase 45: Skeletal Animation (CPU Skinning)
 //!
 //! Demonstrates the skeletal animation substrate: Skeleton, Pose, SkeletonPlugin,
 //! and per-frame write_mesh_positions_normals to upload deformed vertex data.
@@ -430,10 +430,10 @@ pub(crate) fn build_skin47_scene(app: &mut App, renderer: &mut viewport_lib::Vie
         .upload_mesh_data(&app.device, &mesh_data)
         .expect("arm mesh upload");
 
-    app.skin47_state.mesh_id = Some(mesh_id);
-    app.skin47_state.bind_positions = positions.clone();
-    app.skin47_state.bind_normals = normals.clone();
-    app.skin47_state.bind_skin_weights = Some(skin_weights.clone());
+    app.skin_state.mesh_id = Some(mesh_id);
+    app.skin_state.bind_positions = positions.clone();
+    app.skin_state.bind_normals = normals.clone();
+    app.skin_state.bind_skin_weights = Some(skin_weights.clone());
 
     // Try to upload the glTF character if its asset file is present.
     let gltf_path = std::path::Path::new(GLTF_DEMO_PATH);
@@ -443,36 +443,36 @@ pub(crate) fn build_skin47_scene(app: &mut App, renderer: &mut viewport_lib::Vie
                 .resources_mut()
                 .upload_mesh_data(&app.device, &part.mesh_data)
                 .expect("glTF part mesh upload");
-            app.skin47_state.gltf_mesh_ids.push(id);
+            app.skin_state.gltf_mesh_ids.push(id);
         }
-        app.skin47_state.gltf_asset = Some(asset);
+        app.skin_state.gltf_asset = Some(asset);
     } else {
-        app.skin47_state.gltf_missing = true;
+        app.skin_state.gltf_missing = true;
     }
 
-    app.skin47_state.runtime = build_runtime_for_demo(
-        app.skin47_state.demo,
+    app.skin_state.runtime = build_runtime_for_demo(
+        app.skin_state.demo,
         mesh_id,
         &positions,
         &normals,
         &skin_weights,
-        &app.skin47_state.gltf_mesh_ids,
-        app.skin47_state.gltf_asset.as_ref(),
-        &app.skin47_state.crowd_actor_meshes,
-        app.skin47_state.crowd_count,
-        app.skin47_state.speed,
-        app.skin47_state.path,
+        &app.skin_state.gltf_mesh_ids,
+        app.skin_state.gltf_asset.as_ref(),
+        &app.skin_state.crowd_actor_meshes,
+        app.skin_state.crowd_count,
+        app.skin_state.speed,
+        app.skin_state.path,
     );
-    app.skin47_state.active_demo = app.skin47_state.demo;
-    populate_scene_for_demo(&mut app.skin47_state);
+    app.skin_state.active_demo = app.skin_state.demo;
+    populate_scene_for_demo(&mut app.skin_state);
 
     // Force the appearance toggles to apply on the first frame, otherwise
     // the scene shows whatever material build_skin47_scene set and ignores
     // the sidebar defaults until the user toggles something.
-    app.skin47_state.appearance_version =
-        app.skin47_state.appearance_version.wrapping_add(1);
+    app.skin_state.appearance_version =
+        app.skin_state.appearance_version.wrapping_add(1);
 
-    app.skin47_state.built = true;
+    app.skin_state.built = true;
 }
 
 /// Make the scene contain only the meshes belonging to the currently active
@@ -956,40 +956,40 @@ pub(crate) fn update_skin47(
     // CPU/GPU path. Path change also re-stamps `skin_instance` on the scene
     // nodes so the renderer routes through the skinned pipeline variant on
     // GPU and through the static pipeline on CPU.
-    let demo_changed = app.skin47_state.demo != app.skin47_state.active_demo;
-    let path_changed = app.skin47_state.path != app.skin47_state.active_path;
+    let demo_changed = app.skin_state.demo != app.skin_state.active_demo;
+    let path_changed = app.skin_state.path != app.skin_state.active_path;
     // Switching into GPU (from anywhere except a fresh GPU runtime) means
     // the bind-pose buffers may hold whatever CPU LBS last wrote; restore
     // them once before the GPU path takes over.
-    if path_changed && app.skin47_state.path == SkinningPath::Gpu {
-        app.skin47_state.needs_bind_pose_restore = true;
+    if path_changed && app.skin_state.path == SkinningPath::Gpu {
+        app.skin_state.needs_bind_pose_restore = true;
     }
     if demo_changed || path_changed {
         if let (Some(mesh_id), Some(skin_weights)) = (
-            app.skin47_state.mesh_id,
-            app.skin47_state.bind_skin_weights.clone(),
+            app.skin_state.mesh_id,
+            app.skin_state.bind_skin_weights.clone(),
         ) {
-            app.skin47_state.runtime = build_runtime_for_demo(
-                app.skin47_state.demo,
+            app.skin_state.runtime = build_runtime_for_demo(
+                app.skin_state.demo,
                 mesh_id,
-                &app.skin47_state.bind_positions,
-                &app.skin47_state.bind_normals,
+                &app.skin_state.bind_positions,
+                &app.skin_state.bind_normals,
                 &skin_weights,
-                &app.skin47_state.gltf_mesh_ids,
-                app.skin47_state.gltf_asset.as_ref(),
-                &app.skin47_state.crowd_actor_meshes,
-                app.skin47_state.crowd_count,
-                app.skin47_state.speed,
-                app.skin47_state.path,
+                &app.skin_state.gltf_mesh_ids,
+                app.skin_state.gltf_asset.as_ref(),
+                &app.skin_state.crowd_actor_meshes,
+                app.skin_state.crowd_count,
+                app.skin_state.speed,
+                app.skin_state.path,
             );
-            app.skin47_state.active_demo = app.skin47_state.demo;
-            app.skin47_state.active_path = app.skin47_state.path;
-            populate_scene_for_demo(&mut app.skin47_state);
-            restamp_skin_instances(&mut app.skin47_state);
+            app.skin_state.active_demo = app.skin_state.demo;
+            app.skin_state.active_path = app.skin_state.path;
+            populate_scene_for_demo(&mut app.skin_state);
+            restamp_skin_instances(&mut app.skin_state);
             // New nodes need the current appearance toggles applied on next
             // pass through `apply_skin47_updates`.
-            app.skin47_state.applied_appearance_version =
-                app.skin47_state.appearance_version.wrapping_sub(1);
+            app.skin_state.applied_appearance_version =
+                app.skin_state.appearance_version.wrapping_sub(1);
         }
     }
 
@@ -1000,64 +1000,64 @@ pub(crate) fn update_skin47(
     frame_ctx.viewport_size = glam::Vec2::new(800.0, 600.0);
 
     let t0 = std::time::Instant::now();
-    let output = app.skin47_state.runtime.step(
-        &mut app.skin47_state.scene,
-        &mut app.skin47_state.selection,
+    let output = app.skin_state.runtime.step(
+        &mut app.skin_state.scene,
+        &mut app.skin_state.selection,
         &frame_ctx,
     );
     let step_us = t0.elapsed().as_micros() as f32;
     // Exponential smoothing so the readout is steady enough to read.
     let alpha = 0.1_f32;
-    app.skin47_state.last_step_us =
-        alpha * step_us + (1.0 - alpha) * app.skin47_state.last_step_us;
+    app.skin_state.last_step_us =
+        alpha * step_us + (1.0 - alpha) * app.skin_state.last_step_us;
 
     // Hand the right update channel through to build_frame_data.
-    app.skin47_state.pending_updates = output.skinned_mesh_updates;
-    app.skin47_state.pending_pose_updates = output.skinned_pose_updates;
+    app.skin_state.pending_updates = output.skinned_mesh_updates;
+    app.skin_state.pending_pose_updates = output.skinned_pose_updates;
 
     // Crowd picking: capture this frame's deformed positions (if any) so the
     // `RefreshPerFrame` strategy can test against them, then run a pick when
     // the user clicked. Strategy / padding changes are reflected on the next
     // frame by rebuilding the accelerator from scratch.
-    if app.skin47_state.demo == Skin47Demo::Crowd {
-        app.skin47_state.crowd_pick_deformed_positions.clear();
-        if app.skin47_state.crowd_pick_strategy == CrowdPickStrategy::RefreshPerFrame {
-            for u in &app.skin47_state.pending_updates {
-                app.skin47_state
+    if app.skin_state.demo == Skin47Demo::Crowd {
+        app.skin_state.crowd_pick_deformed_positions.clear();
+        if app.skin_state.crowd_pick_strategy == CrowdPickStrategy::RefreshPerFrame {
+            for u in &app.skin_state.pending_updates {
+                app.skin_state
                     .crowd_pick_deformed_positions
                     .insert(u.mesh_id, u.positions.clone());
             }
         }
 
-        let strategy_changed = app.skin47_state.crowd_pick_strategy
-            != app.skin47_state.crowd_pick_strategy_active
-            || (app.skin47_state.crowd_pick_padding
-                - app.skin47_state.crowd_pick_padding_active)
+        let strategy_changed = app.skin_state.crowd_pick_strategy
+            != app.skin_state.crowd_pick_strategy_active
+            || (app.skin_state.crowd_pick_padding
+                - app.skin_state.crowd_pick_padding_active)
                 .abs()
                 > f32::EPSILON;
         if strategy_changed {
-            rebuild_crowd_pick_acc(&mut app.skin47_state);
+            rebuild_crowd_pick_acc(&mut app.skin_state);
         }
 
-        if clicked && app.skin47_state.crowd_pick_acc.is_some() {
+        if clicked && app.skin_state.crowd_pick_acc.is_some() {
             let camera = app.camera.clone();
-            let mut selection = std::mem::take(&mut app.skin47_state.selection);
+            let mut selection = std::mem::take(&mut app.skin_state.selection);
             pick_crowd(
-                &mut app.skin47_state,
+                &mut app.skin_state,
                 &mut selection,
                 cursor,
                 viewport_size,
                 &camera,
             );
-            app.skin47_state.selection = selection;
+            app.skin_state.selection = selection;
         }
-    } else if app.skin47_state.crowd_pick_acc.is_some() {
+    } else if app.skin_state.crowd_pick_acc.is_some() {
         // Leaving the crowd demo: drop pick state so it doesn't survive a
         // demo switch (it would be stale anyway because crowd nodes change).
-        app.skin47_state.crowd_pick_acc = None;
-        app.skin47_state.crowd_pick_strategy_active = CrowdPickStrategy::Off;
-        app.skin47_state.crowd_last_pick = None;
-        app.skin47_state.selection.clear();
+        app.skin_state.crowd_pick_acc = None;
+        app.skin_state.crowd_pick_strategy_active = CrowdPickStrategy::Off;
+        app.skin_state.crowd_last_pick = None;
+        app.skin_state.selection.clear();
     }
 }
 
@@ -1370,65 +1370,65 @@ fn restore_bind_pose_buffers(
 pub(crate) fn apply_skin47_updates(app: &mut App, renderer: &mut viewport_lib::ViewportRenderer) {
     // Crowd: respond to slider changes by uploading extra mesh copies (if
     // needed) and rebuilding the runtime + scene at the new actor count.
-    if app.skin47_state.demo == Skin47Demo::Crowd
-        && app.skin47_state.crowd_count != app.skin47_state.crowd_count_active
+    if app.skin_state.demo == Skin47Demo::Crowd
+        && app.skin_state.crowd_count != app.skin_state.crowd_count_active
     {
-        let desired = app.skin47_state.crowd_count;
-        ensure_crowd_uploads(&mut app.skin47_state, &app.device, renderer, desired);
+        let desired = app.skin_state.crowd_count;
+        ensure_crowd_uploads(&mut app.skin_state, &app.device, renderer, desired);
 
         // Drop existing crowd nodes so populate_scene_for_demo rebuilds with
         // the new count and grid layout.
-        for id in app.skin47_state.crowd_nodes.drain(..) {
-            app.skin47_state.scene.remove(id);
+        for id in app.skin_state.crowd_nodes.drain(..) {
+            app.skin_state.scene.remove(id);
         }
 
         if let (Some(mesh_id), Some(skin_weights)) = (
-            app.skin47_state.mesh_id,
-            app.skin47_state.bind_skin_weights.clone(),
+            app.skin_state.mesh_id,
+            app.skin_state.bind_skin_weights.clone(),
         ) {
-            app.skin47_state.runtime = build_runtime_for_demo(
-                app.skin47_state.demo,
+            app.skin_state.runtime = build_runtime_for_demo(
+                app.skin_state.demo,
                 mesh_id,
-                &app.skin47_state.bind_positions,
-                &app.skin47_state.bind_normals,
+                &app.skin_state.bind_positions,
+                &app.skin_state.bind_normals,
                 &skin_weights,
-                &app.skin47_state.gltf_mesh_ids,
-                app.skin47_state.gltf_asset.as_ref(),
-                &app.skin47_state.crowd_actor_meshes,
+                &app.skin_state.gltf_mesh_ids,
+                app.skin_state.gltf_asset.as_ref(),
+                &app.skin_state.crowd_actor_meshes,
                 desired,
-                app.skin47_state.speed,
-                app.skin47_state.path,
+                app.skin_state.speed,
+                app.skin_state.path,
             );
         }
-        populate_scene_for_demo(&mut app.skin47_state);
-        restamp_skin_instances(&mut app.skin47_state);
-        app.skin47_state.applied_appearance_version =
-            app.skin47_state.appearance_version.wrapping_sub(1);
-        app.skin47_state.crowd_count_active = desired;
+        populate_scene_for_demo(&mut app.skin_state);
+        restamp_skin_instances(&mut app.skin_state);
+        app.skin_state.applied_appearance_version =
+            app.skin_state.appearance_version.wrapping_sub(1);
+        app.skin_state.crowd_count_active = desired;
 
         // The crowd rebuilt: the pick BVH points at the previous scene's
         // nodes, so rebuild it next pass.
-        app.skin47_state.crowd_pick_acc = None;
-        app.skin47_state.crowd_pick_strategy_active = CrowdPickStrategy::Off;
-        app.skin47_state.crowd_last_pick = None;
-        rebuild_crowd_pick_acc(&mut app.skin47_state);
+        app.skin_state.crowd_pick_acc = None;
+        app.skin_state.crowd_pick_strategy_active = CrowdPickStrategy::Off;
+        app.skin_state.crowd_last_pick = None;
+        rebuild_crowd_pick_acc(&mut app.skin_state);
     }
 
     // Apply appearance toggles (opacity, wireframe, PBR, matcap, two-sided)
     // to every skinned node in the active demo.
-    apply_skin47_appearance(&mut app.skin47_state, renderer);
+    apply_skin47_appearance(&mut app.skin_state, renderer);
 
     // CPU -> GPU transition: re-upload bind-pose positions/normals for every
     // mesh the CPU path may have stomped, so the GPU shader applies LBS to
     // the bind pose rather than to last-frame's deformed pose.
-    if app.skin47_state.needs_bind_pose_restore {
-        restore_bind_pose_buffers(&mut app.skin47_state, &app.queue, renderer);
-        app.skin47_state.needs_bind_pose_restore = false;
+    if app.skin_state.needs_bind_pose_restore {
+        restore_bind_pose_buffers(&mut app.skin_state, &app.queue, renderer);
+        app.skin_state.needs_bind_pose_restore = false;
     }
 
     // CPU path: blit deformed positions/normals back into the bind-pose
     // vertex buffer for every emitted mesh.
-    for u in app.skin47_state.pending_updates.drain(..) {
+    for u in app.skin_state.pending_updates.drain(..) {
         let _ = renderer
             .resources_mut()
             .write_mesh_positions_normals(&app.queue, u.mesh_id, &u.positions, &u.normals);
@@ -1438,15 +1438,15 @@ pub(crate) fn apply_skin47_updates(app: &mut App, renderer: &mut viewport_lib::V
     // the GPU path, then push the per-(mesh, instance) joint palette for the
     // current frame. The renderer's skinned pipeline variant takes over once
     // both the weights sidecar and the palette are present.
-    if !app.skin47_state.pending_pose_updates.is_empty() {
-        let pose_updates = std::mem::take(&mut app.skin47_state.pending_pose_updates);
+    if !app.skin_state.pending_pose_updates.is_empty() {
+        let pose_updates = std::mem::take(&mut app.skin_state.pending_pose_updates);
         for u in &pose_updates {
-            if !app.skin47_state.skin_weights_uploaded.contains(&u.mesh_id) {
-                if let Some(w) = weights_for_mesh(&app.skin47_state, u.mesh_id) {
+            if !app.skin_state.skin_weights_uploaded.contains(&u.mesh_id) {
+                if let Some(w) = weights_for_mesh(&app.skin_state, u.mesh_id) {
                     renderer
                         .resources_mut()
                         .set_skin_weights(&app.device, u.mesh_id, &w);
-                    app.skin47_state.skin_weights_uploaded.insert(u.mesh_id);
+                    app.skin_state.skin_weights_uploaded.insert(u.mesh_id);
                 }
             }
             renderer.resources_mut().set_skin_palette(
@@ -1491,9 +1491,9 @@ fn weights_for_mesh(state: &Skin47State, mesh_id: MeshId) -> Option<SkinWeights>
 // ---------------------------------------------------------------------------
 
 pub(crate) fn skin47_scene_items(app: &mut App) -> Vec<viewport_lib::SceneRenderItem> {
-    app.skin47_state
+    app.skin_state
         .scene
-        .collect_render_items(&app.skin47_state.selection)
+        .collect_render_items(&app.skin_state.selection)
 }
 
 // ---------------------------------------------------------------------------
@@ -1507,24 +1507,24 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
         ui.separator();
 
         ui.label("Demo:");
-        let current = app.skin47_state.demo;
+        let current = app.skin_state.demo;
         egui::ComboBox::from_id_salt("skin47_demo")
             .selected_text(current.label())
             .show_ui(ui, |ui| {
                 for d in Skin47Demo::all() {
-                    ui.selectable_value(&mut app.skin47_state.demo, d, d.label());
+                    ui.selectable_value(&mut app.skin_state.demo, d, d.label());
                 }
             });
         ui.add_space(6.0);
 
         ui.label("Skinning path:");
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut app.skin47_state.path, SkinningPath::Cpu, "CPU");
-            ui.selectable_value(&mut app.skin47_state.path, SkinningPath::Gpu, "GPU");
+            ui.selectable_value(&mut app.skin_state.path, SkinningPath::Cpu, "CPU");
+            ui.selectable_value(&mut app.skin_state.path, SkinningPath::Gpu, "GPU");
         });
         ui.label(format!(
             "runtime.step() avg: {:.0} us",
-            app.skin47_state.last_step_us
+            app.skin_state.last_step_us
         ));
         ui.label("CPU: re-uploads vertex buffers each frame.");
         ui.label("GPU: uploads joint palette only; shader does LBS.");
@@ -1536,41 +1536,41 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
         ui.label("Use these with GPU path to exercise the 5.3 variants.");
         ui.add_space(4.0);
         let mut changed = false;
-        let mut opacity = app.skin47_state.opacity;
+        let mut opacity = app.skin_state.opacity;
         if ui
             .add(egui::Slider::new(&mut opacity, 0.05..=1.0).text("Opacity"))
             .changed()
         {
-            app.skin47_state.opacity = opacity;
+            app.skin_state.opacity = opacity;
             changed = true;
         }
         if ui
-            .checkbox(&mut app.skin47_state.per_item_wireframe, "Wireframe")
+            .checkbox(&mut app.skin_state.per_item_wireframe, "Wireframe")
             .changed()
         {
             changed = true;
         }
         if ui
-            .checkbox(&mut app.skin47_state.use_pbr, "PBR shading")
+            .checkbox(&mut app.skin_state.use_pbr, "PBR shading")
             .changed()
         {
             changed = true;
         }
         if ui
-            .checkbox(&mut app.skin47_state.use_matcap, "Matcap (Jade)")
+            .checkbox(&mut app.skin_state.use_matcap, "Matcap (Jade)")
             .changed()
         {
             changed = true;
         }
         if ui
-            .checkbox(&mut app.skin47_state.two_sided, "Two-sided (Tint)")
+            .checkbox(&mut app.skin_state.two_sided, "Two-sided (Tint)")
             .changed()
         {
             changed = true;
         }
         if changed {
-            app.skin47_state.appearance_version =
-                app.skin47_state.appearance_version.wrapping_add(1);
+            app.skin_state.appearance_version =
+                app.skin_state.appearance_version.wrapping_add(1);
         }
         ui.label("Opacity < 1 -> skinned transparent pipeline.");
         ui.label("Wireframe -> skinned wireframe pipeline.");
@@ -1579,17 +1579,17 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
         ui.add_space(6.0);
         ui.separator();
 
-        match app.skin47_state.demo {
+        match app.skin_state.demo {
             Skin47Demo::SineWaveArm => {
                 ui.label("Bending speed:");
-                let mut speed = app.skin47_state.speed;
+                let mut speed = app.skin_state.speed;
                 if ui
                     .add(egui::Slider::new(&mut speed, 0.0..=4.0).text("rad/s"))
                     .changed()
                 {
-                    app.skin47_state.speed = speed;
+                    app.skin_state.speed = speed;
                     // PoseDriver reads BendSpeed from resources each frame.
-                    app.skin47_state.runtime.resources_mut().insert(BendSpeed(speed));
+                    app.skin_state.runtime.resources_mut().insert(BendSpeed(speed));
                 }
                 ui.add_space(6.0);
 
@@ -1603,14 +1603,14 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
             }
             Skin47Demo::ClipDrivenArm => {
                 ui.label("Playback speed:");
-                let mut speed = app.skin47_state.speed;
+                let mut speed = app.skin_state.speed;
                 if ui
                     .add(egui::Slider::new(&mut speed, 0.0..=4.0).text("x"))
                     .changed()
                 {
-                    app.skin47_state.speed = speed;
+                    app.skin_state.speed = speed;
                     // Rebuild on the next frame so the new speed takes effect.
-                    app.skin47_state.active_demo = Skin47Demo::SineWaveArm;
+                    app.skin_state.active_demo = Skin47Demo::SineWaveArm;
                 }
                 ui.add_space(6.0);
 
@@ -1623,14 +1623,14 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                 ui.label("- Bind pose carries joint 1 translation; clip only animates rotation.");
             }
             Skin47Demo::GltfCharacter => {
-                if app.skin47_state.gltf_asset.is_none() {
+                if app.skin_state.gltf_asset.is_none() {
                     ui.label("No glTF asset loaded.");
                     ui.add_space(6.0);
                     ui.label("Drop a skinned .glb (or .gltf with its buffers next to it) at:");
                     ui.code(GLTF_DEMO_PATH);
                     ui.add_space(4.0);
                     ui.label("Restart the showcase to load it.");
-                    if app.skin47_state.gltf_missing {
+                    if app.skin_state.gltf_missing {
                         ui.add_space(4.0);
                         ui.label("(File not found on the last startup.)");
                     }
@@ -1638,7 +1638,7 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                     // Clip selector. Switching clips triggers a runtime
                     // rebuild on the next frame.
                     let mut switch_clip: Option<usize> = None;
-                    if let Some(asset) = app.skin47_state.gltf_asset.as_ref() {
+                    if let Some(asset) = app.skin_state.gltf_asset.as_ref() {
                         ui.label(format!(
                             "{} mesh parts, {} animation clips",
                             asset.parts.len(),
@@ -1663,22 +1663,22 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                             });
                     }
                     if let Some(i) = switch_clip {
-                        if let Some(asset) = app.skin47_state.gltf_asset.as_mut() {
+                        if let Some(asset) = app.skin_state.gltf_asset.as_mut() {
                             asset.active_clip = i;
                         }
                         // Force a runtime rebuild next frame.
-                        app.skin47_state.active_demo = Skin47Demo::SineWaveArm;
+                        app.skin_state.active_demo = Skin47Demo::SineWaveArm;
                     }
                     ui.add_space(6.0);
 
                     ui.label("Playback speed:");
-                    let mut speed = app.skin47_state.speed;
+                    let mut speed = app.skin_state.speed;
                     if ui
                         .add(egui::Slider::new(&mut speed, 0.0..=4.0).text("x"))
                         .changed()
                     {
-                        app.skin47_state.speed = speed;
-                        app.skin47_state.active_demo = Skin47Demo::SineWaveArm;
+                        app.skin_state.speed = speed;
+                        app.skin_state.active_demo = Skin47Demo::SineWaveArm;
                     }
                     ui.add_space(6.0);
                     ui.separator();
@@ -1691,7 +1691,7 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                 }
             }
             Skin47Demo::Crowd => {
-                if app.skin47_state.gltf_asset.is_none() {
+                if app.skin_state.gltf_asset.is_none() {
                     ui.label("No glTF asset loaded.");
                     ui.add_space(6.0);
                     ui.label("The crowd demo reuses the glTF character; drop a .glb at:");
@@ -1700,51 +1700,51 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                     ui.label("Restart the showcase to load it.");
                 } else {
                     ui.label("Crowd size:");
-                    let mut n = app.skin47_state.crowd_count;
+                    let mut n = app.skin_state.crowd_count;
                     let max_n = 100usize;
                     if ui
                         .add(egui::Slider::new(&mut n, 1..=max_n).text("actors"))
                         .changed()
                     {
-                        app.skin47_state.crowd_count = n;
+                        app.skin_state.crowd_count = n;
                         // apply_skin47_updates will notice the mismatch and
                         // upload + rebuild on the next frame.
                     }
                     ui.add_space(6.0);
 
                     ui.label("Playback speed:");
-                    let mut speed = app.skin47_state.speed;
+                    let mut speed = app.skin_state.speed;
                     if ui
                         .add(egui::Slider::new(&mut speed, 0.0..=4.0).text("x"))
                         .changed()
                     {
-                        app.skin47_state.speed = speed;
+                        app.skin_state.speed = speed;
                         // Force a rebuild on the next apply pass.
-                        app.skin47_state.crowd_count_active =
-                            app.skin47_state.crowd_count_active.wrapping_add(1);
+                        app.skin_state.crowd_count_active =
+                            app.skin_state.crowd_count_active.wrapping_add(1);
                     }
                     ui.add_space(6.0);
 
-                    if let Some(asset) = app.skin47_state.gltf_asset.as_ref() {
+                    if let Some(asset) = app.skin_state.gltf_asset.as_ref() {
                         ui.label(format!(
                             "{} actors x {} parts = {} skinned meshes",
-                            app.skin47_state.crowd_count,
+                            app.skin_state.crowd_count,
                             asset.parts.len(),
-                            app.skin47_state.crowd_count * asset.parts.len(),
+                            app.skin_state.crowd_count * asset.parts.len(),
                         ));
                     }
 
                     ui.separator();
                     ui.label("Picking (Phase 6):");
                     ui.label("Click a crowd member to pick it. Two CPU strategies:");
-                    let current = app.skin47_state.crowd_pick_strategy;
+                    let current = app.skin_state.crowd_pick_strategy;
                     egui::ComboBox::from_id_salt("skin47_crowd_pick_strategy")
                         .selected_text(current.label())
                         .show_ui(ui, |ui| {
                             for s in CrowdPickStrategy::all() {
                                 let mut allow_select = true;
                                 if s == CrowdPickStrategy::RefreshPerFrame
-                                    && app.skin47_state.path == SkinningPath::Gpu
+                                    && app.skin_state.path == SkinningPath::Gpu
                                 {
                                     // GPU path doesn't send deformed positions
                                     // back; refresh strategy has nothing to
@@ -1753,7 +1753,7 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                                 }
                                 ui.add_enabled_ui(allow_select, |ui| {
                                     ui.selectable_value(
-                                        &mut app.skin47_state.crowd_pick_strategy,
+                                        &mut app.skin_state.crowd_pick_strategy,
                                         s,
                                         s.label(),
                                     );
@@ -1761,10 +1761,10 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                             }
                         });
 
-                    if app.skin47_state.crowd_pick_strategy
+                    if app.skin_state.crowd_pick_strategy
                         == CrowdPickStrategy::BindPosePadded
                     {
-                        let mut p = app.skin47_state.crowd_pick_padding;
+                        let mut p = app.skin_state.crowd_pick_padding;
                         if ui
                             .add(
                                 egui::Slider::new(&mut p, 0.0..=1.0)
@@ -1772,7 +1772,7 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                             )
                             .changed()
                         {
-                            app.skin47_state.crowd_pick_padding = p;
+                            app.skin_state.crowd_pick_padding = p;
                         }
                         ui.label(
                             "Fraction of longest side added on every axis.",
@@ -1780,9 +1780,9 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                         ui.label("Smaller = tighter BVH (may miss extreme poses).");
                     }
 
-                    if app.skin47_state.crowd_pick_strategy
+                    if app.skin_state.crowd_pick_strategy
                         == CrowdPickStrategy::RefreshPerFrame
-                        && app.skin47_state.path == SkinningPath::Gpu
+                        && app.skin_state.path == SkinningPath::Gpu
                     {
                         ui.colored_label(
                             egui::Color32::YELLOW,
@@ -1790,7 +1790,7 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                         );
                     }
 
-                    match app.skin47_state.crowd_last_pick {
+                    match app.skin_state.crowd_last_pick {
                         Some((node_id, actor_idx, strat)) => {
                             ui.label(format!(
                                 "Last pick: actor {} (node {}) via {}",
