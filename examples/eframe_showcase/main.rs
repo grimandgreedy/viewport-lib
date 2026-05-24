@@ -2084,16 +2084,6 @@ impl App {
             }
             ShowcaseMode::Decals => {
                 showcase_48_decals::build_decal48_scene(self, renderer);
-                // Wall is in XZ plane at y=0, 8 wide, 4 tall (z 0..4).
-                // Camera orbits from +Y so the wall face (+Y normal) is visible.
-                self.camera = Camera {
-                    center: glam::Vec3::new(0.0, 0.0, 2.0),
-                    distance: 12.0,
-                    orientation: glam::Quat::from_rotation_x(
-                        std::f32::consts::FRAC_PI_2,
-                    ),
-                    ..Camera::default()
-                };
             }
             _ => {}
         }
