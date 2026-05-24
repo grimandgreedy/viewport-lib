@@ -2157,16 +2157,28 @@ impl ViewportGpuResources {
         if self.decal_depth_bgl.is_none() {
             let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("decal_depth_bgl"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Uint,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                ],
             });
             self.decal_depth_bgl = Some(bgl);
         }
@@ -2257,6 +2269,10 @@ impl ViewportGpuResources {
         let hdr_depth_view = hdr_depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
         let hdr_depth_only_view = hdr_depth_tex.create_view(&wgpu::TextureViewDescriptor {
             aspect: wgpu::TextureAspect::DepthOnly,
+            ..Default::default()
+        });
+        let hdr_stencil_only_view = hdr_depth_tex.create_view(&wgpu::TextureViewDescriptor {
+            aspect: wgpu::TextureAspect::StencilOnly,
             ..Default::default()
         });
 
@@ -3114,7 +3130,7 @@ impl ViewportGpuResources {
                 (None, None, None)
             };
 
-        let decal_depth_bg = self.create_decal_depth_bg(device, &hdr_depth_only_view);
+        let decal_depth_bg = self.create_decal_depth_bg(device, &hdr_depth_only_view, &hdr_stencil_only_view);
 
         ViewportHdrState {
             hdr_texture: hdr_tex,
@@ -3122,6 +3138,7 @@ impl ViewportGpuResources {
             hdr_depth_texture: hdr_depth_tex,
             hdr_depth_view,
             hdr_depth_only_view,
+            hdr_stencil_only_view,
             bloom_threshold_texture: bloom_threshold_tex,
             bloom_threshold_view,
             bloom_ping_texture: bloom_ping_tex,
