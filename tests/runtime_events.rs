@@ -14,20 +14,13 @@ use viewport_lib::interaction::selection::Selection;
 use viewport_lib::scene::scene::Scene;
 use std::sync::{Arc, Mutex};
 
-fn make_frame<'a>(camera: &'a Camera, input: &'a ActionFrame) -> RuntimeFrameContext<'a> {
-    RuntimeFrameContext {
-        dt: 1.0 / 60.0,
-        camera,
-        viewport_size: glam::Vec2::new(800.0, 600.0),
-        input,
-        pick_hit: None,
-        clicked: false,
-        drag_started: false,
-        dragging: false,
-        pointer_delta: glam::Vec2::ZERO,
-        cursor_viewport: None,
-        shift_held: false,
-    }
+fn make_frame(camera: &Camera, input: &ActionFrame) -> RuntimeFrameContext {
+    let mut frame = RuntimeFrameContext::default();
+    frame.dt = 1.0 / 60.0;
+    frame.camera = camera.clone();
+    frame.viewport_size = glam::Vec2::new(800.0, 600.0);
+    frame.input = input.clone();
+    frame
 }
 
 fn step(runtime: &mut ViewportRuntime) -> viewport_lib::runtime::RuntimeOutput {
@@ -231,19 +224,12 @@ fn diagnostics_emitted_once_per_wall_frame_regardless_of_fixed_timestep() {
     let mut sel = Selection::new();
 
     // 30 fps wall clock -> 2 fixed steps, but WRITEBACK runs once.
-    let output = runtime.step(&mut scene, &mut sel, &RuntimeFrameContext {
-        dt: 1.0 / 30.0,
-        camera: &camera,
-        viewport_size: glam::Vec2::new(800.0, 600.0),
-        input: &input,
-        pick_hit: None,
-        clicked: false,
-        drag_started: false,
-        dragging: false,
-        pointer_delta: glam::Vec2::ZERO,
-        cursor_viewport: None,
-        shift_held: false,
-    });
+    let mut fixed_frame = RuntimeFrameContext::default();
+    fixed_frame.dt = 1.0 / 30.0;
+    fixed_frame.camera = camera.clone();
+    fixed_frame.viewport_size = glam::Vec2::new(800.0, 600.0);
+    fixed_frame.input = input.clone();
+    let output = runtime.step(&mut scene, &mut sel, &fixed_frame);
 
     assert_eq!(output.events.count::<FrameDiagnostics>(), 1);
 }

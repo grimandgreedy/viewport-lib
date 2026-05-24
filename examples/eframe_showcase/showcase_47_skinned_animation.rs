@@ -18,7 +18,7 @@
 
 use eframe::egui;
 use viewport_lib::{
-    ActionFrame, AnimationClip, BuiltinMatcap, Channel, ClipPlayerPlugin, Interpolation, Joint,
+    AnimationClip, BuiltinMatcap, Channel, ClipPlayerPlugin, Interpolation, Joint,
     Material, MatcapId, MeshId, MeshData, PickAccelerator, Pose, RuntimeFrameContext,
     RuntimePlugin, RuntimeStepContext, Sampler, Skeleton, SkeletonPlugin, SkinnedActor,
     SkinnedActorPart, SkinnedActorPlugin, SkinnedMeshUpdate, SkinnedPoseUpdate, SkinningPath,
@@ -994,19 +994,10 @@ pub(crate) fn update_skin47(
     }
 
     let camera = app.camera.clone();
-    let frame_ctx = RuntimeFrameContext {
-        dt,
-        camera: &camera,
-        viewport_size: glam::Vec2::new(800.0, 600.0),
-        input: &ActionFrame::default(),
-        pick_hit: None,
-        clicked: false,
-        drag_started: false,
-        dragging: false,
-        pointer_delta: glam::Vec2::ZERO,
-        cursor_viewport: None,
-        shift_held: false,
-    };
+    let mut frame_ctx = RuntimeFrameContext::default();
+    frame_ctx.dt = dt;
+    frame_ctx.camera = camera.clone();
+    frame_ctx.viewport_size = glam::Vec2::new(800.0, 600.0);
 
     let t0 = std::time::Instant::now();
     let output = app.skin47_state.runtime.step(

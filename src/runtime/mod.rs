@@ -19,12 +19,11 @@
 //!     .with_plugin(MyPhysicsPlugin::new());
 //!
 //! // Each frame:
-//! let frame_ctx = RuntimeFrameContext {
-//!     dt: wall_dt,
-//!     camera: &camera,
-//!     viewport_size: glam::Vec2::new(width, height),
-//!     input: &action_frame,
-//! };
+//! let mut frame_ctx = RuntimeFrameContext::default();
+//! frame_ctx.dt = wall_dt;
+//! frame_ctx.camera = camera.clone();
+//! frame_ctx.viewport_size = glam::Vec2::new(width, height);
+//! frame_ctx.input = action_frame.clone();
 //! let output = runtime.step(&mut scene, &mut selection, &frame_ctx);
 //!
 //! // Handle contact events in game logic:
@@ -45,6 +44,8 @@ pub mod context;
 /// Debug draw accumulator for runtime plugins.
 pub mod debug_draw;
 pub mod events;
+/// Plugin authoring guide.
+pub mod guide;
 /// Async job handoff types for runtime plugins.
 pub mod jobs;
 pub mod mode;
@@ -124,12 +125,12 @@ mod tests {
     use crate::scene::scene::Scene;
     use std::sync::{Arc, Mutex};
 
-    fn make_frame<'a>(camera: &'a Camera, input: &'a ActionFrame, dt: f32) -> RuntimeFrameContext<'a> {
+    fn make_frame(camera: &Camera, input: &ActionFrame, dt: f32) -> RuntimeFrameContext {
         RuntimeFrameContext {
             dt,
-            camera,
+            camera: camera.clone(),
             viewport_size: glam::Vec2::new(800.0, 600.0),
-            input,
+            input: input.clone(),
             pick_hit: None,
             clicked: false,
             drag_started: false,

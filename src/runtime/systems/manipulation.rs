@@ -152,7 +152,7 @@ impl ManipulationSystem {
             clicked: frame.clicked,
         };
 
-        let result = self.controller.update(frame.input, manip_ctx);
+        let result = self.controller.update(&frame.input, manip_ctx);
 
         match result {
             ManipResult::Update(delta) => {

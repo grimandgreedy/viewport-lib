@@ -168,19 +168,18 @@ pub(crate) fn update_rt_interact(
     };
 
     let camera = app.camera.clone();
-    let frame_ctx = RuntimeFrameContext {
-        dt,
-        camera: &camera,
-        viewport_size,
-        input: action_frame,
-        pick_hit,
-        clicked,
-        drag_started,
-        dragging,
-        pointer_delta,
-        cursor_viewport: Some(cursor),
-        shift_held,
-    };
+    let mut frame_ctx = RuntimeFrameContext::default();
+    frame_ctx.dt = dt;
+    frame_ctx.camera = camera.clone();
+    frame_ctx.viewport_size = viewport_size;
+    frame_ctx.input = action_frame.clone();
+    frame_ctx.pick_hit = pick_hit;
+    frame_ctx.clicked = clicked;
+    frame_ctx.drag_started = drag_started;
+    frame_ctx.dragging = dragging;
+    frame_ctx.pointer_delta = pointer_delta;
+    frame_ctx.cursor_viewport = Some(cursor);
+    frame_ctx.shift_held = shift_held;
 
     let was = app.rt_interact_state.was_manipulating;
     app.rt_interact_state.runtime.step(

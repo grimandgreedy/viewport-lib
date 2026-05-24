@@ -24,9 +24,8 @@
 //! in one place rather than scattered between `runtime/<feature>.rs` and
 //! `runtime/plugins/<feature>.rs`.
 //!
-//! The single-file plugins below (`animation`, `constraint`, `physics_lite`)
-//! predate this convention. New work should follow the subdirectory layout;
-//! existing single-file plugins migrate when they next grow a second file.
+//! All plugins follow the subdirectory layout. Use the [`skeleton_plugin`] module
+//! as the template for new plugins.
 
 pub mod animation;
 pub mod constraint;

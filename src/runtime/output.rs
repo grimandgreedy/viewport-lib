@@ -190,6 +190,7 @@ pub struct SkinnedPoseUpdate {
 /// Plugin-authored camera changes are in `camera_commands`; apply them with
 /// `output.apply_camera_commands(&mut camera)`.
 #[derive(Default)]
+#[non_exhaustive]
 pub struct RuntimeOutput {
     /// Transform ops applied to the scene during this step.
     pub node_transform_ops: Vec<NodeTransformOp>,

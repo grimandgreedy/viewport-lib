@@ -137,20 +137,13 @@ impl RuntimePlugin for ReaderPlugin {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn make_frame<'a>(camera: &'a Camera, input: &'a ActionFrame, dt: f32) -> RuntimeFrameContext<'a> {
-    RuntimeFrameContext {
-        dt,
-        camera,
-        viewport_size: glam::Vec2::new(800.0, 600.0),
-        input,
-        pick_hit: None,
-        clicked: false,
-        drag_started: false,
-        dragging: false,
-        pointer_delta: glam::Vec2::ZERO,
-        cursor_viewport: None,
-        shift_held: false,
-    }
+fn make_frame(camera: &Camera, input: &ActionFrame, dt: f32) -> RuntimeFrameContext {
+    let mut frame = RuntimeFrameContext::default();
+    frame.dt = dt;
+    frame.camera = camera.clone();
+    frame.viewport_size = glam::Vec2::new(800.0, 600.0);
+    frame.input = input.clone();
+    frame
 }
 
 fn step_runtime(runtime: &mut ViewportRuntime, camera: &Camera, input: &ActionFrame) {

@@ -8,15 +8,17 @@ use super::output::{RuntimeOutput, TransformWriteback};
 use super::resources::RuntimeResources;
 
 /// Per-frame inputs to [`super::ViewportRuntime::step`].
-pub struct RuntimeFrameContext<'a> {
+#[derive(Default)]
+#[non_exhaustive]
+pub struct RuntimeFrameContext {
     /// Wall-clock delta time in seconds since the last frame.
     pub dt: f32,
     /// Current camera state.
-    pub camera: &'a Camera,
+    pub camera: Camera,
     /// Viewport dimensions in logical pixels.
     pub viewport_size: glam::Vec2,
     /// Resolved input actions for this frame.
-    pub input: &'a ActionFrame,
+    pub input: ActionFrame,
     /// Pick result under the cursor for this frame. Supply from CPU or GPU picking.
     /// None if no picking was done or nothing was hit.
     pub pick_hit: Option<crate::interaction::picking::PickHit>,
@@ -68,8 +70,26 @@ pub struct RuntimeStepContext<'a> {
 impl<'a> RuntimeStepContext<'a> {
     /// Construct a [`SimulationStepContext`] from this context.
     ///
-    /// Useful for physics plugins that need to track per-step index alongside
-    /// the standard context fields.
+    /// Pass the step count from [`super::ViewportRuntime::step_index`] so the
+    /// simulation context reflects the current runtime step. The runtime does not
+    /// thread the step index into `RuntimeStepContext` automatically -- you must
+    /// supply it.
+    ///
+    /// ```rust,ignore
+    /// fn step(&mut self, ctx: &mut RuntimeStepContext) {
+    ///     let sim = ctx.as_simulation(runtime.step_index());
+    ///     // use sim.step_index for deterministic seeding or replay
+    /// }
+    /// ```
+    ///
+    /// Note: within a fixed-timestep frame that runs N simulate steps,
+    /// `runtime.step_index()` returns the count at the start of that frame.
+    /// If you need a per-sub-step index (0..N) within a single frame, maintain
+    /// a local counter in your plugin.
+    ///
+    /// Passing an incorrect value does not cause undefined behavior, but
+    /// physics code that uses `step_index` for deterministic seeding or replay
+    /// will produce wrong results.
     pub fn as_simulation(&mut self, step_index: u64) -> SimulationStepContext<'_> {
         SimulationStepContext {
             dt: self.dt,

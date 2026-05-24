@@ -9,20 +9,13 @@ use viewport_lib::interaction::input::ActionFrame;
 use viewport_lib::interaction::selection::Selection;
 use viewport_lib::scene::scene::Scene;
 
-fn make_frame<'a>(camera: &'a Camera, input: &'a ActionFrame) -> RuntimeFrameContext<'a> {
-    RuntimeFrameContext {
-        dt: 1.0 / 60.0,
-        camera,
-        viewport_size: glam::Vec2::new(800.0, 600.0),
-        input,
-        pick_hit: None,
-        clicked: false,
-        drag_started: false,
-        dragging: false,
-        pointer_delta: glam::Vec2::ZERO,
-        cursor_viewport: None,
-        shift_held: false,
-    }
+fn make_frame(camera: &Camera, input: &ActionFrame) -> RuntimeFrameContext {
+    let mut frame = RuntimeFrameContext::default();
+    frame.dt = 1.0 / 60.0;
+    frame.camera = camera.clone();
+    frame.viewport_size = glam::Vec2::new(800.0, 600.0);
+    frame.input = input.clone();
+    frame
 }
 
 fn step(runtime: &mut ViewportRuntime, camera: &Camera) -> RuntimeOutput {

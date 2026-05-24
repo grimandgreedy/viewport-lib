@@ -15,7 +15,7 @@
 
 use eframe::egui;
 use viewport_lib::{
-    ActionFrame, Aabb, DebugDraw, DebugLayer, DebugPrim, FixedTimestep, Material, MeshId,
+    Aabb, DebugDraw, DebugLayer, DebugPrim, FixedTimestep, Material, MeshId,
     PhysicsBody, PhysicsLitePlugin, RuntimeFrameContext, RuntimePlugin, RuntimeStepContext,
     SceneRenderItem, ViewportRuntime,
     runtime::plugin::phase,
@@ -214,19 +214,10 @@ pub(crate) fn update_dbg_draw(app: &mut App, dt: f32) {
     }
 
     let camera = app.camera.clone();
-    let frame_ctx = RuntimeFrameContext {
-        dt: effective_dt,
-        camera: &camera,
-        viewport_size: glam::Vec2::new(800.0, 600.0),
-        input: &ActionFrame::default(),
-        pick_hit: None,
-        clicked: false,
-        drag_started: false,
-        dragging: false,
-        pointer_delta: glam::Vec2::ZERO,
-        cursor_viewport: None,
-        shift_held: false,
-    };
+    let mut frame_ctx = RuntimeFrameContext::default();
+    frame_ctx.dt = effective_dt;
+    frame_ctx.camera = camera.clone();
+    frame_ctx.viewport_size = glam::Vec2::new(800.0, 600.0);
 
     let output = app.dbg_draw_state.runtime.step(
         &mut app.dbg_draw_state.scene,

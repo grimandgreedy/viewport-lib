@@ -14,20 +14,13 @@ use viewport_lib::interaction::selection::Selection;
 use viewport_lib::scene::scene::Scene;
 use std::sync::{Arc, Mutex};
 
-fn make_frame<'a>(camera: &'a Camera, input: &'a ActionFrame) -> RuntimeFrameContext<'a> {
-    RuntimeFrameContext {
-        dt: 1.0 / 60.0,
-        camera,
-        viewport_size: glam::Vec2::new(800.0, 600.0),
-        input,
-        pick_hit: None,
-        clicked: false,
-        drag_started: false,
-        dragging: false,
-        pointer_delta: glam::Vec2::ZERO,
-        cursor_viewport: None,
-        shift_held: false,
-    }
+fn make_frame(camera: &Camera, input: &ActionFrame) -> RuntimeFrameContext {
+    let mut frame = RuntimeFrameContext::default();
+    frame.dt = 1.0 / 60.0;
+    frame.camera = camera.clone();
+    frame.viewport_size = glam::Vec2::new(800.0, 600.0);
+    frame.input = input.clone();
+    frame
 }
 
 fn step(runtime: &mut ViewportRuntime) {
@@ -185,19 +178,12 @@ fn fixed_timestep_resource_reflects_last_step() {
     let input = ActionFrame::default();
     let mut scene = Scene::new();
     let mut sel = Selection::new();
-    runtime.step(&mut scene, &mut sel, &RuntimeFrameContext {
-        dt: 1.0 / 30.0,
-        camera: &camera,
-        viewport_size: glam::Vec2::new(800.0, 600.0),
-        input: &input,
-        pick_hit: None,
-        clicked: false,
-        drag_started: false,
-        dragging: false,
-        pointer_delta: glam::Vec2::ZERO,
-        cursor_viewport: None,
-        shift_held: false,
-    });
+    let mut fixed_frame = RuntimeFrameContext::default();
+    fixed_frame.dt = 1.0 / 30.0;
+    fixed_frame.camera = camera.clone();
+    fixed_frame.viewport_size = glam::Vec2::new(800.0, 600.0);
+    fixed_frame.input = input.clone();
+    runtime.step(&mut scene, &mut sel, &fixed_frame);
 
     // 2 steps ran; the resource holds the count after the last step.
     assert_eq!(runtime.resources().get::<u32>().copied(), Some(2));

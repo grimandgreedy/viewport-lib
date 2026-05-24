@@ -45,6 +45,29 @@
 //! call. Persistent primitives are added with [`add_persistent`](DebugDraw::add_persistent)
 //! (keyed by a caller-assigned `u64`) and stay until explicitly removed with
 //! [`remove_persistent`](DebugDraw::remove_persistent).
+//!
+//! # Rendering
+//!
+//! `DebugDraw` is a resource accumulator. It does not submit draw calls.
+//! After calling `runtime.step(...)`, convert accumulated primitives to render
+//! items and push them into `FrameData`:
+//!
+//! ```rust,ignore
+//! // After step():
+//! if let Some(dd) = runtime.resources().get::<DebugDraw>() {
+//!     frame_data.scene.polylines.extend(dd.to_polylines());
+//!     if let Some(pc) = dd.to_point_cloud() {
+//!         frame_data.scene.point_clouds.push(pc);
+//!     }
+//!     frame_data.overlays.labels.extend(dd.to_labels());
+//! }
+//! ```
+//!
+//! If this conversion step is omitted, nothing will appear on screen even if
+//! plugins submitted primitives during `step`.
+//!
+//! See `examples/eframe_showcase/showcase_46_debug_draw.rs` for a complete
+//! end-to-end example.
 
 use std::collections::HashMap;
 

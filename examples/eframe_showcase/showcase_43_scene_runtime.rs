@@ -11,7 +11,7 @@
 
 use eframe::egui;
 use viewport_lib::{
-    ActionFrame, FixedTimestep, Material, MeshId,
+    FixedTimestep, Material, MeshId,
     RuntimeFrameContext, RuntimePlugin, RuntimeStepContext, SceneRenderItem,
     ViewportRuntime,
     runtime::plugin::phase,
@@ -144,19 +144,10 @@ pub(crate) fn build_rt_demo_scene(app: &mut App, renderer: &mut viewport_lib::Vi
 
 pub(crate) fn update_rt_demo(app: &mut App, dt: f32) {
     let camera = app.camera.clone();
-    let frame_ctx = RuntimeFrameContext {
-        dt,
-        camera: &camera,
-        viewport_size: glam::Vec2::new(800.0, 600.0),
-        input: &ActionFrame::default(),
-        pick_hit: None,
-        clicked: false,
-        drag_started: false,
-        dragging: false,
-        pointer_delta: glam::Vec2::ZERO,
-        cursor_viewport: None,
-        shift_held: false,
-    };
+    let mut frame_ctx = RuntimeFrameContext::default();
+    frame_ctx.dt = dt;
+    frame_ctx.camera = camera.clone();
+    frame_ctx.viewport_size = glam::Vec2::new(800.0, 600.0);
     app.rt_state.runtime.step(
         &mut app.rt_state.scene,
         &mut app.rt_state.selection,

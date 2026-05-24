@@ -15,7 +15,7 @@
 
 use eframe::egui;
 use viewport_lib::{
-    Aabb, ActionFrame, AnimationPlugin, AnimationTrack, CameraFollow, FixedTimestep, Keyframe,
+    Aabb, AnimationPlugin, AnimationTrack, CameraFollow, FixedTimestep, Keyframe,
     Material, MeshId, PhysicsBody, PhysicsLitePlugin, RuntimeFrameContext, SceneRenderItem,
     ViewportRuntime,
     scene::Scene,
@@ -186,19 +186,10 @@ pub(crate) fn update_sim45(app: &mut App, dt: f32) {
     };
 
     let camera = app.camera.clone();
-    let frame_ctx = RuntimeFrameContext {
-        dt: effective_dt,
-        camera: &camera,
-        viewport_size: glam::Vec2::new(800.0, 600.0),
-        input: &ActionFrame::default(),
-        pick_hit: None,
-        clicked: false,
-        drag_started: false,
-        dragging: false,
-        pointer_delta: glam::Vec2::ZERO,
-        cursor_viewport: None,
-        shift_held: false,
-    };
+    let mut frame_ctx = RuntimeFrameContext::default();
+    frame_ctx.dt = effective_dt;
+    frame_ctx.camera = camera.clone();
+    frame_ctx.viewport_size = glam::Vec2::new(800.0, 600.0);
 
     let output = app.sim45_state.runtime.step(
         &mut app.sim45_state.scene,
