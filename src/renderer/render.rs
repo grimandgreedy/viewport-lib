@@ -3454,7 +3454,7 @@ impl ViewportRenderer {
         &self,
         encoder: &mut wgpu::CommandEncoder,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        _queue: &wgpu::Queue,
         source_view: &wgpu::TextureView,
         spread: f32,
     ) -> wgpu::BindGroup {
