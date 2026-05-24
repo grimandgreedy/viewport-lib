@@ -1517,6 +1517,26 @@ pub enum DecalBlendMode {
     Multiply,
 }
 
+/// How a decal texture is projected onto the receiver surface.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[non_exhaustive]
+pub enum DecalProjection {
+    /// Standard projection: the decal texture is mapped using the XY axes of the decal's local
+    /// space. Works well on flat or gently curved surfaces aligned with the projection direction.
+    #[default]
+    Planar,
+    /// Tri-planar projection: the texture is sampled three times (from the X, Y, and Z axes of
+    /// decal local space) and blended by the surface normal. Avoids UV stretching on corners and
+    /// non-planar surfaces. `blend_sharpness` controls how quickly the blend transitions at edges
+    /// between faces: higher values produce a sharper transition, lower values a wider blend zone.
+    /// Three texture samples per pixel; the bandwidth cost is documented in the field.
+    TriPlanar {
+        /// Exponent applied to the absolute normal components before normalising blend weights.
+        /// Range 1.0-16.0; 4.0 is a good starting value.
+        blend_sharpness: f32,
+    },
+}
+
 /// UV animation applied to a [`LiveDecal`](crate::scene::LiveDecal).
 ///
 /// The renderer computes the effective `uv_offset` and `uv_scale` each frame from
@@ -1644,6 +1664,13 @@ pub struct DecalItem {
     /// Fraction of each local half-extent over which the alpha fades to zero at the box boundary.
     /// Range [0.0, 0.5]. Default: 0.0 (hard edge).
     pub edge_fade: f32,
+    // -- D8 fields --
+    /// How the decal texture is projected onto the receiver surface. Default: `Planar`.
+    ///
+    /// `TriPlanar` samples the texture from three axes and blends by the surface normal,
+    /// avoiding UV stretching on corners. It costs three texture samples per pixel instead of one;
+    /// use it only when the decal spans a non-planar or multi-face surface.
+    pub projection: DecalProjection,
     /// Visibility and opacity overrides. `hidden` skips the decal entirely; `opacity`
     /// multiplies the final alpha. `unlit` and `wireframe` are accepted but have no
     /// effect on decals. Default: all no-op.
@@ -1669,6 +1696,7 @@ impl Default for DecalItem {
             emissive: 0.0,
             emissive_texture_id: None,
             edge_fade: 0.0,
+            projection: DecalProjection::Planar,
             appearance: AppearanceSettings::default(),
         }
     }

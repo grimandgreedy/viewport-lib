@@ -8,7 +8,7 @@ use wgpu::util::DeviceExt as _;
 // GPU-internal types
 // ---------------------------------------------------------------------------
 
-/// Flat uniform buffer matching the WGSL `DecalUniform` struct (128 bytes).
+/// Flat uniform buffer matching the WGSL `DecalUniform` struct (144 bytes).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct DecalUniformRaw {
@@ -30,8 +30,13 @@ pub(crate) struct DecalUniformRaw {
     pub has_emissive_tex: u32,           //  4
     // D7
     pub edge_fade: f32,                  //  4
-    pub _pad: u32,                       //  4  (pad to 128-byte struct size)
-    // total: 128 bytes
+    pub _pad: u32,                       //  4  (alignment gap before D8)
+    // D8
+    pub projection: u32,                 //  4  (0 = Planar, 1 = TriPlanar)
+    pub tri_blend_sharpness: f32,        //  4
+    pub _pad2: u32,                      //  4  (pad to 144-byte struct size)
+    pub _pad3: u32,                      //  4
+    // total: 144 bytes
 }
 
 /// Per-draw GPU data for one [`DecalItem`](crate::renderer::DecalItem).
@@ -230,6 +235,13 @@ impl ViewportGpuResources {
             crate::renderer::DecalBlendMode::Multiply => 1u32,
         };
 
+        let (projection_u32, tri_blend_sharpness) = match item.projection {
+            crate::renderer::DecalProjection::Planar => (0u32, 1.0f32),
+            crate::renderer::DecalProjection::TriPlanar { blend_sharpness } => {
+                (1u32, blend_sharpness.max(0.1))
+            }
+        };
+
         let has_normal        = item.normal_texture_id.is_some()    as u32;
         let has_roughness_tex = item.roughness_texture_id.is_some() as u32;
         let has_metallic_tex  = item.metallic_texture_id.is_some()  as u32;
@@ -251,6 +263,10 @@ impl ViewportGpuResources {
             has_emissive_tex,
             edge_fade: item.edge_fade.clamp(0.0, 0.5),
             _pad: 0,
+            projection: projection_u32,
+            tri_blend_sharpness,
+            _pad2: 0,
+            _pad3: 0,
         };
 
         let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

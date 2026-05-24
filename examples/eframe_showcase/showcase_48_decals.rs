@@ -247,6 +247,31 @@ fn make_spark_texture(size: u32) -> Vec<u8> {
     buf
 }
 
+/// D8: Checkerboard -- contrasting tiles that show UV stretching vs. tri-planar wrapping clearly.
+fn make_checker_texture(size: u32) -> Vec<u8> {
+    let mut buf = vec![255u8; (size * size * 4) as usize];
+    let tiles = 8u32;
+    for y in 0..size {
+        for x in 0..size {
+            let tx = (x * tiles / size) % 2;
+            let ty = (y * tiles / size) % 2;
+            let dark = (tx + ty) % 2 == 0;
+            let idx = ((y * size + x) * 4) as usize;
+            if dark {
+                buf[idx]     = 40;
+                buf[idx + 1] = 40;
+                buf[idx + 2] = 140;
+            } else {
+                buf[idx]     = 210;
+                buf[idx + 1] = 200;
+                buf[idx + 2] = 230;
+            }
+            buf[idx + 3] = 220;
+        }
+    }
+    buf
+}
+
 // ---------------------------------------------------------------------------
 // Decal transform builder
 // ---------------------------------------------------------------------------
@@ -341,6 +366,12 @@ pub(crate) struct Decal48State {
     // D7
     pub edge_fade: f32,
     pub apply_edge_fade: bool,
+
+    // D8
+    pub checker_tex: Option<u64>,
+    pub show_corner_decal: bool,
+    pub use_tri_planar: bool,
+    pub tri_blend_sharpness: f32,
 }
 
 impl Default for Decal48State {
@@ -383,6 +414,10 @@ impl Default for Decal48State {
             spark_emissive: 3.0,
             edge_fade:      0.2,
             apply_edge_fade: false,
+            checker_tex:         None,
+            show_corner_decal:   false,
+            use_tri_planar:      false,
+            tri_blend_sharpness: 4.0,
         }
     }
 }
@@ -429,6 +464,11 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
     app.decal48_state.blood_tex     = Some(blood_id);
     app.decal48_state.rune_tex      = Some(rune_id);
     app.decal48_state.spark_tex     = Some(spark_id);
+
+    let checker_id = res
+        .upload_texture(&app.device, &app.queue, 128, 128, &make_checker_texture(128))
+        .expect("checker texture upload");
+    app.decal48_state.checker_tex = Some(checker_id);
 
     // Vertical wall: 6 wide (X), 0.2 thick (Y), 4 tall (Z).
     // Centered at (0, -0.1, 2): front face (+Y normal) at y = 0,
@@ -743,6 +783,33 @@ pub(crate) fn submit_decal48_items(app: &App, fd: &mut viewport_lib::FrameData) 
         }
     }
 
+    // D8: corner-spanning checkerboard decal at the wall/floor junction.
+    // Planar mode stretches visibly across the 90-degree corner; tri-planar wraps cleanly.
+    if st.show_corner_decal {
+        if let Some(checker) = st.checker_tex {
+            // Place the decal centred on the corner junction (x=1, y=0, z=0),
+            // oriented along +Y as projection axis so it faces the camera from the wall.
+            // Scale it large enough (2.0) to cover both wall and floor across the corner.
+            let transform = decal_transform(
+                glam::Vec3::new(1.0, 0.0, 0.0),
+                glam::Vec3::Y,
+                2.0,
+                2.0,
+            );
+            let mut item = DecalItem::default();
+            item.transform  = transform;
+            item.texture_id = checker;
+            item.alpha      = 0.9;
+            item.edge_fade  = 0.05;
+            item.projection = if st.use_tri_planar {
+                viewport_lib::DecalProjection::TriPlanar { blend_sharpness: st.tri_blend_sharpness }
+            } else {
+                viewport_lib::DecalProjection::Planar
+            };
+            fd.scene.decals.push(item);
+        }
+    }
+
     // D6: spark-impact on the ground, center-right.
     if st.show_spark {
         if let Some(spark) = st.spark_tex {
@@ -905,6 +972,23 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
                 egui::Slider::new(&mut app.decal48_state.edge_fade, 0.0..=0.5)
                     .text("Edge fade"),
             );
+        }
+
+        ui.add_space(6.0);
+        ui.separator();
+        ui.label("Tri-planar projection:");
+        ui.small("Planar stretches across the wall/floor corner; tri-planar wraps cleanly.");
+        ui.add_space(2.0);
+        ui.checkbox(&mut app.decal48_state.show_corner_decal, "Show corner decal (checkerboard)");
+        if app.decal48_state.show_corner_decal {
+            ui.checkbox(&mut app.decal48_state.use_tri_planar, "Tri-planar (off = planar)");
+            if app.decal48_state.use_tri_planar {
+                ui.add(
+                    egui::Slider::new(&mut app.decal48_state.tri_blend_sharpness, 1.0..=16.0)
+                        .text("Blend sharpness"),
+                );
+                ui.small("Higher = sharper face transitions.");
+            }
         }
 
         ui.add_space(6.0);

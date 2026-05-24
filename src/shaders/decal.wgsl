@@ -1,4 +1,4 @@
-// Screen-space decal projection shader (D1 + D2 + D3 + D4 + D6 + D7).
+// Screen-space decal projection shader (D1 + D2 + D3 + D4 + D6 + D7 + D8).
 //
 // Group 0: camera_bgl (CameraUniform)
 // Group 1: per-viewport scene depth texture (depth-only aspect view)
@@ -48,6 +48,11 @@ struct DecalUniform {
     // D7
     edge_fade:             f32,   // [0, 0.5]: fraction of half-extent over which alpha fades
     _pad:                  u32,
+    // D8
+    projection:            u32,   // 0 = Planar, 1 = TriPlanar
+    tri_blend_sharpness:   f32,
+    _pad2:                 u32,
+    _pad3:                 u32,
 };
 
 @group(2) @binding(0) var<uniform> u:             DecalUniform;
@@ -128,24 +133,64 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let view_dir = normalize(camera.eye_pos - world);
     let N_recv   = select(-n_raw, n_raw, dot(n_raw, view_dir) > 0.0);
 
-    // Decal projection axis (row 2 of inv_transform = world-space local Z).
+    // Decal projection axis (column 2 of model matrix = world-space local Z,
+    // extracted from rows of inv_transform via inverse-transpose).
     let decal_Z = normalize(vec3<f32>(u.inv_transform[0][2], u.inv_transform[1][2], u.inv_transform[2][2]));
 
-    // Reject fragments where the camera is on the wrong side of the decal projection
-    // axis, or nearly edge-on. view_dir (surface -> camera) is used instead of N_recv
-    // because N_recv is view-corrected to always face the camera, which defeats the
-    // back-face check when the camera is behind the decal.
-    if dot(view_dir, decal_Z) < 0.05 {
-        discard;
+    // Planar-only: reject fragments where the surface or camera doesn't face
+    // the decal projection axis.  Skipped for tri-planar (all axes are used).
+    //
+    // The surface-normal check (N_recv . decal_Z) prevents two problems that
+    // occur when a projection box overlaps geometry that is perpendicular to
+    // the projection direction:
+    //   - The D2 normal-map scaling ratio (new_nv / old_nv) becomes near-zero
+    //     on perpendicular surfaces, darkening the decal to black.
+    //   - The UV collapses to a constant coordinate, producing a uniform stripe
+    //     instead of the correct texture.
+    // A threshold of 0.1 rejects surfaces more than ~84 degrees off-axis while
+    // allowing slightly curved or low-angle receivers.
+    if u.projection == 0u {
+        if dot(N_recv, decal_Z) < 0.1 { discard; }
+        if dot(view_dir, decal_Z) < 0.05 { discard; }
     }
 
-    // D4: apply UV scale + offset (sprite sheet / scroll animation).
-    // Base UV maps local XY from [-0.5, 0.5] to [0, 1].
-    let base_uv = local.xy + vec2<f32>(0.5);
-    let uv      = u.uv_offset + u.uv_scale * base_uv;
+    // D8: sample texture.
+    // Planar: standard XY projection.
+    // TriPlanar: blend three orthogonal projections weighted by the surface normal
+    //            in decal local space.
+    var uv:      vec2<f32>;
+    var tex_col: vec4<f32>;
 
-    let tex_col = textureSample(decal_tex, decal_samp, uv);
-    let alpha   = tex_col.a * u.alpha * edge_alpha;
+    if u.projection == 0u {
+        // D4: apply UV scale + offset. Base UV maps local XY from [-0.5, 0.5] to [0, 1].
+        let base_uv = local.xy + vec2<f32>(0.5);
+        uv      = u.uv_offset + u.uv_scale * base_uv;
+        tex_col = textureSample(decal_tex, decal_samp, uv);
+    } else {
+        // Transform the world-space receiver normal into decal local space.
+        // Applying inv_transform as a direction transform (not a proper normal
+        // transform) is correct when the decal matrix has no shear; normalization
+        // handles non-uniform scale.
+        let local_normal = normalize((u.inv_transform * vec4<f32>(N_recv, 0.0)).xyz);
+
+        // Blend weights: each axis's weight is proportional to how much the
+        // surface faces that axis.
+        var w = pow(abs(local_normal), vec3<f32>(u.tri_blend_sharpness));
+        w = w / (w.x + w.y + w.z);
+
+        let uv_xy = u.uv_offset + u.uv_scale * (local.xy + vec2<f32>(0.5));
+        let uv_xz = u.uv_offset + u.uv_scale * (local.xz + vec2<f32>(0.5));
+        let uv_yz = u.uv_offset + u.uv_scale * (local.yz + vec2<f32>(0.5));
+
+        let c_xy = textureSample(decal_tex, decal_samp, uv_xy);
+        let c_xz = textureSample(decal_tex, decal_samp, uv_xz);
+        let c_yz = textureSample(decal_tex, decal_samp, uv_yz);
+
+        tex_col = c_xy * w.z + c_xz * w.y + c_yz * w.x;
+        uv = uv_xy; // fallback UV for other texture slots (normal, roughness, emissive)
+    }
+
+    let alpha = tex_col.a * u.alpha * edge_alpha;
 
     if alpha < 0.001 {
         discard;
