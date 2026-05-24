@@ -3116,6 +3116,8 @@ pub struct ViewportGpuResources {
     pub(crate) decal_replace_pipeline: Option<DualPipeline>,
     /// Multiply-blend decal pipeline (LDR + HDR). None until first decal is submitted.
     pub(crate) decal_multiply_pipeline: Option<DualPipeline>,
+    /// Additive-blend decal pipeline (LDR + HDR). None until first decal is submitted.
+    pub(crate) decal_additive_pipeline: Option<DualPipeline>,
     /// BGL for group 1 of the decal pass: depth texture + stencil texture bindings.
     pub(crate) decal_depth_bgl: Option<wgpu::BindGroupLayout>,
     /// BGL for group 2 of the decal pass: uniform buffer + albedo texture + sampler.

@@ -177,6 +177,20 @@ impl ViewportGpuResources {
                 operation: wgpu::BlendOperation::Add,
             },
         };
+        // Additive: result.rgb = dst.rgb + src.rgb * src.a; result.a = dst.a.
+        // src.a modulates the additive contribution so alpha still controls intensity.
+        let additive_blend = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::SrcAlpha,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
 
         self.decal_item_bgl = Some(item_bgl);
         self.decal_replace_pipeline = Some(DualPipeline {
@@ -186,6 +200,10 @@ impl ViewportGpuResources {
         self.decal_multiply_pipeline = Some(DualPipeline {
             ldr: make(self.target_format, multiply_blend),
             hdr: make(wgpu::TextureFormat::Rgba16Float, multiply_blend),
+        });
+        self.decal_additive_pipeline = Some(DualPipeline {
+            ldr: make(self.target_format, additive_blend),
+            hdr: make(wgpu::TextureFormat::Rgba16Float, additive_blend),
         });
     }
 
@@ -231,8 +249,10 @@ impl ViewportGpuResources {
         let inv_transform = model.inverse().to_cols_array_2d();
 
         let blend_mode_u32 = match item.blend_mode {
-            crate::renderer::DecalBlendMode::Replace => 0u32,
+            crate::renderer::DecalBlendMode::Replace  => 0u32,
             crate::renderer::DecalBlendMode::Multiply => 1u32,
+            // Additive uses a separate pipeline; shader logic is identical to Replace.
+            crate::renderer::DecalBlendMode::Additive => 0u32,
         };
 
         let (projection_u32, tri_blend_sharpness) = match item.projection {

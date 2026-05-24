@@ -1515,6 +1515,12 @@ pub enum DecalBlendMode {
     Replace,
     /// Multiply the receiver colour by the decal colour (grime, dirt, weathering).
     Multiply,
+    /// Add the decal colour to the receiver colour (sparks, fire, glows, emissive overlays).
+    ///
+    /// Stacking multiple additive decals accumulates correctly: each one brightens the
+    /// receiver independently. Combined with `emissive > 0`, the contribution is doubly
+    /// additive (emissive adds on top of the already-additive blend result).
+    Additive,
 }
 
 /// Which side of a cylinder surface receives a cylindrical decal.

@@ -1397,7 +1397,7 @@ impl eframe::App for App {
                 if self.mode == ShowcaseMode::Decals && self.decal48_state.built {
                     let dt = ctx.input(|i| i.stable_dt.min(1.0 / 30.0));
                     showcase_48_decals::update_decal48(self, dt);
-                    if self.decal48_state.show_scroll || !self.decal48_state.scene.collect_decal_items().is_empty() {
+                    if !self.decal48_state.scene.collect_decal_items().is_empty() {
                         ctx.request_repaint();
                     }
                 }

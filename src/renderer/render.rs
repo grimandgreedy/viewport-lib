@@ -2057,9 +2057,10 @@ impl ViewportRenderer {
             let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
             let camera_bg = &self.viewport_slots[vp_idx].camera_bind_group;
             let depth_bg = &slot_hdr.decal_depth_bg;
-            let replace_pipeline = self.resources.decal_replace_pipeline.as_ref();
+            let replace_pipeline  = self.resources.decal_replace_pipeline.as_ref();
             let multiply_pipeline = self.resources.decal_multiply_pipeline.as_ref();
-            if replace_pipeline.is_some() || multiply_pipeline.is_some() {
+            let additive_pipeline = self.resources.decal_additive_pipeline.as_ref();
+            if replace_pipeline.is_some() || multiply_pipeline.is_some() || additive_pipeline.is_some() {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("decal_pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2079,8 +2080,9 @@ impl ViewportRenderer {
                 pass.set_bind_group(1, depth_bg, &[]);
                 for gpu in &self.decal_gpu_data {
                     let pipeline = match gpu.blend_mode {
-                        crate::renderer::DecalBlendMode::Replace => replace_pipeline,
+                        crate::renderer::DecalBlendMode::Replace  => replace_pipeline,
                         crate::renderer::DecalBlendMode::Multiply => multiply_pipeline,
+                        crate::renderer::DecalBlendMode::Additive => additive_pipeline,
                     };
                     if let Some(pl) = pipeline {
                         pass.set_pipeline(&pl.hdr);

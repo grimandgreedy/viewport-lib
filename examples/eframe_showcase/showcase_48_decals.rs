@@ -18,8 +18,8 @@
 
 use eframe::egui;
 use viewport_lib::{
-    CylindricalFacing, DecalAnimation, DecalBlendMode, DecalHandle, DecalItem, DecalProjection,
-    Material, MeshId, SceneRenderItem,
+    BuiltinMatcap, CylindricalFacing, DecalAnimation, DecalBlendMode, DecalHandle, DecalItem,
+    DecalProjection, Material, MeshId, SceneRenderItem,
     scene::Scene,
     selection::Selection,
 };
@@ -102,10 +102,10 @@ fn make_wet_texture(size: u32) -> Vec<u8> {
     buf
 }
 
-/// D4: Diagonal stripe pattern for UV-scroll animation demo.
+/// D4: Diagonal black/white stripe pattern for UV-scroll animation demo.
 fn make_stripe_texture(size: u32) -> Vec<u8> {
     let mut buf = vec![0u8; (size * size * 4) as usize];
-    const GAP: f32 = 0.04;
+    const GAP: f32 = 0.03;
     for y in 0..size {
         for x in 0..size {
             let t = ((x + y) as f32 / size as f32 * 4.0).fract();
@@ -114,15 +114,15 @@ fn make_stripe_texture(size: u32) -> Vec<u8> {
             if near_edge {
                 buf[idx + 3] = 0;
             } else if t < 0.5 {
-                buf[idx]     = 40;
-                buf[idx + 1] = 80;
-                buf[idx + 2] = 220;
-                buf[idx + 3] = 255;
+                buf[idx]     = 10;
+                buf[idx + 1] = 10;
+                buf[idx + 2] = 10;
+                buf[idx + 3] = 230;
             } else {
-                buf[idx]     = 220;
-                buf[idx + 1] = 50;
-                buf[idx + 2] = 40;
-                buf[idx + 3] = 255;
+                buf[idx]     = 245;
+                buf[idx + 1] = 245;
+                buf[idx + 2] = 245;
+                buf[idx + 3] = 230;
             }
         }
     }
@@ -245,6 +245,52 @@ fn make_spark_texture(size: u32) -> Vec<u8> {
                 buf[idx + 2] = (b * 255.0) as u8;
                 buf[idx + 3] = (alpha * 255.0) as u8;
             }
+        }
+    }
+    buf
+}
+
+/// D10: Fire overlay -- tall flame shape with orange/yellow core; designed for additive blending.
+fn make_fire_texture(size: u32) -> Vec<u8> {
+    let mut buf = vec![0u8; (size * size * 4) as usize];
+    let s = size as f32;
+    for y in 0..size {
+        for x in 0..size {
+            // tx in [0,1] left to right; ty in [0,1] top to bottom.
+            let tx = x as f32 / s;
+            let ty = y as f32 / s;
+
+            // Heat: 1.0 at the bottom (fire base), 0.0 at the top (flame tip).
+            let heat = 1.0 - ty;
+
+            // Flame silhouette: widest at the base, tapering to a point at the top.
+            // half_w shrinks as heat drops (moving toward the tip).
+            let half_w = 0.48 * heat.powf(0.35);
+            let dx = (tx - 0.5).abs();
+            if dx >= half_w || heat < 0.02 {
+                continue;
+            }
+
+            // Edge fade: 1.0 at center, 0.0 at silhouette edge.
+            let edge = 1.0 - (dx / half_w).min(1.0);
+
+            // Turbulence from two overlapping sine waves, breaks up the smooth shape.
+            let turb = ((tx * 8.7 + ty * 12.3).sin() * 0.5 + 0.5)
+                * ((ty * 9.1 - tx * 5.6).cos() * 0.5 + 0.5);
+
+            // Core brightness: strong at the base and center, fades at tip and edges.
+            let core = (heat.powf(0.5) * edge * (0.65 + 0.35 * turb)).clamp(0.0, 1.0);
+
+            if core < 0.02 {
+                continue;
+            }
+
+            let idx = ((y * size + x) * 4) as usize;
+            // Color: white-yellow core at high intensity, deep orange-red at edges.
+            buf[idx]     = 255;
+            buf[idx + 1] = (core * core * 240.0).min(255.0) as u8;
+            buf[idx + 2] = ((core - 0.6).max(0.0) / 0.4 * 180.0).min(255.0) as u8;
+            buf[idx + 3] = (core * 255.0).min(255.0) as u8;
         }
     }
     buf
@@ -391,7 +437,6 @@ pub(crate) struct Decal48State {
     pub fading_mode: bool,
     pub fade_lifetime: f32,
     pub fade_out: f32,
-    pub show_scroll: bool,
     pub scroll_handle: Option<DecalHandle>,
 
     // D5
@@ -420,9 +465,12 @@ pub(crate) struct Decal48State {
     pub column_mesh:   Option<MeshId>,
     pub column_node:   Option<viewport_lib::interaction::selection::NodeId>,
     pub label_tex:     Option<u64>,
-    pub show_column:   bool,
-    pub show_cyl_decal: bool,
     pub cyl_facing:    CylindricalFacing,
+
+    // D10
+    pub fire_tex:       Option<u64>,
+    pub show_fire:      bool,
+    pub fire_alpha:     f32,
 }
 
 impl Default for Decal48State {
@@ -456,28 +504,28 @@ impl Default for Decal48State {
             fading_mode: true,
             fade_lifetime: 6.0,
             fade_out: 2.0,
-            show_scroll: false,
             scroll_handle: None,
             wall_obstacle_node: None,
             show_obstacle: true,
             rune_tex:       None,
             spark_tex:      None,
-            show_rune:      false,
+            show_rune:      true,
             rune_emissive:  2.0,
-            show_spark:     false,
+            show_spark:     true,
             spark_emissive: 3.0,
             edge_fade:      0.2,
             apply_edge_fade: false,
             checker_tex:         None,
-            show_corner_decal:   false,
-            use_tri_planar:      false,
+            show_corner_decal:   true,
+            use_tri_planar:      true,
             tri_blend_sharpness: 4.0,
             column_mesh:         None,
             column_node:         None,
             label_tex:           None,
-            show_column:         true,
-            show_cyl_decal:      false,
             cyl_facing:          CylindricalFacing::Outward,
+            fire_tex:            None,
+            show_fire:           false,
+            fire_alpha:          0.6,
         }
     }
 }
@@ -535,6 +583,11 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
         .expect("label texture upload");
     app.decal48_state.label_tex = Some(label_id);
 
+    let fire_id = res
+        .upload_texture(&app.device, &app.queue, 128, 128, &make_fire_texture(128))
+        .expect("fire texture upload");
+    app.decal48_state.fire_tex = Some(fire_id);
+
     // Vertical wall: 6 wide (X), 0.2 thick (Y), 4 tall (Z).
     let wall_data = viewport_lib::primitives::cuboid(6.0, 0.2, 4.0);
     app.decal48_state.wall_cpu_mesh = Some((wall_data.positions.clone(), wall_data.indices.clone()));
@@ -553,6 +606,7 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
 
     // D9: column (cylinder) standing on the ground, right side.
     // radius=0.3, height=3.0, center at (2.5, 0.5, 1.5).
+    res.ensure_matcaps_initialized(&app.device, &app.queue);
     let column_data = viewport_lib::primitives::cylinder(0.3, 3.0, 24);
     app.decal48_state.column_cpu_mesh = Some((column_data.positions.clone(), column_data.indices.clone()));
     let column_id = res
@@ -583,11 +637,16 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
         ground_mat,
     );
 
-    // D9: column standing on the ground, right side.
+    // D9: column standing on the ground, right side. Wax matcap with black base colour.
+    let column_mat = {
+        let mut m = Material::from_colour([0.0, 0.0, 0.0]);
+        m.matcap_id = Some(res.builtin_matcap_id(BuiltinMatcap::Wax));
+        m
+    };
     let column_node = scene.add(
         Some(column_id),
         glam::Mat4::from_translation(glam::Vec3::new(2.5, 0.5, 1.5)),
-        Material::from_colour([0.82, 0.80, 0.78]),
+        column_mat,
     );
     app.decal48_state.column_node = Some(column_node);
 
@@ -695,45 +754,32 @@ pub(crate) fn update_decal48(app: &mut App, dt: f32) {
         app.decal48_state.scene.set_visible(node, show);
     }
 
-    // D9: sync column visibility.
-    let show_col = app.decal48_state.show_column;
-    if let Some(node) = app.decal48_state.column_node {
-        app.decal48_state.scene.set_visible(node, show_col);
-    }
-
     let st = &mut app.decal48_state;
 
-    // Scroll animation: covers the left side of the ground floor.
-    let want_scroll = st.show_scroll;
-    match (want_scroll, st.scroll_handle.is_some()) {
-        (true, false) => {
-            if let Some(stripe) = st.stripe_tex {
-                // Ground: normal = +Z, center on left half at z = 0.
-                let transform = decal_transform(
-                    glam::Vec3::new(-1.0, 3.0, 0.0),
-                    glam::Vec3::Z,
-                    3.0,
-                    1.5,
-                );
-                let mut item = DecalItem::default();
-                item.transform  = transform;
-                item.texture_id = stripe;
-                item.alpha      = 1.0;
-                item.sort_key   = -10;
-                let handle = st.scene.add_decal_animated(
-                    item,
-                    DecalAnimation::UvScroll { vx: 0.2, vy: 0.1 },
-                    None,
-                );
-                st.scroll_handle = Some(handle);
-            }
+    // Scroll animation: always-on black/white stripe across the full width of the wall top.
+    // Wall: 6 wide (X), 4 tall (Z), face at y=0, normal +Y.
+    // Top 1/6th of wall height = 0.67 tall, centered at z = 3.67.
+    // tangent = -X, bitangent = +Z (derived from n=+Y, ref_up=+Z).
+    if st.scroll_handle.is_none() {
+        if let Some(stripe) = st.stripe_tex {
+            let transform = glam::Mat4::from_cols(
+                glam::Vec4::new(-6.0, 0.0, 0.0, 0.0),
+                glam::Vec4::new(0.0, 0.0, 0.67, 0.0),
+                glam::Vec4::new(0.0, 0.3, 0.0, 0.0),
+                glam::Vec4::new(0.0, 0.0, 3.67, 1.0),
+            ).to_cols_array_2d();
+            let mut item = DecalItem::default();
+            item.transform  = transform;
+            item.texture_id = stripe;
+            item.alpha      = 0.85;
+            item.sort_key   = -10;
+            let handle = st.scene.add_decal_animated(
+                item,
+                DecalAnimation::UvScroll { vx: 0.15, vy: 0.0 },
+                None,
+            );
+            st.scroll_handle = Some(handle);
         }
-        (false, true) => {
-            if let Some(h) = st.scroll_handle.take() {
-                st.scene.remove_decal(h);
-            }
-        }
-        _ => {}
     }
 }
 
@@ -906,38 +952,56 @@ pub(crate) fn submit_decal48_items(app: &App, fd: &mut viewport_lib::FrameData) 
     // The decal's local Z axis = world Z (column axis). Scale XY just outside
     // the column radius (0.3 -> 0.65 world units = 0.5 in local), Z covers the
     // middle section of the column (world z = [0.5, 2.5]).
-    if st.show_cyl_decal {
-        if let Some(label) = st.label_tex {
-            let transform = glam::Mat4::from_cols(
-                glam::Vec4::new(0.65, 0.0, 0.0, 0.0),
-                glam::Vec4::new(0.0, 0.65, 0.0, 0.0),
-                glam::Vec4::new(0.0, 0.0, 2.0, 0.0),
-                glam::Vec4::new(2.5, 0.5, 1.5, 1.0),
-            ).to_cols_array_2d();
-            let mut item = DecalItem::default();
-            item.transform  = transform;
-            item.texture_id = label;
-            item.alpha      = 0.95;
-            item.edge_fade  = 0.05;
-            item.projection = DecalProjection::Cylindrical { facing: st.cyl_facing };
-            fd.scene.decals.push(item);
-        }
+    if let Some(label) = st.label_tex {
+        let transform = glam::Mat4::from_cols(
+            glam::Vec4::new(0.65, 0.0, 0.0, 0.0),
+            glam::Vec4::new(0.0, 0.65, 0.0, 0.0),
+            glam::Vec4::new(0.0, 0.0, 2.0, 0.0),
+            glam::Vec4::new(2.5, 0.5, 1.5, 1.0),
+        ).to_cols_array_2d();
+        let mut item = DecalItem::default();
+        item.transform  = transform;
+        item.texture_id = label;
+        item.alpha      = 0.95;
+        item.edge_fade  = 0.05;
+        item.projection = DecalProjection::Cylindrical { facing: st.cyl_facing };
+        fd.scene.decals.push(item);
     }
 
-    // D6: spark-impact on the ground, center-right.
+    // D6: spark-impact on the wall, alongside the rune.
     if st.show_spark {
         if let Some(spark) = st.spark_tex {
             let transform = decal_transform(
-                glam::Vec3::new(2.5, 1.5, 0.0),
-                glam::Vec3::Z,
+                glam::Vec3::new(2.2, 0.0, 2.0),
+                glam::Vec3::Y,
                 0.4,
-                0.8,
+                1.0,
             );
             let mut item = DecalItem::default();
             item.transform  = transform;
             item.texture_id = spark;
             item.alpha      = 1.0;
             item.emissive   = st.spark_emissive;
+            fd.scene.decals.push(item);
+        }
+    }
+
+    // D10: fire overlay on the wall, additive blend.
+    // Non-square: 1.2 wide, 2.4 tall (flame shape). Wall +Y normal -> tangent=-X, bitangent=+Z.
+    if st.show_fire {
+        if let Some(fire) = st.fire_tex {
+            let transform = glam::Mat4::from_cols(
+                glam::Vec4::new(-1.2, 0.0, 0.0, 0.0),
+                glam::Vec4::new(0.0, 0.0, 2.4, 0.0),
+                glam::Vec4::new(0.0, 0.4, 0.0, 0.0),
+                glam::Vec4::new(-1.5, 0.0, 1.2, 1.0),
+            ).to_cols_array_2d();
+            let mut item = DecalItem::default();
+            item.transform  = transform;
+            item.texture_id = fire;
+            item.blend_mode = DecalBlendMode::Additive;
+            item.alpha      = st.fire_alpha;
+            item.emissive   = 1.5;
             fd.scene.decals.push(item);
         }
     }
@@ -974,6 +1038,9 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
             }
             if ui.selectable_label(cur == DecalBlendMode::Multiply, "Multiply").clicked() {
                 app.decal48_state.blend_mode = DecalBlendMode::Multiply;
+            }
+            if ui.selectable_label(cur == DecalBlendMode::Additive, "Additive").clicked() {
+                app.decal48_state.blend_mode = DecalBlendMode::Additive;
             }
         });
 
@@ -1016,8 +1083,7 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
                     .text("Fade-out (s)"),
             );
         }
-        ui.checkbox(&mut app.decal48_state.show_scroll, "UV scroll animation");
-        ui.small("Diagonal stripe decal scrolling across the ground.");
+        ui.small("Black/white stripe decal scrolls along the top strip of the wall.");
 
         ui.add_space(6.0);
         ui.separator();
@@ -1111,25 +1177,35 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
         ui.small("Wraps the decal around the column using angle/Z UV coordinates.");
         ui.small("The facing check rejects surfaces that point the wrong way.");
         ui.add_space(2.0);
-        ui.checkbox(&mut app.decal48_state.show_column, "Show column");
-        ui.checkbox(&mut app.decal48_state.show_cyl_decal, "Show cylindrical label decal");
-        if app.decal48_state.show_cyl_decal {
-            ui.horizontal(|ui| {
-                let cur = app.decal48_state.cyl_facing;
-                if ui.selectable_label(cur == CylindricalFacing::Outward, "Outward (column exterior)").clicked() {
-                    app.decal48_state.cyl_facing = CylindricalFacing::Outward;
-                }
-                if ui.selectable_label(cur == CylindricalFacing::Inward, "Inward (tube interior)").clicked() {
-                    app.decal48_state.cyl_facing = CylindricalFacing::Inward;
-                }
-            });
+        ui.horizontal(|ui| {
+            let cur = app.decal48_state.cyl_facing;
+            if ui.selectable_label(cur == CylindricalFacing::Outward, "Outward (column exterior)").clicked() {
+                app.decal48_state.cyl_facing = CylindricalFacing::Outward;
+            }
+            if ui.selectable_label(cur == CylindricalFacing::Inward, "Inward (tube interior)").clicked() {
+                app.decal48_state.cyl_facing = CylindricalFacing::Inward;
+            }
+        });
+
+        ui.add_space(6.0);
+        ui.separator();
+        ui.label("Additive blend (D10):");
+        ui.small("Additive decals brighten the receiver instead of replacing its colour.");
+        ui.small("Stack multiple additive decals to accumulate brightness.");
+        ui.add_space(2.0);
+        ui.checkbox(&mut app.decal48_state.show_fire, "Fire overlay (wall left, additive)");
+        if app.decal48_state.show_fire {
+            ui.add(
+                egui::Slider::new(&mut app.decal48_state.fire_alpha, 0.0..=1.0)
+                    .text("Fire alpha"),
+            );
         }
 
         ui.add_space(6.0);
         ui.separator();
         ui.label("Surface guide:");
-        ui.small("Wall (y = 0):        gunshot craters, glowing rune.");
-        ui.small("Ground left  (x<0):  muddy footprints (static).");
-        ui.small("Ground right (x>=0): blood splatter, spark impact.");
+        ui.small("Wall (y = 0):       gunshot craters, glowing rune, spark impact, fire overlay.");
+        ui.small("Ground left  (x<0): muddy footprints (static).");
+        ui.small("Ground right (x>=0): blood splatter.");
     });
 }
