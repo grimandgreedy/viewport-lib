@@ -124,6 +124,164 @@ pub enum KeyCode {
     RightBracket,
     /// Forward-slash `/` key.
     Slash,
+    /// Left Shift key.
+    LeftShift,
+    /// Right Shift key.
+    RightShift,
+    /// Digit row `0`.
+    Num0,
+    /// Digit row `1`.
+    Num1,
+    /// Digit row `2`.
+    Num2,
+    /// Digit row `3`.
+    Num3,
+    /// Digit row `4`.
+    Num4,
+    /// Digit row `5`.
+    Num5,
+    /// Digit row `6`.
+    Num6,
+    /// Digit row `7`.
+    Num7,
+    /// Digit row `8`.
+    Num8,
+    /// Digit row `9`.
+    Num9,
+    /// Space bar.
+    Space,
+    /// Arrow up.
+    Up,
+    /// Arrow down.
+    Down,
+    /// Arrow left.
+    Left,
+    /// Arrow right.
+    Right,
+    /// F1 function key.
+    F1,
+    /// F2 function key.
+    F2,
+    /// F3 function key.
+    F3,
+    /// F4 function key.
+    F4,
+    /// F5 function key.
+    F5,
+    /// F6 function key.
+    F6,
+    /// F7 function key.
+    F7,
+    /// F8 function key.
+    F8,
+    /// F9 function key.
+    F9,
+    /// F10 function key.
+    F10,
+    /// F11 function key.
+    F11,
+    /// F12 function key.
+    F12,
+    /// F13 function key.
+    F13,
+    /// F14 function key.
+    F14,
+    /// F15 function key.
+    F15,
+    /// F16 function key.
+    F16,
+    /// F17 function key.
+    F17,
+    /// F18 function key.
+    F18,
+    /// F19 function key.
+    F19,
+    /// F20 function key.
+    F20,
+    /// F21 function key.
+    F21,
+    /// F22 function key.
+    F22,
+    /// F23 function key.
+    F23,
+    /// F24 function key.
+    F24,
+    /// Semicolon `;`.
+    Semicolon,
+    /// Apostrophe `'`.
+    Apostrophe,
+    /// Backslash `\`.
+    Backslash,
+    /// Minus `-`.
+    Minus,
+    /// Equals `=`.
+    Equals,
+    /// Left Ctrl key.
+    LeftCtrl,
+    /// Right Ctrl key.
+    RightCtrl,
+    /// Left Alt key.
+    LeftAlt,
+    /// Right Alt key.
+    RightAlt,
+    /// Left Super (Windows/Command) key.
+    LeftSuper,
+    /// Right Super (Windows/Command) key.
+    RightSuper,
+    /// Caps Lock key.
+    CapsLock,
+    /// Delete key.
+    Delete,
+    /// Insert key.
+    Insert,
+    /// Home key.
+    Home,
+    /// End key.
+    End,
+    /// Page Up key.
+    PageUp,
+    /// Page Down key.
+    PageDown,
+    /// Numpad `0`.
+    Numpad0,
+    /// Numpad `1`.
+    Numpad1,
+    /// Numpad `2`.
+    Numpad2,
+    /// Numpad `3`.
+    Numpad3,
+    /// Numpad `4`.
+    Numpad4,
+    /// Numpad `5`.
+    Numpad5,
+    /// Numpad `6`.
+    Numpad6,
+    /// Numpad `7`.
+    Numpad7,
+    /// Numpad `8`.
+    Numpad8,
+    /// Numpad `9`.
+    Numpad9,
+    /// Numpad `+`.
+    NumpadAdd,
+    /// Numpad `-`.
+    NumpadSubtract,
+    /// Numpad `*`.
+    NumpadMultiply,
+    /// Numpad `/`.
+    NumpadDivide,
+    /// Numpad `.` (decimal point).
+    NumpadDecimal,
+    /// Numpad Enter.
+    NumpadEnter,
+    /// Num Lock key.
+    NumLock,
+    /// Print Screen key.
+    PrintScreen,
+    /// Pause/Break key.
+    Pause,
+    /// Scroll Lock key.
+    ScrollLock,
 }
 
 /// Mouse buttons.
