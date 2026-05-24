@@ -2677,6 +2677,8 @@ impl ViewportGpuResources {
             decal_depth_bgl: None,
             decal_item_bgl: None,
             decal_sampler: None,
+            decal_exclude_pipeline: None,
+            decal_exclude_obj_bgl: None,
         }
     }
 }

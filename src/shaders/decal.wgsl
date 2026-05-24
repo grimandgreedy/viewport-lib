@@ -22,7 +22,10 @@ struct Camera {
 @group(0) @binding(0) var<uniform> camera: Camera;
 
 // Scene depth written by the opaque pass (depth-only aspect, Depth24PlusStencil8).
-@group(1) @binding(0) var scene_depth: texture_depth_2d;
+@group(1) @binding(0) var scene_depth:   texture_depth_2d;
+// Scene stencil written by the opaque pass (stencil-only aspect, Depth24PlusStencil8).
+// Value 1 = receives decals, 0 = excluded.
+@group(1) @binding(1) var scene_stencil: texture_2d<u32>;
 
 struct DecalUniform {
     // Inverse of the decal model matrix: transforms world -> decal local space.
@@ -76,6 +79,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Load scene depth at the current pixel.
     let pix   = vec2<i32>(i32(in.clip_pos.x), i32(in.clip_pos.y));
     let depth = textureLoad(scene_depth, pix, 0);
+
+    // D5: stencil 0 means this surface is marked non-receiver -- skip it.
+    let stencil = textureLoad(scene_stencil, pix, 0).r;
+    if stencil == 0u { discard; }
 
     // depth == 1.0 means background -- no surface.
     if depth >= 1.0 {

@@ -86,6 +86,8 @@ pub struct SceneNode {
     /// Per-node skinning instance ID. See
     /// [`SceneRenderItem::skin_instance`](crate::renderer::SceneRenderItem::skin_instance).
     skin_instance: Option<u32>,
+    /// Whether projected decals land on this surface. Default: `true`.
+    receives_decals: bool,
 }
 
 impl SceneNode {
@@ -147,6 +149,16 @@ impl SceneNode {
     /// Layer this node belongs to.
     pub fn layer(&self) -> LayerId {
         self.layer
+    }
+
+    /// Whether projected decals land on this surface.
+    pub fn receives_decals(&self) -> bool {
+        self.receives_decals
+    }
+
+    /// Set whether projected decals land on this surface.
+    pub fn set_receives_decals(&mut self, v: bool) {
+        self.receives_decals = v;
     }
 }
 
@@ -319,6 +331,7 @@ impl Scene {
             layer: DEFAULT_LAYER,
             dirty: true,
             skin_instance: None,
+            receives_decals: true,
         };
         self.nodes.insert(id, node);
         self.roots.push(id);
@@ -499,6 +512,14 @@ impl Scene {
     pub fn set_skin_instance(&mut self, id: NodeId, instance: Option<u32>) {
         if let Some(node) = self.nodes.get_mut(&id) {
             node.skin_instance = instance;
+        }
+        self.version = self.version.wrapping_add(1);
+    }
+
+    /// Set whether projected decals land on this node's surface.
+    pub fn set_receives_decals(&mut self, id: NodeId, v: bool) {
+        if let Some(node) = self.nodes.get_mut(&id) {
+            node.receives_decals = v;
         }
         self.version = self.version.wrapping_add(1);
     }
@@ -843,6 +864,7 @@ impl Scene {
                 warp_attribute: None,
                 warp_scale: 1.0,
                 skin_instance: node.skin_instance,
+                receives_decals: node.receives_decals,
             });
         }
         items
@@ -919,6 +941,7 @@ impl Scene {
                     warp_attribute: None,
                     warp_scale: 1.0,
                     skin_instance: node.skin_instance,
+                    receives_decals: node.receives_decals,
                 });
             }
 
@@ -973,6 +996,7 @@ impl Scene {
                     warp_attribute: None,
                     warp_scale: 1.0,
                     skin_instance: node.skin_instance,
+                    receives_decals: node.receives_decals,
                 });
             }
 

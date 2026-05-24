@@ -1,6 +1,7 @@
-//! Screen-space decal pipeline (D1 + D2).
+//! Screen-space decal pipeline (D1 + D2 + D5).
 
 use crate::resources::{DualPipeline, ViewportGpuResources};
+use crate::resources::mesh_store::MeshId;
 use wgpu::util::DeviceExt as _;
 
 // ---------------------------------------------------------------------------
@@ -30,6 +31,13 @@ pub(crate) struct DecalUniformRaw {
 /// Per-draw GPU data for one [`DecalItem`](crate::renderer::DecalItem).
 pub(crate) struct DecalGpuItem {
     pub blend_mode: crate::renderer::DecalBlendMode,
+    pub _uniform_buf: wgpu::Buffer,
+    pub bind_group: wgpu::BindGroup,
+}
+
+/// Per-draw GPU data for one non-receiver surface in the decal exclude pass (D5).
+pub(crate) struct DecalExcludeGpuItem {
+    pub mesh_id: MeshId,
     pub _uniform_buf: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
 }
@@ -168,7 +176,7 @@ impl ViewportGpuResources {
         });
     }
 
-    /// Create the per-viewport depth bind group used by the decal pass.
+    /// Create the per-viewport depth+stencil bind group used by the decal pass.
     ///
     /// Must be called after `ensure_hdr_shared` (which creates `decal_depth_bgl`).
     /// Rebuilt when the viewport is resized.
@@ -176,6 +184,7 @@ impl ViewportGpuResources {
         &self,
         device: &wgpu::Device,
         depth_only_view: &wgpu::TextureView,
+        stencil_only_view: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
         let bgl = self
             .decal_depth_bgl
@@ -184,10 +193,16 @@ impl ViewportGpuResources {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("decal_depth_bg"),
             layout: bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(depth_only_view),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(depth_only_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(stencil_only_view),
+                },
+            ],
         })
     }
 
@@ -287,6 +302,149 @@ impl ViewportGpuResources {
 
         DecalGpuItem {
             blend_mode: item.blend_mode,
+            _uniform_buf: uniform_buf,
+            bind_group,
+        }
+    }
+
+    /// Lazily create the decal exclude pipeline and its object BGL (D5).
+    ///
+    /// No-op if already created. Must be called after `camera_bind_group_layout` exists.
+    pub(crate) fn ensure_decal_exclude_pipeline(&mut self, device: &wgpu::Device) {
+        if self.decal_exclude_pipeline.is_some() {
+            return;
+        }
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("decal_exclude_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/decal_exclude.wgsl").into(),
+            ),
+        });
+
+        let obj_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("decal_exclude_obj_bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("decal_exclude_pipeline_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, &obj_bgl],
+            push_constant_ranges: &[],
+        });
+
+        // Vertex layout: position only (location 0, Float32x3).
+        // Stride matches the full Vertex struct (64 bytes) but we only read pos.
+        let vertex_layout = wgpu::VertexBufferLayout {
+            array_stride: 64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 0,
+                shader_location: 0,
+            }],
+        };
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("decal_exclude_pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[vertex_layout],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState {
+                    front: wgpu::StencilFaceState {
+                        compare: wgpu::CompareFunction::Always,
+                        fail_op: wgpu::StencilOperation::Keep,
+                        depth_fail_op: wgpu::StencilOperation::Keep,
+                        pass_op: wgpu::StencilOperation::Replace,
+                    },
+                    back: wgpu::StencilFaceState {
+                        compare: wgpu::CompareFunction::Always,
+                        fail_op: wgpu::StencilOperation::Keep,
+                        depth_fail_op: wgpu::StencilOperation::Keep,
+                        pass_op: wgpu::StencilOperation::Replace,
+                    },
+                    read_mask: 0xff,
+                    write_mask: 0xff,
+                },
+                // Slight negative bias so the re-projected geometry reliably passes
+                // the LessEqual depth test against values written by the opaque pass.
+                // Without this, floating-point rounding differences between two
+                // separate render passes of the same geometry can cause the depth
+                // test to fail intermittently, leaving stencil un-written.
+                bias: wgpu::DepthBiasState {
+                    constant: -2,
+                    slope_scale: 0.0,
+                    clamp: 0.0,
+                },
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        self.decal_exclude_obj_bgl = Some(obj_bgl);
+        self.decal_exclude_pipeline = Some(pipeline);
+    }
+
+    /// Upload one non-receiver surface for the decal exclude pass and return per-draw data.
+    ///
+    /// Panics if called before `ensure_decal_exclude_pipeline`.
+    pub(crate) fn upload_decal_exclude_item(
+        &self,
+        device: &wgpu::Device,
+        mesh_id: MeshId,
+        model: [[f32; 4]; 4],
+    ) -> DecalExcludeGpuItem {
+        let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("decal_exclude_uniform_buf"),
+            contents: bytemuck::cast_slice(&model),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        let bgl = self
+            .decal_exclude_obj_bgl
+            .as_ref()
+            .expect("ensure_decal_exclude_pipeline not called");
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("decal_exclude_obj_bg"),
+            layout: bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buf.as_entire_binding(),
+            }],
+        });
+
+        DecalExcludeGpuItem {
+            mesh_id,
             _uniform_buf: uniform_buf,
             bind_group,
         }

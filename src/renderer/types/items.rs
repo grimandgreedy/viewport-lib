@@ -80,6 +80,8 @@ pub struct SceneRenderItem {
     /// Allows multiple `SceneRenderItem`s that share a bind-pose mesh to each
     /// pose independently (crowd / instanced characters).
     pub skin_instance: Option<u32>,
+    /// Whether this surface receives projected decals. Default: `true`.
+    pub receives_decals: bool,
 }
 
 impl Default for SceneRenderItem {
@@ -99,6 +101,7 @@ impl Default for SceneRenderItem {
             warp_attribute: None,
             warp_scale: 1.0,
             skin_instance: None,
+            receives_decals: true,
         }
     }
 }

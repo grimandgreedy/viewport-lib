@@ -1457,7 +1457,7 @@ impl ViewportRenderer {
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(0),
+                        load: wgpu::LoadOp::Clear(1),
                         store: wgpu::StoreOp::Store,
                     }),
                 }),
@@ -2001,6 +2001,50 @@ impl ViewportRenderer {
                 resolve_pass.set_pipeline(pipeline);
                 resolve_pass.set_bind_group(0, bg, &[]);
                 resolve_pass.draw(0..3, 0..1);
+            }
+        }
+
+        // -----------------------------------------------------------------------
+        // Decal exclude pass (D5): stamp stencil = 0 on non-receiver surfaces.
+        // Runs after the opaque pass, before the decal pass.
+        // -----------------------------------------------------------------------
+        if !self.decal_exclude_items.is_empty() {
+            if let Some(exclude_pl) = self.resources.decal_exclude_pipeline.as_ref() {
+                let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+                let camera_bg = &self.viewport_slots[vp_idx].camera_bind_group;
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("decal_exclude_pass"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &slot_hdr.hdr_depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(exclude_pl);
+                pass.set_stencil_reference(0);
+                pass.set_bind_group(0, camera_bg, &[]);
+                for item in &self.decal_exclude_items {
+                    if let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) {
+                        pass.set_bind_group(1, &item.bind_group, &[]);
+                        pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        if mesh.index_count > 0 {
+                            pass.set_index_buffer(
+                                mesh.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                        }
+                    }
+                }
             }
         }
 

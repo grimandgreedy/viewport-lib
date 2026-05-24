@@ -1327,6 +1327,31 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
+        // D5: Collect non-receiver surfaces for the decal exclude pass.
+        // ------------------------------------------------------------------
+        self.decal_exclude_items.clear();
+        {
+            let crate::SurfaceSubmission::Flat(ref surfaces) =
+                frame.scene.surfaces;
+            let has_exclude = surfaces
+                .iter()
+                .any(|item| !item.receives_decals && !item.appearance.hidden);
+            if has_exclude {
+                resources.ensure_decal_exclude_pipeline(device);
+                for item in surfaces.iter() {
+                    if !item.receives_decals && !item.appearance.hidden {
+                        let gpu = resources.upload_decal_exclude_item(
+                            device,
+                            item.mesh_id,
+                            item.model,
+                        );
+                        self.decal_exclude_items.push(gpu);
+                    }
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
         // Phase 17 : GPU marching cubes compute dispatch.
         // ------------------------------------------------------------------
         self.mc_gpu_data.clear();

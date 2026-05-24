@@ -2154,6 +2154,7 @@ pub(crate) struct ViewportHdrState {
     pub hdr_depth_texture: wgpu::Texture,
     pub hdr_depth_view: wgpu::TextureView,
     pub hdr_depth_only_view: wgpu::TextureView,
+    pub hdr_stencil_only_view: wgpu::TextureView,
 
     // --- Bloom ---
     pub bloom_threshold_texture: wgpu::Texture,
@@ -3115,10 +3116,15 @@ pub struct ViewportGpuResources {
     pub(crate) decal_replace_pipeline: Option<DualPipeline>,
     /// Multiply-blend decal pipeline (LDR + HDR). None until first decal is submitted.
     pub(crate) decal_multiply_pipeline: Option<DualPipeline>,
-    /// BGL for group 1 of the decal pass: one depth texture binding.
+    /// BGL for group 1 of the decal pass: depth texture + stencil texture bindings.
     pub(crate) decal_depth_bgl: Option<wgpu::BindGroupLayout>,
     /// BGL for group 2 of the decal pass: uniform buffer + albedo texture + sampler.
     pub(crate) decal_item_bgl: Option<wgpu::BindGroupLayout>,
     /// Linear-clamp sampler used by the decal fragment shader.
     pub(crate) decal_sampler: Option<wgpu::Sampler>,
+    // --- D5: decal receiver masking ---
+    /// Pipeline that writes stencil = 0 for non-receiver surfaces (D5).
+    pub(crate) decal_exclude_pipeline: Option<wgpu::RenderPipeline>,
+    /// BGL for group 1 of the decal exclude pass: one model matrix uniform buffer.
+    pub(crate) decal_exclude_obj_bgl: Option<wgpu::BindGroupLayout>,
 }
