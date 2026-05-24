@@ -99,7 +99,7 @@ impl Default for RtDemoState {
             scene: Scene::new(),
             selection: Selection::new(),
             runtime: ViewportRuntime::new()
-                .with_fixed_timestep(FixedTimestep::new(15.0))
+                .with_fixed_timestep(FixedTimestep::new(60.0))
                 .with_plugin(OrbitPlugin::new()),
             mesh_id: None,
             sim_fps: 15.0,
@@ -221,7 +221,7 @@ pub(crate) fn controls_rt_demo(app: &mut App, ui: &mut egui::Ui) {
 
         // Interpolation toggle.
         ui.checkbox(&mut app.rt_state.interpolate, "Interpolate transforms");
-        ui.small(if app.rt_state.interpolate {
+        ui.label(if app.rt_state.interpolate {
             "Smooth: renders at display rate using snapshot lerp/slerp."
         } else {
             "Choppy: renders only at simulation rate (jitter visible at low sim fps)."
@@ -240,8 +240,8 @@ pub(crate) fn controls_rt_demo(app: &mut App, ui: &mut egui::Ui) {
 
         ui.separator();
         ui.label("What this shows:");
-        ui.small("- RuntimePlugin trait: external code drives transforms via TransformWriteback.");
-        ui.small("- FixedTimestep: simulation runs at a fixed Hz independent of frame rate.");
-        ui.small("- TransformSnapshotTable: interpolation removes jitter between fixed steps.");
+        ui.label("- RuntimePlugin trait: external code drives transforms via TransformWriteback.");
+        ui.label("- FixedTimestep: simulation runs at a fixed Hz independent of frame rate.");
+        ui.label("- TransformSnapshotTable: interpolation removes jitter between fixed steps.");
     });
 }

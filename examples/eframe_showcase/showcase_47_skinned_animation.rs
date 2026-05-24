@@ -374,12 +374,12 @@ impl Default for Skin47State {
             bind_normals: Vec::new(),
             bind_skin_weights: None,
             speed: 1.0,
-            demo: Skin47Demo::SineWaveArm,
-            active_demo: Skin47Demo::SineWaveArm,
+            demo: Skin47Demo::Crowd,
+            active_demo: Skin47Demo::Crowd,
             pending_updates: Vec::new(),
             pending_pose_updates: Vec::new(),
-            path: SkinningPath::Cpu,
-            active_path: SkinningPath::Cpu,
+            path: SkinningPath::Gpu,
+            active_path: SkinningPath::Gpu,
             skin_weights_uploaded: std::collections::HashSet::new(),
             last_step_us: 0.0,
             gltf_mesh_ids: Vec::new(),
@@ -389,7 +389,7 @@ impl Default for Skin47State {
             gltf_nodes: Vec::new(),
             crowd_nodes: Vec::new(),
             crowd_actor_meshes: Vec::new(),
-            crowd_count: 6,
+            crowd_count: 64,
             crowd_count_active: 0,
             crowd_max_uploaded: 0,
             opacity: 1.0,
@@ -1522,18 +1522,18 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
             ui.selectable_value(&mut app.skin47_state.path, SkinningPath::Cpu, "CPU");
             ui.selectable_value(&mut app.skin47_state.path, SkinningPath::Gpu, "GPU");
         });
-        ui.small(format!(
+        ui.label(format!(
             "runtime.step() avg: {:.0} us",
             app.skin47_state.last_step_us
         ));
-        ui.small("CPU: re-uploads vertex buffers each frame.");
-        ui.small("GPU: uploads joint palette only; shader does LBS.");
+        ui.label("CPU: re-uploads vertex buffers each frame.");
+        ui.label("GPU: uploads joint palette only; shader does LBS.");
         ui.add_space(6.0);
         ui.separator();
 
         ui.label("Appearance (skinned pipeline coverage):");
-        ui.small("Toggles apply to every node in the active demo.");
-        ui.small("Use these with GPU path to exercise the 5.3 variants.");
+        ui.label("Toggles apply to every node in the active demo.");
+        ui.label("Use these with GPU path to exercise the 5.3 variants.");
         ui.add_space(4.0);
         let mut changed = false;
         let mut opacity = app.skin47_state.opacity;
@@ -1572,10 +1572,10 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
             app.skin47_state.appearance_version =
                 app.skin47_state.appearance_version.wrapping_add(1);
         }
-        ui.small("Opacity < 1 -> skinned transparent pipeline.");
-        ui.small("Wireframe -> skinned wireframe pipeline.");
-        ui.small("PBR / Matcap -> fragment-stage branches (shared with static).");
-        ui.small("Two-sided -> skinned two-sided pipeline.");
+        ui.label("Opacity < 1 -> skinned transparent pipeline.");
+        ui.label("Wireframe -> skinned wireframe pipeline.");
+        ui.label("PBR / Matcap -> fragment-stage branches (shared with static).");
+        ui.label("Two-sided -> skinned two-sided pipeline.");
         ui.add_space(6.0);
         ui.separator();
 
@@ -1595,11 +1595,11 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
 
                 ui.separator();
                 ui.label("How it works:");
-                ui.small("- Skeleton: 2 joints (root at origin, forearm at z=2.0).");
-                ui.small("- Pose: child joint rotates around X each frame.");
-                ui.small("- SkeletonPlugin: runs at POST_SIM, reads Pose, runs LBS.");
-                ui.small("- Output: SkinnedMeshUpdate pushed to output.skinned_mesh_updates.");
-                ui.small("- App: calls write_mesh_positions_normals before rendering.");
+                ui.label("- Skeleton: 2 joints (root at origin, forearm at z=2.0).");
+                ui.label("- Pose: child joint rotates around X each frame.");
+                ui.label("- SkeletonPlugin: runs at POST_SIM, reads Pose, runs LBS.");
+                ui.label("- Output: SkinnedMeshUpdate pushed to output.skinned_mesh_updates.");
+                ui.label("- App: calls write_mesh_positions_normals before rendering.");
             }
             Skin47Demo::ClipDrivenArm => {
                 ui.label("Playback speed:");
@@ -1616,23 +1616,23 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
 
                 ui.separator();
                 ui.label("How it works:");
-                ui.small("- AnimationClip: one rotation track on the forearm joint.");
-                ui.small("- 5 keyframes over 2 seconds: 0, +45, 0, -45, 0 deg.");
-                ui.small("- ClipPlayerPlugin: samples the clip at the playhead, writes Pose.");
-                ui.small("- SkeletonPlugin: same as before, reads Pose and runs LBS.");
-                ui.small("- Bind pose carries joint 1 translation; clip only animates rotation.");
+                ui.label("- AnimationClip: one rotation track on the forearm joint.");
+                ui.label("- 5 keyframes over 2 seconds: 0, +45, 0, -45, 0 deg.");
+                ui.label("- ClipPlayerPlugin: samples the clip at the playhead, writes Pose.");
+                ui.label("- SkeletonPlugin: same as before, reads Pose and runs LBS.");
+                ui.label("- Bind pose carries joint 1 translation; clip only animates rotation.");
             }
             Skin47Demo::GltfCharacter => {
                 if app.skin47_state.gltf_asset.is_none() {
                     ui.label("No glTF asset loaded.");
                     ui.add_space(6.0);
-                    ui.small("Drop a skinned .glb (or .gltf with its buffers next to it) at:");
+                    ui.label("Drop a skinned .glb (or .gltf with its buffers next to it) at:");
                     ui.code(GLTF_DEMO_PATH);
                     ui.add_space(4.0);
-                    ui.small("Restart the showcase to load it.");
+                    ui.label("Restart the showcase to load it.");
                     if app.skin47_state.gltf_missing {
                         ui.add_space(4.0);
-                        ui.small("(File not found on the last startup.)");
+                        ui.label("(File not found on the last startup.)");
                     }
                 } else {
                     // Clip selector. Switching clips triggers a runtime
@@ -1683,21 +1683,21 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                     ui.add_space(6.0);
                     ui.separator();
                     ui.label("How it works:");
-                    ui.small("- viewport-lib-io decodes the .glb to neutral io types.");
-                    ui.small("- An adapter converts io Skeleton/Clip to runtime types.");
-                    ui.small("- One ClipPlayerPlugin + N SkeletonPlugins (one per mesh part).");
-                    ui.small("- All parts share the skeleton and the Pose written by the player.");
-                    ui.small("- Bone-parented (non-skinned) rigs are auto-converted at import time.");
+                    ui.label("- viewport-lib-io decodes the .glb to neutral io types.");
+                    ui.label("- An adapter converts io Skeleton/Clip to runtime types.");
+                    ui.label("- One ClipPlayerPlugin + N SkeletonPlugins (one per mesh part).");
+                    ui.label("- All parts share the skeleton and the Pose written by the player.");
+                    ui.label("- Bone-parented (non-skinned) rigs are auto-converted at import time.");
                 }
             }
             Skin47Demo::Crowd => {
                 if app.skin47_state.gltf_asset.is_none() {
                     ui.label("No glTF asset loaded.");
                     ui.add_space(6.0);
-                    ui.small("The crowd demo reuses the glTF character; drop a .glb at:");
+                    ui.label("The crowd demo reuses the glTF character; drop a .glb at:");
                     ui.code(GLTF_DEMO_PATH);
                     ui.add_space(4.0);
-                    ui.small("Restart the showcase to load it.");
+                    ui.label("Restart the showcase to load it.");
                 } else {
                     ui.label("Crowd size:");
                     let mut n = app.skin47_state.crowd_count;
@@ -1736,7 +1736,7 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
 
                     ui.separator();
                     ui.label("Picking (Phase 6):");
-                    ui.small("Click a crowd member to pick it. Two CPU strategies:");
+                    ui.label("Click a crowd member to pick it. Two CPU strategies:");
                     let current = app.skin47_state.crowd_pick_strategy;
                     egui::ComboBox::from_id_salt("skin47_crowd_pick_strategy")
                         .selected_text(current.label())
@@ -1774,10 +1774,10 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                         {
                             app.skin47_state.crowd_pick_padding = p;
                         }
-                        ui.small(
+                        ui.label(
                             "Fraction of longest side added on every axis.",
                         );
-                        ui.small("Smaller = tighter BVH (may miss extreme poses).");
+                        ui.label("Smaller = tighter BVH (may miss extreme poses).");
                     }
 
                     if app.skin47_state.crowd_pick_strategy
@@ -1792,7 +1792,7 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
 
                     match app.skin47_state.crowd_last_pick {
                         Some((node_id, actor_idx, strat)) => {
-                            ui.small(format!(
+                            ui.label(format!(
                                 "Last pick: actor {} (node {}) via {}",
                                 actor_idx,
                                 node_id,
@@ -1800,19 +1800,19 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                             ));
                         }
                         None => {
-                            ui.small("Last pick: none");
+                            ui.label("Last pick: none");
                         }
                     }
-                    ui.small("- Bind-pose + padded AABB: cheap, may miss the deformed silhouette.");
-                    ui.small("- Per-frame refresh: rebuilds TriMeshes from deformed positions, picks the rendered shape.");
+                    ui.label("- Bind-pose + padded AABB: cheap, may miss the deformed silhouette.");
+                    ui.label("- Per-frame refresh: rebuilds TriMeshes from deformed positions, picks the rendered shape.");
 
                     ui.separator();
                     ui.label("How it works:");
-                    ui.small("- One SkinnedActorPlugin owns the shared skeleton and N actors.");
-                    ui.small("- Each actor has its own clip choice, playhead, and play state.");
-                    ui.small("- Playheads are staggered around each clip's duration to de-phase.");
-                    ui.small("- N x parts unique GPU meshes; one vertex-buffer write per part per frame.");
-                    ui.small("- Phase 5 (GPU skinning) replaces those writes with one joint-palette upload per actor.");
+                    ui.label("- One SkinnedActorPlugin owns the shared skeleton and N actors.");
+                    ui.label("- Each actor has its own clip choice, playhead, and play state.");
+                    ui.label("- Playheads are staggered around each clip's duration to de-phase.");
+                    ui.label("- N x parts unique GPU meshes; one vertex-buffer write per part per frame.");
+                    ui.label("- Phase 5 (GPU skinning) replaces those writes with one joint-palette upload per actor.");
                 }
             }
         }

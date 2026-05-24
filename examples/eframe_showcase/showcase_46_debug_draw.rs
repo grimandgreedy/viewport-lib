@@ -278,8 +278,8 @@ pub(crate) fn controls_dbg_draw(app: &mut App, ui: &mut egui::Ui) {
         if ui.checkbox(&mut dev, "Dev layer visuals").changed() {
             app.dbg_draw_state.dev_enabled = dev;
         }
-        ui.small("Dev layer: AABB wireframes, contact normals, point markers, body labels.");
-        ui.small("The yellow bounding region is overlay-layer and always shown.");
+        ui.label("Dev layer: AABB wireframes, contact normals, point markers, body labels.");
+        ui.label("The yellow bounding region is overlay-layer and always shown.");
         ui.add_space(6.0);
 
         ui.separator();
@@ -293,10 +293,10 @@ pub(crate) fn controls_dbg_draw(app: &mut App, ui: &mut egui::Ui) {
 
         ui.separator();
         ui.label("What this shows:");
-        ui.small("- DebugDraw stored in RuntimeResources, accessed by plugins via ctx.resources.");
-        ui.small("- begin_frame() clears transient draws; persistent draws survive across frames.");
-        ui.small("- Dev layer suppressed when dev_enabled = false (ship mode).");
-        ui.small("- Overlay layer always shown regardless of dev_enabled.");
-        ui.small("- to_polylines(), to_point_cloud(), to_labels() convert to render items.");
+        ui.label("- DebugDraw stored in RuntimeResources, accessed by plugins via ctx.resources.");
+        ui.label("- begin_frame() clears transient draws; persistent draws survive across frames.");
+        ui.label("- Dev layer suppressed when dev_enabled = false (ship mode).");
+        ui.label("- Overlay layer always shown regardless of dev_enabled.");
+        ui.label("- to_polylines(), to_point_cloud(), to_labels() convert to render items.");
     });
 }

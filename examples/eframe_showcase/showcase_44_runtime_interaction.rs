@@ -250,9 +250,9 @@ pub(crate) fn controls_rt_interact(app: &mut App, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         ui.separator();
         ui.label("What this shows:");
-        ui.small("- SelectionSystem: click-to-select built into the runtime.");
-        ui.small("- ManipulationSystem: G/R/S sessions driven by ActionFrame.");
-        ui.small("- TransformWriteback: scene transform updates via the runtime.");
+        ui.label("- SelectionSystem: click-to-select built into the runtime.");
+        ui.label("- ManipulationSystem: G/R/S sessions driven by ActionFrame.");
+        ui.label("- TransformWriteback: scene transform updates via the runtime.");
     });
 }
 

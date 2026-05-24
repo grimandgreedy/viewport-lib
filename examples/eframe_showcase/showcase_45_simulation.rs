@@ -286,7 +286,7 @@ pub(crate) fn controls_sim45(app: &mut App, ui: &mut egui::Ui) {
 
         // Interpolation toggle.
         ui.checkbox(&mut app.sim45_state.interpolate, "Interpolate transforms");
-        ui.small(if app.sim45_state.interpolate {
+        ui.label(if app.sim45_state.interpolate {
             "Smooth: snapshot lerp/slerp at display rate."
         } else {
             "Choppy: renders only at sim fps (jitter visible at low fps)."
@@ -347,9 +347,9 @@ pub(crate) fn controls_sim45(app: &mut App, ui: &mut egui::Ui) {
 
         ui.separator();
         ui.label("What this shows:");
-        ui.small("- PhysicsLitePlugin: gravity, velocity integration, bounded reflection.");
-        ui.small("- AnimationPlugin: keyframed looping path.");
-        ui.small("- CameraFollow: orbit camera center tracks a physics body.");
-        ui.small("- FixedTimestep + interpolation: smooth rendering at any display fps.");
+        ui.label("- PhysicsLitePlugin: gravity, velocity integration, bounded reflection.");
+        ui.label("- AnimationPlugin: keyframed looping path.");
+        ui.label("- CameraFollow: orbit camera center tracks a physics body.");
+        ui.label("- FixedTimestep + interpolation: smooth rendering at any display fps.");
     });
 }
