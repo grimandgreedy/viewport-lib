@@ -1,5 +1,7 @@
 /// Built-in colourmap LUT data.
 pub mod colourmap_data;
+/// Screen-space decal pipeline (D1).
+pub(crate) mod decal;
 /// Dynamic resolution intermediate render target.
 pub(crate) mod dyn_res;
 /// IBL precomputation and environment map upload.

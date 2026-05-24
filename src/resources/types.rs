@@ -2154,6 +2154,7 @@ pub(crate) struct ViewportHdrState {
     pub hdr_depth_texture: wgpu::Texture,
     pub hdr_depth_view: wgpu::TextureView,
     pub hdr_depth_only_view: wgpu::TextureView,
+    pub hdr_stencil_only_view: wgpu::TextureView,
 
     // --- Bloom ---
     pub bloom_threshold_texture: wgpu::Texture,
@@ -2285,6 +2286,11 @@ pub(crate) struct ViewportHdrState {
     /// Effective scene resolution after render scale: [output_size * render_scale].
     /// Equals output_size when render_scale = 1.0.
     pub scene_size: [u32; 2],
+
+    // --- Decal pass depth binding (D1) ---
+    /// Bind group for group 1 of the decal pass: reads hdr_depth_only_view as a depth texture.
+    /// Rebuilt on viewport resize alongside the other viewport-sized bind groups.
+    pub decal_depth_bg: wgpu::BindGroup,
 }
 
 // ---------------------------------------------------------------------------
@@ -3104,4 +3110,23 @@ pub struct ViewportGpuResources {
     /// Read and reset at the start of each `prepare()` call to populate
     /// `FrameStats::upload_bytes`.
     pub frame_upload_bytes: u64,
+
+    // --- Screen-space decal pipelines (D1, lazily created) ---
+    /// Replace-blend decal pipeline (LDR + HDR). None until first decal is submitted.
+    pub(crate) decal_replace_pipeline: Option<DualPipeline>,
+    /// Multiply-blend decal pipeline (LDR + HDR). None until first decal is submitted.
+    pub(crate) decal_multiply_pipeline: Option<DualPipeline>,
+    /// Additive-blend decal pipeline (LDR + HDR). None until first decal is submitted.
+    pub(crate) decal_additive_pipeline: Option<DualPipeline>,
+    /// BGL for group 1 of the decal pass: depth texture + stencil texture bindings.
+    pub(crate) decal_depth_bgl: Option<wgpu::BindGroupLayout>,
+    /// BGL for group 2 of the decal pass: uniform buffer + albedo texture + sampler.
+    pub(crate) decal_item_bgl: Option<wgpu::BindGroupLayout>,
+    /// Linear-clamp sampler used by the decal fragment shader.
+    pub(crate) decal_sampler: Option<wgpu::Sampler>,
+    // --- D5: decal receiver masking ---
+    /// Pipeline that writes stencil = 0 for non-receiver surfaces (D5).
+    pub(crate) decal_exclude_pipeline: Option<wgpu::RenderPipeline>,
+    /// BGL for group 1 of the decal exclude pass: one model matrix uniform buffer.
+    pub(crate) decal_exclude_obj_bgl: Option<wgpu::BindGroupLayout>,
 }

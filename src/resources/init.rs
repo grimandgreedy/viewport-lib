@@ -2672,6 +2672,14 @@ impl ViewportGpuResources {
             dyn_res_upscale_ds_pipeline: None,
             dyn_res_upscale_bgl: None,
             dyn_res_linear_sampler: None,
+            decal_replace_pipeline: None,
+            decal_multiply_pipeline: None,
+            decal_additive_pipeline: None,
+            decal_depth_bgl: None,
+            decal_item_bgl: None,
+            decal_sampler: None,
+            decal_exclude_pipeline: None,
+            decal_exclude_obj_bgl: None,
         }
     }
 }

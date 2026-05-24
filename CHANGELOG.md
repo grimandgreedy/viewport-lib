@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unrelaese changes]
+### Decals
+
+- Screen-space decal projection: place a texture onto any opaque surface without modifying the receiver mesh. The renderer reads the scene depth buffer each frame, reconstructs world position per pixel, and projects the decal onto whatever geometry lies inside the projection volume. No per-receiver setup is needed.
+- Normal map support: decals can carry a tangent-space normal map that perturbs the receiver's surface shading, making them read as craters or embossed marks rather than flat stickers. A blend strength control fades between the original surface normal and the decal normal.
+- Three blend modes: replace (standard alpha composite), multiply (darkens the receiver, good for grime and weathering), and additive (brightens the receiver, good for fire, sparks, and glows). Stacking multiple additive decals accumulates correctly.
+- Roughness and metallic overrides: decals can carry roughness and metallic values or textures that layer a specular approximation on top of the albedo, so a metal-looking decal reads as metal on any surface.
+- Draw order: a sort key controls which decals composite on top of others within a frame.
+- Animated decals: UV offset and scale can be driven by a scroll animation without per-frame updates from the application. Decals can also be given a lifetime and a fade-out duration; the scene removes them automatically when they expire.
+- Receiver masking: individual scene nodes can opt out of receiving decals entirely.
+- Emissive channel: a scalar multiplier adds self-illumination on top of the blend result. Values above 1.0 bloom under tone-mapping in HDR mode.
+- Soft edges: an edge fade parameter smooths the alpha to zero near the boundary of the projection volume, hiding the hard rectangular cutoff.
+- Tri-planar projection: samples the texture from all three local axes and blends by surface normal, avoiding UV stretching on corners and non-planar surfaces.
+- Cylindrical projection: wraps a decal around a cylindrical surface using angle and axial position as UV coordinates. Works on both the outside of a column and the inside of a tube.
+
 ## [0.15.0]
 
 ### Runtime Layer & Plugins

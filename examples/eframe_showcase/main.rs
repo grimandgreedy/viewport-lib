@@ -63,6 +63,7 @@ mod showcase_42_gaussian_splats;
 mod showcase_43_scene_runtime;
 mod showcase_44_debug_draw;
 mod showcase_45_skinned_animation;
+mod showcase_48_decals;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -209,6 +210,7 @@ fn main() -> eframe::Result {
                 rt_state: showcase_43_scene_runtime::RtDemoState::default(),
                 dbg_draw_state: showcase_44_debug_draw::DbgDrawState::default(),
                 skin_state: showcase_45_skinned_animation::Skin47State::default(),
+                decal48_state: showcase_48_decals::Decal48State::default(),
             }))
         }),
     )
@@ -267,6 +269,7 @@ enum ShowcaseMode {
     SceneRuntime,
     DebugDraw,
     SkinnedAnimation,
+    Decals,
 }
 
 impl ShowcaseMode {
@@ -317,6 +320,7 @@ impl ShowcaseMode {
             Self::SceneRuntime => "43: Scene Runtime",
             Self::DebugDraw => "44: Debug Draw",
             Self::SkinnedAnimation => "45: Skeletal Animation",
+            Self::Decals => "48: Decals",
         }
     }
 }
@@ -478,6 +482,9 @@ pub(crate) struct App {
 
     // --- Showcase 45 ---
     pub(crate) skin_state: showcase_45_skinned_animation::Skin47State,
+
+    // --- Showcase 48 ---
+    pub(crate) decal48_state: showcase_48_decals::Decal48State,
 }
 
 // ---------------------------------------------------------------------------
@@ -656,6 +663,7 @@ impl eframe::App for App {
                     ShowcaseMode::SceneRuntime,
                     ShowcaseMode::DebugDraw,
                     ShowcaseMode::SkinnedAnimation,
+                    ShowcaseMode::Decals,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1133,6 +1141,9 @@ impl eframe::App for App {
                                 pick_pos, vp_size, view_proj, shift, renderer,
                             );
                         }
+                    } else if self.mode == ShowcaseMode::Decals {
+                        let vp_size = glam::Vec2::new(rect.width(), rect.height());
+                        showcase_48_decals::decal48_place(self, pick_pos, vp_size);
                     } else {
                         self.handle_click_select(pick_pos, rect.width(), rect.height());
                     }
@@ -1353,6 +1364,14 @@ impl eframe::App for App {
                         ctx.request_repaint();
                     }
                 }
+                // ----- Decals: advance live decal ages (D4) -----
+                if self.mode == ShowcaseMode::Decals && self.decal48_state.built {
+                    let dt = ctx.input(|i| i.stable_dt.min(1.0 / 30.0));
+                    showcase_48_decals::update_decal48(self, dt);
+                    if !self.decal48_state.scene.collect_decal_items().is_empty() {
+                        ctx.request_repaint();
+                    }
+                }
             });
     }
 }
@@ -1363,7 +1382,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 45] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 46] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1409,6 +1428,7 @@ impl App {
             ShowcaseMode::SceneRuntime,
             ShowcaseMode::DebugDraw,
             ShowcaseMode::SkinnedAnimation,
+            ShowcaseMode::Decals,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1536,6 +1556,7 @@ impl App {
             ShowcaseMode::SceneRuntime => !self.rt_state.built,
             ShowcaseMode::DebugDraw => !self.dbg_draw_state.built,
             ShowcaseMode::SkinnedAnimation => !self.skin_state.built,
+            ShowcaseMode::Decals => !self.decal48_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -1974,6 +1995,9 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::Decals => {
+                showcase_48_decals::build_decal48_scene(self, renderer);
+            }
             _ => {}
         }
     }
@@ -2072,6 +2096,9 @@ impl App {
             }
             ShowcaseMode::SkinnedAnimation => {
                 showcase_45_skinned_animation::controls_skin47(self, ui)
+            }
+            ShowcaseMode::Decals => {
+                showcase_48_decals::controls_decal48(self, ui)
             }
         }
     }
@@ -2816,6 +2843,22 @@ impl App {
                 let sg = self.skin_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
+
+            ShowcaseMode::Decals => {
+                let items = if self.decal48_state.built {
+                    showcase_48_decals::decal48_scene_items(self)
+                } else {
+                    Vec::new()
+                };
+                let lighting = LightingSettings {
+                    hemisphere_intensity: 0.5,
+                    sky_colour: [1.0, 1.0, 1.0],
+                    ground_colour: [0.6, 0.6, 0.6],
+                    ..LightingSettings::default()
+                };
+                let sg = self.decal48_state.scene.version();
+                (items, Some(BG_COLOUR), lighting, sg, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -2987,6 +3030,11 @@ impl App {
             showcase_44_debug_draw::submit_dbg_draw_items(self, &mut fd);
         }
 
+        // Decals (Showcase 48): push placed decals into fd.scene.decals.
+        if self.mode == ShowcaseMode::Decals && self.decal48_state.built {
+            showcase_48_decals::submit_decal48_items(self, &mut fd);
+        }
+
 
         // Curve network quantities (Showcase 28) : submitted every frame.
         if self.mode == ShowcaseMode::CurveNetworkQuantities {
@@ -3099,6 +3147,11 @@ impl App {
                 }
             }
             ShowcaseMode::BackfacePolicy => {}
+            // Decals require the full HDR pipeline so the decal pass (which reads
+            // scene depth as a texture) runs via render_frame_internal.
+            ShowcaseMode::Decals => {
+                fd.effects.post_process.enabled = true;
+            }
             _ => {}
         }
 

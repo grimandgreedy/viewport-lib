@@ -19,6 +19,7 @@ pub mod stats;
 
 pub use self::types::{
     CameraFrame, CameraFrustumItem, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
+    CylindricalFacing, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection,
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GaussianSplatData, GaussianSplatId,
     GaussianSplatItem, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode, ImageAnchor,
     ImageSliceItem, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
@@ -266,6 +267,10 @@ pub struct ViewportRenderer {
     lic_gpu_data: Vec<crate::resources::LicSurfaceGpuData>,
     /// Per-frame GPU implicit surface data, rebuilt in prepare(), consumed in paint() (Phase 16).
     implicit_gpu_data: Vec<crate::resources::implicit::ImplicitGpuItem>,
+    /// Per-frame decal GPU data, rebuilt in prepare(), consumed in paint() (D1).
+    decal_gpu_data: Vec<crate::resources::decal::DecalGpuItem>,
+    /// Per-frame decal exclude GPU data, rebuilt in prepare(), consumed in paint() (D5).
+    decal_exclude_items: Vec<crate::resources::decal::DecalExcludeGpuItem>,
     /// Per-frame GPU marching cubes render data, rebuilt in prepare(), consumed in paint() (Phase 17).
     mc_gpu_data: Vec<crate::resources::gpu_marching_cubes::McFrameData>,
     /// Per-frame sprite GPU data, rebuilt in prepare(), consumed in paint().
@@ -470,6 +475,8 @@ impl ViewportRenderer {
             gaussian_splat_draw_data: Vec::new(),
             lic_gpu_data: Vec::new(),
             implicit_gpu_data: Vec::new(),
+            decal_gpu_data: Vec::new(),
+            decal_exclude_items: Vec::new(),
             mc_gpu_data: Vec::new(),
             screen_image_gpu_data: Vec::new(),
             overlay_image_gpu_data: Vec::new(),

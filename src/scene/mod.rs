@@ -1,6 +1,6 @@
 /// Scene graph with parent-child hierarchy and layers.
 pub mod scene;
-pub use scene::{Group, GroupId, Layer, LayerId, Scene, SceneNode, SceneStats};
+pub use scene::{DecalHandle, Group, GroupId, Layer, LayerId, LiveDecal, Scene, SceneNode, SceneStats};
 /// Axis-aligned bounding box.
 pub mod aabb;
 /// Per-object material parameters (colour, shading, textures).

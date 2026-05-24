@@ -2152,6 +2152,49 @@ impl ViewportGpuResources {
             self.depth_blit_bgl = Some(bgl);
             self.depth_blit_pipeline = Some(pipeline);
         }
+
+        // --- Decal shared resources (D1) ---
+        if self.decal_depth_bgl.is_none() {
+            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("decal_depth_bgl"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Uint,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+            self.decal_depth_bgl = Some(bgl);
+        }
+        if self.decal_sampler.is_none() {
+            // Repeat address mode so UV scroll animation tiles correctly.
+            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("decal_sampler"),
+                address_mode_u: wgpu::AddressMode::Repeat,
+                address_mode_v: wgpu::AddressMode::Repeat,
+                address_mode_w: wgpu::AddressMode::Repeat,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            });
+            self.decal_sampler = Some(sampler);
+        }
     }
 
     /// Create a fresh [`ViewportHdrState`] for the given viewport dimensions.
@@ -2226,6 +2269,10 @@ impl ViewportGpuResources {
         let hdr_depth_view = hdr_depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
         let hdr_depth_only_view = hdr_depth_tex.create_view(&wgpu::TextureViewDescriptor {
             aspect: wgpu::TextureAspect::DepthOnly,
+            ..Default::default()
+        });
+        let hdr_stencil_only_view = hdr_depth_tex.create_view(&wgpu::TextureViewDescriptor {
+            aspect: wgpu::TextureAspect::StencilOnly,
             ..Default::default()
         });
 
@@ -3083,12 +3130,15 @@ impl ViewportGpuResources {
                 (None, None, None)
             };
 
+        let decal_depth_bg = self.create_decal_depth_bg(device, &hdr_depth_only_view, &hdr_stencil_only_view);
+
         ViewportHdrState {
             hdr_texture: hdr_tex,
             hdr_view,
             hdr_depth_texture: hdr_depth_tex,
             hdr_depth_view,
             hdr_depth_only_view,
+            hdr_stencil_only_view,
             bloom_threshold_texture: bloom_threshold_tex,
             bloom_threshold_view,
             bloom_ping_texture: bloom_ping_tex,
@@ -3161,6 +3211,7 @@ impl ViewportGpuResources {
             upscale_texture,
             upscale_view,
             upscale_bind_group,
+            decal_depth_bg,
         }
     }
 

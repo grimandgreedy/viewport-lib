@@ -403,6 +403,8 @@ pub struct SceneFrame {
     pub sprite_items: Vec<SpriteItem>,
     /// Gaussian splat items to render this frame.
     pub gaussian_splats: Vec<GaussianSplatItem>,
+    /// Screen-space decal items to render this frame (D1).
+    pub decals: Vec<DecalItem>,
 }
 
 impl Default for SceneFrame {
@@ -430,6 +432,7 @@ impl Default for SceneFrame {
             volume_surface_slices: Vec::new(),
             sprite_items: Vec::new(),
             gaussian_splats: Vec::new(),
+            decals: Vec::new(),
         }
     }
 }

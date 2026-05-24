@@ -1306,6 +1306,52 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
+        // D1 + D3: Screen-space decals, sorted by sort_key (D3).
+        // ------------------------------------------------------------------
+        self.decal_gpu_data.clear();
+        if !frame.scene.decals.is_empty() {
+            resources.ensure_decal_pipeline(device);
+            // Stable sort so equal-key decals stay in submission order.
+            let mut sorted: Vec<&crate::renderer::DecalItem> =
+                frame.scene.decals.iter().collect();
+            sorted.sort_by_key(|d| d.sort_key);
+            for item in sorted {
+                if item.appearance.hidden { continue; }
+                if item.appearance.opacity <= 0.0 { continue; }
+                // Apply appearance.opacity on top of the item's own alpha.
+                let mut effective = item.clone();
+                effective.alpha *= item.appearance.opacity;
+                let gpu = resources.upload_decal_item(device, &effective);
+                self.decal_gpu_data.push(gpu);
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // D5: Collect non-receiver surfaces for the decal exclude pass.
+        // ------------------------------------------------------------------
+        self.decal_exclude_items.clear();
+        {
+            let crate::SurfaceSubmission::Flat(ref surfaces) =
+                frame.scene.surfaces;
+            let has_exclude = surfaces
+                .iter()
+                .any(|item| !item.receives_decals && !item.appearance.hidden);
+            if has_exclude {
+                resources.ensure_decal_exclude_pipeline(device);
+                for item in surfaces.iter() {
+                    if !item.receives_decals && !item.appearance.hidden {
+                        let gpu = resources.upload_decal_exclude_item(
+                            device,
+                            item.mesh_id,
+                            item.model,
+                        );
+                        self.decal_exclude_items.push(gpu);
+                    }
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
         // Phase 17 : GPU marching cubes compute dispatch.
         // ------------------------------------------------------------------
         self.mc_gpu_data.clear();
