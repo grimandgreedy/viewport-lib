@@ -1,4 +1,4 @@
-// Screen-space decal projection shader (D1 + D2 + D3 + D4).
+// Screen-space decal projection shader (D1 + D2 + D3 + D4 + D6 + D7).
 //
 // Group 0: camera_bgl (CameraUniform)
 // Group 1: per-viewport scene depth texture (depth-only aspect view)
@@ -42,6 +42,12 @@ struct DecalUniform {
     // D4
     uv_offset:             vec2<f32>,  // added to final UV before sampling
     uv_scale:              vec2<f32>,  // scales final UV before offset (sprite sheet / scroll)
+    // D6
+    emissive:              f32,   // emissive intensity multiplier
+    has_emissive_tex:      u32,   // 1 when emissive_tex is bound
+    // D7
+    edge_fade:             f32,   // [0, 0.5]: fraction of half-extent over which alpha fades
+    _pad:                  u32,
 };
 
 @group(2) @binding(0) var<uniform> u:             DecalUniform;
@@ -50,6 +56,7 @@ struct DecalUniform {
 @group(2) @binding(3) var          decal_normal:  texture_2d<f32>;  // D2
 @group(2) @binding(4) var          roughness_tex: texture_2d<f32>;  // D3
 @group(2) @binding(5) var          metallic_tex:  texture_2d<f32>;  // D3
+@group(2) @binding(6) var          emissive_tex:  texture_2d<f32>;  // D6
 
 struct VertexOutput {
     @builtin(position) clip_pos: vec4<f32>,
@@ -103,6 +110,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
+    // D7: compute edge fade from local-space coordinates.
+    // Fades alpha to zero within edge_fade of each box face.
+    var edge_alpha = 1.0;
+    if u.edge_fade > 0.0 {
+        let fx = smoothstep(0.0, u.edge_fade, 0.5 - abs(local.x));
+        let fy = smoothstep(0.0, u.edge_fade, 0.5 - abs(local.y));
+        let fz = smoothstep(0.0, u.edge_fade, 0.5 - abs(local.z));
+        edge_alpha = fx * fy * fz;
+    }
+
     // Estimate the receiver surface normal from world-position screen derivatives.
     // Used for D2 normal-map shading and D3 specular -- not for the facing check.
     let ddx_w    = dpdx(world);
@@ -128,7 +145,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let uv      = u.uv_offset + u.uv_scale * base_uv;
 
     let tex_col = textureSample(decal_tex, decal_samp, uv);
-    let alpha   = tex_col.a * u.alpha;
+    let alpha   = tex_col.a * u.alpha * edge_alpha;
 
     if alpha < 0.001 {
         discard;
@@ -186,6 +203,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Dielectric: white highlight. Metal: highlight tinted by albedo colour.
         let spec_color = mix(vec3<f32>(0.95), out_rgb, metallic_val);
         out_rgb = out_rgb + spec_color * spec_intensity;
+    }
+
+    // D6: emissive contribution -- always additive on top of the blend result.
+    if u.emissive > 0.0 {
+        let emissive_col = select(out_rgb,
+                                  textureSample(emissive_tex, decal_samp, uv).rgb,
+                                  u.has_emissive_tex != 0u);
+        out_rgb = out_rgb + emissive_col * u.emissive;
     }
 
     return vec4<f32>(out_rgb, alpha);

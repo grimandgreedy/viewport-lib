@@ -1588,6 +1588,22 @@ pub enum DecalAnimation {
 /// [`LiveDecal`](crate::scene::LiveDecal) with a
 /// [`DecalAnimation`]: the scene updates `uv_offset` / `uv_scale` from the
 /// animation each frame.
+///
+/// # Emissive (D6)
+///
+/// `emissive` adds a self-illumination contribution on top of whatever the
+/// blend mode produces. The emissive colour is sampled from `emissive_texture_id`
+/// when set, or taken from the albedo colour otherwise. The contribution is
+/// always additive regardless of blend mode, so `emissive = 0.0` (default) has
+/// no visible effect. Values above 1.0 are meaningful in HDR: they bloom under
+/// tone-mapping when `post_process.enabled = true`.
+///
+/// # Soft edges (D7)
+///
+/// `edge_fade` fades the decal alpha to zero near the boundary of its projection
+/// box, hiding the rectangular cutoff. Range [0.0, 0.5]; 0.0 (default) = hard
+/// edge, 0.5 = fade covers the full half-extent. A value around 0.15-0.25 suits
+/// most decals.
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct DecalItem {
@@ -1619,6 +1635,15 @@ pub struct DecalItem {
     pub uv_offset: [f32; 2],
     /// UV scale applied before texture sampling. Modified by [`DecalAnimation`]. Default: [1, 1].
     pub uv_scale: [f32; 2],
+    // -- D6 fields --
+    /// Emissive intensity multiplier. 0.0 = no emission. Default: 0.0.
+    pub emissive: f32,
+    /// Optional emissive texture. When `None`, the albedo colour is used as the emissive colour.
+    pub emissive_texture_id: Option<u64>,
+    // -- D7 fields --
+    /// Fraction of each local half-extent over which the alpha fades to zero at the box boundary.
+    /// Range [0.0, 0.5]. Default: 0.0 (hard edge).
+    pub edge_fade: f32,
     /// Visibility and opacity overrides. `hidden` skips the decal entirely; `opacity`
     /// multiplies the final alpha. `unlit` and `wireframe` are accepted but have no
     /// effect on decals. Default: all no-op.
@@ -1641,6 +1666,9 @@ impl Default for DecalItem {
             metallic_texture_id: None,
             uv_offset: [0.0, 0.0],
             uv_scale: [1.0, 1.0],
+            emissive: 0.0,
+            emissive_texture_id: None,
+            edge_fade: 0.0,
             appearance: AppearanceSettings::default(),
         }
     }

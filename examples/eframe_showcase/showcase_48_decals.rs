@@ -11,6 +11,8 @@
 //! D3: roughness and metallic controls; wet-patch sort_key demo.
 //! D4: lifetime-managed fading decals and a UV-scroll animation demo.
 //! D5: receiver masking -- orange box on the floor blocks decal projection.
+//! D6: emissive channel -- glowing rune and spark-impact decals.
+//! D7: soft projection-box edges -- edge_fade slider on/off comparison.
 
 use eframe::egui;
 use viewport_lib::{
@@ -186,6 +188,65 @@ fn make_blood_texture(size: u32) -> Vec<u8> {
     buf
 }
 
+/// D6: Glowing rune -- a five-pointed star outline on a transparent background.
+fn make_rune_texture(size: u32) -> Vec<u8> {
+    let mut buf = vec![0u8; (size * size * 4) as usize];
+    let s = size as f32;
+    let c = s * 0.5;
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as f32 - c;
+            let dy = y as f32 - c;
+            let d = (dx * dx + dy * dy).sqrt();
+            let angle = dy.atan2(dx);
+            // Star: 5 outer points, 5 inner indents.
+            let spoke_angle = (angle * 5.0 / 2.0).cos().abs();
+            let outer = c * 0.45;
+            let inner = c * 0.20;
+            let star_r = inner + (outer - inner) * spoke_angle;
+            let edge_w = c * 0.07;
+            let rim_dist = (d - star_r).abs();
+            let alpha = ((edge_w - rim_dist) / edge_w).clamp(0.0, 1.0);
+            if alpha > 0.0 {
+                let idx = ((y * size + x) * 4) as usize;
+                buf[idx]     = 255;
+                buf[idx + 1] = 200;
+                buf[idx + 2] = 80;
+                buf[idx + 3] = (alpha * 255.0) as u8;
+            }
+        }
+    }
+    buf
+}
+
+/// D6: Spark-impact -- a bright central burst with 8 radiating streaks.
+fn make_spark_texture(size: u32) -> Vec<u8> {
+    let mut buf = vec![0u8; (size * size * 4) as usize];
+    let s = size as f32;
+    let c = s * 0.5;
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as f32 - c;
+            let dy = y as f32 - c;
+            let d = (dx * dx + dy * dy).sqrt() / c;
+            let angle = dy.atan2(dx);
+            let spoke = (angle * 8.0).cos().abs().powf(6.0);
+            let radial = (1.0 - d).max(0.0).powf(1.5);
+            let alpha = (radial * 0.5 + spoke * radial * 0.7).clamp(0.0, 1.0);
+            if alpha > 0.005 {
+                let idx = ((y * size + x) * 4) as usize;
+                let g = (0.7 + 0.3 * radial).clamp(0.0, 1.0);
+                let b = (0.2 * radial).clamp(0.0, 1.0);
+                buf[idx]     = 255;
+                buf[idx + 1] = (g * 255.0) as u8;
+                buf[idx + 2] = (b * 255.0) as u8;
+                buf[idx + 3] = (alpha * 255.0) as u8;
+            }
+        }
+    }
+    buf
+}
+
 // ---------------------------------------------------------------------------
 // Decal transform builder
 // ---------------------------------------------------------------------------
@@ -268,6 +329,18 @@ pub(crate) struct Decal48State {
     // D5
     pub wall_obstacle_node: Option<viewport_lib::interaction::selection::NodeId>,
     pub show_obstacle: bool,
+
+    // D6
+    pub rune_tex:   Option<u64>,
+    pub spark_tex:  Option<u64>,
+    pub show_rune:  bool,
+    pub rune_emissive: f32,
+    pub show_spark: bool,
+    pub spark_emissive: f32,
+
+    // D7
+    pub edge_fade: f32,
+    pub apply_edge_fade: bool,
 }
 
 impl Default for Decal48State {
@@ -302,6 +375,14 @@ impl Default for Decal48State {
             scroll_handle: None,
             wall_obstacle_node: None,
             show_obstacle: true,
+            rune_tex:       None,
+            spark_tex:      None,
+            show_rune:      false,
+            rune_emissive:  2.0,
+            show_spark:     false,
+            spark_emissive: 3.0,
+            edge_fade:      0.2,
+            apply_edge_fade: false,
         }
     }
 }
@@ -333,6 +414,12 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
     let blood_id = res
         .upload_texture(&app.device, &app.queue, 128, 128, &make_blood_texture(128))
         .expect("blood texture upload");
+    let rune_id = res
+        .upload_texture(&app.device, &app.queue, 128, 128, &make_rune_texture(128))
+        .expect("rune texture upload");
+    let spark_id = res
+        .upload_texture(&app.device, &app.queue, 128, 128, &make_spark_texture(128))
+        .expect("spark texture upload");
 
     app.decal48_state.albedo_tex    = Some(albedo_id);
     app.decal48_state.normal_tex    = Some(normal_id);
@@ -340,6 +427,8 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
     app.decal48_state.stripe_tex    = Some(stripe_id);
     app.decal48_state.footprint_tex = Some(footprint_id);
     app.decal48_state.blood_tex     = Some(blood_id);
+    app.decal48_state.rune_tex      = Some(rune_id);
+    app.decal48_state.spark_tex     = Some(spark_id);
 
     // Vertical wall: 6 wide (X), 0.2 thick (Y), 4 tall (Z).
     // Centered at (0, -0.1, 2): front face (+Y normal) at y = 0,
@@ -627,11 +716,50 @@ pub(crate) fn submit_decal48_items(app: &App, fd: &mut viewport_lib::FrameData) 
         item.normal_blend_strength = st.normal_blend;
         item.roughness             = st.decal_roughness;
         item.metallic              = st.decal_metallic;
+        // D7: apply edge fade to placed decals when the toggle is on.
+        item.edge_fade = if st.apply_edge_fade { st.edge_fade } else { 0.0 };
         fd.scene.decals.push(item);
     }
 
     // D4: live decals (fading + animation) from the scene.
     fd.scene.decals.extend(st.scene.collect_decal_items());
+
+    // D6: glowing rune on the wall, center-right.
+    if st.show_rune {
+        if let Some(rune) = st.rune_tex {
+            let transform = decal_transform(
+                glam::Vec3::new(1.5, 0.0, 2.0),
+                glam::Vec3::Y,
+                0.5,
+                1.0,
+            );
+            let mut item = DecalItem::default();
+            item.transform  = transform;
+            item.texture_id = rune;
+            item.alpha      = 1.0;
+            item.emissive   = st.rune_emissive;
+            item.edge_fade  = 0.1;
+            fd.scene.decals.push(item);
+        }
+    }
+
+    // D6: spark-impact on the ground, center-right.
+    if st.show_spark {
+        if let Some(spark) = st.spark_tex {
+            let transform = decal_transform(
+                glam::Vec3::new(2.5, 1.5, 0.0),
+                glam::Vec3::Z,
+                0.4,
+                0.8,
+            );
+            let mut item = DecalItem::default();
+            item.transform  = transform;
+            item.texture_id = spark;
+            item.alpha      = 1.0;
+            item.emissive   = st.spark_emissive;
+            fd.scene.decals.push(item);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -670,7 +798,7 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
 
         ui.add_space(6.0);
         ui.separator();
-        ui.label("D2 - Normal map:");
+        ui.label("Normal map:");
         ui.checkbox(&mut app.decal48_state.use_normal_map, "Crater normal map");
         ui.add(
             egui::Slider::new(&mut app.decal48_state.normal_blend, 0.0..=1.0)
@@ -679,7 +807,7 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
 
         ui.add_space(6.0);
         ui.separator();
-        ui.label("D3 - Roughness / metallic:");
+        ui.label("Roughness / metallic:");
         ui.add(
             egui::Slider::new(&mut app.decal48_state.decal_roughness, 0.0..=1.0)
                 .text("Roughness"),
@@ -694,7 +822,7 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
 
         ui.add_space(6.0);
         ui.separator();
-        ui.label("D4 - Lifetime / animation:");
+        ui.label("Lifetime / animation:");
         ui.checkbox(&mut app.decal48_state.fading_mode, "Fading mode (auto-remove)");
         if app.decal48_state.fading_mode {
             ui.add(
@@ -740,15 +868,50 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
 
         ui.add_space(6.0);
         ui.separator();
-        ui.label("D5 - Receiver masking:");
+        ui.label("Receiver masking:");
         ui.checkbox(&mut app.decal48_state.show_obstacle, "Show non-receiver obstacles");
         ui.small("Orange boxes (wall + ground): receives_decals = false.");
 
         ui.add_space(6.0);
         ui.separator();
+        ui.label("Emissive:");
+        ui.small("Emissive adds self-illumination on top of the blend result.");
+        ui.small("Values above 1.0 bloom under tone-mapping (post_process required).");
+        ui.add_space(2.0);
+        ui.checkbox(&mut app.decal48_state.show_rune, "Glowing rune (wall right)");
+        if app.decal48_state.show_rune {
+            ui.add(
+                egui::Slider::new(&mut app.decal48_state.rune_emissive, 0.0..=8.0)
+                    .text("Rune emissive"),
+            );
+        }
+        ui.checkbox(&mut app.decal48_state.show_spark, "Spark impact (ground right)");
+        if app.decal48_state.show_spark {
+            ui.add(
+                egui::Slider::new(&mut app.decal48_state.spark_emissive, 0.0..=8.0)
+                    .text("Spark emissive"),
+            );
+        }
+
+        ui.add_space(6.0);
+        ui.separator();
+        ui.label("Soft edges:");
+        ui.small("Edge fade smooths the rectangular boundary of the projection box.");
+        ui.small("Toggle on placed gunshots to compare hard vs. soft edges.");
+        ui.add_space(2.0);
+        ui.checkbox(&mut app.decal48_state.apply_edge_fade, "Apply edge fade to gunshots");
+        if app.decal48_state.apply_edge_fade {
+            ui.add(
+                egui::Slider::new(&mut app.decal48_state.edge_fade, 0.0..=0.5)
+                    .text("Edge fade"),
+            );
+        }
+
+        ui.add_space(6.0);
+        ui.separator();
         ui.label("Surface guide:");
-        ui.small("Wall (y = 0):        gunshot craters.");
+        ui.small("Wall (y = 0):        gunshot craters, glowing rune.");
         ui.small("Ground left  (x<0):  muddy footprints (static).");
-        ui.small("Ground right (x>=0): blood splatter (static).");
+        ui.small("Ground right (x>=0): blood splatter, spark impact.");
     });
 }

@@ -8,7 +8,7 @@ use wgpu::util::DeviceExt as _;
 // GPU-internal types
 // ---------------------------------------------------------------------------
 
-/// Flat uniform buffer matching the WGSL `DecalUniform` struct (112 bytes).
+/// Flat uniform buffer matching the WGSL `DecalUniform` struct (128 bytes).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct DecalUniformRaw {
@@ -25,7 +25,13 @@ pub(crate) struct DecalUniformRaw {
     // D4 -- vec2 pairs, 8-byte aligned
     pub uv_offset: [f32; 2],            //  8
     pub uv_scale: [f32; 2],             //  8
-    // total: 112 bytes
+    // D6
+    pub emissive: f32,                   //  4
+    pub has_emissive_tex: u32,           //  4
+    // D7
+    pub edge_fade: f32,                  //  4
+    pub _pad: u32,                       //  4  (pad to 128-byte struct size)
+    // total: 128 bytes
 }
 
 /// Per-draw GPU data for one [`DecalItem`](crate::renderer::DecalItem).
@@ -76,9 +82,10 @@ impl ViewportGpuResources {
         //  0: DecalUniform buffer
         //  1: albedo texture
         //  2: sampler (shared by all texture slots)
-        //  3: normal map   (D2; fallback_texture when absent)
+        //  3: normal map    (D2; fallback_texture when absent)
         //  4: roughness map (D3; fallback_texture when absent)
         //  5: metallic map  (D3; fallback_texture when absent)
+        //  6: emissive map  (D6; fallback_texture when absent)
         let item_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("decal_item_bgl"),
             entries: &[
@@ -102,6 +109,7 @@ impl ViewportGpuResources {
                 tex2d_entry(3), // D2: normal map
                 tex2d_entry(4), // D3: roughness map
                 tex2d_entry(5), // D3: metallic map
+                tex2d_entry(6), // D6: emissive map
             ],
         });
 
@@ -225,6 +233,7 @@ impl ViewportGpuResources {
         let has_normal        = item.normal_texture_id.is_some()    as u32;
         let has_roughness_tex = item.roughness_texture_id.is_some() as u32;
         let has_metallic_tex  = item.metallic_texture_id.is_some()  as u32;
+        let has_emissive_tex  = item.emissive_texture_id.is_some()  as u32;
 
         let raw = DecalUniformRaw {
             inv_transform,
@@ -238,6 +247,10 @@ impl ViewportGpuResources {
             has_metallic_tex,
             uv_offset: item.uv_offset,
             uv_scale: item.uv_scale,
+            emissive: item.emissive,
+            has_emissive_tex,
+            edge_fade: item.edge_fade.clamp(0.0, 0.5),
+            _pad: 0,
         };
 
         let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -255,9 +268,10 @@ impl ViewportGpuResources {
         let tex_view      = self.textures.get(item.texture_id as usize)
                                 .map(|t| &t.view)
                                 .unwrap_or(&self.fallback_texture.view);
-        let normal_view   = resolve_tex(item.normal_texture_id);
+        let normal_view    = resolve_tex(item.normal_texture_id);
         let roughness_view = resolve_tex(item.roughness_texture_id);
         let metallic_view  = resolve_tex(item.metallic_texture_id);
+        let emissive_view  = resolve_tex(item.emissive_texture_id);
 
         let bgl = self
             .decal_item_bgl
@@ -296,6 +310,10 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::TextureView(metallic_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(emissive_view),
                 },
             ],
         });
