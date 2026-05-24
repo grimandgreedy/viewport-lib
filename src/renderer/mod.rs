@@ -19,7 +19,7 @@ pub mod stats;
 
 pub use self::types::{
     CameraFrame, CameraFrustumItem, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
-    DecalAnimation, DecalBlendMode, DecalItem, DecalProjection,
+    CylindricalFacing, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection,
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GaussianSplatData, GaussianSplatId,
     GaussianSplatItem, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode, ImageAnchor,
     ImageSliceItem, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,

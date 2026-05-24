@@ -1517,6 +1517,20 @@ pub enum DecalBlendMode {
     Multiply,
 }
 
+/// Which side of a cylinder surface receives a cylindrical decal.
+///
+/// Use `Outward` for projecting onto the outside of a pipe or column (convex surface,
+/// normals point away from the axis). Use `Inward` for projecting onto the inside of a
+/// tube or barrel (concave surface, normals point toward the axis).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CylindricalFacing {
+    /// Project onto the outside of the cylinder (normals point away from the axis). Default.
+    #[default]
+    Outward,
+    /// Project onto the inside of the cylinder (normals point toward the axis).
+    Inward,
+}
+
 /// How a decal texture is projected onto the receiver surface.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 #[non_exhaustive]
@@ -1534,6 +1548,17 @@ pub enum DecalProjection {
         /// Exponent applied to the absolute normal components before normalising blend weights.
         /// Range 1.0-16.0; 4.0 is a good starting value.
         blend_sharpness: f32,
+    },
+    /// Cylindrical projection: wraps the texture around a cylinder whose axis is the decal's
+    /// local Z axis. UV.x is the angle around the axis (0 at local +X, wrapping at 360
+    /// degrees back to the start); UV.y is position along the axis (0 at local -Z, 1 at
+    /// local +Z). The decal volume is a cylinder of radius 0.5 and height 1.0 in local space.
+    ///
+    /// Use this for labels on pipes, warning bands on columns, or any decal that wraps
+    /// continuously around a curved surface.
+    Cylindrical {
+        /// Which side of the cylinder surface to project onto.
+        facing: CylindricalFacing,
     },
 }
 

@@ -240,6 +240,13 @@ impl ViewportGpuResources {
             crate::renderer::DecalProjection::TriPlanar { blend_sharpness } => {
                 (1u32, blend_sharpness.max(0.1))
             }
+            crate::renderer::DecalProjection::Cylindrical { facing } => {
+                let code = match facing {
+                    crate::renderer::CylindricalFacing::Outward => 2u32,
+                    crate::renderer::CylindricalFacing::Inward  => 3u32,
+                };
+                (code, 0.0f32)
+            }
         };
 
         let has_normal        = item.normal_texture_id.is_some()    as u32;

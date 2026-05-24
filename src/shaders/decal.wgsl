@@ -110,19 +110,34 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let local_h = u.inv_transform * vec4<f32>(world, 1.0);
     let local   = local_h.xyz;
 
-    // Reject fragments outside the projection box.
-    if any(local < vec3<f32>(-0.5)) || any(local > vec3<f32>(0.5)) {
-        discard;
+    // Reject fragments outside the projection volume.
+    // Cylindrical: radial distance in XY <= 0.5, Z within [-0.5, 0.5].
+    // Planar / TriPlanar: box test.
+    if u.projection == 2u || u.projection == 3u {
+        let r2 = local.x * local.x + local.y * local.y;
+        if r2 > 0.25 || abs(local.z) > 0.5 { discard; }
+    } else {
+        if any(local < vec3<f32>(-0.5)) || any(local > vec3<f32>(0.5)) {
+            discard;
+        }
     }
 
     // D7: compute edge fade from local-space coordinates.
-    // Fades alpha to zero within edge_fade of each box face.
+    // Cylindrical: fade by radial distance and Z.
+    // Planar / TriPlanar: fade by each box face.
     var edge_alpha = 1.0;
     if u.edge_fade > 0.0 {
-        let fx = smoothstep(0.0, u.edge_fade, 0.5 - abs(local.x));
-        let fy = smoothstep(0.0, u.edge_fade, 0.5 - abs(local.y));
-        let fz = smoothstep(0.0, u.edge_fade, 0.5 - abs(local.z));
-        edge_alpha = fx * fy * fz;
+        if u.projection == 2u || u.projection == 3u {
+            let r  = sqrt(local.x * local.x + local.y * local.y);
+            let fr = smoothstep(0.0, u.edge_fade, 0.5 - r);
+            let fz = smoothstep(0.0, u.edge_fade, 0.5 - abs(local.z));
+            edge_alpha = fr * fz;
+        } else {
+            let fx = smoothstep(0.0, u.edge_fade, 0.5 - abs(local.x));
+            let fy = smoothstep(0.0, u.edge_fade, 0.5 - abs(local.y));
+            let fz = smoothstep(0.0, u.edge_fade, 0.5 - abs(local.z));
+            edge_alpha = fx * fy * fz;
+        }
     }
 
     // Estimate the receiver surface normal from world-position screen derivatives.
@@ -154,16 +169,42 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         if dot(view_dir, decal_Z) < 0.05 { discard; }
     }
 
-    // D8: sample texture.
+    // D9: Cylindrical facing check.
+    // Transform receiver normal into decal local space and test its XY radial
+    // component against the surface position to verify the surface faces the
+    // correct side of the cylinder.
+    if u.projection == 2u || u.projection == 3u {
+        let local_normal = normalize((u.inv_transform * vec4<f32>(N_recv, 0.0)).xyz);
+        let r = sqrt(local.x * local.x + local.y * local.y);
+        if r > 0.001 {
+            let radial_dir = vec2<f32>(local.x, local.y) / r;
+            let radial_dot = dot(local_normal.xy, radial_dir);
+            if u.projection == 2u {
+                // Outward: normal should point away from axis.
+                if radial_dot < 0.1 { discard; }
+            } else {
+                // Inward: normal should point toward axis.
+                if radial_dot > -0.1 { discard; }
+            }
+        }
+    }
+
+    // D8/D9: sample texture.
     // Planar: standard XY projection.
-    // TriPlanar: blend three orthogonal projections weighted by the surface normal
-    //            in decal local space.
+    // TriPlanar: blend three orthogonal projections weighted by the surface normal.
+    // Cylindrical: angle around Z axis -> UV.x; position along Z -> UV.y.
     var uv:      vec2<f32>;
     var tex_col: vec4<f32>;
 
     if u.projection == 0u {
         // D4: apply UV scale + offset. Base UV maps local XY from [-0.5, 0.5] to [0, 1].
         let base_uv = local.xy + vec2<f32>(0.5);
+        uv      = u.uv_offset + u.uv_scale * base_uv;
+        tex_col = textureSample(decal_tex, decal_samp, uv);
+    } else if u.projection == 2u || u.projection == 3u {
+        // D9: cylindrical -- angle around local Z axis, length along local Z.
+        let angle   = atan2(local.y, local.x);
+        let base_uv = vec2<f32>(angle / (2.0 * 3.14159265) + 0.5, local.z + 0.5);
         uv      = u.uv_offset + u.uv_scale * base_uv;
         tex_col = textureSample(decal_tex, decal_samp, uv);
     } else {

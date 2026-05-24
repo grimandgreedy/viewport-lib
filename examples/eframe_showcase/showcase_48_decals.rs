@@ -13,10 +13,13 @@
 //! D5: receiver masking -- orange box on the floor blocks decal projection.
 //! D6: emissive channel -- glowing rune and spark-impact decals.
 //! D7: soft projection-box edges -- edge_fade slider on/off comparison.
+//! D8: tri-planar projection -- corner-spanning checkerboard decal.
+//! D9: cylindrical projection -- label wrapped around a column.
 
 use eframe::egui;
 use viewport_lib::{
-    DecalAnimation, DecalBlendMode, DecalHandle, DecalItem, Material, MeshId, SceneRenderItem,
+    CylindricalFacing, DecalAnimation, DecalBlendMode, DecalHandle, DecalItem, DecalProjection,
+    Material, MeshId, SceneRenderItem,
     scene::Scene,
     selection::Selection,
 };
@@ -272,6 +275,42 @@ fn make_checker_texture(size: u32) -> Vec<u8> {
     buf
 }
 
+/// D9: Cylindrical label -- a horizontal warning band with repeating chevrons.
+fn make_label_texture(size: u32) -> Vec<u8> {
+    let mut buf = vec![0u8; (size * size * 4) as usize];
+    let w = size as f32;
+    let h = size as f32;
+    for y in 0..size {
+        for x in 0..size {
+            let tx = x as f32 / w;
+            let ty = y as f32 / h;
+            // Yellow border bands at top and bottom.
+            let border = 0.12_f32;
+            let in_border = ty < border || ty > 1.0 - border;
+            // Chevron pattern in the middle band: diagonal stripes.
+            let chevron = ((tx * 8.0 + ty * 4.0).fract() > 0.5) != ((tx * 8.0 - ty * 4.0).fract() > 0.5);
+            let idx = ((y * size + x) * 4) as usize;
+            if in_border {
+                buf[idx]     = 255;
+                buf[idx + 1] = 200;
+                buf[idx + 2] = 0;
+                buf[idx + 3] = 230;
+            } else if chevron {
+                buf[idx]     = 30;
+                buf[idx + 1] = 30;
+                buf[idx + 2] = 30;
+                buf[idx + 3] = 220;
+            } else {
+                buf[idx]     = 220;
+                buf[idx + 1] = 220;
+                buf[idx + 2] = 220;
+                buf[idx + 3] = 200;
+            }
+        }
+    }
+    buf
+}
+
 // ---------------------------------------------------------------------------
 // Decal transform builder
 // ---------------------------------------------------------------------------
@@ -306,8 +345,9 @@ fn decal_transform_yaw(hit: glam::Vec3, normal: glam::Vec3, size: f32, depth: f3
 pub(crate) struct PlacedDecal {
     id: u64,
     label: String,
-    pub(crate) hit:    glam::Vec3,
-    pub(crate) normal: glam::Vec3,
+    pub(crate) hit:       glam::Vec3,
+    pub(crate) normal:    glam::Vec3,
+    pub(crate) on_column: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -321,6 +361,9 @@ pub(crate) struct Decal48State {
 
     pub wall_mesh:      Option<MeshId>,
     pub ground_mesh:    Option<MeshId>,
+    pub wall_cpu_mesh:   Option<(Vec<[f32; 3]>, Vec<u32>)>,
+    pub ground_cpu_mesh: Option<(Vec<[f32; 3]>, Vec<u32>)>,
+    pub column_cpu_mesh: Option<(Vec<[f32; 3]>, Vec<u32>)>,
 
     pub albedo_tex:     Option<u64>,
     pub normal_tex:     Option<u64>,
@@ -372,6 +415,14 @@ pub(crate) struct Decal48State {
     pub show_corner_decal: bool,
     pub use_tri_planar: bool,
     pub tri_blend_sharpness: f32,
+
+    // D9
+    pub column_mesh:   Option<MeshId>,
+    pub column_node:   Option<viewport_lib::interaction::selection::NodeId>,
+    pub label_tex:     Option<u64>,
+    pub show_column:   bool,
+    pub show_cyl_decal: bool,
+    pub cyl_facing:    CylindricalFacing,
 }
 
 impl Default for Decal48State {
@@ -380,8 +431,11 @@ impl Default for Decal48State {
             built: false,
             scene: Scene::new(),
             selection: Selection::new(),
-            wall_mesh:     None,
-            ground_mesh:   None,
+            wall_mesh:       None,
+            ground_mesh:     None,
+            wall_cpu_mesh:   None,
+            ground_cpu_mesh: None,
+            column_cpu_mesh: None,
             albedo_tex:    None,
             normal_tex:    None,
             wet_tex:       None,
@@ -418,6 +472,12 @@ impl Default for Decal48State {
             show_corner_decal:   false,
             use_tri_planar:      false,
             tri_blend_sharpness: 4.0,
+            column_mesh:         None,
+            column_node:         None,
+            label_tex:           None,
+            show_column:         true,
+            show_cyl_decal:      false,
+            cyl_facing:          CylindricalFacing::Outward,
         }
     }
 }
@@ -470,23 +530,35 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
         .expect("checker texture upload");
     app.decal48_state.checker_tex = Some(checker_id);
 
+    let label_id = res
+        .upload_texture(&app.device, &app.queue, 128, 128, &make_label_texture(128))
+        .expect("label texture upload");
+    app.decal48_state.label_tex = Some(label_id);
+
     // Vertical wall: 6 wide (X), 0.2 thick (Y), 4 tall (Z).
-    // Centered at (0, -0.1, 2): front face (+Y normal) at y = 0,
-    // spans x in [-3, 3], z in [0, 4].
     let wall_data = viewport_lib::primitives::cuboid(6.0, 0.2, 4.0);
+    app.decal48_state.wall_cpu_mesh = Some((wall_data.positions.clone(), wall_data.indices.clone()));
     let wall_id = res
         .upload_mesh_data(&app.device, &wall_data)
         .expect("wall mesh upload");
     app.decal48_state.wall_mesh = Some(wall_id);
 
     // Ground floor: 8 wide (X), 6 deep (Y), 0.2 thick (Z).
-    // Centered at (0, 3, -0.1): top face (+Z normal) at z = 0,
-    // spans x in [-4, 4], y in [0, 6].
     let ground_data = viewport_lib::primitives::cuboid(8.0, 6.0, 0.2);
+    app.decal48_state.ground_cpu_mesh = Some((ground_data.positions.clone(), ground_data.indices.clone()));
     let ground_id = res
         .upload_mesh_data(&app.device, &ground_data)
         .expect("ground mesh upload");
     app.decal48_state.ground_mesh = Some(ground_id);
+
+    // D9: column (cylinder) standing on the ground, right side.
+    // radius=0.3, height=3.0, center at (2.5, 0.5, 1.5).
+    let column_data = viewport_lib::primitives::cylinder(0.3, 3.0, 24);
+    app.decal48_state.column_cpu_mesh = Some((column_data.positions.clone(), column_data.indices.clone()));
+    let column_id = res
+        .upload_mesh_data(&app.device, &column_data)
+        .expect("column mesh upload");
+    app.decal48_state.column_mesh = Some(column_id);
 
     // D5: non-receiver box mounted on the wall face.
     // cuboid(0.6, 0.25, 0.6): sticks 0.25 out from the wall, center y = 0.125.
@@ -511,6 +583,14 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
         ground_mat,
     );
 
+    // D9: column standing on the ground, right side.
+    let column_node = scene.add(
+        Some(column_id),
+        glam::Mat4::from_translation(glam::Vec3::new(2.5, 0.5, 1.5)),
+        Material::from_colour([0.82, 0.80, 0.78]),
+    );
+    app.decal48_state.column_node = Some(column_node);
+
     // Wall obstacle: mounted on the wall face at left-center.
     // center y = 0.125 puts its back face flush against y = 0.
     let wall_obstacle_node = scene.add(
@@ -528,57 +608,51 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
 // Click handling
 // ---------------------------------------------------------------------------
 
-/// Test `ray` against the wall face and the ground floor.
-/// Returns (hit_point, surface_normal), choosing the closest hit.
-///
-/// Wall:   +Y normal at y = 0, bounds x in [-3, 3], z in [0, 4].
-/// Ground: +Z normal at z = 0, bounds x in [-4, 4], y in [0, 6].
-fn decal48_ray_hit(
-    ray_origin: glam::Vec3,
-    ray_dir: glam::Vec3,
-) -> Option<(glam::Vec3, glam::Vec3)> {
-    let mut best_t = f32::INFINITY;
-    let mut best: Option<(glam::Vec3, glam::Vec3)> = None;
-
-    // Test vertical wall (y = 0 plane, camera must be on +y side).
-    if ray_dir.y.abs() > 1e-6 {
-        let t = -ray_origin.y / ray_dir.y;
-        if t > 0.001 && t < best_t {
-            let hit = ray_origin + ray_dir * t;
-            // Obstacle footprint exclusion: box at (-1.5, 0.125, 2.0), half-extents (0.3, *, 0.3).
-            let in_obstacle = hit.x >= -1.8 && hit.x <= -1.2
-                           && hit.z >= 1.7  && hit.z <= 2.3;
-            if hit.x.abs() <= 3.0 && hit.z >= 0.0 && hit.z <= 4.0 && !in_obstacle {
-                best_t = t;
-                best = Some((hit, glam::Vec3::Y));
-            }
-        }
-    }
-
-    // Test ground floor (z = 0 plane, camera must be above).
-    if ray_dir.z.abs() > 1e-6 {
-        let t = -ray_origin.z / ray_dir.z;
-        if t > 0.001 && t < best_t {
-            let hit = ray_origin + ray_dir * t;
-            if hit.x.abs() <= 4.0 && hit.y >= 0.0 && hit.y <= 6.0 {
-                best = Some((hit, glam::Vec3::Z));
-            }
-        }
-    }
-
-    best
+/// Build the mesh lookup table for CPU picking from stored mesh data.
+fn decal48_mesh_lookup(
+    st: &Decal48State,
+) -> std::collections::HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)> {
+    let mut map = std::collections::HashMap::new();
+    if let (Some(id), Some(data)) = (st.wall_mesh,   &st.wall_cpu_mesh)   { map.insert(id.index() as u64, data.clone()); }
+    if let (Some(id), Some(data)) = (st.ground_mesh, &st.ground_cpu_mesh) { map.insert(id.index() as u64, data.clone()); }
+    if let (Some(id), Some(data)) = (st.column_mesh, &st.column_cpu_mesh) { map.insert(id.index() as u64, data.clone()); }
+    map
 }
 
-/// Place a gunshot decal at the clicked viewport position.
+/// Place a gunshot decal at the clicked viewport position using CPU ray-casting.
 pub(crate) fn decal48_place(app: &mut App, cursor: glam::Vec2, vp_size: glam::Vec2) {
     if !app.decal48_state.built { return; }
     let vp_inv = app.camera.view_proj_matrix().inverse();
     let (ro, rd) = viewport_lib::picking::screen_to_ray(cursor, vp_size, vp_inv);
-    let Some((hit, normal)) = decal48_ray_hit(ro, rd) else { return };
+
+    let mesh_lookup = decal48_mesh_lookup(&app.decal48_state);
+    let Some(pick) = viewport_lib::picking::pick_scene_nodes_cpu(
+        ro, rd, &app.decal48_state.scene, &mesh_lookup,
+    ) else { return };
+
+    let hit    = pick.world_pos;
+    let normal = pick.normal;
+
+    // Detect whether the hit was on the column by comparing the picked node ID.
+    let column_node_id = app.decal48_state.column_node.unwrap_or(u64::MAX);
+    let on_column = pick.id == column_node_id;
 
     let st = &mut app.decal48_state;
     let Some(tex) = st.albedo_tex else { return };
-    let transform = decal_transform(hit, normal, st.decal_size, st.decal_depth);
+
+    // Build the decal transform. For column hits, local Z = world Z (cylinder axis)
+    // and XY is fixed at the column's radial scale; depth controls height coverage.
+    let (transform, projection) = if on_column {
+        let t = glam::Mat4::from_cols(
+            glam::Vec4::new(0.65, 0.0, 0.0, 0.0),
+            glam::Vec4::new(0.0, 0.65, 0.0, 0.0),
+            glam::Vec4::new(0.0, 0.0, st.decal_depth, 0.0),
+            glam::Vec4::new(2.5, 0.5, hit.z, 1.0),
+        ).to_cols_array_2d();
+        (t, DecalProjection::Cylindrical { facing: CylindricalFacing::Outward })
+    } else {
+        (decal_transform(hit, normal, st.decal_size, st.decal_depth), DecalProjection::Planar)
+    };
 
     if st.fading_mode {
         let mut item = DecalItem::default();
@@ -590,6 +664,7 @@ pub(crate) fn decal48_place(app: &mut App, cursor: glam::Vec2, vp_size: glam::Ve
         item.normal_blend_strength = st.normal_blend;
         item.roughness             = st.decal_roughness;
         item.metallic              = st.decal_metallic;
+        item.projection            = projection;
         let lt = st.fade_lifetime;
         st.scene.add_decal_with_lifetime(item, lt, st.fade_out);
     } else {
@@ -600,6 +675,7 @@ pub(crate) fn decal48_place(app: &mut App, cursor: glam::Vec2, vp_size: glam::Ve
             label: format!("#{id}"),
             hit,
             normal,
+            on_column,
         });
     }
 }
@@ -617,6 +693,12 @@ pub(crate) fn update_decal48(app: &mut App, dt: f32) {
     let show = app.decal48_state.show_obstacle;
     if let Some(node) = app.decal48_state.wall_obstacle_node {
         app.decal48_state.scene.set_visible(node, show);
+    }
+
+    // D9: sync column visibility.
+    let show_col = app.decal48_state.show_column;
+    if let Some(node) = app.decal48_state.column_node {
+        app.decal48_state.scene.set_visible(node, show_col);
     }
 
     let st = &mut app.decal48_state;
@@ -745,8 +827,18 @@ pub(crate) fn submit_decal48_items(app: &App, fd: &mut viewport_lib::FrameData) 
 
     // D1-D3: permanently placed gunshot decals.
     for placed in &st.decals {
-        let transform = decal_transform(placed.hit, placed.normal, st.decal_size, st.decal_depth);
         let Some(tex) = st.albedo_tex else { continue };
+        let (transform, projection) = if placed.on_column {
+            let t = glam::Mat4::from_cols(
+                glam::Vec4::new(0.65, 0.0, 0.0, 0.0),
+                glam::Vec4::new(0.0, 0.65, 0.0, 0.0),
+                glam::Vec4::new(0.0, 0.0, st.decal_depth, 0.0),
+                glam::Vec4::new(2.5, 0.5, placed.hit.z, 1.0),
+            ).to_cols_array_2d();
+            (t, DecalProjection::Cylindrical { facing: CylindricalFacing::Outward })
+        } else {
+            (decal_transform(placed.hit, placed.normal, st.decal_size, st.decal_depth), DecalProjection::Planar)
+        };
         let mut item = DecalItem::default();
         item.transform             = transform;
         item.texture_id            = tex;
@@ -756,8 +848,8 @@ pub(crate) fn submit_decal48_items(app: &App, fd: &mut viewport_lib::FrameData) 
         item.normal_blend_strength = st.normal_blend;
         item.roughness             = st.decal_roughness;
         item.metallic              = st.decal_metallic;
-        // D7: apply edge fade to placed decals when the toggle is on.
-        item.edge_fade = if st.apply_edge_fade { st.edge_fade } else { 0.0 };
+        item.projection            = projection;
+        item.edge_fade             = if st.apply_edge_fade { st.edge_fade } else { 0.0 };
         fd.scene.decals.push(item);
     }
 
@@ -806,6 +898,28 @@ pub(crate) fn submit_decal48_items(app: &App, fd: &mut viewport_lib::FrameData) 
             } else {
                 viewport_lib::DecalProjection::Planar
             };
+            fd.scene.decals.push(item);
+        }
+    }
+
+    // D9: cylindrical label decal wrapped around the column.
+    // The decal's local Z axis = world Z (column axis). Scale XY just outside
+    // the column radius (0.3 -> 0.65 world units = 0.5 in local), Z covers the
+    // middle section of the column (world z = [0.5, 2.5]).
+    if st.show_cyl_decal {
+        if let Some(label) = st.label_tex {
+            let transform = glam::Mat4::from_cols(
+                glam::Vec4::new(0.65, 0.0, 0.0, 0.0),
+                glam::Vec4::new(0.0, 0.65, 0.0, 0.0),
+                glam::Vec4::new(0.0, 0.0, 2.0, 0.0),
+                glam::Vec4::new(2.5, 0.5, 1.5, 1.0),
+            ).to_cols_array_2d();
+            let mut item = DecalItem::default();
+            item.transform  = transform;
+            item.texture_id = label;
+            item.alpha      = 0.95;
+            item.edge_fade  = 0.05;
+            item.projection = DecalProjection::Cylindrical { facing: st.cyl_facing };
             fd.scene.decals.push(item);
         }
     }
@@ -989,6 +1103,26 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
                 );
                 ui.small("Higher = sharper face transitions.");
             }
+        }
+
+        ui.add_space(6.0);
+        ui.separator();
+        ui.label("Cylindrical projection:");
+        ui.small("Wraps the decal around the column using angle/Z UV coordinates.");
+        ui.small("The facing check rejects surfaces that point the wrong way.");
+        ui.add_space(2.0);
+        ui.checkbox(&mut app.decal48_state.show_column, "Show column");
+        ui.checkbox(&mut app.decal48_state.show_cyl_decal, "Show cylindrical label decal");
+        if app.decal48_state.show_cyl_decal {
+            ui.horizontal(|ui| {
+                let cur = app.decal48_state.cyl_facing;
+                if ui.selectable_label(cur == CylindricalFacing::Outward, "Outward (column exterior)").clicked() {
+                    app.decal48_state.cyl_facing = CylindricalFacing::Outward;
+                }
+                if ui.selectable_label(cur == CylindricalFacing::Inward, "Inward (tube interior)").clicked() {
+                    app.decal48_state.cyl_facing = CylindricalFacing::Inward;
+                }
+            });
         }
 
         ui.add_space(6.0);
