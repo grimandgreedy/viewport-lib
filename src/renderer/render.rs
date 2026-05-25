@@ -591,6 +591,56 @@ impl ViewportRenderer {
         self.render_frame_internal(device, queue, &output_view, vp_idx, frame)
     }
 
+    /// HDR encode for a single viewport in the multi-viewport eframe callback model.
+    ///
+    /// Like [`prepare_hdr_callback`](Self::prepare_hdr_callback) but skips the internal
+    /// [`prepare`](Self::prepare) call. The caller must have already called
+    /// [`prepare_scene`](Self::prepare_scene) and [`prepare_viewport`](Self::prepare_viewport)
+    /// for `id` before invoking this.
+    ///
+    /// Multi-viewport HDR sequence:
+    /// 1. Call `prepare_scene` once.
+    /// 2. Call `prepare_viewport` for each viewport.
+    /// 3. Call this method for each viewport; collect the returned `CommandBuffer`s.
+    /// 4. Return them from `CallbackTrait::prepare`.
+    ///
+    /// Call [`paint_hdr_blit`](Self::paint_hdr_blit) for each viewport from
+    /// `CallbackTrait::paint` with the scissor/viewport rect set first.
+    pub(crate) fn prepare_hdr_callback_viewport(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: ViewportId,
+        frame: &FrameData,
+    ) -> wgpu::CommandBuffer {
+        let vp_idx = id.0;
+        let ppp = frame.camera.pixels_per_point;
+        let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
+        let h = (frame.camera.viewport_size[1] * ppp).round() as u32;
+
+        self.resources.ensure_dyn_res_pipeline(device);
+        self.resources.ensure_dyn_res_ds_pipeline(device);
+
+        self.ensure_viewport_slot(device, vp_idx);
+        let needs_create = match self.viewport_slots[vp_idx].hdr_callback.as_ref() {
+            None => true,
+            Some(t) => t.size != [w, h],
+        };
+        if needs_create {
+            let target = self.resources.create_hdr_callback_target(device, [w, h]);
+            self.viewport_slots[vp_idx].hdr_callback = Some(target);
+        }
+
+        let output_view = self.viewport_slots[vp_idx]
+            .hdr_callback
+            .as_ref()
+            .unwrap()
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        self.render_frame_internal(device, queue, &output_view, vp_idx, frame)
+    }
+
     /// Blit the HDR intermediate texture into the egui render pass.
     ///
     /// Call from `CallbackTrait::paint` after

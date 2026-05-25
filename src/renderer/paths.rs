@@ -140,6 +140,23 @@ impl<'r> PassPath<'r> {
     ) {
         self.renderer.paint_viewport_to(render_pass, id, frame);
     }
+
+    /// Multi-viewport HDR: encode the full HDR pipeline for `id` into an intermediate texture.
+    ///
+    /// Call after `prepare_scene` and `prepare_viewport` for this viewport. Returns a
+    /// `CommandBuffer` that eframe must submit before the egui render pass begins.
+    ///
+    /// Call [`PassView::paint_hdr_blit`] from `CallbackTrait::paint` to composite the
+    /// result into the egui render pass. Set the render pass viewport and scissor rect first.
+    pub fn prepare_hdr_viewport(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: ViewportId,
+        frame: &FrameData,
+    ) -> wgpu::CommandBuffer {
+        self.renderer.prepare_hdr_callback_viewport(device, queue, id, frame)
+    }
 }
 
 impl<'r> PassView<'r> {
@@ -156,5 +173,13 @@ impl<'r> PassView<'r> {
         frame: &FrameData,
     ) {
         self.renderer.paint_viewport_to(render_pass, id, frame);
+    }
+
+    /// Multi-viewport HDR: blit the intermediate texture for `frame`'s viewport into `render_pass`.
+    ///
+    /// Call after [`PassPath::prepare_hdr_viewport`] for the same viewport. Set the render
+    /// pass viewport and scissor rect to the correct region before calling.
+    pub fn paint_hdr_blit<'rp>(&self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
+        self.renderer.paint_hdr_blit(render_pass, frame);
     }
 }

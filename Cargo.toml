@@ -38,17 +38,6 @@ pollster = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 viewport-lib-io = { version = "0.1.0", path = "../viewport-lib-io" }
 
-[[example]]
-name = "iced-viewport"
-path = "examples/iced_viewport/main.rs"
-
-[[example]]
-name = "winit-viewport"
-path = "examples/winit_viewport/main.rs"
-
-[[example]]
-name = "winit-minimal"
-path = "examples/winit_minimal/main.rs"
 
 
 [[example]]
@@ -80,12 +69,30 @@ name = "eframe-showcase"
 path = "examples/eframe_showcase/main.rs"
 
 [[example]]
+name = "eframe-multi-viewport"
+path = "examples/eframe_multi_viewport/main.rs"
+
+
+[[example]]
+name = "winit-viewport"
+path = "examples/winit_viewport/main.rs"
+
+[[example]]
+name = "winit-minimal"
+path = "examples/winit_minimal/main.rs"
+
+[[example]]
 name = "winit-multi-viewport"
 path = "examples/winit_multi_viewport/main.rs"
 
 [[example]]
 name = "winit-hdr"
 path = "examples/winit_hdr/main.rs"
+
+
+[[example]]
+name = "iced-viewport"
+path = "examples/iced_viewport/main.rs"
 
 [[example]]
 name = "runtime-jobs"

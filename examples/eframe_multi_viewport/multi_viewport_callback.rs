@@ -1,17 +1,5 @@
-//! egui wgpu paint callback for the multi-viewport showcase.
-//!
-//! Drives `prepare_scene` + `prepare_viewport x 4` + paint x 4
-//! inside a single egui paint callback, splitting the callback rect into
-//! four equal quadrants at the pixel level.
-//!
-//! When `post_process.enabled` is true on the first frame, the HDR path runs:
-//! each viewport is encoded into its own intermediate texture before the egui
-//! render pass, then blitted in `paint`. When post-processing is off, draw
-//! calls go directly into the egui render pass (LDR path).
-
 use viewport_lib::{FrameData, ViewportId, ViewportRenderer};
 
-/// Paint callback that renders four viewports sharing one scene.
 pub struct MultiViewportCallback {
     pub frames: [FrameData; 4],
     pub viewports: [ViewportId; 4],
@@ -27,27 +15,21 @@ impl eframe::egui_wgpu::CallbackTrait for MultiViewportCallback {
         callback_resources: &mut eframe::egui_wgpu::CallbackResources,
     ) -> Vec<eframe::wgpu::CommandBuffer> {
         if let Some(renderer) = callback_resources.get_mut::<ViewportRenderer>() {
-            // Prepare scene-global data once (lighting, shadows, batching).
             let (scene_fx, _) = self.frames[0].effects.split();
             renderer.pass().prepare_scene(device, queue, &self.frames[0], &scene_fx);
-            // Prepare per-viewport state (camera uniforms, clip planes).
             for (i, frame) in self.frames.iter().enumerate() {
                 renderer.pass().prepare_viewport(device, queue, self.viewports[i], frame);
             }
-            // HDR path: encode each viewport into its own intermediate texture and
-            // return the command buffers for eframe to submit before the render pass.
-            if self.frames[0].effects.post_process.enabled {
-                return self
-                    .frames
-                    .iter()
-                    .enumerate()
-                    .map(|(i, frame)| {
-                        renderer
-                            .pass()
-                            .prepare_hdr_viewport(device, queue, self.viewports[i], frame)
-                    })
-                    .collect();
-            }
+            return self
+                .frames
+                .iter()
+                .enumerate()
+                .map(|(i, frame)| {
+                    renderer
+                        .pass()
+                        .prepare_hdr_viewport(device, queue, self.viewports[i], frame)
+                })
+                .collect();
         }
         Vec::new()
     }
@@ -59,20 +41,18 @@ impl eframe::egui_wgpu::CallbackTrait for MultiViewportCallback {
         callback_resources: &eframe::egui_wgpu::CallbackResources,
     ) {
         if let Some(renderer) = callback_resources.get::<ViewportRenderer>() {
-            // Obtain the physical-pixel rect of the full callback area.
             let vp = info.viewport_in_pixels();
             let fx = vp.left_px.max(0) as u32;
             let fy = vp.top_px.max(0) as u32;
             let fw = vp.width_px.max(0) as u32;
             let fh = vp.height_px.max(0) as u32;
 
-            // Split into four equal quadrants (ceiling for the second half).
             let hw = fw / 2;
             let hh = fh / 2;
             let hw2 = fw - hw;
             let hh2 = fh - hh;
 
-            // (x, y, w, h) in physical pixels : order: TL, TR, BL, BR.
+            // (x, y, w, h) in physical pixels : TL, TR, BL, BR.
             let quads: [(u32, u32, u32, u32); 4] = [
                 (fx, fy, hw, hh),
                 (fx + hw, fy, hw2, hh),
@@ -80,21 +60,13 @@ impl eframe::egui_wgpu::CallbackTrait for MultiViewportCallback {
                 (fx + hw, fy + hh, hw2, hh2),
             ];
 
-            let hdr = self.frames[0].effects.post_process.enabled;
-
             for (i, &(qx, qy, qw, qh)) in quads.iter().enumerate() {
                 if qw == 0 || qh == 0 {
                     continue;
                 }
                 render_pass.set_viewport(qx as f32, qy as f32, qw as f32, qh as f32, 0.0, 1.0);
                 render_pass.set_scissor_rect(qx, qy, qw, qh);
-                if hdr {
-                    renderer.pass_view().paint_hdr_blit(render_pass, &self.frames[i]);
-                } else {
-                    renderer
-                        .pass_view()
-                        .paint_viewport(render_pass, self.viewports[i], &self.frames[i]);
-                }
+                renderer.pass_view().paint_hdr_blit(render_pass, &self.frames[i]);
             }
         }
     }
