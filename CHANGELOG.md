@@ -2,6 +2,7 @@
 
 ## [Unreleased changes]
 
+
 ### Decals
 
 Screen-space decal projection: place a texture onto any opaque surface without modifying the receiver mesh. The renderer reads the scene depth buffer each frame, reconstructs world position per pixel, and projects the decal onto whatever geometry lies inside the projection volume. No per-receiver setup is needed.
@@ -16,6 +17,9 @@ Screen-space decal projection: place a texture onto any opaque surface without m
 - Tri-planar projection: samples the texture from all three local axes and blends by surface normal, avoiding UV stretching on corners and non-planar surfaces.
 - Cylindrical projection: wraps a decal around a cylindrical surface using angle and axial position as UV coordinates. Works on both the outside of a column and the inside of a tube.
 
+### Material constructors
+
+Added `Material::solid`, `Material::textured`, and `Material::pbr_with_ao` for the three most common material setup cases. Existing `from_colour` and `pbr` are unchanged.
 
 ### Improvements
 
@@ -48,6 +52,31 @@ pub struct ItemSettings {
 - `CameraFrustumItem` removed from the public API. Build frustum wireframes directly using `PolylineItem` with explicit quad strips for near/far planes and lateral edges. `SceneFrame::camera_frustums` is removed; push `PolylineItem` values to `SceneFrame::polylines` instead. Build your own frustum!
 - `SurfaceLICItem` removed from the public API. SurfaceLIC 'objects' belong to surface meshes and so that is where they have to be defined. Set `SceneRenderItem::lic = Some(LicOverlay { vector_attribute, config })`.
 
+#### Improved item data upload responses
+
+`upload_mesh`, `upload_gaussian_splats`, and `upload_environment_map` now return `ViewportResult`
+
+These three upload functions previously returned `MeshId`, `GaussianSplatId`, and `()` respectively.  They now return `ViewportResult<MeshId>`, `ViewportResult<GaussianSplatId>`, and `ViewportResult<()>`.
+
+Call sites must handle or propagate the error. Callers that previously discarded the result should append `.expect("reason")` if the input is known-valid, or propagate with `?` if the caller already returns `ViewportResult`.
+
+Error variants returned:
+- `upload_mesh`: `ViewportError::EmptyMesh` when `vertices` or `indices` is empty.
+- `upload_gaussian_splats`: `ViewportError::InvalidGaussianSplatData` when the splat list is empty or when `positions`, `scales`, `rotations`, and `opacities` differ in length.
+- `upload_environment_map`: `ViewportError::InvalidTextureData` when `pixels.len()` does not equal `width * height * 4`.
+
+#### `prepare_scene` / `prepare_viewport` call ordering is now enforced at compile time
+`OwnedPath::prepare_scene` and `PassPath::prepare_scene` now return a `ScenePreparedToken`. `prepare_viewport` on both path types now requires `&ScenePreparedToken` as a parameter (between `queue` and `id`), making it a compile error to call `prepare_viewport` without a prior `prepare_scene` in the same frame. Migration: capture the token from `prepare_scene` and pass `&token` to each `prepare_viewport` call.
+
+```rust
+// Before
+renderer.pass().prepare_scene(device, queue, frame, &scene_fx);
+renderer.pass().prepare_viewport(device, queue, vp_id, frame);
+
+// After
+let token = renderer.pass().prepare_scene(device, queue, frame, &scene_fx);
+renderer.pass().prepare_viewport(device, queue, &token, vp_id, frame);
+```
 
 
 

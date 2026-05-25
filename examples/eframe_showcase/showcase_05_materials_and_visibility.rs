@@ -45,7 +45,7 @@ impl App {
             "Gold (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(2.5, -1.5, 0.0)),
-            Material::pbr([1.0, 0.78, 0.2], 0.95, 0.05),
+            Material::pbr_with_ao([1.0, 0.78, 0.2], 0.95, 0.05, None),
         );
         self.materials_visibility_state.selection.select_one(id);
 

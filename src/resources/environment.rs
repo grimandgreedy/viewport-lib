@@ -35,8 +35,14 @@ pub fn upload_environment_map(
     pixels: &[f32],
     width: u32,
     height: u32,
-) {
-    assert_eq!(pixels.len(), (width * height * 4) as usize);
+) -> crate::error::ViewportResult<()> {
+    let expected = (width as usize) * (height as usize) * 4;
+    if pixels.len() != expected {
+        return Err(crate::error::ViewportError::InvalidTextureData {
+            expected,
+            actual: pixels.len(),
+        });
+    }
 
     // 1. Upload full-res skybox texture.
     let skybox_tex = upload_rgba16f(device, queue, pixels, width, height, "ibl_skybox");
@@ -88,6 +94,7 @@ pub fn upload_environment_map(
     resources.ibl_prefiltered_texture = Some(spec_tex);
     resources.ibl_brdf_lut_texture = Some(brdf_tex);
     resources.ibl_skybox_texture = Some(skybox_tex);
+    Ok(())
 }
 
 // -------------------------------------------------------------------------

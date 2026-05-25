@@ -4,13 +4,34 @@ use rayon::prelude::*;
 impl ViewportGpuResources {
     /// Create a GpuMesh from vertex/index slices and register it into the resource list.
     ///
-    /// Returns the index of the new mesh in `self.meshes`.
+    /// Returns the `MeshId` of the new mesh.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::EmptyMesh`](crate::error::ViewportError::EmptyMesh) if
+    /// `vertices` or `indices` is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use viewport_lib::error::ViewportError;
+    /// # fn demo(resources: &mut viewport_lib::resources::ViewportGpuResources, device: &wgpu::Device) {
+    /// let result = resources.upload_mesh(device, &[], &[]);
+    /// assert!(matches!(result, Err(ViewportError::EmptyMesh { .. })));
+    /// # }
+    /// ```
     pub fn upload_mesh(
         &mut self,
         device: &wgpu::Device,
         vertices: &[Vertex],
         indices: &[u32],
-    ) -> crate::resources::mesh_store::MeshId {
+    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
+        if vertices.is_empty() || indices.is_empty() {
+            return Err(crate::error::ViewportError::EmptyMesh {
+                positions: vertices.len(),
+                indices: indices.len(),
+            });
+        }
         self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
             + indices.len() * std::mem::size_of::<u32>()) as u64;
         let mesh = Self::create_mesh(
@@ -31,7 +52,7 @@ impl ViewportGpuResources {
             vertices,
             indices,
         );
-        self.mesh_store.insert(mesh)
+        Ok(self.mesh_store.insert(mesh))
     }
 
     /// Upload a `MeshData` (from the geometry primitives module) directly.

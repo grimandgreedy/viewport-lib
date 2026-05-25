@@ -495,7 +495,7 @@ impl ApplicationHandler for App {
 
                 // Prepare: scene once, then one per viewport.
                 let (scene_fx, _) = frames[0].effects.split();
-                state
+                let token = state
                     .renderer
                     .pass()
                     .prepare_scene(&state.device, &state.queue, &frames[0], &scene_fx);
@@ -503,6 +503,7 @@ impl ApplicationHandler for App {
                     state.renderer.pass().prepare_viewport(
                         &state.device,
                         &state.queue,
+                        &token,
                         state.viewports[i],
                         frame,
                     );

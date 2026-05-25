@@ -386,12 +386,40 @@ impl ViewportGpuResources {
     ///
     /// Call once per splat set at startup (or when the set changes). The returned
     /// [`GaussianSplatId`] is stable until [`remove_gaussian_splats`] is called.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::InvalidGaussianSplatData`](crate::error::ViewportError::InvalidGaussianSplatData)
+    /// if `data.positions` is empty or if the lengths of `positions`, `scales`,
+    /// `rotations`, and `opacities` do not all match.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use viewport_lib::error::ViewportError;
+    /// # use viewport_lib::renderer::{GaussianSplatData, ViewportRenderer};
+    /// # fn demo(renderer: &mut ViewportRenderer, device: &wgpu::Device, queue: &wgpu::Queue) {
+    /// let result = renderer.upload_gaussian_splats(device, queue, &GaussianSplatData::default());
+    /// assert!(matches!(result, Err(ViewportError::InvalidGaussianSplatData { .. })));
+    /// # }
+    /// ```
     pub fn upload_gaussian_splats(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         data: &crate::renderer::GaussianSplatData,
-    ) -> crate::renderer::GaussianSplatId {
+    ) -> crate::error::ViewportResult<crate::renderer::GaussianSplatId> {
+        if data.positions.is_empty() {
+            return Err(crate::error::ViewportError::InvalidGaussianSplatData {
+                reason: "empty splat list",
+            });
+        }
+        let n = data.positions.len();
+        if data.scales.len() != n || data.rotations.len() != n || data.opacities.len() != n {
+            return Err(crate::error::ViewportError::InvalidGaussianSplatData {
+                reason: "mismatched buffer lengths",
+            });
+        }
         let count = data.positions.len() as u32;
 
         // Pad positions/scales/rotations to vec4 (w=1 / w=0 / raw).
@@ -477,7 +505,7 @@ impl ViewportGpuResources {
         };
 
         let store_index = self.gaussian_splat_store.insert(gpu_set);
-        crate::renderer::GaussianSplatId(store_index)
+        Ok(crate::renderer::GaussianSplatId(store_index))
     }
 
     /// Remove an uploaded Gaussian splat set by handle.

@@ -87,6 +87,13 @@ pub enum ViewportError {
         /// The device's `max_buffer_size` limit.
         limit: u64,
     },
+
+    /// Gaussian splat data is malformed or empty.
+    #[error("invalid gaussian splat data: {reason}")]
+    InvalidGaussianSplatData {
+        /// Short description of what is wrong.
+        reason: &'static str,
+    },
 }
 
 /// Convenience alias for `Result<T, ViewportError>`.

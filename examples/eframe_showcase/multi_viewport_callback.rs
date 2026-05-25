@@ -29,10 +29,10 @@ impl eframe::egui_wgpu::CallbackTrait for MultiViewportCallback {
         if let Some(renderer) = callback_resources.get_mut::<ViewportRenderer>() {
             // Prepare scene-global data once (lighting, shadows, batching).
             let (scene_fx, _) = self.frames[0].effects.split();
-            renderer.pass().prepare_scene(device, queue, &self.frames[0], &scene_fx);
+            let token = renderer.pass().prepare_scene(device, queue, &self.frames[0], &scene_fx);
             // Prepare per-viewport state (camera uniforms, clip planes).
             for (i, frame) in self.frames.iter().enumerate() {
-                renderer.pass().prepare_viewport(device, queue, self.viewports[i], frame);
+                renderer.pass().prepare_viewport(device, queue, &token, self.viewports[i], frame);
             }
             // HDR path: encode each viewport into its own intermediate texture and
             // return the command buffers for eframe to submit before the render pass.

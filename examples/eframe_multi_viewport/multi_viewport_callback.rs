@@ -16,9 +16,9 @@ impl eframe::egui_wgpu::CallbackTrait for MultiViewportCallback {
     ) -> Vec<eframe::wgpu::CommandBuffer> {
         if let Some(renderer) = callback_resources.get_mut::<ViewportRenderer>() {
             let (scene_fx, _) = self.frames[0].effects.split();
-            renderer.pass().prepare_scene(device, queue, &self.frames[0], &scene_fx);
+            let token = renderer.pass().prepare_scene(device, queue, &self.frames[0], &scene_fx);
             for (i, frame) in self.frames.iter().enumerate() {
-                renderer.pass().prepare_viewport(device, queue, self.viewports[i], frame);
+                renderer.pass().prepare_viewport(device, queue, &token, self.viewports[i], frame);
             }
             return self
                 .frames

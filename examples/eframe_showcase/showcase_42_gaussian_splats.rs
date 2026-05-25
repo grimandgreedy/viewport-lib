@@ -63,8 +63,10 @@ impl Default for GaussianSplatsState {
 pub(crate) fn build_gaussian_splat_scene(app: &mut App, renderer: &mut ViewportRenderer) {
     let dti = generate_dti();
     let tgv = generate_tgv();
-    app.splat_state.id_dti = renderer.upload_gaussian_splats(&app.device, &app.queue, &dti);
-    app.splat_state.id_tgv = renderer.upload_gaussian_splats(&app.device, &app.queue, &tgv);
+    app.splat_state.id_dti = renderer.upload_gaussian_splats(&app.device, &app.queue, &dti)
+        .expect("example: splat data is validated at construction");
+    app.splat_state.id_tgv = renderer.upload_gaussian_splats(&app.device, &app.queue, &tgv)
+        .expect("example: splat data is validated at construction");
     app.splat_state.built = true;
 }
 

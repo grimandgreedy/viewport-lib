@@ -342,6 +342,52 @@ impl Material {
             ..Default::default()
         }
     }
+
+    /// Alias for [`Material::from_colour`].
+    ///
+    /// Returns a material with the given base colour and all other fields at defaults.
+    /// "solid" is a more familiar name in some graphics contexts; both names are kept
+    /// so existing `from_colour` call sites do not need updating.
+    pub fn solid(colour: [f32; 3]) -> Self {
+        Self::from_colour(colour)
+    }
+
+    /// Returns a material with only `texture_id` set; all other fields take defaults.
+    ///
+    /// Useful when the mesh already carries a UV layout and the only requirement is
+    /// to apply a texture. Base colour, lighting model, and all other fields stay at
+    /// their default values.
+    pub fn textured(texture_id: u64) -> Self {
+        Self {
+            texture_id: Some(texture_id),
+            ..Default::default()
+        }
+    }
+
+    /// PBR constructor that also sets a baked ambient-occlusion texture.
+    ///
+    /// - `base_colour`: RGB albedo in linear 0..1
+    /// - `metallic`: 0.0 = dielectric, 1.0 = full metal
+    /// - `roughness`: 0.0 = mirror, 1.0 = fully rough
+    /// - `ao_map`: baked AO texture id, or `None` to disable AO
+    ///
+    /// Sets `use_pbr = true`. All other fields take defaults.
+    /// Use [`Material::pbr`] when no AO map is needed.
+    pub fn pbr_with_ao(
+        base_colour: [f32; 3],
+        metallic: f32,
+        roughness: f32,
+        ao_map: Option<u64>,
+    ) -> Self {
+        Self {
+            base_colour,
+            use_pbr: true,
+            metallic,
+            roughness,
+            ao_map_id: ao_map,
+            ..Default::default()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -453,5 +499,44 @@ mod tests {
         let pv = ParamVis::default();
         assert_eq!(pv.mode, ParamVisMode::Checker);
         assert!((pv.scale - 8.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn solid_delegates_to_from_colour() {
+        let colour = [1.0_f32, 0.0, 0.5];
+        let a = Material::solid(colour);
+        let b = Material::from_colour(colour);
+        assert!((a.base_colour[0] - b.base_colour[0]).abs() < 1e-6);
+        assert!((a.base_colour[1] - b.base_colour[1]).abs() < 1e-6);
+        assert!((a.base_colour[2] - b.base_colour[2]).abs() < 1e-6);
+        assert_eq!(a.use_pbr, b.use_pbr);
+        assert_eq!(a.texture_id, b.texture_id);
+        assert_eq!(a.ao_map_id, b.ao_map_id);
+        assert!((a.ambient - b.ambient).abs() < 1e-6);
+    }
+
+    #[test]
+    fn textured_sets_texture_id() {
+        let m = Material::textured(42);
+        assert_eq!(m.texture_id, Some(42));
+        let def = Material::default();
+        assert!((m.base_colour[0] - def.base_colour[0]).abs() < 1e-6);
+        assert!(!m.use_pbr);
+    }
+
+    #[test]
+    fn pbr_with_ao_sets_fields() {
+        let m = Material::pbr_with_ao([0.8, 0.2, 0.1], 0.9, 0.3, Some(7));
+        assert!(m.use_pbr);
+        assert!((m.metallic - 0.9).abs() < 1e-6);
+        assert!((m.roughness - 0.3).abs() < 1e-6);
+        assert_eq!(m.ao_map_id, Some(7));
+        assert!((m.base_colour[0] - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn pbr_with_ao_accepts_none() {
+        let m = Material::pbr_with_ao([0.5; 3], 0.0, 1.0, None);
+        assert_eq!(m.ao_map_id, None);
     }
 }

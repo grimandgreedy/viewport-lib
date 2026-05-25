@@ -644,12 +644,29 @@ impl ViewportRenderer {
     ///
     /// Call once per splat set at startup or when it changes. The returned
     /// [`GaussianSplatId`] is valid until [`remove_gaussian_splats`](Self::remove_gaussian_splats) is called.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::InvalidGaussianSplatData`](crate::error::ViewportError::InvalidGaussianSplatData)
+    /// if `data.positions` is empty or if `positions`, `scales`, `rotations`, and `opacities`
+    /// differ in length.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use viewport_lib::error::ViewportError;
+    /// # use viewport_lib::renderer::{GaussianSplatData, ViewportRenderer};
+    /// # fn demo(renderer: &mut ViewportRenderer, device: &wgpu::Device, queue: &wgpu::Queue) {
+    /// let result = renderer.upload_gaussian_splats(device, queue, &GaussianSplatData::default());
+    /// assert!(matches!(result, Err(ViewportError::InvalidGaussianSplatData { .. })));
+    /// # }
+    /// ```
     pub fn upload_gaussian_splats(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         data: &GaussianSplatData,
-    ) -> GaussianSplatId {
+    ) -> crate::error::ViewportResult<GaussianSplatId> {
         self.resources.upload_gaussian_splats(device, queue, data)
     }
 
@@ -662,8 +679,25 @@ impl ViewportRenderer {
 
     /// Upload an equirectangular HDR environment map and precompute IBL textures.
     ///
-    /// `pixels` is row-major RGBA f32 data (4 floats per texel), `width`×`height`.
+    /// `pixels` is row-major RGBA f32 data (4 floats per texel), `width`x`height`.
     /// This rebuilds camera bind groups so shaders immediately see the new textures.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
+    /// if `pixels.len()` does not equal `width * height * 4`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use viewport_lib::error::ViewportError;
+    /// # use viewport_lib::renderer::ViewportRenderer;
+    /// # fn demo(renderer: &mut ViewportRenderer, device: &wgpu::Device, queue: &wgpu::Queue) {
+    /// // 2x2 RGBA image requires exactly 16 floats.
+    /// let result = renderer.upload_environment_map(device, queue, &[0.0f32; 12], 2, 2);
+    /// assert!(matches!(result, Err(ViewportError::InvalidTextureData { expected: 16, actual: 12 })));
+    /// # }
+    /// ```
     pub fn upload_environment_map(
         &mut self,
         device: &wgpu::Device,
@@ -671,7 +705,7 @@ impl ViewportRenderer {
         pixels: &[f32],
         width: u32,
         height: u32,
-    ) {
+    ) -> crate::error::ViewportResult<()> {
         crate::resources::environment::upload_environment_map(
             &mut self.resources,
             device,
@@ -679,8 +713,9 @@ impl ViewportRenderer {
             pixels,
             width,
             height,
-        );
+        )?;
         self.rebuild_camera_bind_groups(device);
+        Ok(())
     }
 
     /// Rebuild the primary + per-viewport camera bind groups.
