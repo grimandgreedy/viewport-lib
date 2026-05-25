@@ -582,8 +582,8 @@ impl ViewportRenderer {
         let vm_cell_map: std::collections::HashMap<u64, &[u32]> = self
             .pick_volume_mesh_items
             .iter()
-            .filter(|item| item.pick_id != PickId::NONE && !item.face_to_cell.is_empty())
-            .map(|item| (item.pick_id.0, item.face_to_cell.as_slice()))
+            .filter(|item| item.settings.pick_id != PickId::NONE && !item.face_to_cell.is_empty())
+            .map(|item| (item.settings.pick_id.0, item.face_to_cell.as_slice()))
             .collect();
 
         // 1. Surface mesh picks (FACE, VERTEX, EDGE, CELL, or OBJECT fallback).
@@ -593,7 +593,7 @@ impl ViewportRenderer {
                 Vector::new(ray_dir.x, ray_dir.y, ray_dir.z),
             );
             for item in &self.pick_scene_items {
-                if item.appearance.hidden || item.pick_id == PickId::NONE {
+                if item.settings.hidden || item.settings.pick_id == PickId::NONE {
                     continue;
                 }
                 let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
@@ -645,7 +645,7 @@ impl ViewportRenderer {
                             feature_sub
                         } else if wants_cell {
                             // Convert surface Face hit to originating cell index.
-                            if let Some(f2c) = vm_cell_map.get(&item.pick_id.0) {
+                            if let Some(f2c) = vm_cell_map.get(&item.settings.pick_id.0) {
                                 match feature_sub {
                                     Some(SubObjectRef::Face(face_raw)) => {
                                         let n_tri = indices.len() / 3;
@@ -745,7 +745,7 @@ impl ViewportRenderer {
                         if sub_object.is_some() || wants_object {
                             #[allow(deprecated)]
                             let hit = PickHit {
-                                id: item.pick_id.0,
+                                id: item.settings.pick_id.0,
                                 sub_object,
                                 world_pos,
                                 normal,
@@ -758,7 +758,7 @@ impl ViewportRenderer {
                     }
                     Err(e) => {
                         tracing::warn!(
-                            pick_id = item.pick_id.0,
+                            pick_id = item.settings.pick_id.0,
                             error = %e,
                             "TriMesh build failed in renderer.pick()"
                         );
@@ -773,7 +773,7 @@ impl ViewportRenderer {
         // 2b. Transparent volume mesh cell picks (CELL or OBJECT fallback).
         if wants_cell || wants_object {
             for item in &self.pick_tvm_items {
-                if item.pick_id == 0 {
+                if item.settings.pick_id == PickId::NONE {
                     continue;
                 }
                 let Some(data) = item.volume_mesh_data.as_deref() else {
@@ -782,7 +782,7 @@ impl ViewportRenderer {
                 if let Some(mut hit) = pick_transparent_volume_mesh_cpu(
                     ray_origin,
                     ray_dir,
-                    item.pick_id,
+                    item.settings.pick_id.0,
                     glam::Mat4::IDENTITY,
                     data,
                 ) {
@@ -798,13 +798,13 @@ impl ViewportRenderer {
         // 3. Point cloud picks (CLOUD_POINT or OBJECT fallback).
         if wants_cloud || wants_object {
             for item in &self.pick_point_cloud_items {
-                if item.id == 0 || item.positions.is_empty() {
+                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
                     continue;
                 }
                 let radius_px = item.point_size.max(4.0);
                 if let Some(mut hit) = pick_point_cloud_cpu(
                     click_pos,
-                    item.id,
+                    item.settings.pick_id.0,
                     item,
                     view_proj,
                     viewport_size,
@@ -823,14 +823,14 @@ impl ViewportRenderer {
         let wants_voxel = mask.intersects(PickMask::VOXEL);
         if wants_voxel || wants_object {
             for item in &self.pick_volume_items {
-                if item.pick_id == 0 {
+                if item.settings.pick_id == PickId::NONE {
                     continue;
                 }
                 let Some(vol_data) = item.volume_data.as_deref() else {
                     continue;
                 };
                 if let Some(mut hit) =
-                    pick_volume_cpu(ray_origin, ray_dir, item.pick_id, item, vol_data)
+                    pick_volume_cpu(ray_origin, ray_dir, item.settings.pick_id.0, item, vol_data)
                 {
                     let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
                     if !wants_voxel {
@@ -844,7 +844,7 @@ impl ViewportRenderer {
         // 5. Gaussian splat picks (SPLAT or OBJECT fallback).
         if wants_splat || wants_object {
             for item in &self.pick_splat_items {
-                if item.pick_id == 0 {
+                if item.settings.pick_id == PickId::NONE {
                     continue;
                 }
                 let Some(gpu_set) = self.resources.gaussian_splat_store.get(item.id.0) else {
@@ -880,7 +880,7 @@ impl ViewportRenderer {
                 };
                 if let Some(mut hit) = pick_gaussian_splat_cpu(
                     click_pos,
-                    item.pick_id,
+                    item.settings.pick_id.0,
                     &gpu_set.cpu_positions,
                     model,
                     view_proj,
@@ -921,7 +921,7 @@ impl ViewportRenderer {
 
             // Glyphs
             for item in &self.pick_glyph_items {
-                if item.id == 0 || item.positions.is_empty() {
+                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
                     continue;
                 }
                 let model = glam::Mat4::from_cols_array_2d(&item.model);
@@ -970,7 +970,7 @@ impl ViewportRenderer {
                 let radius_px = instance_radius_px(centroid, full_len * 0.5);
                 if let Some(mut hit) = pick_gaussian_splat_cpu(
                     click_pos,
-                    item.id,
+                    item.settings.pick_id.0,
                     &midpoints,
                     model,
                     view_proj,
@@ -995,7 +995,7 @@ impl ViewportRenderer {
 
             // Tensor glyphs
             for item in &self.pick_tensor_glyph_items {
-                if item.id == 0 || item.positions.is_empty() {
+                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
                     continue;
                 }
                 let model = glam::Mat4::from_cols_array_2d(&item.model);
@@ -1023,7 +1023,7 @@ impl ViewportRenderer {
                 let radius_px = instance_radius_px(centroid, world_r);
                 if let Some(mut hit) = pick_gaussian_splat_cpu(
                     click_pos,
-                    item.id,
+                    item.settings.pick_id.0,
                     &item.positions,
                     model,
                     view_proj,
@@ -1044,7 +1044,7 @@ impl ViewportRenderer {
 
             // Sprites
             for item in &self.pick_sprite_items {
-                if item.id == 0 || item.positions.is_empty() {
+                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
                     continue;
                 }
                 let model = glam::Mat4::from_cols_array_2d(&item.model);
@@ -1064,7 +1064,7 @@ impl ViewportRenderer {
                 };
                 if let Some(mut hit) = pick_gaussian_splat_cpu(
                     click_pos,
-                    item.id,
+                    item.settings.pick_id.0,
                     &item.positions,
                     model,
                     view_proj,
@@ -1089,13 +1089,13 @@ impl ViewportRenderer {
         let wants_strip = mask.intersects(PickMask::STRIP);
         if wants_poly_node || wants_strip || wants_object {
             for item in &self.pick_polyline_items {
-                if item.id == 0 || item.positions.is_empty() {
+                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
                     continue;
                 }
                 let radius_px = (item.line_width + 4.0).max(8.0);
                 if let Some(mut hit) = pick_gaussian_splat_cpu(
                     click_pos,
-                    item.id,
+                    item.settings.pick_id.0,
                     &item.positions,
                     glam::Mat4::IDENTITY,
                     view_proj,
@@ -1126,7 +1126,7 @@ impl ViewportRenderer {
         let wants_segment = mask.intersects(PickMask::SEGMENT);
         if wants_segment || wants_strip || wants_object {
             for item in &self.pick_polyline_items {
-                if item.id == 0 || item.positions.is_empty() {
+                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
                     continue;
                 }
                 // Half the visual line width plus a few pixels of slack.
@@ -1154,7 +1154,7 @@ impl ViewportRenderer {
                 };
                 #[allow(deprecated)]
                 let hit = PickHit {
-                    id: item.id,
+                    id: item.settings.pick_id.0,
                     sub_object,
                     world_pos,
                     normal: glam::Vec3::Y,
@@ -1190,14 +1190,14 @@ impl ViewportRenderer {
             // POLY_NODE pass: nearest control point, promoted to Strip/Object as needed.
             if wants_poly_node || wants_strip || wants_object {
                 for item in &self.pick_streamtube_items {
-                    if item.id == 0 || item.positions.is_empty() {
+                    if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
                         continue;
                     }
                     let ref_pos = glam::Vec3::from(item.positions[0]);
                     let radius_px = world_r_to_px(ref_pos, item.radius.max(0.01)).max(8.0);
                     if let Some(mut hit) = pick_gaussian_splat_cpu(
                         click_pos,
-                        item.id,
+                        item.settings.pick_id.0,
                         &item.positions,
                         glam::Mat4::IDENTITY,
                         view_proj,
@@ -1221,7 +1221,7 @@ impl ViewportRenderer {
                     }
                 }
                 for item in &self.pick_tube_items {
-                    if item.id == 0 || item.positions.is_empty() {
+                    if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
                         continue;
                     }
                     let ref_pos = glam::Vec3::from(item.positions[0]);
@@ -1235,7 +1235,7 @@ impl ViewportRenderer {
                     let radius_px = world_r_to_px(ref_pos, max_r).max(8.0);
                     if let Some(mut hit) = pick_gaussian_splat_cpu(
                         click_pos,
-                        item.id,
+                        item.settings.pick_id.0,
                         &item.positions,
                         glam::Mat4::IDENTITY,
                         view_proj,
@@ -1259,14 +1259,14 @@ impl ViewportRenderer {
                     }
                 }
                 for item in &self.pick_ribbon_items {
-                    if item.id == 0 || item.positions.is_empty() {
+                    if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
                         continue;
                     }
                     let ref_pos = glam::Vec3::from(item.positions[0]);
                     let radius_px = world_r_to_px(ref_pos, item.width * 0.5).max(8.0);
                     if let Some(mut hit) = pick_gaussian_splat_cpu(
                         click_pos,
-                        item.id,
+                        item.settings.pick_id.0,
                         &item.positions,
                         glam::Mat4::IDENTITY,
                         view_proj,
@@ -1296,7 +1296,7 @@ impl ViewportRenderer {
                 // Streamtube: project each cylinder axis segment to screen and find the
                 // closest point along the full segment (not just the midpoint).
                 for item in &self.pick_streamtube_items {
-                    if item.id == 0 || item.positions.is_empty() {
+                    if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
                         continue;
                     }
                     let ref_pos = glam::Vec3::from(item.positions[0]);
@@ -1326,7 +1326,7 @@ impl ViewportRenderer {
                     consider(
                         toi,
                         PickHit {
-                            id: item.id,
+                            id: item.settings.pick_id.0,
                             sub_object,
                             world_pos,
                             normal: glam::Vec3::Y,
@@ -1340,7 +1340,7 @@ impl ViewportRenderer {
                 // Tube: same as streamtube; uses the conservative max of uniform and
                 // per-point radii for the screen-space threshold.
                 for item in &self.pick_tube_items {
-                    if item.id == 0 || item.positions.is_empty() {
+                    if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
                         continue;
                     }
                     let ref_pos = glam::Vec3::from(item.positions[0]);
@@ -1377,7 +1377,7 @@ impl ViewportRenderer {
                     consider(
                         toi,
                         PickHit {
-                            id: item.id,
+                            id: item.settings.pick_id.0,
                             sub_object,
                             world_pos,
                             normal: glam::Vec3::Y,
@@ -1391,7 +1391,7 @@ impl ViewportRenderer {
                 // Ribbon: reconstruct the swept quad per segment (parallel-transport
                 // lateral frame) and test the ray against both triangles of each quad.
                 for item in &self.pick_ribbon_items {
-                    if item.id == 0 || item.positions.is_empty() {
+                    if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
                         continue;
                     }
                     let frames = ribbon_lateral_frames(
@@ -1460,7 +1460,7 @@ impl ViewportRenderer {
                         consider(
                             best_t,
                             PickHit {
-                                id: item.id,
+                                id: item.settings.pick_id.0,
                                 sub_object,
                                 world_pos,
                                 normal: glam::Vec3::Y,
@@ -1478,7 +1478,7 @@ impl ViewportRenderer {
         if wants_object {
             // Image slice: axis-aligned quad ray intersection.
             for item in &self.pick_image_slice_items {
-                if item.id == 0 {
+                if item.settings.pick_id == PickId::NONE {
                     continue;
                 }
                 let [bmin, bmax] = [item.bbox_min, item.bbox_max];
@@ -1512,7 +1512,7 @@ impl ViewportRenderer {
                     consider(
                         toi,
                         PickHit {
-                            id: item.id,
+                            id: item.settings.pick_id.0,
                             sub_object: None,
                             world_pos: hit_pos,
                             normal: plane_n,
@@ -1526,7 +1526,7 @@ impl ViewportRenderer {
 
             // Volume surface slice: ray/mesh intersection via mesh_store CPU data.
             for item in &self.pick_volume_surface_slice_items {
-                if item.id == 0 {
+                if item.settings.pick_id == PickId::NONE {
                     continue;
                 }
                 let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
@@ -1570,7 +1570,7 @@ impl ViewportRenderer {
                         consider(
                             hit.time_of_impact,
                             PickHit {
-                                id: item.id,
+                                id: item.settings.pick_id.0,
                                 sub_object: None,
                                 world_pos,
                                 normal: glam::Vec3::new(n.x, n.y, n.z),
@@ -1585,7 +1585,7 @@ impl ViewportRenderer {
 
             // Screen image: screen-space rect test. toi=0 so these win over any 3D hit.
             for item in &self.pick_screen_image_items {
-                if item.id == 0 || item.width == 0 || item.height == 0 {
+                if item.settings.pick_id == PickId::NONE || item.width == 0 || item.height == 0 {
                     continue;
                 }
                 let img_w = item.width as f32 * item.scale;
@@ -1611,7 +1611,7 @@ impl ViewportRenderer {
                     consider(
                         0.0,
                         PickHit {
-                            id: item.id,
+                            id: item.settings.pick_id.0,
                             sub_object: None,
                             world_pos,
                             normal: -ray_dir,
@@ -1712,8 +1712,8 @@ impl ViewportRenderer {
         let vm_cell_map: std::collections::HashMap<u64, &[u32]> = self
             .pick_volume_mesh_items
             .iter()
-            .filter(|item| item.pick_id != PickId::NONE && !item.face_to_cell.is_empty())
-            .map(|item| (item.pick_id.0, item.face_to_cell.as_slice()))
+            .filter(|item| item.settings.pick_id != PickId::NONE && !item.face_to_cell.is_empty())
+            .map(|item| (item.settings.pick_id.0, item.face_to_cell.as_slice()))
             .collect();
 
         // Project a local-space point through mvp and return screen coords,
@@ -1735,7 +1735,7 @@ impl ViewportRenderer {
         // 1. Surface mesh picks (FACE, VERTEX, CELL, or OBJECT).
         if wants_face || wants_vertex || wants_cell || wants_object {
             for item in &self.pick_scene_items {
-                if item.appearance.hidden || item.pick_id == PickId::NONE {
+                if item.settings.hidden || item.settings.pick_id == PickId::NONE {
                     continue;
                 }
                 let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
@@ -1748,7 +1748,7 @@ impl ViewportRenderer {
 
                 let model = glam::Mat4::from_cols_array_2d(&item.model);
                 let mvp = view_proj * model;
-                let id = item.pick_id.0;
+                let id = item.settings.pick_id.0;
                 let mut item_hit = false;
 
                 if wants_face {
@@ -1861,14 +1861,14 @@ impl ViewportRenderer {
         // 2b. Transparent volume mesh cell picks (CELL or OBJECT).
         if wants_cell || wants_object {
             for item in &self.pick_tvm_items {
-                if item.pick_id == 0 {
+                if item.settings.pick_id == PickId::NONE {
                     continue;
                 }
                 let Some(data) = item.volume_mesh_data.as_deref() else {
                     continue;
                 };
                 use crate::resources::volume_mesh::CELL_SENTINEL;
-                let id = item.pick_id;
+                let id = item.settings.pick_id.0;
                 let mvp = view_proj; // TVM items are always in world space (no model transform)
                 let mut item_hit = false;
 
@@ -1908,12 +1908,12 @@ impl ViewportRenderer {
         // 3. Point cloud picks (CLOUD_POINT or OBJECT).
         if wants_cloud || wants_object {
             for item in &self.pick_point_cloud_items {
-                if item.id == 0 || item.positions.is_empty() {
+                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
                     continue;
                 }
                 let model = glam::Mat4::from_cols_array_2d(&item.model);
                 let mvp = view_proj * model;
-                let id = item.id;
+                let id = item.settings.pick_id.0;
                 let mut item_hit = false;
 
                 for (pt_idx, pos) in item.positions.iter().enumerate() {
@@ -1939,7 +1939,7 @@ impl ViewportRenderer {
         let wants_voxel = mask.intersects(PickMask::VOXEL);
         if wants_voxel || wants_object {
             for item in &self.pick_volume_items {
-                if item.pick_id == 0 {
+                if item.settings.pick_id == PickId::NONE {
                     continue;
                 }
                 let Some(vol_data) = item.volume_data.as_deref() else {
@@ -1954,7 +1954,7 @@ impl ViewportRenderer {
                 let bbox_min = glam::Vec3::from(item.bbox_min);
                 let bbox_max = glam::Vec3::from(item.bbox_max);
                 let cell = (bbox_max - bbox_min) / glam::Vec3::new(nx as f32, ny as f32, nz as f32);
-                let id = item.pick_id;
+                let id = item.settings.pick_id.0;
                 let mut item_hit = false;
 
                 for iz in 0..nz {
@@ -1998,7 +1998,7 @@ impl ViewportRenderer {
         // 5. Gaussian splat picks (SPLAT or OBJECT).
         if wants_splat || wants_object {
             for item in &self.pick_splat_items {
-                if item.pick_id == 0 {
+                if item.settings.pick_id == PickId::NONE {
                     continue;
                 }
                 let Some(gpu_set) = self.resources.gaussian_splat_store.get(item.id.0) else {
@@ -2009,7 +2009,7 @@ impl ViewportRenderer {
                 }
                 let model = glam::Mat4::from_cols_array_2d(&item.model);
                 let mvp = view_proj * model;
-                let id = item.pick_id;
+                let id = item.settings.pick_id.0;
                 let mut item_hit = false;
 
                 for (i, pos) in gpu_set.cpu_positions.iter().enumerate() {
@@ -2034,12 +2034,12 @@ impl ViewportRenderer {
         if wants_instance || wants_object {
             // Glyphs
             for item in &self.pick_glyph_items {
-                if item.id == 0 || item.positions.is_empty() {
+                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
                     continue;
                 }
                 let model = glam::Mat4::from_cols_array_2d(&item.model);
                 let mvp = view_proj * model;
-                let id = item.id;
+                let id = item.settings.pick_id.0;
                 let mut item_hit = false;
                 for (i, pos) in item.positions.iter().enumerate() {
                     if let Some((sx, sy)) = project(mvp, glam::Vec3::from(*pos)) {
@@ -2058,12 +2058,12 @@ impl ViewportRenderer {
 
             // Tensor glyphs
             for item in &self.pick_tensor_glyph_items {
-                if item.id == 0 || item.positions.is_empty() {
+                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
                     continue;
                 }
                 let model = glam::Mat4::from_cols_array_2d(&item.model);
                 let mvp = view_proj * model;
-                let id = item.id;
+                let id = item.settings.pick_id.0;
                 let mut item_hit = false;
                 for (i, pos) in item.positions.iter().enumerate() {
                     if let Some((sx, sy)) = project(mvp, glam::Vec3::from(*pos)) {
@@ -2082,12 +2082,12 @@ impl ViewportRenderer {
 
             // Sprites
             for item in &self.pick_sprite_items {
-                if item.id == 0 || item.positions.is_empty() {
+                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
                     continue;
                 }
                 let model = glam::Mat4::from_cols_array_2d(&item.model);
                 let mvp = view_proj * model;
-                let id = item.id;
+                let id = item.settings.pick_id.0;
                 let mut item_hit = false;
                 for (i, pos) in item.positions.iter().enumerate() {
                     if let Some((sx, sy)) = project(mvp, glam::Vec3::from(*pos)) {
@@ -2111,10 +2111,10 @@ impl ViewportRenderer {
         let wants_strip = mask.intersects(PickMask::STRIP);
         if wants_poly_node || wants_segment || wants_strip || wants_object {
             for item in &self.pick_polyline_items {
-                if item.id == 0 || item.positions.is_empty() {
+                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
                     continue;
                 }
-                let id = item.id;
+                let id = item.settings.pick_id.0;
                 let mut item_hit = false;
                 let mut strips_hit = std::collections::HashSet::<u32>::new();
 
@@ -2199,11 +2199,11 @@ impl ViewportRenderer {
             let st_tube_iter = self
                 .pick_streamtube_items
                 .iter()
-                .map(|it| (it.id, it.positions.as_slice(), it.strip_lengths.as_slice()))
+                .map(|it| (it.settings.pick_id.0, it.positions.as_slice(), it.strip_lengths.as_slice()))
                 .chain(
                     self.pick_tube_items
                         .iter()
-                        .map(|it| (it.id, it.positions.as_slice(), it.strip_lengths.as_slice())),
+                        .map(|it| (it.settings.pick_id.0, it.positions.as_slice(), it.strip_lengths.as_slice())),
                 );
 
             for (id, positions, strip_lengths) in st_tube_iter {
@@ -2295,7 +2295,7 @@ impl ViewportRenderer {
             // the rect via the endpoint check inside segment_in_rect).
             // POLY_NODE: also check each control point individually.
             for item in &self.pick_ribbon_items {
-                if item.id == 0 || item.positions.is_empty() {
+                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
                     continue;
                 }
 
@@ -2324,7 +2324,7 @@ impl ViewportRenderer {
                                 if wants_poly_node {
                                     result
                                         .elements
-                                        .push((item.id, SubObjectRef::Point(ni as u32)));
+                                        .push((item.settings.pick_id.0, SubObjectRef::Point(ni as u32)));
                                 } else if wants_strip {
                                     let s = strip_for_node(ni as u32, &item.strip_lengths);
                                     strips_hit.insert(s);
@@ -2383,7 +2383,7 @@ impl ViewportRenderer {
                                 if wants_segment {
                                     result
                                         .elements
-                                        .push((item.id, SubObjectRef::Segment(seg_idx)));
+                                        .push((item.settings.pick_id.0, SubObjectRef::Segment(seg_idx)));
                                 } else if wants_strip {
                                     let s = strip_for_segment(seg_idx, &item.strip_lengths);
                                     strips_hit.insert(s);
@@ -2399,11 +2399,11 @@ impl ViewportRenderer {
 
                 if wants_strip {
                     for s in strips_hit {
-                        result.elements.push((item.id, SubObjectRef::Strip(s)));
+                        result.elements.push((item.settings.pick_id.0, SubObjectRef::Strip(s)));
                     }
                 }
                 if wants_object && item_hit {
-                    result.objects.push(item.id);
+                    result.objects.push(item.settings.pick_id.0);
                 }
             }
         }
@@ -2412,7 +2412,7 @@ impl ViewportRenderer {
         if wants_object {
             // Image slice: project all 4 quad corners and check containment/edge intersection.
             for item in &self.pick_image_slice_items {
-                if item.id == 0 {
+                if item.settings.pick_id == PickId::NONE {
                     continue;
                 }
                 let [bmin, bmax] = [item.bbox_min, item.bbox_max];
@@ -2464,13 +2464,13 @@ impl ViewportRenderer {
                         }
                     });
                 if hit {
-                    result.objects.push(item.id);
+                    result.objects.push(item.settings.pick_id.0);
                 }
             }
 
             // Volume surface slice: project each mesh vertex (with model transform) and check.
             for item in &self.pick_volume_surface_slice_items {
-                if item.id == 0 {
+                if item.settings.pick_id == PickId::NONE {
                     continue;
                 }
                 let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
@@ -2485,13 +2485,13 @@ impl ViewportRenderer {
                     project(view_proj, wp).map_or(false, |(sx, sy)| in_rect(sx, sy))
                 });
                 if hit {
-                    result.objects.push(item.id);
+                    result.objects.push(item.settings.pick_id.0);
                 }
             }
 
             // Screen image: check if the image's screen rect overlaps the pick rect.
             for item in &self.pick_screen_image_items {
-                if item.id == 0 || item.width == 0 || item.height == 0 {
+                if item.settings.pick_id == PickId::NONE || item.width == 0 || item.height == 0 {
                     continue;
                 }
                 let img_w = item.width as f32 * item.scale;
@@ -2512,7 +2512,7 @@ impl ViewportRenderer {
                     && sy <= rect_max.y
                     && sy + img_h >= rect_min.y;
                 if overlap {
-                    result.objects.push(item.id);
+                    result.objects.push(item.settings.pick_id.0);
                 }
             }
         }
@@ -2704,7 +2704,7 @@ impl ViewportRenderer {
         // Clear value 0 means "no hit" (or non-pickable surface).
         let pickable_items: Vec<&SceneRenderItem> = scene_items
             .iter()
-            .filter(|item| !item.appearance.hidden && item.pick_id != PickId::NONE)
+            .filter(|item| !item.settings.hidden && item.settings.pick_id != PickId::NONE)
             .collect();
 
         let pick_instances: Vec<PickInstance> = pickable_items
@@ -2716,7 +2716,7 @@ impl ViewportRenderer {
                     model_c1: m[1],
                     model_c2: m[2],
                     model_c3: m[3],
-                    object_id: item.pick_id.0 as u32,
+                    object_id: item.settings.pick_id.0 as u32,
                     _pad: [0; 3],
                 }
             })

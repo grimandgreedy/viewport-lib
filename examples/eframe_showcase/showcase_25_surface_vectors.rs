@@ -193,7 +193,7 @@ impl App {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
         item.material.backface_policy = BackfacePolicy::Identical;
-        item.appearance.unlit = true;
+        item.settings.unlit = true;
         item
     }
 
@@ -237,7 +237,7 @@ impl App {
             ),
         };
         item.colourmap_id = self.sv_state.rainbow_id;
-        item.appearance.unlit = true;
+        item.settings.unlit = true;
         item
     }
 

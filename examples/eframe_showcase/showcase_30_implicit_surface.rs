@@ -464,9 +464,7 @@ impl App {
             volume_id,
             isovalue: self.is_state.gmc_isovalue,
             material: mat,
-            id: 0,
-            appearance: Default::default(),
-            selected: false,
+            settings: Default::default(),
             cpu_data: None,
         });
     }

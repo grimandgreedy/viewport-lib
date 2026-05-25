@@ -538,7 +538,7 @@ pub fn pick_rect(
 
     // --- Mesh scene items ---
     for item in scene_items {
-        if item.appearance.hidden {
+        if item.settings.hidden {
             continue;
         }
         let Some((positions, indices)) = mesh_lookup.get(&item.mesh_id.index()) else {
@@ -581,13 +581,13 @@ pub fn pick_rect(
         }
 
         if !tri_hits.is_empty() {
-            result.hits.insert(item.pick_id.0, tri_hits);
+            result.hits.insert(item.settings.pick_id.0, tri_hits);
         }
     }
 
     // --- Point cloud items ---
     for pc in point_clouds {
-        if pc.id == 0 {
+        if pc.settings.pick_id == crate::renderer::PickId::NONE {
             // Not pickable.
             continue;
         }
@@ -612,7 +612,7 @@ pub fn pick_rect(
         }
 
         if !pt_hits.is_empty() {
-            result.hits.insert(pc.id, pt_hits);
+            result.hits.insert(pc.settings.pick_id.0, pt_hits);
         }
     }
 
@@ -1974,7 +1974,10 @@ mod tests {
         let pc = crate::renderer::PointCloudItem {
             positions: vec![[0.0, 0.0, 0.0], [0.1, 0.1, 0.0]],
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            id: 99,
+            settings: crate::scene::material::ItemSettings {
+                pick_id: crate::renderer::PickId(99),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -2014,7 +2017,7 @@ mod tests {
         let item = crate::renderer::SceneRenderItem {
             mesh_id: crate::resources::mesh_store::MeshId(0),
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            appearance: crate::scene::material::AppearanceSettings {
+            settings: crate::scene::material::ItemSettings {
                 hidden: true,
                 ..Default::default()
             },

@@ -18,9 +18,9 @@ use crate::App;
 use crate::geometry::make_box_with_uvs;
 use eframe::egui;
 use viewport_lib::{
-    CameraFrustumItem, CameraTarget, CameraTrack, ImageAnchor, LightKind, LightSource,
-    LightingSettings, Material, ScreenImageItem, TurntableController, ViewportRenderer,
-    interpolate_camera,
+    CameraTarget, CameraTrack, ImageAnchor, LightKind, LightSource,
+    LightingSettings, Material, PolylineItem, ScreenImageItem, TurntableController,
+    ViewportRenderer, interpolate_camera,
 };
 
 /// Sub-mode for Showcase 27 (camera framing).
@@ -45,8 +45,81 @@ fn camera_pose(eye: glam::Vec3, target: glam::Vec3, up: glam::Vec3) -> [[f32; 4]
         .to_cols_array_2d()
 }
 
+/// Local camera frustum data for showcase_27.
+#[derive(Clone)]
+pub(crate) struct FrustumData {
+    pub pose: [[f32; 4]; 4],
+    pub fov_y: f32,
+    pub aspect: f32,
+    pub near: f32,
+    pub far: f32,
+    pub colour: [f32; 4],
+    pub line_width: f32,
+}
+
+/// Compute world-space corners of a frustum cross-section at depth d.
+fn frustum_plane_corners(pose: [[f32; 4]; 4], fov_y: f32, aspect: f32, d: f32) -> [[f32; 3]; 4] {
+    let half_h = (fov_y * 0.5).tan() * d;
+    let half_w = half_h * aspect;
+    let mat = glam::Mat4::from_cols_array_2d(&pose);
+    let cam = [
+        glam::vec3(-half_w, half_h, -d),
+        glam::vec3(half_w, half_h, -d),
+        glam::vec3(half_w, -half_h, -d),
+        glam::vec3(-half_w, -half_h, -d),
+    ];
+    cam.map(|c| {
+        let w = mat.transform_point3(c);
+        [w.x, w.y, w.z]
+    })
+}
+
+/// Build a PolylineItem wireframe for a camera frustum.
+pub(crate) fn frustum_to_polyline(f: &FrustumData) -> PolylineItem {
+    let near = frustum_plane_corners(f.pose, f.fov_y, f.aspect, f.near);
+    let far = frustum_plane_corners(f.pose, f.fov_y, f.aspect, f.far);
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut strip_lengths: Vec<u32> = Vec::new();
+    // Near quad (closed loop)
+    positions.extend_from_slice(&[near[0], near[1], near[2], near[3], near[0]]);
+    strip_lengths.push(5);
+    // Far quad
+    positions.extend_from_slice(&[far[0], far[1], far[2], far[3], far[0]]);
+    strip_lengths.push(5);
+    // Lateral edges
+    for i in 0..4 {
+        positions.extend_from_slice(&[near[i], far[i]]);
+        strip_lengths.push(2);
+    }
+    let mut item = PolylineItem::default();
+    item.positions = positions;
+    item.strip_lengths = strip_lengths;
+    item.default_colour = f.colour;
+    item.line_width = f.line_width;
+    item
+}
+
+/// Compute a CameraTarget for "look through this camera" fly-to.
+pub(crate) fn frustum_view_target(f: &FrustumData) -> viewport_lib::CameraTarget {
+    let mat = glam::Mat4::from_cols_array_2d(&f.pose);
+    let eye = mat.transform_point3(glam::Vec3::ZERO);
+    let rot = glam::Mat3::from_cols(
+        mat.x_axis.truncate(),
+        mat.y_axis.truncate(),
+        mat.z_axis.truncate(),
+    );
+    let orientation = glam::Quat::from_mat3(&rot).normalize();
+    let distance = (f.near * 0.5_f32).max(0.01);
+    let center = eye + orientation * (-glam::Vec3::Z) * distance;
+    viewport_lib::CameraTarget {
+        center,
+        distance,
+        orientation,
+    }
+}
+
 /// Build the default demo track: overview -> A -> B -> C -> overview.
-fn build_demo_track(frustums: &[CameraFrustumItem]) -> CameraTrack {
+fn build_demo_track(frustums: &[FrustumData]) -> CameraTrack {
     let overview = CameraTarget {
         center: glam::Vec3::new(0.0, 0.0, 0.5),
         distance: 30.0,
@@ -56,9 +129,9 @@ fn build_demo_track(frustums: &[CameraFrustumItem]) -> CameraTrack {
     let mut track = CameraTrack::new();
     track.push(0.0, overview);
     if frustums.len() >= 3 {
-        track.push(2.5, frustums[0].camera_view_target());
-        track.push(5.0, frustums[1].camera_view_target());
-        track.push(7.5, frustums[2].camera_view_target());
+        track.push(2.5, frustum_view_target(&frustums[0]));
+        track.push(5.0, frustum_view_target(&frustums[1]));
+        track.push(7.5, frustum_view_target(&frustums[2]));
         track.push(10.0, overview);
     }
     track
@@ -71,7 +144,7 @@ fn build_demo_track(frustums: &[CameraFrustumItem]) -> CameraTrack {
 pub(crate) struct AuxState {
     pub built: bool,
     pub scene: viewport_lib::scene::Scene,
-    pub frustums: Vec<viewport_lib::CameraFrustumItem>,
+    pub frustums: Vec<FrustumData>,
     pub img_alpha: f32,
     pub img_scale: f32,
     pub active_frustum: Option<usize>,
@@ -196,33 +269,39 @@ impl App {
 
         // Camera A : south of the scene, angled down at the warm objects.
         let eye_a = glam::vec3(0.0, -14.0, 2.5);
-        let mut fa = CameraFrustumItem::default();
-        fa.pose = camera_pose(eye_a, glam::vec3(0.0, -2.0, 0.7), up);
-        fa.fov_y = 42_f32.to_radians();
-        fa.aspect = 16.0 / 9.0;
-        fa.near = 0.5;
-        fa.far = 3.5;
-        fa.colour = COLOUR_A;
+        let fa = FrustumData {
+            pose: camera_pose(eye_a, glam::vec3(0.0, -2.0, 0.7), up),
+            fov_y: 42_f32.to_radians(),
+            aspect: 16.0 / 9.0,
+            near: 0.5,
+            far: 3.5,
+            colour: COLOUR_A,
+            line_width: 2.0,
+        };
 
         // Camera B : north of the scene, angled down at the cool objects.
         let eye_b = glam::vec3(0.0, 14.0, 2.5);
-        let mut fb = CameraFrustumItem::default();
-        fb.pose = camera_pose(eye_b, glam::vec3(0.0, 2.0, 0.7), up);
-        fb.fov_y = 42_f32.to_radians();
-        fb.aspect = 16.0 / 9.0;
-        fb.near = 0.5;
-        fb.far = 3.5;
-        fb.colour = COLOUR_B;
+        let fb = FrustumData {
+            pose: camera_pose(eye_b, glam::vec3(0.0, 2.0, 0.7), up),
+            fov_y: 42_f32.to_radians(),
+            aspect: 16.0 / 9.0,
+            near: 0.5,
+            far: 3.5,
+            colour: COLOUR_B,
+            line_width: 2.0,
+        };
 
         // Camera C : west end, aimed at wall mid-height.
         let eye_c = glam::vec3(-18.0, 0.0, 2.0);
-        let mut fc = CameraFrustumItem::default();
-        fc.pose = camera_pose(eye_c, glam::vec3(0.0, 0.0, 1.2), up);
-        fc.fov_y = 48_f32.to_radians();
-        fc.aspect = 16.0 / 9.0;
-        fc.near = 0.5;
-        fc.far = 4.5;
-        fc.colour = COLOUR_C;
+        let fc = FrustumData {
+            pose: camera_pose(eye_c, glam::vec3(0.0, 0.0, 1.2), up),
+            fov_y: 48_f32.to_radians(),
+            aspect: 16.0 / 9.0,
+            near: 0.5,
+            far: 4.5,
+            colour: COLOUR_C,
+            line_width: 2.0,
+        };
 
         self.aux_state.frustums = vec![fa, fb, fc];
 
@@ -327,7 +406,7 @@ fn controls_aux_framing(app: &mut App, ui: &mut egui::Ui) {
 
     match action {
         Some(AuxAction::LookThrough(i)) => {
-            let t = app.aux_state.frustums[i].camera_view_target();
+            let t = frustum_view_target(&app.aux_state.frustums[i]);
             app.cam_animator
                 .fly_to(&app.camera, t.center, t.distance, t.orientation, 1.2);
             app.aux_state.active_frustum = Some(i);

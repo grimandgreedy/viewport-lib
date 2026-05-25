@@ -1,7 +1,7 @@
 //! Disk widget: a bounded circular plane with center, normal, and radius handles.
 
 use crate::interaction::clip_plane::ray_plane_intersection;
-use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
+use crate::renderer::{GlyphItem, GlyphType, PolylineItem, PickId};
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
 
@@ -179,7 +179,8 @@ impl DiskWidget {
             strip_lengths: vec![(STEPS + 1) as u32, 2],
             default_colour: self.colour,
             line_width: 1.5,
-            id,
+
+            settings: crate::scene::material::ItemSettings { pick_id: crate::renderer::PickId(id), ..Default::default() },
             ..PolylineItem::default()
         }
     }
@@ -215,7 +216,8 @@ impl DiskWidget {
             ],
             scalar_range: Some((0.0, 1.0)),
             glyph_type: GlyphType::Sphere,
-            id: id_base,
+
+            settings: crate::scene::material::ItemSettings { pick_id: crate::renderer::PickId(id_base), ..Default::default() },
             default_colour: self.handle_colour,
             use_default_colour: self.handle_colour[3] > 0.0,
             ..GlyphItem::default()

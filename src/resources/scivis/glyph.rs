@@ -288,8 +288,8 @@ impl ViewportGpuResources {
             } else {
                 0
             },
-            unlit: if item.appearance.unlit { 1 } else { 0 },
-            opacity: item.appearance.opacity,
+            unlit: if item.settings.unlit { 1 } else { 0 },
+            opacity: item.settings.opacity,
             wireframe: if wireframe { 1 } else { 0 },
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -751,8 +751,8 @@ impl ViewportGpuResources {
             has_scalars: if has_scalars { 1 } else { 0 },
             scalar_min,
             scalar_max,
-            unlit: item.appearance.unlit as u32,
-            opacity: item.appearance.opacity,
+            unlit: item.settings.unlit as u32,
+            opacity: item.settings.opacity,
             wireframe: if wireframe { 1 } else { 0 },
             _pad1b: 0.0,
             _pad1c: 0.0,

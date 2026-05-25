@@ -4,6 +4,7 @@
 //! [`GpuImplicitOptions`].
 
 use crate::resources::{DualPipeline, ViewportGpuResources};
+use crate::scene::material::ItemSettings;
 use wgpu::util::DeviceExt as _;
 
 // ---------------------------------------------------------------------------
@@ -104,12 +105,8 @@ pub struct GpuImplicitItem {
     pub blend_mode: ImplicitBlendMode,
     /// Ray-march quality settings.
     pub march_options: GpuImplicitOptions,
-    /// Pick ID for unified selection API. `0` = not selectable.
-    pub id: u64,
-    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
-    pub appearance: crate::scene::material::AppearanceSettings,
-    /// If `true`, draws an outline ring around the implicit surface.
-    pub selected: bool,
+    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    pub settings: ItemSettings,
 }
 
 impl Default for GpuImplicitItem {
@@ -118,9 +115,7 @@ impl Default for GpuImplicitItem {
             primitives: Vec::new(),
             blend_mode: crate::resources::ImplicitBlendMode::Union,
             march_options: GpuImplicitOptions::default(),
-            id: 0,
-            appearance: crate::scene::material::AppearanceSettings::default(),
-            selected: false,
+            settings: ItemSettings::default(),
         }
     }
 }
@@ -339,11 +334,11 @@ impl ViewportGpuResources {
             num_primitives: item.primitives.len().min(16) as u32,
             blend_mode: blend_mode_u32,
             max_steps: item.march_options.max_steps,
-            unlit: item.appearance.unlit as u32,
+            unlit: item.settings.unlit as u32,
             step_scale: item.march_options.step_scale,
             hit_threshold: item.march_options.hit_threshold,
             max_distance: item.march_options.max_distance,
-            opacity: item.appearance.opacity,
+            opacity: item.settings.opacity,
             primitives: [ImplicitPrimitive::zeroed(); 16],
         };
 

@@ -240,7 +240,7 @@ fn test_scene_collect_render_items_roundtrip() {
     let items = scene.collect_render_items(&sel);
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].mesh_id, mesh_idx);
-    assert!(items[0].selected);
+    assert!(items[0].settings.selected);
     // Verify position is in the model matrix.
     let pos_x = items[0].model[3][0];
     assert!((pos_x - 1.0).abs() < 1e-5, "model[3][0] = {pos_x}");
@@ -281,7 +281,7 @@ fn render_offscreen_produces_rgba_pixels() {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_idx;
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-    item.selected = false;
+    item.settings.selected = false;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 
     let width = 64u32;

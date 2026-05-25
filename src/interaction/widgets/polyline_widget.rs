@@ -1,7 +1,7 @@
 //! Polyline widget: N draggable waypoints connected by straight line segments.
 
 use crate::interaction::clip_plane::ray_plane_intersection;
-use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
+use crate::renderer::{GlyphItem, GlyphType, PolylineItem, PickId};
 
 use super::{WidgetContext, WidgetResult, ctx_ray, handle_world_radius, ray_point_dist};
 
@@ -178,7 +178,8 @@ impl PolylineWidget {
             strip_lengths: if n > 0 { vec![n] } else { vec![] },
             default_colour: self.colour,
             line_width: self.line_width,
-            id,
+
+            settings: crate::scene::material::ItemSettings { pick_id: crate::renderer::PickId(id), ..Default::default() },
             ..PolylineItem::default()
         }
     }
@@ -211,7 +212,8 @@ impl PolylineWidget {
             scalars,
             scalar_range: Some((0.0, 1.0)),
             glyph_type: GlyphType::Sphere,
-            id: id_base,
+
+            settings: crate::scene::material::ItemSettings { pick_id: crate::renderer::PickId(id_base), ..Default::default() },
             default_colour: self.handle_colour,
             use_default_colour: self.handle_colour[3] > 0.0,
             ..GlyphItem::default()

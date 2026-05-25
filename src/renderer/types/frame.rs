@@ -221,44 +221,6 @@ impl Default for SurfaceLICConfig {
     }
 }
 
-/// A mesh surface to render with Surface LIC for one frame.
-///
-/// The mesh must have been uploaded via [`ViewportGpuResources::upload_mesh_data`]
-/// with a `VertexVector` attribute matching `vector_attribute`.
-#[non_exhaustive]
-#[derive(Debug, Clone)]
-pub struct SurfaceLICItem {
-    /// ID of the mesh to render (obtained from `upload_mesh_data`).
-    pub mesh_id: crate::resources::mesh_store::MeshId,
-    /// Name of the `AttributeData::VertexVector` attribute on that mesh.
-    pub vector_attribute: String,
-    /// Model matrix (row-major 4x4).
-    pub model: [[f32; 4]; 4],
-    /// LIC rendering configuration.
-    pub config: SurfaceLICConfig,
-    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
-    pub appearance: crate::scene::material::AppearanceSettings,
-}
-
-impl SurfaceLICItem {
-    /// Create a new `SurfaceLICItem` with the given mesh, vector attribute, model matrix,
-    /// and LIC configuration.
-    pub fn new(
-        mesh_id: crate::resources::mesh_store::MeshId,
-        vector_attribute: impl Into<String>,
-        model: [[f32; 4]; 4],
-        config: SurfaceLICConfig,
-    ) -> Self {
-        Self {
-            mesh_id,
-            vector_attribute: vector_attribute.into(),
-            model,
-            config,
-            appearance: crate::scene::material::AppearanceSettings::default(),
-        }
-    }
-}
-
 /// A transparent unstructured volume mesh rendered via projected tetrahedra.
 ///
 /// Created by uploading a [`VolumeMeshData`](crate::resources::VolumeMeshData) with
@@ -283,15 +245,10 @@ impl SurfaceLICItem {
 pub struct TransparentVolumeMeshItem {
     /// Handle to the uploaded projected-tet mesh.
     pub id: crate::resources::ProjectedTetId,
-    /// Pick ID returned when a cell in this mesh is hit.
-    ///
-    /// `0` means this mesh is not pickable. Set to a non-zero value alongside
-    /// `volume_mesh_data` to enable cell picking.
-    pub pick_id: u64,
     /// CPU mesh data for cell picking.
     ///
     /// Must match the data passed to `upload_projected_tet_mesh` for `id`.
-    /// `None` disables cell-level picking regardless of `pick_id`.
+    /// `None` disables cell-level picking regardless of `settings.pick_id`.
     pub volume_mesh_data: Option<std::sync::Arc<crate::resources::volume_mesh::VolumeMeshData>>,
     /// Beer-Lambert extinction coefficient (world-space units).
     ///
@@ -309,12 +266,8 @@ pub struct TransparentVolumeMeshItem {
     pub threshold_min: f32,
     /// Upper scalar threshold. See `threshold_min`.
     pub threshold_max: f32,
-    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
-    pub appearance: crate::scene::material::AppearanceSettings,
-    /// Draw a selection outline ring around this mesh when `true`.
-    ///
-    /// Requires `boundary_mesh_id` to be set; see the type-level docs.
-    pub selected: bool,
+    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    pub settings: crate::scene::material::ItemSettings,
     /// Boundary surface mesh used for the selection outline mask pass.
     ///
     /// Pass the `MeshId` returned by `upload_volume_mesh_data` for the same
@@ -328,14 +281,12 @@ impl TransparentVolumeMeshItem {
     pub fn new(id: crate::resources::ProjectedTetId) -> Self {
         Self {
             id,
-            pick_id: 0,
             volume_mesh_data: None,
             density: 1.0,
             scalar_range: None,
             threshold_min: f32::NEG_INFINITY,
             threshold_max: f32::INFINITY,
-            appearance: crate::scene::material::AppearanceSettings::default(),
-            selected: false,
+            settings: crate::scene::material::ItemSettings::default(),
             boundary_mesh_id: None,
         }
     }
@@ -367,16 +318,12 @@ pub struct SceneFrame {
     pub isolines: Vec<crate::geometry::isoline::IsolineItem>,
     /// Streamtube items to render this frame.
     pub streamtube_items: Vec<StreamtubeItem>,
-    /// Camera frustum wireframe items to render this frame (Phase 10).
-    pub camera_frustums: Vec<CameraFrustumItem>,
     /// Screen-space image overlay items to render this frame (Phase 10).
     pub screen_images: Vec<ScreenImageItem>,
     /// GPU implicit surface items to render this frame (Phase 16).
     pub gpu_implicit: Vec<crate::resources::GpuImplicitItem>,
     /// GPU marching cubes jobs to dispatch this frame (Phase 17).
     pub gpu_mc_jobs: Vec<crate::resources::GpuMarchingCubesJob>,
-    /// Surface LIC items to render this frame (Phase 4).
-    pub lic_items: Vec<SurfaceLICItem>,
     /// Transparent unstructured volume meshes rendered via projected tetrahedra (Phase 6).
     pub transparent_volume_meshes: Vec<TransparentVolumeMeshItem>,
     /// Opaque volume mesh items submitted for cell-level picking.
@@ -418,11 +365,9 @@ impl Default for SceneFrame {
             volumes: Vec::new(),
             isolines: Vec::new(),
             streamtube_items: Vec::new(),
-            camera_frustums: Vec::new(),
             screen_images: Vec::new(),
             gpu_implicit: Vec::new(),
             gpu_mc_jobs: Vec::new(),
-            lic_items: Vec::new(),
             transparent_volume_meshes: Vec::new(),
             volume_mesh_items: Vec::new(),
             tube_items: Vec::new(),

@@ -13,7 +13,7 @@ use wgpu::util::DeviceExt as _;
 use crate::{
     geometry::marching_cubes::{TRI_TABLE, VolumeData},
     resources::{DualPipeline, ViewportGpuResources},
-    scene::material::Material,
+    scene::material::{ItemSettings, Material},
 };
 
 // ---------------------------------------------------------------------------
@@ -39,12 +39,8 @@ pub struct GpuMarchingCubesJob {
     pub isovalue: f32,
     /// Surface material (colour + roughness).
     pub material: Material,
-    /// Pick ID for unified selection API. `0` = not selectable.
-    pub id: u64,
-    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
-    pub appearance: crate::scene::material::AppearanceSettings,
-    /// If `true`, draws an outline ring around the marching cubes surface.
-    pub selected: bool,
+    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    pub settings: ItemSettings,
     /// CPU-side volume data for `pick()` and `pick_rect()`.
     ///
     /// When set, the CPU picker ray-marches the actual scalar field and detects
@@ -779,8 +775,8 @@ impl ViewportGpuResources {
             let mat_raw = McSurfaceRaw {
                 base_colour: job.material.base_colour,
                 roughness: job.material.roughness,
-                unlit: job.appearance.unlit as u32,
-                opacity: job.appearance.opacity,
+                unlit: job.settings.unlit as u32,
+                opacity: job.settings.opacity,
                 _pad: [0; 2],
             };
             let mat_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1038,7 +1034,7 @@ impl ViewportGpuResources {
             frame_data.push(McFrameData {
                 volume_idx: job.volume_id.0,
                 render_bg,
-                wireframe: job.appearance.wireframe,
+                wireframe: job.settings.wireframe,
                 wire_slab_bgs,
             });
         }

@@ -74,7 +74,7 @@ pub struct SceneNode {
     name: String,
     mesh_id: Option<MeshId>,
     material: Material,
-    appearance: crate::scene::material::AppearanceSettings,
+    appearance: crate::scene::material::ItemSettings,
     visible: bool,
     show_normals: bool,
     local_transform: glam::Mat4,
@@ -112,7 +112,7 @@ impl SceneNode {
     }
 
     /// Per-node appearance overrides (hidden, unlit, opacity, wireframe).
-    pub fn appearance(&self) -> &crate::scene::material::AppearanceSettings {
+    pub fn appearance(&self) -> &crate::scene::material::ItemSettings {
         &self.appearance
     }
 
@@ -321,7 +321,7 @@ impl Scene {
             name: name.to_string(),
             mesh_id,
             material,
-            appearance: crate::scene::material::AppearanceSettings::default(),
+            appearance: crate::scene::material::ItemSettings::default(),
             visible: true,
             show_normals: false,
             local_transform: transform,
@@ -477,7 +477,7 @@ impl Scene {
     }
 
     /// Set node appearance overrides.
-    pub fn set_appearance(&mut self, id: NodeId, appearance: crate::scene::material::AppearanceSettings) {
+    pub fn set_appearance(&mut self, id: NodeId, appearance: crate::scene::material::ItemSettings) {
         if let Some(node) = self.nodes.get_mut(&id) {
             node.appearance = appearance;
         }
@@ -844,27 +844,24 @@ impl Scene {
                 continue;
             };
             let locked = layer_locked.get(&node.layer).copied().unwrap_or(false);
+            let mut item_settings = node.appearance;
+            item_settings.pick_id = PickId(node.id);
+            item_settings.selected = if locked { false } else { selection.contains(node.id) };
             items.push(SceneRenderItem {
                 mesh_id,
                 model: node.world_transform.to_cols_array_2d(),
-                selected: if locked {
-                    false
-                } else {
-                    selection.contains(node.id)
-                },
-                appearance: node.appearance,
+                settings: item_settings,
                 show_normals: node.show_normals,
                 material: node.material,
                 active_attribute: None,
                 scalar_range: None,
                 colourmap_id: None,
                 nan_colour: None,
-                pick_id: PickId(node.id),
-
                 warp_attribute: None,
                 warp_scale: 1.0,
                 skin_instance: node.skin_instance,
                 receives_decals: node.receives_decals,
+                lic: None,
             });
         }
         items
@@ -922,26 +919,24 @@ impl Scene {
                     continue;
                 };
                 let locked = layer_locked.get(&node.layer).copied().unwrap_or(false);
+                let mut item_settings = node.appearance;
+                item_settings.pick_id = PickId(node.id);
+                item_settings.selected = if locked { false } else { selection.contains(node.id) };
                 items.push(SceneRenderItem {
                     mesh_id,
                     model: node.world_transform.to_cols_array_2d(),
-                    selected: if locked {
-                        false
-                    } else {
-                        selection.contains(node.id)
-                    },
-                    appearance: node.appearance,
+                    settings: item_settings,
                     show_normals: node.show_normals,
                     material: node.material,
                     active_attribute: None,
                     scalar_range: None,
                     colourmap_id: None,
                     nan_colour: None,
-                    pick_id: PickId(node.id),
                     warp_attribute: None,
                     warp_scale: 1.0,
                     skin_instance: node.skin_instance,
                     receives_decals: node.receives_decals,
+                    lic: None,
                 });
             }
 
@@ -977,26 +972,24 @@ impl Scene {
 
                 let locked = layer_locked.get(&node.layer).copied().unwrap_or(false);
                 stats.visible += 1;
+                let mut item_settings = node.appearance;
+                item_settings.pick_id = PickId(node.id);
+                item_settings.selected = if locked { false } else { selection.contains(node.id) };
                 items.push(SceneRenderItem {
                     mesh_id,
                     model: node.world_transform.to_cols_array_2d(),
-                    selected: if locked {
-                        false
-                    } else {
-                        selection.contains(node.id)
-                    },
-                    appearance: node.appearance,
+                    settings: item_settings,
                     show_normals: node.show_normals,
                     material: node.material,
                     active_attribute: None,
                     scalar_range: None,
                     colourmap_id: None,
                     nan_colour: None,
-                    pick_id: PickId(node.id),
                     warp_attribute: None,
                     warp_scale: 1.0,
                     skin_instance: node.skin_instance,
                     receives_decals: node.receives_decals,
+                    lic: None,
                 });
             }
 
@@ -1332,7 +1325,7 @@ mod tests {
 
         let items = scene.collect_render_items(&sel);
         assert_eq!(items.len(), 1);
-        assert!(items[0].selected);
+        assert!(items[0].settings.selected);
     }
 
     #[test]
@@ -1453,7 +1446,7 @@ mod tests {
         let items = scene.collect_render_items(&sel);
         assert_eq!(items.len(), 1, "locked layer nodes still render");
         assert!(
-            !items[0].selected,
+            !items[0].settings.selected,
             "locked layer nodes must not appear selected"
         );
     }

@@ -1,7 +1,7 @@
 //! Sphere widget: draggable center handle and radius handle.
 
 use crate::interaction::clip_plane::ray_plane_intersection;
-use crate::renderer::{ClipObject, ClipShape, GlyphItem, GlyphType, PolylineItem};
+use crate::renderer::{ClipObject, ClipShape, GlyphItem, GlyphType, PolylineItem, PickId};
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
 
@@ -187,7 +187,8 @@ impl SphereWidget {
             strip_lengths,
             default_colour: line_colour,
             line_width: 1.5,
-            id,
+
+            settings: crate::scene::material::ItemSettings { pick_id: crate::renderer::PickId(id), ..Default::default() },
             ..PolylineItem::default()
         }
     }
@@ -224,7 +225,8 @@ impl SphereWidget {
             scalars: vec![sc, sr],
             scalar_range: Some((0.0, 1.0)),
             glyph_type: GlyphType::Sphere,
-            id: id_base,
+
+            settings: crate::scene::material::ItemSettings { pick_id: crate::renderer::PickId(id_base), ..Default::default() },
             default_colour: self.handle_colour,
             use_default_colour: self.handle_colour[3] > 0.0,
             ..GlyphItem::default()

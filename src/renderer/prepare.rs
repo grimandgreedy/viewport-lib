@@ -397,7 +397,7 @@ impl ViewportRenderer {
 
         // -- Instancing preparation --
         // Determine instancing mode BEFORE per-object uniforms so we can skip them.
-        let visible_count = scene_items.iter().filter(|i| !i.appearance.hidden).count();
+        let visible_count = scene_items.iter().filter(|i| !i.settings.hidden).count();
         let prev_use_instancing = self.use_instancing;
         self.use_instancing = visible_count > INSTANCING_THRESHOLD;
 
@@ -416,7 +416,7 @@ impl ViewportRenderer {
         let has_two_sided_items = scene_items.iter().any(|i| i.material.is_two_sided());
         let has_matcap_items = scene_items.iter().any(|i| i.material.matcap_id.is_some());
         let has_param_vis_items = scene_items.iter().any(|i| i.material.param_vis.is_some());
-        let has_wireframe_items = scene_items.iter().any(|i| i.appearance.wireframe);
+        let has_wireframe_items = scene_items.iter().any(|i| i.settings.wireframe);
         let has_normal_vis_items = scene_items.iter().any(|i| i.show_normals);
         // Collect per-item uniforms when wireframe mode is on so we can give each
         // visible item its own bind group (the mesh's shared object_uniform_buf gets
@@ -443,7 +443,7 @@ impl ViewportRenderer {
                     && !item.material.is_two_sided()
                     && item.material.matcap_id.is_none()
                     && item.material.param_vis.is_none()
-                    && !item.appearance.wireframe
+                    && !item.settings.wireframe
                     && item.warp_attribute.is_none()
                     && !item.show_normals
                 {
@@ -474,9 +474,9 @@ impl ViewportRenderer {
                 };
                 let obj_uniform = ObjectUniform {
                     model: item.model,
-                    colour: [m.base_colour[0], m.base_colour[1], m.base_colour[2], item.appearance.opacity],
-                    selected: if item.selected { 1 } else { 0 },
-                    wireframe: if frame.viewport.wireframe_mode || item.appearance.wireframe {
+                    colour: [m.base_colour[0], m.base_colour[1], m.base_colour[2], item.settings.opacity],
+                    selected: if item.settings.selected { 1 } else { 0 },
+                    wireframe: if frame.viewport.wireframe_mode || item.settings.wireframe {
                         1
                     } else {
                         0
@@ -499,7 +499,7 @@ impl ViewportRenderer {
                     use_nan_colour: if item.nan_colour.is_some() { 1 } else { 0 },
                     use_matcap: if m.matcap_id.is_some() { 1 } else { 0 },
                     matcap_blendable: m.matcap_id.map_or(0, |id| if id.blendable { 1 } else { 0 }),
-                    unlit: if item.appearance.unlit { 1 } else { 0 },
+                    unlit: if item.settings.unlit { 1 } else { 0 },
                     use_face_colour: u32::from(item.active_attribute.as_ref().map_or(false, |a| {
                         a.kind == crate::resources::AttributeKind::FaceColour
                     })),
@@ -596,7 +596,7 @@ impl ViewportRenderer {
                 };
 
                 // Collect per-item uniform for wireframe per-item bind groups.
-                if collect_wf_uniforms && !item.appearance.hidden {
+                if collect_wf_uniforms && !item.settings.hidden {
                     wireframe_uniforms.push(obj_uniform);
                 }
 
@@ -758,7 +758,7 @@ impl ViewportRenderer {
             let instancable_count = scene_items
                 .iter()
                 .filter(|item| {
-                    !item.appearance.hidden
+                    !item.settings.hidden
                         && item.active_attribute.is_none()
                         && !item.material.is_two_sided()
                         && item.material.matcap_id.is_none()
@@ -777,7 +777,7 @@ impl ViewportRenderer {
                 let mut sorted_items: Vec<&SceneRenderItem> = scene_items
                     .iter()
                     .filter(|item| {
-                        !item.appearance.hidden
+                        !item.settings.hidden
                             && item.active_attribute.is_none()
                             && !item.material.is_two_sided()
                             && item.material.matcap_id.is_none()
@@ -831,7 +831,7 @@ impl ViewportRenderer {
                     // key) ensures that any two objects with identical transforms
                     // still sort deterministically, regardless of the order they
                     // appear in the caller's scene_items slice.
-                    a.pick_id.0.cmp(&b.pick_id.0)
+                    a.settings.pick_id.0.cmp(&b.settings.pick_id.0)
                 });
 
                 let mut all_instances: Vec<InstanceData> = Vec::with_capacity(sorted_items.len());
@@ -856,7 +856,7 @@ impl ViewportRenderer {
                             let batch_items = &sorted_items[batch_start..i];
                             let rep = batch_items[0];
                             let instance_offset = all_instances.len() as u32;
-                            let is_transparent = rep.appearance.opacity < 1.0;
+                            let is_transparent = rep.settings.opacity < 1.0;
 
                             // All items in a batch share the same mesh_id (batch key).
                             // Look up the mesh once and reuse it for both index_count and
@@ -875,9 +875,9 @@ impl ViewportRenderer {
                                         m.base_colour[0],
                                         m.base_colour[1],
                                         m.base_colour[2],
-                                        item.appearance.opacity,
+                                        item.settings.opacity,
                                     ],
-                                    selected: if item.selected { 1 } else { 0 },
+                                    selected: if item.settings.selected { 1 } else { 0 },
                                     wireframe: 0, // Phase 2: always 0 : wireframe uses per-object pipeline
                                     ambient: m.ambient,
                                     diffuse: m.diffuse,
@@ -889,7 +889,7 @@ impl ViewportRenderer {
                                     roughness: m.roughness,
                                     has_normal_map: if m.normal_map_id.is_some() { 1 } else { 0 },
                                     has_ao_map: if m.ao_map_id.is_some() { 1 } else { 0 },
-                                    unlit: if item.appearance.unlit { 1 } else { 0 },
+                                    unlit: if item.settings.unlit { 1 } else { 0 },
                                     _pad_inst: [0; 3],
                                 });
                                 if let Some(mesh) = batch_mesh {
@@ -1156,7 +1156,7 @@ impl ViewportRenderer {
                 if item.positions.is_empty() || item.vectors.is_empty() {
                     continue;
                 }
-                let wireframe = frame.viewport.wireframe_mode || item.appearance.wireframe;
+                let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
                 let gpu_data = resources.upload_glyph_set(device, queue, item, wireframe);
                 self.glyph_gpu_data.push(gpu_data);
             }
@@ -1173,7 +1173,7 @@ impl ViewportRenderer {
                     continue;
                 }
                 let mut gd = resources.upload_sprite(device, queue, item);
-                gd.wireframe = frame.viewport.wireframe_mode || item.appearance.wireframe;
+                gd.wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
                 self.sprite_gpu_data.push(gd);
             }
         }
@@ -1188,7 +1188,7 @@ impl ViewportRenderer {
                 if item.positions.is_empty() {
                     continue;
                 }
-                let wireframe = frame.viewport.wireframe_mode || item.appearance.wireframe;
+                let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
                 let gd = resources.upload_tensor_glyph_set(device, queue, item, wireframe);
                 self.tensor_glyph_gpu_data.push(gd);
             }
@@ -1207,8 +1207,8 @@ impl ViewportRenderer {
                     continue;
                 }
                 let mut gpu_data = resources.upload_polyline(device, queue, item, vp_size);
-                gpu_data.wireframe = frame.viewport.wireframe_mode || item.appearance.wireframe;
-                if frame.interaction.outline_selected && item.selected {
+                gpu_data.wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
+                if frame.interaction.outline_selected && item.settings.selected {
                     self.polyline_selected_gpu_indices.push(self.polyline_gpu_data.len());
                 }
                 self.polyline_gpu_data.push(gpu_data);
@@ -1218,7 +1218,7 @@ impl ViewportRenderer {
                     resources.ensure_glyph_pipeline(device);
                     let g = crate::quantities::polyline_node_vectors_to_glyphs(item);
                     if !g.positions.is_empty() {
-                        let wf = frame.viewport.wireframe_mode || item.appearance.wireframe;
+                        let wf = frame.viewport.wireframe_mode || item.settings.wireframe;
                         let gd = resources.upload_glyph_set(device, queue, &g, wf);
                         self.glyph_gpu_data.push(gd);
                     }
@@ -1227,7 +1227,7 @@ impl ViewportRenderer {
                     resources.ensure_glyph_pipeline(device);
                     let g = crate::quantities::polyline_edge_vectors_to_glyphs(item);
                     if !g.positions.is_empty() {
-                        let wf = frame.viewport.wireframe_mode || item.appearance.wireframe;
+                        let wf = frame.viewport.wireframe_mode || item.settings.wireframe;
                         let gd = resources.upload_glyph_set(device, queue, &g, wf);
                         self.glyph_gpu_data.push(gd);
                     }
@@ -1256,25 +1256,10 @@ impl ViewportRenderer {
                     colourmap_id: None,
                     default_colour: item.colour,
                     line_width: item.line_width,
-                    id: 0,
                     ..Default::default()
                 };
                 let gpu_data = resources.upload_polyline(device, queue, &polyline, vp_size);
                 self.polyline_gpu_data.push(gpu_data);
-            }
-        }
-
-        // ------------------------------------------------------------------
-        // Phase 10A : camera frustum wireframes (converted to polylines).
-        // ------------------------------------------------------------------
-        if !frame.scene.camera_frustums.is_empty() {
-            resources.ensure_polyline_pipeline(device);
-            for item in &frame.scene.camera_frustums {
-                let polyline = item.to_polyline();
-                if !polyline.positions.is_empty() {
-                    let gpu_data = resources.upload_polyline(device, queue, &polyline, vp_size);
-                    self.polyline_gpu_data.push(gpu_data);
-                }
             }
         }
 
@@ -1291,9 +1276,9 @@ impl ViewportRenderer {
                 }
                 let gpu = resources.upload_implicit_item(device, item);
                 self.implicit_gpu_data.push(gpu);
-                if item.id != 0 {
+                if item.settings.pick_id != PickId::NONE {
                     self.pick_implicit_items.push(GpuImplicitPickItem {
-                        id: item.id,
+                        id: item.settings.pick_id.0,
                         primitives: item.primitives.clone(),
                         blend_mode: item.blend_mode,
                         max_steps: item.march_options.max_steps,
@@ -1316,11 +1301,11 @@ impl ViewportRenderer {
                 frame.scene.decals.iter().collect();
             sorted.sort_by_key(|d| d.sort_key);
             for item in sorted {
-                if item.appearance.hidden { continue; }
-                if item.appearance.opacity <= 0.0 { continue; }
+                if item.settings.hidden { continue; }
+                if item.settings.opacity <= 0.0 { continue; }
                 // Apply appearance.opacity on top of the item's own alpha.
                 let mut effective = item.clone();
-                effective.alpha *= item.appearance.opacity;
+                effective.alpha *= item.settings.opacity;
                 let gpu = resources.upload_decal_item(device, &effective);
                 self.decal_gpu_data.push(gpu);
             }
@@ -1335,11 +1320,11 @@ impl ViewportRenderer {
                 frame.scene.surfaces;
             let has_exclude = surfaces
                 .iter()
-                .any(|item| !item.receives_decals && !item.appearance.hidden);
+                .any(|item| !item.receives_decals && !item.settings.hidden);
             if has_exclude {
                 resources.ensure_decal_exclude_pipeline(device);
                 for item in surfaces.iter() {
-                    if !item.receives_decals && !item.appearance.hidden {
+                    if !item.receives_decals && !item.settings.hidden {
                         let gpu = resources.upload_decal_exclude_item(
                             device,
                             item.mesh_id,
@@ -1360,10 +1345,10 @@ impl ViewportRenderer {
             resources.ensure_mc_pipelines(device);
             self.mc_gpu_data = resources.run_mc_jobs(device, queue, &frame.scene.gpu_mc_jobs);
             for job in &frame.scene.gpu_mc_jobs {
-                if job.id != 0 {
+                if job.settings.pick_id != PickId::NONE {
                     if let Some(cpu_data) = &job.cpu_data {
                         self.pick_mc_items.push(GpuMcPickItem {
-                            id: job.id,
+                            id: job.settings.pick_id.0,
                             isovalue: job.isovalue,
                             volume_data: cpu_data.clone(),
                         });
@@ -1421,10 +1406,10 @@ impl ViewportRenderer {
                 if item.positions.is_empty() || item.strip_lengths.is_empty() {
                     continue;
                 }
-                let wireframe = frame.viewport.wireframe_mode || item.appearance.wireframe;
+                let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
                 let gpu_data = resources.upload_streamtube(device, queue, item, wireframe);
                 if gpu_data.index_count > 0 {
-                    if frame.interaction.outline_selected && item.selected {
+                    if frame.interaction.outline_selected && item.settings.selected {
                         self.streamtube_selected_gpu_indices.push(self.streamtube_gpu_data.len());
                     }
                     self.streamtube_gpu_data.push(gpu_data);
@@ -1443,10 +1428,10 @@ impl ViewportRenderer {
                 if item.positions.is_empty() || item.strip_lengths.is_empty() {
                     continue;
                 }
-                let wireframe = frame.viewport.wireframe_mode || item.appearance.wireframe;
+                let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
                 let gpu_data = resources.upload_tube(device, queue, item, wireframe);
                 if gpu_data.index_count > 0 {
-                    if frame.interaction.outline_selected && item.selected {
+                    if frame.interaction.outline_selected && item.settings.selected {
                         self.tube_selected_gpu_indices.push(self.tube_gpu_data.len());
                     }
                     self.tube_gpu_data.push(gpu_data);
@@ -1465,10 +1450,10 @@ impl ViewportRenderer {
                 if item.positions.is_empty() || item.strip_lengths.is_empty() {
                     continue;
                 }
-                let wireframe = frame.viewport.wireframe_mode || item.appearance.wireframe;
+                let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
                 let gpu_data = resources.upload_ribbon(device, queue, item, wireframe);
                 if gpu_data.index_count > 0 {
-                    if frame.interaction.outline_selected && item.selected {
+                    if frame.interaction.outline_selected && item.settings.selected {
                         self.ribbon_selected_gpu_indices.push(self.ribbon_gpu_data.len());
                     }
                     self.ribbon_gpu_data.push(gpu_data);
@@ -1506,64 +1491,71 @@ impl ViewportRenderer {
         // Phase 4: Surface LIC GPU data upload.
         // ------------------------------------------------------------------
         self.lic_gpu_data.clear();
-        if !frame.scene.lic_items.is_empty() {
-            // The LIC surface pipeline is created inside ensure_hdr_shared (already called before
-            // prepare_scene_internal runs), so no separate ensure call is needed here.
-            for item in &frame.scene.lic_items {
-                if item.vector_attribute.is_empty() {
-                    continue;
-                }
-                if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
-                    // Verify the vector attribute buffer exists before committing to this item.
-                    if mesh
-                        .vector_attribute_buffers
-                        .contains_key(&item.vector_attribute)
-                    {
-                        if let Some(bgl) = &resources.lic_surface_bgl {
-                            use crate::resources::LicObjectUniform;
-                            let model = item.model;
-                            let obj_data = LicObjectUniform { model };
-                            let obj_buf = device.create_buffer(&wgpu::BufferDescriptor {
-                                label: Some("lic_object_uniform"),
-                                size: std::mem::size_of::<LicObjectUniform>() as u64,
-                                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                                mapped_at_creation: false,
-                            });
-                            queue.write_buffer(&obj_buf, 0, bytemuck::cast_slice(&[obj_data]));
-                            // Bind group (group 1): object uniform only.
-                            // Flow vectors are bound as vertex buffer 1 in the render pass.
-                            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                                label: Some("lic_surface_item_bg"),
-                                layout: bgl,
-                                entries: &[wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: obj_buf.as_entire_binding(),
-                                }],
-                            });
-                            self.lic_gpu_data.push(crate::resources::LicSurfaceGpuData {
-                                bind_group: bg,
-                                _object_uniform_buf: obj_buf,
-                                mesh_id: item.mesh_id,
-                                vector_attribute: item.vector_attribute.clone(),
-                            });
+        {
+            let lic_scene_items: Vec<(&SceneRenderItem, &LicOverlay)> = scene_items
+                .iter()
+                .filter(|i| !i.settings.hidden)
+                .filter_map(|i| i.lic.as_ref().map(|l| (i, l)))
+                .collect();
+            if !lic_scene_items.is_empty() {
+                // The LIC surface pipeline is created inside ensure_hdr_shared (already called
+                // before prepare_scene_internal runs), so no separate ensure call is needed here.
+                for (item, lic) in &lic_scene_items {
+                    if lic.vector_attribute.is_empty() {
+                        continue;
+                    }
+                    if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
+                        // Verify the vector attribute buffer exists before committing to this item.
+                        if mesh
+                            .vector_attribute_buffers
+                            .contains_key(&lic.vector_attribute)
+                        {
+                            if let Some(bgl) = &resources.lic_surface_bgl {
+                                use crate::resources::LicObjectUniform;
+                                let model = item.model;
+                                let obj_data = LicObjectUniform { model };
+                                let obj_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                                    label: Some("lic_object_uniform"),
+                                    size: std::mem::size_of::<LicObjectUniform>() as u64,
+                                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                                    mapped_at_creation: false,
+                                });
+                                queue.write_buffer(&obj_buf, 0, bytemuck::cast_slice(&[obj_data]));
+                                // Bind group (group 1): object uniform only.
+                                // Flow vectors are bound as vertex buffer 1 in the render pass.
+                                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                    label: Some("lic_surface_item_bg"),
+                                    layout: bgl,
+                                    entries: &[wgpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: obj_buf.as_entire_binding(),
+                                    }],
+                                });
+                                self.lic_gpu_data.push(crate::resources::LicSurfaceGpuData {
+                                    bind_group: bg,
+                                    _object_uniform_buf: obj_buf,
+                                    mesh_id: item.mesh_id,
+                                    vector_attribute: lic.vector_attribute.clone(),
+                                });
+                            }
                         }
                     }
                 }
-            }
-            // Write LicAdvectUniform to the per-viewport buffer.
-            if let Some(hdr) = self.viewport_slots[frame.camera.viewport_index]
-                .hdr
-                .as_ref()
-            {
-                if let Some(first) = frame.scene.lic_items.first() {
-                    let [vw, vh] = hdr.scene_size;
-                    let u = crate::resources::LicAdvectUniform {
-                        steps: first.config.steps,
-                        step_size: first.config.step_size,
-                        vp_width: vw as f32,
-                        vp_height: vh as f32,
-                    };
-                    queue.write_buffer(&hdr.lic_uniform_buf, 0, bytemuck::cast_slice(&[u]));
+                // Write LicAdvectUniform to the per-viewport buffer.
+                if let Some(hdr) = self.viewport_slots[frame.camera.viewport_index]
+                    .hdr
+                    .as_ref()
+                {
+                    if let Some((_, first_lic)) = lic_scene_items.first() {
+                        let [vw, vh] = hdr.scene_size;
+                        let u = crate::resources::LicAdvectUniform {
+                            steps: first_lic.config.steps,
+                            step_size: first_lic.config.step_size,
+                            vp_width: vw as f32,
+                            vp_height: vh as f32,
+                        };
+                        queue.write_buffer(&hdr.lic_uniform_buf, 0, bytemuck::cast_slice(&[u]));
+                    }
                 }
             }
         }
@@ -1592,21 +1584,21 @@ impl ViewportRenderer {
                     clip_objects_for_vol,
                     vol_step_multiplier,
                 );
-                gpu.wireframe = frame.viewport.wireframe_mode || item.appearance.wireframe;
+                gpu.wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
                 self.volume_gpu_data.push(gpu);
             }
         }
 
         // Volume wireframe overlay: OBB from bbox + model matrix.
         let need_vol_wf = frame.viewport.wireframe_mode
-            || frame.scene.volumes.iter().any(|v| !v.appearance.hidden && v.appearance.wireframe);
+            || frame.scene.volumes.iter().any(|v| !v.settings.hidden && v.settings.wireframe);
         if need_vol_wf {
             resources.ensure_polyline_pipeline(device);
             for item in &frame.scene.volumes {
-                if item.appearance.hidden {
+                if item.settings.hidden {
                     continue;
                 }
-                if !(frame.viewport.wireframe_mode || item.appearance.wireframe) {
+                if !(frame.viewport.wireframe_mode || item.settings.wireframe) {
                     continue;
                 }
                 let polyline = volume_obb_polyline(item);
@@ -1618,10 +1610,10 @@ impl ViewportRenderer {
         // TransparentVolumeMesh wireframe: boundary mesh edge overlay.
         self.tvm_wireframe_draws.clear();
         for item in &frame.scene.transparent_volume_meshes {
-            if item.appearance.hidden {
+            if item.settings.hidden {
                 continue;
             }
-            if !(item.appearance.wireframe || frame.viewport.wireframe_mode) {
+            if !(item.settings.wireframe || frame.viewport.wireframe_mode) {
                 continue;
             }
             let Some(mesh_id) = item.boundary_mesh_id else {
@@ -1726,7 +1718,7 @@ impl ViewportRenderer {
         // -- Frame stats --
         {
             let total = scene_items.len() as u32;
-            let visible = scene_items.iter().filter(|i| !i.appearance.hidden).count() as u32;
+            let visible = scene_items.iter().filter(|i| !i.settings.hidden).count() as u32;
             let mut draw_calls = 0u32;
             let mut triangles = 0u64;
             let instanced_batch_count = if self.use_instancing {
@@ -1744,7 +1736,7 @@ impl ViewportRenderer {
                 }
             } else {
                 for item in scene_items {
-                    if item.appearance.hidden {
+                    if item.settings.hidden {
                         continue;
                     }
                     if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
@@ -2057,8 +2049,8 @@ impl ViewportRenderer {
                             // and restore the instanced bindings after.
                             let mut drew_skinned = false;
                             for item in scene_items.iter() {
-                                if item.appearance.hidden
-                                    || item.appearance.opacity < 1.0
+                                if item.settings.hidden
+                                    || item.settings.opacity < 1.0
                                 {
                                     continue;
                                 }
@@ -2134,10 +2126,10 @@ impl ViewportRenderer {
                         );
 
                         for item in scene_items.iter() {
-                            if item.appearance.hidden {
+                            if item.settings.hidden {
                                 continue;
                             }
-                            if item.appearance.opacity < 1.0 {
+                            if item.settings.opacity < 1.0 {
                                 continue;
                             }
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
@@ -2471,7 +2463,7 @@ impl ViewportRenderer {
         if frame.interaction.outline_selected {
             let resources = &self.resources;
             for item in scene_items {
-                if item.appearance.hidden || !item.selected {
+                if item.settings.hidden || !item.settings.selected {
                     continue;
                 }
                 let uniform = OutlineUniform {
@@ -2505,7 +2497,7 @@ impl ViewportRenderer {
             }
             // Selected transparent volume meshes: use their boundary surface for the outline.
             for item in &frame.scene.transparent_volume_meshes {
-                if !item.selected {
+                if !item.settings.selected {
                     continue;
                 }
                 let Some(mesh_id) = item.boundary_mesh_id else {
@@ -2542,7 +2534,7 @@ impl ViewportRenderer {
             }
             // Selected volume surface slices: use their mesh directly.
             for item in &frame.scene.volume_surface_slices {
-                if !item.selected {
+                if !item.settings.selected {
                     continue;
                 }
                 let uniform = OutlineUniform {
@@ -2598,7 +2590,7 @@ impl ViewportRenderer {
                 let Some(gpu_set) = resources.gaussian_splat_store.get(item.id.0) else {
                     continue;
                 };
-                if item.selected && !gpu_set.cpu_positions.is_empty() {
+                if item.settings.selected && !gpu_set.cpu_positions.is_empty() {
                     // Object-level: outline all splats.
                     // World-space radius covering the visible Gaussian tail (~3 sigma).
                     let mean_max_scale: f32 = if gpu_set.cpu_scales.is_empty() {
@@ -2683,14 +2675,14 @@ impl ViewportRenderer {
                         _uniform_buf: uniform_buf,
                         bind_group,
                     });
-                } else if !item.selected && item.pick_id != 0 {
+                } else if !item.settings.selected && item.settings.pick_id != PickId::NONE {
                     // Per-splat sub-selection: outline only the selected splats.
                     let sub_sel = frame.interaction.sub_selection.as_ref();
                     let selected_indices: Vec<u32> = sub_sel
                         .iter()
                         .flat_map(|s| s.items.iter())
                         .filter_map(|(node_id, sub)| {
-                            if *node_id == item.pick_id {
+                            if *node_id == item.settings.pick_id.0 {
                                 if let crate::interaction::sub_object::SubObjectRef::Splat(i) = sub
                                 {
                                     return Some(*i);
@@ -2796,7 +2788,7 @@ impl ViewportRenderer {
                     continue;
                 }
                 let pixel_radius = (item.point_size * 0.5).max(1.0);
-                if item.selected {
+                if item.settings.selected {
                     // Object-level: outline all points.
                     let position_buf =
                         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -2839,14 +2831,14 @@ impl ViewportRenderer {
                         _uniform_buf: uniform_buf,
                         bind_group,
                     });
-                } else if item.id != 0 {
+                } else if item.settings.pick_id != PickId::NONE {
                     // Per-point sub-selection: outline only the selected points.
                     let sub_sel = frame.interaction.sub_selection.as_ref();
                     let selected_positions: Vec<[f32; 3]> = sub_sel
                         .iter()
                         .flat_map(|s| s.items.iter())
                         .filter_map(|(node_id, sub)| {
-                            if *node_id == item.id {
+                            if *node_id == item.settings.pick_id.0 {
                                 if let crate::interaction::sub_object::SubObjectRef::Point(i) = sub
                                 {
                                     return item.positions.get(*i as usize).copied();
@@ -2911,16 +2903,16 @@ impl ViewportRenderer {
                     if item.positions.is_empty() || item.vectors.is_empty() {
                         continue;
                     }
-                    if item.selected {
+                    if item.settings.selected {
                         self.resources.ensure_glyph_outline_mask_pipeline(device);
                         glyph_outline_indices.push((gpu_idx, None));
-                    } else if item.id != 0 {
+                    } else if item.settings.pick_id != PickId::NONE {
                         // Check for per-instance sub-selection.
                         let instances: Vec<u32> = sub_sel
                             .iter()
                             .flat_map(|s| s.items.iter())
                             .filter_map(|(node_id, sub)| {
-                                if *node_id == item.id {
+                                if *node_id == item.settings.pick_id.0 {
                                     if let crate::interaction::sub_object::SubObjectRef::Instance(
                                         i,
                                     ) = sub
@@ -2955,15 +2947,15 @@ impl ViewportRenderer {
                     if item.positions.is_empty() {
                         continue;
                     }
-                    if item.selected {
+                    if item.settings.selected {
                         self.resources.ensure_sprite_outline_mask_pipeline(device);
                         sprite_outline_indices.push((i, None));
-                    } else if item.id != 0 {
+                    } else if item.settings.pick_id != PickId::NONE {
                         let instances: Vec<u32> = sub_sel
                             .iter()
                             .flat_map(|s| s.items.iter())
                             .filter_map(|(node_id, sub)| {
-                                if *node_id == item.id {
+                                if *node_id == item.settings.pick_id.0 {
                                     if let crate::interaction::sub_object::SubObjectRef::Instance(
                                         idx,
                                     ) = sub
@@ -3031,16 +3023,16 @@ impl ViewportRenderer {
                     if item.positions.is_empty() {
                         continue;
                     }
-                    if item.selected {
+                    if item.settings.selected {
                         self.resources
                             .ensure_tensor_glyph_outline_mask_pipeline(device);
                         tensor_glyph_outline_indices.push((gpu_idx, None));
-                    } else if item.id != 0 {
+                    } else if item.settings.pick_id != PickId::NONE {
                         let instances: Vec<u32> = sub_sel
                             .iter()
                             .flat_map(|s| s.items.iter())
                             .filter_map(|(node_id, sub)| {
-                                if *node_id == item.id {
+                                if *node_id == item.settings.pick_id.0 {
                                     if let crate::interaction::sub_object::SubObjectRef::Instance(
                                         i,
                                     ) = sub
@@ -3071,7 +3063,7 @@ impl ViewportRenderer {
             self.resources.ensure_volume_pipeline(device);
             self.resources.ensure_volume_outline_mask_pipeline(device);
             for (i, item) in frame.scene.volumes.iter().enumerate() {
-                if item.selected {
+                if item.settings.selected {
                     volume_outline_indices.push(i);
                 }
             }
@@ -3082,7 +3074,7 @@ impl ViewportRenderer {
         if frame.interaction.outline_selected {
             let resources = &self.resources;
             for item in &frame.scene.image_slices {
-                if !item.selected {
+                if !item.settings.selected {
                     continue;
                 }
                 use crate::SliceAxis;
@@ -3165,14 +3157,14 @@ impl ViewportRenderer {
         let mut screen_rect_outline_buffers: Vec<crate::resources::ScreenRectOutlineBuffers> =
             Vec::new();
         if frame.interaction.outline_selected
-            && frame.scene.screen_images.iter().any(|i| i.selected)
+            && frame.scene.screen_images.iter().any(|i| i.settings.selected)
         {
             self.resources
                 .ensure_screen_rect_outline_mask_pipeline(device);
             let [vp_w, vp_h] = frame.camera.viewport_size;
             if let Some(bgl) = self.resources.screen_rect_outline_bgl.as_ref() {
                 for item in &frame.scene.screen_images {
-                    if !item.selected || item.width == 0 || item.height == 0 {
+                    if !item.settings.selected || item.width == 0 || item.height == 0 {
                         continue;
                     }
                     use crate::ImageAnchor;
@@ -3230,7 +3222,7 @@ impl ViewportRenderer {
                 if item.primitives.is_empty() {
                     continue;
                 }
-                if item.selected {
+                if item.settings.selected {
                     self.resources.ensure_implicit_pipeline(device);
                     self.resources.ensure_implicit_outline_mask_pipeline(device);
                     implicit_outline_indices.push(gpu_idx);
@@ -3244,7 +3236,7 @@ impl ViewportRenderer {
             Vec::new();
         if frame.interaction.outline_selected {
             for (i, job) in frame.scene.gpu_mc_jobs.iter().enumerate() {
-                if !job.selected {
+                if !job.settings.selected {
                     continue;
                 }
                 self.resources.ensure_mc_pipelines(device);
@@ -3287,7 +3279,7 @@ impl ViewportRenderer {
         if frame.interaction.xray_selected {
             let resources = &self.resources;
             for item in scene_items {
-                if item.appearance.hidden || !item.selected {
+                if item.settings.hidden || !item.settings.selected {
                     continue;
                 }
                 let uniform = OutlineUniform {
@@ -3472,7 +3464,7 @@ impl ViewportRenderer {
                 } = obj.shape
                 {
                     let plane_n = glam::Vec3::from(normal);
-                    for item in scene_items.iter().filter(|i| !i.appearance.hidden) {
+                    for item in scene_items.iter().filter(|i| !i.settings.hidden) {
                         let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
                             continue;
                         };
@@ -5428,22 +5420,22 @@ impl ViewportRenderer {
                         viewport_index: vp_idx,
                         model: item.model,
                         count,
-                        wireframe: frame.viewport.wireframe_mode || item.appearance.wireframe,
+                        wireframe: frame.viewport.wireframe_mode || item.settings.wireframe,
                     });
             }
         }
 
         // Gaussian splat wireframe overlay.
         let need_splat_wf = frame.viewport.wireframe_mode
-            || frame.scene.gaussian_splats.iter().any(|g| !g.appearance.hidden && g.appearance.wireframe);
+            || frame.scene.gaussian_splats.iter().any(|g| !g.settings.hidden && g.settings.wireframe);
         if need_splat_wf {
             self.resources.ensure_polyline_pipeline(device);
             let vp_size = frame.camera.viewport_size;
             for item in &frame.scene.gaussian_splats {
-                if item.appearance.hidden {
+                if item.settings.hidden {
                     continue;
                 }
-                if !(frame.viewport.wireframe_mode || item.appearance.wireframe) {
+                if !(frame.viewport.wireframe_mode || item.settings.wireframe) {
                     continue;
                 }
                 let store_index = item.id.0;
@@ -5464,15 +5456,15 @@ impl ViewportRenderer {
 
         // Sprite wireframe overlay: quad outline per sprite (<=100) or AABB box (>100).
         let need_sprite_wf = frame.viewport.wireframe_mode
-            || frame.scene.sprite_items.iter().any(|s| !s.appearance.hidden && s.appearance.wireframe);
+            || frame.scene.sprite_items.iter().any(|s| !s.settings.hidden && s.settings.wireframe);
         if need_sprite_wf {
             self.resources.ensure_polyline_pipeline(device);
             let vp_size = frame.camera.viewport_size;
             for item in &frame.scene.sprite_items {
-                if item.appearance.hidden {
+                if item.settings.hidden {
                     continue;
                 }
-                if !(frame.viewport.wireframe_mode || item.appearance.wireframe) {
+                if !(frame.viewport.wireframe_mode || item.settings.wireframe) {
                     continue;
                 }
                 if item.positions.is_empty() {

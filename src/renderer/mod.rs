@@ -18,18 +18,18 @@ mod shadows;
 pub mod stats;
 
 pub use self::types::{
-    CameraFrame, CameraFrustumItem, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
+    CameraFrame, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
     CylindricalFacing, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection,
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GaussianSplatData, GaussianSplatId,
     GaussianSplatItem, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode, ImageAnchor,
     ImageSliceItem, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
-    LightingSettings, LoadingBarAnchor, LoadingBarItem, OverlayFrame, OverlayImageItem,
+    LicOverlay, LightingSettings, LoadingBarAnchor, LoadingBarItem, OverlayFrame, OverlayImageItem,
     OverlayAnimation, OverlayFill, OverlayRectItem, OverlayShape, OverlayShapeItem,
     OverlayTextureId, BorderMode, LineCap, PickId, TriangleDirection,
     PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings, RenderCamera, RibbonItem,
     RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, SceneEffects, SceneFrame,
     SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpriteItem,
-    SpriteSizeMode, StreamtubeItem, SurfaceLICConfig, SurfaceLICItem, SurfaceSubmission,
+    SpriteSizeMode, StreamtubeItem, SurfaceLICConfig, SurfaceSubmission,
     TensorGlyphItem, ToneMapping, TransparentVolumeMeshItem, TubeItem, ViewportEffects,
     ViewportFrame, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, aabb_wireframe_polyline,
 };

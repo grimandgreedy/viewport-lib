@@ -1,41 +1,43 @@
-/// Per-item appearance overrides that apply uniformly across all renderable types.
+/// Per-item render settings: visibility, appearance overrides, pick identity, and selection state.
 ///
-/// Every field defaults to the "do nothing" state so that `AppearanceSettings::default()`
-/// is always safe to use without changing existing behaviour.
+/// Replaces the former `AppearanceSettings` struct and absorbs the `pick_id` and `selected`
+/// fields that previously appeared at the top level of each item type.
 ///
-/// This struct is `#[non_exhaustive]`: always construct with `..Default::default()` so
-/// that new fields added in future versions do not break your code:
+/// Always use `Default::default()` as the base, then set individual fields:
 ///
 /// ```rust
-/// # use viewport_lib::AppearanceSettings;
-/// let mut app = AppearanceSettings::default();
-/// app.unlit = true;
+/// # use viewport_lib::ItemSettings;
+/// let mut s = ItemSettings::default();
+/// s.hidden = true;
 /// ```
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct AppearanceSettings {
+pub struct ItemSettings {
     /// Hide the object entirely. Default `false`.
     pub hidden: bool,
     /// Skip all lighting calculations and output raw colour. Default `false`.
-    ///
-    /// For types that are already flat-shaded (polylines, point clouds, image slices)
-    /// this flag is accepted but has no visible effect.
     pub unlit: bool,
-    /// Global opacity multiplier applied on top of the item's own opacity mechanism.
-    /// 1.0 = fully opaque, 0.0 = fully transparent. Default 1.0.
+    /// Global opacity multiplier. 1.0 = fully opaque, 0.0 = fully transparent. Default 1.0.
     pub opacity: f32,
-    /// Render as wireframe regardless of the global wireframe mode flag. Default `false`.
+    /// Render as wireframe regardless of the global wireframe flag. Default `false`. Extended conceptually to non-mesh
+    /// objects to render their sub-objects as meshes, e.g., a VolumeItem has its voxels as wireframe boxes.
     pub wireframe: bool,
+    /// GPU pick identifier. `PickId::NONE` = not pickable. Default `PickId::NONE`.
+    pub pick_id: crate::renderer::PickId,
+    /// Whether the item is currently selected. Default `false`.
+    pub selected: bool,
 }
 
-impl Default for AppearanceSettings {
+impl Default for ItemSettings {
     fn default() -> Self {
         Self {
             hidden: false,
             unlit: false,
             opacity: 1.0,
             wireframe: false,
+            pick_id: crate::renderer::PickId::NONE,
+            selected: false,
         }
     }
 }
@@ -347,17 +349,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn appearance_defaults() {
-        let a = AppearanceSettings::default();
+    fn item_settings_defaults() {
+        let a = ItemSettings::default();
         assert!(!a.hidden);
         assert!(!a.unlit);
         assert!((a.opacity - 1.0).abs() < 1e-6);
         assert!(!a.wireframe);
+        assert!(!a.selected);
     }
 
     #[test]
-    fn appearance_spread_syntax() {
-        let a = AppearanceSettings {
+    fn item_settings_spread_syntax() {
+        let a = ItemSettings {
             unlit: true,
             ..Default::default()
         };

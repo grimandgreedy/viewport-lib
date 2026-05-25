@@ -199,8 +199,8 @@ pub(crate) fn controls_scene_graph(app: &mut App, ui: &mut egui::Ui, frame: &efr
 // Material and background presets
 // ---------------------------------------------------------------------------
 
-pub(crate) fn material_preset(index: usize) -> (Material, viewport_lib::AppearanceSettings) {
-    let default_app = viewport_lib::AppearanceSettings::default();
+pub(crate) fn material_preset(index: usize) -> (Material, viewport_lib::ItemSettings) {
+    let default_app = viewport_lib::ItemSettings::default();
     match index % 4 {
         0 => (Material::default(), default_app),
         1 => {

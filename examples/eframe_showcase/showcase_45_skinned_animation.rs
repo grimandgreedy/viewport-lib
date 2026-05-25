@@ -1102,7 +1102,7 @@ fn apply_skin47_appearance(state: &mut Skin47State, renderer: &viewport_lib::Vie
         };
         state.scene.set_material(node_id, mat);
 
-        let mut app = viewport_lib::scene::material::AppearanceSettings::default();
+        let mut app = viewport_lib::scene::material::ItemSettings::default();
         app.opacity = state.opacity;
         app.wireframe = state.per_item_wireframe;
         state.scene.set_appearance(node_id, app);

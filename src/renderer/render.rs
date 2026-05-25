@@ -1237,16 +1237,15 @@ impl ViewportRenderer {
             background_colour: bg_colour,
             near_plane: frame.camera.render_camera.near,
             far_plane: frame.camera.render_camera.far,
-            lic_enabled: if frame.scene.lic_items.is_empty() {
-                0
-            } else {
+            lic_enabled: if scene_items.iter().any(|i| i.lic.is_some() && !i.settings.hidden) {
                 1
+            } else {
+                0
             },
-            lic_strength: frame
-                .scene
-                .lic_items
-                .first()
-                .map(|i| i.config.strength)
+            lic_strength: scene_items
+                .iter()
+                .filter(|i| !i.settings.hidden)
+                .find_map(|i| i.lic.as_ref().map(|l| l.config.strength))
                 .unwrap_or(0.5),
         };
         {
@@ -1360,7 +1359,7 @@ impl ViewportRenderer {
                 pp.bloom,
                 pp.ssao,
                 pp.contact_shadows,
-                !frame.scene.lic_items.is_empty(),
+                scene_items.iter().any(|i| i.lic.is_some() && !i.settings.hidden),
                 pp.dof_enabled,
             );
         }
@@ -1375,12 +1374,12 @@ impl ViewportRenderer {
             } else {
                 scene_items
                     .iter()
-                    .any(|i| !i.appearance.hidden && i.appearance.opacity < 1.0)
+                    .any(|i| !i.settings.hidden && i.settings.opacity < 1.0)
             } || frame
                 .scene
                 .transparent_volume_meshes
                 .iter()
-                .any(|i| !i.appearance.hidden);
+                .any(|i| !i.settings.hidden);
             if needs_oit {
                 let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
                 let [sw, sh] = hdr.scene_size;
@@ -1485,7 +1484,7 @@ impl ViewportRenderer {
                     let excluded_items: Vec<&SceneRenderItem> = scene_items
                         .iter()
                         .filter(|item| {
-                            !item.appearance.hidden
+                            !item.settings.hidden
                                 && (item.active_attribute.is_some()
                                     || item.material.is_two_sided()
                                     || item.material.matcap_id.is_some())
@@ -1585,7 +1584,7 @@ impl ViewportRenderer {
                         if let Some(ref hdr_wf) = resources.hdr_wireframe_pipeline {
                             let mut wf_idx = 0usize;
                             for item in scene_items {
-                                if item.appearance.hidden {
+                                if item.settings.hidden {
                                     continue;
                                 }
                                 let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
@@ -1627,7 +1626,7 @@ impl ViewportRenderer {
                         // transparency throughout.
                         for item in excluded_items
                             .into_iter()
-                            .filter(|item| item.appearance.opacity >= 1.0 && !item.material.is_blend())
+                            .filter(|item| item.settings.opacity >= 1.0 && !item.material.is_blend())
                         {
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                                 continue;
@@ -1678,7 +1677,7 @@ impl ViewportRenderer {
                     // Instanced batch draws skip per-item logic, so these are drawn
                     // here after all batches finish.
                     if let Some(hdr_wf) = &resources.hdr_wireframe_pipeline {
-                        for item in scene_items.iter().filter(|i| i.show_normals && !i.appearance.hidden) {
+                        for item in scene_items.iter().filter(|i| i.show_normals && !i.settings.hidden) {
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                                 continue;
                             };
@@ -1704,10 +1703,10 @@ impl ViewportRenderer {
                     let mut opaque: Vec<&SceneRenderItem> = Vec::new();
                     let mut transparent: Vec<&SceneRenderItem> = Vec::new();
                     for item in scene_items {
-                        if item.appearance.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
+                        if item.settings.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
                             continue;
                         }
-                        if item.appearance.opacity < 1.0 || item.material.is_blend() {
+                        if item.settings.opacity < 1.0 || item.material.is_blend() {
                             transparent.push(item);
                         } else {
                             opaque.push(item);
@@ -1768,7 +1767,7 @@ impl ViewportRenderer {
                                 render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
                             } else if is_face_attr {
                                 if let Some(ref fvb) = mesh.face_vertex_buffer {
-                                    let pl = if item.appearance.opacity < 1.0 {
+                                    let pl = if item.settings.opacity < 1.0 {
                                         trans_pl
                                     } else {
                                         solid_pl
@@ -1781,12 +1780,12 @@ impl ViewportRenderer {
                                 let filter = compute_filter_results
                                     .iter()
                                     .find(|r| r.mesh_id == item.mesh_id);
-                                let pl = if item.appearance.opacity < 1.0 {
+                                let pl = if item.settings.opacity < 1.0 {
                                     trans_pl
                                 } else {
                                     solid_pl
                                 };
-                                let is_blended = item.appearance.opacity < 1.0
+                                let is_blended = item.settings.opacity < 1.0
                                     || item.material.is_blend();
                                 let hdr_skinned_pl = if is_blended {
                                     resources.hdr_skinned_transparent_pipeline.as_ref()
@@ -2170,8 +2169,8 @@ impl ViewportRenderer {
             // those items are invisible.
             self.instanced_batches.iter().any(|b| b.is_transparent)
                 || scene_items.iter().any(|i| {
-                    !i.appearance.hidden
-                        && (i.appearance.opacity < 1.0 || i.material.is_blend())
+                    !i.settings.hidden
+                        && (i.settings.opacity < 1.0 || i.material.is_blend())
                         && (i.active_attribute.is_some()
                             || i.material.is_two_sided()
                             || i.material.matcap_id.is_some())
@@ -2179,12 +2178,12 @@ impl ViewportRenderer {
         } else {
             scene_items
                 .iter()
-                .any(|i| !i.appearance.hidden && i.appearance.opacity < 1.0)
+                .any(|i| !i.settings.hidden && i.settings.opacity < 1.0)
         } || frame
             .scene
             .transparent_volume_meshes
             .iter()
-            .any(|i| !i.appearance.hidden);
+            .any(|i| !i.settings.hidden);
 
         if has_transparent {
             // OIT targets already allocated in the pre-pass above.
@@ -2323,7 +2322,7 @@ impl ViewportRenderer {
                         oit_pass.set_pipeline(pipeline);
                         let mut last_skinned = false;
                         for item in scene_items {
-                            if item.appearance.hidden || (item.appearance.opacity >= 1.0 && !item.material.is_blend()) {
+                            if item.settings.hidden || (item.settings.opacity >= 1.0 && !item.material.is_blend()) {
                                 continue;
                             }
                             let skin_bg = item.skin_instance.and_then(|inst| {
@@ -2367,7 +2366,7 @@ impl ViewportRenderer {
                     oit_pass.set_pipeline(pipeline);
                     let mut last_skinned = false;
                     for item in scene_items {
-                        if item.appearance.hidden || item.appearance.opacity >= 1.0 {
+                        if item.settings.hidden || item.settings.opacity >= 1.0 {
                             continue;
                         }
                         let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
@@ -2410,10 +2409,10 @@ impl ViewportRenderer {
                         oit_pass.set_pipeline(pipeline);
                         oit_pass.set_bind_group(0, camera_bg, &[]);
                         for item in &frame.scene.transparent_volume_meshes {
-                            if item.appearance.hidden {
+                            if item.settings.hidden {
                                 continue;
                             }
-                            if item.appearance.wireframe || frame.viewport.wireframe_mode {
+                            if item.settings.wireframe || frame.viewport.wireframe_mode {
                                 continue;
                             }
                             let Some(gpu) = self.resources.projected_tet_store.get(item.id.0)

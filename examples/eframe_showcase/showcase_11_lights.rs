@@ -108,7 +108,7 @@ impl App {
             Material::from_colour([0.2, 0.7, 1.0]),
         );
         {
-            let mut a = viewport_lib::AppearanceSettings::default();
+            let mut a = viewport_lib::ItemSettings::default();
             a.unlit = true;
             self.lights_state.scene.set_appearance(unlit_id, a);
         }

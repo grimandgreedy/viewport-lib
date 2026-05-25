@@ -1,19 +1,55 @@
 # Changelog
 
-## [Unrelaese changes]
+## [Unreleased changes]
+
 ### Decals
 
-- Screen-space decal projection: place a texture onto any opaque surface without modifying the receiver mesh. The renderer reads the scene depth buffer each frame, reconstructs world position per pixel, and projects the decal onto whatever geometry lies inside the projection volume. No per-receiver setup is needed.
-- Normal map support: decals can carry a tangent-space normal map that perturbs the receiver's surface shading, making them read as craters or embossed marks rather than flat stickers. A blend strength control fades between the original surface normal and the decal normal.
-- Three blend modes: replace (standard alpha composite), multiply (darkens the receiver, good for grime and weathering), and additive (brightens the receiver, good for fire, sparks, and glows). Stacking multiple additive decals accumulates correctly.
-- Roughness and metallic overrides: decals can carry roughness and metallic values or textures that layer a specular approximation on top of the albedo, so a metal-looking decal reads as metal on any surface.
+Screen-space decal projection: place a texture onto any opaque surface without modifying the receiver mesh. The renderer reads the scene depth buffer each frame, reconstructs world position per pixel, and projects the decal onto whatever geometry lies inside the projection volume. No per-receiver setup is needed.
+- Normal map support: can appear as craters or embossed marks rather than flat stickers.
+- Three blend modes: replace (alpha), multiply (darkens the receiver, good for grime and weathering), and additive (brightens the receiver, good for fire, sparks, and glows). Stacking multiple additive decals accumulates correctly.
+- Roughness and metallic overrides.
 - Draw order: a sort key controls which decals composite on top of others within a frame.
 - Animated decals: UV offset and scale can be driven by a scroll animation without per-frame updates from the application. Decals can also be given a lifetime and a fade-out duration; the scene removes them automatically when they expire.
 - Receiver masking: individual scene nodes can opt out of receiving decals entirely.
-- Emissive channel: a scalar multiplier adds self-illumination on top of the blend result. Values above 1.0 bloom under tone-mapping in HDR mode.
-- Soft edges: an edge fade parameter smooths the alpha to zero near the boundary of the projection volume, hiding the hard rectangular cutoff.
+- Emissive channel: scalar multiplier.
+- Soft edges: edge fade parameter.
 - Tri-planar projection: samples the texture from all three local axes and blends by surface normal, avoiding UV stretching on corners and non-planar surfaces.
 - Cylindrical projection: wraps a decal around a cylindrical surface using angle and axial position as UV coordinates. Works on both the outside of a column and the inside of a tube.
+
+
+### Improvements
+
+#### `ItemSettings` extends and replaces `AppearanceSettings` on all scene item types
+All renderable item types now express pick identity and selection state through a single `settings: ItemSettings` field. The former `id: u64`, `pick_id: u64`, `selected: bool`, and `appearance: AppearanceSettings` top-level fields are removed.
+- Renamed `AppearanceSettings` -> `ItemSettings` and standardised the settings across all first-class scene item types.
+- Standardised `pick_id: PickId` across all item types. No more `id` or `pickID`.
+- Added `pick_id` and `selected` to `ItemSettings` so that both are standard and universal across all vp-lib item types.
+
+```rust
+pub struct ItemSettings {
+    /// Hide the object entirely. Default `false`.
+    pub hidden: bool,
+    /// Skip all lighting calculations and output raw colour. Default `false`.
+    pub unlit: bool,
+    /// Global opacity multiplier. 1.0 = fully opaque, 0.0 = fully transparent. Default 1.0.
+    pub opacity: f32,
+    /// Render as wireframe regardless of the global wireframe flag. Default `false`. Extended conceptually to non-mesh
+    /// objects to render their sub-objects as meshes, e.g., a VolumeItem has its voxels as wireframe boxes.
+    pub wireframe: bool,
+    /// GPU pick identifier. `PickId::NONE` = not pickable. Default `PickId::NONE`.
+    pub pick_id: crate::renderer::PickId,
+    /// Whether the item is currently selected. Default `false`.
+    pub selected: bool,
+}
+```
+
+### Breaking changes
+
+- `CameraFrustumItem` removed from the public API. Build frustum wireframes directly using `PolylineItem` with explicit quad strips for near/far planes and lateral edges. `SceneFrame::camera_frustums` is removed; push `PolylineItem` values to `SceneFrame::polylines` instead. Build your own frustum!
+- `SurfaceLICItem` removed from the public API. SurfaceLIC 'objects' belong to surface meshes and so that is where they have to be defined. Set `SceneRenderItem::lic = Some(LicOverlay { vector_attribute, config })`.
+
+
+
 
 ## [0.15.0]
 

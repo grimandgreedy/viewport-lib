@@ -27,8 +27,8 @@ use crate::App;
 use eframe::egui;
 use std::collections::HashMap;
 use viewport_lib::{
-    AttributeData, BackfacePolicy, FrameData, Material, MeshData, MeshId, SurfaceLICConfig,
-    SurfaceLICItem, ViewportRenderer, scene::Scene,
+    AttributeData, BackfacePolicy, FrameData, LicOverlay, Material, MeshData, MeshId,
+    SurfaceLICConfig, SurfaceSubmission, ViewportRenderer, scene::Scene,
 };
 
 // ---------------------------------------------------------------------------
@@ -395,15 +395,23 @@ pub(crate) fn submit_lic_items(app: &App, fd: &mut FrameData) {
     config.step_size = state.step_size;
     config.strength = state.strength;
 
+    // Build a lookup from MeshId to LicOverlay.
+    let mut lic_by_mesh: std::collections::HashMap<MeshId, LicOverlay> =
+        std::collections::HashMap::new();
     for (row, row_ids) in state.mesh_ids.iter().enumerate() {
-        for (col, maybe_id) in row_ids.iter().enumerate() {
+        for (_col, maybe_id) in row_ids.iter().enumerate() {
             let Some(mesh_id) = *maybe_id else { continue };
-            fd.scene.lic_items.push(SurfaceLICItem::new(
-                mesh_id,
-                "flow",
-                transform(col, row).to_cols_array_2d(),
-                config.clone(),
-            ));
+            lic_by_mesh.insert(mesh_id, LicOverlay::new("flow", config.clone()));
+        }
+    }
+
+    // Apply to matching SceneRenderItems.
+    if let SurfaceSubmission::Flat(ref mut items) = fd.scene.surfaces {
+        let items = std::sync::Arc::make_mut(items);
+        for item in items.iter_mut() {
+            if let Some(lic) = lic_by_mesh.remove(&item.mesh_id) {
+                item.lic = Some(lic);
+            }
         }
     }
 }

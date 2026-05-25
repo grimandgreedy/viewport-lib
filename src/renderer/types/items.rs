@@ -1,9 +1,37 @@
 use crate::resources::ColourmapId;
-use crate::scene::material::{AppearanceSettings, Material};
+use crate::scene::material::{ItemSettings, Material};
 
 // ---------------------------------------------------------------------------
 // Per-frame data types
 // ---------------------------------------------------------------------------
+
+/// LIC overlay data attached to a surface item.
+///
+/// Set `SceneRenderItem::lic` to `Some(LicOverlay { ... })` to render a
+/// Line Integral Convolution flow visualisation on that surface mesh.
+/// The mesh must have a `VertexVector` attribute matching `vector_attribute`
+/// uploaded via `ViewportGpuResources::upload_mesh_data`.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct LicOverlay {
+    /// Name of the `AttributeData::VertexVector` attribute on the mesh.
+    pub vector_attribute: String,
+    /// LIC rendering configuration (step count, step size, strength).
+    pub config: crate::renderer::types::frame::SurfaceLICConfig,
+}
+
+impl LicOverlay {
+    /// Create a new `LicOverlay` with the given vector attribute name and LIC configuration.
+    pub fn new(
+        vector_attribute: impl Into<String>,
+        config: crate::renderer::types::frame::SurfaceLICConfig,
+    ) -> Self {
+        Self {
+            vector_attribute: vector_attribute.into(),
+            config,
+        }
+    }
+}
 
 /// Typed GPU pick identifier for a renderable surface.
 ///
@@ -34,10 +62,8 @@ pub struct SceneRenderItem {
     pub mesh_id: crate::resources::mesh_store::MeshId,
     /// World-space model matrix (Translation * Rotation * Scale).
     pub model: [[f32; 4]; 4],
-    /// Whether this object is selected (drives orange tint in WGSL).
-    pub selected: bool,
-    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
-    pub appearance: AppearanceSettings,
+    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    pub settings: ItemSettings,
     /// Whether to render per-vertex normal visualization lines for this object.
     pub show_normals: bool,
     /// Per-object material (colour, shading coefficients, texture).
@@ -50,13 +76,6 @@ pub struct SceneRenderItem {
     pub colourmap_id: Option<crate::resources::ColourmapId>,
     /// RGBA colour for NaN scalar values. `None` = discard (fully transparent).
     pub nan_colour: Option<[f32; 4]>,
-    /// GPU pick identifier for this surface. [`PickId::NONE`] = not pickable.
-    ///
-    /// The renderer only includes surfaces with a nonzero pick ID in the GPU
-    /// pick pass. Set a nonzero value for any surface the user should be able to
-    /// click to select. Helper geometry and transient previews that should not
-    /// participate in picking should leave this at the default [`PickId::NONE`].
-    pub pick_id: PickId,
     /// Named vector attribute (from `AttributeData::VertexVector`) used to displace
     /// vertex positions in the vertex shader. `None` = no warp. See also `warp_scale`.
     ///
@@ -82,6 +101,11 @@ pub struct SceneRenderItem {
     pub skin_instance: Option<u32>,
     /// Whether this surface receives projected decals. Default: `true`.
     pub receives_decals: bool,
+    /// LIC flow overlay for this surface. `None` disables LIC for this item.
+    ///
+    /// The mesh must have a `VertexVector` attribute matching
+    /// `LicOverlay::vector_attribute`.
+    pub lic: Option<LicOverlay>,
 }
 
 impl Default for SceneRenderItem {
@@ -89,19 +113,18 @@ impl Default for SceneRenderItem {
         Self {
             mesh_id: crate::resources::mesh_store::MeshId(0),
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            selected: false,
-            appearance: AppearanceSettings::default(),
+            settings: ItemSettings::default(),
             show_normals: false,
             material: Material::default(),
             active_attribute: None,
             scalar_range: None,
             colourmap_id: None,
             nan_colour: None,
-            pick_id: PickId::NONE,
             warp_attribute: None,
             warp_scale: 1.0,
             skin_instance: None,
             receives_decals: true,
+            lic: None,
         }
     }
 }
@@ -138,10 +161,8 @@ pub struct VolumeMeshItem {
     pub face_to_cell: Vec<u32>,
     /// World-space model matrix. Default: identity.
     pub model: [[f32; 4]; 4],
-    /// Whether this object is selected. Default: false.
-    pub selected: bool,
-    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
-    pub appearance: AppearanceSettings,
+    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    pub settings: ItemSettings,
     /// Per-object material.
     pub material: crate::scene::material::Material,
     /// Named scalar or colour attribute to colour by.
@@ -150,8 +171,6 @@ pub struct VolumeMeshItem {
     pub scalar_range: Option<(f32, f32)>,
     /// Colourmap for scalar colouring.
     pub colourmap_id: Option<ColourmapId>,
-    /// GPU pick identifier. [`PickId::NONE`] = not pickable.
-    pub pick_id: PickId,
 }
 
 impl VolumeMeshItem {
@@ -162,13 +181,11 @@ impl VolumeMeshItem {
             mesh_id,
             face_to_cell,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            selected: false,
-            appearance: AppearanceSettings::default(),
+            settings: ItemSettings::default(),
             material: crate::scene::material::Material::default(),
             active_attribute: None,
             scalar_range: None,
             colourmap_id: None,
-            pick_id: PickId::NONE,
         }
     }
 
@@ -180,13 +197,11 @@ impl VolumeMeshItem {
         SceneRenderItem {
             mesh_id: self.mesh_id,
             model: self.model,
-            selected: self.selected,
-            appearance: self.appearance,
+            settings: self.settings,
             material: self.material.clone(),
             active_attribute: self.active_attribute.clone(),
             scalar_range: self.scalar_range,
             colourmap_id: self.colourmap_id,
-            pick_id: self.pick_id,
             ..SceneRenderItem::default()
         }
     }
@@ -248,8 +263,6 @@ pub struct PointCloudItem {
     pub model: [[f32; 4]; 4],
     /// Render mode. Default: ScreenSpaceCircle.
     pub render_mode: PointRenderMode,
-    /// Unique ID for picking. 0 = not pickable.
-    pub id: u64,
     /// Optional per-point radii in pixels. If non-empty, overrides `point_size` for each point.
     pub radii: Vec<f32>,
     /// Optional per-point opacity values in `[0, 1]`. If non-empty, scales each point's alpha.
@@ -267,12 +280,8 @@ pub struct PointCloudItem {
     /// Output pixel-radius range `[min_px, max_px]` for the radius scalar mapping.
     /// Default: `(2.0, 12.0)`.
     pub radius_range: (f32, f32),
-    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
-    pub appearance: AppearanceSettings,
-    /// Whether this point cloud is selected at object level. When true and
-    /// `InteractionFrame::outline_selected` is set, the renderer draws a smooth
-    /// outline ring around the cloud's screen-space silhouette. Default: false.
-    pub selected: bool,
+    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    pub settings: ItemSettings,
 }
 
 impl Default for PointCloudItem {
@@ -287,15 +296,13 @@ impl Default for PointCloudItem {
             default_colour: [1.0, 1.0, 1.0, 1.0],
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             render_mode: PointRenderMode::ScreenSpaceCircle,
-            id: 0,
             radii: Vec::new(),
             transparencies: Vec::new(),
             gaussian: false,
             radius_scalars: Vec::new(),
             radius_scalar_range: None,
             radius_range: (2.0, 12.0),
-            appearance: AppearanceSettings::default(),
-            selected: false,
+            settings: ItemSettings::default(),
         }
     }
 }
@@ -337,18 +344,12 @@ pub struct GlyphItem {
     /// When true, glyphs are coloured by `default_colour` (with per-instance scalar as brightness)
     /// instead of the LUT. Default: false.
     pub use_default_colour: bool,
-    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
-    pub appearance: AppearanceSettings,
     /// Glyph shape. Default: Arrow.
     pub glyph_type: GlyphType,
     /// World-space model matrix. Default: identity.
     pub model: [[f32; 4]; 4],
-    /// Unique ID for picking. 0 = not pickable.
-    pub id: u64,
-    /// Whether this glyph set is selected at object level. When true and
-    /// `InteractionFrame::outline_selected` is set, the renderer draws a smooth
-    /// outline ring around the glyph positions. Default: false.
-    pub selected: bool,
+    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    pub settings: ItemSettings,
 }
 
 impl Default for GlyphItem {
@@ -364,11 +365,9 @@ impl Default for GlyphItem {
             colourmap_id: None,
             default_colour: [0.0; 4],
             use_default_colour: false,
-            appearance: AppearanceSettings::default(),
             glyph_type: GlyphType::Arrow,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            id: 0,
-            selected: false,
+            settings: ItemSettings::default(),
         }
     }
 }
@@ -400,12 +399,8 @@ pub struct TensorGlyphItem {
     pub colourmap_id: Option<ColourmapId>,
     /// World-space model matrix. Default: identity.
     pub model: [[f32; 4]; 4],
-    /// Unique ID for picking. 0 = not pickable.
-    pub id: u64,
-    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
-    pub appearance: AppearanceSettings,
-    /// Whether this tensor glyph set is selected at object level. Default: false.
-    pub selected: bool,
+    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    pub settings: ItemSettings,
 }
 
 impl Default for TensorGlyphItem {
@@ -419,9 +414,7 @@ impl Default for TensorGlyphItem {
             scalar_range: None,
             colourmap_id: None,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            id: 0,
-            appearance: AppearanceSettings::default(),
-            selected: false,
+            settings: ItemSettings::default(),
         }
     }
 }
@@ -444,15 +437,10 @@ impl Default for TensorGlyphItem {
 pub struct VolumeItem {
     /// Reference to a previously uploaded 3D texture.
     pub volume_id: crate::resources::VolumeId,
-    /// Pick ID returned when a voxel in this volume is hit.
-    ///
-    /// `0` means this volume is not pickable. Set to a non-zero value alongside
-    /// `volume_data` to enable voxel picking.
-    pub pick_id: u64,
     /// CPU scalar data for voxel picking.
     ///
     /// Must match the data passed to `upload_volume` for `volume_id`.
-    /// `None` disables voxel-level picking regardless of `pick_id`.
+    /// `None` disables voxel-level picking regardless of `settings.pick_id`.
     pub volume_data: Option<std::sync::Arc<crate::geometry::marching_cubes::VolumeData>>,
     /// Colour transfer function LUT. `None` = use default builtin (viridis).
     pub colour_lut: Option<ColourmapId>,
@@ -482,18 +470,14 @@ pub struct VolumeItem {
     /// (same as current behaviour: discard). `Some([r, g, b, a])` = render NaN voxels with
     /// this fixed RGBA colour instead of sampling the transfer function.
     pub nan_colour: Option<[f32; 4]>,
-    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
-    pub appearance: AppearanceSettings,
-    /// When true, the renderer draws a wireframe outline around the volume AABB.
-    /// Default: false.
-    pub selected: bool,
+    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    pub settings: ItemSettings,
 }
 
 impl Default for VolumeItem {
     fn default() -> Self {
         Self {
             volume_id: crate::resources::VolumeId(0),
-            pick_id: 0,
             volume_data: None,
             colour_lut: None,
             opacity_lut: None,
@@ -507,8 +491,7 @@ impl Default for VolumeItem {
             threshold_min: 0.0,
             threshold_max: 1.0,
             nan_colour: None,
-            appearance: AppearanceSettings::default(),
-            selected: false,
+            settings: ItemSettings::default(),
         }
     }
 }
@@ -555,8 +538,6 @@ pub struct PolylineItem {
     pub default_colour: [f32; 4],
     /// Global line width in pixels. Used when `node_radii` is empty.
     pub line_width: f32,
-    /// Unique ID for identification. 0 = not pickable.
-    pub id: u64,
     /// Per-node direct RGBA colours. Length must match `positions`. Empty = not used.
     /// Takes priority over scalar-driven colouring when non-empty.
     pub node_colours: Vec<[f32; 4]>,
@@ -579,12 +560,8 @@ pub struct PolylineItem {
     pub edge_vectors: Vec<[f32; 3]>,
     /// Scale applied to generated arrow glyphs from `node_vectors`/`edge_vectors`.
     pub vector_scale: f32,
-    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
-    pub appearance: AppearanceSettings,
-    /// Whether this polyline set is selected at object level. When true and
-    /// `InteractionFrame::outline_selected` is set, the renderer draws a smooth
-    /// outline ring around the node positions. Default: false.
-    pub selected: bool,
+    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    pub settings: ItemSettings,
 }
 
 impl Default for PolylineItem {
@@ -597,7 +574,6 @@ impl Default for PolylineItem {
             colourmap_id: None,
             default_colour: [0.9, 0.92, 0.96, 1.0],
             line_width: 2.0,
-            id: 0,
             node_colours: Vec::new(),
             edge_scalars: Vec::new(),
             edge_colours: Vec::new(),
@@ -605,8 +581,7 @@ impl Default for PolylineItem {
             node_vectors: Vec::new(),
             edge_vectors: Vec::new(),
             vector_scale: 1.0,
-            appearance: AppearanceSettings::default(),
-            selected: false,
+            settings: ItemSettings::default(),
         }
     }
 }
@@ -671,12 +646,8 @@ pub struct StreamtubeItem {
     pub radius: f32,
     /// RGBA colour for all tube segments in this item.  Default: opaque white.
     pub colour: [f32; 4],
-    /// Unique ID (reserved for future picking support).  Default: `0`.
-    pub id: u64,
-    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
-    pub appearance: AppearanceSettings,
-    /// Whether this streamtube set is selected at object level. Default: false.
-    pub selected: bool,
+    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    pub settings: ItemSettings,
 }
 
 impl Default for StreamtubeItem {
@@ -686,9 +657,7 @@ impl Default for StreamtubeItem {
             strip_lengths: Vec::new(),
             radius: 0.05,
             colour: [1.0, 1.0, 1.0, 1.0],
-            id: 0,
-            appearance: AppearanceSettings::default(),
-            selected: false,
+            settings: ItemSettings::default(),
         }
     }
 }
@@ -725,12 +694,8 @@ pub struct TubeItem {
     pub colourmap_id: Option<crate::resources::ColourmapId>,
     /// Flat RGBA colour used when `scalars` is empty.  Default: opaque white.
     pub colour: [f32; 4],
-    /// Unique ID (reserved for picking). Default: 0.
-    pub id: u64,
-    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
-    pub appearance: AppearanceSettings,
-    /// Whether this tube set is selected at object level. Default: false.
-    pub selected: bool,
+    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    pub settings: ItemSettings,
 }
 
 impl Default for TubeItem {
@@ -745,9 +710,7 @@ impl Default for TubeItem {
             scalar_range: None,
             colourmap_id: None,
             colour: [1.0, 1.0, 1.0, 1.0],
-            id: 0,
-            appearance: AppearanceSettings::default(),
-            selected: false,
+            settings: ItemSettings::default(),
         }
     }
 }
@@ -784,12 +747,8 @@ pub struct RibbonItem {
     pub colourmap_id: Option<crate::resources::ColourmapId>,
     /// Flat RGBA colour used when `scalars` is empty. Default: opaque white.
     pub colour: [f32; 4],
-    /// Unique ID (reserved for picking). Default: 0.
-    pub id: u64,
-    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
-    pub appearance: AppearanceSettings,
-    /// Whether this ribbon set is selected at object level. Default: false.
-    pub selected: bool,
+    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    pub settings: ItemSettings,
 }
 
 impl Default for RibbonItem {
@@ -804,9 +763,7 @@ impl Default for RibbonItem {
             scalar_range: None,
             colourmap_id: None,
             colour: [1.0, 1.0, 1.0, 1.0],
-            id: 0,
-            appearance: AppearanceSettings::default(),
-            selected: false,
+            settings: ItemSettings::default(),
         }
     }
 }
@@ -851,12 +808,8 @@ pub struct ImageSliceItem {
     pub colour_lut: Option<crate::resources::ColourmapId>,
     /// Overall opacity of the slice quad. Default: `1.0`.
     pub opacity: f32,
-    /// Pick ID for unified selection API. `0` = not selectable.
-    pub id: u64,
-    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
-    pub appearance: AppearanceSettings,
-    /// If `true`, draws an outline ring around the slice quad.
-    pub selected: bool,
+    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    pub settings: ItemSettings,
 }
 
 impl Default for ImageSliceItem {
@@ -870,9 +823,7 @@ impl Default for ImageSliceItem {
             scalar_range: (0.0, 1.0),
             colour_lut: None,
             opacity: 1.0,
-            id: 0,
-            appearance: AppearanceSettings::default(),
-            selected: false,
+            settings: ItemSettings::default(),
         }
     }
 }
@@ -913,12 +864,8 @@ pub struct VolumeSurfaceSliceItem {
     pub opacity: f32,
     /// World-space model matrix for the slice mesh. Default: identity.
     pub model: [[f32; 4]; 4],
-    /// Pick ID for unified selection API. `0` = not selectable.
-    pub id: u64,
-    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
-    pub appearance: AppearanceSettings,
-    /// If `true`, draws an outline ring around the slice mesh.
-    pub selected: bool,
+    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    pub settings: ItemSettings,
 }
 
 impl Default for VolumeSurfaceSliceItem {
@@ -932,219 +879,7 @@ impl Default for VolumeSurfaceSliceItem {
             colour_lut: None,
             opacity: 1.0,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            id: 0,
-            appearance: AppearanceSettings::default(),
-            selected: false,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Phase 10A : Camera frustum wireframe
-// ---------------------------------------------------------------------------
-
-/// A renderable camera frustum wireframe item.
-///
-/// Converted to [`PolylineItem`] geometry in `prepare.rs` (no new GPU pipeline).
-/// The frustum is drawn as near quad + far quad + 4 lateral edges, with an
-/// optional image-plane quad at a configurable depth.
-///
-/// Use [`CameraFrustumItem::camera_target`] to get a fly-to target that frames
-/// the frustum from a comfortable standoff distance.
-#[non_exhaustive]
-#[derive(Debug, Clone)]
-pub struct CameraFrustumItem {
-    /// View-to-world transform (the camera's world-space pose).
-    ///
-    /// Pass `camera.view_matrix().inverse().to_cols_array_2d()` for the current
-    /// viewport camera, or any other camera-world transform.
-    pub pose: [[f32; 4]; 4],
-    /// Vertical field of view in radians.
-    pub fov_y: f32,
-    /// Viewport aspect ratio (width / height).
-    pub aspect: f32,
-    /// Near clip distance (world units).
-    pub near: f32,
-    /// Far clip distance (world units).
-    pub far: f32,
-    /// RGBA line colour. Default: `[0.8, 0.8, 0.9, 1.0]` (light blue-grey).
-    pub colour: [f32; 4],
-    /// Screen-space line width in pixels. Default: `2.0`.
-    pub line_width: f32,
-    /// If `Some(d)`, draw a closed quad at depth `d` (world units) inside the frustum.
-    /// Useful to visualise the image plane of a camera.
-    pub image_plane_depth: Option<f32>,
-}
-
-impl Default for CameraFrustumItem {
-    fn default() -> Self {
-        Self {
-            pose: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            fov_y: std::f32::consts::FRAC_PI_4,
-            aspect: 16.0 / 9.0,
-            near: 0.1,
-            far: 10.0,
-            colour: [0.8, 0.8, 0.9, 1.0],
-            line_width: 2.0,
-            image_plane_depth: None,
-        }
-    }
-}
-
-impl CameraFrustumItem {
-    /// Compute the world-space corners of a frustum plane at depth `d`.
-    ///
-    /// Returns `[top_left, top_right, bottom_right, bottom_left]` in world space.
-    fn plane_corners(&self, d: f32) -> [[f32; 3]; 4] {
-        let half_h = (self.fov_y * 0.5).tan() * d;
-        let half_w = half_h * self.aspect;
-        let pose = glam::Mat4::from_cols_array_2d(&self.pose);
-        let corners_cam = [
-            glam::vec3(-half_w, half_h, -d),
-            glam::vec3(half_w, half_h, -d),
-            glam::vec3(half_w, -half_h, -d),
-            glam::vec3(-half_w, -half_h, -d),
-        ];
-        corners_cam.map(|c| {
-            let w = pose.transform_point3(c);
-            [w.x, w.y, w.z]
-        })
-    }
-
-    /// Convert this frustum into a [`PolylineItem`] for the polyline pipeline.
-    ///
-    /// Produces: near quad strip (5 verts), far quad strip (5 verts),
-    /// 4 lateral edge strips (2 verts each), and optionally an image-plane
-    /// quad strip (5 verts).
-    pub(crate) fn to_polyline(&self) -> PolylineItem {
-        let near = self.plane_corners(self.near);
-        let far = self.plane_corners(self.far);
-
-        let mut positions: Vec<[f32; 3]> = Vec::new();
-        let mut strip_lengths: Vec<u32> = Vec::new();
-
-        // Near quad (closed loop: TL->TR->BR->BL->TL)
-        positions.extend_from_slice(&[near[0], near[1], near[2], near[3], near[0]]);
-        strip_lengths.push(5);
-
-        // Far quad
-        positions.extend_from_slice(&[far[0], far[1], far[2], far[3], far[0]]);
-        strip_lengths.push(5);
-
-        // Lateral edges (near corner -> far corner, for each of 4 corners)
-        for i in 0..4 {
-            positions.extend_from_slice(&[near[i], far[i]]);
-            strip_lengths.push(2);
-        }
-
-        // Optional image-plane quad
-        if let Some(d) = self.image_plane_depth {
-            let ip = self.plane_corners(d);
-            positions.extend_from_slice(&[ip[0], ip[1], ip[2], ip[3], ip[0]]);
-            strip_lengths.push(5);
-        }
-
-        PolylineItem {
-            positions,
-            strip_lengths,
-            default_colour: self.colour,
-            line_width: self.line_width,
-            ..PolylineItem::default()
-        }
-    }
-
-    /// Compute a [`crate::camera::CameraTarget`] that frames this frustum.
-    ///
-    /// `standoff_factor` controls how far back the viewing camera sits relative
-    /// to the frustum diagonal (2.5 is a comfortable default). The returned
-    /// orientation faces the frustum from its front (along the frustum's +Z axis).
-    ///
-    /// Feed the result directly into [`crate::camera::CameraAnimator::fly_to`]:
-    ///
-    /// ```rust,ignore
-    /// let t = frustum.camera_target(2.5);
-    /// animator.fly_to(&camera, t.center, t.distance, t.orientation, 1.0);
-    /// ```
-    pub fn camera_target(&self, standoff_factor: f32) -> crate::camera::CameraTarget {
-        let near = self.plane_corners(self.near);
-        let far = self.plane_corners(self.far);
-
-        // World-space center: midpoint of all 8 corners.
-        let mut sum = glam::Vec3::ZERO;
-        for c in near.iter().chain(far.iter()) {
-            sum += glam::Vec3::from(*c);
-        }
-        let center = sum / 8.0;
-
-        // Distance: half-diagonal of the frustum bounding box, scaled by standoff.
-        let mut max_dist_sq: f32 = 0.0;
-        for c in near.iter().chain(far.iter()) {
-            let d = (glam::Vec3::from(*c) - center).length_squared();
-            if d > max_dist_sq {
-                max_dist_sq = d;
-            }
-        }
-        let distance = max_dist_sq.sqrt() * standoff_factor;
-
-        // Orientation: look from camera +Z axis (frustum's back) toward center.
-        let pose = glam::Mat4::from_cols_array_2d(&self.pose);
-        // Frustum's world-space forward (into scene) is -Z of the camera frame.
-        // We want to view the frustum from the +Z side (behind the camera).
-        let cam_z_world = pose.transform_vector3(glam::Vec3::Z); // frustum's +Z (back)
-        let eye = center + cam_z_world.normalize() * distance;
-        let forward = (center - eye).normalize();
-        // Build orientation quaternion: look along `forward` with world-up hint.
-        let up_hint = if forward.dot(glam::Vec3::Z).abs() > 0.99 {
-            glam::Vec3::Y
-        } else {
-            glam::Vec3::Z
-        };
-        let right = forward.cross(up_hint).normalize();
-        let up = right.cross(forward).normalize();
-        let rot = glam::Mat3::from_cols(right, up, -forward);
-        let orientation = glam::Quat::from_mat3(&rot);
-
-        crate::camera::CameraTarget {
-            center,
-            distance,
-            orientation,
-        }
-    }
-
-    /// Compute a [`crate::camera::CameraTarget`] that adopts this frustum's own viewpoint.
-    ///
-    /// Unlike [`camera_target`](Self::camera_target), which frames the frustum from outside,
-    /// this places the orbit camera exactly at the frustum's eye position looking in the
-    /// frustum's forward direction. Use it for "look through this camera" functionality.
-    ///
-    /// ```rust,ignore
-    /// let t = frustum.camera_view_target();
-    /// animator.fly_to(&camera, t.center, t.distance, t.orientation, 1.0);
-    /// ```
-    pub fn camera_view_target(&self) -> crate::camera::CameraTarget {
-        let pose = glam::Mat4::from_cols_array_2d(&self.pose);
-
-        // Eye: world-space position of the frustum camera.
-        let eye = pose.transform_point3(glam::Vec3::ZERO);
-
-        // Orientation: rotation columns of pose (assumed rigid, no scale).
-        let rot = glam::Mat3::from_cols(
-            pose.x_axis.truncate(),
-            pose.y_axis.truncate(),
-            pose.z_axis.truncate(),
-        );
-        let orientation = glam::Quat::from_mat3(&rot).normalize();
-
-        // For the orbit camera: eye = center + orientation * Z * distance.
-        // Place the orbit center just inside the near plane so distance is non-zero.
-        // Camera -Z (forward) in world space = orientation * (-Z).
-        let distance = (self.near * 0.5_f32).max(0.01);
-        let center = eye + orientation * (-glam::Vec3::Z) * distance;
-
-        crate::camera::CameraTarget {
-            center,
-            distance,
-            orientation,
+            settings: ItemSettings::default(),
         }
     }
 }
@@ -1214,12 +949,8 @@ pub struct ScreenImageItem {
     /// geometry. Must contain exactly `width * height` values if `Some`.
     /// `None` (default) renders the image on top of all geometry (no depth test).
     pub depth: Option<Vec<f32>>,
-    /// Pick ID for unified selection API. `0` = not selectable.
-    pub id: u64,
-    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
-    pub appearance: AppearanceSettings,
-    /// If `true`, draws an outline ring around the image rect.
-    pub selected: bool,
+    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    pub settings: ItemSettings,
 }
 
 impl Default for ScreenImageItem {
@@ -1232,9 +963,7 @@ impl Default for ScreenImageItem {
             scale: 1.0,
             alpha: 1.0,
             depth: None,
-            id: 0,
-            appearance: AppearanceSettings::default(),
-            selected: false,
+            settings: ItemSettings::default(),
         }
     }
 }
@@ -1379,14 +1108,8 @@ pub struct SpriteItem {
     /// each other based on submission order. Set `true` for opaque world-space markers
     /// that should participate in depth testing normally.
     pub depth_write: bool,
-    /// Picking ID. `0` = not pickable.
-    pub id: u64,
-    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
-    pub appearance: AppearanceSettings,
-    /// Whether this sprite set is selected at object level. When true and
-    /// `InteractionFrame::outline_selected` is set, the renderer draws a smooth
-    /// outline ring around the sprite positions. Default: false.
-    pub selected: bool,
+    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    pub settings: ItemSettings,
 }
 
 impl Default for SpriteItem {
@@ -1403,9 +1126,7 @@ impl Default for SpriteItem {
             size_mode: SpriteSizeMode::ScreenSpace,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             depth_write: false,
-            id: 0,
-            appearance: AppearanceSettings::default(),
-            selected: false,
+            settings: ItemSettings::default(),
         }
     }
 }
@@ -1481,14 +1202,8 @@ pub struct GaussianSplatItem {
     pub id: GaussianSplatId,
     /// World-space model matrix.
     pub model: [[f32; 4]; 4],
-    /// Pick ID. 0 = not pickable.
-    pub pick_id: u64,
-    /// Per-item appearance overrides (hidden, unlit, opacity, wireframe).
-    pub appearance: AppearanceSettings,
-    /// Whether this splat set is selected. When true and `InteractionFrame::outline_selected`
-    /// is set, the renderer draws a smooth outline ring around the cloud's screen-space
-    /// silhouette. Default: false.
-    pub selected: bool,
+    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    pub settings: ItemSettings,
 }
 
 impl Default for GaussianSplatItem {
@@ -1496,9 +1211,7 @@ impl Default for GaussianSplatItem {
         Self {
             id: GaussianSplatId(usize::MAX),
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            pick_id: 0,
-            appearance: AppearanceSettings::default(),
-            selected: false,
+            settings: ItemSettings::default(),
         }
     }
 }
@@ -1704,8 +1417,8 @@ pub struct DecalItem {
     pub projection: DecalProjection,
     /// Visibility and opacity overrides. `hidden` skips the decal entirely; `opacity`
     /// multiplies the final alpha. `unlit` and `wireframe` are accepted but have no
-    /// effect on decals. Default: all no-op.
-    pub appearance: AppearanceSettings,
+    /// effect on decals. `pick_id` and `selected` are also no-op for decals. Default: all no-op.
+    pub settings: ItemSettings,
 }
 
 impl Default for DecalItem {
@@ -1728,7 +1441,7 @@ impl Default for DecalItem {
             emissive_texture_id: None,
             edge_fade: 0.0,
             projection: DecalProjection::Planar,
-            appearance: AppearanceSettings::default(),
+            settings: ItemSettings::default(),
         }
     }
 }

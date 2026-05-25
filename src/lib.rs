@@ -124,7 +124,7 @@ pub use camera::view_preset::ViewPreset;
 
 pub use scene::aabb::Aabb;
 pub use scene::material::{
-    AppearanceSettings, BackfacePattern, BackfacePolicy, Material, ParamVis, ParamVisMode,
+    ItemSettings, BackfacePattern, BackfacePolicy, Material, ParamVis, ParamVisMode,
     PatternConfig,
 };
 pub use scene::scene::{DecalHandle, Group, GroupId, Layer, LayerId, LiveDecal, Scene, SceneNode, SceneStats};
@@ -189,7 +189,7 @@ pub use widgets::axes_indicator::AxisView;
 pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::{FrameStats, PerformancePolicy, QualityPreset, RuntimeMode};
 pub use renderer::{
-    CameraFrame, CameraFrustumItem, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
+    CameraFrame, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
     CylindricalFacing, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection,
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GaussianSplatData, GaussianSplatId,
     GaussianSplatItem, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode, ImageAnchor,
@@ -199,8 +199,8 @@ pub use renderer::{
     OverlayTextureId, BorderMode, LineCap, PickId, TriangleDirection,
     PickRectResult, PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings,
     RenderCamera, RibbonItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
-    SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, SliceAxis,
-    SpriteItem, SpriteSizeMode, StreamtubeItem, SurfaceLICConfig, SurfaceLICItem,
+    LicOverlay, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter,
+    SliceAxis, SpriteItem, SpriteSizeMode, StreamtubeItem, SurfaceLICConfig,
     SurfaceSubmission, TensorGlyphItem, ToneMapping, TransparentVolumeMeshItem, TubeItem,
     ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer, VolumeItem, VolumeMeshItem,
     VolumeSurfaceSliceItem, aabb_wireframe_polyline,

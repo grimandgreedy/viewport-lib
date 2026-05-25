@@ -1449,7 +1449,7 @@ impl App {
             };
             match next {
                 Some(i) => {
-                    let t = self.aux_state.frustums[i].camera_view_target();
+                    let t = showcase_27_camera_framing::frustum_view_target(&self.aux_state.frustums[i]);
                     self.cam_animator.fly_to(
                         &self.camera,
                         t.center,
@@ -2354,7 +2354,7 @@ impl App {
                     .scene
                     .collect_render_items(&Selection::new());
                 if !self.lights_state.unlit_sphere {
-                    items.retain(|item| !item.appearance.unlit);
+                    items.retain(|item| !item.settings.unlit);
                 }
                 let lighting = LightingSettings {
                     lights: self.lights_state.sources.clone(),
@@ -2415,7 +2415,7 @@ impl App {
                 let wave_node_id = self.scalar_state.node_ids[1];
                 if let Some(item) = items
                     .iter_mut()
-                    .find(|item| item.pick_id == PickId(active_node_id))
+                    .find(|item| item.settings.pick_id == PickId(active_node_id))
                 {
                     item.active_attribute = Some(viewport_lib::AttributeRef {
                         name: ATTR_NAMES[self.scalar_state.active_object].to_string(),
@@ -2435,7 +2435,7 @@ impl App {
                 }
                 if let Some(item) = items
                     .iter_mut()
-                    .find(|item| item.pick_id == PickId(wave_node_id))
+                    .find(|item| item.settings.pick_id == PickId(wave_node_id))
                 {
                     item.material.backface_policy = BackfacePolicy::Identical;
                 }
@@ -2478,7 +2478,7 @@ impl App {
                     .scene
                     .collect_render_items(&Selection::new());
                 let plane_node = self.texture_state.plane_node;
-                if let Some(item) = items.iter_mut().find(|i| i.pick_id == PickId(plane_node)) {
+                if let Some(item) = items.iter_mut().find(|i| i.settings.pick_id == PickId(plane_node)) {
                     item.material.backface_policy = BackfacePolicy::Identical;
                 }
                 let sg = self.texture_state.scene.version();
@@ -2537,7 +2537,7 @@ impl App {
                 // scalar_range left as None : renderer auto-detects from attribute_ranges.
                 if let Some(item) = items
                     .iter_mut()
-                    .find(|i| i.pick_id == PickId(self.face_state.node_ids[0]))
+                    .find(|i| i.settings.pick_id == PickId(self.face_state.node_ids[0]))
                 {
                     item.active_attribute = Some(AttributeRef {
                         name: "scalar".to_string(),
@@ -2550,7 +2550,7 @@ impl App {
                 // scalar_range left as None : renderer auto-detects from attribute_ranges.
                 if let Some(item) = items
                     .iter_mut()
-                    .find(|i| i.pick_id == PickId(self.face_state.node_ids[1]))
+                    .find(|i| i.settings.pick_id == PickId(self.face_state.node_ids[1]))
                 {
                     item.active_attribute = Some(AttributeRef {
                         name: "scalar".to_string(),
@@ -2562,13 +2562,13 @@ impl App {
                 // Node 2: FaceColour attribute (direct RGBA, no colourmap)
                 if let Some(item) = items
                     .iter_mut()
-                    .find(|i| i.pick_id == PickId(self.face_state.node_ids[2]))
+                    .find(|i| i.settings.pick_id == PickId(self.face_state.node_ids[2]))
                 {
                     item.active_attribute = Some(AttributeRef {
                         name: "colour".to_string(),
                         kind: AttributeKind::FaceColour,
                     });
-                    item.appearance.opacity = self.face_state.opacity;
+                    item.settings.opacity = self.face_state.opacity;
                 }
 
                 let sg = self.face_state.scene.version();
@@ -3055,7 +3055,9 @@ impl App {
 
         // Auxiliary frustums and screen images (Showcase 27) : submitted every frame.
         if self.mode == ShowcaseMode::Auxiliary && self.aux_state.built {
-            fd.scene.camera_frustums = self.aux_state.frustums.clone();
+            for f in &self.aux_state.frustums {
+                fd.scene.polylines.push(showcase_27_camera_framing::frustum_to_polyline(f));
+            }
             self.aux_push_screen_images(&mut fd);
         }
 
@@ -3239,7 +3241,12 @@ impl App {
         // must be active (post_process.enabled = true).
         if self.mode == ShowcaseMode::SurfaceLIC && self.lic_state.built {
             showcase_38_surface_lic::submit_lic_items(self, &mut fd);
-            if !fd.scene.lic_items.is_empty() {
+            let has_lic = if let viewport_lib::SurfaceSubmission::Flat(ref items) = fd.scene.surfaces {
+                items.iter().any(|i| i.lic.is_some())
+            } else {
+                false
+            };
+            if has_lic {
                 fd.effects.post_process.enabled = true;
             }
         }

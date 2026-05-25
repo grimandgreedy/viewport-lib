@@ -442,8 +442,8 @@ impl ViewportGpuResources {
             colour: item.colour,
             radius,
             use_vertex_colour: 0,
-            unlit: item.appearance.unlit as u32,
-            opacity: item.appearance.opacity,
+            unlit: item.settings.unlit as u32,
+            opacity: item.settings.opacity,
             wireframe: wireframe as u32,
             _pad: [0.0; 3],
         };
@@ -739,8 +739,8 @@ impl ViewportGpuResources {
             colour: item.colour,
             radius: item.radius.max(f32::EPSILON),
             use_vertex_colour,
-            unlit: item.appearance.unlit as u32,
-            opacity: item.appearance.opacity,
+            unlit: item.settings.unlit as u32,
+            opacity: item.settings.opacity,
             wireframe: wireframe as u32,
             _pad: [0.0; 3],
         };
@@ -1002,8 +1002,8 @@ impl ViewportGpuResources {
             colour: item.colour,
             radius: item.width * 0.5,
             use_vertex_colour,
-            unlit: item.appearance.unlit as u32,
-            opacity: item.appearance.opacity,
+            unlit: item.settings.unlit as u32,
+            opacity: item.settings.opacity,
             wireframe: wireframe as u32,
             _pad: [0.0; 3],
         };

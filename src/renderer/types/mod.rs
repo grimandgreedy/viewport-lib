@@ -193,7 +193,7 @@ macro_rules! emit_draw_calls {
                     let excluded_items: Vec<&SceneRenderItem> = scene_items
                         .iter()
                         .filter(|item| {
-                            !item.appearance.hidden
+                            !item.settings.hidden
                                 && (item.active_attribute.is_some()
                                     || item.material.is_two_sided()
                                     || item.material.param_vis.is_some()
@@ -272,7 +272,7 @@ macro_rules! emit_draw_calls {
                     if frame.viewport.wireframe_mode {
                         let mut wf_idx = 0usize;
                         for item in scene_items {
-                            if item.appearance.hidden { continue; }
+                            if item.settings.hidden { continue; }
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else { continue };
                             let skin_bg = item.skin_instance.and_then(|inst| {
                                 resources.skin_instance_bind_group(item.mesh_id, inst)
@@ -306,7 +306,7 @@ macro_rules! emit_draw_calls {
                             let skin_bg = item.skin_instance.and_then(|inst| {
                                 resources.skin_instance_bind_group(item.mesh_id, inst)
                             });
-                            let is_blended = item.appearance.opacity < 1.0
+                            let is_blended = item.settings.opacity < 1.0
                                 || item.material.is_blend();
                             let pipeline: &wgpu::RenderPipeline = if let Some(bg) = skin_bg {
                                 render_pass.set_bind_group(2, bg, &[]);
@@ -367,10 +367,10 @@ macro_rules! emit_draw_calls {
                 let mut opaque: Vec<&SceneRenderItem> = Vec::new();
                 let mut transparent: Vec<&SceneRenderItem> = Vec::new();
                 for item in scene_items {
-                    if item.appearance.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
+                    if item.settings.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
                         continue;
                     }
-                    if item.appearance.opacity < 1.0 {
+                    if item.settings.opacity < 1.0 {
                         transparent.push(item);
                     } else {
                         opaque.push(item);
@@ -432,7 +432,7 @@ macro_rules! emit_draw_calls {
                                 .iter()
                                 .find(|r| r.mesh_id == item.mesh_id);
                             if let Some(bg) = skin_bg {
-                                let is_blended = item.appearance.opacity < 1.0
+                                let is_blended = item.settings.opacity < 1.0
                                     || item.material.is_blend();
                                 let skinned_pl = if is_blended {
                                     &resources.skinned_transparent_pipeline

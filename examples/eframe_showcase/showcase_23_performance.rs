@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use eframe::egui;
 use viewport_lib::{
-    Aabb, AppearanceSettings, FrameStats, Material, MeshId, PickAccelerator, SceneRenderItem,
+    Aabb, ItemSettings, FrameStats, Material, MeshId, PickAccelerator, SceneRenderItem,
     scene::Scene, selection::Selection,
 };
 
@@ -97,7 +97,7 @@ pub(crate) fn build_perf_scene_threaded(
                 let colour = colours[count as usize % colours.len()];
                 let mat = Material::from_colour(colour);
                 let id = scene.add(Some(mesh), transform, mat);
-                let mut appearance = AppearanceSettings::default();
+                let mut appearance = ItemSettings::default();
                 appearance.unlit = true;
                 scene.set_appearance(id, appearance);
                 count += 1;

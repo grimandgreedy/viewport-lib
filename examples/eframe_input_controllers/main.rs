@@ -703,9 +703,9 @@ impl eframe::App for App {
                             item.mesh_id = obj.mesh;
                             item.model = obj.model.to_cols_array_2d();
                             item.material = Material::from_colour(obj.colour);
-                            item.selected = self.selection.contains(i as u64);
+                            item.settings.selected = self.selection.contains(i as u64);
                             // pick_id is 1-indexed so 0 can mean "no hit".
-                            item.pick_id = PickId((i as u64) + 1);
+                            item.settings.pick_id = PickId((i as u64) + 1);
                             item
                         })
                         .collect()

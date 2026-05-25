@@ -2,7 +2,7 @@
 
 use super::{WidgetContext, WidgetResult, ctx_ray, handle_world_radius, ray_point_dist};
 use crate::interaction::clip_plane::ray_plane_intersection;
-use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
+use crate::renderer::{GlyphItem, GlyphType, PolylineItem, PickId};
 
 /// An interactive spline widget with N draggable Catmull-Rom control points.
 ///
@@ -109,7 +109,8 @@ impl SplineWidget {
             strip_lengths: if n > 0 { vec![n] } else { vec![] },
             default_colour: self.colour,
             line_width: self.line_width,
-            id,
+
+            settings: crate::scene::material::ItemSettings { pick_id: crate::renderer::PickId(id), ..Default::default() },
             ..PolylineItem::default()
         }
     }
@@ -127,7 +128,8 @@ impl SplineWidget {
             scale: radius,
             use_default_colour: true,
             default_colour: self.handle_colour,
-            id: id_base,
+
+            settings: crate::scene::material::ItemSettings { pick_id: crate::renderer::PickId(id_base), ..Default::default() },
             ..GlyphItem::default()
         }
     }
