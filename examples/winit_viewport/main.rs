@@ -1,4 +1,7 @@
-//! Minimal `winit` + `wgpu` integration for `viewport-lib`.
+//! winit + wgpu integration for viewport-lib with scene graph, picking, and gizmos.
+//!
+//! Uses renderer.owned().render() for the full HDR pipeline -- no manual
+//! encoder or depth buffer needed from the caller.
 //!
 //! This example renders directly to a window surface and keeps input handling
 //! in the host app. It is the best reference if you want the smallest possible
@@ -6,7 +9,7 @@
 
 use std::sync::Arc;
 
-use viewport_lib::{ButtonState, ScrollUnits};
+use viewport_lib::{ButtonState, PostProcessSettings, ScrollUnits};
 use viewport_lib::{
     Camera, CameraFrame, FrameData, LightingSettings, MeshId, OrbitCameraController, SceneFrame,
     SceneRenderItem, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
@@ -44,32 +47,11 @@ struct AppState {
     device: wgpu::Device,
     queue: wgpu::Queue,
     surface_config: wgpu::SurfaceConfiguration,
-    depth_view: wgpu::TextureView,
 
     renderer: ViewportRenderer,
     camera: Camera,
     mesh_id: MeshId,
     controller: OrbitCameraController,
-}
-
-impl AppState {
-    fn create_depth_view(device: &wgpu::Device, w: u32, h: u32) -> wgpu::TextureView {
-        let tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("winit_depth"),
-            size: wgpu::Extent3d {
-                width: w.max(1),
-                height: h.max(1),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth24PlusStencil8,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        tex.create_view(&wgpu::TextureViewDescriptor::default())
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -104,8 +86,17 @@ impl ApplicationHandler for App {
         }))
         .expect("Failed to find a suitable GPU adapter");
 
+        let required_features = if adapter
+            .features()
+            .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE)
+        {
+            wgpu::Features::INDIRECT_FIRST_INSTANCE
+        } else {
+            eprintln!("INDIRECT_FIRST_INSTANCE not supported -- GPU culling will be disabled");
+            wgpu::Features::empty()
+        };
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("winit_viewport_device"),
+            required_features,
             ..Default::default()
         }))
         .expect("Failed to create wgpu device");
@@ -130,8 +121,6 @@ impl ApplicationHandler for App {
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
-
-        let depth_view = AppState::create_depth_view(&device, config.width, config.height);
 
         let mut renderer = ViewportRenderer::new(&device, format);
 
@@ -161,7 +150,6 @@ impl ApplicationHandler for App {
             device,
             queue,
             surface_config: config,
-            depth_view,
             renderer,
             camera,
             mesh_id,
@@ -191,8 +179,6 @@ impl ApplicationHandler for App {
                     state
                         .surface
                         .configure(&state.device, &state.surface_config);
-                    state.depth_view =
-                        AppState::create_depth_view(&state.device, new_size.width, new_size.height);
                     state.window.request_redraw();
                 }
             }
@@ -317,55 +303,23 @@ impl ApplicationHandler for App {
                     SceneFrame::from_surface_items(scene_items),
                 );
                 frame_data.effects.lighting = LightingSettings::default();
+                frame_data.effects.post_process = PostProcessSettings {
+                    enabled: true,
+                    bloom: true,
+                    bloom_threshold: 1.0,
+                    bloom_intensity: 0.15,
+                    ..PostProcessSettings::default()
+                };
                 frame_data.viewport.show_grid = true;
                 frame_data.viewport.show_axes_indicator = true;
 
-                state
+                // owned().render() runs the full HDR pipeline internally:
+                //   prepare -> shadow pass -> HDR scene -> post-process -> tone map -> output_view
+                let cmd = state
                     .renderer
-                    .pass()
-                    .prepare(&state.device, &state.queue, &frame_data);
-
-                let mut encoder =
-                    state
-                        .device
-                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("winit_viewport_encoder"),
-                        });
-
-                {
-                    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("winit_viewport_render_pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: 0.1,
-                                    g: 0.1,
-                                    b: 0.12,
-                                    a: 1.0,
-                                }),
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        })],
-                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                            view: &state.depth_view,
-                            depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(1.0),
-                                store: wgpu::StoreOp::Discard,
-                            }),
-                            stencil_ops: None,
-                        }),
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
-
-                    render_pass.set_viewport(0.0, 0.0, w, h, 0.0, 1.0);
-                    state.renderer.pass().paint(&mut render_pass, &frame_data);
-                }
-
-                state.queue.submit(std::iter::once(encoder.finish()));
+                    .owned()
+                    .render(&state.device, &state.queue, &view, &frame_data);
+                state.queue.submit(std::iter::once(cmd));
                 frame.present();
 
                 // Begin accumulation for the next frame's events.

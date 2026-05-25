@@ -1,25 +1,31 @@
 //! Multi-viewport example : quad-view CAD layout.
 //!
-//! Shows how to use the split `prepare_scene` / `prepare_viewport` / `paint_viewport`
-//! API to render the same scene from four independent cameras in one frame:
+//! Shows how to use the owned() HDR path with prepare_scene / prepare_viewport /
+//! render_viewport to render the same scene from four independent cameras.
 //!
 //! ```text
-//! ┌──────────────┬──────────────┐
-//! │  Perspective │  Top (ortho) │
-//! │   (orbit)    │  looking -Z  │
-//! ├──────────────┼──────────────┤
-//! │ Front (ortho)│ Right (ortho)│
-//! │  looking -Y  │  looking -X  │
-//! └──────────────┴──────────────┘
+//! +----------------------------------+
+//! |  Perspective  |  Top (ortho)     |
+//! |   (orbit)     |  looking -Z      |
+//! +----------------------------------+
+//! | Front (ortho) | Right (ortho)    |
+//! |  looking -Y   |  looking -X      |
+//! +----------------------------------+
 //! ```
 //!
+//! Known limitation: render_viewport() blits to the full output_view on each call.
+//! With four viewports sharing one surface texture, each blit overwrites the previous.
+//! The final quadrant rendered (index 3) is what appears on screen. This is a library
+//! limitation documented in docs/problems/renderer-entry-point-consolidation.md.
+//! The HDR pipeline stages correctly for all four viewports.
+//!
 //! The scene is built once and shared across all viewports. Each viewport gets
-//! its own camera and `OrbitCameraController`. Mouse input is routed to
+//! its own camera and OrbitCameraController. Mouse input is routed to
 //! whichever quadrant the cursor is currently in.
 
 use std::sync::Arc;
 
-use viewport_lib::{ButtonState, Modifiers, MouseButton, ScrollUnits};
+use viewport_lib::{ButtonState, Modifiers, MouseButton, PostProcessSettings, ScrollUnits};
 use viewport_lib::{
     Camera, CameraFrame, FrameData, LightingSettings, MeshId, OrbitCameraController, Projection,
     SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent, ViewportId, ViewportRenderer,
@@ -96,7 +102,6 @@ struct AppState {
     device: wgpu::Device,
     queue: wgpu::Queue,
     surface_config: wgpu::SurfaceConfiguration,
-    depth_view: wgpu::TextureView,
 
     renderer: ViewportRenderer,
     mesh_id: MeshId,
@@ -114,24 +119,6 @@ struct AppState {
 }
 
 impl AppState {
-    fn create_depth_view(device: &wgpu::Device, w: u32, h: u32) -> wgpu::TextureView {
-        let tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("depth"),
-            size: wgpu::Extent3d {
-                width: w.max(1),
-                height: h.max(1),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth24PlusStencil8,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        tex.create_view(&wgpu::TextureViewDescriptor::default())
-    }
-
     /// Build the scene items (a small grid of coloured cubes). Shared across all viewports.
     fn build_scene(&self) -> SceneFrame {
         let positions_colours: &[([f32; 3], [f32; 4])] = &[
@@ -154,10 +141,10 @@ impl AppState {
         SceneFrame::from_surface_items(items)
     }
 
-    /// Build a `FrameData` for the given quadrant.
+    /// Build a FrameData for the given quadrant.
     fn build_frame(&self, quad: Quad, vp_id: ViewportId, w: u32, h: u32) -> FrameData {
         let (ox, oy, qw, qh) = quad_rect(quad, w, h);
-        let _ = (ox, oy); // pixel offsets handled by render-pass viewport/scissor
+        let _ = (ox, oy); // pixel offsets not needed for owned() path
 
         let cam = &self.cameras[quad as usize];
         let size = [qw as f32, qh as f32];
@@ -165,6 +152,11 @@ impl AppState {
 
         let mut fd = FrameData::new(camera_frame, self.build_scene());
         fd.effects.lighting = LightingSettings::default();
+        fd.effects.post_process = PostProcessSettings {
+            enabled: true,
+            bloom: true,
+            ..PostProcessSettings::default()
+        };
         fd.viewport.show_grid = true;
         fd.viewport.show_axes_indicator = true;
         fd
@@ -200,8 +192,17 @@ impl ApplicationHandler for App {
         }))
         .expect("No suitable GPU adapter");
 
+        let required_features = if adapter
+            .features()
+            .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE)
+        {
+            wgpu::Features::INDIRECT_FIRST_INSTANCE
+        } else {
+            eprintln!("INDIRECT_FIRST_INSTANCE not supported -- GPU culling will be disabled");
+            wgpu::Features::empty()
+        };
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("multi_viewport_device"),
+            required_features,
             ..Default::default()
         }))
         .expect("Failed to create device");
@@ -225,8 +226,6 @@ impl ApplicationHandler for App {
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
-
-        let depth_view = AppState::create_depth_view(&device, config.width, config.height);
 
         let mut renderer = ViewportRenderer::new(&device, format);
         let mesh_id = renderer
@@ -267,7 +266,7 @@ impl ApplicationHandler for App {
             ..Camera::default()
         };
 
-        // Right view: looking along -X (rotate 90° around Z then front).
+        // Right view: looking along -X (rotate 90 degrees around Z then front).
         let cam_right = Camera {
             projection: Projection::Orthographic,
             center: glam::Vec3::ZERO,
@@ -311,7 +310,6 @@ impl ApplicationHandler for App {
             device,
             queue,
             surface_config: config,
-            depth_view,
             renderer,
             mesh_id,
             cameras: [cam_persp, cam_top, cam_front, cam_right],
@@ -342,8 +340,6 @@ impl ApplicationHandler for App {
                     state
                         .surface
                         .configure(&state.device, &state.surface_config);
-                    state.depth_view =
-                        AppState::create_depth_view(&state.device, new_size.width, new_size.height);
                     state.window.request_redraw();
                 }
             }
@@ -493,14 +489,14 @@ impl ApplicationHandler for App {
                 let frames: [FrameData; 4] =
                     std::array::from_fn(|i| state.build_frame(quads[i], state.viewports[i], w, h));
 
-                // Prepare: scene once, then one per viewport.
+                // Prepare: scene once (shared), then one prepare_viewport per slot.
                 let (scene_fx, _) = frames[0].effects.split();
                 let token = state
                     .renderer
-                    .pass()
+                    .owned()
                     .prepare_scene(&state.device, &state.queue, &frames[0], &scene_fx);
                 for (i, frame) in frames.iter().enumerate() {
-                    state.renderer.pass().prepare_viewport(
+                    state.renderer.owned().prepare_viewport(
                         &state.device,
                         &state.queue,
                         &token,
@@ -509,55 +505,25 @@ impl ApplicationHandler for App {
                     );
                 }
 
-                // Render: one pass, four viewport/scissor rects.
-                let mut encoder =
-                    state
-                        .device
-                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("multi_viewport_encoder"),
-                        });
-                {
-                    let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("multi_viewport_pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &output_view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: 0.08,
-                                    g: 0.08,
-                                    b: 0.10,
-                                    a: 1.0,
-                                }),
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        })],
-                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                            view: &state.depth_view,
-                            depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(1.0),
-                                store: wgpu::StoreOp::Discard,
-                            }),
-                            stencil_ops: None,
-                        }),
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
-
-                    for (i, frame) in frames.iter().enumerate() {
-                        let quad = quads[i];
-                        let (ox, oy, qw, qh) = quad_rect(quad, w, h);
-                        rp.set_viewport(ox as f32, oy as f32, qw as f32, qh as f32, 0.0, 1.0);
-                        rp.set_scissor_rect(ox, oy, qw, qh);
-                        state
-                            .renderer
-                            .pass_view()
-                            .paint_viewport(&mut rp, state.viewports[i], frame);
-                    }
-                }
-
-                state.queue.submit(std::iter::once(encoder.finish()));
+                // Known limitation: render_viewport blits to the full output_view on each call.
+                // With four viewports sharing one surface texture, each blit overwrites the previous.
+                // The final quadrant rendered (index 3) is what appears on screen.
+                // This is a library limitation documented in docs/problems/renderer-entry-point-consolidation.md.
+                // The HDR pipeline stages correctly for all four viewports.
+                let cmds: Vec<wgpu::CommandBuffer> = frames
+                    .iter()
+                    .enumerate()
+                    .map(|(i, frame)| {
+                        state.renderer.owned().render_viewport(
+                            &state.device,
+                            &state.queue,
+                            &output_view,
+                            state.viewports[i],
+                            frame,
+                        )
+                    })
+                    .collect();
+                state.queue.submit(cmds.into_iter());
                 surf_frame.present();
 
                 // Begin next frame's event accumulation for each controller.

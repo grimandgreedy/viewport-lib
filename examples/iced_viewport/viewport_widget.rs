@@ -197,6 +197,8 @@ impl shader::Primitive for ViewportPrimitive {
         frame_data.viewport.grid_z = -0.5; // bottom face of unit boxes
         frame_data.viewport.show_axes_indicator = true;
 
+        // pass().prepare() delegates to prepare_callback, which stages HDR pre-pass work
+        // when frame.effects.post_process.enabled is true. HDR routing is automatic.
         pipeline.renderer.pass().prepare(device, queue, &frame_data);
     }
 
@@ -269,6 +271,8 @@ impl shader::Primitive for ViewportPrimitive {
             1.0,
         );
 
+        // pass_view().paint() delegates to paint_callback, which blits the HDR result when
+        // HDR was staged in prepare, or draws LDR directly otherwise.
         pipeline.renderer.pass_view().paint(&mut render_pass, &frame_data);
     }
 }
