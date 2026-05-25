@@ -661,6 +661,24 @@ impl ViewportRenderer {
         }
     }
 
+    /// Like [`paint_hdr_blit`](Self::paint_hdr_blit) but for render passes without a
+    /// depth-stencil attachment. Use this when you create the blit render pass yourself
+    /// (e.g. winit) and omit the depth attachment.
+    pub(crate) fn paint_hdr_blit_no_ds<'rp>(&self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
+        let vp_idx = frame.camera.viewport_index;
+        if let Some(hc) = self
+            .viewport_slots
+            .get(vp_idx)
+            .and_then(|s| s.hdr_callback.as_ref())
+        {
+            if let Some(pipeline) = &self.resources.dyn_res_upscale_pipeline {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, &hc.blit_bind_group, &[]);
+                render_pass.draw(0..3, 0..1);
+            }
+        }
+    }
+
     /// Unified prepare step for the eframe `CallbackTrait::prepare` method.
     ///
     /// Replaces manual `prepare` + `prepare_ldr_dyn_res` or `prepare_hdr_callback`

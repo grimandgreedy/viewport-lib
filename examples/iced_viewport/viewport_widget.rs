@@ -50,7 +50,7 @@ impl Default for ViewportState {
             camera: Camera {
                 center: glam::Vec3::ZERO,
                 distance: 12.0,
-                orientation: glam::Quat::from_rotation_y(0.6) * glam::Quat::from_rotation_x(-0.4),
+                orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
                 ..Camera::default()
             },
             controller: OrbitCameraController::viewport_primitives(),
@@ -189,17 +189,21 @@ impl shader::Primitive for ViewportPrimitive {
             CameraFrame::new(
                 self.camera_snapshot.render_camera.clone(),
                 [bounds.width, bounds.height],
-            ),
+            )
+            .with_pixels_per_point(viewport.scale_factor() as f32),
             SceneFrame::from_surface_items(scene_items),
         );
         frame_data.effects.lighting = LightingSettings::default();
         frame_data.viewport.show_grid = true;
-        frame_data.viewport.grid_z = -0.5; // bottom face of unit boxes
+        frame_data.viewport.grid_z = -0.5;
         frame_data.viewport.show_axes_indicator = true;
 
-        // pass().prepare() delegates to prepare_callback, which stages HDR pre-pass work
-        // when frame.effects.post_process.enabled is true. HDR routing is automatic.
-        pipeline.renderer.pass().prepare(device, queue, &frame_data);
+        // prepare_callback encodes HDR pre-pass work when post_process.enabled is true
+        // and returns a CommandBuffer that must be submitted before the render pass.
+        let pre_cmds = pipeline.renderer.pass().prepare(device, queue, &frame_data);
+        if !pre_cmds.is_empty() {
+            queue.submit(pre_cmds.into_iter());
+        }
     }
 
     fn render(
@@ -231,7 +235,7 @@ impl shader::Primitive for ViewportPrimitive {
         );
         frame_data.effects.lighting = LightingSettings::default();
         frame_data.viewport.show_grid = true;
-        frame_data.viewport.grid_z = -0.5; // bottom face of unit boxes
+        frame_data.viewport.grid_z = -0.5;
         frame_data.viewport.show_axes_indicator = true;
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

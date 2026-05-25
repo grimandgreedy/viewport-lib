@@ -1,7 +1,10 @@
 //! Multi-viewport example : quad-view CAD layout.
 //!
-//! Shows how to use the owned() HDR path with prepare_scene / prepare_viewport /
-//! render_viewport to render the same scene from four independent cameras.
+//! Shows how to use pass().prepare_hdr_viewport and pass_view().paint_hdr_blit
+//! to render four independent viewports into a shared surface texture. Each
+//! viewport is rendered into its own HDR intermediate texture in the prepare
+//! step, then blitted into its quadrant of the surface via a scissored render
+//! pass with no depth attachment.
 //!
 //! ```text
 //! +----------------------------------+
@@ -12,12 +15,6 @@
 //! |  looking -Y   |  looking -X      |
 //! +----------------------------------+
 //! ```
-//!
-//! Known limitation: render_viewport() blits to the full output_view on each call.
-//! With four viewports sharing one surface texture, each blit overwrites the previous.
-//! The final quadrant rendered (index 3) is what appears on screen. This is a library
-//! limitation documented in docs/problems/renderer-entry-point-consolidation.md.
-//! The HDR pipeline stages correctly for all four viewports.
 //!
 //! The scene is built once and shared across all viewports. Each viewport gets
 //! its own camera and OrbitCameraController. Mouse input is routed to
@@ -489,14 +486,14 @@ impl ApplicationHandler for App {
                 let frames: [FrameData; 4] =
                     std::array::from_fn(|i| state.build_frame(quads[i], state.viewports[i], w, h));
 
-                // Prepare: scene once (shared), then one prepare_viewport per slot.
+                // Prepare: scene once (shared), then per-viewport GPU data and HDR intermediate texture.
                 let (scene_fx, _) = frames[0].effects.split();
                 let token = state
                     .renderer
-                    .owned()
+                    .pass()
                     .prepare_scene(&state.device, &state.queue, &frames[0], &scene_fx);
                 for (i, frame) in frames.iter().enumerate() {
-                    state.renderer.owned().prepare_viewport(
+                    state.renderer.pass().prepare_viewport(
                         &state.device,
                         &state.queue,
                         &token,
@@ -505,25 +502,50 @@ impl ApplicationHandler for App {
                     );
                 }
 
-                // Known limitation: render_viewport blits to the full output_view on each call.
-                // With four viewports sharing one surface texture, each blit overwrites the previous.
-                // The final quadrant rendered (index 3) is what appears on screen.
-                // This is a library limitation documented in docs/problems/renderer-entry-point-consolidation.md.
-                // The HDR pipeline stages correctly for all four viewports.
-                let cmds: Vec<wgpu::CommandBuffer> = frames
+                // Render each viewport into its own HDR intermediate texture.
+                let hdr_cmds: Vec<wgpu::CommandBuffer> = frames
                     .iter()
                     .enumerate()
                     .map(|(i, frame)| {
-                        state.renderer.owned().render_viewport(
+                        state.renderer.pass().prepare_hdr_viewport(
                             &state.device,
                             &state.queue,
-                            &output_view,
                             state.viewports[i],
                             frame,
                         )
                     })
                     .collect();
-                state.queue.submit(cmds.into_iter());
+                state.queue.submit(hdr_cmds.into_iter());
+
+                // Blit each viewport's HDR result into its quadrant of the surface.
+                // No depth attachment: the blit pass is a fullscreen quad per slot.
+                let mut encoder = state.device.create_command_encoder(
+                    &wgpu::CommandEncoderDescriptor { label: Some("hdr_blit") },
+                );
+                {
+                    let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("hdr_blit_pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &output_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                store: wgpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    for (i, frame) in frames.iter().enumerate() {
+                        let (qx, qy, qw, qh) = quad_rect(quads[i], w, h);
+                        rp.set_viewport(qx as f32, qy as f32, qw as f32, qh as f32, 0.0, 1.0);
+                        rp.set_scissor_rect(qx, qy, qw, qh);
+                        state.renderer.pass_view().paint_hdr_blit_no_ds(&mut rp, frame);
+                    }
+                }
+                state.queue.submit(std::iter::once(encoder.finish()));
                 surf_frame.present();
 
                 // Begin next frame's event accumulation for each controller.

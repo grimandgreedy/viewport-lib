@@ -2064,8 +2064,11 @@ impl ViewportRenderer {
                                     continue;
                                 };
                                 if !drew_skinned {
+                                    let Some(skinned_pl) = resources.skinned_shadow_pipeline.as_ref() else {
+                                        continue;
+                                    };
                                     shadow_pass
-                                        .set_pipeline(&resources.skinned_shadow_pipeline);
+                                        .set_pipeline(skinned_pl);
                                     shadow_pass.set_bind_group(
                                         0,
                                         &resources.shadow_bind_group,
@@ -2149,7 +2152,8 @@ impl ViewportRenderer {
                             let want_skinned = skin_bg.is_some();
                             if last_skinned != Some(want_skinned) {
                                 shadow_pass.set_pipeline(if want_skinned {
-                                    &resources.skinned_shadow_pipeline
+                                    resources.skinned_shadow_pipeline.as_ref()
+                                        .unwrap_or(&resources.shadow_pipeline)
                                 } else {
                                     &resources.shadow_pipeline
                                 });
@@ -3823,9 +3827,11 @@ impl ViewportRenderer {
                         }
                         self.resources.skin_instance_bind_group(outlined.mesh_id, inst)
                     });
-                    let pipeline = match (skin_bg.is_some(), outlined.two_sided) {
-                        (true, true) => &self.resources.outline_mask_skinned_two_sided_pipeline,
-                        (true, false) => &self.resources.outline_mask_skinned_pipeline,
+                    let pipeline: &wgpu::RenderPipeline = match (skin_bg.is_some(), outlined.two_sided) {
+                        (true, true) => self.resources.outline_mask_skinned_two_sided_pipeline.as_ref()
+                            .unwrap_or(&self.resources.outline_mask_two_sided_pipeline),
+                        (true, false) => self.resources.outline_mask_skinned_pipeline.as_ref()
+                            .unwrap_or(&self.resources.outline_mask_pipeline),
                         (false, true) => &self.resources.outline_mask_two_sided_pipeline,
                         (false, false) => &self.resources.outline_mask_pipeline,
                     };

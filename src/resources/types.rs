@@ -2351,20 +2351,21 @@ pub struct ViewportGpuResources {
     /// Skinned variant of [`Self::solid_pipeline`]. Same fragment stage as the
     /// non-skinned pipeline; vertex stage applies LBS from the skinning
     /// sidecar storage buffers.
-    pub skinned_solid_pipeline: wgpu::RenderPipeline,
+    // None when device.limits().max_bind_groups < 3 (e.g. iced_wgpu, which hardcodes 2).
+    pub skinned_solid_pipeline: Option<wgpu::RenderPipeline>,
     /// Skinned two-sided variant (cull_mode = None). Selected when a skinned
     /// mesh's material requests a non-Cull backface policy.
-    pub skinned_solid_two_sided_pipeline: wgpu::RenderPipeline,
+    pub skinned_solid_two_sided_pipeline: Option<wgpu::RenderPipeline>,
     /// Skinned variant of [`Self::transparent_pipeline`]: alpha blending,
     /// no back-face culling, no depth write. Selected for skinned items
     /// with opacity < 1.0 or a blended material.
-    pub skinned_transparent_pipeline: wgpu::RenderPipeline,
+    pub skinned_transparent_pipeline: Option<wgpu::RenderPipeline>,
     /// Skinned variant of [`Self::wireframe_pipeline`]: LineList topology
     /// over the mesh's edge index buffer.
-    pub skinned_wireframe_pipeline: wgpu::RenderPipeline,
+    pub skinned_wireframe_pipeline: Option<wgpu::RenderPipeline>,
     /// Skinned variant of [`Self::shadow_pipeline`] used when a skinned mesh
     /// casts shadows.
-    pub skinned_shadow_pipeline: wgpu::RenderPipeline,
+    pub skinned_shadow_pipeline: Option<wgpu::RenderPipeline>,
 
     // --- Shadow map resources ---
     /// Shadow atlas depth texture (Depth32Float, atlas_size × atlas_size, 2×2 tile grid).
@@ -2518,9 +2519,9 @@ pub struct ViewportGpuResources {
     /// Skinned variant of `outline_mask_pipeline`. Applies LBS to the bind-pose
     /// vertex buffer so the selection outline tracks the deformed silhouette
     /// on the GPU skinning path.
-    pub(crate) outline_mask_skinned_pipeline: wgpu::RenderPipeline,
+    pub(crate) outline_mask_skinned_pipeline: Option<wgpu::RenderPipeline>,
     /// Skinned two-sided outline mask pipeline.
-    pub(crate) outline_mask_skinned_two_sided_pipeline: wgpu::RenderPipeline,
+    pub(crate) outline_mask_skinned_two_sided_pipeline: Option<wgpu::RenderPipeline>,
     /// Fullscreen edge-detection pipeline: reads mask, outputs anti-aliased outline ring.
     pub(crate) outline_edge_pipeline: wgpu::RenderPipeline,
     /// Bind group layout for the edge-detection pass (mask texture + sampler + uniform).

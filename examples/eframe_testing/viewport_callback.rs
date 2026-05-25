@@ -20,7 +20,7 @@ impl eframe::egui_wgpu::CallbackTrait for ViewportCallback {
             } else {
                 renderer.disable_gpu_driven_culling();
             }
-            renderer.pass().prepare(device, queue, &self.frame);
+            return renderer.pass().prepare(device, queue, &self.frame);
         }
         Vec::new()
     }

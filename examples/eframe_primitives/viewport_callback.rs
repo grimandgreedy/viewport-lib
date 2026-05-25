@@ -14,7 +14,7 @@ impl eframe::egui_wgpu::CallbackTrait for ViewportCallback {
         callback_resources: &mut eframe::egui_wgpu::CallbackResources,
     ) -> Vec<eframe::wgpu::CommandBuffer> {
         if let Some(renderer) = callback_resources.get_mut::<ViewportRenderer>() {
-            renderer.pass().prepare(device, queue, &self.frame);
+            return renderer.pass().prepare(device, queue, &self.frame);
         }
         Vec::new()
     }

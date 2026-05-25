@@ -2018,6 +2018,26 @@ impl ViewportGpuResources {
         // ------------------------------------------------------------------
         let skinning = crate::resources::skin::SkinningState::new(device);
 
+        // Skinned variants require bind group index 2 (the skinning sidecar).
+        // iced_wgpu (and any framework that hardcodes max_bind_groups = 2) cannot
+        // host these pipelines. Guard creation and leave fields as None on those devices.
+        let three_bg = device.limits().max_bind_groups >= 3;
+
+        // All skinned pipelines use @group(2) for the skinning sidecar.
+        // Devices with max_bind_groups < 3 (e.g. iced_wgpu) cannot create
+        // these shader modules at all -- guard the whole block and leave
+        // the fields as None on those devices.
+        let (
+            outline_mask_skinned_pipeline,
+            outline_mask_skinned_two_sided_pipeline,
+            skinned_solid_pipeline,
+            skinned_solid_two_sided_pipeline,
+            skinned_transparent_pipeline,
+            skinned_wireframe_pipeline,
+            skinned_shadow_pipeline,
+        ) = if !three_bg {
+            (None, None, None, None, None, None, None)
+        } else {
         // Skinned variants of the outline mask pipelines. Layout extends the
         // unskinned outline layout with the skin bind group (weights + palette)
         // at group 2 so the vertex stage can apply LBS and the selection
@@ -2314,6 +2334,16 @@ impl ViewportGpuResources {
             multiview: None,
             cache: None,
         });
+        (
+            Some(outline_mask_skinned_pipeline),
+            Some(outline_mask_skinned_two_sided_pipeline),
+            Some(skinned_solid_pipeline),
+            Some(skinned_solid_two_sided_pipeline),
+            Some(skinned_transparent_pipeline),
+            Some(skinned_wireframe_pipeline),
+            Some(skinned_shadow_pipeline),
+        )
+        }; // end three_bg guard
 
         Self {
             target_format,

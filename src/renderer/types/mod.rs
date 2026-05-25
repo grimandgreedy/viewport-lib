@@ -277,8 +277,8 @@ macro_rules! emit_draw_calls {
                             let skin_bg = item.skin_instance.and_then(|inst| {
                                 resources.skin_instance_bind_group(item.mesh_id, inst)
                             });
-                            if let Some(bg) = skin_bg {
-                                render_pass.set_pipeline(&resources.skinned_wireframe_pipeline);
+                            if let (Some(bg), Some(pl)) = (skin_bg, resources.skinned_wireframe_pipeline.as_ref()) {
+                                render_pass.set_pipeline(pl);
                                 render_pass.set_bind_group(2, bg, &[]);
                             } else {
                                 render_pass.set_pipeline(&resources.wireframe_pipeline);
@@ -308,15 +308,18 @@ macro_rules! emit_draw_calls {
                             });
                             let is_blended = item.settings.opacity < 1.0
                                 || item.material.is_blend();
-                            let pipeline: &wgpu::RenderPipeline = if let Some(bg) = skin_bg {
-                                render_pass.set_bind_group(2, bg, &[]);
-                                if is_blended {
-                                    &resources.skinned_transparent_pipeline
+                            let skinned_pl: Option<&wgpu::RenderPipeline> = skin_bg.and_then(|bg| {
+                                let pl = if is_blended {
+                                    resources.skinned_transparent_pipeline.as_ref()
                                 } else if item.material.is_two_sided() {
-                                    &resources.skinned_solid_two_sided_pipeline
+                                    resources.skinned_solid_two_sided_pipeline.as_ref()
                                 } else {
-                                    &resources.skinned_solid_pipeline
-                                }
+                                    resources.skinned_solid_pipeline.as_ref()
+                                };
+                                pl.map(|p| { render_pass.set_bind_group(2, bg, &[]); p })
+                            });
+                            let pipeline: &wgpu::RenderPipeline = if skinned_pl.is_some() {
+                                skinned_pl.unwrap()
                             } else if is_blended {
                                 &resources.transparent_pipeline
                             } else if item.material.is_two_sided() {
@@ -406,9 +409,9 @@ macro_rules! emit_draw_calls {
                         });
 
                         if frame.viewport.wireframe_mode {
-                            let wf_pl = if let Some(bg) = skin_bg {
+                            let wf_pl: &wgpu::RenderPipeline = if let (Some(bg), Some(pl)) = (skin_bg, resources.skinned_wireframe_pipeline.as_ref()) {
                                 render_pass.set_bind_group(2, bg, &[]);
-                                &resources.skinned_wireframe_pipeline
+                                pl
                             } else {
                                 &resources.wireframe_pipeline
                             };
@@ -435,14 +438,18 @@ macro_rules! emit_draw_calls {
                                 let is_blended = item.settings.opacity < 1.0
                                     || item.material.is_blend();
                                 let skinned_pl = if is_blended {
-                                    &resources.skinned_transparent_pipeline
+                                    resources.skinned_transparent_pipeline.as_ref()
                                 } else if item.material.is_two_sided() {
-                                    &resources.skinned_solid_two_sided_pipeline
+                                    resources.skinned_solid_two_sided_pipeline.as_ref()
                                 } else {
-                                    &resources.skinned_solid_pipeline
+                                    resources.skinned_solid_pipeline.as_ref()
                                 };
-                                render_pass.set_pipeline(skinned_pl);
-                                render_pass.set_bind_group(2, bg, &[]);
+                                if let Some(pl) = skinned_pl {
+                                    render_pass.set_pipeline(pl);
+                                    render_pass.set_bind_group(2, bg, &[]);
+                                } else {
+                                    render_pass.set_pipeline($pipeline);
+                                }
                             } else {
                                 render_pass.set_pipeline($pipeline);
                             }

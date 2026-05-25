@@ -1224,61 +1224,65 @@ impl ViewportGpuResources {
             cache: None,
         });
 
-        let skinned_oit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("skinned_oit_pipeline_layout"),
-            bind_group_layouts: &[
-                &self.camera_bind_group_layout,
-                &self.object_bind_group_layout,
-                &self.skinning.bind_group_layout,
-            ],
-            push_constant_ranges: &[],
-        });
-        let skinned_oit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mesh_skinned_shader_oit"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/mesh_skinned.wgsl").into(),
-            ),
-        });
-        let skinned_oit_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("skinned_oit_pipeline"),
-            layout: Some(&skinned_oit_layout),
-            vertex: wgpu::VertexState {
-                module: &skinned_oit_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &oit_shader,
-                entry_point: Some("fs_oit_main"),
-                targets: &[
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba16Float,
-                        blend: Some(accum_blend),
-                        write_mask: wgpu::ColorWrites::ALL,
+        if device.limits().max_bind_groups >= 3 {
+            let skinned_oit_layout =
+                device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("skinned_oit_pipeline_layout"),
+                    bind_group_layouts: &[
+                        &self.camera_bind_group_layout,
+                        &self.object_bind_group_layout,
+                        &self.skinning.bind_group_layout,
+                    ],
+                    push_constant_ranges: &[],
+                });
+            let skinned_oit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("mesh_skinned_shader_oit"),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("../shaders/mesh_skinned.wgsl").into(),
+                ),
+            });
+            let skinned_oit_pipeline =
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("skinned_oit_pipeline"),
+                    layout: Some(&skinned_oit_layout),
+                    vertex: wgpu::VertexState {
+                        module: &skinned_oit_shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[Vertex::buffer_layout()],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &oit_shader,
+                        entry_point: Some("fs_oit_main"),
+                        targets: &[
+                            Some(wgpu::ColorTargetState {
+                                format: wgpu::TextureFormat::Rgba16Float,
+                                blend: Some(accum_blend),
+                                write_mask: wgpu::ColorWrites::ALL,
+                            }),
+                            Some(wgpu::ColorTargetState {
+                                format: wgpu::TextureFormat::R8Unorm,
+                                blend: Some(reveal_blend),
+                                write_mask: wgpu::ColorWrites::RED,
+                            }),
+                        ],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
                     }),
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R8Unorm,
-                        blend: Some(reveal_blend),
-                        write_mask: wgpu::ColorWrites::RED,
-                    }),
-                ],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(oit_depth_stencil.clone()),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        });
-        self.skinned_oit_pipeline = Some(skinned_oit_pipeline);
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(oit_depth_stencil.clone()),
+                    multisample: wgpu::MultisampleState {
+                        count: 1,
+                        ..Default::default()
+                    },
+                    multiview: None,
+                    cache: None,
+                });
+            self.skinned_oit_pipeline = Some(skinned_oit_pipeline);
+        }
 
         let oit_instanced_pipeline = if let Some(ref instance_bgl) = self.instance_bind_group_layout
         {
@@ -1726,6 +1730,8 @@ impl ViewportGpuResources {
         // skinned vertex stage from `mesh_skinned.wgsl` and a 3-group layout
         // (camera, object, skin sidecar). Fragment stage is shared with the
         // standard HDR mesh shader.
+        // Skipped on devices with max_bind_groups < 3 (e.g. iced_wgpu which caps at 2).
+        if device.limits().max_bind_groups >= 3 {
         let hdr_skinned_shader =
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("mesh_skinned_shader_hdr"),
@@ -1882,11 +1888,12 @@ impl ViewportGpuResources {
                 cache: None,
             });
 
+            self.hdr_skinned_solid_pipeline = Some(hdr_skinned_solid_pipeline);
+            self.hdr_skinned_solid_two_sided_pipeline = Some(hdr_skinned_solid_two_sided_pipeline);
+            self.hdr_skinned_transparent_pipeline = Some(hdr_skinned_transparent_pipeline);
+            self.hdr_skinned_wireframe_pipeline = Some(hdr_skinned_wireframe_pipeline);
+        } // end max_bind_groups >= 3 guard
         self.hdr_solid_pipeline = Some(hdr_solid_pipeline);
-        self.hdr_skinned_solid_pipeline = Some(hdr_skinned_solid_pipeline);
-        self.hdr_skinned_solid_two_sided_pipeline = Some(hdr_skinned_solid_two_sided_pipeline);
-        self.hdr_skinned_transparent_pipeline = Some(hdr_skinned_transparent_pipeline);
-        self.hdr_skinned_wireframe_pipeline = Some(hdr_skinned_wireframe_pipeline);
         self.hdr_solid_two_sided_pipeline = Some(hdr_solid_two_sided_pipeline);
         self.hdr_transparent_pipeline = Some(hdr_transparent_pipeline);
         self.hdr_wireframe_pipeline = Some(hdr_wireframe_pipeline);

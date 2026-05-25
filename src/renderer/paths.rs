@@ -207,7 +207,20 @@ impl<'r> PassView<'r> {
     ///
     /// Call after [`PassPath::prepare_hdr_viewport`] for the same viewport. Set the render
     /// pass viewport and scissor rect to the correct region before calling.
+    ///
+    /// The render pass must have a `Depth24PlusStencil8` depth-stencil attachment (as eframe
+    /// callbacks always do). For render passes without a depth attachment (e.g. a plain winit
+    /// blit pass), use [`paint_hdr_blit_no_ds`](Self::paint_hdr_blit_no_ds) instead.
     pub fn paint_hdr_blit<'rp>(&self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
         self.renderer.paint_hdr_blit(render_pass, frame);
+    }
+
+    /// Like [`paint_hdr_blit`] but for render passes without a depth-stencil attachment.
+    ///
+    /// Use this when you create the blit render pass yourself (e.g. winit) and the pass
+    /// has no depth attachment. The resulting blit is identical; only the pipeline variant
+    /// differs to match the render pass format.
+    pub fn paint_hdr_blit_no_ds<'rp>(&self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
+        self.renderer.paint_hdr_blit_no_ds(render_pass, frame);
     }
 }

@@ -19,7 +19,7 @@ impl eframe::egui_wgpu::CallbackTrait for ViewportCallback {
         callback_resources: &mut eframe::egui_wgpu::CallbackResources,
     ) -> Vec<eframe::wgpu::CommandBuffer> {
         if let Some(renderer) = callback_resources.get_mut::<ViewportRenderer>() {
-            renderer.pass().prepare(device, queue, &self.frame);
+            let buffers = renderer.pass().prepare(device, queue, &self.frame);
 
             if let Some(cursor) = self.pick_cursor {
                 let hit = renderer.pick_scene_gpu(device, queue, cursor, &self.frame);
@@ -28,6 +28,7 @@ impl eframe::egui_wgpu::CallbackTrait for ViewportCallback {
                     *slot = Some(id);
                 }
             }
+            return buffers;
         }
         Vec::new()
     }
