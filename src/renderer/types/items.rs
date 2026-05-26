@@ -148,6 +148,7 @@ impl Default for SceneRenderItem {
 /// // Each frame:
 /// scene_frame.surfaces = SurfaceSubmission::Flat(vec![item.to_render_item()].into());
 /// ```
+#[non_exhaustive]
 #[derive(Clone)]
 pub struct VolumeMeshItem {
     /// GPU mesh slot for the extracted boundary surface.

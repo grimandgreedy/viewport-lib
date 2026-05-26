@@ -24,6 +24,7 @@ pub enum ToneMapping {
 /// Transparent volume meshes (`SceneFrame::transparent_volume_meshes`) require
 /// `enabled = true` -- they are rendered via the OIT pass which only exists in
 /// the HDR pipeline.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct PostProcessSettings {
     /// Enable the HDR render target and tone mapping pipeline. Default: `true`.

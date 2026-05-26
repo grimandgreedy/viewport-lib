@@ -36,6 +36,7 @@ pub struct NavigationActions {
 ///
 /// Returned by [`super::controller::OrbitCameraController::apply_to_camera`] and
 /// available from [`super::viewport_input::ViewportInput`] after a frame.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct ActionFrame {
     /// Resolved camera navigation actions.

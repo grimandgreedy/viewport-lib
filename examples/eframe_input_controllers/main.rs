@@ -677,6 +677,7 @@ impl eframe::App for App {
                                 self.save_snapshots();
                             }
                         }
+                        _ => {}
                     }
 
                     // Click-to-select: schedule a GPU pick; result arrives next frame.

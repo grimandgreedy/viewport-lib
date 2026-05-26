@@ -38,6 +38,7 @@ pub enum LightKind {
 }
 
 /// A single light source with colour and intensity.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct LightSource {
     /// The type and geometric parameters of this light.
@@ -77,6 +78,7 @@ pub enum ShadowFilter {
 /// Supports up to 8 light sources. Only `lights[0]` casts shadows.
 /// Blinn-Phong shading coefficients (ambient, diffuse, specular, shininess) have
 /// moved to per-object [`Material`] structs.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct LightingSettings {
     /// Active light sources (max 8). Default: one directional light.

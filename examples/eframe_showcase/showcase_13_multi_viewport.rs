@@ -415,6 +415,7 @@ impl App {
                         self.save_mv_snapshots();
                     }
                 }
+                _ => {}
             }
 
             // Apply remaining controllers (non-hq); hq already applied/resolved above.
@@ -457,11 +458,12 @@ impl App {
             .mv_state
             .scene
             .collect_render_items(&self.mv_state.selection);
-        let lighting = LightingSettings {
-            hemisphere_intensity: 0.5,
-            sky_colour: [1.0, 1.0, 1.0],
-            ground_colour: [1.0, 1.0, 1.0],
-            ..LightingSettings::default()
+        let lighting = {
+            let mut _t = LightingSettings::default();
+            _t.hemisphere_intensity = 0.5;
+            _t.sky_colour = [1.0, 1.0, 1.0];
+            _t.ground_colour = [1.0, 1.0, 1.0];
+            _t
         };
         let scene_gen = self.mv_state.scene.version();
         let sel_gen = self.mv_state.selection.version();

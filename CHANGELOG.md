@@ -51,6 +51,10 @@ pub struct ItemSettings {
 
 - `CameraFrustumItem` removed from the public API. Build frustum wireframes directly using `PolylineItem` with explicit quad strips for near/far planes and lateral edges. `SceneFrame::camera_frustums` is removed; push `PolylineItem` values to `SceneFrame::polylines` instead. Build your own frustum!
 - `SurfaceLICItem` removed from the public API. SurfaceLIC 'objects' belong to surface meshes and so that is where they have to be defined. Set `SceneRenderItem::lic = Some(LicOverlay { vector_attribute, config })`.
+- `ViewportId` inner field is now `pub(crate)`. External code that read `id.0` must switch to `CameraFrame::with_viewport_id(id)`. Direct construction of `ViewportId` values is no longer possible outside the crate.
+- `ClipVolumeUniform` (deprecated since 0.9.0) removed. Use `ClipVolumesUniform` and `ClipVolumeEntry`.
+- `TET_SENTINEL` (deprecated since 0.13.0) removed. Use `CELL_SENTINEL`.
+- `ViewportEvent`, `ActionFrame`, `ManipResult`, `WidgetResult`, `PostProcessSettings`, `LightingSettings`, `LightSource`, and `VolumeMeshItem` are now `#[non_exhaustive]`. Match arms on `ViewportEvent`, `ManipResult`, and `WidgetResult` must add a wildcard arm (`_ => {}`). Struct literals for the struct types must use `..Default::default()` or a constructor.
 
 #### Improved item data upload responses
 

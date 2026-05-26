@@ -70,6 +70,7 @@ pub struct WidgetContext {
 // ---------------------------------------------------------------------------
 
 /// Result returned by widget `update()` calls.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WidgetResult {
     /// Nothing changed this frame.

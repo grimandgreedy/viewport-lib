@@ -212,16 +212,13 @@ pub use quantities::{
     volume_mesh_cell_vectors_to_glyphs, volume_mesh_vertex_vectors_to_glyphs,
 };
 
-#[allow(deprecated)]
-pub use resources::ClipVolumeUniform;
 pub use resources::colourmap_data::{
     export_paraview_xml_colourmap, lerp_colourmap_lut, parse_paraview_xml_colourmap,
 };
 pub use resources::mesh_store::MeshId;
 pub use resources::sparse_volume::SparseVolumeGridData;
-#[allow(deprecated)]
 pub use resources::volume_mesh::{
-    CELL_SENTINEL, TET_SENTINEL, VolumeMeshData, extract_clipped_volume_faces,
+    CELL_SENTINEL, VolumeMeshData, extract_clipped_volume_faces,
 };
 pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,

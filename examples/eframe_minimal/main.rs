@@ -253,6 +253,7 @@ impl eframe::App for App {
                 ManipResult::None => {
                     self.transforms_snapshot = self.scene_items.iter().map(|i| i.model).collect();
                 }
+                _ => {}
             }
 
             let mut frame_data = FrameData::new(

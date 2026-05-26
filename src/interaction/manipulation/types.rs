@@ -41,6 +41,7 @@ impl Default for TransformDelta {
 }
 
 /// What the manipulation controller produced this frame.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ManipResult {
     /// No manipulation is active or no change this frame.

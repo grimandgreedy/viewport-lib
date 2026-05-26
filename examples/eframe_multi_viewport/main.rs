@@ -550,6 +550,7 @@ impl eframe::App for App {
                         self.save_snapshots();
                     }
                 }
+                _ => {}
             }
 
             // Apply remaining cameras and set aspect ratios.

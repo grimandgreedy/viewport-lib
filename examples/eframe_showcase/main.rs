@@ -1065,6 +1065,7 @@ impl eframe::App for App {
                                     self.save_interact_snapshots();
                                 }
                             }
+                            _ => {}
                         }
 
                         // Click-to-select: only when no session is active.
@@ -2132,22 +2133,24 @@ impl App {
                 let items = self.basic_scene_items();
 
                 let lights = if self.basic_state.use_point_light {
-                    vec![LightSource {
-                        kind: LightKind::Point {
+                    vec![{
+                        let mut _t = LightSource::default();
+                        _t.kind = LightKind::Point {
                             position: [5.0, 5.0, 5.0],
                             range: 30.0,
-                        },
-                        ..LightSource::default()
+                        };
+                        _t
                     }]
                 } else {
                     vec![LightSource::default()]
                 };
-                let lighting = LightingSettings {
-                    lights,
-                    hemisphere_intensity: 0.25,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [1.0, 1.0, 1.0],
-                    ..LightingSettings::default()
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.lights = lights;
+                    _t.hemisphere_intensity = 0.25;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
+                    _t
                 };
                 (items, Some(BG_COLOUR), lighting, 0u64, 0u64)
             }
@@ -2158,11 +2161,12 @@ impl App {
                     .scene
                     .collect_render_items(&self.sg_state.selection);
                 let bg = showcase_02_scene_graph::background_colour(self.sg_state.bg_cycle);
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [1.0, 1.0, 1.0],
-                    ..LightingSettings::default()
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.hemisphere_intensity = 0.5;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
+                    _t
                 };
                 scene_graph_outline = !self.sg_state.selection.is_empty();
                 scene_graph_outline_width = self.sg_state.outline_width;
@@ -2189,11 +2193,12 @@ impl App {
                 let sg = self.perf_state.scene.version();
                 let ss = self.perf_state.selection.version();
                 perf_outline = !self.perf_state.selection.is_empty();
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [1.0, 1.0, 1.0],
-                    ..LightingSettings::default()
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.hemisphere_intensity = 0.5;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
+                    _t
                 };
                 (vec![], Some(BG_COLOUR), lighting, sg, ss)
             }
@@ -2218,47 +2223,51 @@ impl App {
                     && !self.materials_visibility_state.selection.is_empty();
                 let sg = self.materials_visibility_state.scene.version();
                 let ss = self.materials_visibility_state.selection.version();
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [1.0, 1.0, 1.0],
-                    ..LightingSettings::default()
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.hemisphere_intensity = 0.5;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
+                    _t
                 };
                 (items, Some(BG_COLOUR), lighting, sg, ss)
             }
 
             ShowcaseMode::PostProcess => {
                 let items = self.pp_state.scene.collect_render_items(&Selection::new());
-                let mut lights = vec![LightSource {
-                    kind: LightKind::Directional {
+                let mut lights = vec![{
+                    let mut _t = LightSource::default();
+                    _t.kind = LightKind::Directional {
                         direction: [0.6, 0.4, 1.0],
-                    },
-                    intensity: self.pp_state.dir_intensity,
-                    ..LightSource::default()
+                    };
+                    _t.intensity = self.pp_state.dir_intensity;
+                    _t
                 }];
                 if self.pp_state.point_light_on {
-                    lights.push(LightSource {
-                        kind: LightKind::Point {
+                    lights.push({
+                        let mut _t = LightSource::default();
+                        _t.kind = LightKind::Point {
                             position: [3.0, 3.0, 3.0],
                             range: 15.0,
-                        },
-                        colour: [1.0, 0.9, 0.7],
-                        intensity: 2.0,
-                        ..LightSource::default()
+                        };
+                        _t.colour = [1.0, 0.9, 0.7];
+                        _t.intensity = 2.0;
+                        _t
                     });
                 }
-                let lighting = LightingSettings {
-                    lights,
-                    shadows_enabled: true,
-                    shadow_filter: if self.pp_state.shadow_pcss {
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.lights = lights;
+                    _t.shadows_enabled = true;
+                    _t.shadow_filter = if self.pp_state.shadow_pcss {
                         ShadowFilter::Pcss
                     } else {
                         ShadowFilter::Pcf
-                    },
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [1.0, 1.0, 1.0],
-                    ..LightingSettings::default()
+                    };
+                    _t.hemisphere_intensity = 0.5;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
+                    _t
                 };
                 let sg = self.pp_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
@@ -2269,30 +2278,33 @@ impl App {
                 if self.nm_state.clip_enabled {
                     adv_clip_objects.push(ClipObject::plane([1.0, 0.0, 0.0], 0.0));
                 }
-                let lighting = LightingSettings {
-                    lights: vec![
-                        LightSource {
-                            kind: LightKind::Directional {
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.lights = vec![
+                        {
+                            let mut _t = LightSource::default();
+                            _t.kind = LightKind::Directional {
                                 direction: [0.5, 0.3, 1.0],
-                            },
-                            intensity: 2.5,
-                            ..LightSource::default()
+                            };
+                            _t.intensity = 2.5;
+                            _t
                         },
-                        LightSource {
-                            kind: LightKind::Point {
+                        {
+                            let mut _t = LightSource::default();
+                            _t.kind = LightKind::Point {
                                 position: [3.0, 3.0, 3.0],
                                 range: 15.0,
-                            },
-                            colour: [1.0, 0.97, 0.93],
-                            intensity: 2.0,
-                            ..LightSource::default()
+                            };
+                            _t.colour = [1.0, 0.97, 0.93];
+                            _t.intensity = 2.0;
+                            _t
                         },
-                    ],
-                    shadows_enabled: true,
-                    hemisphere_intensity: 0.4,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [1.0, 1.0, 1.0],
-                    ..LightingSettings::default()
+                    ];
+                    _t.shadows_enabled = true;
+                    _t.hemisphere_intensity = 0.4;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
+                    _t
                 };
                 let sg = self.nm_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
@@ -2300,25 +2312,27 @@ impl App {
 
             ShowcaseMode::Shadows => {
                 let items = self.shd_state.scene.collect_render_items(&Selection::new());
-                let lighting = LightingSettings {
-                    lights: vec![LightSource {
-                        kind: LightKind::Directional {
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.lights = vec![{
+                        let mut _t = LightSource::default();
+                        _t.kind = LightKind::Directional {
                             direction: [0.5, 0.2, 1.2],
-                        },
-                        intensity: 2.0,
-                        ..LightSource::default()
-                    }],
-                    shadows_enabled: true,
-                    shadow_cascade_count: self.shd_state.cascade_count,
-                    shadow_filter: if self.shd_state.pcss_on {
+                        };
+                        _t.intensity = 2.0;
+                        _t
+                    }];
+                    _t.shadows_enabled = true;
+                    _t.shadow_cascade_count = self.shd_state.cascade_count;
+                    _t.shadow_filter = if self.shd_state.pcss_on {
                         ShadowFilter::Pcss
                     } else {
                         ShadowFilter::Pcf
-                    },
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [1.0, 1.0, 1.0],
-                    ..LightingSettings::default()
+                    };
+                    _t.hemisphere_intensity = 0.5;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
+                    _t
                 };
                 let sg = self.shd_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
@@ -2327,11 +2341,12 @@ impl App {
             ShowcaseMode::Annotation => {
                 let items = self.ann_state.scene.collect_render_items(&Selection::new());
                 let sg = self.ann_state.scene.version();
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [1.0, 1.0, 1.0],
-                    ..LightingSettings::default()
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.hemisphere_intensity = 0.5;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
+                    _t
                 };
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
@@ -2339,11 +2354,12 @@ impl App {
             ShowcaseMode::CameraTools => {
                 let items = self.ct_state.scene.collect_render_items(&Selection::new());
                 let sg = self.ct_state.scene.version();
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [1.0, 1.0, 1.0],
-                    ..LightingSettings::default()
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.hemisphere_intensity = 0.5;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
+                    _t
                 };
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
@@ -2356,16 +2372,17 @@ impl App {
                 if !self.lights_state.unlit_sphere {
                     items.retain(|item| !item.settings.unlit);
                 }
-                let lighting = LightingSettings {
-                    lights: self.lights_state.sources.clone(),
-                    hemisphere_intensity: if self.lights_state.hemi_on {
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.lights = self.lights_state.sources.clone();
+                    _t.hemisphere_intensity = if self.lights_state.hemi_on {
                         self.lights_state.hemi_intensity
                     } else {
                         0.0
-                    },
-                    sky_colour: self.lights_state.sky_colour,
-                    ground_colour: self.lights_state.ground_colour,
-                    ..LightingSettings::default()
+                    };
+                    _t.sky_colour = self.lights_state.sky_colour;
+                    _t.ground_colour = self.lights_state.ground_colour;
+                    _t
                 };
                 let sg = self.lights_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
@@ -2440,11 +2457,12 @@ impl App {
                     item.material.backface_policy = BackfacePolicy::Identical;
                 }
                 let sg = self.scalar_state.scene.version();
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [1.0, 1.0, 1.0],
-                    ..LightingSettings::default()
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.hemisphere_intensity = 0.5;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
+                    _t
                 };
                 (
                     items,
@@ -2463,11 +2481,12 @@ impl App {
                 let sg = self.matcap_state.scene.version();
                 // Lighting is not used by matcap-shaded objects, but we still
                 // need minimal settings for the framework.
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [1.0, 1.0, 1.0],
-                    ..LightingSettings::default()
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.hemisphere_intensity = 0.5;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
+                    _t
                 };
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
@@ -2482,11 +2501,12 @@ impl App {
                     item.material.backface_policy = BackfacePolicy::Identical;
                 }
                 let sg = self.texture_state.scene.version();
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 1.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [0.8, 0.8, 0.8],
-                    ..LightingSettings::default()
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.hemisphere_intensity = 1.5;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [0.8, 0.8, 0.8];
+                    _t
                 };
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
@@ -2497,11 +2517,12 @@ impl App {
                     .scene
                     .collect_render_items(&Selection::new());
                 let sg = self.param_vis_state.scene.version();
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [1.0, 1.0, 1.0],
-                    ..LightingSettings::default()
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.hemisphere_intensity = 0.5;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
+                    _t
                 };
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
@@ -2509,19 +2530,21 @@ impl App {
             ShowcaseMode::GroundPlane => {
                 let items = self.gp_state.scene.collect_render_items(&Selection::new());
                 let sg = self.gp_state.scene.version();
-                let lighting = LightingSettings {
-                    lights: vec![LightSource {
-                        kind: LightKind::Directional {
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.lights = vec![{
+                        let mut _t = LightSource::default();
+                        _t.kind = LightKind::Directional {
                             direction: [0.4, 0.6, 1.0],
-                        },
-                        intensity: 1.5,
-                        ..LightSource::default()
-                    }],
-                    shadows_enabled: true,
-                    hemisphere_intensity: 0.3,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [0.3, 0.3, 0.3],
-                    ..LightingSettings::default()
+                        };
+                        _t.intensity = 1.5;
+                        _t
+                    }];
+                    _t.shadows_enabled = true;
+                    _t.hemisphere_intensity = 0.3;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [0.3, 0.3, 0.3];
+                    _t
                 };
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
@@ -2572,11 +2595,12 @@ impl App {
                 }
 
                 let sg = self.face_state.scene.version();
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.4,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [1.0, 1.0, 1.0],
-                    ..LightingSettings::default()
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.hemisphere_intensity = 0.4;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
+                    _t
                 };
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
@@ -2649,11 +2673,12 @@ impl App {
             ShowcaseMode::Labels => {
                 let items = self.lbl_state.scene.collect_render_items(&Selection::new());
                 let sg = self.lbl_state.scene.version();
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [1.0, 1.0, 1.0],
-                    ..LightingSettings::default()
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.hemisphere_intensity = 0.5;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
+                    _t
                 };
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
@@ -2722,11 +2747,12 @@ impl App {
                 }
 
                 let items = showcase_36_playback_runtime::pb_scene_items(self);
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [1.0, 1.0, 1.0],
-                    ..LightingSettings::default()
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.hemisphere_intensity = 0.5;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
+                    _t
                 };
                 let sg = self.pb_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
@@ -2740,22 +2766,24 @@ impl App {
 
             ShowcaseMode::SurfaceLIC => {
                 let items = self.lic_state.scene.collect_render_items(&Selection::new());
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [0.7, 0.7, 0.7],
-                    ..LightingSettings::default()
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.hemisphere_intensity = 0.5;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [0.7, 0.7, 0.7];
+                    _t
                 };
                 let sg = self.lic_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
 
             ShowcaseMode::TensorGlyphs => {
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.6,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [0.8, 0.8, 0.8],
-                    ..LightingSettings::default()
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.hemisphere_intensity = 0.6;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [0.8, 0.8, 0.8];
+                    _t
                 };
                 let items = showcase_39_tensor_glyphs::beam_scene_items(self);
                 (items, Some(BG_COLOUR), lighting, 0, 0)
@@ -2795,11 +2823,12 @@ impl App {
                 } else {
                     Vec::new()
                 };
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [0.7, 0.7, 0.7],
-                    ..LightingSettings::default()
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.hemisphere_intensity = 0.5;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [0.7, 0.7, 0.7];
+                    _t
                 };
                 let sg = self.rt_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
@@ -2811,11 +2840,12 @@ impl App {
                 } else {
                     Vec::new()
                 };
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [0.7, 0.7, 0.7],
-                    ..LightingSettings::default()
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.hemisphere_intensity = 0.5;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [0.7, 0.7, 0.7];
+                    _t
                 };
                 let sg = self.dbg_draw_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
@@ -2834,11 +2864,12 @@ impl App {
                 } else {
                     Vec::new()
                 };
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [0.7, 0.7, 0.7],
-                    ..LightingSettings::default()
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.hemisphere_intensity = 0.5;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [0.7, 0.7, 0.7];
+                    _t
                 };
                 let sg = self.skin_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
@@ -2850,11 +2881,12 @@ impl App {
                 } else {
                     Vec::new()
                 };
-                let lighting = LightingSettings {
-                    hemisphere_intensity: 0.5,
-                    sky_colour: [1.0, 1.0, 1.0],
-                    ground_colour: [0.6, 0.6, 0.6],
-                    ..LightingSettings::default()
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.hemisphere_intensity = 0.5;
+                    _t.sky_colour = [1.0, 1.0, 1.0];
+                    _t.ground_colour = [0.6, 0.6, 0.6];
+                    _t
                 };
                 let sg = self.decal48_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
@@ -3084,24 +3116,26 @@ impl App {
                 rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
                 fd.camera.render_camera = rc;
                 if self.pp_state.dof_enabled {
-                    fd.effects.post_process = PostProcessSettings {
-                        enabled: true,
-                        dof_enabled: true,
-                        dof_focal_distance: self.pp_state.dof_focal_dist,
-                        dof_focal_range: self.pp_state.dof_focal_range,
-                        dof_max_blur_radius: self.pp_state.dof_max_blur,
-                        ..PostProcessSettings::default()
+                    fd.effects.post_process = {
+                        let mut _t = PostProcessSettings::default();
+                        _t.enabled = true;
+                        _t.dof_enabled = true;
+                        _t.dof_focal_distance = self.pp_state.dof_focal_dist;
+                        _t.dof_focal_range = self.pp_state.dof_focal_range;
+                        _t.dof_max_blur_radius = self.pp_state.dof_max_blur;
+                        _t
                     };
                 }
             }
             ShowcaseMode::Shadows => {
-                fd.effects.post_process = PostProcessSettings {
-                    enabled: false,
-                    contact_shadows: self.shd_state.contact_on,
-                    contact_shadow_max_distance: 0.18,
-                    contact_shadow_steps: 32,
-                    contact_shadow_thickness: 0.04,
-                    ..PostProcessSettings::default()
+                fd.effects.post_process = {
+                    let mut _t = PostProcessSettings::default();
+                    _t.enabled = false;
+                    _t.contact_shadows = self.shd_state.contact_on;
+                    _t.contact_shadow_max_distance = 0.18;
+                    _t.contact_shadow_steps = 32;
+                    _t.contact_shadow_thickness = 0.04;
+                    _t
                 };
                 // Cap far plane for better cascade distribution, but track orbit
                 // distance so the scene doesn't disappear when zooming out.
@@ -3111,9 +3145,10 @@ impl App {
                 fd.camera.render_camera = rc;
             }
             ShowcaseMode::NormalMaps => {
-                fd.effects.post_process = PostProcessSettings {
-                    enabled: false,
-                    ..PostProcessSettings::default()
+                fd.effects.post_process = {
+                    let mut _t = PostProcessSettings::default();
+                    _t.enabled = false;
+                    _t
                 };
                 // Cap far plane for better cascade distribution, but track orbit
                 // distance so the scene doesn't disappear when zooming out.
@@ -3139,12 +3174,13 @@ impl App {
                 rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
                 fd.camera.render_camera = rc;
                 if self.lights_state.edl_enabled {
-                    fd.effects.post_process = PostProcessSettings {
-                        enabled: true,
-                        edl_enabled: true,
-                        edl_radius: self.lights_state.edl_radius,
-                        edl_strength: self.lights_state.edl_strength,
-                        ..PostProcessSettings::default()
+                    fd.effects.post_process = {
+                        let mut _t = PostProcessSettings::default();
+                        _t.enabled = true;
+                        _t.edl_enabled = true;
+                        _t.edl_radius = self.lights_state.edl_radius;
+                        _t.edl_strength = self.lights_state.edl_strength;
+                        _t
                     };
                 }
             }

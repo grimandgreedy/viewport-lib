@@ -5,10 +5,9 @@
 /// `target.center` / `target.distance` / `target.orientation` to
 /// [`CameraAnimator::fly_to`](crate::camera::animator::CameraAnimator::fly_to).
 ///
-/// The getters/setters on [`Camera`] (`center()`, `distance()`,
-/// `orientation()`) are forward-compatible accessors intended for eventual
-/// field privatization (Phase 4). Field access (`camera.center` etc.) still
-/// works and is not deprecated.
+/// The getters/setters on [`Camera`] (`center()`, `distance()`, `orientation()`)
+/// are provided as convenience accessors. Field access (`camera.center` etc.)
+/// works equally well.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CameraTarget {

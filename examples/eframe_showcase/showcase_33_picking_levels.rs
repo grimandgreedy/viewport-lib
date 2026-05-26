@@ -1685,27 +1685,30 @@ pub(crate) fn pl_collect_scene_items(
     }
     let scene_gen = app.pl_state.scene.version();
     let sel_gen = app.pl_state.selection.version();
-    let lighting = LightingSettings {
-        lights: vec![
-            viewport_lib::LightSource {
-                kind: viewport_lib::LightKind::Directional {
+    let lighting = {
+        let mut _t = LightingSettings::default();
+        _t.lights = vec![
+            {
+                let mut _t = viewport_lib::LightSource::default();
+                _t.kind = viewport_lib::LightKind::Directional {
                     direction: [0.4, 0.3, 1.5],
-                },
-                intensity: 0.7,
-                ..Default::default()
+                };
+                _t.intensity = 0.7;
+                _t
             },
-            viewport_lib::LightSource {
-                kind: viewport_lib::LightKind::Directional {
+            {
+                let mut _t = viewport_lib::LightSource::default();
+                _t.kind = viewport_lib::LightKind::Directional {
                     direction: [-0.3, -0.2, -1.0],
-                },
-                intensity: 0.35,
-                ..Default::default()
+                };
+                _t.intensity = 0.35;
+                _t
             },
-        ],
-        hemisphere_intensity: 0.7,
-        sky_colour: [1.0, 1.0, 1.0],
-        ground_colour: [0.8, 0.8, 0.8],
-        ..LightingSettings::default()
+        ];
+        _t.hemisphere_intensity = 0.7;
+        _t.sky_colour = [1.0, 1.0, 1.0];
+        _t.ground_colour = [0.8, 0.8, 0.8];
+        _t
     };
     (items, lighting, scene_gen, sel_gen)
 }

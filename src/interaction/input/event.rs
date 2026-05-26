@@ -27,6 +27,7 @@ pub enum ScrollUnits {
 /// Host applications translate their native windowing events into
 /// `ViewportEvent` values and push them to [`super::controller::OrbitCameraController`]
 /// (or [`super::viewport_input::ViewportInput`] for direct input handling).
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum ViewportEvent {
     /// The pointer moved to the given viewport-local position.
