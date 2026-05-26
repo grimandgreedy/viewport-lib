@@ -216,7 +216,7 @@ impl ViewportRenderer {
 
         let dist = frame.camera.render_camera.distance;
         let shadow_near = (dist * 0.1).max(frame.camera.render_camera.near);
-        let shadow_far = (dist * 1.5).max(10.0).min(frame.camera.render_camera.far);
+        let shadow_far = (dist * 1.5).max(shadow_extent).min(frame.camera.render_camera.far);
         let cascade_splits = compute_cascade_splits(
             shadow_near,
             shadow_far,

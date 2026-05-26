@@ -1,7 +1,7 @@
 //! Polyline widget: N draggable waypoints connected by straight line segments.
 
 use crate::interaction::clip_plane::ray_plane_intersection;
-use crate::renderer::{GlyphItem, GlyphType, PolylineItem, PickId};
+use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
 
 use super::{WidgetContext, WidgetResult, ctx_ray, handle_world_radius, ray_point_dist};
 

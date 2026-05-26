@@ -1,7 +1,7 @@
 //! Plane widget: a draggable infinite plane defined by a center point and normal.
 
 use crate::interaction::clip_plane::ray_plane_intersection;
-use crate::renderer::{GlyphItem, GlyphType, PolylineItem, PickId};
+use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
 

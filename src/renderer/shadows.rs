@@ -10,11 +10,13 @@ pub(super) fn compute_cascade_splits(near: f32, far: f32, count: u32, lambda: f3
     splits
 }
 
-/// Build a tight orthographic light-space matrix for one cascade.
+/// Build an orthographic light-space matrix for one cascade.
 ///
-/// Given the camera frustum sub-volume [split_near, split_far], compute the 8 corners
-/// in world space, transform them into light space, and build a tight ortho projection.
-/// Includes texel snapping to prevent shadow shimmer during camera movement.
+/// Uses bounding-sphere fitting (not AABB) so the cascade XY extents are constant
+/// for a given split pair regardless of camera orientation. This prevents shadows
+/// from shifting on static geometry when the camera rotates. Texel-snapping the
+/// sphere center eliminates sub-texel shimmer during camera translation.
+/// Z extents use AABB to capture casters behind or outside the frustum.
 pub(super) fn compute_cascade_matrix(
     light_dir: glam::Vec3,
     camera_view: glam::Mat4,
@@ -44,51 +46,67 @@ pub(super) fn compute_cascade_matrix(
         }
     }
 
-    // Compute frustum center for light view positioning.
     let center = corners_world
         .iter()
         .copied()
         .fold(glam::Vec3::ZERO, |a, b| a + b)
         / 8.0;
 
-    // Build light view matrix.
+    // Bounding sphere radius of this frustum slice. Depends only on fov/aspect/splits,
+    // not camera orientation, so the cascade XY footprint stays constant as camera rotates.
+    let radius = corners_world
+        .iter()
+        .map(|c| (*c - center).length())
+        .fold(0.0f32, f32::max);
+
+    // Build a FIXED light view (anchored at world origin, not the frustum center).
+    // This gives center_ls a non-zero, varying position as the camera moves, so
+    // texel snapping actually discretises the cascade's world-space position.
+    // If we build look_at around `center`, center_ls is always (0,0,-500) and
+    // snapping it to texels does nothing -- the cascade slides continuously.
     let dir = light_dir.normalize();
     let light_up = if dir.z.abs() > 0.99 {
         glam::Vec3::X
     } else {
         glam::Vec3::Z
     };
-    let light_view = glam::Mat4::look_at_rh(center + dir * 500.0, center, light_up);
+    let light_view = glam::Mat4::look_at_rh(dir * 500.0, glam::Vec3::ZERO, light_up);
 
-    // Transform frustum corners into light space, find AABB.
-    let mut min_ls = glam::Vec3::splat(f32::MAX);
-    let mut max_ls = glam::Vec3::splat(f32::MIN);
+    // Project the frustum sphere center through the fixed light view, then snap
+    // its XY to texel boundaries.  The cascade only shifts in whole-texel steps,
+    // which eliminates shadow shimmer on static geometry as the camera moves.
+    let texel_size = (radius * 2.0) / tile_size;
+    let center_ls = light_view.transform_point3(center);
+    let snapped_cx = if texel_size > 0.0 {
+        (center_ls.x / texel_size).floor() * texel_size
+    } else {
+        center_ls.x
+    };
+    let snapped_cy = if texel_size > 0.0 {
+        (center_ls.y / texel_size).floor() * texel_size
+    } else {
+        center_ls.y
+    };
+
+    let min_x = snapped_cx - radius;
+    let max_x = snapped_cx + radius;
+    let min_y = snapped_cy - radius;
+    let max_y = snapped_cy + radius;
+
+    // Z extents: AABB of corners plus margin to capture casters outside the frustum.
+    // Keep tight: a large z range inflates the world-space shadow bias.
+    let mut min_z = f32::MAX;
+    let mut max_z = f32::MIN;
     for c in &corners_world {
-        let ls = light_view.transform_point3(*c);
-        min_ls = min_ls.min(ls);
-        max_ls = max_ls.max(ls);
+        let ls_z = light_view.transform_point3(*c).z;
+        min_z = min_z.min(ls_z);
+        max_z = max_z.max(ls_z);
     }
-
-    // Expand near/far so shadow casters outside the camera frustum are captured.
-    // Keep modest : excessively large Z ranges inflate the shadow_bias world-space
-    // equivalent and cause visible peter panning at contact points.
-    min_ls.z -= 50.0;
-    max_ls.z += 20.0;
-
-    // Texel snapping: round min/max to texel boundaries to prevent shimmer.
-    let world_units_per_texel_x = (max_ls.x - min_ls.x) / tile_size;
-    let world_units_per_texel_y = (max_ls.y - min_ls.y) / tile_size;
-    if world_units_per_texel_x > 0.0 {
-        min_ls.x = (min_ls.x / world_units_per_texel_x).floor() * world_units_per_texel_x;
-        max_ls.x = (max_ls.x / world_units_per_texel_x).ceil() * world_units_per_texel_x;
-    }
-    if world_units_per_texel_y > 0.0 {
-        min_ls.y = (min_ls.y / world_units_per_texel_y).floor() * world_units_per_texel_y;
-        max_ls.y = (max_ls.y / world_units_per_texel_y).ceil() * world_units_per_texel_y;
-    }
+    min_z -= 15.0;
+    max_z += 5.0;
 
     let light_proj =
-        glam::Mat4::orthographic_rh(min_ls.x, max_ls.x, min_ls.y, max_ls.y, -max_ls.z, -min_ls.z);
+        glam::Mat4::orthographic_rh(min_x, max_x, min_y, max_y, -max_z, -min_z);
 
     light_proj * light_view
 }

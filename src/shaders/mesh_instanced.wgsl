@@ -282,10 +282,11 @@ fn sample_shadow_csm(
     let n_dot_l = dot(surface_normal, light_dir);
     let offset_sign = select(-1.0, 1.0, n_dot_l >= 0.0);
     let texel_world = 2.0 / (shadow_atlas.cascade_vp[cascade_idx][0][0] * shadow_atlas.atlas_size * (rect.z - rect.x));
-    let normal_bias = texel_world * mix(1.5, 0.5, clamp(abs(n_dot_l), 0.0, 1.0));
+    let normal_bias = texel_world * mix(1.5, 0.0, clamp(abs(n_dot_l), 0.0, 1.0));
     let offset_world = world_pos + surface_normal * (offset_sign * normal_bias);
     let offset_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(offset_world, 1.0);
     let biased_depth = (offset_clip.xyz / offset_clip.w).z - lights_uniform.shadow_bias;
+    let surface_depth = ndc.z;
 
     let noise = fract(52.9829189 * fract(dot(world_pos.xz, vec2<f32>(0.06711056, 0.00583715))));
     let rot = noise * 6.28318530;
@@ -301,10 +302,9 @@ fn sample_shadow_csm(
             let rd = vec2<f32>(d.x * cos_r - d.y * sin_r, d.x * sin_r + d.y * cos_r);
             let sample_uv = atlas_uv + rd * search_radius;
             let clamped_uv = clamp(sample_uv, rect.xy, rect.zw);
-            let sample_depth = textureSampleCompare(shadow_map, shadow_sampler, clamped_uv, biased_depth);
-            if sample_depth < 1.0 {
-                let coords = vec2<i32>(clamped_uv * shadow_atlas.atlas_size);
-                let raw_depth = textureLoad(shadow_map, coords, 0);
+            let coords = vec2<i32>(clamped_uv * shadow_atlas.atlas_size);
+            let raw_depth = textureLoad(shadow_map, coords, 0);
+            if raw_depth < surface_depth {
                 blocker_sum += raw_depth;
                 blocker_count += 1.0;
             }

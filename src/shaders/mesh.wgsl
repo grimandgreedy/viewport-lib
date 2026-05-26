@@ -337,22 +337,18 @@ fn sample_shadow_csm(
 
     let texel_size = 1.0 / shadow_atlas.atlas_size;
 
-    // Normal-offset depth bias: move the comparison point toward the light so
-    // the receiver sample does not self-intersect the shadow caster. Increase
-    // the offset near grazing angles, where curved surfaces are most prone to
-    // shadow-terminator acne.
-    //
-    // Scale the bias by the cascade's world-space texel size so that far
-    // cascades (which cover much larger world areas per texel) get proportionally
-    // more bias. cascade_vp[i][0][0] = 2 / world_extent_x for the ortho proj,
-    // so world_per_texel = 2 / (scale * atlas_size * tile_fraction).
+    // Normal-offset depth bias: increase at grazing angles to suppress acne.
+    // Taper to 0.0 at n_dot_l = 1.0 so a close caster is not pushed past the
+    // receiver. Scale by cascade texel size so far cascades get proportionally
+    // more bias (cascade_vp[i][0][0] = 2 / world_extent_x).
     let n_dot_l = dot(surface_normal, light_dir);
     let offset_sign = select(-1.0, 1.0, n_dot_l >= 0.0);
     let texel_world = 2.0 / (shadow_atlas.cascade_vp[cascade_idx][0][0] * shadow_atlas.atlas_size * (rect.z - rect.x));
-    let normal_bias = texel_world * mix(1.5, 0.5, clamp(abs(n_dot_l), 0.0, 1.0));
+    let normal_bias = texel_world * mix(1.5, 0.0, clamp(abs(n_dot_l), 0.0, 1.0));
     let offset_world = world_pos + surface_normal * (offset_sign * normal_bias);
     let offset_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(offset_world, 1.0);
     let biased_depth = (offset_clip.xyz / offset_clip.w).z - lights_uniform.shadow_bias;
+    let surface_depth = ndc.z; // unbiased receiver depth for PCSS blocker search
 
     // Per-fragment Poisson disk rotation : breaks up the coherent square/blob
     // pattern that results from every pixel using the same disk orientation.
@@ -368,7 +364,8 @@ fn sample_shadow_csm(
         // ---------------------------------------------------------------
         let search_radius = shadow_atlas.pcss_light_radius * 16.0 * texel_size;
 
-        // Phase 1: Blocker search (16 Poisson samples).
+        // Phase 1: Blocker search (16 Poisson samples). Raw depth loads against
+        // surface_depth so a close caster is not missed due to bias.
         var blocker_sum = 0.0;
         var blocker_count = 0.0;
         for (var i = 0u; i < 16u; i++) {
@@ -376,10 +373,9 @@ fn sample_shadow_csm(
             let rd = vec2<f32>(d.x * cos_r - d.y * sin_r, d.x * sin_r + d.y * cos_r);
             let sample_uv = atlas_uv + rd * search_radius;
             let clamped_uv = clamp(sample_uv, rect.xy, rect.zw);
-            let sample_depth = textureSampleCompare(shadow_map, shadow_sampler, clamped_uv, biased_depth);
-            if sample_depth < 1.0 {
-                let coords = vec2<i32>(clamped_uv * shadow_atlas.atlas_size);
-                let raw_depth = textureLoad(shadow_map, coords, 0);
+            let coords = vec2<i32>(clamped_uv * shadow_atlas.atlas_size);
+            let raw_depth = textureLoad(shadow_map, coords, 0);
+            if raw_depth < surface_depth {
                 blocker_sum += raw_depth;
                 blocker_count += 1.0;
             }

@@ -1,7 +1,7 @@
 //! Sphere widget: draggable center handle and radius handle.
 
 use crate::interaction::clip_plane::ray_plane_intersection;
-use crate::renderer::{ClipObject, ClipShape, GlyphItem, GlyphType, PolylineItem, PickId};
+use crate::renderer::{ClipObject, ClipShape, GlyphItem, GlyphType, PolylineItem};
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
 

@@ -65,7 +65,7 @@ impl Default for LightSource {
 /// Shadow filtering mode.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ShadowFilter {
-    /// Standard 3×3 PCF (fast).
+    /// Standard 3x3 PCF (fast).
     #[default]
     Pcf,
     /// Percentage-Closer Soft Shadows (variable penumbra width, higher cost).
@@ -81,7 +81,7 @@ pub enum ShadowFilter {
 pub struct LightingSettings {
     /// Active light sources (max 8). Default: one directional light.
     pub lights: Vec<LightSource>,
-    /// Shadow map depth bias to reduce shadow acne. Default: 0.0001.
+    /// Constant NDC depth bias subtracted from the receiver comparison depth. Default: 0.0.
     pub shadow_bias: f32,
     /// Whether shadow maps are computed and sampled. Default: true.
     pub shadows_enabled: bool,
@@ -95,7 +95,7 @@ pub struct LightingSettings {
     /// Tighter values improve shadow map texel density and reduce contact-shadow penumbra.
     pub shadow_extent_override: Option<f32>,
 
-    /// Number of cascaded shadow map splits (1–4). Default: 4.
+    /// Number of cascaded shadow map splits (1-4). Default: 4.
     pub shadow_cascade_count: u32,
     /// Shadow atlas resolution (width = height). Default: 4096.
     /// Each cascade tile is `atlas_resolution / 2`.
@@ -110,7 +110,7 @@ impl Default for LightingSettings {
     fn default() -> Self {
         Self {
             lights: vec![LightSource::default()],
-            shadow_bias: 0.0001,
+            shadow_bias: 0.0,
             shadows_enabled: true,
             sky_colour: [0.8, 0.9, 1.0],
             ground_colour: [0.5, 0.55, 0.6],

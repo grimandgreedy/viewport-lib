@@ -215,7 +215,7 @@ impl App {
             spot_inner_deg: 15.0,
             spot_outer_deg: 25.0,
             shadows_enabled: true,
-            shadow_bias: 0.0001,
+            shadow_bias: 0.0,
             shadow_cascade_count: 4,
             shadow_filter: ShadowFilter::Pcf,
             pcss_light_radius: 0.02,
