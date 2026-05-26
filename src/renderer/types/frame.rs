@@ -160,6 +160,13 @@ impl CameraFrame {
         self.viewport_index = viewport_index;
         self
     }
+
+    /// Set the multi-viewport slot from a ViewportId returned by ViewportRenderer::create_viewport.
+    /// Prefer this over with_viewport_index when you have a ViewportId.
+    pub fn with_viewport_id(mut self, id: crate::renderer::ViewportId) -> Self {
+        self.viewport_index = id.0;
+        self
+    }
 }
 
 /// Surface submission type for world-space geometry.

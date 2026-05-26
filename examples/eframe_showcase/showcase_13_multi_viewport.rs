@@ -486,7 +486,7 @@ impl App {
             let qh = qr.height();
 
             let camera_frame = CameraFrame::from_camera(&self.mv_state.cameras[i], [qw, qh])
-                .with_viewport_index(viewports[i].0);
+                .with_viewport_id(viewports[i]);
 
             let mut fd = FrameData::new(
                 camera_frame,

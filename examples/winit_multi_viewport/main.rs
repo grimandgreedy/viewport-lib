@@ -145,7 +145,7 @@ impl AppState {
 
         let cam = &self.cameras[quad as usize];
         let size = [qw as f32, qh as f32];
-        let camera_frame = CameraFrame::from_camera(cam, size).with_viewport_index(vp_id.0);
+        let camera_frame = CameraFrame::from_camera(cam, size).with_viewport_id(vp_id);
 
         let mut fd = FrameData::new(camera_frame, self.build_scene());
         fd.effects.lighting = LightingSettings::default();

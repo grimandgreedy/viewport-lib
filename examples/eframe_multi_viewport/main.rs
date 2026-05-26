@@ -624,7 +624,7 @@ impl eframe::App for App {
                 let qw = qr.width();
                 let qh = qr.height();
                 let cam_frame = CameraFrame::from_camera(&self.cameras[i], [qw, qh])
-                    .with_viewport_index(self.vp_ids[i].0)
+                    .with_viewport_id(self.vp_ids[i])
                     .with_pixels_per_point(ppp);
                 let mut fd = FrameData::new(
                     cam_frame,

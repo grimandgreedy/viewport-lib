@@ -40,12 +40,12 @@ pub use self::types::{
 /// [`ViewportRenderer::prepare_viewport`], [`ViewportRenderer::paint_viewport`],
 /// and [`ViewportRenderer::render_viewport`].
 ///
-/// The inner `usize` is the slot index and doubles as the value for
-/// [`CameraFrame::with_viewport_index`].  Single-viewport applications that use
+/// The slot index is managed internally. To bind a `ViewportId` to a camera frame,
+/// use [`CameraFrame::with_viewport_id`]. Single-viewport applications that use
 /// the legacy [`ViewportRenderer::prepare`] / [`ViewportRenderer::paint`] API do
 /// not need this type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ViewportId(pub usize);
+pub struct ViewportId(pub(crate) usize);
 
 use self::shadows::{compute_cascade_matrix, compute_cascade_splits};
 use self::types::{INSTANCING_THRESHOLD, InstancedBatch};
@@ -916,12 +916,12 @@ impl ViewportRenderer {
     /// [`paint_viewport`](Self::paint_viewport), and
     /// [`render_viewport`](Self::render_viewport) each frame.
     ///
-    /// Also set `CameraFrame::viewport_index` to `id.0` when building the
+    /// Also set the viewport slot on the camera frame when building the
     /// [`FrameData`] for this viewport:
     /// ```rust,ignore
     /// let id = renderer.create_viewport(&device);
     /// let frame = FrameData {
-    ///     camera: CameraFrame::from_camera(&cam, size).with_viewport_index(id.0),
+    ///     camera: CameraFrame::from_camera(&cam, size).with_viewport_id(id),
     ///     ..Default::default()
     /// };
     /// ```
@@ -995,8 +995,8 @@ impl ViewportRenderer {
     /// Call once per viewport per frame, **after** [`prepare_scene`](Self::prepare_scene).
     ///
     /// `id` must have been obtained from [`create_viewport`](Self::create_viewport).
-    /// `frame.camera.viewport_index` must equal `id.0`; use
-    /// [`CameraFrame::with_viewport_index`] when building the frame.
+    /// `frame.camera.viewport_index` must equal the slot for `id`; use
+    /// [`CameraFrame::with_viewport_id`] when building the frame.
     pub(crate) fn prepare_viewport(
         &mut self,
         device: &wgpu::Device,
@@ -1007,7 +1007,7 @@ impl ViewportRenderer {
         debug_assert_eq!(
             frame.camera.viewport_index, id.0,
             "frame.camera.viewport_index ({}) must equal the ViewportId ({}); \
-             use CameraFrame::with_viewport_index(id.0)",
+             use CameraFrame::with_viewport_id(id)",
             frame.camera.viewport_index, id.0,
         );
         let (_, viewport_fx) = frame.effects.split();
