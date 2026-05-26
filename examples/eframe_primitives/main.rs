@@ -216,29 +216,34 @@ impl eframe::App for App {
                 CameraFrame::from_camera(&self.camera, [w, h]),
                 SceneFrame::from_surface_items(self.scene_items.clone()),
             );
-            frame_data.effects.lighting = LightingSettings {
-                lights: vec![
-                    // Key light: warm, from upper front-right.
-                    LightSource {
-                        kind: LightKind::Directional {
+            frame_data.effects.lighting = {
+                let mut _t = LightingSettings::default();
+                _t.lights = vec![
+                    
+                    {
+                        let mut _t = LightSource::default();
+                        _t.kind = LightKind::Directional {
                             direction: [0.4, -0.5, 1.2],
-                        },
-                        colour: [1.0, 0.97, 0.92],
-                        intensity: 1.0,
+                        };
+                        _t.colour = [1.0, 0.97, 0.92];
+                        _t.intensity = 1.0;
+                        _t
                     },
-                    // Cool fill from the opposite side.
-                    LightSource {
-                        kind: LightKind::Directional {
+                    
+                    {
+                        let mut _t = LightSource::default();
+                        _t.kind = LightKind::Directional {
                             direction: [-0.8, 0.6, 0.3],
-                        },
-                        colour: [0.70, 0.82, 1.0],
-                        intensity: 0.35,
+                        };
+                        _t.colour = [0.70, 0.82, 1.0];
+                        _t.intensity = 0.35;
+                        _t
                     },
-                ],
-                hemisphere_intensity: 0.35,
-                sky_colour: [0.80, 0.90, 1.0],
-                ground_colour: [0.35, 0.28, 0.22],
-                ..LightingSettings::default()
+                ];
+                _t.hemisphere_intensity = 0.35;
+                _t.sky_colour = [0.80, 0.90, 1.0];
+                _t.ground_colour = [0.35, 0.28, 0.22];
+                _t
             };
             frame_data.viewport.show_grid = false;
             frame_data.viewport.show_axes_indicator = true;

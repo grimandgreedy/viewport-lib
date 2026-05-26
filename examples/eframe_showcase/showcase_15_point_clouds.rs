@@ -163,11 +163,12 @@ impl App {
 
     /// Standard lighting for Showcase 15.
     pub(crate) fn pc_lighting() -> LightingSettings {
-        LightingSettings {
-            hemisphere_intensity: 0.5,
-            sky_colour: [1.0, 1.0, 1.0],
-            ground_colour: [1.0, 1.0, 1.0],
-            ..LightingSettings::default()
+        {
+            let mut _t = LightingSettings::default();
+            _t.hemisphere_intensity = 0.5;
+            _t.sky_colour = [1.0, 1.0, 1.0];
+            _t.ground_colour = [1.0, 1.0, 1.0];
+            _t
         }
     }
 
@@ -364,10 +365,11 @@ pub(crate) fn submit_pc_items(app: &mut App, fd: &mut FrameData) {
         }
     }
     if app.pc_state.ssao_enabled {
-        fd.effects.post_process = PostProcessSettings {
-            enabled: true,
-            ssao: true,
-            ..PostProcessSettings::default()
+        fd.effects.post_process = {
+            let mut _t = PostProcessSettings::default();
+            _t.enabled = true;
+            _t.ssao = true;
+            _t
         };
     }
 }

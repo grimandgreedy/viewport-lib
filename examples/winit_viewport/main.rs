@@ -303,12 +303,13 @@ impl ApplicationHandler for App {
                     SceneFrame::from_surface_items(scene_items),
                 );
                 frame_data.effects.lighting = LightingSettings::default();
-                frame_data.effects.post_process = PostProcessSettings {
-                    enabled: true,
-                    bloom: true,
-                    bloom_threshold: 1.0,
-                    bloom_intensity: 0.15,
-                    ..PostProcessSettings::default()
+                frame_data.effects.post_process = {
+                    let mut _t = PostProcessSettings::default();
+                    _t.enabled = true;
+                    _t.bloom = true;
+                    _t.bloom_threshold = 1.0;
+                    _t.bloom_intensity = 0.15;
+                    _t
                 };
                 frame_data.viewport.show_grid = true;
                 frame_data.viewport.show_axes_indicator = true;

@@ -651,19 +651,22 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn sprite_lighting() -> LightingSettings {
-    LightingSettings {
-        lights: vec![LightSource {
-            kind: LightKind::Directional {
+    {
+        let mut _t = LightingSettings::default();
+        _t.lights = vec![{
+            let mut _t = LightSource::default();
+            _t.kind = LightKind::Directional {
                 direction: [0.4, 0.7, 0.6],
-            },
-            colour: [1.0, 1.0, 1.0],
-            intensity: 0.8,
-        }],
-        shadows_enabled: false,
-        hemisphere_intensity: 0.4,
-        sky_colour: [0.85, 0.9, 1.0],
-        ground_colour: [0.4, 0.4, 0.5],
-        ..LightingSettings::default()
+            };
+            _t.colour = [1.0, 1.0, 1.0];
+            _t.intensity = 0.8;
+            _t
+        }];
+        _t.shadows_enabled = false;
+        _t.hemisphere_intensity = 0.4;
+        _t.sky_colour = [0.85, 0.9, 1.0];
+        _t.ground_colour = [0.4, 0.4, 0.5];
+        _t
     }
 }
 

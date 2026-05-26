@@ -137,35 +137,41 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
 
     ui.horizontal(|ui| {
         if ui.button("+ Directional").clicked() && app.lights_state.sources.len() < 8 {
-            app.lights_state.sources.push(LightSource {
-                kind: LightKind::Directional {
+            app.lights_state.sources.push({
+                let mut _t = LightSource::default();
+                _t.kind = LightKind::Directional {
                     direction: [0.4, 0.3, 1.5],
-                },
-                colour: [1.0, 1.0, 1.0],
-                intensity: 1.0,
+                };
+                _t.colour = [1.0, 1.0, 1.0];
+                _t.intensity = 1.0;
+                _t
             });
         }
         if ui.button("+ Point").clicked() && app.lights_state.sources.len() < 8 {
-            app.lights_state.sources.push(LightSource {
-                kind: LightKind::Point {
+            app.lights_state.sources.push({
+                let mut _t = LightSource::default();
+                _t.kind = LightKind::Point {
                     position: [0.0, 3.0, 3.0],
                     range: 15.0,
-                },
-                colour: [1.0, 0.9, 0.7],
-                intensity: 2.0,
+                };
+                _t.colour = [1.0, 0.9, 0.7];
+                _t.intensity = 2.0;
+                _t
             });
         }
         if ui.button("+ Spot").clicked() && app.lights_state.sources.len() < 8 {
-            app.lights_state.sources.push(LightSource {
-                kind: LightKind::Spot {
+            app.lights_state.sources.push({
+                let mut _t = LightSource::default();
+                _t.kind = LightKind::Spot {
                     position: [0.0, 3.0, 6.0],
                     direction: [0.0, 0.0, -1.0],
                     range: 20.0,
                     inner_angle: 0.25,
                     outer_angle: 0.45,
-                },
-                colour: [0.8, 0.95, 1.0],
-                intensity: 3.0,
+                };
+                _t.colour = [0.8, 0.95, 1.0];
+                _t.intensity = 3.0;
+                _t
             });
         }
     });

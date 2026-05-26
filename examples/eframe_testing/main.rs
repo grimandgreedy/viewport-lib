@@ -119,12 +119,14 @@ impl App {
         unlit_box_id: MeshId,
     ) -> Self {
         let mut lighting = LightingSettings::default();
-        lighting.lights = vec![LightSource {
-            kind: LightKind::Directional {
+        lighting.lights = vec![{
+            let mut _t = LightSource::default();
+            _t.kind = LightKind::Directional {
                 direction: [0.4, 0.3, 1.5],
-            },
-            colour: [1.0, 1.0, 1.0],
-            intensity: 1.0,
+            };
+            _t.colour = [1.0, 1.0, 1.0];
+            _t.intensity = 1.0;
+            _t
         }];
         lighting.hemisphere_intensity = 0.4;
         lighting.shadow_cascade_count = 4;

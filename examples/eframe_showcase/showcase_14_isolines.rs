@@ -220,11 +220,12 @@ pub(crate) fn iso_collect_scene_items(
         }
     }
     let sg = app.iso_state.scene.version();
-    let lighting = LightingSettings {
-        hemisphere_intensity: 0.5,
-        sky_colour: [1.0, 1.0, 1.0],
-        ground_colour: [1.0, 1.0, 1.0],
-        ..LightingSettings::default()
+    let lighting = {
+        let mut _t = LightingSettings::default();
+        _t.hemisphere_intensity = 0.5;
+        _t.sky_colour = [1.0, 1.0, 1.0];
+        _t.ground_colour = [1.0, 1.0, 1.0];
+        _t
     };
     (items, lighting, sg, 0)
 }

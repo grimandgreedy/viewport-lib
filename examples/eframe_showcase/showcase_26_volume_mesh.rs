@@ -987,11 +987,12 @@ impl App {
 
     /// Lighting for the volume mesh showcase.
     pub(crate) fn vm_lighting() -> LightingSettings {
-        LightingSettings {
-            hemisphere_intensity: 0.3,
-            sky_colour: [1.0, 1.0, 1.0],
-            ground_colour: [0.3, 0.3, 0.4],
-            ..LightingSettings::default()
+        {
+            let mut _t = LightingSettings::default();
+            _t.hemisphere_intensity = 0.3;
+            _t.sky_colour = [1.0, 1.0, 1.0];
+            _t.ground_colour = [0.3, 0.3, 0.4];
+            _t
         }
     }
 }

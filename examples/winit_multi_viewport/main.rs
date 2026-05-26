@@ -149,10 +149,11 @@ impl AppState {
 
         let mut fd = FrameData::new(camera_frame, self.build_scene());
         fd.effects.lighting = LightingSettings::default();
-        fd.effects.post_process = PostProcessSettings {
-            enabled: true,
-            bloom: true,
-            ..PostProcessSettings::default()
+        fd.effects.post_process = {
+            let mut _t = PostProcessSettings::default();
+            _t.enabled = true;
+            _t.bloom = true;
+            _t
         };
         fd.viewport.show_grid = true;
         fd.viewport.show_axes_indicator = true;

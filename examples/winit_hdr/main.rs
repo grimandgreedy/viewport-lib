@@ -317,14 +317,15 @@ impl ApplicationHandler for App {
                 );
                 let mut effects = EffectsFrame::default();
                 effects.lighting = LightingSettings::default();
-                effects.post_process = PostProcessSettings {
-                    enabled: true,
-                    bloom: state.bloom,
-                    bloom_threshold: 1.0,
-                    bloom_intensity: 0.15,
-                    fxaa: state.fxaa,
-                    ssao: state.ssao,
-                    ..PostProcessSettings::default()
+                effects.post_process = {
+                    let mut _t = PostProcessSettings::default();
+                    _t.enabled = true;
+                    _t.bloom = state.bloom;
+                    _t.bloom_threshold = 1.0;
+                    _t.bloom_intensity = 0.15;
+                    _t.fxaa = state.fxaa;
+                    _t.ssao = state.ssao;
+                    _t
                 };
                 frame_data.effects = effects;
 

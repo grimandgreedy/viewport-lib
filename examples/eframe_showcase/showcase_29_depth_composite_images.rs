@@ -190,19 +190,21 @@ impl App {
     }
 
     pub(crate) fn dc_lighting() -> LightingSettings {
-        LightingSettings {
-            lights: vec![LightSource {
-                kind: LightKind::Directional {
+        {
+            let mut _t = LightingSettings::default();
+            _t.lights = vec![{
+                let mut _t = LightSource::default();
+                _t.kind = LightKind::Directional {
                     direction: [-0.4, -0.7, -1.0],
-                },
-                colour: [1.0, 0.97, 0.93],
-                intensity: 2.2,
-            }],
-            hemisphere_intensity: 0.45,
-            // Darker sky so the coloured overlay stands out.
-            sky_colour: [0.08, 0.10, 0.18],
-            ground_colour: [0.15, 0.15, 0.20],
-            ..LightingSettings::default()
+                };
+                _t.colour = [1.0, 0.97, 0.93];
+                _t.intensity = 2.2;
+                _t
+            }];
+            _t.hemisphere_intensity = 0.45;
+            _t.sky_colour = [0.08, 0.10, 0.18];
+            _t.ground_colour = [0.15, 0.15, 0.20];
+            _t
         }
     }
 }

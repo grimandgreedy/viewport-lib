@@ -239,13 +239,15 @@ impl eframe::App for App {
                     [-s, -s, -s],
                 ]
                 .into_iter()
-                .map(|position| LightSource {
-                    kind: LightKind::Point {
+                .map(|position| {
+                    let mut _t = LightSource::default();
+                    _t.kind = LightKind::Point {
                         position,
                         range: d * 2.0,
-                    },
-                    colour: [1.0, 1.0, 1.0],
-                    intensity: 0.5,
+                    };
+                    _t.colour = [1.0, 1.0, 1.0];
+                    _t.intensity = 0.5;
+                    _t
                 })
                 .collect();
                 ls

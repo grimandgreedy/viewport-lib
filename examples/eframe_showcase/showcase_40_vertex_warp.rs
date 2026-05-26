@@ -170,27 +170,32 @@ pub(crate) fn warp_scene_items(app: &App) -> Vec<SceneRenderItem> {
 pub(crate) fn warp_lighting() -> LightingSettings {
     // Two opposing soft lights so all sides of the mesh are visible regardless
     // of deformation direction, with a neutral hemisphere fill.
-    LightingSettings {
-        lights: vec![
-            LightSource {
-                kind: LightKind::Directional {
+    {
+        let mut _t = LightingSettings::default();
+        _t.lights = vec![
+            {
+                let mut _t = LightSource::default();
+                _t.kind = LightKind::Directional {
                     direction: [0.3, 0.8, 0.5],
-                },
-                colour: [1.0, 1.0, 1.0],
-                intensity: 0.7,
+                };
+                _t.colour = [1.0, 1.0, 1.0];
+                _t.intensity = 0.7;
+                _t
             },
-            LightSource {
-                kind: LightKind::Directional {
+            {
+                let mut _t = LightSource::default();
+                _t.kind = LightKind::Directional {
                     direction: [-0.3, -0.5, -0.5],
-                },
-                colour: [0.8, 0.85, 1.0],
-                intensity: 0.3,
+                };
+                _t.colour = [0.8, 0.85, 1.0];
+                _t.intensity = 0.3;
+                _t
             },
-        ],
-        shadows_enabled: false,
-        hemisphere_intensity: 0.35,
-        sky_colour: [0.9, 0.92, 1.0],
-        ground_colour: [0.5, 0.5, 0.55],
-        ..LightingSettings::default()
+        ];
+        _t.shadows_enabled = false;
+        _t.hemisphere_intensity = 0.35;
+        _t.sky_colour = [0.9, 0.92, 1.0];
+        _t.ground_colour = [0.5, 0.5, 0.55];
+        _t
     }
 }

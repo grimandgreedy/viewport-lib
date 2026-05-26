@@ -243,11 +243,12 @@ impl App {
 
     /// Standard lighting for Showcase 25.
     pub(crate) fn sv_lighting() -> LightingSettings {
-        LightingSettings {
-            hemisphere_intensity: 0.5,
-            sky_colour: [1.0, 1.0, 1.0],
-            ground_colour: [1.0, 1.0, 1.0],
-            ..LightingSettings::default()
+        {
+            let mut _t = LightingSettings::default();
+            _t.hemisphere_intensity = 0.5;
+            _t.sky_colour = [1.0, 1.0, 1.0];
+            _t.ground_colour = [1.0, 1.0, 1.0];
+            _t
         }
     }
 }

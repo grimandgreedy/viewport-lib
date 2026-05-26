@@ -519,11 +519,12 @@ pub(crate) fn vol_collect_scene_items(
     } else {
         vec![]
     };
-    let lighting = LightingSettings {
-        hemisphere_intensity: 0.6,
-        sky_colour: [1.0, 1.0, 1.0],
-        ground_colour: [0.8, 0.8, 0.8],
-        ..LightingSettings::default()
+    let lighting = {
+        let mut _t = LightingSettings::default();
+        _t.hemisphere_intensity = 0.6;
+        _t.sky_colour = [1.0, 1.0, 1.0];
+        _t.ground_colour = [0.8, 0.8, 0.8];
+        _t
     };
     (surface_items, lighting, 0, 0)
 }

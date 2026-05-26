@@ -312,19 +312,21 @@ impl App {
     }
 
     pub(crate) fn aux_lighting() -> LightingSettings {
-        LightingSettings {
-            lights: vec![LightSource {
-                kind: LightKind::Directional {
+        {
+            let mut _t = LightingSettings::default();
+            _t.lights = vec![{
+                let mut _t = LightSource::default();
+                _t.kind = LightKind::Directional {
                     direction: [0.3, -0.5, 0.8],
-                },
-                colour: [1.0, 0.97, 0.90],
-                intensity: 1.8,
-                ..LightSource::default()
-            }],
-            shadows_enabled: true,
-            shadow_cascade_count: 4,
-            hemisphere_intensity: 0.2,
-            ..LightingSettings::default()
+                };
+                _t.colour = [1.0, 0.97, 0.90];
+                _t.intensity = 1.8;
+                _t
+            }];
+            _t.shadows_enabled = true;
+            _t.shadow_cascade_count = 4;
+            _t.hemisphere_intensity = 0.2;
+            _t
         }
     }
 }

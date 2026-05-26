@@ -245,26 +245,30 @@ impl App {
                 outer_angle: self.spot_outer_deg.to_radians(),
             },
         };
-        LightingSettings {
-            lights: vec![LightSource {
-                kind,
-                colour: self.light_colour,
-                intensity: self.light_intensity,
-            }],
-            shadows_enabled: self.shadows_enabled,
-            shadow_bias: self.shadow_bias,
-            shadow_cascade_count: self.shadow_cascade_count,
-            shadow_filter: self.shadow_filter,
-            pcss_light_radius: self.pcss_light_radius,
-            shadow_atlas_resolution: self.shadow_atlas_resolution,
-            shadow_extent_override: if self.shadow_extent_enabled {
+        {
+            let mut _t = LightingSettings::default();
+            _t.lights = vec![{
+                let mut _t = LightSource::default();
+                _t.kind = kind;
+                _t.colour = self.light_colour;
+                _t.intensity = self.light_intensity;
+                _t
+            }];
+            _t.shadows_enabled = self.shadows_enabled;
+            _t.shadow_bias = self.shadow_bias;
+            _t.shadow_cascade_count = self.shadow_cascade_count;
+            _t.shadow_filter = self.shadow_filter;
+            _t.pcss_light_radius = self.pcss_light_radius;
+            _t.shadow_atlas_resolution = self.shadow_atlas_resolution;
+            _t.shadow_extent_override = if self.shadow_extent_enabled {
                 Some(self.shadow_extent_value)
             } else {
                 None
-            },
-            hemisphere_intensity: self.hemisphere_intensity,
-            sky_colour: self.sky_colour,
-            ground_colour: self.ground_colour,
+            };
+            _t.hemisphere_intensity = self.hemisphere_intensity;
+            _t.sky_colour = self.sky_colour;
+            _t.ground_colour = self.ground_colour;
+            _t
         }
     }
 

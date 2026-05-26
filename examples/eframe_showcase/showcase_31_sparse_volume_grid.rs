@@ -518,16 +518,14 @@ impl App {
 
     /// Lighting settings for the sparse grid showcase.
     pub(crate) fn svg_lighting() -> LightingSettings {
-        LightingSettings {
-            // Pure hemisphere: equal light from every direction, no directional
-            // hotspots.  Sky and ground are both near-white so top and bottom
-            // faces are equally readable.
-            hemisphere_intensity: 0.9,
-            sky_colour: [1.0, 1.0, 1.0],
-            ground_colour: [0.85, 0.85, 0.9],
-            lights: vec![],
-            shadows_enabled: false,
-            ..LightingSettings::default()
+        {
+            let mut _t = LightingSettings::default();
+            _t.hemisphere_intensity = 0.9;
+            _t.sky_colour = [1.0, 1.0, 1.0];
+            _t.ground_colour = [0.85, 0.85, 0.9];
+            _t.lights = vec![];
+            _t.shadows_enabled = false;
+            _t
         }
     }
 }

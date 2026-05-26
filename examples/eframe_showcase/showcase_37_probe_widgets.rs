@@ -486,11 +486,12 @@ pub(crate) fn pw_collect_scene_items(
     app: &mut App,
 ) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
     let items = app.pw_state.scene.collect_render_items(&viewport_lib::selection::Selection::new());
-    let lighting = LightingSettings {
-        hemisphere_intensity: 0.6,
-        sky_colour: [1.0, 1.0, 1.0],
-        ground_colour: [0.8, 0.8, 0.8],
-        ..LightingSettings::default()
+    let lighting = {
+        let mut _t = LightingSettings::default();
+        _t.hemisphere_intensity = 0.6;
+        _t.sky_colour = [1.0, 1.0, 1.0];
+        _t.ground_colour = [0.8, 0.8, 0.8];
+        _t
     };
     let sg = app.pw_state.scene.version();
     (items, lighting, sg, 0)

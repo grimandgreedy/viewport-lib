@@ -471,30 +471,33 @@ impl App {
 
     /// Lighting for Showcase 30.
     pub(crate) fn implicit_lighting() -> LightingSettings {
-        LightingSettings {
-            lights: vec![
-                LightSource {
-                    kind: LightKind::Directional {
+        {
+            let mut _t = LightingSettings::default();
+            _t.lights = vec![
+                {
+                    let mut _t = LightSource::default();
+                    _t.kind = LightKind::Directional {
                         direction: [0.4, 0.7, 0.9],
-                    },
-                    colour: [1.0, 0.97, 0.93],
-                    intensity: 1.4,
+                    };
+                    _t.colour = [1.0, 0.97, 0.93];
+                    _t.intensity = 1.4;
+                    _t
                 },
-                LightSource {
-                    kind: LightKind::Directional {
+                {
+                    let mut _t = LightSource::default();
+                    _t.kind = LightKind::Directional {
                         direction: [-0.3, 0.2, -0.5],
-                    },
-                    colour: [0.5, 0.6, 0.9],
-                    intensity: 0.3,
+                    };
+                    _t.colour = [0.5, 0.6, 0.9];
+                    _t.intensity = 0.3;
+                    _t
                 },
-            ],
-            hemisphere_intensity: 0.45,
-            sky_colour: [0.50, 0.60, 0.80],
-            ground_colour: [0.25, 0.25, 0.35],
-            // Higher bias for the marching-cubes variant: smooth vertex normals on
-            // faceted geometry cause shadow-terminator artifacts at the default 0.0001.
-            shadow_bias: 0.003,
-            ..LightingSettings::default()
+            ];
+            _t.hemisphere_intensity = 0.45;
+            _t.sky_colour = [0.50, 0.60, 0.80];
+            _t.ground_colour = [0.25, 0.25, 0.35];
+            _t.shadow_bias = 0.003;
+            _t
         }
     }
 }

@@ -337,11 +337,12 @@ pub(crate) fn interact_collect_scene_items(
         .collect_render_items(&app.interact_state.selection);
     let sg = app.interact_state.scene.version();
     let ss = app.interact_state.selection.version();
-    let lighting = LightingSettings {
-        hemisphere_intensity: 0.5,
-        sky_colour: [1.0, 1.0, 1.0],
-        ground_colour: [1.0, 1.0, 1.0],
-        ..LightingSettings::default()
+    let lighting = {
+        let mut _t = LightingSettings::default();
+        _t.hemisphere_intensity = 0.5;
+        _t.sky_colour = [1.0, 1.0, 1.0];
+        _t.ground_colour = [1.0, 1.0, 1.0];
+        _t
     };
     (items, lighting, sg, ss)
 }

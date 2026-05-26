@@ -539,18 +539,20 @@ pub(crate) fn clipvol_collect_scene_items(
         Vec::new()
     };
     let sg = app.clipvol_state.scene.version();
-    let lighting = LightingSettings {
-        lights: vec![LightSource {
-            kind: LightKind::Directional {
+    let lighting = {
+        let mut _t = LightingSettings::default();
+        _t.lights = vec![{
+            let mut _t = LightSource::default();
+            _t.kind = LightKind::Directional {
                 direction: [0.5, 0.3, 1.2],
-            },
-            intensity: 1.8,
-            ..LightSource::default()
-        }],
-        hemisphere_intensity: 0.4,
-        sky_colour: [1.0, 1.0, 1.0],
-        ground_colour: [0.8, 0.8, 0.8],
-        ..LightingSettings::default()
+            };
+            _t.intensity = 1.8;
+            _t
+        }];
+        _t.hemisphere_intensity = 0.4;
+        _t.sky_colour = [1.0, 1.0, 1.0];
+        _t.ground_colour = [0.8, 0.8, 0.8];
+        _t
     };
     (items, lighting, sg, 0)
 }
