@@ -15,7 +15,7 @@ use viewport_lib::{
     AtlasViewerCorner, BackfacePolicy, BuiltinMatcap, ButtonState, Camera, CameraFrame,
     DebugOutputMode, DebugQuantity, DebugVis, FrameData, LightKind, LightSource, LightingSettings,
     MatcapId, Material, MeshId, OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits,
-    ShadowFilter, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
+    ShadowDebugStats, ShadowFilter, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
 };
 
 // Percy photo: pre-converted raw RGBA (2203 x 2009).
@@ -204,6 +204,8 @@ struct App {
 
     // Instancing status (updated each frame by the paint callback)
     instancing_status: std::sync::Arc<std::sync::Mutex<(bool, usize)>>,
+    // Shadow debug stats (updated each frame by the paint callback)
+    shadow_stats: std::sync::Arc<std::sync::Mutex<Option<ShadowDebugStats>>>,
 }
 
 impl App {
@@ -267,6 +269,7 @@ impl App {
             last_picked_pos: None,
             last_picked_values: None,
             instancing_status: std::sync::Arc::new(std::sync::Mutex::new((false, 0))),
+            shadow_stats: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -582,6 +585,7 @@ impl eframe::App for App {
                     instancing_status: self.instancing_status.clone(),
                     pixel_read_req: self.pixel_read_req.clone(),
                     pixel_read_res: self.pixel_read_res.clone(),
+                    shadow_stats: self.shadow_stats.clone(),
                 },
             ));
 
@@ -600,7 +604,7 @@ impl eframe::App for App {
                 egui::Align2::LEFT_BOTTOM,
                 &status_text,
                 egui::FontId::monospace(11.0),
-                egui::Color32::from_rgba_premultiplied(220, 220, 220, 200),
+                egui::Color32::from_rgba_premultiplied(20,20,20, 200),
             );
 
             if response.dragged() {
@@ -895,6 +899,158 @@ impl App {
                     }
                 }
             });
+
+        ui.add_space(4.0);
+
+        // D8: Frame stats footer.
+        egui::CollapsingHeader::new("Frame Stats")
+            .default_open(false)
+            .show(ui, |ui| {
+                let stats = self.shadow_stats.lock().ok().and_then(|g| *g);
+                if let Some(s) = stats {
+                    let path = if s.using_instanced_path {
+                        format!("Instanced ({} batches)", s.instanced_batch_count)
+                    } else {
+                        "Per-object".to_string()
+                    };
+                    ui.label(format!("Path:     {}", path));
+                    let splits: Vec<String> = s.cascade_splits[..s.cascade_count as usize]
+                        .iter()
+                        .map(|v| format!("{:.1}", v))
+                        .collect();
+                    let splits_str = splits.join(" / ");
+                    ui.label(format!("Cascades: {}  splits: {}", s.cascade_count, splits_str));
+                    let extent_label = if self.shadow_extent_enabled {
+                        format!("{:.1} m (override)", s.shadow_extent_world)
+                    } else {
+                        format!("{:.1} m (auto)", s.shadow_extent_world)
+                    };
+                    ui.label(format!("Atlas:    {} px   Extent: {}", s.shadow_atlas_resolution, extent_label));
+                    let contact = if s.contact_shadow_active { "enabled" } else { "disabled" };
+                    ui.label(format!("Contact:  {}", contact));
+                } else {
+                    ui.label("(no data yet)");
+                }
+            });
+
+        ui.add_space(4.0);
+
+        // D9: Diagnostic presets.
+        egui::CollapsingHeader::new("Diagnostic Presets")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.label("One-click setups for each known bug class.");
+                ui.add_space(4.0);
+
+                if ui.button("Peter-panning / shadow gap").clicked() {
+                    self.apply_preset_peter_panning();
+                }
+                if ui.button("Shadow acne").clicked() {
+                    self.apply_preset_acne();
+                }
+                if ui.button("Cascade band / seam").clicked() {
+                    self.apply_preset_cascade_band();
+                }
+                if ui.button("Ghost shapes (orbit)").clicked() {
+                    self.apply_preset_ghost_shapes();
+                }
+                if ui.button("Contact shadow bright spot").clicked() {
+                    self.apply_preset_contact_bright_spot();
+                }
+            });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostic preset helpers
+// ---------------------------------------------------------------------------
+
+impl App {
+    fn apply_preset_peter_panning(&mut self) {
+        // Side-on view of the sphere at (-4, 0, 0.6), low camera angle.
+        // SplitScreen: left = normal, right = ShadowFactor.
+        self.tab = Tab::Basic;
+        self.camera.center = glam::Vec3::new(-4.0, 0.0, 0.6);
+        self.camera.distance = 7.0;
+        // Looking from the Y+ side, slightly above horizontal.
+        self.camera.orientation =
+            glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2) * glam::Quat::from_rotation_x(1.42);
+        self.debug_vis_active = true;
+        self.debug_vis_splitscreen = true;
+        self.debug_vis_r = DebugQuantity::ShadowFactor;
+        self.debug_vis_g = DebugQuantity::Zero;
+        self.debug_vis_b = DebugQuantity::Zero;
+        self.debug_vis_scale = 1.0;
+        self.debug_vis_split_x = 0.5;
+    }
+
+    fn apply_preset_acne(&mut self) {
+        // Steep top-down view of the rough sphere in the Materials tab.
+        // SplitScreen: left = normal, right = ShadowFactor (acne appears as bright speckles).
+        self.tab = Tab::Materials;
+        self.camera.center = glam::Vec3::new(4.5, 2.5, 0.7);
+        self.camera.distance = 4.0;
+        // Looking down at steep angle.
+        self.camera.orientation =
+            glam::Quat::from_rotation_z(0.3) * glam::Quat::from_rotation_x(0.5);
+        self.debug_vis_active = true;
+        self.debug_vis_splitscreen = true;
+        self.debug_vis_r = DebugQuantity::ShadowFactor;
+        self.debug_vis_g = DebugQuantity::Zero;
+        self.debug_vis_b = DebugQuantity::Zero;
+        self.debug_vis_scale = 1.0;
+        self.debug_vis_split_x = 0.5;
+    }
+
+    fn apply_preset_cascade_band(&mut self) {
+        // Pulled back to see the full scene from a moderate angle.
+        // SplitScreen: left = normal, right = CascadeIndex (bands as distinct colours).
+        self.tab = Tab::Basic;
+        self.camera.center = glam::Vec3::new(0.0, 0.0, 0.5);
+        self.camera.distance = 22.0;
+        self.camera.orientation =
+            glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.0);
+        self.debug_vis_active = true;
+        self.debug_vis_splitscreen = true;
+        self.debug_vis_r = DebugQuantity::CascadeIndex;
+        self.debug_vis_g = DebugQuantity::Zero;
+        self.debug_vis_b = DebugQuantity::Zero;
+        self.debug_vis_scale = 0.33;
+        self.debug_vis_split_x = 0.5;
+    }
+
+    fn apply_preset_ghost_shapes(&mut self) {
+        // Mid-distance orbit view. Orbit while watching AtlasUV on the right half.
+        // Unstable UVs during orbit point to cascade matrix instability.
+        self.tab = Tab::Basic;
+        self.camera.center = glam::Vec3::new(0.0, 0.0, 0.5);
+        self.camera.distance = 12.0;
+        self.camera.orientation =
+            glam::Quat::from_rotation_z(1.0) * glam::Quat::from_rotation_x(1.15);
+        self.debug_vis_active = true;
+        self.debug_vis_splitscreen = true;
+        self.debug_vis_r = DebugQuantity::AtlasUvX;
+        self.debug_vis_g = DebugQuantity::AtlasUvY;
+        self.debug_vis_b = DebugQuantity::Zero;
+        self.debug_vis_scale = 1.0;
+        self.debug_vis_split_x = 0.5;
+    }
+
+    fn apply_preset_contact_bright_spot(&mut self) {
+        // Looking at the torus from above at a low angle so the inner ring is visible.
+        // SplitScreen: left = normal, right = ContactShadowFactor.
+        self.tab = Tab::Basic;
+        self.camera.center = glam::Vec3::new(4.0, 0.0, 0.18);
+        self.camera.distance = 5.0;
+        self.camera.orientation =
+            glam::Quat::from_rotation_z(-0.4) * glam::Quat::from_rotation_x(1.3);
+        self.debug_vis_active = true;
+        self.debug_vis_splitscreen = true;
+        self.debug_vis_r = DebugQuantity::ContactShadowFactor;
+        self.debug_vis_g = DebugQuantity::Zero;
+        self.debug_vis_b = DebugQuantity::Zero;
+        self.debug_vis_scale = 1.0;
+        self.debug_vis_split_x = 0.5;
     }
 }
 

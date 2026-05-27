@@ -16,6 +16,8 @@ mod render;
 pub mod shader_hashes;
 mod shadows;
 pub mod stats;
+mod shadow_debug_stats;
+pub use shadow_debug_stats::ShadowDebugStats;
 
 pub use self::types::{
     AtlasViewerCorner,
@@ -426,6 +428,21 @@ pub struct ViewportRenderer {
     /// Whether SSAO, contact shadows, and bloom were skipped this frame.
     /// Set in prepare(); read by the render path.
     degradation_effects_throttled: bool,
+
+    // --- D8: shadow debug stats cache ---
+    /// Cascade count from the last prepare_scene_internal call.
+    last_cascade_count: u32,
+    /// Cascade split distances from the last prepare_scene_internal call.
+    last_cascade_splits: [f32; 4],
+    /// Shadow frustum half-extent from the last prepare_scene_internal call.
+    last_shadow_extent: f32,
+    /// Shadow atlas resolution from the last prepare_scene_internal call.
+    last_shadow_atlas_resolution: u32,
+    /// Contact shadow enabled state from the last prepare_scene_internal call.
+    last_contact_shadow_active: bool,
+    /// Cascade splits from the last tracing log emission. Sentinel [f32::MAX; 4] forces
+    /// a log on the first frame.
+    last_logged_cascade_splits: [f32; 4],
 }
 
 impl ViewportRenderer {
@@ -537,6 +554,12 @@ impl ViewportRenderer {
             degradation_shadows_skipped: false,
             degradation_volume_quality_reduced: false,
             degradation_effects_throttled: false,
+            last_cascade_count: 0,
+            last_cascade_splits: [0.0; 4],
+            last_shadow_extent: 20.0,
+            last_shadow_atlas_resolution: 4096,
+            last_contact_shadow_active: false,
+            last_logged_cascade_splits: [f32::MAX; 4],
         }
     }
 
@@ -661,6 +684,22 @@ impl ViewportRenderer {
     /// (MeshId, material) combination in the scene.
     pub fn instanced_batch_count(&self) -> usize {
         self.instanced_batches.len()
+    }
+
+    /// Returns per-frame shadow and lighting pipeline statistics for debug inspection.
+    ///
+    /// All fields reflect the most recently completed `prepare` call (one frame
+    /// behind the display). Returns default values before the first `prepare` call.
+    pub fn shadow_debug_stats(&self) -> ShadowDebugStats {
+        ShadowDebugStats {
+            using_instanced_path: self.use_instancing,
+            instanced_batch_count: self.instanced_batches.len(),
+            cascade_count: self.last_cascade_count,
+            cascade_splits: self.last_cascade_splits,
+            shadow_atlas_resolution: self.last_shadow_atlas_resolution,
+            shadow_extent_world: self.last_shadow_extent,
+            contact_shadow_active: self.last_contact_shadow_active,
+        }
     }
 
     /// Read the debug values at a specific pixel from the per-fragment storage buffer.

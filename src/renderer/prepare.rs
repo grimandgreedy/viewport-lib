@@ -283,6 +283,25 @@ impl ViewportRenderer {
         }
         let effective_cascade_count = if use_csm { cascade_count } else { 1 };
 
+        // D8: cache shadow stats and log when cascade splits change.
+        {
+            if cascade_split_distances != self.last_logged_cascade_splits {
+                tracing::debug!(
+                    cascade_count = effective_cascade_count,
+                    splits = ?cascade_split_distances,
+                    shadow_extent = shadow_extent,
+                    camera_dist = frame.camera.render_camera.distance,
+                    "cascade splits changed"
+                );
+                self.last_logged_cascade_splits = cascade_split_distances;
+            }
+            self.last_cascade_count = effective_cascade_count as u32;
+            self.last_cascade_splits = cascade_split_distances;
+            self.last_shadow_extent = shadow_extent;
+            self.last_shadow_atlas_resolution = lighting.shadow_atlas_resolution.max(64);
+            self.last_contact_shadow_active = frame.effects.post_process.contact_shadows;
+        }
+
         // Atlas tile layout (2x2 grid):
         // [0] = top-left, [1] = top-right, [2] = bottom-left, [3] = bottom-right
         let atlas_rects: [[f32; 4]; 8] = [

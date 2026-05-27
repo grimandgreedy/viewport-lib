@@ -1,10 +1,11 @@
-use viewport_lib::{FrameData, ViewportRenderer};
+use viewport_lib::{FrameData, ShadowDebugStats, ViewportRenderer};
 
 pub struct ViewportCallback {
     pub frame: FrameData,
     pub instancing_status: std::sync::Arc<std::sync::Mutex<(bool, usize)>>,
     pub pixel_read_req: std::sync::Arc<std::sync::Mutex<Option<(u32, u32)>>>,
     pub pixel_read_res: std::sync::Arc<std::sync::Mutex<Option<[f32; 4]>>>,
+    pub shadow_stats: std::sync::Arc<std::sync::Mutex<Option<ShadowDebugStats>>>,
 }
 
 impl eframe::egui_wgpu::CallbackTrait for ViewportCallback {
@@ -30,6 +31,9 @@ impl eframe::egui_wgpu::CallbackTrait for ViewportCallback {
             let cmds = renderer.pass().prepare(device, queue, &self.frame);
             if let Ok(mut status) = self.instancing_status.lock() {
                 *status = (renderer.is_using_instanced_path(), renderer.instanced_batch_count());
+            }
+            if let Ok(mut stats) = self.shadow_stats.lock() {
+                *stats = Some(renderer.shadow_debug_stats());
             }
             return cmds;
         }
