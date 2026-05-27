@@ -294,16 +294,24 @@ const POISSON_DISK: array<vec2<f32>, 32> = array<vec2<f32>, 32>(
 // ---------------------------------------------------------------------------
 // CSM shadow sampling : selects cascade by eye distance, samples atlas tile
 // ---------------------------------------------------------------------------
+struct ShadowSample {
+    factor: f32,
+    cascade_idx: u32,
+    atlas_uv: vec2<f32>,
+    tile_uv: vec2<f32>,
+    biased_depth: f32,
+    surface_depth: f32,
+    normal_bias_world: f32,
+}
+
 fn sample_shadow_csm(
     world_pos: vec3<f32>,
     eye_pos: vec3<f32>,
     surface_normal: vec3<f32>,
     light_dir: vec3<f32>,
-) -> f32 {
+) -> ShadowSample {
     let dist = dot(world_pos - eye_pos, camera.forward);
 
-    // Select cascade based on camera-forward depth, which matches the
-    // frustum depth intervals used to build the cascade matrices.
     var cascade_idx = 0u;
     for (var i = 0u; i < shadow_atlas.cascade_count; i++) {
         if dist > shadow_atlas.cascade_splits[i] {
@@ -312,35 +320,19 @@ fn sample_shadow_csm(
     }
     cascade_idx = min(cascade_idx, shadow_atlas.cascade_count - 1u);
 
-    // Project the actual surface position to get the correct shadow-map UV.
-    // We must NOT offset the UV : on curved surfaces the tangential component
-    // of the normal would shift the sample into a shallower shadow-map region
-    // (closer to the light), causing MORE false shadows instead of fewer.
     let light_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(world_pos, 1.0);
     let ndc = light_clip.xyz / light_clip.w;
 
     // NDC -> tile UV [0,1].
     let tile_uv = vec2<f32>(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
 
-    // Out-of-range check.
-    if tile_uv.x < 0.0 || tile_uv.x > 1.0 || tile_uv.y < 0.0 || tile_uv.y > 1.0 ||
-       ndc.z < 0.0 || ndc.z > 1.0 {
-        return 1.0;
-    }
-
-    // Remap tile UV through atlas rect.
+    // Remap before range check so atlas_uv is always filled in the returned struct.
     let rect = shadow_atlas.atlas_rects[cascade_idx];
     let atlas_uv = vec2<f32>(
         mix(rect.x, rect.z, tile_uv.x),
         mix(rect.y, rect.w, tile_uv.y),
     );
 
-    let texel_size = 1.0 / shadow_atlas.atlas_size;
-
-    // Normal-offset depth bias: increase at grazing angles to suppress acne.
-    // Taper to 0.0 at n_dot_l = 1.0 so a close caster is not pushed past the
-    // receiver. Scale by cascade texel size so far cascades get proportionally
-    // more bias (cascade_vp[i][0][0] = 2 / world_extent_x).
     let n_dot_l = dot(surface_normal, light_dir);
     let offset_sign = select(-1.0, 1.0, n_dot_l >= 0.0);
     let texel_world = 2.0 / (shadow_atlas.cascade_vp[cascade_idx][0][0] * shadow_atlas.atlas_size * (rect.z - rect.x));
@@ -348,24 +340,21 @@ fn sample_shadow_csm(
     let offset_world = world_pos + surface_normal * (offset_sign * normal_bias);
     let offset_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(offset_world, 1.0);
     let biased_depth = (offset_clip.xyz / offset_clip.w).z - lights_uniform.shadow_bias;
-    let surface_depth = ndc.z; // unbiased receiver depth for PCSS blocker search
+    let surface_depth = ndc.z;
 
-    // Per-fragment Poisson disk rotation : breaks up the coherent square/blob
-    // pattern that results from every pixel using the same disk orientation.
-    // Uses world_pos.xz as seed so adjacent pixels get different rotations.
+    if tile_uv.x < 0.0 || tile_uv.x > 1.0 || tile_uv.y < 0.0 || tile_uv.y > 1.0 ||
+       ndc.z < 0.0 || ndc.z > 1.0 {
+        return ShadowSample(1.0, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
+    }
+
+    let texel_size = 1.0 / shadow_atlas.atlas_size;
     let noise = fract(52.9829189 * fract(dot(world_pos.xz, vec2<f32>(0.06711056, 0.00583715))));
     let rot = noise * 6.28318530;
     let sin_r = sin(rot);
     let cos_r = cos(rot);
 
     if shadow_atlas.shadow_filter == 1u {
-        // ---------------------------------------------------------------
-        // PCSS: blocker search -> penumbra estimation -> variable PCF
-        // ---------------------------------------------------------------
         let search_radius = shadow_atlas.pcss_light_radius * 16.0 * texel_size;
-
-        // Phase 1: Blocker search (16 Poisson samples). Raw depth loads against
-        // surface_depth so a close caster is not missed due to bias.
         var blocker_sum = 0.0;
         var blocker_count = 0.0;
         for (var i = 0u; i < 16u; i++) {
@@ -380,16 +369,12 @@ fn sample_shadow_csm(
                 blocker_count += 1.0;
             }
         }
-
         if blocker_count < 1.0 {
-            return 1.0;
+            return ShadowSample(1.0, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
         }
-
         let avg_blocker = blocker_sum / blocker_count;
         let penumbra_width = shadow_atlas.pcss_light_radius * (biased_depth - avg_blocker) / max(avg_blocker, 0.001);
         let filter_radius = max(penumbra_width * 16.0 * texel_size, texel_size);
-
-        // Phase 2: Variable-width PCF (32 Poisson samples).
         var shadow = 0.0;
         for (var i = 0u; i < 32u; i++) {
             let d = POISSON_DISK[i];
@@ -398,11 +383,8 @@ fn sample_shadow_csm(
             let clamped_uv = clamp(sample_uv, rect.xy, rect.zw);
             shadow += textureSampleCompare(shadow_map, shadow_sampler, clamped_uv, biased_depth);
         }
-        return shadow / 32.0;
+        return ShadowSample(shadow / 32.0, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
     } else {
-        // ---------------------------------------------------------------
-        // 32-sample Poisson-disk PCF at 4-texel radius, per-fragment rotation.
-        // ---------------------------------------------------------------
         let pcf_radius = 4.0 * texel_size;
         var shadow = 0.0;
         for (var i = 0u; i < 32u; i++) {
@@ -412,7 +394,7 @@ fn sample_shadow_csm(
             let clamped_uv = clamp(sample_uv, rect.xy, rect.zw);
             shadow += textureSampleCompare(shadow_map, shadow_sampler, clamped_uv, biased_depth);
         }
-        return shadow / 32.0;
+        return ShadowSample(shadow / 32.0, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
     }
 }
 
@@ -737,6 +719,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     let V = normalize(camera.eye_pos - in.world_pos);
     let tint = vec4<f32>(1.0, 1.0, 1.0, 1.0);
 
+    var last_shadow_sample = ShadowSample(1.0, 0u, vec2<f32>(0.0), vec2<f32>(0.0), 0.0, 0.0, 0.0);
     var final_rgb: vec3<f32>;
 
     if object.use_pbr != 0u {
@@ -785,7 +768,8 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
             // Shadow factor (lights[0] only) : CSM.
             var shadow_factor = 1.0;
             if i == 0u && lights_uniform.shadows_enabled != 0u {
-                shadow_factor = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L);
+                last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L);
+                shadow_factor = last_shadow_sample.factor;
                 // Fade shadow to 1.0 near the terminator (N·L ≈ 0).
                 // Shadow-map texels project at grazing angles near the terminator,
                 // causing visible squares. N·L already smoothly darkens that region,
@@ -849,7 +833,8 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
 
             var shadow = 1.0;
             if i == 0u && lights_uniform.shadows_enabled != 0u {
-                shadow = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, light_dir);
+                last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, light_dir);
+                shadow = last_shadow_sample.factor;
                 // Terminator fade: suppress shadow map near N·L ≈ 0 to avoid
                 // shadow-texel squares on curved surfaces.
                 let terminator = smoothstep(0.0, 0.75, dot(shadow_normal, light_dir));

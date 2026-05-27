@@ -221,6 +221,18 @@ fn vs_main_cull(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
     return out;
 }
 
+// ShadowSample stub: no shadow sampling in this shader (transparent instances skip CSM).
+// Declared so debug_vis.wgsl can reference last_shadow_sample uniformly across all variants.
+struct ShadowSample {
+    factor: f32,
+    cascade_idx: u32,
+    atlas_uv: vec2<f32>,
+    tile_uv: vec2<f32>,
+    biased_depth: f32,
+    surface_depth: f32,
+    normal_bias_world: f32,
+}
+
 // ---------------------------------------------------------------------------
 // PBR BRDF helpers (Cook-Torrance)
 // ---------------------------------------------------------------------------
@@ -342,6 +354,7 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
 
     let V = normalize(camera.eye_pos - in.world_pos);
     let tint = vec4<f32>(1.0);
+    var last_shadow_sample = ShadowSample(1.0, 0u, vec2<f32>(0.0), vec2<f32>(0.0), 0.0, 0.0, 0.0);
     var final_rgb: vec3<f32>;
 
     if inst.use_pbr != 0u {

@@ -702,6 +702,19 @@ impl App {
             .show(ui, |ui| {
                 ui.checkbox(&mut self.debug_vis_active, "Active");
                 if self.debug_vis_active {
+                    ui.add_space(2.0);
+                    ui.horizontal(|ui| {
+                        if ui.small_button("Atlas UV").clicked() {
+                            self.debug_vis_r = viewport_lib::DebugQuantity::AtlasUvX;
+                            self.debug_vis_g = viewport_lib::DebugQuantity::AtlasUvY;
+                            self.debug_vis_b = viewport_lib::DebugQuantity::Zero;
+                        }
+                        if ui.small_button("Depth compare").clicked() {
+                            self.debug_vis_r = viewport_lib::DebugQuantity::BiasedDepth;
+                            self.debug_vis_g = viewport_lib::DebugQuantity::SurfaceDepth;
+                            self.debug_vis_b = viewport_lib::DebugQuantity::NdotL;
+                        }
+                    });
                     ui.add_space(4.0);
                     ui.label("Mode:");
                     ui.horizontal(|ui| {
