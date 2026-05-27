@@ -55,7 +55,7 @@ fn main() -> eframe::Result {
 
                 // Tab 1: Basic geometry
                 m_ground = res
-                    .upload_mesh_data(device, &primitives::plane(24.0, 24.0))
+                    .upload_mesh_data(device, &primitives::cuboid(24.0, 24.0, 0.5))
                     .expect("ground");
                 m_sphere = res
                     .upload_mesh_data(device, &primitives::sphere(0.6, 32, 16))
@@ -71,7 +71,7 @@ fn main() -> eframe::Result {
                 // Each sphere needs its own mesh upload so the non-instanced path gives each
                 // object independent GPU state (object_uniform_buf / bind_group).
                 m_ground2 = res
-                    .upload_mesh_data(device, &primitives::plane(24.0, 24.0))
+                    .upload_mesh_data(device, &primitives::cuboid(24.0, 24.0, 0.5))
                     .expect("ground2");
                 m_clay = res
                     .upload_mesh_data(device, &primitives::sphere(0.7, 40, 20))
@@ -195,6 +195,13 @@ struct App {
     atlas_viewer_corner: AtlasViewerCorner,
     atlas_viewer_scale: f32,
 
+    // Pixel inspector (D7)
+    pixel_inspector_active: bool,
+    pixel_read_req: std::sync::Arc<std::sync::Mutex<Option<(u32, u32)>>>,
+    pixel_read_res: std::sync::Arc<std::sync::Mutex<Option<[f32; 4]>>>,
+    last_picked_pos: Option<(u32, u32)>,
+    last_picked_values: Option<[f32; 4]>,
+
     // Instancing status (updated each frame by the paint callback)
     instancing_status: std::sync::Arc<std::sync::Mutex<(bool, usize)>>,
 }
@@ -223,7 +230,7 @@ impl App {
             // Match showcase_27 defaults: a known-problematic setup useful for reproducing bugs.
             light_kind: 0,
             light_colour: [1.0, 0.97, 0.90],
-            light_intensity: 1.8,
+            light_intensity: 0.8,
             dir_direction: [0.3, -0.5, 0.8],
             point_position: [0.0, 0.0, 5.0],
             point_range: 20.0,
@@ -254,6 +261,11 @@ impl App {
             show_shadow_atlas: false,
             atlas_viewer_corner: AtlasViewerCorner::BottomRight,
             atlas_viewer_scale: 0.3,
+            pixel_inspector_active: false,
+            pixel_read_req: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            pixel_read_res: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            last_picked_pos: None,
+            last_picked_values: None,
             instancing_status: std::sync::Arc::new(std::sync::Mutex::new((false, 0))),
         }
     }
@@ -322,37 +334,39 @@ impl App {
     fn build_basic_items(&self) -> Vec<SceneRenderItem> {
         let mut items = Vec::new();
 
-        // Ground plane: large, light warm off-white. Good for shadow gap and cascade band visibility.
+        // Ground platform: light warm sand. Cuboid with top surface at z=0.
         let mut ground = SceneRenderItem::default();
         ground.mesh_id = self.m_ground;
-        ground.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-        ground.material = Material::from_colour([0.90, 0.88, 0.85]);
+        ground.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25))
+            .to_cols_array_2d();
+        ground.material = Material::from_colour([0.88, 0.84, 0.76]);
         ground.material.roughness = 0.85;
+        ground.material.backface_policy = BackfacePolicy::Identical;
         items.push(ground);
-
-        // Sphere: near-white. Acne is easy to spot on light curved surfaces.
+        
+        // Sphere: light sage green. Acne is easy to spot on light curved surfaces.
         let mut sphere = SceneRenderItem::default();
         sphere.mesh_id = self.m_sphere;
         sphere.model =
             glam::Mat4::from_translation(glam::Vec3::new(-4.0, 0.0, 0.6)).to_cols_array_2d();
-        sphere.material = Material::from_colour([0.95, 0.95, 0.94]);
+        sphere.material = Material::from_colour([0.78, 0.90, 0.80]);
         items.push(sphere);
 
-        // Cube: near-white with a slight cool tint. Flat faces isolate bias and gap artifacts.
+        // Cube: light periwinkle. Flat faces isolate bias and gap artifacts.
         let mut cube = SceneRenderItem::default();
         cube.mesh_id = self.m_cube;
         cube.model =
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.5)).to_cols_array_2d();
-        cube.material = Material::from_colour([0.92, 0.93, 0.95]);
+        cube.material = Material::from_colour([0.78, 0.83, 0.95]);
         items.push(cube);
 
-        // Torus: near-white with slight warm tint. Mixed geometry useful for bright-spot test.
+        // Torus: light peach. Mixed geometry useful for bright-spot test.
         // Z offset 0.18 = torus minor radius, places the bottom of the tube on the ground.
         let mut torus = SceneRenderItem::default();
         torus.mesh_id = self.m_torus;
         torus.model =
             glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.18)).to_cols_array_2d();
-        torus.material = Material::from_colour([0.94, 0.93, 0.91]);
+        torus.material = Material::from_colour([0.95, 0.82, 0.74]);
         items.push(torus);
 
         items
@@ -361,10 +375,11 @@ impl App {
     fn build_materials_items(&self) -> Vec<SceneRenderItem> {
         let mut items = Vec::new();
 
-        // Ground plane: neutral light grey.
+        // Ground platform: neutral light grey, top surface at z=0.
         let mut ground = SceneRenderItem::default();
         ground.mesh_id = self.m_ground2;
-        ground.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        ground.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25))
+            .to_cols_array_2d();
         ground.material = Material::from_colour([0.85, 0.85, 0.85]);
         ground.material.roughness = 0.85;
         items.push(ground);
@@ -528,8 +543,10 @@ impl eframe::App for App {
                 Tab::Materials => self.build_materials_items(),
             };
 
+            let ppp = ui.ctx().pixels_per_point();
             let mut fd = FrameData::new(
-                CameraFrame::from_camera(&self.camera, [w, h]),
+                CameraFrame::from_camera(&self.camera, [w, h])
+                    .with_pixels_per_point(ppp),
                 SceneFrame::from_surface_items(items),
             );
             fd.effects.lighting = self.build_lighting();
@@ -537,11 +554,34 @@ impl eframe::App for App {
             fd.effects.atlas_viewer_corner = self.atlas_viewer_corner;
             fd.effects.atlas_viewer_scale = self.atlas_viewer_scale;
 
+            // Pixel inspector: on left-click, submit the clicked pixel for readback.
+            if self.pixel_inspector_active && self.debug_vis_active {
+                if response.clicked() {
+                    if let Some(pos) = response.interact_pointer_pos() {
+                        let px = (pos.x - rect.left()) as u32;
+                        let py = (pos.y - rect.top()) as u32;
+                        self.last_picked_pos = Some((px, py));
+                        if let Ok(mut req) = self.pixel_read_req.lock() {
+                            *req = Some((px, py));
+                        }
+                    }
+                }
+            }
+
+            // Collect pixel readback result from previous frame.
+            if let Ok(mut res) = self.pixel_read_res.lock() {
+                if let Some(vals) = res.take() {
+                    self.last_picked_values = Some(vals);
+                }
+            }
+
             ui.painter().add(eframe::egui_wgpu::Callback::new_paint_callback(
                 rect,
                 viewport_callback::ViewportCallback {
                     frame: fd,
                     instancing_status: self.instancing_status.clone(),
+                    pixel_read_req: self.pixel_read_req.clone(),
+                    pixel_read_res: self.pixel_read_res.clone(),
                 },
             ));
 
@@ -634,7 +674,7 @@ impl App {
                     ui.color_edit_button_rgb(&mut self.light_colour);
                 });
                 ui.add(
-                    egui::Slider::new(&mut self.light_intensity, 0.0..=5.0).text("Intensity"),
+                    egui::Slider::new(&mut self.light_intensity, 0.0..=1.0).text("Intensity"),
                 );
             });
 
@@ -817,6 +857,42 @@ impl App {
                             .text("Scale")
                             .logarithmic(true),
                     );
+                }
+            });
+
+        ui.add_space(4.0);
+
+        egui::CollapsingHeader::new("Pixel Inspector")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.checkbox(&mut self.pixel_inspector_active, "Active");
+                if self.pixel_inspector_active {
+                    if !self.debug_vis_active {
+                        ui.label("Enable Debug Visualization first.");
+                    } else {
+                        ui.label("Click a pixel in the viewport to read its debug values.");
+                    }
+                }
+
+                if let Some((px, py)) = self.last_picked_pos {
+                    ui.add_space(4.0);
+                    ui.label(format!("Last picked: ({}, {})", px, py));
+                    if let Some(vals) = self.last_picked_values {
+                        ui.horizontal(|ui| {
+                            ui.label("R");
+                            ui.label(format!("{} ({:.4})", debug_quantity_label(self.debug_vis_r), vals[0]));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("G");
+                            ui.label(format!("{} ({:.4})", debug_quantity_label(self.debug_vis_g), vals[1]));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("B");
+                            ui.label(format!("{} ({:.4})", debug_quantity_label(self.debug_vis_b), vals[2]));
+                        });
+                    } else {
+                        ui.label("(reading...)");
+                    }
                 }
             });
     }

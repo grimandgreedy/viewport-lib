@@ -87,4 +87,15 @@ if lights_uniform.debug_vis_mode != 0u {
     } else {
         final_rgb = dbg_rgb;
     }
+
+    // Write to per-fragment storage buffer for pixel inspector readback.
+    // Uses the window-space position from @builtin(position).
+    let dbg_px = u32(in.clip_pos.x);
+    let dbg_py = u32(in.clip_pos.y);
+    let dbg_buf_stride = u32(clip_planes.viewport_width);
+    let dbg_buf_idx = dbg_py * dbg_buf_stride + dbg_px;
+    let dbg_buf_len = arrayLength(&debug_frag_buf);
+    if dbg_buf_idx < dbg_buf_len {
+        debug_frag_buf[dbg_buf_idx] = vec4<f32>(dbg_rgb, 1.0);
+    }
 }

@@ -5505,6 +5505,51 @@ impl ViewportRenderer {
             }
         }
 
+        // Debug fragment buffer: allocate or resize when debug_vis is active.
+        {
+            let vp_idx = frame.camera.viewport_index;
+            let debug_active = frame.effects.lighting.debug_vis.active;
+            let vw = frame.camera.viewport_size[0].max(1.0) as u32;
+            let vh = frame.camera.viewport_size[1].max(1.0) as u32;
+            let slot = &self.viewport_slots[vp_idx];
+
+            if debug_active && slot.debug_frag_dims != (vw, vh) {
+                let size = (vw as u64) * (vh as u64) * 16;
+                let new_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("debug_frag_buf"),
+                    size: size.max(16),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                });
+                let new_bg = self.resources.create_camera_bind_group(
+                    device,
+                    &self.viewport_slots[vp_idx].camera_buf,
+                    &self.viewport_slots[vp_idx].clip_planes_buf,
+                    &self.viewport_slots[vp_idx].shadow_info_buf,
+                    &self.viewport_slots[vp_idx].clip_volume_buf,
+                    &new_buf,
+                    "per_viewport_camera_bg_debug",
+                );
+                self.viewport_slots[vp_idx].debug_frag_buf = Some(new_buf);
+                self.viewport_slots[vp_idx].debug_frag_dims = (vw, vh);
+                self.viewport_slots[vp_idx].camera_bind_group = new_bg;
+            } else if !debug_active && slot.debug_frag_buf.is_some() {
+                let sentinel = &self.resources.debug_frag_sentinel_buf;
+                let new_bg = self.resources.create_camera_bind_group(
+                    device,
+                    &self.viewport_slots[vp_idx].camera_buf,
+                    &self.viewport_slots[vp_idx].clip_planes_buf,
+                    &self.viewport_slots[vp_idx].shadow_info_buf,
+                    &self.viewport_slots[vp_idx].clip_volume_buf,
+                    sentinel,
+                    "per_viewport_camera_bg",
+                );
+                self.viewport_slots[vp_idx].debug_frag_buf = None;
+                self.viewport_slots[vp_idx].debug_frag_dims = (0, 0);
+                self.viewport_slots[vp_idx].camera_bind_group = new_bg;
+            }
+        }
+
         // Atlas blit uniform: compute NDC rect for the corner overlay.
         if viewport_fx.show_shadow_atlas {
             let vw = frame.camera.viewport_size[0].max(1.0);

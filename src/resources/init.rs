@@ -146,6 +146,19 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
+                // Binding 12: per-fragment debug storage buffer (written in debug_vis.wgsl).
+                // Sized to viewport_width * viewport_height * 16 bytes when debug is active;
+                // a 16-byte sentinel buffer is used otherwise.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 12,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -694,6 +707,14 @@ impl ViewportGpuResources {
             ..Default::default()
         });
 
+        // 16-byte sentinel bound at group 0 binding 12 when the debug fragment buffer is inactive.
+        let debug_frag_sentinel_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("debug_frag_sentinel_buf"),
+            size: 16,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("camera_bind_group"),
             layout: &camera_bgl,
@@ -746,6 +767,10 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 11,
                     resource: wgpu::BindingResource::TextureView(&ibl_fallback_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: debug_frag_sentinel_buf.as_entire_binding(),
                 },
             ],
         });
@@ -2497,6 +2522,7 @@ impl ViewportGpuResources {
             shadow_atlas_viewer_pipeline,
             shadow_atlas_viewer_bg,
             shadow_atlas_viewer_buf,
+            debug_frag_sentinel_buf,
             gizmo_pipeline,
             gizmo_vertex_buffer,
             gizmo_index_buffer,

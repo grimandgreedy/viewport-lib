@@ -2411,6 +2411,8 @@ pub struct ViewportGpuResources {
     pub shadow_atlas_viewer_bg: wgpu::BindGroup,
     /// Uniform buffer: NDC rect of the atlas viewer quad.
     pub shadow_atlas_viewer_buf: wgpu::Buffer,
+    /// 16-byte sentinel bound at group 0 binding 12 when the debug fragment buffer is inactive.
+    pub debug_frag_sentinel_buf: wgpu::Buffer,
 
     // --- Gizmo resources ---
     /// Gizmo render pipeline (TriangleList, depth_compare Always : always on top).

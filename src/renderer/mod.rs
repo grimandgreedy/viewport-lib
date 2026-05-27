@@ -79,6 +79,11 @@ pub(crate) struct ViewportSlot {
     ///
     /// Created lazily on first HDR render call and resized when viewport dimensions change.
     pub hdr: Option<crate::resources::ViewportHdrState>,
+    /// Per-fragment debug storage buffer (group 0 binding 12). Allocated at
+    /// `width * height * 16` bytes when debug_vis is active; None otherwise.
+    pub debug_frag_buf: Option<wgpu::Buffer>,
+    /// Viewport dimensions for which `debug_frag_buf` was allocated.
+    pub debug_frag_dims: (u32, u32),
 
     // --- Per-viewport interaction state (Phase 4) ---
     /// Per-frame outline buffers for selected objects, rebuilt in prepare().
@@ -658,6 +663,55 @@ impl ViewportRenderer {
         self.instanced_batches.len()
     }
 
+    /// Read the debug values at a specific pixel from the per-fragment storage buffer.
+    ///
+    /// Returns `None` when debug_vis is inactive (no buffer allocated) or when `(x, y)`
+    /// is outside the viewport. The four channels correspond to the current R/G/B channel
+    /// selectors plus 1.0 for alpha.
+    ///
+    /// This submits a GPU-to-CPU copy and waits synchronously. Only call from outside
+    /// a render pass (e.g., in the next frame's prepare step), not inside paint callbacks.
+    ///
+    /// The returned values are from the previous rendered frame.
+    pub fn read_debug_pixel(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        x: u32,
+        y: u32,
+    ) -> Option<[f32; 4]> {
+        // Use the primary viewport slot (index 0).
+        let slot = self.viewport_slots.first()?;
+        let buf = slot.debug_frag_buf.as_ref()?;
+        let (vw, vh) = slot.debug_frag_dims;
+        if x >= vw || y >= vh {
+            return None;
+        }
+        let byte_offset = ((y as u64) * (vw as u64) + (x as u64)) * 16;
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 16,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        encoder.copy_buffer_to_buffer(buf, byte_offset, &staging, 0, 16);
+        queue.submit(Some(encoder.finish()));
+        let slice = staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel::<Result<(), wgpu::BufferAsyncError>>();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        let _ = device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(std::time::Duration::from_secs(5)),
+        });
+        rx.recv().ok()?.ok()?;
+        let data = slice.get_mapped_range();
+        Some(bytemuck::pod_read_unaligned::<[f32; 4]>(&data))
+    }
+
     /// Upload a Gaussian splat set to the GPU.
     ///
     /// Call once per splat set at startup or when it changes. The returned
@@ -746,16 +800,22 @@ impl ViewportRenderer {
             &self.resources.clip_planes_uniform_buf,
             &self.resources.shadow_info_buf,
             &self.resources.clip_volume_uniform_buf,
+            &self.resources.debug_frag_sentinel_buf,
             "camera_bind_group",
         );
 
         for slot in &mut self.viewport_slots {
+            let dbg_buf = slot
+                .debug_frag_buf
+                .as_ref()
+                .unwrap_or(&self.resources.debug_frag_sentinel_buf);
             slot.camera_bind_group = self.resources.create_camera_bind_group(
                 device,
                 &slot.camera_buf,
                 &slot.clip_planes_buf,
                 &slot.shadow_info_buf,
                 &slot.clip_volume_buf,
+                dbg_buf,
                 "per_viewport_camera_bg",
             );
         }
@@ -806,6 +866,7 @@ impl ViewportRenderer {
                 &clip_planes_buf,
                 &shadow_info_buf,
                 &clip_volume_buf,
+                &self.resources.debug_frag_sentinel_buf,
                 "per_viewport_camera_bg",
             );
 
@@ -889,6 +950,8 @@ impl ViewportRenderer {
                 camera_bind_group,
                 grid_bind_group,
                 hdr: None,
+                debug_frag_buf: None,
+                debug_frag_dims: (0, 0),
                 outline_object_buffers: Vec::new(),
                 splat_outline_buffers: Vec::new(),
                 volume_outline_indices: Vec::new(),

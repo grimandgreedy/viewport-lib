@@ -478,6 +478,7 @@ impl ViewportGpuResources {
         clip_planes_buf: &wgpu::Buffer,
         shadow_info_buf: &wgpu::Buffer,
         clip_volume_buf: &wgpu::Buffer,
+        debug_frag_buf: &wgpu::Buffer,
         label: &str,
     ) -> wgpu::BindGroup {
         let irr = self
@@ -548,6 +549,10 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 11,
                     resource: wgpu::BindingResource::TextureView(skybox),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: debug_frag_buf.as_entire_binding(),
                 },
             ],
         })

@@ -231,6 +231,12 @@ impl ViewportRenderer {
                 }
             }
         }
+        // Shadow atlas viewer overlay.
+        if frame.effects.show_shadow_atlas {
+            render_pass.set_pipeline(&self.resources.shadow_atlas_viewer_pipeline);
+            render_pass.set_bind_group(0, &self.resources.shadow_atlas_viewer_bg, &[]);
+            render_pass.draw(0..6, 0..1);
+        }
     }
 
     /// Render the scene into an intermediate dyn-res texture for the LDR callback
@@ -658,6 +664,12 @@ impl ViewportRenderer {
                 render_pass.set_bind_group(0, &hc.blit_bind_group, &[]);
                 render_pass.draw(0..3, 0..1);
             }
+        }
+        // Shadow atlas viewer overlay.
+        if frame.effects.show_shadow_atlas {
+            render_pass.set_pipeline(&self.resources.shadow_atlas_viewer_pipeline);
+            render_pass.set_bind_group(0, &self.resources.shadow_atlas_viewer_bg, &[]);
+            render_pass.draw(0..6, 0..1);
         }
     }
 
