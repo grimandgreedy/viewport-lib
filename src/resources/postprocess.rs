@@ -98,7 +98,7 @@ impl ViewportGpuResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("outline_composite_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/outline_composite.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/outline_composite.wgsl")).into(),
             ),
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -985,7 +985,7 @@ impl ViewportGpuResources {
         // Tone map pipeline
         let tone_map_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("tone_map_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/tone_map.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/tone_map.wgsl")).into()),
         });
         let tone_map_pipeline = make_fs_pipeline(
             "tone_map_pipeline",
@@ -1001,7 +1001,7 @@ impl ViewportGpuResources {
         let bloom_threshold_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("bloom_threshold_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/bloom_threshold.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/bloom_threshold.wgsl")).into(),
             ),
         });
         let bloom_threshold_pipeline = make_fs_pipeline(
@@ -1015,7 +1015,7 @@ impl ViewportGpuResources {
         );
         let bloom_blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("bloom_blur_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/bloom_blur.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/bloom_blur.wgsl")).into()),
         });
         let bloom_blur_pipeline = make_fs_pipeline(
             "bloom_blur_pipeline",
@@ -1030,7 +1030,7 @@ impl ViewportGpuResources {
         // SSAO pipelines
         let ssao_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ssao_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/ssao.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/ssao.wgsl")).into()),
         });
         let ssao_pipeline = make_fs_pipeline(
             "ssao_pipeline",
@@ -1043,7 +1043,7 @@ impl ViewportGpuResources {
         );
         let ssao_blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ssao_blur_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/ssao_blur.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/ssao_blur.wgsl")).into()),
         });
         let ssao_blur_pipeline = make_fs_pipeline(
             "ssao_blur_pipeline",
@@ -1058,7 +1058,7 @@ impl ViewportGpuResources {
         // Contact shadow pipeline
         let cs_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("contact_shadow_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/contact_shadow.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/contact_shadow.wgsl")).into()),
         });
         let cs_pipeline = make_fs_pipeline(
             "contact_shadow_pipeline",
@@ -1073,7 +1073,7 @@ impl ViewportGpuResources {
         // FXAA pipeline
         let fxaa_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("fxaa_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/fxaa.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/fxaa.wgsl")).into()),
         });
         let fxaa_pipeline = make_fs_pipeline(
             "fxaa_pipeline",
@@ -1088,7 +1088,7 @@ impl ViewportGpuResources {
         // OIT composite pipeline
         let oit_comp_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("oit_composite_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/oit_composite.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/oit_composite.wgsl")).into()),
         });
         let premul_blend = wgpu::BlendState {
             color: wgpu::BlendComponent {
@@ -1238,7 +1238,7 @@ impl ViewportGpuResources {
             let skinned_oit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("mesh_skinned_shader_oit"),
                 source: wgpu::ShaderSource::Wgsl(
-                    include_str!("../shaders/mesh_skinned.wgsl").into(),
+                    include_str!(concat!(env!("OUT_DIR"), "/mesh_skinned.wgsl")).into(),
                 ),
             });
             let skinned_oit_pipeline =
@@ -1346,7 +1346,7 @@ impl ViewportGpuResources {
         // HDR scene pipelines
         let hdr_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh_shader_hdr"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mesh.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl")).into()),
         });
         let hdr_depth_stencil = wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth24PlusStencil8,
@@ -1438,7 +1438,7 @@ impl ViewportGpuResources {
 
         let hdr_overlay_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("overlay_shader_hdr"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/overlay.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/overlay.wgsl")).into()),
         });
         let hdr_overlay_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("hdr_overlay_pipeline_layout"),
@@ -1491,7 +1491,7 @@ impl ViewportGpuResources {
         let outline_comp_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("outline_composite_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/outline_composite.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/outline_composite.wgsl")).into(),
             ),
         });
         let outline_comp_blend = wgpu::BlendState {
@@ -1624,7 +1624,7 @@ impl ViewportGpuResources {
         });
         let ssaa_resolve_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ssaa_resolve_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/ssaa_resolve.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/ssaa_resolve.wgsl")).into()),
         });
         let ssaa_resolve_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ssaa_resolve_layout"),
@@ -1707,7 +1707,7 @@ impl ViewportGpuResources {
         });
         let dof_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("dof_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/dof.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/dof.wgsl")).into()),
         });
         let dof_pipeline = make_fs_pipeline(
             "dof_pipeline",
@@ -1736,7 +1736,7 @@ impl ViewportGpuResources {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("mesh_skinned_shader_hdr"),
                 source: wgpu::ShaderSource::Wgsl(
-                    include_str!("../shaders/mesh_skinned.wgsl").into(),
+                    include_str!(concat!(env!("OUT_DIR"), "/mesh_skinned.wgsl")).into(),
                 ),
             });
         let hdr_skinned_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1991,7 +1991,7 @@ impl ViewportGpuResources {
                 let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("lic_surface_shader"),
                     source: wgpu::ShaderSource::Wgsl(
-                        include_str!("../shaders/lic_surface.wgsl").into(),
+                        include_str!(concat!(env!("OUT_DIR"), "/lic_surface.wgsl")).into(),
                     ),
                 });
                 let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -2058,7 +2058,7 @@ impl ViewportGpuResources {
                 let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("lic_advect_shader"),
                     source: wgpu::ShaderSource::Wgsl(
-                        include_str!("../shaders/lic_advect.wgsl").into(),
+                        include_str!(concat!(env!("OUT_DIR"), "/lic_advect.wgsl")).into(),
                     ),
                 });
                 let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -2118,7 +2118,7 @@ impl ViewportGpuResources {
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("depth_blit_shader"),
                 source: wgpu::ShaderSource::Wgsl(
-                    include_str!("../shaders/depth_blit.wgsl").into(),
+                    include_str!(concat!(env!("OUT_DIR"), "/depth_blit.wgsl")).into(),
                 ),
             });
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

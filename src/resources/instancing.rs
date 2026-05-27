@@ -166,7 +166,7 @@ impl ViewportGpuResources {
         let shadow_instanced_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shadow_instanced_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/shadow_instanced.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/shadow_instanced.wgsl")).into(),
             ),
         });
 
@@ -791,7 +791,7 @@ impl ViewportGpuResources {
         let shadow_cull_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shadow_instanced_cull_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/shadow_instanced.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/shadow_instanced.wgsl")).into(),
             ),
         });
         let shadow_instanced_cull =

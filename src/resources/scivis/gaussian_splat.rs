@@ -126,7 +126,7 @@ impl ViewportGpuResources {
         let render_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gaussian_splat_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../shaders/gaussian_splat.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/gaussian_splat.wgsl")).into(),
             ),
         });
 
@@ -189,7 +189,7 @@ impl ViewportGpuResources {
         let sort_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gaussian_splat_sort_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../shaders/gaussian_splat_sort.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/gaussian_splat_sort.wgsl")).into(),
             ),
         });
 

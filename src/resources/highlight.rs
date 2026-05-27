@@ -60,19 +60,19 @@ impl ViewportGpuResources {
         let fill_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sub_highlight_fill_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/sub_highlight_fill.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/sub_highlight_fill.wgsl")).into(),
             ),
         });
         let edge_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sub_highlight_edge_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/sub_highlight_edge.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/sub_highlight_edge.wgsl")).into(),
             ),
         });
         let sprite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sub_highlight_sprite_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/sub_highlight_sprite.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/sub_highlight_sprite.wgsl")).into(),
             ),
         });
 

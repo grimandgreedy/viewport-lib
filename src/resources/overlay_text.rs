@@ -51,7 +51,7 @@ impl super::ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("overlay_text.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/overlay_text.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/overlay_text.wgsl")).into()),
         });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {

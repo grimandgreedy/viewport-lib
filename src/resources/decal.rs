@@ -69,7 +69,7 @@ impl ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("decal_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/decal.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/decal.wgsl")).into()),
         });
 
         let tex2d_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
@@ -379,7 +379,7 @@ impl ViewportGpuResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("decal_exclude_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/decal_exclude.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/decal_exclude.wgsl")).into(),
             ),
         });
 

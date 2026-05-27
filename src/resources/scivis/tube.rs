@@ -26,7 +26,7 @@ impl ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("streamtube_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/streamtube.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/streamtube.wgsl")).into()),
         });
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -80,7 +80,7 @@ impl ViewportGpuResources {
         // Ribbon pipeline: same layout, two-sided shader, cull_mode None.
         let ribbon_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ribbon_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/ribbon.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/ribbon.wgsl")).into()),
         });
         let make_ribbon = |fmt: wgpu::TextureFormat| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {

@@ -273,7 +273,7 @@ impl ViewportGpuResources {
         // ----------------------------------------------------------------
         let classify_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mc_classify_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mc_classify.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/mc_classify.wgsl")).into()),
         });
         let classify_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mc_classify_layout"),
@@ -291,7 +291,7 @@ impl ViewportGpuResources {
 
         let prefix_sum_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mc_prefix_sum_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mc_prefix_sum.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/mc_prefix_sum.wgsl")).into()),
         });
         let prefix_sum_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mc_prefix_sum_layout"),
@@ -310,7 +310,7 @@ impl ViewportGpuResources {
 
         let generate_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mc_generate_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mc_generate.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/mc_generate.wgsl")).into()),
         });
         let generate_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mc_generate_layout"),
@@ -331,7 +331,7 @@ impl ViewportGpuResources {
         // ----------------------------------------------------------------
         let surface_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mc_surface_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mc_surface.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/mc_surface.wgsl")).into()),
         });
         let surface_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mc_surface_layout"),
@@ -420,7 +420,7 @@ impl ViewportGpuResources {
         let wireframe_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mc_wireframe_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/mc_wireframe.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/mc_wireframe.wgsl")).into(),
             ),
         });
         let wireframe_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -669,7 +669,7 @@ impl ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mc_outline_mask_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/outline_mask.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/outline_mask.wgsl")).into()),
         });
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

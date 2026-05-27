@@ -70,7 +70,7 @@ impl ViewportGpuResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("dyn_res_upscale_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/dyn_res_upscale.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/dyn_res_upscale.wgsl")).into(),
             ),
         });
 
@@ -133,7 +133,7 @@ impl ViewportGpuResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("dyn_res_upscale_ds_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/dyn_res_upscale.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/dyn_res_upscale.wgsl")).into(),
             ),
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

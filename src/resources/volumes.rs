@@ -130,7 +130,7 @@ impl ViewportGpuResources {
             ],
         });
 
-        let shader_src = include_str!("../shaders/volume.wgsl");
+        let shader_src = include_str!(concat!(env!("OUT_DIR"), "/volume.wgsl"));
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("volume_shader"),
             source: wgpu::ShaderSource::Wgsl(shader_src.into()),
@@ -228,7 +228,7 @@ impl ViewportGpuResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("volume_outline_mask_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/volume_outline_mask.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/volume_outline_mask.wgsl")).into(),
             ),
         });
 

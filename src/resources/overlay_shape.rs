@@ -22,7 +22,7 @@ impl super::ViewportGpuResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("overlay_shape.wgsl"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/overlay_shape.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/overlay_shape.wgsl")).into(),
             ),
         });
 
@@ -125,7 +125,7 @@ impl super::ViewportGpuResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("overlay_shape_tex.wgsl"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/overlay_shape_tex.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/overlay_shape_tex.wgsl")).into(),
             ),
         });
 
@@ -310,7 +310,7 @@ impl super::ViewportGpuResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("backdrop_blur.wgsl"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/backdrop_blur.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/backdrop_blur.wgsl")).into(),
             ),
         });
 

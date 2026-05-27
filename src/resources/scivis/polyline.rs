@@ -43,7 +43,7 @@ impl ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("polyline_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/polyline.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/polyline.wgsl")).into()),
         });
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -215,7 +215,7 @@ impl ViewportGpuResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("polyline_wireframe_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../shaders/polyline_wireframe.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/polyline_wireframe.wgsl")).into(),
             ),
         });
 
@@ -549,7 +549,7 @@ impl ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("polyline_no_clip_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/polyline.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/polyline.wgsl")).into()),
         });
 
         let pl_bgl = self
@@ -707,7 +707,7 @@ impl ViewportGpuResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("polyline_outline_mask_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../shaders/polyline_outline_mask.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/polyline_outline_mask.wgsl")).into(),
             ),
         });
 

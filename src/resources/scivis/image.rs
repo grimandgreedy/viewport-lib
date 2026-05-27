@@ -70,7 +70,7 @@ impl ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("image_slice_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/image_slice.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/image_slice.wgsl")).into()),
         });
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -265,7 +265,7 @@ impl ViewportGpuResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("screen_image_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../shaders/screen_image.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/screen_image.wgsl")).into(),
             ),
         });
 
@@ -368,7 +368,7 @@ impl ViewportGpuResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("screen_image_dc_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../shaders/screen_image_dc.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/screen_image_dc.wgsl")).into(),
             ),
         });
 
@@ -927,7 +927,7 @@ impl ViewportGpuResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("volume_surface_slice_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../shaders/volume_surface_slice.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/volume_surface_slice.wgsl")).into(),
             ),
         });
 
@@ -1127,7 +1127,7 @@ impl ViewportGpuResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("screen_rect_outline_mask_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../shaders/outline_mask_ndc.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/outline_mask_ndc.wgsl")).into(),
             ),
         });
 

@@ -780,7 +780,7 @@ impl ViewportGpuResources {
         // ------------------------------------------------------------------
         let shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shadow_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/shadow.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/shadow.wgsl")).into()),
         });
 
         // Shadow pass uses a simple bind group layout: just the light uniform.
@@ -880,7 +880,7 @@ impl ViewportGpuResources {
         // ------------------------------------------------------------------
         let gizmo_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gizmo_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/gizmo.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/gizmo.wgsl")).into()),
         });
 
         // ------------------------------------------------------------------
@@ -1025,7 +1025,7 @@ impl ViewportGpuResources {
         // ------------------------------------------------------------------
         let overlay_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("overlay_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/overlay.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/overlay.wgsl")).into()),
         });
 
         // ------------------------------------------------------------------
@@ -1168,7 +1168,7 @@ impl ViewportGpuResources {
         // ------------------------------------------------------------------
         let grid_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("grid_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/grid.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/grid.wgsl")).into()),
         });
         let grid_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("grid_bgl"),
@@ -1260,7 +1260,7 @@ impl ViewportGpuResources {
         // ------------------------------------------------------------------
         let ground_plane_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ground_plane_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/ground_plane.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/ground_plane.wgsl")).into()),
         });
         let ground_plane_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ground_plane_bgl"),
@@ -1387,7 +1387,7 @@ impl ViewportGpuResources {
         // ------------------------------------------------------------------
         let atlas_blit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shadow_atlas_blit"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/shadow_atlas_blit.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/shadow_atlas_blit.wgsl")).into()),
         });
         let atlas_blit_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("atlas_blit_bgl"),
@@ -1494,7 +1494,7 @@ impl ViewportGpuResources {
         // ------------------------------------------------------------------
         let axes_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("axes_overlay_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/axes_overlay.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/axes_overlay.wgsl")).into()),
         });
 
         let axes_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1825,7 +1825,7 @@ impl ViewportGpuResources {
 
         let outline_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("outline_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/outline.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/outline.wgsl")).into()),
         });
 
         let outline_pipeline_layout =
@@ -1839,7 +1839,7 @@ impl ViewportGpuResources {
         // texture with depth testing, replacing the old stencil-based approach.
         let outline_mask_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("outline_mask_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/outline_mask.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/outline_mask.wgsl")).into()),
         });
         let outline_mask_pipeline =
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1929,7 +1929,7 @@ impl ViewportGpuResources {
         let splat_outline_mask_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("splat_outline_mask_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/splat_outline_mask.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/splat_outline_mask.wgsl")).into(),
             ),
         });
         let splat_outline_pos_attrs = [wgpu::VertexAttribute {
@@ -1997,7 +1997,7 @@ impl ViewportGpuResources {
         // outputs an anti-aliased outline ring to the outline colour texture.
         let outline_edge_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("outline_edge_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/outline_edge.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/outline_edge.wgsl")).into()),
         });
         let outline_edge_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("outline_edge_bgl"),
@@ -2110,7 +2110,7 @@ impl ViewportGpuResources {
         // Skybox pipeline: fullscreen triangle that samples the equirect environment map.
         let skybox_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("skybox_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/skybox.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/skybox.wgsl")).into()),
         });
         let skybox_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -2188,7 +2188,7 @@ impl ViewportGpuResources {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("outline_mask_skinned_shader"),
                 source: wgpu::ShaderSource::Wgsl(
-                    include_str!("../shaders/outline_mask_skinned.wgsl").into(),
+                    include_str!(concat!(env!("OUT_DIR"), "/outline_mask_skinned.wgsl")).into(),
                 ),
             });
         let outline_skinned_pipeline_layout =
@@ -2247,7 +2247,7 @@ impl ViewportGpuResources {
 
         let skinned_mesh_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh_skinned_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mesh_skinned.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/mesh_skinned.wgsl")).into()),
         });
 
         let skinned_solid_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -2429,7 +2429,7 @@ impl ViewportGpuResources {
 
         let skinned_shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shadow_skinned_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/shadow_skinned.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/shadow_skinned.wgsl")).into()),
         });
 
         let skinned_shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

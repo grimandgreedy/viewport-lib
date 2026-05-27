@@ -58,7 +58,7 @@ impl ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("glyph_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/glyph.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/glyph.wgsl")).into()),
         });
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -494,7 +494,7 @@ impl ViewportGpuResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("tensor_glyph_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../shaders/tensor_glyph.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/tensor_glyph.wgsl")).into(),
             ),
         });
 
@@ -851,7 +851,7 @@ impl ViewportGpuResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("glyph_outline_mask_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../shaders/glyph_outline_mask.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/glyph_outline_mask.wgsl")).into(),
             ),
         });
 
@@ -928,7 +928,7 @@ impl ViewportGpuResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("tensor_glyph_outline_mask_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../shaders/tensor_glyph_outline_mask.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/tensor_glyph_outline_mask.wgsl")).into(),
             ),
         });
 

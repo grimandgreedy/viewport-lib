@@ -1,6 +1,8 @@
 //! Shader hash pinning for runtime integrity validation.
 //!
-//! Provides FNV-1a 64-bit hashing for all 25 WGSL shaders in the viewport library.
+//! Provides FNV-1a 64-bit hashing for every WGSL shader in `src/shaders/`.
+//! The `SHADERS` catalog is generated at build time by `build.rs` from a
+//! directory walk, so it stays in sync with the shader inventory automatically.
 //! Use `current_shader_hashes()` to snapshot hashes at build time, then
 //! `validate_shader_hashes()` at startup to detect accidental shader changes.
 
@@ -29,115 +31,14 @@ pub fn fnv1a_hash(data: &[u8]) -> u64 {
 pub struct ShaderEntry {
     /// Human-readable shader name (filename without path).
     pub name: &'static str,
-    /// Full WGSL source as embedded at compile time.
+    /// Full WGSL source as embedded at compile time, after preprocessor
+    /// `// #include` resolution.
     pub source: &'static str,
 }
 
-/// All 25 shaders embedded via `include_str!`.
-///
-/// Order matches the filesystem order in `src/shaders/`.
-pub const SHADERS: &[ShaderEntry] = &[
-    ShaderEntry {
-        name: "axes_overlay.wgsl",
-        source: include_str!("../shaders/axes_overlay.wgsl"),
-    },
-    ShaderEntry {
-        name: "cull.wgsl",
-        source: include_str!("../shaders/cull.wgsl"),
-    },
-    ShaderEntry {
-        name: "bloom_blur.wgsl",
-        source: include_str!("../shaders/bloom_blur.wgsl"),
-    },
-    ShaderEntry {
-        name: "bloom_threshold.wgsl",
-        source: include_str!("../shaders/bloom_threshold.wgsl"),
-    },
-    ShaderEntry {
-        name: "contact_shadow.wgsl",
-        source: include_str!("../shaders/contact_shadow.wgsl"),
-    },
-    ShaderEntry {
-        name: "dyn_res_upscale.wgsl",
-        source: include_str!("../shaders/dyn_res_upscale.wgsl"),
-    },
-    ShaderEntry {
-        name: "fxaa.wgsl",
-        source: include_str!("../shaders/fxaa.wgsl"),
-    },
-    ShaderEntry {
-        name: "grid.wgsl",
-        source: include_str!("../shaders/grid.wgsl"),
-    },
-    ShaderEntry {
-        name: "gizmo.wgsl",
-        source: include_str!("../shaders/gizmo.wgsl"),
-    },
-    ShaderEntry {
-        name: "mesh.wgsl",
-        source: include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl")),
-    },
-    ShaderEntry {
-        name: "mesh_instanced.wgsl",
-        source: include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl")),
-    },
-    ShaderEntry {
-        name: "mesh_instanced_oit.wgsl",
-        source: include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit.wgsl")),
-    },
-    ShaderEntry {
-        name: "outline.wgsl",
-        source: include_str!("../shaders/outline.wgsl"),
-    },
-    ShaderEntry {
-        name: "outline_composite.wgsl",
-        source: include_str!("../shaders/outline_composite.wgsl"),
-    },
-    ShaderEntry {
-        name: "outline_mask.wgsl",
-        source: include_str!("../shaders/outline_mask.wgsl"),
-    },
-    ShaderEntry {
-        name: "splat_outline_mask.wgsl",
-        source: include_str!("../shaders/splat_outline_mask.wgsl"),
-    },
-    ShaderEntry {
-        name: "polyline_outline_mask.wgsl",
-        source: include_str!("../shaders/polyline_outline_mask.wgsl"),
-    },
-    ShaderEntry {
-        name: "outline_edge.wgsl",
-        source: include_str!("../shaders/outline_edge.wgsl"),
-    },
-    ShaderEntry {
-        name: "overlay.wgsl",
-        source: include_str!("../shaders/overlay.wgsl"),
-    },
-    ShaderEntry {
-        name: "shadow.wgsl",
-        source: include_str!("../shaders/shadow.wgsl"),
-    },
-    ShaderEntry {
-        name: "shadow_instanced.wgsl",
-        source: include_str!("../shaders/shadow_instanced.wgsl"),
-    },
-    ShaderEntry {
-        name: "ssao.wgsl",
-        source: include_str!("../shaders/ssao.wgsl"),
-    },
-    ShaderEntry {
-        name: "ssao_blur.wgsl",
-        source: include_str!("../shaders/ssao_blur.wgsl"),
-    },
-    ShaderEntry {
-        name: "tone_map.wgsl",
-        source: include_str!("../shaders/tone_map.wgsl"),
-    },
-    ShaderEntry {
-        name: "volume_outline_mask.wgsl",
-        source: include_str!("../shaders/volume_outline_mask.wgsl"),
-    },
-];
+/// Every shader in `src/shaders/`, embedded via `include_str!` from the
+/// build-time preprocessor output in `OUT_DIR`. Order is alphabetical.
+pub const SHADERS: &[ShaderEntry] = include!(concat!(env!("OUT_DIR"), "/shader_catalog.rs"));
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -207,6 +108,24 @@ pub fn validate_shader_hashes(expected: &[(&str, u64)]) -> ShaderValidation {
 mod tests {
     use super::*;
 
+    /// Counts `.wgsl` files in `src/shaders/` to drive expected-count assertions
+    /// without needing manual updates as shaders are added or removed.
+    fn count_shader_files_on_disk() -> usize {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let shaders_dir = std::path::Path::new(manifest_dir).join("src/shaders");
+        std::fs::read_dir(&shaders_dir)
+            .expect("read src/shaders/")
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s == "wgsl")
+                    .unwrap_or(false)
+            })
+            .count()
+    }
+
     #[test]
     fn test_fnv1a_hash_deterministic() {
         let h1 = fnv1a_hash(b"hello");
@@ -222,13 +141,13 @@ mod tests {
     }
 
     #[test]
-    fn test_current_shader_hashes_returns_17_entries() {
-        let hashes = current_shader_hashes();
+    fn test_catalog_matches_directory_contents() {
+        let on_disk = count_shader_files_on_disk();
+        let catalog = current_shader_hashes().len();
         assert_eq!(
-            hashes.len(),
-            25,
-            "expected 25 shaders, got {}",
-            hashes.len()
+            catalog, on_disk,
+            "catalog has {} entries but src/shaders/ contains {} .wgsl files",
+            catalog, on_disk
         );
     }
 
@@ -247,7 +166,7 @@ mod tests {
         let hashes = current_shader_hashes();
         let expected: Vec<(&str, u64)> = hashes.iter().map(|(n, h)| (*n, *h)).collect();
         let result = validate_shader_hashes(&expected);
-        assert_eq!(result.valid, 25);
+        assert_eq!(result.valid, hashes.len());
         assert!(result.mismatched.is_empty());
     }
 

@@ -19,7 +19,7 @@ impl ViewportGpuResources {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("projected_tet_shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../shaders/projected_tet.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/projected_tet.wgsl")).into(),
             ),
         });
 
