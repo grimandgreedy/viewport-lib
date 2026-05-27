@@ -189,6 +189,7 @@ pub use widgets::axes_indicator::AxisView;
 pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::{FrameStats, PerformancePolicy, QualityPreset, RuntimeMode};
 pub use renderer::{
+    AtlasViewerCorner,
     CameraFrame, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
     CylindricalFacing, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection,
     DebugOutputMode, DebugQuantity, DebugVis,

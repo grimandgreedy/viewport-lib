@@ -177,3 +177,18 @@ impl DebugVis {
         (1u32 << 31) | (m << 15) | (b << 10) | (g << 5) | r
     }
 }
+
+/// Viewport corner where the shadow atlas viewer overlay is anchored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum AtlasViewerCorner {
+    /// Top-left corner.
+    TopLeft,
+    /// Top-right corner.
+    TopRight,
+    /// Bottom-left corner.
+    BottomLeft,
+    /// Bottom-right corner (default).
+    #[default]
+    BottomRight,
+}

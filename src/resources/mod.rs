@@ -56,6 +56,7 @@ pub use self::types::{
 };
 pub(crate) use self::types::PendingUploadEntry;
 pub(crate) use self::types::{
+    AtlasBlitUniform,
     BatchMeta, BloomUniform, ClipPlanesUniform, ContactShadowUniform, CurveMeshOutlineItem,
     DofUniform, DualPipeline,
     FrustumPlane, FrustumUniform, GaussianSplatDrawData, GlyphBaseMesh, GlyphGpuData,

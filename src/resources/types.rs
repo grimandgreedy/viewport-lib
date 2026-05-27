@@ -1080,6 +1080,14 @@ pub(crate) struct ShadowAtlasUniform {
 }
 // Total: 256 + 16 + 16 + 128 = 416 bytes
 
+/// Uniform for the shadow atlas blit overlay. 16 bytes.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct AtlasBlitUniform {
+    /// NDC rect [xmin, ymin, xmax, ymax].
+    pub(crate) rect: [f32; 4],
+}
+
 /// Contact shadow uniform (176 bytes).
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -2395,6 +2403,14 @@ pub struct ViewportGpuResources {
     /// Current shadow atlas texture size. Used to detect when atlas needs recreation.
     #[allow(dead_code)]
     pub(crate) shadow_atlas_size: u32,
+    /// Non-comparison sampler for reading depth values as float (atlas viewer).
+    pub shadow_atlas_depth_sampler: wgpu::Sampler,
+    /// Pipeline for the shadow atlas corner overlay.
+    pub shadow_atlas_viewer_pipeline: wgpu::RenderPipeline,
+    /// Bind group for the atlas viewer (uniform + depth texture + sampler).
+    pub shadow_atlas_viewer_bg: wgpu::BindGroup,
+    /// Uniform buffer: NDC rect of the atlas viewer quad.
+    pub shadow_atlas_viewer_buf: wgpu::Buffer,
 
     // --- Gizmo resources ---
     /// Gizmo render pipeline (TriangleList, depth_compare Always : always on top).

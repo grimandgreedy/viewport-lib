@@ -624,6 +624,16 @@ impl ViewportGpuResources {
             ..Default::default()
         });
 
+        let shadow_atlas_depth_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("shadow_atlas_depth_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+            // NO compare field -- non-comparison sampler for float reads
+        });
+
         // Shadow atlas uniform buffer (binding 5).
         let shadow_info_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("shadow_info_buf"),
@@ -1345,6 +1355,113 @@ impl ViewportGpuResources {
                     resource: shadow_info_buf.as_entire_binding(),
                 },
             ],
+        });
+
+        // ------------------------------------------------------------------
+        // Shadow atlas viewer pipeline (corner overlay, no vertex buffers)
+        // ------------------------------------------------------------------
+        let atlas_blit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("shadow_atlas_blit"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/shadow_atlas_blit.wgsl").into()),
+        });
+        let atlas_blit_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("atlas_blit_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
+            ],
+        });
+        let atlas_blit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("atlas_blit_layout"),
+            bind_group_layouts: &[&atlas_blit_bgl],
+            push_constant_ranges: &[],
+        });
+        let shadow_atlas_viewer_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("shadow_atlas_viewer_buf"),
+            size: std::mem::size_of::<AtlasBlitUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let shadow_atlas_viewer_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow_atlas_viewer_bg"),
+            layout: &atlas_blit_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: shadow_atlas_viewer_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&shadow_map_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&shadow_atlas_depth_sampler),
+                },
+            ],
+        });
+        let shadow_atlas_viewer_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("shadow_atlas_viewer_pipeline"),
+            layout: Some(&atlas_blit_layout),
+            vertex: wgpu::VertexState {
+                module: &atlas_blit_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &atlas_blit_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Always,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
         });
 
         // ------------------------------------------------------------------
@@ -2376,6 +2493,10 @@ impl ViewportGpuResources {
             shadow_bind_group,
             shadow_info_buf,
             shadow_atlas_size: SHADOW_ATLAS_SIZE,
+            shadow_atlas_depth_sampler,
+            shadow_atlas_viewer_pipeline,
+            shadow_atlas_viewer_bg,
+            shadow_atlas_viewer_buf,
             gizmo_pipeline,
             gizmo_vertex_buffer,
             gizmo_index_buffer,

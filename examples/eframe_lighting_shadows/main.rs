@@ -12,9 +12,9 @@ mod viewport_callback;
 
 use eframe::egui;
 use viewport_lib::{
-    BackfacePolicy, BuiltinMatcap, ButtonState, Camera, CameraFrame, DebugOutputMode,
-    DebugQuantity, DebugVis, FrameData, LightKind, LightSource, LightingSettings, MatcapId,
-    Material, MeshId, OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits,
+    AtlasViewerCorner, BackfacePolicy, BuiltinMatcap, ButtonState, Camera, CameraFrame,
+    DebugOutputMode, DebugQuantity, DebugVis, FrameData, LightKind, LightSource, LightingSettings,
+    MatcapId, Material, MeshId, OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits,
     ShadowFilter, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
 };
 
@@ -190,6 +190,11 @@ struct App {
     debug_vis_b: DebugQuantity,
     debug_vis_scale: f32,
 
+    // Shadow atlas viewer
+    show_shadow_atlas: bool,
+    atlas_viewer_corner: AtlasViewerCorner,
+    atlas_viewer_scale: f32,
+
     // Instancing status (updated each frame by the paint callback)
     instancing_status: std::sync::Arc<std::sync::Mutex<(bool, usize)>>,
 }
@@ -246,6 +251,9 @@ impl App {
             debug_vis_g: DebugQuantity::Zero,
             debug_vis_b: DebugQuantity::Zero,
             debug_vis_scale: 1.0,
+            show_shadow_atlas: false,
+            atlas_viewer_corner: AtlasViewerCorner::BottomRight,
+            atlas_viewer_scale: 0.3,
             instancing_status: std::sync::Arc::new(std::sync::Mutex::new((false, 0))),
         }
     }
@@ -525,6 +533,9 @@ impl eframe::App for App {
                 SceneFrame::from_surface_items(items),
             );
             fd.effects.lighting = self.build_lighting();
+            fd.effects.show_shadow_atlas = self.show_shadow_atlas;
+            fd.effects.atlas_viewer_corner = self.atlas_viewer_corner;
+            fd.effects.atlas_viewer_scale = self.atlas_viewer_scale;
 
             ui.painter().add(eframe::egui_wgpu::Callback::new_paint_callback(
                 rect,
@@ -704,6 +715,29 @@ impl App {
 
         ui.add_space(4.0);
 
+        egui::CollapsingHeader::new("Shadow Atlas Viewer")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.show_shadow_atlas, "Show atlas");
+                    if self.show_shadow_atlas {
+                        egui::ComboBox::from_id_salt("atlas_corner")
+                            .selected_text(atlas_corner_label(self.atlas_viewer_corner))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut self.atlas_viewer_corner, AtlasViewerCorner::TopLeft, "Top-left");
+                                ui.selectable_value(&mut self.atlas_viewer_corner, AtlasViewerCorner::TopRight, "Top-right");
+                                ui.selectable_value(&mut self.atlas_viewer_corner, AtlasViewerCorner::BottomLeft, "Bottom-left");
+                                ui.selectable_value(&mut self.atlas_viewer_corner, AtlasViewerCorner::BottomRight, "Bottom-right");
+                            });
+                    }
+                });
+                if self.show_shadow_atlas {
+                    ui.add(egui::Slider::new(&mut self.atlas_viewer_scale, 0.1..=0.6).text("Size"));
+                }
+            });
+
+        ui.add_space(4.0);
+
         egui::CollapsingHeader::new("Debug Visualization")
             .default_open(false)
             .show(ui, |ui| {
@@ -799,6 +833,18 @@ fn ui_vec3(ui: &mut egui::Ui, v: &mut [f32; 3], speed: f64) {
         ui.add(egui::DragValue::new(&mut v[1]).speed(speed).prefix("y: "));
         ui.add(egui::DragValue::new(&mut v[2]).speed(speed).prefix("z: "));
     });
+}
+
+/// Display label for an AtlasViewerCorner variant.
+#[allow(unreachable_patterns)]
+fn atlas_corner_label(c: AtlasViewerCorner) -> &'static str {
+    match c {
+        AtlasViewerCorner::TopLeft => "Top-left",
+        AtlasViewerCorner::TopRight => "Top-right",
+        AtlasViewerCorner::BottomLeft => "Bottom-left",
+        AtlasViewerCorner::BottomRight => "Bottom-right",
+        _ => "?",
+    }
 }
 
 /// Display label for a DebugQuantity variant.

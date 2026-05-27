@@ -705,6 +705,12 @@ pub struct EffectsFrame {
     pub environment: Option<EnvironmentMap>,
     /// Ground plane configuration. Default: mode = None (not drawn, zero overhead).
     pub ground_plane: GroundPlane,
+    /// Show the shadow depth atlas as a corner overlay. Default: false.
+    pub show_shadow_atlas: bool,
+    /// Corner where the atlas viewer is placed. Default: BottomRight.
+    pub atlas_viewer_corner: crate::renderer::types::debug::AtlasViewerCorner,
+    /// Atlas viewer size as a fraction of viewport width. Default: 0.3.
+    pub atlas_viewer_scale: f32,
 }
 
 impl Default for EffectsFrame {
@@ -717,6 +723,9 @@ impl Default for EffectsFrame {
             compute_filter_items: Vec::new(),
             environment: None,
             ground_plane: GroundPlane::default(),
+            show_shadow_atlas: false,
+            atlas_viewer_corner: crate::renderer::types::debug::AtlasViewerCorner::BottomRight,
+            atlas_viewer_scale: 0.3,
         }
     }
 }
@@ -758,6 +767,12 @@ pub struct ViewportEffects<'a> {
     pub post_process: &'a PostProcessSettings,
     /// Ground plane configuration for this viewport.
     pub ground_plane: &'a GroundPlane,
+    /// Show the shadow depth atlas as a corner overlay.
+    pub show_shadow_atlas: bool,
+    /// Corner where the atlas viewer is placed.
+    pub atlas_viewer_corner: crate::renderer::types::debug::AtlasViewerCorner,
+    /// Atlas viewer size as a fraction of viewport width.
+    pub atlas_viewer_scale: f32,
 }
 
 impl EffectsFrame {
@@ -781,6 +796,9 @@ impl EffectsFrame {
                 cap_fill_enabled: self.cap_fill_enabled,
                 post_process: &self.post_process,
                 ground_plane: &self.ground_plane,
+                show_shadow_atlas: self.show_shadow_atlas,
+                atlas_viewer_corner: self.atlas_viewer_corner,
+                atlas_viewer_scale: self.atlas_viewer_scale,
             },
         )
     }
