@@ -376,32 +376,32 @@ pub struct SingleLightUniform {
 /// - count:                u32            =  4 bytes
 /// - shadow_bias:          f32            =  4 bytes
 /// - shadows_enabled:      u32            =  4 bytes
-/// - _pad:                 u32            =  4 bytes (align header to 16)
+/// - debug_vis_mode:       u32            =  4 bytes (packed debug channel selectors and active flag)
 /// - sky_colour:            `[f32; 3]`     = 12 bytes
 /// - hemisphere_intensity: f32            =  4 bytes
 /// - ground_colour:         `[f32; 3]`     = 12 bytes
-/// - _pad2:                f32            =  4 bytes (align to 16)
+/// - debug_vis_scale:      f32            =  4 bytes (multiplier for debug quantity display)
 /// - lights:               [SingleLightUniform; 8] = 8 * 144 = 1152 bytes
 /// Total: 16 + 16 + 16 + 1152 = 1200 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct LightsUniform {
-    /// Number of active lights (0–8).
+    /// Number of active lights (0-8).
     pub count: u32, //  4 bytes
     /// Shadow bias applied to depth comparisons to reduce acne.
     pub shadow_bias: f32, //  4 bytes
     /// 1 = shadow maps enabled, 0 = disabled.
     pub shadows_enabled: u32, //  4 bytes
-    /// Alignment padding.
-    pub _pad: u32, //  4 bytes
+    /// Packed debug visualization channel selectors and active flag. 0 = debug off.
+    pub debug_vis_mode: u32, //  4 bytes
     /// Sky hemisphere colour for ambient contribution.
     pub sky_colour: [f32; 3], // 12 bytes
     /// Hemisphere ambient intensity multiplier.
     pub hemisphere_intensity: f32, //  4 bytes
     /// Ground hemisphere colour for ambient contribution.
     pub ground_colour: [f32; 3], // 12 bytes
-    /// Alignment padding.
-    pub _pad2: f32, //  4 bytes
+    /// Scale multiplier applied to debug quantity values before display.
+    pub debug_vis_scale: f32, //  4 bytes
     /// Per-light parameters (up to 8 lights).
     pub lights: [SingleLightUniform; 8], // 8 * 144 = 1152 bytes
     /// 1 = IBL environment map is active, 0 = disabled.

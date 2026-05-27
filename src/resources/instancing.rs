@@ -72,7 +72,7 @@ impl ViewportGpuResources {
         // Instanced mesh shader.
         let instanced_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh_instanced_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mesh_instanced.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl")).into()),
         });
 
         let instanced_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -266,7 +266,7 @@ impl ViewportGpuResources {
         let inst_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh_instanced_shader_hdr"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/mesh_instanced.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl")).into(),
             ),
         });
         let inst_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -608,7 +608,7 @@ impl ViewportGpuResources {
         // HDR solid cull pipeline: Rgba16Float target, vs_main_cull, back-face cull.
         let instanced_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh_instanced_shader_cull"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mesh_instanced.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl")).into()),
         });
         let inst_cull_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("hdr_instanced_cull_pipeline_layout"),
@@ -658,7 +658,7 @@ impl ViewportGpuResources {
         let oit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh_instanced_oit_shader_cull"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/mesh_instanced_oit.wgsl").into(),
+                include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit.wgsl")).into(),
             ),
         });
         let oit_cull_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

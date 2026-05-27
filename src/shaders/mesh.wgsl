@@ -49,11 +49,11 @@ struct Lights {
     count: u32,
     shadow_bias: f32,
     shadows_enabled: u32,
-    _pad: u32,
+    debug_vis_mode: u32,
     sky_colour: vec3<f32>,
     hemisphere_intensity: f32,
     ground_colour: vec3<f32>,
-    _pad2: f32,
+    debug_vis_scale: f32,
     lights: array<SingleLight, 8>,
     ibl_enabled: u32,
     ibl_intensity: f32,
@@ -882,6 +882,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     if object.has_emissive_tex != 0u {
         emissive = emissive * textureSample(emissive_tex, obj_sampler, in.uv).rgb;
     }
+    final_rgb += emissive;
 
-    return vec4<f32>(final_rgb + emissive, obj_colour.a);
+    // #include "debug_vis.wgsl"
+
+    return vec4<f32>(final_rgb, obj_colour.a);
 }

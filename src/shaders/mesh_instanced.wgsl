@@ -34,11 +34,11 @@ struct Lights {
     count: u32,
     shadow_bias: f32,
     shadows_enabled: u32,
-    _pad: u32,
+    debug_vis_mode: u32,
     sky_colour: vec3<f32>,
     hemisphere_intensity: f32,
     ground_colour: vec3<f32>,
-    _pad2: f32,
+    debug_vis_scale: f32,
     lights: array<SingleLight, 8>,
     ibl_enabled: u32,
     ibl_intensity: f32,
@@ -551,6 +551,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
                     + base_colour * total_colour_contrib;
         final_rgb = clamp(lit_rgb * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     }
+
+    // #include "debug_vis.wgsl"
 
     return vec4<f32>(final_rgb, obj_colour.a);
 }

@@ -17,7 +17,7 @@ impl ViewportGpuResources {
         // ------------------------------------------------------------------
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mesh.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl")).into()),
         });
 
         // ------------------------------------------------------------------

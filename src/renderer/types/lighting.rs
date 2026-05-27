@@ -106,6 +106,8 @@ pub struct LightingSettings {
     pub shadow_filter: ShadowFilter,
     /// PCSS light source radius in shadow-map UV space. Controls penumbra width. Default: 0.02.
     pub pcss_light_radius: f32,
+    /// Debug visualization configuration. Off by default (zero overhead when inactive).
+    pub debug_vis: crate::renderer::types::debug::DebugVis,
 }
 
 impl Default for LightingSettings {
@@ -122,6 +124,7 @@ impl Default for LightingSettings {
             shadow_atlas_resolution: 4096,
             shadow_filter: ShadowFilter::Pcf,
             pcss_light_radius: 0.02,
+            debug_vis: crate::renderer::types::debug::DebugVis::default(),
         }
     }
 }

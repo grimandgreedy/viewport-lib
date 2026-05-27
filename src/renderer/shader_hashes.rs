@@ -75,15 +75,15 @@ pub const SHADERS: &[ShaderEntry] = &[
     },
     ShaderEntry {
         name: "mesh.wgsl",
-        source: include_str!("../shaders/mesh.wgsl"),
+        source: include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl")),
     },
     ShaderEntry {
         name: "mesh_instanced.wgsl",
-        source: include_str!("../shaders/mesh_instanced.wgsl"),
+        source: include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl")),
     },
     ShaderEntry {
         name: "mesh_instanced_oit.wgsl",
-        source: include_str!("../shaders/mesh_instanced_oit.wgsl"),
+        source: include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit.wgsl")),
     },
     ShaderEntry {
         name: "outline.wgsl",

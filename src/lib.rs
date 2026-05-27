@@ -191,6 +191,7 @@ pub use renderer::stats::{FrameStats, PerformancePolicy, QualityPreset, RuntimeM
 pub use renderer::{
     CameraFrame, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
     CylindricalFacing, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection,
+    DebugOutputMode, DebugQuantity, DebugVis,
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GaussianSplatData, GaussianSplatId,
     GaussianSplatItem, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode, ImageAnchor,
     ImageSliceItem, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,

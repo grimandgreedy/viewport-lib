@@ -20,6 +20,7 @@ pub mod stats;
 pub use self::types::{
     CameraFrame, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
     CylindricalFacing, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection,
+    DebugOutputMode, DebugQuantity, DebugVis,
     EffectsFrame, EnvironmentMap, FilterMode, FrameData, GaussianSplatData, GaussianSplatId,
     GaussianSplatItem, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode, ImageAnchor,
     ImageSliceItem, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
@@ -638,6 +639,22 @@ impl ViewportRenderer {
     /// Mutable access to the underlying GPU resources (e.g. for mesh uploads).
     pub fn resources_mut(&mut self) -> &mut ViewportGpuResources {
         &mut self.resources
+    }
+
+    /// Returns true when the current frame is rendered via the instanced draw path.
+    ///
+    /// When true, edits to mesh.wgsl shadow sampling code have no effect - the active
+    /// shader is mesh_instanced.wgsl. Check this before testing shader changes.
+    pub fn is_using_instanced_path(&self) -> bool {
+        self.use_instancing
+    }
+
+    /// Returns the number of instanced batches prepared for the current frame.
+    ///
+    /// Zero when using the non-instanced path. Each batch corresponds to a distinct
+    /// (MeshId, material) combination in the scene.
+    pub fn instanced_batch_count(&self) -> usize {
+        self.instanced_batches.len()
     }
 
     /// Upload a Gaussian splat set to the GPU.

@@ -826,7 +826,7 @@ impl ViewportGpuResources {
             // Non-instanced OIT pipeline (mesh_oit.wgsl, group 0 = camera BGL, group 1 = object BGL).
             let oit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("mesh_oit_shader"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mesh_oit.wgsl").into()),
+                source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/mesh_oit.wgsl")).into()),
             });
             let oit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("oit_pipeline_layout"),
@@ -920,7 +920,7 @@ impl ViewportGpuResources {
                     device.create_shader_module(wgpu::ShaderModuleDescriptor {
                         label: Some("mesh_instanced_oit_shader"),
                         source: wgpu::ShaderSource::Wgsl(
-                            include_str!("../shaders/mesh_instanced_oit.wgsl").into(),
+                            include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit.wgsl")).into(),
                         ),
                     });
                 let instanced_oit_layout =

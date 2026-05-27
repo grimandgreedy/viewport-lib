@@ -24,6 +24,7 @@ pub(crate) struct InstancedBatch {
 }
 
 mod clip;
+pub mod debug;
 mod frame;
 mod items;
 mod lighting;
@@ -31,6 +32,7 @@ mod overlay;
 mod postprocess;
 
 pub use self::clip::*;
+pub use self::debug::{DebugOutputMode, DebugQuantity, DebugVis};
 pub use self::frame::*;
 pub use self::items::*;
 pub use self::lighting::*;

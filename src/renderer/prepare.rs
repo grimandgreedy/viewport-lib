@@ -357,15 +357,22 @@ impl ViewportRenderer {
                 (0, 0.0, 0.0, 0)
             };
 
+        let debug_vis_mode = lighting.debug_vis.pack_mode();
+        let debug_vis_scale = if lighting.debug_vis.active {
+            lighting.debug_vis.scale.max(0.001)
+        } else {
+            1.0
+        };
+
         let lights_uniform = LightsUniform {
             count: light_count,
             shadow_bias: lighting.shadow_bias,
             shadows_enabled: if lighting.shadows_enabled { 1 } else { 0 },
-            _pad: 0,
+            debug_vis_mode,
             sky_colour: lighting.sky_colour,
             hemisphere_intensity: lighting.hemisphere_intensity,
             ground_colour: lighting.ground_colour,
-            _pad2: 0.0,
+            debug_vis_scale,
             lights: lights_arr,
             ibl_enabled,
             ibl_intensity,
@@ -407,6 +414,14 @@ impl ViewportRenderer {
             self.instanced_batches.clear();
             self.last_scene_generation = u64::MAX;
             self.last_scene_items_count = usize::MAX;
+        }
+        if self.use_instancing != prev_use_instancing {
+            tracing::debug!(
+                visible_objects = visible_count,
+                threshold = INSTANCING_THRESHOLD,
+                instanced = self.use_instancing,
+                "instancing mode changed"
+            );
         }
 
         // Per-object uniform writes : needed for the non-instanced path, wireframe mode,

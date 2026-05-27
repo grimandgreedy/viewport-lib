@@ -2,6 +2,7 @@ use viewport_lib::{FrameData, ViewportRenderer};
 
 pub struct ViewportCallback {
     pub frame: FrameData,
+    pub instancing_status: std::sync::Arc<std::sync::Mutex<(bool, usize)>>,
 }
 
 impl eframe::egui_wgpu::CallbackTrait for ViewportCallback {
@@ -14,7 +15,11 @@ impl eframe::egui_wgpu::CallbackTrait for ViewportCallback {
         callback_resources: &mut eframe::egui_wgpu::CallbackResources,
     ) -> Vec<eframe::wgpu::CommandBuffer> {
         if let Some(renderer) = callback_resources.get_mut::<ViewportRenderer>() {
-            return renderer.pass().prepare(device, queue, &self.frame);
+            let cmds = renderer.pass().prepare(device, queue, &self.frame);
+            if let Ok(mut status) = self.instancing_status.lock() {
+                *status = (renderer.is_using_instanced_path(), renderer.instanced_batch_count());
+            }
+            return cmds;
         }
         Vec::new()
     }

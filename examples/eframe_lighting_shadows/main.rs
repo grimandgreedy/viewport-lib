@@ -12,10 +12,10 @@ mod viewport_callback;
 
 use eframe::egui;
 use viewport_lib::{
-    BackfacePolicy, BuiltinMatcap, ButtonState, Camera, CameraFrame, FrameData, LightKind,
-    LightSource, LightingSettings, MatcapId, Material, MeshId, OrbitCameraController, SceneFrame,
-    SceneRenderItem, ScrollUnits, ShadowFilter, ViewportContext, ViewportEvent, ViewportRenderer,
-    primitives,
+    BackfacePolicy, BuiltinMatcap, ButtonState, Camera, CameraFrame, DebugOutputMode,
+    DebugQuantity, DebugVis, FrameData, LightKind, LightSource, LightingSettings, MatcapId,
+    Material, MeshId, OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits,
+    ShadowFilter, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
 };
 
 // Percy photo: pre-converted raw RGBA (2203 x 2009).
@@ -179,6 +179,17 @@ struct App {
     hemisphere_intensity: f32,
     sky_colour: [f32; 3],
     ground_colour: [f32; 3],
+
+    // Debug visualization
+    debug_vis_active: bool,
+    debug_vis_mode_replace: bool,
+    debug_vis_r: DebugQuantity,
+    debug_vis_g: DebugQuantity,
+    debug_vis_b: DebugQuantity,
+    debug_vis_scale: f32,
+
+    // Instancing status (updated each frame by the paint callback)
+    instancing_status: std::sync::Arc<std::sync::Mutex<(bool, usize)>>,
 }
 
 impl App {
@@ -225,6 +236,13 @@ impl App {
             hemisphere_intensity: 0.2,
             sky_colour: [0.8, 0.9, 1.0],
             ground_colour: [0.5, 0.55, 0.6],
+            debug_vis_active: false,
+            debug_vis_mode_replace: true,
+            debug_vis_r: DebugQuantity::ShadowFactor,
+            debug_vis_g: DebugQuantity::Zero,
+            debug_vis_b: DebugQuantity::Zero,
+            debug_vis_scale: 1.0,
+            instancing_status: std::sync::Arc::new(std::sync::Mutex::new((false, 0))),
         }
     }
 
@@ -268,6 +286,20 @@ impl App {
             _t.hemisphere_intensity = self.hemisphere_intensity;
             _t.sky_colour = self.sky_colour;
             _t.ground_colour = self.ground_colour;
+            _t.debug_vis = {
+                let mut dv = DebugVis::default();
+                dv.active = self.debug_vis_active;
+                dv.mode = if self.debug_vis_mode_replace {
+                    DebugOutputMode::Replace
+                } else {
+                    DebugOutputMode::TintOverlay
+                };
+                dv.channel_r = self.debug_vis_r;
+                dv.channel_g = self.debug_vis_g;
+                dv.channel_b = self.debug_vis_b;
+                dv.scale = self.debug_vis_scale;
+                dv
+            };
             _t
         }
     }
@@ -489,8 +521,29 @@ impl eframe::App for App {
 
             ui.painter().add(eframe::egui_wgpu::Callback::new_paint_callback(
                 rect,
-                viewport_callback::ViewportCallback { frame: fd },
+                viewport_callback::ViewportCallback {
+                    frame: fd,
+                    instancing_status: self.instancing_status.clone(),
+                },
             ));
+
+            // Status bar: show shader path and cascade count (data is one frame behind).
+            let (is_instanced, batch_count) = self.instancing_status.lock()
+                .map(|g| *g)
+                .unwrap_or((false, 0));
+            let path_label = if is_instanced {
+                format!("Shader path: Instanced ({} batches)", batch_count)
+            } else {
+                "Shader path: Per-object".to_string()
+            };
+            let status_text = format!("{}   Cascades: {}", path_label, self.shadow_cascade_count);
+            ui.painter().text(
+                egui::pos2(rect.left() + 8.0, rect.bottom() - 20.0),
+                egui::Align2::LEFT_BOTTOM,
+                &status_text,
+                egui::FontId::monospace(11.0),
+                egui::Color32::from_rgba_premultiplied(220, 220, 220, 200),
+            );
 
             if response.dragged() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -641,6 +694,53 @@ impl App {
                     );
                 }
             });
+
+        ui.add_space(4.0);
+
+        egui::CollapsingHeader::new("Debug Visualization")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.checkbox(&mut self.debug_vis_active, "Active");
+                if self.debug_vis_active {
+                    ui.add_space(4.0);
+                    ui.label("Mode:");
+                    ui.horizontal(|ui| {
+                        ui.radio_value(&mut self.debug_vis_mode_replace, true, "Replace");
+                        ui.radio_value(&mut self.debug_vis_mode_replace, false, "Tint overlay");
+                    });
+                    ui.add_space(4.0);
+                    ui.label("R channel:");
+                    egui::ComboBox::from_id_salt("dbg_r")
+                        .selected_text(debug_quantity_label(self.debug_vis_r))
+                        .show_ui(ui, |ui| {
+                            for &q in DebugQuantity::all_variants() {
+                                ui.selectable_value(&mut self.debug_vis_r, q, debug_quantity_label(q));
+                            }
+                        });
+                    ui.label("G channel:");
+                    egui::ComboBox::from_id_salt("dbg_g")
+                        .selected_text(debug_quantity_label(self.debug_vis_g))
+                        .show_ui(ui, |ui| {
+                            for &q in DebugQuantity::all_variants() {
+                                ui.selectable_value(&mut self.debug_vis_g, q, debug_quantity_label(q));
+                            }
+                        });
+                    ui.label("B channel:");
+                    egui::ComboBox::from_id_salt("dbg_b")
+                        .selected_text(debug_quantity_label(self.debug_vis_b))
+                        .show_ui(ui, |ui| {
+                            for &q in DebugQuantity::all_variants() {
+                                ui.selectable_value(&mut self.debug_vis_b, q, debug_quantity_label(q));
+                            }
+                        });
+                    ui.add_space(4.0);
+                    ui.add(
+                        egui::Slider::new(&mut self.debug_vis_scale, 0.1..=100.0)
+                            .text("Scale")
+                            .logarithmic(true),
+                    );
+                }
+            });
     }
 }
 
@@ -655,4 +755,29 @@ fn ui_vec3(ui: &mut egui::Ui, v: &mut [f32; 3], speed: f64) {
         ui.add(egui::DragValue::new(&mut v[1]).speed(speed).prefix("y: "));
         ui.add(egui::DragValue::new(&mut v[2]).speed(speed).prefix("z: "));
     });
+}
+
+/// Display label for a DebugQuantity variant.
+fn debug_quantity_label(q: DebugQuantity) -> &'static str {
+    match q {
+        DebugQuantity::Zero => "Zero (black)",
+        DebugQuantity::One => "One (white)",
+        DebugQuantity::CascadeIndex => "Cascade index",
+        DebugQuantity::ShadowFactor => "Shadow factor",
+        DebugQuantity::ContactShadowFactor => "Contact shadow",
+        DebugQuantity::NdotL => "N dot L",
+        DebugQuantity::NormalBiasMagnitude => "Normal bias magnitude",
+        DebugQuantity::AtlasUvX => "Atlas UV X",
+        DebugQuantity::AtlasUvY => "Atlas UV Y",
+        DebugQuantity::TileUvX => "Tile UV X",
+        DebugQuantity::TileUvY => "Tile UV Y",
+        DebugQuantity::BiasedDepth => "Biased depth",
+        DebugQuantity::SurfaceDepth => "Surface depth",
+        DebugQuantity::WorldNormalX => "World normal X",
+        DebugQuantity::WorldNormalY => "World normal Y",
+        DebugQuantity::WorldNormalZ => "World normal Z",
+        DebugQuantity::Roughness => "Roughness",
+        DebugQuantity::Metallic => "Metallic",
+        _ => "Unknown",
+    }
 }
