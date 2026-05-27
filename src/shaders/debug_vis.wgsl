@@ -33,7 +33,7 @@ if lights_uniform.debug_vis_mode != 0u {
 
     let dbg_ci_f = f32(dbg_casc) / max(f32(shadow_atlas.cascade_count) - 1.0, 1.0);
 
-    var dbg_vals: array<f32, 18>;
+    var dbg_vals: array<f32, 24>;
     dbg_vals[0]  = 0.0;
     dbg_vals[1]  = 1.0;
     dbg_vals[2]  = dbg_ci_f;                          // CascadeIndex (scalar; hue handled below)
@@ -50,8 +50,14 @@ if lights_uniform.debug_vis_mode != 0u {
     dbg_vals[13] = N.x * 0.5 + 0.5;                  // WorldNormalX
     dbg_vals[14] = N.y * 0.5 + 0.5;                  // WorldNormalY
     dbg_vals[15] = N.z * 0.5 + 0.5;                  // WorldNormalZ
-    dbg_vals[16] = 0.5;                               // Roughness stub
-    dbg_vals[17] = 0.5;                               // Metallic stub
+    dbg_vals[16] = dbg_roughness;                     // Roughness
+    dbg_vals[17] = dbg_metallic;                      // Metallic
+    dbg_vals[18] = ao_factor;                         // AoFactor
+    dbg_vals[19] = dbg_direct_lum * dbg_scale;        // DirectLightLuminance
+    dbg_vals[20] = dbg_ambient_lum * dbg_scale;       // AmbientLuminance
+    dbg_vals[21] = dbg_ibl_diff_lum * dbg_scale;     // IblDiffuseLuminance
+    dbg_vals[22] = dbg_ibl_spec_lum * dbg_scale;     // IblSpecularLuminance
+    dbg_vals[23] = dbg_emissive_lum * dbg_scale;     // EmissiveLuminance
 
     let dbg_casc_hues = array<vec3<f32>, 4>(
         vec3<f32>(1.0, 0.2, 0.2),
@@ -69,6 +75,15 @@ if lights_uniform.debug_vis_mode != 0u {
 
     if dbg_mode == 1u {
         final_rgb = mix(final_rgb, dbg_rgb, 0.5);
+    } else if dbg_mode == 2u {
+        let split_px = lights_uniform.debug_vis_split_x * clip_planes.viewport_width;
+        let px = in.clip_pos.x;
+        if abs(px - split_px) < 1.5 {
+            final_rgb = vec3<f32>(1.0);
+        } else if px > split_px {
+            final_rgb = dbg_rgb;
+        }
+        // left of split: final_rgb unchanged
     } else {
         final_rgb = dbg_rgb;
     }

@@ -41,6 +41,18 @@ pub enum DebugQuantity {
     Roughness,
     /// PBR metallic value.
     Metallic,
+    /// Ambient occlusion factor.
+    AoFactor,
+    /// Direct light luminance (all lights, no ambient).
+    DirectLightLuminance,
+    /// Hemisphere or IBL ambient luminance.
+    AmbientLuminance,
+    /// IBL diffuse luminance only.
+    IblDiffuseLuminance,
+    /// IBL specular luminance only.
+    IblSpecularLuminance,
+    /// Emissive luminance only.
+    EmissiveLuminance,
 }
 
 impl DebugQuantity {
@@ -70,6 +82,12 @@ impl DebugQuantity {
             DebugQuantity::WorldNormalZ,
             DebugQuantity::Roughness,
             DebugQuantity::Metallic,
+            DebugQuantity::AoFactor,
+            DebugQuantity::DirectLightLuminance,
+            DebugQuantity::AmbientLuminance,
+            DebugQuantity::IblDiffuseLuminance,
+            DebugQuantity::IblSpecularLuminance,
+            DebugQuantity::EmissiveLuminance,
         ]
     }
 }
@@ -83,6 +101,9 @@ pub enum DebugOutputMode {
     Replace,
     /// Debug output is blended over the normal color at 50% opacity.
     TintOverlay,
+    /// Left half shows normal render, right half shows debug quantity.
+    /// Split position is set by `DebugVis::split_x`.
+    SplitScreen,
 }
 
 /// Debug visualization configuration for the shadow and lighting pipeline.
@@ -106,6 +127,9 @@ pub struct DebugVis {
     /// Multiplier applied to the raw quantity value before display.
     /// Use values > 1.0 to bring small quantities (e.g. bias in world units) into visible range.
     pub scale: f32,
+    /// Split position for `SplitScreen` mode, in normalized viewport coordinates (0..1).
+    /// 0.5 = center. Ignored unless mode is `SplitScreen`.
+    pub split_x: f32,
 }
 
 impl DebugVis {
@@ -124,6 +148,7 @@ impl DebugVis {
             channel_g,
             channel_b,
             scale,
+            split_x: 0.5,
         }
     }
 
@@ -147,6 +172,7 @@ impl DebugVis {
         let m = match self.mode {
             DebugOutputMode::Replace => 0u32,
             DebugOutputMode::TintOverlay => 1u32,
+            DebugOutputMode::SplitScreen => 2u32,
         };
         (1u32 << 31) | (m << 15) | (b << 10) | (g << 5) | r
     }

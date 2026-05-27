@@ -378,6 +378,12 @@ impl ViewportRenderer {
             ibl_intensity,
             ibl_rotation,
             show_skybox,
+            debug_vis_split_x: if lighting.debug_vis.active {
+                lighting.debug_vis.split_x.clamp(0.0, 1.0)
+            } else {
+                0.5
+            },
+            _pad_dbg: [0u32; 3],
         };
         queue.write_buffer(
             &resources.light_uniform_buf,

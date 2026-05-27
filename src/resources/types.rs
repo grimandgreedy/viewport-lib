@@ -382,7 +382,13 @@ pub struct SingleLightUniform {
 /// - ground_colour:         `[f32; 3]`     = 12 bytes
 /// - debug_vis_scale:      f32            =  4 bytes (multiplier for debug quantity display)
 /// - lights:               [SingleLightUniform; 8] = 8 * 144 = 1152 bytes
-/// Total: 16 + 16 + 16 + 1152 = 1200 bytes
+/// - ibl_enabled:          u32            =  4 bytes
+/// - ibl_intensity:        f32            =  4 bytes
+/// - ibl_rotation:         f32            =  4 bytes
+/// - show_skybox:          u32            =  4 bytes
+/// - debug_vis_split_x:    f32            =  4 bytes
+/// - _pad_dbg:             [u32; 3]       = 12 bytes
+/// Total: 16 + 16 + 16 + 1152 + 16 + 16 = 1216 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct LightsUniform {
@@ -412,6 +418,10 @@ pub struct LightsUniform {
     pub ibl_rotation: f32, // 4 bytes
     /// 1 = show skybox background, 0 = use background colour.
     pub show_skybox: u32, // 4 bytes
+    /// Normalized split X position (0..1) for SplitScreen debug mode.
+    pub debug_vis_split_x: f32, // 4 bytes
+    /// Reserved for future debug uniform fields.
+    pub _pad_dbg: [u32; 3], // 12 bytes
 }
 
 /// Alias kept for backward compatibility : existing app code imports `LightUniform`.

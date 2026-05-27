@@ -183,6 +183,8 @@ struct App {
     // Debug visualization
     debug_vis_active: bool,
     debug_vis_mode_replace: bool,
+    debug_vis_splitscreen: bool,
+    debug_vis_split_x: f32,
     debug_vis_r: DebugQuantity,
     debug_vis_g: DebugQuantity,
     debug_vis_b: DebugQuantity,
@@ -238,6 +240,8 @@ impl App {
             ground_colour: [0.5, 0.55, 0.6],
             debug_vis_active: false,
             debug_vis_mode_replace: true,
+            debug_vis_splitscreen: false,
+            debug_vis_split_x: 0.5,
             debug_vis_r: DebugQuantity::ShadowFactor,
             debug_vis_g: DebugQuantity::Zero,
             debug_vis_b: DebugQuantity::Zero,
@@ -289,11 +293,14 @@ impl App {
             _t.debug_vis = {
                 let mut dv = DebugVis::default();
                 dv.active = self.debug_vis_active;
-                dv.mode = if self.debug_vis_mode_replace {
+                dv.mode = if self.debug_vis_splitscreen {
+                    DebugOutputMode::SplitScreen
+                } else if self.debug_vis_mode_replace {
                     DebugOutputMode::Replace
                 } else {
                     DebugOutputMode::TintOverlay
                 };
+                dv.split_x = self.debug_vis_split_x;
                 dv.channel_r = self.debug_vis_r;
                 dv.channel_g = self.debug_vis_g;
                 dv.channel_b = self.debug_vis_b;
@@ -714,13 +721,37 @@ impl App {
                             self.debug_vis_g = viewport_lib::DebugQuantity::SurfaceDepth;
                             self.debug_vis_b = viewport_lib::DebugQuantity::NdotL;
                         }
+                        if ui.small_button("Direct light").clicked() {
+                            self.debug_vis_r = viewport_lib::DebugQuantity::DirectLightLuminance;
+                            self.debug_vis_g = viewport_lib::DebugQuantity::AmbientLuminance;
+                            self.debug_vis_b = viewport_lib::DebugQuantity::Zero;
+                            self.debug_vis_scale = 1.0;
+                        }
+                        if ui.small_button("IBL split").clicked() {
+                            self.debug_vis_r = viewport_lib::DebugQuantity::IblDiffuseLuminance;
+                            self.debug_vis_g = viewport_lib::DebugQuantity::IblSpecularLuminance;
+                            self.debug_vis_b = viewport_lib::DebugQuantity::Zero;
+                            self.debug_vis_scale = 1.0;
+                        }
                     });
                     ui.add_space(4.0);
                     ui.label("Mode:");
                     ui.horizontal(|ui| {
-                        ui.radio_value(&mut self.debug_vis_mode_replace, true, "Replace");
-                        ui.radio_value(&mut self.debug_vis_mode_replace, false, "Tint overlay");
+                        if ui.radio(!self.debug_vis_splitscreen && self.debug_vis_mode_replace, "Replace").clicked() {
+                            self.debug_vis_splitscreen = false;
+                            self.debug_vis_mode_replace = true;
+                        }
+                        if ui.radio(!self.debug_vis_splitscreen && !self.debug_vis_mode_replace, "Tint overlay").clicked() {
+                            self.debug_vis_splitscreen = false;
+                            self.debug_vis_mode_replace = false;
+                        }
+                        if ui.radio(self.debug_vis_splitscreen, "Split screen").clicked() {
+                            self.debug_vis_splitscreen = true;
+                        }
                     });
+                    if self.debug_vis_splitscreen {
+                        ui.add(egui::Slider::new(&mut self.debug_vis_split_x, 0.0..=1.0).text("Split"));
+                    }
                     ui.add_space(4.0);
                     ui.label("R channel:");
                     egui::ComboBox::from_id_salt("dbg_r")
@@ -791,6 +822,12 @@ fn debug_quantity_label(q: DebugQuantity) -> &'static str {
         DebugQuantity::WorldNormalZ => "World normal Z",
         DebugQuantity::Roughness => "Roughness",
         DebugQuantity::Metallic => "Metallic",
+        DebugQuantity::AoFactor => "AO factor",
+        DebugQuantity::DirectLightLuminance => "Direct light lum.",
+        DebugQuantity::AmbientLuminance => "Ambient lum.",
+        DebugQuantity::IblDiffuseLuminance => "IBL diffuse lum.",
+        DebugQuantity::IblSpecularLuminance => "IBL specular lum.",
+        DebugQuantity::EmissiveLuminance => "Emissive lum.",
         _ => "Unknown",
     }
 }

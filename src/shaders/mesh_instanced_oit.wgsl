@@ -44,6 +44,10 @@ struct Lights {
     ibl_intensity: f32,
     ibl_rotation: f32,
     show_skybox: u32,
+    debug_vis_split_x: f32,
+    _pad_dbg_a: u32,
+    _pad_dbg_b: u32,
+    _pad_dbg_c: u32,
 };
 
 struct ClipPlanes {
@@ -273,8 +277,13 @@ fn sample_brdf_lut(NdotV: f32, roughness: f32) -> vec2<f32> {
 fn F_Schlick_roughness(cos_theta: f32, F0: vec3<f32>, roughness: f32) -> vec3<f32> {
     return F0 + (max(vec3<f32>(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
+struct IblContrib {
+    diffuse: vec3<f32>,
+    specular: vec3<f32>,
+}
+
 fn ibl_ambient(N: vec3<f32>, V: vec3<f32>, base_colour: vec3<f32>, metallic: f32,
-               roughness: f32, F0: vec3<f32>, ao: f32, intensity: f32, rotation: f32) -> vec3<f32> {
+               roughness: f32, F0: vec3<f32>, ao: f32, intensity: f32, rotation: f32) -> IblContrib {
     let NdotV = max(dot(N, V), 0.001);
     let F = F_Schlick_roughness(NdotV, F0, roughness);
     let kD = (vec3<f32>(1.0) - F) * (1.0 - metallic);
@@ -282,7 +291,9 @@ fn ibl_ambient(N: vec3<f32>, V: vec3<f32>, base_colour: vec3<f32>, metallic: f32
     let R = reflect(-V, N);
     let prefiltered = sample_ibl_prefiltered(R, roughness, rotation);
     let brdf = sample_brdf_lut(NdotV, roughness);
-    return (kD * irradiance * base_colour + prefiltered * (F * brdf.x + brdf.y)) * ao * intensity;
+    let diffuse_ibl = kD * irradiance * base_colour * ao * intensity;
+    let specular_ibl = prefiltered * (F * brdf.x + brdf.y) * ao * intensity;
+    return IblContrib(diffuse_ibl, specular_ibl);
 }
 
 fn pbr_light_contrib(
@@ -357,6 +368,15 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
     var last_shadow_sample = ShadowSample(1.0, 0u, vec2<f32>(0.0), vec2<f32>(0.0), 0.0, 0.0, 0.0);
     var final_rgb: vec3<f32>;
 
+    var dbg_direct_lum   = 0.0;
+    var dbg_ambient_lum  = 0.0;
+    var dbg_ibl_diff_lum = 0.0;
+    var dbg_ibl_spec_lum = 0.0;
+    var dbg_emissive_lum = 0.0;
+    var dbg_roughness    = 0.5;
+    var dbg_metallic     = 0.0;
+    let lum_weights = vec3<f32>(0.2126, 0.7152, 0.0722);
+
     if inst.use_pbr != 0u {
         let metallic  = clamp(inst.metallic,  0.0, 1.0);
         let roughness = max(inst.roughness, 0.04);
@@ -385,16 +405,24 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
             // Transparent surfaces: skip shadow map sampling.
             Lo += pbr_light_contrib(N, V, L, radiance, base_colour, metallic, roughness, F0);
         }
+        dbg_direct_lum = dot(Lo, lum_weights);
+        dbg_roughness  = roughness;
+        dbg_metallic   = metallic;
         var ambient: vec3<f32>;
         if lights_uniform.ibl_enabled != 0u {
-            ambient = ibl_ambient(N, V, base_colour, metallic, roughness, F0,
+            let ibl = ibl_ambient(N, V, base_colour, metallic, roughness, F0,
                                   ao_factor, lights_uniform.ibl_intensity,
                                   lights_uniform.ibl_rotation);
+            ambient = ibl.diffuse + ibl.specular;
+            dbg_ibl_diff_lum = dot(ibl.diffuse, lum_weights);
+            dbg_ibl_spec_lum = dot(ibl.specular, lum_weights);
+            dbg_ambient_lum  = dbg_ibl_diff_lum + dbg_ibl_spec_lum;
         } else {
             let hemi_t = clamp(in.world_normal.y * 0.5 + 0.5, 0.0, 1.0);
             let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
             let ambient_scale = vec3<f32>(inst.ambient) + hemi_colour * lights_uniform.hemisphere_intensity;
             ambient = ambient_scale * (base_colour * (1.0 - metallic) + F0 * metallic) * ao_factor;
+            dbg_ambient_lum = dot(ambient, lum_weights);
         }
         final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     } else {
@@ -432,8 +460,11 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
         let hemi_t = clamp(in.world_normal.y * 0.5 + 0.5, 0.0, 1.0);
         let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
         let hemi_ambient = hemi_colour * lights_uniform.hemisphere_intensity;
-        let lit_rgb = base_colour * (ambient_contrib + hemi_ambient) * ao_factor
-                    + base_colour * total_colour_contrib;
+        let direct_rgb = base_colour * total_colour_contrib;
+        dbg_direct_lum  = dot(direct_rgb, lum_weights);
+        let hemi_rgb = base_colour * (ambient_contrib + hemi_ambient) * ao_factor;
+        dbg_ambient_lum = dot(hemi_rgb, lum_weights);
+        let lit_rgb = hemi_rgb + direct_rgb;
         final_rgb = clamp(lit_rgb * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
