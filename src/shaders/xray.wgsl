@@ -1,14 +1,9 @@
-// Outline shader for two-pass stencil selection effect.
+// xray.wgsl : renders selected objects as a semi-transparent tint visible through
+// all geometry (depth compare = Always). Used by the x-ray pipeline to show
+// selected items that are occluded by other scene geometry.
 //
-// Pass 1 (stencil_write_pipeline): renders the object normally; writes stencil=1
-//   wherever the depth test passes. Uses the standard mesh pipeline for this.
-//
-// Pass 2 (outline_pipeline): renders a slightly expanded version of the object;
-//   stencil test = NotEqual(1) so only the "ring" outside the original silhouette
-//   is drawn. Depth compare = Always so the ring always renders on top.
-//
-// Group 0: Camera bind group (same layout as mesh.wgsl, bindings 0–7).
-// Group 1: OutlineUniform (model matrix, outline colour, pixel_offset).
+// Group 0: Camera bind group (same layout as mesh.wgsl, bindings 0-7).
+// Group 1: OutlineUniform (model matrix, colour, pixel_offset).
 
 struct Camera {
     view_proj: mat4x4<f32>,

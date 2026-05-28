@@ -1823,9 +1823,9 @@ impl ViewportGpuResources {
             }],
         });
 
-        let outline_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("outline_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/outline.wgsl")).into()),
+        let xray_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("xray_shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/xray.wgsl")).into()),
         });
 
         let outline_pipeline_layout =
@@ -2071,13 +2071,13 @@ impl ViewportGpuResources {
             label: Some("xray_pipeline"),
             layout: Some(&outline_pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &outline_shader,
+                module: &xray_shader,
                 entry_point: Some("vs_main"),
                 buffers: &[Vertex::buffer_layout()],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                module: &outline_shader,
+                module: &xray_shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: target_format,
