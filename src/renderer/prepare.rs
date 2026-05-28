@@ -1186,7 +1186,7 @@ impl ViewportRenderer {
         if !frame.scene.point_clouds.is_empty() {
             resources.ensure_point_cloud_pipeline(device);
             for item in &frame.scene.point_clouds {
-                if item.positions.is_empty() {
+                if item.settings.hidden || item.positions.is_empty() {
                     continue;
                 }
                 let gpu_data = resources.upload_point_cloud(device, queue, item);
@@ -1198,7 +1198,7 @@ impl ViewportRenderer {
         if !frame.scene.glyphs.is_empty() {
             resources.ensure_glyph_pipeline(device);
             for item in &frame.scene.glyphs {
-                if item.positions.is_empty() || item.vectors.is_empty() {
+                if item.settings.hidden || item.positions.is_empty() || item.vectors.is_empty() {
                     continue;
                 }
                 let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
@@ -1214,7 +1214,7 @@ impl ViewportRenderer {
         if !frame.scene.sprite_items.is_empty() {
             resources.ensure_sprite_pipelines(device);
             for item in &frame.scene.sprite_items {
-                if item.positions.is_empty() {
+                if item.settings.hidden || item.positions.is_empty() {
                     continue;
                 }
                 let mut gd = resources.upload_sprite(device, queue, item);
@@ -1230,7 +1230,7 @@ impl ViewportRenderer {
         if !frame.scene.tensor_glyphs.is_empty() {
             resources.ensure_tensor_glyph_pipeline(device);
             for item in &frame.scene.tensor_glyphs {
-                if item.positions.is_empty() {
+                if item.settings.hidden || item.positions.is_empty() {
                     continue;
                 }
                 let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
@@ -1248,7 +1248,7 @@ impl ViewportRenderer {
         if !frame.scene.polylines.is_empty() {
             resources.ensure_polyline_pipeline(device);
             for item in &frame.scene.polylines {
-                if item.positions.is_empty() {
+                if item.settings.hidden || item.positions.is_empty() {
                     continue;
                 }
                 let mut gpu_data = resources.upload_polyline(device, queue, item, vp_size);
@@ -1316,7 +1316,7 @@ impl ViewportRenderer {
         if !frame.scene.gpu_implicit.is_empty() {
             resources.ensure_implicit_pipeline(device);
             for item in &frame.scene.gpu_implicit {
-                if item.primitives.is_empty() {
+                if item.settings.hidden || item.primitives.is_empty() {
                     continue;
                 }
                 let gpu = resources.upload_implicit_item(device, item);
@@ -1415,7 +1415,11 @@ impl ViewportRenderer {
             let vp_w = vp_size[0];
             let vp_h = vp_size[1];
             for item in &frame.scene.screen_images {
-                if item.width == 0 || item.height == 0 || item.pixels.is_empty() {
+                if item.settings.hidden
+                    || item.width == 0
+                    || item.height == 0
+                    || item.pixels.is_empty()
+                {
                     continue;
                 }
                 let gpu = resources.upload_screen_image(device, queue, item, vp_w, vp_h);
@@ -1448,7 +1452,10 @@ impl ViewportRenderer {
         if !frame.scene.streamtube_items.is_empty() {
             resources.ensure_streamtube_pipeline(device);
             for item in &frame.scene.streamtube_items {
-                if item.positions.is_empty() || item.strip_lengths.is_empty() {
+                if item.settings.hidden
+                    || item.positions.is_empty()
+                    || item.strip_lengths.is_empty()
+                {
                     continue;
                 }
                 let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
@@ -1470,7 +1477,10 @@ impl ViewportRenderer {
         if !frame.scene.tube_items.is_empty() {
             resources.ensure_streamtube_pipeline(device);
             for item in &frame.scene.tube_items {
-                if item.positions.is_empty() || item.strip_lengths.is_empty() {
+                if item.settings.hidden
+                    || item.positions.is_empty()
+                    || item.strip_lengths.is_empty()
+                {
                     continue;
                 }
                 let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
@@ -1492,7 +1502,10 @@ impl ViewportRenderer {
         if !frame.scene.ribbon_items.is_empty() {
             resources.ensure_streamtube_pipeline(device);
             for item in &frame.scene.ribbon_items {
-                if item.positions.is_empty() || item.strip_lengths.is_empty() {
+                if item.settings.hidden
+                    || item.positions.is_empty()
+                    || item.strip_lengths.is_empty()
+                {
                     continue;
                 }
                 let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
@@ -1513,6 +1526,9 @@ impl ViewportRenderer {
         if !frame.scene.image_slices.is_empty() {
             resources.ensure_image_slice_pipeline(device);
             for item in &frame.scene.image_slices {
+                if item.settings.hidden {
+                    continue;
+                }
                 if let Some(gpu_data) = resources.upload_image_slice(device, queue, item) {
                     self.image_slice_gpu_data.push(gpu_data);
                 }
@@ -1526,6 +1542,9 @@ impl ViewportRenderer {
         if !frame.scene.volume_surface_slices.is_empty() {
             resources.ensure_volume_surface_slice_pipeline(device);
             for item in &frame.scene.volume_surface_slices {
+                if item.settings.hidden {
+                    continue;
+                }
                 if let Some(gpu_data) = resources.upload_volume_surface_slice(device, queue, item) {
                     self.volume_surface_slice_gpu_data.push(gpu_data);
                 }
@@ -1621,6 +1640,9 @@ impl ViewportRenderer {
                 1.0_f32
             };
             for item in &frame.scene.volumes {
+                if item.settings.hidden {
+                    continue;
+                }
                 let mut gpu = resources.upload_volume_frame(
                     device,
                     queue,
