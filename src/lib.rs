@@ -211,7 +211,7 @@ pub use renderer::{
     ScatterVolumeItem,
     SurfaceSubmission, TensorGlyphItem, ToneMapping, TransparentVolumeMeshItem, TubeItem,
     ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer, VolumeItem, VolumeMeshItem,
-    VolumeSurfaceSliceItem, aabb_wireframe_polyline,
+    VolumeSurfaceSliceItem, aabb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 pub use quantities::{

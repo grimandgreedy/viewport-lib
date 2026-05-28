@@ -23,9 +23,9 @@ struct ClipPlanes {
 };
 
 // Must match GpuScatterVolume in src/scene/scatter_volume.rs. 64 bytes.
+// shape_pack.x holds the kind discriminant (0 = box, 1 = sphere); .yzw are pad.
 struct GpuScatterVolume {
-    shape_kind:     u32,
-    _pad0:          vec3<u32>,
+    shape_pack:     vec4<u32>,
     p0:             vec4<f32>,
     p1:             vec4<f32>,
     colour_density: vec4<f32>,
@@ -35,9 +35,8 @@ const MAX_SCATTER_VOLUMES: u32 = 16u;
 const MARCH_STEPS:         u32 = 32u;
 
 struct ScatterUniforms {
-    volumes: array<GpuScatterVolume, MAX_SCATTER_VOLUMES>,
-    count:   u32,
-    _pad:    vec3<u32>,
+    volumes:    array<GpuScatterVolume, MAX_SCATTER_VOLUMES>,
+    count_pack: vec4<u32>,
 };
 
 @group(0) @binding(0) var<uniform> camera:      Camera;
@@ -134,17 +133,22 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Sample opaque depth at this fragment so volumes do not march past
     // already-rendered geometry.
     let uv = vec2<f32>(ndc_xy.x * 0.5 + 0.5, 1.0 - (ndc_xy.y * 0.5 + 0.5));
-    let depth = textureSampleLevel(opaque_depth, depth_sampler, uv, 0.0);
+    let dims = textureDimensions(opaque_depth, 0);
+    let coord = vec2<i32>(
+        clamp(i32(uv.x * f32(dims.x)), 0, i32(dims.x) - 1),
+        clamp(i32(uv.y * f32(dims.y)), 0, i32(dims.y) - 1),
+    );
+    let depth = textureLoad(opaque_depth, coord, 0);
     let t_opaque = opaque_distance(ndc_xy, depth, ray_dir);
 
     // Collect ray intervals against each volume.
     var intervals: array<Interval, MAX_SCATTER_VOLUMES>;
     var n_intervals: u32 = 0u;
-    let count = min(uniforms.count, MAX_SCATTER_VOLUMES);
+    let count = min(uniforms.count_pack.x, MAX_SCATTER_VOLUMES);
     for (var i: u32 = 0u; i < count; i = i + 1u) {
         let v = uniforms.volumes[i];
         var hit: vec2<f32>;
-        if v.shape_kind == 0u {
+        if v.shape_pack.x == 0u {
             hit = ray_box(v.p0.xyz, v.p1.xyz, eye, ray_dir);
         } else {
             hit = ray_sphere(v.p0.xyz, v.p0.w, eye, ray_dir);

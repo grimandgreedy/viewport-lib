@@ -1291,6 +1291,45 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
+        // Scatter-volume selection / wireframe outlines: emit a polyline of
+        // the volume bounds for each selected or wireframe-flagged volume.
+        // ------------------------------------------------------------------
+        if !frame.scene.scatter_volumes.is_empty() {
+            for item in &frame.scene.scatter_volumes {
+                if item.settings.hidden {
+                    continue;
+                }
+                let show_outline = (frame.interaction.outline_selected
+                    && item.settings.selected)
+                    || item.settings.wireframe
+                    || frame.viewport.wireframe_mode;
+                if !show_outline {
+                    continue;
+                }
+                resources.ensure_polyline_pipeline(device);
+                let colour = if item.settings.selected {
+                    [1.0_f32, 0.9, 0.2, 1.0]
+                } else {
+                    [0.8_f32, 0.85, 0.95, 1.0]
+                };
+                let polyline = match item.volume.shape {
+                    crate::scene::scatter_volume::ScatterShape::Box(b) => {
+                        crate::renderer::aabb_wireframe_polyline(&b, colour)
+                    }
+                    crate::scene::scatter_volume::ScatterShape::Sphere { center, radius } => {
+                        crate::renderer::sphere_wireframe_polyline(center, radius, 48, colour)
+                    }
+                };
+                let mut gpu_data = resources.upload_polyline(device, queue, &polyline, vp_size);
+                gpu_data.wireframe = true;
+                if frame.interaction.outline_selected && item.settings.selected {
+                    self.polyline_selected_gpu_indices.push(self.polyline_gpu_data.len());
+                }
+                self.polyline_gpu_data.push(gpu_data);
+            }
+        }
+
+        // ------------------------------------------------------------------
         // isoline extraction and upload via polyline pipeline.
         // ------------------------------------------------------------------
         if !frame.scene.isolines.is_empty() {
@@ -5853,8 +5892,9 @@ impl ViewportRenderer {
             self.pick_tvm_items = frame.scene.transparent_volume_meshes.clone();
             self.pick_scatter_volume_items = frame.scene.scatter_volumes.clone();
             self.prepared_scatter_volumes.clear();
+            let global_wireframe = frame.viewport.wireframe_mode;
             for item in &frame.scene.scatter_volumes {
-                if item.settings.hidden {
+                if item.settings.hidden || item.settings.wireframe || global_wireframe {
                     continue;
                 }
                 self.prepared_scatter_volumes

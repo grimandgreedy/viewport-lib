@@ -624,6 +624,47 @@ pub fn aabb_wireframe_polyline(aabb: &crate::scene::aabb::Aabb, colour: [f32; 4]
     }
 }
 
+/// Build a `PolylineItem` that draws three great-circle outlines for a sphere.
+///
+/// Produces three closed loops in the XY, XZ, and YZ planes through the given
+/// centre, each sampled at `segments` points. Pass `colour` as RGBA in linear
+/// space. Used as the selection outline for `ScatterShape::Sphere`.
+pub fn sphere_wireframe_polyline(
+    center: [f32; 3],
+    radius: f32,
+    segments: u32,
+    colour: [f32; 4],
+) -> PolylineItem {
+    let n = segments.max(8) as usize;
+    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(3 * (n + 1));
+    let two_pi = std::f32::consts::TAU;
+    let cx = center[0];
+    let cy = center[1];
+    let cz = center[2];
+    // XY plane circle
+    for i in 0..=n {
+        let t = i as f32 / n as f32 * two_pi;
+        positions.push([cx + radius * t.cos(), cy + radius * t.sin(), cz]);
+    }
+    // XZ plane circle
+    for i in 0..=n {
+        let t = i as f32 / n as f32 * two_pi;
+        positions.push([cx + radius * t.cos(), cy, cz + radius * t.sin()]);
+    }
+    // YZ plane circle
+    for i in 0..=n {
+        let t = i as f32 / n as f32 * two_pi;
+        positions.push([cx, cy + radius * t.cos(), cz + radius * t.sin()]);
+    }
+    let strip = (n + 1) as u32;
+    PolylineItem {
+        positions,
+        strip_lengths: vec![strip, strip, strip],
+        default_colour: colour,
+        ..Default::default()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // streamtube renderer
 // ---------------------------------------------------------------------------

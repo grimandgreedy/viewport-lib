@@ -27,6 +27,8 @@ pub(crate) struct SvolState {
     pub sphere_radius: f32,
 
     pub camera_inside: bool,
+    pub show_global_outline: bool,
+    pub show_sphere_outline: bool,
 }
 
 impl Default for SvolState {
@@ -42,6 +44,8 @@ impl Default for SvolState {
             sphere_colour: [0.95, 0.65, 0.45],
             sphere_radius: 1.6,
             camera_inside: false,
+            show_global_outline: false,
+            show_sphere_outline: true,
         }
     }
 }
@@ -106,15 +110,25 @@ impl App {
     pub(crate) fn submit_svol_volumes(&self, fd: &mut viewport_lib::FrameData) {
         let s = &self.svol_state;
         if s.global_enabled {
+            // When the camera-inside toggle is on, lift the box ceiling so it
+            // encloses the eye. When off, cap the box below the typical orbit
+            // height so the eye sits outside and looks down into the fog.
+            let (z_min, z_max) = if s.camera_inside {
+                (-1.0_f32, 10.0)
+            } else {
+                (-1.0_f32, 2.5)
+            };
             let v = ScatterVolume::box_uniform(
                 Aabb {
-                    min: glam::Vec3::new(-10.0, -10.0, 0.0),
-                    max: glam::Vec3::new(10.0, 10.0, 6.0),
+                    min: glam::Vec3::new(-12.0, -12.0, z_min),
+                    max: glam::Vec3::new(12.0, 12.0, z_max),
                 },
                 s.global_density,
                 s.global_colour,
             );
-            fd.scene.scatter_volumes.push(ScatterVolumeItem::new(v));
+            let mut item = ScatterVolumeItem::new(v);
+            item.settings.selected = s.show_global_outline;
+            fd.scene.scatter_volumes.push(item);
         }
         if s.sphere_enabled {
             let v = ScatterVolume::sphere_uniform(
@@ -123,7 +137,9 @@ impl App {
                 s.sphere_density,
                 s.sphere_colour,
             );
-            fd.scene.scatter_volumes.push(ScatterVolumeItem::new(v));
+            let mut item = ScatterVolumeItem::new(v);
+            item.settings.selected = s.show_sphere_outline;
+            fd.scene.scatter_volumes.push(item);
         }
     }
 }
@@ -160,6 +176,8 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
 
     ui.separator();
     ui.checkbox(&mut s.camera_inside, "Camera inside global volume");
+    ui.checkbox(&mut s.show_global_outline, "Show global outline");
+    ui.checkbox(&mut s.show_sphere_outline, "Show sphere outline");
     ui.label(
         "V1 ships uniform density + flat colour + camera-inside handling.\n\
          Lighting (V2), ramps + emission (V3), and noise (V4) are future phases.",

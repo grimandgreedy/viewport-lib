@@ -40,6 +40,7 @@ pub use self::types::{
     ScatterVolumeItem,
     TensorGlyphItem, ToneMapping, TransparentVolumeMeshItem, TubeItem, ViewportEffects,
     ViewportFrame, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, aabb_wireframe_polyline,
+    sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
