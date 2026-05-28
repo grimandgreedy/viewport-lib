@@ -9,7 +9,8 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    Material, ScatterVolume, ScatterVolumeItem, ViewportRenderer,
+    DensityRemap, Emission, EmissionCurve, Material, ScatterVolume, ScatterVolumeItem,
+    ViewportRenderer,
     scene::{Scene, aabb::Aabb},
 };
 
@@ -23,12 +24,22 @@ pub(crate) struct SvolState {
     pub global_anisotropy: f32,
     pub global_unlit: bool,
     pub global_receive_shadows: bool,
+    pub global_soft_edges: bool,
+    pub global_soft_lo: f32,
+    pub global_soft_hi: f32,
 
     pub sphere_enabled: bool,
     pub sphere_density: f32,
     pub sphere_colour: [f32; 3],
     pub sphere_radius: f32,
     pub sphere_anisotropy: f32,
+
+    pub fire_enabled: bool,
+    pub fire_density: f32,
+    pub fire_colour: [f32; 3],
+    pub fire_radius: f32,
+    pub fire_emission: f32,
+    pub fire_falloff: f32,
 
     pub show_global_outline: bool,
     pub show_sphere_outline: bool,
@@ -50,11 +61,20 @@ impl Default for SvolState {
             global_anisotropy: 0.3,
             global_unlit: false,
             global_receive_shadows: true,
+            global_soft_edges: false,
+            global_soft_lo: 4.0,
+            global_soft_hi: 12.0,
             sphere_enabled: true,
             sphere_density: 0.4,
             sphere_colour: [0.95, 0.65, 0.45],
             sphere_radius: 1.6,
             sphere_anisotropy: 0.0,
+            fire_enabled: false,
+            fire_density: 1.2,
+            fire_colour: [1.0, 0.55, 0.18],
+            fire_radius: 1.0,
+            fire_emission: 4.0,
+            fire_falloff: 1.4,
             show_global_outline: false,
             show_sphere_outline: true,
             sun_dir: [-0.6, 0.2, 0.6],
@@ -134,10 +154,39 @@ impl App {
                 s.global_colour,
             );
             v.anisotropy = s.global_anisotropy;
+            if s.global_soft_edges {
+                v.density_remap = DensityRemap::Smoothstep {
+                    lo: s.global_soft_lo,
+                    hi: s.global_soft_hi,
+                };
+            }
             let mut item = ScatterVolumeItem::new(v);
             item.settings.selected = s.show_global_outline;
             item.settings.unlit = s.global_unlit;
             item.settings.receive_shadows = s.global_receive_shadows;
+            fd.scene.scatter_volumes.push(item);
+        }
+        if s.fire_enabled {
+            let center = [-4.0_f32, 0.0, 1.2];
+            let mut v = ScatterVolume::sphere_uniform(
+                center,
+                s.fire_radius,
+                s.fire_density,
+                s.fire_colour,
+            );
+            v.emission = Emission::Strength {
+                strength: s.fire_emission,
+                curve: EmissionCurve::Power(2.0),
+            };
+            v.density_remap = DensityRemap::ExpFalloff {
+                center,
+                falloff: s.fire_falloff,
+            };
+            let mut item = ScatterVolumeItem::new(v);
+            // Fire reads as self-illuminated; nearby surfaces are not lit by
+            // the volume itself in V3 (a virtual point light for surface
+            // illumination is reserved for a follow-up phase).
+            item.settings.unlit = false;
             fd.scene.scatter_volumes.push(item);
         }
         if s.sphere_enabled {
@@ -198,6 +247,17 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
     });
     ui.checkbox(&mut s.global_unlit, "Unlit (skip in-scattering)");
     ui.checkbox(&mut s.global_receive_shadows, "Receive shadows (shafts)");
+    ui.checkbox(&mut s.global_soft_edges, "Smoothstep soft edges (V3)");
+    if s.global_soft_edges {
+        ui.horizontal(|ui| {
+            ui.label("Inner radius");
+            ui.add(egui::Slider::new(&mut s.global_soft_lo, 0.0..=15.0).step_by(0.1));
+        });
+        ui.horizontal(|ui| {
+            ui.label("Outer radius");
+            ui.add(egui::Slider::new(&mut s.global_soft_hi, 0.5..=20.0).step_by(0.1));
+        });
+    }
 
     ui.separator();
     ui.heading("Localized haze (Sphere)");
@@ -220,6 +280,30 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
     });
 
     ui.separator();
+    ui.heading("Fire (Sphere with emission + ExpFalloff)");
+    ui.checkbox(&mut s.fire_enabled, "Enabled");
+    ui.horizontal(|ui| {
+        ui.label("Density");
+        ui.add(egui::Slider::new(&mut s.fire_density, 0.0..=4.0).step_by(0.05));
+    });
+    ui.horizontal(|ui| {
+        ui.label("Radius");
+        ui.add(egui::Slider::new(&mut s.fire_radius, 0.2..=2.5).step_by(0.05));
+    });
+    ui.horizontal(|ui| {
+        ui.label("Emission");
+        ui.add(egui::Slider::new(&mut s.fire_emission, 0.0..=10.0).step_by(0.1));
+    });
+    ui.horizontal(|ui| {
+        ui.label("Falloff");
+        ui.add(egui::Slider::new(&mut s.fire_falloff, 0.2..=4.0).step_by(0.05));
+    });
+    ui.horizontal(|ui| {
+        ui.label("Colour");
+        ui.color_edit_button_rgb(&mut s.fire_colour);
+    });
+
+    ui.separator();
     if ui.button("Teleport camera inside global volume").clicked() {
         app.camera.center = glam::Vec3::new(0.0, 0.0, 2.5);
         app.camera.distance = 0.5;
@@ -232,8 +316,9 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
     ui.checkbox(&mut s.show_global_outline, "Show global outline");
     ui.checkbox(&mut s.show_sphere_outline, "Show sphere outline");
     ui.label(
-        "V2 ships sun lighting, Henyey-Greenstein phase, and god rays from\n\
-         the cascaded shadow atlas. Try negative anisotropy with the sun behind\n\
-         the camera, or positive with the sun ahead.",
+        "V3 adds density remaps and emission. Soft-edge fog uses a radial\n\
+         smoothstep; fire uses ExpFalloff + Power emission. Colour ramps\n\
+         (ColourSource::Ramp) and the fire-as-light virtual-light hook are\n\
+         reserved for a follow-up phase.",
     );
 }

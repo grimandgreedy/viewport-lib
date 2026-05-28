@@ -2,6 +2,17 @@
 
 ## [Unreleased changes]
 
+### ScatterVolume authoring richness (volumetric effects V3, partial)
+
+`ScatterVolume.density_remap` and `ScatterVolume.emission` are now honoured at sample time:
+
+- `DensityRemap::Smoothstep { lo, hi }`: radial fall-off (distance from world origin). Use for soft-edge fog — the silhouette that V2 left looking abrupt is now a smooth gradient.
+- `DensityRemap::ExpFalloff { center, falloff }`: exponential decay from a world-space centre. Use for fire / magic-orb cores that should peak at the centre and trail off.
+- `Emission::Strength { strength, curve }` with `EmissionCurve::Linear`, `Power(exp)`, or `Threshold(min_density)`: self-emitted radiance proportional to local (remapped) density. Added unconditionally each step — emission is not shadow-attenuated.
+- `ItemSettings.unlit` continues to skip the per-step in-scattering; emission still contributes, so an unlit emissive volume reads as a pure glow.
+
+GPU packing grew to 96 bytes per volume (added `remap_kind`, `emission_kind`, and a `remap_data: vec4<f32>` slot). `GpuScatterVolume::pack(volume, density_multiplier, flags)` keeps the same signature.
+
 ### ScatterVolume lighting (volumetric effects V2)
 
 `ScatterVolume` now interacts with scene lights. The fragment shader switched from per-interval uniform composition to a per-step ray-march. At each step it samples the primary directional light, applies a Henyey-Greenstein phase function driven by `ScatterVolume.anisotropy`, samples the cascaded shadow atlas (single-tap; PCF would be prohibitively expensive in the march loop) and accumulates in-scattering with Beer-Lambert absorption. Hemisphere ambient (`sky_colour` / `ground_colour`) lifts otherwise-black volumes.

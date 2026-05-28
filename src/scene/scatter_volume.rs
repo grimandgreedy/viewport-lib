@@ -199,7 +199,7 @@ impl Default for NoiseDriver {
 /// custom render paths can pack their own buffers; ordinary use does not need
 /// to touch this.
 ///
-/// Layout: 80 bytes, 16-byte aligned. Matches `GpuScatterVolume` in
+/// Layout: 96 bytes, 16-byte aligned. Matches `GpuScatterVolume` in
 /// `src/shaders/scatter_volume.wgsl`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -208,16 +208,22 @@ pub struct GpuScatterVolume {
     pub shape_kind: u32,
     /// Bit flags: 1 = unlit (skip in-scattering), 2 = receive_shadows.
     pub flags: u32,
-    /// Padding to bring `p0` to a 16-byte boundary.
-    pub _pad0: [u32; 2],
+    /// Density remap kind: 0 = Identity, 1 = Smoothstep, 2 = ExpFalloff.
+    pub remap_kind: u32,
+    /// Emission kind: 0 = None, 1 = Linear, 2 = Power, 3 = Threshold.
+    pub emission_kind: u32,
     /// Box: `min.xyz`, `_`. Sphere: `center.xyz, radius`.
     pub p0: [f32; 4],
     /// Box: `max.xyz, _`. Sphere: unused.
     pub p1: [f32; 4],
     /// RGB scattered colour and density (a = density).
     pub colour_density: [f32; 4],
-    /// V2 scalar parameters: `x` = Henyey-Greenstein anisotropy g, others reserved.
+    /// Scalar parameters: x = Henyey-Greenstein anisotropy g,
+    /// y = emission_strength, z = emission_curve_param, w = reserved.
     pub params: [f32; 4],
+    /// Density remap data. Smoothstep: `(lo, hi, 0, 0)`. ExpFalloff:
+    /// `(center.x, center.y, center.z, falloff)`. Identity: unused.
+    pub remap_data: [f32; 4],
 }
 
 /// Flag bit: skip in-scattering (treat the volume as `unlit`).
@@ -237,8 +243,10 @@ impl GpuScatterVolume {
         }
         let colour = match volume.colour {
             ColourSource::Flat(rgb) => rgb,
-            // V3 will resolve a ramp at sample time. Until then a Ramp volume
-            // renders as mid-grey so it is visible but obviously placeholder.
+            // V3 ships `Flat`. `Ramp` is reserved for a follow-up phase that
+            // adds the colourmap LUT binding to the scatter pipeline. A Ramp
+            // volume renders as mid-grey for now so it is visible but
+            // obviously placeholder.
             ColourSource::Ramp(_) => [0.5, 0.5, 0.5],
         };
         let (shape_kind, p0, p1) = match volume.shape {
@@ -254,14 +262,31 @@ impl GpuScatterVolume {
             ),
         };
         let anisotropy = volume.anisotropy.clamp(-0.95, 0.95);
+        let (remap_kind, remap_data) = match volume.density_remap {
+            DensityRemap::Identity => (0u32, [0.0; 4]),
+            DensityRemap::Smoothstep { lo, hi } => (1u32, [lo, hi, 0.0, 0.0]),
+            DensityRemap::ExpFalloff { center, falloff } => {
+                (2u32, [center[0], center[1], center[2], falloff])
+            }
+        };
+        let (emission_kind, emission_strength, emission_param) = match volume.emission {
+            Emission::None => (0u32, 0.0, 0.0),
+            Emission::Strength { strength, curve } => match curve {
+                EmissionCurve::Linear => (1u32, strength, 0.0),
+                EmissionCurve::Power(exponent) => (2u32, strength, exponent),
+                EmissionCurve::Threshold(min_density) => (3u32, strength, min_density),
+            },
+        };
         Some(Self {
             shape_kind,
             flags,
-            _pad0: [0; 2],
+            remap_kind,
+            emission_kind,
             p0,
             p1,
             colour_density: [colour[0], colour[1], colour[2], density],
-            params: [anisotropy, 0.0, 0.0, 0.0],
+            params: [anisotropy, emission_strength, emission_param, 0.0],
+            remap_data,
         })
     }
 }

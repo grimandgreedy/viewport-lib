@@ -74,17 +74,25 @@ struct ShadowAtlas {
 };
 
 struct GpuScatterVolume {
-    shape_pack:     vec4<u32>,   // x=kind (0=box,1=sphere), y=flags, zw=pad
+    shape_pack:     vec4<u32>,   // x=kind (0=box,1=sphere), y=flags, z=remap_kind, w=emission_kind
     p0:             vec4<f32>,
     p1:             vec4<f32>,
     colour_density: vec4<f32>,   // rgb=colour, a=density
-    params:         vec4<f32>,   // x=anisotropy, yzw reserved
+    params:         vec4<f32>,   // x=anisotropy, y=emission_strength, z=emission_param, w=reserved
+    remap_data:     vec4<f32>,   // Smoothstep: (lo,hi,_,_). ExpFalloff: (center.xyz, falloff).
 };
 
 const MAX_SCATTER_VOLUMES: u32 = 16u;
 const MARCH_STEPS:         u32 = 24u;
 const FLAG_UNLIT:           u32 = 1u;
 const FLAG_RECEIVE_SHADOWS: u32 = 2u;
+const REMAP_IDENTITY:    u32 = 0u;
+const REMAP_SMOOTHSTEP:  u32 = 1u;
+const REMAP_EXP_FALLOFF: u32 = 2u;
+const EMISSION_NONE:      u32 = 0u;
+const EMISSION_LINEAR:    u32 = 1u;
+const EMISSION_POWER:     u32 = 2u;
+const EMISSION_THRESHOLD: u32 = 3u;
 
 struct ScatterUniforms {
     volumes:    array<GpuScatterVolume, MAX_SCATTER_VOLUMES>,
@@ -120,13 +128,56 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VsOut {
 }
 
 struct Interval {
-    t_enter:    f32,
-    t_exit:     f32,
-    colour_rgb: vec3<f32>,
-    density:    f32,
-    aniso:      f32,
-    flags:      u32,
+    t_enter:           f32,
+    t_exit:            f32,
+    colour_rgb:        vec3<f32>,
+    density:           f32,
+    aniso:             f32,
+    flags:             u32,
+    remap_kind:        u32,
+    emission_kind:     u32,
+    emission_strength: f32,
+    emission_param:    f32,
+    remap_data:        vec4<f32>,
 };
+
+// Apply the per-volume density remap at a world position. Returns a unitless
+// scalar in [0, 1] that the per-step extinction multiplies the base density by.
+fn apply_remap(kind: u32, data: vec4<f32>, world_pos: vec3<f32>) -> f32 {
+    if kind == REMAP_SMOOTHSTEP {
+        // data.xy = (lo, hi). We do not have a per-voxel scalar yet (V4
+        // brings noise), so remap on the distance to the volume centre is
+        // the right shape for "soft edge" fog: lo = inner radius, hi = outer.
+        // The smoothstep is inverted so densities are highest near the centre.
+        let lo = data.x;
+        let hi = max(data.y, lo + 1e-4);
+        let r = length(world_pos);
+        let t = clamp((r - lo) / (hi - lo), 0.0, 1.0);
+        let s_curve = t * t * (3.0 - 2.0 * t);
+        return 1.0 - s_curve;
+    } else if kind == REMAP_EXP_FALLOFF {
+        let center = data.xyz;
+        let falloff = max(data.w, 1e-4);
+        let r = length(world_pos - center);
+        return exp(-falloff * r);
+    }
+    return 1.0;
+}
+
+// Map a local density value through the emission curve. Result multiplies
+// `emission_strength` and the volume's colour to produce emitted radiance.
+fn emission_factor(kind: u32, param: f32, density: f32) -> f32 {
+    if kind == EMISSION_LINEAR {
+        return density;
+    } else if kind == EMISSION_POWER {
+        let exp_ = max(param, 1e-3);
+        return pow(clamp(density, 0.0, 1.0), exp_);
+    } else if kind == EMISSION_THRESHOLD {
+        if density >= param { return 1.0; }
+        return 0.0;
+    }
+    return 0.0;
+}
 
 fn ray_box(p0: vec3<f32>, p1: vec3<f32>, o: vec3<f32>, d: vec3<f32>) -> vec2<f32> {
     let inv = 1.0 / d;
@@ -243,6 +294,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         entry.density = v.colour_density.a;
         entry.aniso = v.params.x;
         entry.flags = v.shape_pack.y;
+        entry.remap_kind = v.shape_pack.z;
+        entry.emission_kind = v.shape_pack.w;
+        entry.emission_strength = v.params.y;
+        entry.emission_param = v.params.z;
+        entry.remap_data = v.remap_data;
         intervals[n_intervals] = entry;
         n_intervals = n_intervals + 1u;
     }
@@ -285,38 +341,48 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let iv = intervals[k];
         let unlit = (iv.flags & FLAG_UNLIT) != 0u;
         let recv_shadows = (iv.flags & FLAG_RECEIVE_SHADOWS) != 0u;
-        if unlit {
-            // Unlit short-circuit: flat colour weighted by Beer-Lambert.
-            let thickness = max(iv.t_exit - iv.t_enter, 0.0);
-            let alpha = 1.0 - exp(-iv.density * thickness);
-            let one_minus_acc = 1.0 - acc_a;
-            acc_rgb = acc_rgb + iv.colour_rgb * alpha * one_minus_acc;
-            acc_a = acc_a + alpha * one_minus_acc;
-        } else {
-            let thickness = iv.t_exit - iv.t_enter;
-            let dt = thickness / f32(MARCH_STEPS);
-            let cos_theta = dot(ray_dir, sun_dir);
-            let phase = phase_hg(cos_theta, iv.aniso);
-            for (var s: u32 = 0u; s < MARCH_STEPS; s = s + 1u) {
-                let t = iv.t_enter + (f32(s) + 0.5) * dt;
-                let p = eye + ray_dir * t;
-                let step_extinction = iv.density * dt;
-                let step_alpha = 1.0 - exp(-step_extinction);
-                // Hemisphere ambient: a coarse split between sky / ground for
-                // the sun's up direction. Volumes do not have a surface
-                // normal so a zenith-blend gives a reasonable shape.
-                let zenith = clamp(sun_dir.z * 0.5 + 0.5, 0.0, 1.0);
-                let ambient = mix(ambient_bot, ambient_top, zenith);
+        let thickness = iv.t_exit - iv.t_enter;
+        let dt = thickness / f32(MARCH_STEPS);
+        let cos_theta = dot(ray_dir, sun_dir);
+        let phase = phase_hg(cos_theta, iv.aniso);
+        // Hemisphere ambient: a coarse split between sky / ground for the
+        // sun's up direction. Volumes have no surface normal so a zenith
+        // blend gives a reasonable shape.
+        let zenith = clamp(sun_dir.z * 0.5 + 0.5, 0.0, 1.0);
+        let ambient = mix(ambient_bot, ambient_top, zenith);
+        for (var s: u32 = 0u; s < MARCH_STEPS; s = s + 1u) {
+            let t = iv.t_enter + (f32(s) + 0.5) * dt;
+            let p = eye + ray_dir * t;
+            let remap = apply_remap(iv.remap_kind, iv.remap_data, p);
+            let local_density = iv.density * remap;
+            let step_extinction = local_density * dt;
+            let step_alpha = 1.0 - exp(-step_extinction);
+
+            // In-scattering: sun (shadowed) + ambient, modulated by volume
+            // colour. Skipped when `unlit` so the volume reads as a flat
+            // medium driven only by colour, density, and emission.
+            var in_scatter = vec3<f32>(0.0);
+            if !unlit {
                 var sun_contrib = sun_colour * phase;
                 if recv_shadows {
                     sun_contrib = sun_contrib * sample_sun_shadow(p);
                 }
-                let in_scatter = (sun_contrib + ambient) * iv.colour_rgb;
-                let one_minus_acc = 1.0 - acc_a;
-                acc_rgb = acc_rgb + in_scatter * step_alpha * one_minus_acc;
-                acc_a = acc_a + step_alpha * one_minus_acc;
-                if acc_a > 0.995 { break; }
+                in_scatter = (sun_contrib + ambient) * iv.colour_rgb;
             }
+
+            // Emission: self-emitted radiance proportional to the local
+            // density mapped through the per-volume curve. Always added,
+            // never shadow-attenuated.
+            var emission = vec3<f32>(0.0);
+            if iv.emission_kind != EMISSION_NONE {
+                let f = emission_factor(iv.emission_kind, iv.emission_param, local_density);
+                emission = iv.colour_rgb * (iv.emission_strength * f);
+            }
+
+            let one_minus_acc = 1.0 - acc_a;
+            acc_rgb = acc_rgb + (in_scatter + emission) * step_alpha * one_minus_acc;
+            acc_a = acc_a + step_alpha * one_minus_acc;
+            if acc_a > 0.995 { break; }
         }
         if acc_a > 0.995 { break; }
     }
