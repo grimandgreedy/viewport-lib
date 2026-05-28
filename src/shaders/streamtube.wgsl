@@ -174,10 +174,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     var light_dir: vec3<f32>;
     var light_rgb: vec3<f32>;
     if lights.count > 0u && lights.lights[0].light_type == 0u {
-        light_dir = normalize(-lights.lights[0].pos_or_dir);
+        // `pos_or_dir` is the surface-to-light direction (matches mesh.wgsl).
+        light_dir = normalize(lights.lights[0].pos_or_dir);
         light_rgb = lights.lights[0].colour * lights.lights[0].intensity;
     } else {
-        light_dir = normalize(vec3<f32>(0.3, 1.0, 0.5));
+        // No scene lights: fallback to a direction pointing toward an above-front
+        // light source in the Z-up world (matches mesh.wgsl convention).
+        light_dir = normalize(vec3<f32>(0.4, 0.3, 1.5));
         light_rgb = vec3<f32>(1.0);
     }
 

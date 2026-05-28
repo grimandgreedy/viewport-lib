@@ -279,8 +279,8 @@ fn fs_main(in: VertexOutput) -> FragOutput {
     var light_dir: vec3<f32>;
     var light_rgb: vec3<f32>;
     if lights.count > 0u && lights.lights[0].light_type == 0u {
-        // Directional: pos_or_dir is the light direction (pointing away from surface).
-        light_dir = normalize(-lights.lights[0].pos_or_dir);
+        // `pos_or_dir` is the surface-to-light direction (matches mesh.wgsl).
+        light_dir = normalize(lights.lights[0].pos_or_dir);
         light_rgb = lights.lights[0].colour * lights.lights[0].intensity;
     } else {
         light_dir = normalize(vec3<f32>(0.577, 0.577, 0.577));

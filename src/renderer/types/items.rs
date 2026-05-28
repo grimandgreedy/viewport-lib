@@ -846,6 +846,20 @@ impl Default for ImageSliceItem {
 ///
 /// Fragments whose world position falls outside the volume bounding box are
 /// discarded, so the mesh can extend beyond the volume without clipping artifacts.
+///
+/// # `ItemSettings.unlit` and `ItemSettings.wireframe`
+///
+/// Accepted but no-op. The slice colours each fragment by sampling the volume
+/// LUT directly; there is no lighting calculation to skip and no edge-pass
+/// variant of the pipeline. Setting either flag compiles and renders identically
+/// to the default.
+///
+/// # `ItemSettings.opacity`
+///
+/// Multiplied into the type's own [`opacity`](Self::opacity) field at upload
+/// time so `settings.opacity` controls transparency consistently across item
+/// types. The two fields compose multiplicatively; the type field is retained
+/// for back-compat.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct VolumeSurfaceSliceItem {
@@ -862,6 +876,10 @@ pub struct VolumeSurfaceSliceItem {
     /// Colour LUT. `None` = default builtin (viridis).
     pub colour_lut: Option<crate::resources::ColourmapId>,
     /// Overall opacity of the slice. Default: `1.0`.
+    ///
+    /// Prefer [`ItemSettings::opacity`] (`settings.opacity`) for new code; the two
+    /// fields compose multiplicatively so existing consumers of this field keep
+    /// working.
     pub opacity: f32,
     /// World-space model matrix for the slice mesh. Default: identity.
     pub model: [[f32; 4]; 4],

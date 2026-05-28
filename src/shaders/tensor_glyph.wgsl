@@ -191,8 +191,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         return vec4<f32>(in.colour.rgb, alpha);
     }
 
-    // Simple diffuse lighting with a fixed directional light.
-    let light_dir = normalize(vec3<f32>(0.3, 1.0, 0.5));
+    // Simple diffuse lighting with a fixed directional light. Z-up world.
+    // Tensor glyph does not yet bind `LightingSettings`; scene-light support is
+    // tracked in `lighting-shading-consistency-plan.md` C11.
+    let light_dir = normalize(vec3<f32>(0.4, 0.3, 1.5));
     let n_dot_l   = max(dot(in.world_nrm, light_dir), 0.0);
     let ambient   = 0.2;
     let diffuse   = 0.8 * n_dot_l;

@@ -482,7 +482,13 @@ impl ViewportGpuResources {
             uniform_data[offset..offset + 4]
                 .copy_from_slice(bytemuck::bytes_of(&item.threshold_max));
             offset += 4;
-            let shading_u32: u32 = if item.enable_shading { 1 } else { 0 };
+            // ItemSettings.unlit forces gradient shading off regardless of the
+            // per-item enable_shading toggle. The volume ray-marcher's only
+            // lighting path is gradient Phong, gated by VolumeUniform.enable_shading;
+            // ORing unlit here gives consumers a uniform way to disable lighting
+            // across all item types.
+            let shading_u32: u32 =
+                if item.enable_shading && !item.settings.unlit { 1 } else { 0 };
             uniform_data[offset..offset + 4].copy_from_slice(bytemuck::bytes_of(&shading_u32));
             offset += 4;
             uniform_data[offset..offset + 4].copy_from_slice(bytemuck::bytes_of(&num_clip));

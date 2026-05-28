@@ -125,9 +125,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let light = lights.lights[i];
         if light.light_type != 0u { continue; } // directional only
 
-        // pos_or_dir stores the direction the light is pointing (pointing to source
-        // from scene is -pos_or_dir for directional lights).
-        let L     = normalize(-light.pos_or_dir);
+        // `pos_or_dir` is the surface-to-light direction (matches mesh.wgsl).
+        let L     = normalize(light.pos_or_dir);
         let H     = normalize(L + V);
         let light_rgb = light.colour * light.intensity;
 

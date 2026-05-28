@@ -247,6 +247,14 @@ impl Default for SurfaceLICConfig {
 /// [`upload_volume_mesh_data`](crate::resources::ViewportGpuResources::upload_volume_mesh_data)
 /// for the same geometry; the outline pass uses that boundary surface to compute
 /// the silhouette. Without `boundary_mesh_id` the `selected` flag has no visual effect.
+///
+/// # `ItemSettings.unlit`
+///
+/// Accepted but a no-op. The projected-tet pipeline has no lighting calculation
+/// to skip: fragment colour comes directly from the colourmap LUT and alpha
+/// comes from Beer-Lambert thickness. There is no diffuse, specular, ambient,
+/// or normal-based term that `unlit` could bypass. Setting `settings.unlit = true`
+/// compiles and renders identically to the default.
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct TransparentVolumeMeshItem {

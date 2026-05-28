@@ -1023,7 +1023,10 @@ impl ViewportGpuResources {
             scalar_min: item.scalar_range.0,
             bbox_max: item.bbox_max,
             scalar_max: item.scalar_range.1,
-            opacity: item.opacity,
+            // ItemSettings.opacity multiplies into the type's own opacity field
+            // so consumers can drive transparency through the standard per-item
+            // settings without abandoning the existing field.
+            opacity: item.opacity * item.settings.opacity,
             _pad: [0.0; 3],
         };
 

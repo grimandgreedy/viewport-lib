@@ -64,6 +64,7 @@ mod showcase_43_scene_runtime;
 mod showcase_44_debug_draw;
 mod showcase_45_skinned_animation;
 mod showcase_48_decals;
+mod showcase_49_lighting_consistency;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -211,6 +212,7 @@ fn main() -> eframe::Result {
                 dbg_draw_state: showcase_44_debug_draw::DbgDrawState::default(),
                 skin_state: showcase_45_skinned_animation::Skin47State::default(),
                 decal48_state: showcase_48_decals::Decal48State::default(),
+                lc_state: showcase_49_lighting_consistency::LcState::default(),
             }))
         }),
     )
@@ -270,6 +272,7 @@ enum ShowcaseMode {
     DebugDraw,
     SkinnedAnimation,
     Decals,
+    LightingConsistency,
 }
 
 impl ShowcaseMode {
@@ -321,6 +324,7 @@ impl ShowcaseMode {
             Self::DebugDraw => "44: Debug Draw",
             Self::SkinnedAnimation => "45: Skeletal Animation",
             Self::Decals => "48: Decals",
+            Self::LightingConsistency => "49: Lighting Consistency",
         }
     }
 }
@@ -485,6 +489,9 @@ pub(crate) struct App {
 
     // --- Showcase 48 ---
     pub(crate) decal48_state: showcase_48_decals::Decal48State,
+
+    // --- Showcase 49 ---
+    pub(crate) lc_state: showcase_49_lighting_consistency::LcState,
 }
 
 // ---------------------------------------------------------------------------
@@ -664,6 +671,7 @@ impl eframe::App for App {
                     ShowcaseMode::DebugDraw,
                     ShowcaseMode::SkinnedAnimation,
                     ShowcaseMode::Decals,
+                    ShowcaseMode::LightingConsistency,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1558,6 +1566,7 @@ impl App {
             ShowcaseMode::DebugDraw => !self.dbg_draw_state.built,
             ShowcaseMode::SkinnedAnimation => !self.skin_state.built,
             ShowcaseMode::Decals => !self.decal48_state.built,
+            ShowcaseMode::LightingConsistency => !self.lc_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -1999,6 +2008,9 @@ impl App {
             ShowcaseMode::Decals => {
                 showcase_48_decals::build_decal48_scene(self, renderer);
             }
+            ShowcaseMode::LightingConsistency => {
+                self.build_lc_scene(renderer);
+            }
             _ => {}
         }
     }
@@ -2100,6 +2112,9 @@ impl App {
             }
             ShowcaseMode::Decals => {
                 showcase_48_decals::controls_decal48(self, ui)
+            }
+            ShowcaseMode::LightingConsistency => {
+                showcase_49_lighting_consistency::controls_lc(self, ui)
             }
         }
     }
@@ -2891,6 +2906,12 @@ impl App {
                 let sg = self.decal48_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
+
+            ShowcaseMode::LightingConsistency => {
+                let (items, lighting, sg, ss) =
+                    showcase_49_lighting_consistency::lc_collect_scene_items(self);
+                (items, Some(BG_COLOUR), lighting, sg, ss)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -3065,6 +3086,11 @@ impl App {
         // Decals (Showcase 48): push placed decals into fd.scene.decals.
         if self.mode == ShowcaseMode::Decals && self.decal48_state.built {
             showcase_48_decals::submit_decal48_items(self, &mut fd);
+        }
+
+        // Lighting consistency (Showcase 49): push all non-mesh items.
+        if self.mode == ShowcaseMode::LightingConsistency && self.lc_state.built {
+            showcase_49_lighting_consistency::submit_lc_items(self, &mut fd);
         }
 
 
