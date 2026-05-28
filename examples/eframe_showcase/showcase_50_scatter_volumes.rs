@@ -16,11 +16,28 @@ use viewport_lib::{
     scene::{Scene, aabb::Aabb},
 };
 
+/// Scene preset. Each variant is a complete look (volumes, sky, sun) the
+/// user can switch between with a single click.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SvolPreset {
+    FoggyCorridor,
+    CloudySky,
+    CampfireNight,
+    GodRays,
+    StressTest,
+}
+
 pub(crate) struct SvolState {
     pub scene: Scene,
     pub built: bool,
+    pub preset: SvolPreset,
 
+    // Global volume: doubles as the atmospheric setup -- a huge fog box in
+    // the fog/god-ray/campfire presets, or a wide flat cloud slab in
+    // CloudySky. Configured entirely by `apply_preset`.
     pub global_enabled: bool,
+    pub global_min: [f32; 3],
+    pub global_max: [f32; 3],
     pub global_density: f32,
     pub global_colour: [f32; 3],
     pub global_anisotropy: f32,
@@ -29,6 +46,7 @@ pub(crate) struct SvolState {
     pub global_soft_edges: bool,
     pub global_soft_lo: f32,
     pub global_soft_hi: f32,
+    pub global_noise: bool,
 
     pub sphere_enabled: bool,
     pub sphere_density: f32,
@@ -60,6 +78,11 @@ pub(crate) struct SvolState {
     pub sun_intensity: f32,
     pub shadows_enabled: bool,
 
+    /// Hemisphere ambient -- set by the active preset, exposed in Advanced.
+    pub sky_colour: [f32; 3],
+    pub ground_colour: [f32; 3],
+    pub hemisphere_intensity: f32,
+
     pub quality: ScatterQuality,
     pub blue_noise_jitter: bool,
     pub downsample: bool,
@@ -69,20 +92,131 @@ pub(crate) struct SvolState {
     pub fire_step_budget: u32,
 }
 
+impl SvolPreset {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::FoggyCorridor => "Foggy",
+            Self::CloudySky => "Cloudy sky",
+            Self::CampfireNight => "Campfire",
+            Self::GodRays => "God rays",
+            Self::StressTest => "Stress test",
+        }
+    }
+
+    /// Apply this preset to a [`SvolState`], overwriting the scene-dependent
+    /// fields. Fire knobs are reset to preset-specific defaults so the
+    /// "Campfire" preset shows off the fire and other presets disable it.
+    pub(crate) fn apply(self, s: &mut SvolState) {
+        s.preset = self;
+        // Defaults that most presets share; per-preset overrides follow.
+        s.global_enabled = true;
+        s.global_min = [-200.0, -200.0, -2.0];
+        s.global_max = [200.0, 200.0, 50.0];
+        s.global_density = 0.04;
+        s.global_colour = [0.78, 0.82, 0.88];
+        s.global_anisotropy = 0.3;
+        s.global_unlit = false;
+        s.global_receive_shadows = true;
+        s.global_soft_edges = false;
+        s.global_noise = false;
+        s.sphere_enabled = false;
+        s.sphere_density = 0.4;
+        s.sphere_colour = [0.95, 0.65, 0.45];
+        s.sphere_radius = 1.6;
+        s.sphere_anisotropy = 0.0;
+        s.sphere_use_texture = false;
+        s.fire_enabled = true;
+        s.fire_density = 2.0;
+        s.fire_colour = [1.0, 0.55, 0.18];
+        s.fire_radius = 2.0;
+        s.fire_emission = 4.0;
+        s.fire_falloff = 1.2;
+        s.fire_use_ramp = true;
+        s.fire_animate = true;
+        s.fire_noise_scale = 2.5;
+        s.fire_noise_octaves = 4;
+        s.fire_noise_time_scale = 2.5;
+        s.fire_noise_scroll_z = 1.5;
+        s.sun_dir = [-0.6, 0.2, 0.6];
+        s.sun_colour = [1.0, 0.96, 0.86];
+        s.sun_intensity = 2.0;
+        s.shadows_enabled = true;
+        s.sky_colour = [0.45, 0.55, 0.7];
+        s.ground_colour = [0.2, 0.18, 0.15];
+        s.hemisphere_intensity = 0.35;
+        s.show_sphere_outline = false;
+        s.show_global_outline = false;
+
+        match self {
+            Self::FoggyCorridor => {
+                s.sphere_enabled = true;
+                s.global_density = 0.05;
+            }
+            Self::CloudySky => {
+                // Wide, thin cloud slab high above the platform. Low base
+                // density keeps the layer wispy; the procedural noise has
+                // most of the visual weight, carving puffs and gaps.
+                s.global_min = [-300.0, -300.0, 28.0];
+                s.global_max = [300.0, 300.0, 38.0];
+                s.global_density = 0.05;
+                s.global_colour = [1.0, 1.0, 1.0];
+                s.global_anisotropy = 0.7;
+                s.global_noise = true;
+                s.global_receive_shadows = false;
+                // Light blue daytime sky.
+                s.sky_colour = [0.55, 0.7, 0.9];
+                s.ground_colour = [0.35, 0.45, 0.3];
+                s.hemisphere_intensity = 0.7;
+                s.sun_colour = [1.0, 0.98, 0.92];
+                s.sun_intensity = 3.0;
+                // Low-angle sun so the forward-scattering anisotropy shows
+                // as bright silver-lining on the cloud edges facing the sun.
+                s.sun_dir = [-0.7, 0.15, 0.45];
+            }
+            Self::CampfireNight => {
+                s.global_density = 0.025;
+                s.global_colour = [0.45, 0.5, 0.62];
+                s.fire_enabled = true;
+                s.sky_colour = [0.05, 0.08, 0.16];
+                s.ground_colour = [0.03, 0.03, 0.05];
+                s.hemisphere_intensity = 0.15;
+                s.sun_colour = [0.35, 0.4, 0.6];
+                s.sun_intensity = 0.25;
+                s.sun_dir = [-0.4, 0.3, 0.7];
+            }
+            Self::GodRays => {
+                s.global_density = 0.09;
+                s.global_anisotropy = 0.6;
+                s.global_receive_shadows = true;
+                s.sun_intensity = 3.5;
+                s.sun_dir = [-0.85, 0.25, 0.35];
+            }
+            Self::StressTest => {
+                s.global_density = 0.04;
+                // Volumes are spawned procedurally in submit_svol_volumes.
+            }
+        }
+    }
+}
+
 impl Default for SvolState {
     fn default() -> Self {
-        Self {
+        let mut s = Self {
             scene: Scene::new(),
             built: false,
+            preset: SvolPreset::FoggyCorridor,
             global_enabled: true,
-            global_density: 0.08,
+            global_min: [-200.0, -200.0, -2.0],
+            global_max: [200.0, 200.0, 50.0],
+            global_density: 0.05,
             global_colour: [0.78, 0.82, 0.88],
             global_anisotropy: 0.3,
             global_unlit: false,
             global_receive_shadows: true,
             global_soft_edges: false,
-            global_soft_lo: 4.0,
-            global_soft_hi: 12.0,
+            global_soft_lo: 40.0,
+            global_soft_hi: 200.0,
+            global_noise: false,
             sphere_enabled: true,
             sphere_density: 0.4,
             sphere_colour: [0.95, 0.65, 0.45],
@@ -90,7 +224,7 @@ impl Default for SvolState {
             sphere_anisotropy: 0.0,
             sphere_use_texture: false,
             sphere_texture_id: None,
-            fire_enabled: true,
+            fire_enabled: false,
             fire_density: 2.0,
             fire_colour: [1.0, 0.55, 0.18],
             fire_radius: 2.0,
@@ -104,11 +238,14 @@ impl Default for SvolState {
             fire_noise_time_scale: 2.5,
             fire_noise_scroll_z: 1.5,
             show_global_outline: false,
-            show_sphere_outline: true,
+            show_sphere_outline: false,
             sun_dir: [-0.6, 0.2, 0.6],
             sun_colour: [1.0, 0.96, 0.86],
             sun_intensity: 2.0,
             shadows_enabled: true,
+            sky_colour: [0.45, 0.55, 0.7],
+            ground_colour: [0.2, 0.18, 0.15],
+            hemisphere_intensity: 0.35,
             quality: ScatterQuality::Medium,
             blue_noise_jitter: true,
             downsample: false,
@@ -116,7 +253,9 @@ impl Default for SvolState {
             temporal_blend: 0.85,
             fire_step_budget_override: false,
             fire_step_budget: 24,
-        }
+        };
+        SvolPreset::FoggyCorridor.apply(&mut s);
+        s
     }
 }
 
@@ -212,8 +351,8 @@ impl App {
         if s.global_enabled {
             let mut v = ScatterVolume::box_uniform(
                 Aabb {
-                    min: glam::Vec3::new(-12.0, -12.0, -1.0),
-                    max: glam::Vec3::new(12.0, 12.0, 6.0),
+                    min: glam::Vec3::from(s.global_min),
+                    max: glam::Vec3::from(s.global_max),
                 },
                 s.global_density,
                 s.global_colour,
@@ -225,11 +364,45 @@ impl App {
                     hi: s.global_soft_hi,
                 };
             }
+            if s.global_noise {
+                // Tuned for cloud-puffs scale: low frequency base layer + a
+                // couple of octaves of detail. Slow horizontal scroll so the
+                // cloud field drifts rather than evolves in place.
+                let mut nd = NoiseDriver::default();
+                nd.scale = 0.025;
+                nd.octaves = 3;
+                nd.lacunarity = 2.2;
+                nd.time_scale = 0.05;
+                nd.scroll_velocity = [0.6, 0.2, 0.0];
+                v.noise = Some(nd);
+            }
             let mut item = ScatterVolumeItem::new(v);
             item.settings.selected = s.show_global_outline;
             item.settings.unlit = s.global_unlit;
             item.settings.receive_shadows = s.global_receive_shadows;
             fd.scene.scatter_volumes.push(item);
+        }
+
+        if matches!(s.preset, SvolPreset::StressTest) {
+            // Spawn a grid of small sphere volumes to demonstrate that
+            // tile-based culling keeps off-screen volumes free.
+            let palette: [[f32; 3]; 4] = [
+                [0.95, 0.6, 0.4],
+                [0.45, 0.65, 0.95],
+                [0.85, 0.9, 0.5],
+                [0.7, 0.5, 0.9],
+            ];
+            let mut idx = 0;
+            for gy in -2..=1 {
+                for gx in -2..=2 {
+                    let centre = [gx as f32 * 4.0, gy as f32 * 4.0 + 1.0, 1.5];
+                    let colour = palette[idx % palette.len()];
+                    idx += 1;
+                    let mut v = ScatterVolume::sphere_uniform(centre, 1.2, 0.5, colour);
+                    v.anisotropy = 0.2;
+                    fd.scene.scatter_volumes.push(ScatterVolumeItem::new(v));
+                }
+            }
         }
         if s.fire_enabled {
             let center = [-4.0_f32, 0.0, 1.2];
@@ -289,122 +462,59 @@ impl App {
 }
 
 pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
-    let s = &mut app.svol_state;
-
-    // Shader time advances per frame; keep frames flowing while the
-    // animation toggle is on so the noise field actually evolves on screen.
-    if s.fire_enabled && s.fire_animate {
+    // Shader time advances per frame; keep frames flowing while the fire
+    // animation toggle is on so the noise field actually evolves.
+    if app.svol_state.fire_enabled && app.svol_state.fire_animate {
         ui.ctx().request_repaint();
     }
 
-    ui.heading("Quality");
+    // -- Performance: always visible at the top. --
+    let s = &mut app.svol_state;
+    ui.heading("Performance");
     ui.horizontal(|ui| {
         for (label, q) in [
-            ("Low (8)", ScatterQuality::Low),
-            ("Medium (16)", ScatterQuality::Medium),
-            ("High (32)", ScatterQuality::High),
+            ("Low", ScatterQuality::Low),
+            ("Medium", ScatterQuality::Medium),
+            ("High", ScatterQuality::High),
         ] {
             if ui.selectable_label(s.quality == q, label).clicked() {
                 s.quality = q;
             }
         }
     });
-    ui.checkbox(&mut s.blue_noise_jitter, "Blue-noise jitter");
-    ui.checkbox(&mut s.downsample, "Half-res scatter (downsample)");
+    ui.checkbox(&mut s.downsample, "Half-resolution");
     ui.checkbox(&mut s.temporal, "Temporal accumulation");
     if s.temporal {
         ui.horizontal(|ui| {
-            ui.label("History weight");
+            ui.label("History");
             ui.add(egui::Slider::new(&mut s.temporal_blend, 0.0..=0.95).step_by(0.01));
         });
     }
-    ui.checkbox(&mut s.fire_step_budget_override, "Override fire step budget");
-    if s.fire_step_budget_override {
-        ui.horizontal(|ui| {
-            ui.label("Fire steps");
-            ui.add(egui::Slider::new(&mut s.fire_step_budget, 4..=64));
-        });
+    ui.separator();
+
+    // -- Scene preset picker. --
+    ui.heading("Scene");
+    let current = s.preset;
+    let mut pending: Option<SvolPreset> = None;
+    for preset in [
+        SvolPreset::FoggyCorridor,
+        SvolPreset::CloudySky,
+        SvolPreset::CampfireNight,
+        SvolPreset::GodRays,
+        SvolPreset::StressTest,
+    ] {
+        if ui.selectable_label(current == preset, preset.label()).clicked() {
+            pending = Some(preset);
+        }
+    }
+    if let Some(p) = pending {
+        p.apply(s);
     }
     ui.separator();
 
-    ui.heading("Sun");
-    ui.horizontal(|ui| {
-        ui.label("Dir X");
-        ui.add(egui::Slider::new(&mut s.sun_dir[0], -1.0..=1.0).step_by(0.01));
-    });
-    ui.horizontal(|ui| {
-        ui.label("Dir Y");
-        ui.add(egui::Slider::new(&mut s.sun_dir[1], -1.0..=1.0).step_by(0.01));
-    });
-    ui.horizontal(|ui| {
-        ui.label("Dir Z");
-        ui.add(egui::Slider::new(&mut s.sun_dir[2], 0.05..=1.0).step_by(0.01));
-    });
-    ui.horizontal(|ui| {
-        ui.label("Intensity");
-        ui.add(egui::Slider::new(&mut s.sun_intensity, 0.0..=5.0).step_by(0.05));
-    });
-    ui.horizontal(|ui| {
-        ui.label("Colour");
-        ui.color_edit_button_rgb(&mut s.sun_colour);
-    });
-    ui.checkbox(&mut s.shadows_enabled, "Cast shadows (god rays)");
-
-    ui.separator();
-    ui.heading("Global fog (Box)");
-    ui.checkbox(&mut s.global_enabled, "Enabled");
-    ui.horizontal(|ui| {
-        ui.label("Density");
-        ui.add(egui::Slider::new(&mut s.global_density, 0.0..=0.4).step_by(0.005));
-    });
-    ui.horizontal(|ui| {
-        ui.label("Anisotropy g");
-        ui.add(egui::Slider::new(&mut s.global_anisotropy, -0.9..=0.9).step_by(0.01));
-    });
-    ui.horizontal(|ui| {
-        ui.label("Colour");
-        ui.color_edit_button_rgb(&mut s.global_colour);
-    });
-    ui.checkbox(&mut s.global_unlit, "Unlit (skip in-scattering)");
-    ui.checkbox(&mut s.global_receive_shadows, "Receive shadows (shafts)");
-    ui.checkbox(&mut s.global_soft_edges, "Smoothstep soft edges");
-    if s.global_soft_edges {
-        ui.horizontal(|ui| {
-            ui.label("Inner radius");
-            ui.add(egui::Slider::new(&mut s.global_soft_lo, 0.0..=15.0).step_by(0.1));
-        });
-        ui.horizontal(|ui| {
-            ui.label("Outer radius");
-            ui.add(egui::Slider::new(&mut s.global_soft_hi, 0.5..=20.0).step_by(0.1));
-        });
-    }
-
-    ui.separator();
-    ui.heading("Localized haze (Sphere)");
-    ui.checkbox(&mut s.sphere_enabled, "Enabled");
-    ui.horizontal(|ui| {
-        ui.label("Density");
-        ui.add(egui::Slider::new(&mut s.sphere_density, 0.0..=1.0).step_by(0.01));
-    });
-    ui.horizontal(|ui| {
-        ui.label("Radius");
-        ui.add(egui::Slider::new(&mut s.sphere_radius, 0.5..=4.0).step_by(0.05));
-    });
-    ui.horizontal(|ui| {
-        ui.label("Anisotropy g");
-        ui.add(egui::Slider::new(&mut s.sphere_anisotropy, -0.9..=0.9).step_by(0.01));
-    });
-    ui.horizontal(|ui| {
-        ui.label("Colour");
-        ui.color_edit_button_rgb(&mut s.sphere_colour);
-    });
-    ui.checkbox(
-        &mut s.sphere_use_texture,
-        "Use baked 3D density texture",
-    );
-
-    ui.separator();
-    ui.heading("Fire (Sphere with emission + ExpFalloff)");
+    // -- Fire: kept fully exposed so users see how a single volume's
+    //    parameters compose into a recognisable look. --
+    ui.heading("Fire (Sphere + emission)");
     ui.checkbox(&mut s.fire_enabled, "Enabled");
     ui.horizontal(|ui| {
         ui.label("Density");
@@ -426,16 +536,12 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
         ui.label("Tint");
         ui.color_edit_button_rgb(&mut s.fire_colour);
     });
-    ui.checkbox(&mut s.fire_use_ramp, "Use Inferno colourmap (Ramp)");
-    ui.checkbox(&mut s.fire_animate, "Animate (procedural noise)");
+    ui.checkbox(&mut s.fire_use_ramp, "Inferno colourmap");
+    ui.checkbox(&mut s.fire_animate, "Animate");
     if s.fire_animate {
         ui.horizontal(|ui| {
             ui.label("Noise scale");
             ui.add(egui::Slider::new(&mut s.fire_noise_scale, 0.5..=8.0).step_by(0.1));
-        });
-        ui.horizontal(|ui| {
-            ui.label("Octaves");
-            ui.add(egui::Slider::new(&mut s.fire_noise_octaves, 1..=6));
         });
         ui.horizontal(|ui| {
             ui.label("Time scale");
@@ -446,22 +552,102 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
             ui.add(egui::Slider::new(&mut s.fire_noise_scroll_z, -2.0..=2.0).step_by(0.05));
         });
     }
+    ui.separator();
+
+    // -- Advanced: everything else, collapsed by default. --
+    egui::CollapsingHeader::new("Advanced")
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.checkbox(&mut s.blue_noise_jitter, "Blue-noise jitter");
+            ui.checkbox(&mut s.fire_step_budget_override, "Override fire step budget");
+            if s.fire_step_budget_override {
+                ui.horizontal(|ui| {
+                    ui.label("Fire steps");
+                    ui.add(egui::Slider::new(&mut s.fire_step_budget, 4..=64));
+                });
+            }
+
+            ui.separator();
+            ui.label(egui::RichText::new("Sun").strong());
+            ui.horizontal(|ui| {
+                ui.label("Direction");
+                ui.add(egui::Slider::new(&mut s.sun_dir[0], -1.0..=1.0).step_by(0.01));
+                ui.add(egui::Slider::new(&mut s.sun_dir[1], -1.0..=1.0).step_by(0.01));
+                ui.add(egui::Slider::new(&mut s.sun_dir[2], 0.05..=1.0).step_by(0.01));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Intensity");
+                ui.add(egui::Slider::new(&mut s.sun_intensity, 0.0..=5.0).step_by(0.05));
+                ui.color_edit_button_rgb(&mut s.sun_colour);
+            });
+            ui.checkbox(&mut s.shadows_enabled, "Shadows");
+
+            ui.separator();
+            ui.label(egui::RichText::new("Hemisphere").strong());
+            ui.horizontal(|ui| {
+                ui.label("Sky");
+                ui.color_edit_button_rgb(&mut s.sky_colour);
+                ui.label("Ground");
+                ui.color_edit_button_rgb(&mut s.ground_colour);
+            });
+            ui.horizontal(|ui| {
+                ui.label("Intensity");
+                ui.add(egui::Slider::new(&mut s.hemisphere_intensity, 0.0..=1.5).step_by(0.01));
+            });
+
+            ui.separator();
+            ui.label(egui::RichText::new("Global volume").strong());
+            ui.checkbox(&mut s.global_enabled, "Enabled");
+            ui.horizontal(|ui| {
+                ui.label("Density");
+                ui.add(egui::Slider::new(&mut s.global_density, 0.0..=0.4).step_by(0.005));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Anisotropy");
+                ui.add(egui::Slider::new(&mut s.global_anisotropy, -0.9..=0.9).step_by(0.01));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Colour");
+                ui.color_edit_button_rgb(&mut s.global_colour);
+            });
+            ui.checkbox(&mut s.global_unlit, "Unlit");
+            ui.checkbox(&mut s.global_receive_shadows, "Shafts (receive shadows)");
+            ui.checkbox(&mut s.global_noise, "Procedural noise");
+
+            ui.separator();
+            ui.label(egui::RichText::new("Localized haze (sphere)").strong());
+            ui.checkbox(&mut s.sphere_enabled, "Enabled");
+            ui.horizontal(|ui| {
+                ui.label("Density");
+                ui.add(egui::Slider::new(&mut s.sphere_density, 0.0..=1.0).step_by(0.01));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Radius");
+                ui.add(egui::Slider::new(&mut s.sphere_radius, 0.5..=4.0).step_by(0.05));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Anisotropy");
+                ui.add(egui::Slider::new(&mut s.sphere_anisotropy, -0.9..=0.9).step_by(0.01));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Colour");
+                ui.color_edit_button_rgb(&mut s.sphere_colour);
+            });
+            ui.checkbox(&mut s.sphere_use_texture, "Baked 3D density texture");
+
+            ui.separator();
+            ui.label(egui::RichText::new("Debug").strong());
+            ui.checkbox(&mut s.show_global_outline, "Global outline");
+            ui.checkbox(&mut s.show_sphere_outline, "Sphere outline");
+        });
 
     ui.separator();
-    if ui.button("Teleport camera inside global volume").clicked() {
+    if ui.button("Camera inside global volume").clicked() {
         app.camera.center = glam::Vec3::new(0.0, 0.0, 2.5);
         app.camera.distance = 0.5;
     }
-    if ui.button("Teleport camera outside global volume").clicked() {
+    if ui.button("Camera back to platform").clicked() {
         app.camera.center = glam::Vec3::new(0.0, 0.0, 1.5);
         app.camera.distance = 14.0;
     }
-    let s = &mut app.svol_state;
-    ui.checkbox(&mut s.show_global_outline, "Show global outline");
-    ui.checkbox(&mut s.show_sphere_outline, "Show sphere outline");
-    ui.label(
-        "Procedural noise animation: fire flickers via turbulent noise with a\n\
-         time-domain warp; smoke / clouds would use scroll velocity instead.\n\
-         External 3D density textures can be uploaded as scalar volumes.",
-    );
 }

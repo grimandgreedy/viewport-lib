@@ -2949,9 +2949,9 @@ impl App {
                     let mut _t = LightingSettings::default();
                     _t.lights = vec![sun];
                     _t.shadows_enabled = self.svol_state.shadows_enabled;
-                    _t.sky_colour = [0.45, 0.55, 0.7];
-                    _t.ground_colour = [0.2, 0.18, 0.15];
-                    _t.hemisphere_intensity = 0.35;
+                    _t.sky_colour = self.svol_state.sky_colour;
+                    _t.ground_colour = self.svol_state.ground_colour;
+                    _t.hemisphere_intensity = self.svol_state.hemisphere_intensity;
                     _t
                 };
                 (items, Some(BG_COLOUR), lighting, sg, 0)

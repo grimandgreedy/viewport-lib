@@ -4419,9 +4419,48 @@ impl ViewportRenderer {
                 let proj = &frame.camera.render_camera.projection;
 
                 // Each item (label or rect) contributes a (z_order, verts) batch.
-                // Sorting batches by z_order before flattening gives correct draw order.
+                // Rects are pushed before labels so that after a stable sort, items at
+                // equal z_order always draw rect (background) before label (text).
                 let mut batches: Vec<(i32, Vec<crate::resources::OverlayTextVertex>)> =
                     Vec::new();
+
+                // --- Rects (processed first so equal-z_order rects draw before labels) ---
+                for rect in &frame.overlays.rects {
+                    if rect.opacity <= 0.0 {
+                        continue;
+                    }
+                    let x0 = rect.position[0];
+                    let y0 = rect.position[1];
+                    let x1 = x0 + rect.size[0];
+                    let y1 = y0 + rect.size[1];
+
+                    let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+
+                    if rect.border_width > 0.0 {
+                        let bw = rect.border_width;
+                        let mut bc = rect.border_colour;
+                        bc[3] *= rect.opacity;
+                        emit_rounded_quad(
+                            &mut batch,
+                            x0 - bw,
+                            y0 - bw,
+                            x1 + bw,
+                            y1 + bw,
+                            rect.corner_radius + bw,
+                            bc,
+                            vp_w,
+                            vp_h,
+                        );
+                    }
+
+                    let mut fc = rect.colour;
+                    fc[3] *= rect.opacity;
+                    emit_rounded_quad(
+                        &mut batch, x0, y0, x1, y1, rect.corner_radius, fc, vp_w, vp_h,
+                    );
+
+                    batches.push((rect.z_order, batch));
+                }
 
                 // --- Labels ---
                 for label in &frame.overlays.labels {
@@ -4547,45 +4586,7 @@ impl ViewportRenderer {
                 // Upload atlas if new glyphs were rasterized.
                 self.resources.glyph_atlas.upload_if_dirty(queue);
 
-                // --- Rects ---
-                for rect in &frame.overlays.rects {
-                    if rect.opacity <= 0.0 {
-                        continue;
-                    }
-                    let x0 = rect.position[0];
-                    let y0 = rect.position[1];
-                    let x1 = x0 + rect.size[0];
-                    let y1 = y0 + rect.size[1];
-
-                    let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
-
-                    if rect.border_width > 0.0 {
-                        let bw = rect.border_width;
-                        let mut bc = rect.border_colour;
-                        bc[3] *= rect.opacity;
-                        emit_rounded_quad(
-                            &mut batch,
-                            x0 - bw,
-                            y0 - bw,
-                            x1 + bw,
-                            y1 + bw,
-                            rect.corner_radius + bw,
-                            bc,
-                            vp_w,
-                            vp_h,
-                        );
-                    }
-
-                    let mut fc = rect.colour;
-                    fc[3] *= rect.opacity;
-                    emit_rounded_quad(
-                        &mut batch, x0, y0, x1, y1, rect.corner_radius, fc, vp_w, vp_h,
-                    );
-
-                    batches.push((rect.z_order, batch));
-                }
-
-                // Stable sort preserves submission order for equal z_order values.
+                // Stable sort preserves rect-before-label order for equal z_order values.
                 batches.sort_by_key(|(z, _)| *z);
                 let verts: Vec<crate::resources::OverlayTextVertex> =
                     batches.into_iter().flat_map(|(_, v)| v).collect();
@@ -5977,18 +5978,40 @@ impl ViewportRenderer {
                 self.prepared_scatter_volumes
                     .push((item.volume.clone(), item.settings.opacity, flags));
             }
-            // Sort back-to-front by squared distance from the eye so the
-            // per-volume scatter draws composite in the correct order under
-            // the existing premultiplied alpha-over blend.
+            // Sort back-to-front for the per-volume scatter draws. The
+            // metric is the maximum corner distance of the volume's world
+            // AABB from the eye, descending. Centroid distance flips order
+            // when one volume contains another (huge fog containing a small
+            // fire) -- the fire centroid can land on either side of the fog
+            // centroid as the camera orbits, causing the alpha-over composite
+            // to swap visibly. Sorting by far-corner distance keeps
+            // containers (whose far corner is much further from the eye)
+            // strictly behind contained volumes regardless of camera angle.
             self.prepared_scatter_volumes.sort_by(|a, b| {
-                let ca = a.0.shape_centre();
-                let cb = b.0.shape_centre();
-                let da = (ca[0] - eye[0]).powi(2)
-                    + (ca[1] - eye[1]).powi(2)
-                    + (ca[2] - eye[2]).powi(2);
-                let db = (cb[0] - eye[0]).powi(2)
-                    + (cb[1] - eye[1]).powi(2)
-                    + (cb[2] - eye[2]).powi(2);
+                let aabb_a = a.0.world_aabb();
+                let aabb_b = b.0.world_aabb();
+                let far_corner = |aabb: &crate::Aabb| -> f32 {
+                    let cx = if (aabb.min.x - eye[0]).abs() > (aabb.max.x - eye[0]).abs() {
+                        aabb.min.x
+                    } else {
+                        aabb.max.x
+                    };
+                    let cy = if (aabb.min.y - eye[1]).abs() > (aabb.max.y - eye[1]).abs() {
+                        aabb.min.y
+                    } else {
+                        aabb.max.y
+                    };
+                    let cz = if (aabb.min.z - eye[2]).abs() > (aabb.max.z - eye[2]).abs() {
+                        aabb.min.z
+                    } else {
+                        aabb.max.z
+                    };
+                    (cx - eye[0]).powi(2)
+                        + (cy - eye[1]).powi(2)
+                        + (cz - eye[2]).powi(2)
+                };
+                let da = far_corner(&aabb_a);
+                let db = far_corner(&aabb_b);
                 db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
             });
             self.pick_volume_mesh_items = frame.scene.volume_mesh_items.clone();
