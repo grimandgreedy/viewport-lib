@@ -1167,8 +1167,7 @@ impl ViewportRenderer {
         }
 
         // 9. Streamtube / tube / ribbon picks (POLY_NODE, SEGMENT, STRIP, or OBJECT).
-        // Phase 10 fidelity upgrade:
-        //   Streamtube / tube: screen-space closest-segment test against each cylinder
+        // Streamtube / tube: screen-space closest-segment test against each cylinder
         //     axis (both endpoints projected), not just the midpoint.
         //   Ribbon: ray-triangle intersection against the reconstructed swept quad
         //     using the parallel-transport lateral frame.

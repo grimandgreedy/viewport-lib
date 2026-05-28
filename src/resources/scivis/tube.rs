@@ -481,7 +481,7 @@ impl ViewportGpuResources {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 3.3 : General Tube representation
+    // General Tube representation
     // -------------------------------------------------------------------------
 
     /// Upload one [`TubeItem`] to the GPU and return draw data.
@@ -778,7 +778,7 @@ impl ViewportGpuResources {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 8.1 : Ribbon representation
+    // Ribbon representation
     // -------------------------------------------------------------------------
 
     /// Build and upload GPU data for a `RibbonItem`.

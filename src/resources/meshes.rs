@@ -489,7 +489,7 @@ impl ViewportGpuResources {
     ///
     /// Interior faces (shared by two cells) are discarded; only boundary faces (belonging
     /// to exactly one cell) are kept. Per-cell scalar and colour attributes are remapped to
-    /// per-face attributes so the Phase 2 face-colouring path handles them automatically.
+    /// per-face attributes so the face-colouring path handles them automatically.
     ///
     /// Returns the `MeshId`, identical to what [`upload_mesh_data`](Self::upload_mesh_data)
     /// would return. Reference cell attributes via
@@ -927,7 +927,7 @@ impl ViewportGpuResources {
         let n = positions.len();
         let tri_count = indices.len() / 3;
 
-        // Phase 1: accumulate sdir/tdir contributions per vertex.
+        // Accumulate sdir/tdir contributions per vertex.
         // Above 1024 triangles: parallel fold/reduce with thread-local arrays.
         // Below: sequential loop to avoid per-thread allocation overhead.
         let (tan1, tan2) = if tri_count >= 1024 {
@@ -1044,7 +1044,7 @@ impl ViewportGpuResources {
             (tan1, tan2)
         };
 
-        // Phase 2: Gram-Schmidt orthogonalization per vertex -- trivially parallel.
+        // Gram-Schmidt orthogonalization per vertex -- trivially parallel.
         (0..n)
             .into_par_iter()
             .map(|i| {

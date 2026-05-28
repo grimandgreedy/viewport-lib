@@ -9,10 +9,10 @@ pub mod environment;
 mod extra_impls;
 /// Font atlas and single-line text layout for overlay rendering.
 pub(crate) mod font;
-/// GPU marching cubes compute pipeline (Phase 17).
+/// GPU marching cubes compute pipeline.
 pub mod gpu_marching_cubes;
 mod highlight;
-/// GPU implicit surface types and pipeline (Phase 16).
+/// GPU implicit surface types and pipeline.
 pub mod implicit;
 mod init;
 mod instancing;

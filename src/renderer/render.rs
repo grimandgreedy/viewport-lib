@@ -72,7 +72,7 @@ impl ViewportRenderer {
                 }
             }
         }
-        // Phase 16 : GPU implicit surface (depth-writes enabled, LessEqual compare).
+        // GPU implicit surface (depth-writes enabled, LessEqual compare).
         if !self.implicit_gpu_data.is_empty() {
             if let Some(ref dual) = self.resources.implicit_pipeline {
                 render_pass.set_pipeline(dual.for_format(false));
@@ -83,7 +83,7 @@ impl ViewportRenderer {
                 }
             }
         }
-        // Phase 17 : GPU marching cubes indirect draw.
+        // GPU marching cubes indirect draw.
         if !self.mc_gpu_data.is_empty() {
             render_pass.set_bind_group(0, camera_bg, &[]);
             for mc in &self.mc_gpu_data {
@@ -144,7 +144,7 @@ impl ViewportRenderer {
                 }
             }
         }
-        // Phase 10B : screen-space image overlays (always on top, no depth test).
+        // Screen-space image overlays (always on top, no depth test).
         if !self.screen_image_gpu_data.is_empty() {
             if let Some(pipeline) = &self.resources.screen_image_pipeline {
                 render_pass.set_pipeline(pipeline);
@@ -221,7 +221,7 @@ impl ViewportRenderer {
                 render_pass.draw(0..lb.vertex_count, 0..1);
             }
         }
-        // Phase 7 : overlay images (OverlayFrame, drawn last, no depth test).
+        // Overlay images (OverlayFrame, drawn last, no depth test).
         if !self.overlay_image_gpu_data.is_empty() {
             if let Some(pipeline) = &self.resources.screen_image_pipeline {
                 render_pass.set_pipeline(pipeline);
@@ -838,7 +838,7 @@ impl ViewportRenderer {
         let ssaa_factor = frame.effects.post_process.ssaa_factor.max(1);
         self.ensure_viewport_hdr(device, queue, vp_idx, w.max(1), h.max(1), ssaa_factor, self.current_render_scale);
 
-        // Phase 4 : lazy-initialize GPU timestamp resources on first render call when supported.
+        // Lazy-initialize GPU timestamp resources on first render call when supported.
         if self.ts_query_set.is_none()
             && device.features().contains(wgpu::Features::TIMESTAMP_QUERY)
         {
@@ -986,7 +986,7 @@ impl ViewportRenderer {
                         }
                     }
                 }
-                // Phase 16 : GPU implicit surface.
+                // GPU implicit surface.
                 if !self.implicit_gpu_data.is_empty() {
                     if let Some(ref dual) = self.resources.implicit_pipeline {
                         render_pass.set_pipeline(dual.for_format(false));
@@ -997,7 +997,7 @@ impl ViewportRenderer {
                         }
                     }
                 }
-                // Phase 17 : GPU marching cubes indirect draw.
+                // GPU marching cubes indirect draw.
                 if !self.mc_gpu_data.is_empty() {
                     if let Some(ref dual) = self.resources.mc_surface_pipeline {
                         render_pass.set_pipeline(dual.for_format(false));
@@ -1014,7 +1014,7 @@ impl ViewportRenderer {
                 }
                 // Outline composite after all scene content.
                 emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
-                // Phase 10B / Phase 12 : screen-space image overlays.
+                // Screen-space image overlays.
                 // Regular items drawn with depth_compare: Always (always on top).
                 // Depth-composite items drawn with depth_compare: LessEqual (occluded by
                 // scene geometry whose depth was already written to the depth attachment).
@@ -1096,7 +1096,7 @@ impl ViewportRenderer {
                             render_pass.draw(0..rd.vertex_count, 0..1);
                         }
                     }
-                    // Phase 7 : overlay images (OverlayFrame, LDR fallback, drawn last).
+                    // Overlay images (OverlayFrame, LDR fallback, drawn last).
                     if !self.overlay_image_gpu_data.is_empty() {
                         if let Some(pipeline) = &self.resources.screen_image_pipeline {
                             render_pass.set_pipeline(pipeline);
@@ -1217,7 +1217,7 @@ impl ViewportRenderer {
                 }
             }
 
-            // Phase 4 : resolve timestamp queries -> staging buffer.
+            // Resolve timestamp queries -> staging buffer.
             if let (Some(qs), Some(res_buf), Some(stg_buf)) = (
                 self.ts_query_set.as_ref(),
                 self.ts_resolve_buf.as_ref(),
@@ -1228,7 +1228,7 @@ impl ViewportRenderer {
                 self.ts_needs_readback = true;
             }
 
-            // Phase 3 : upscale blit from dyn_res intermediate to output_view.
+            // Upscale blit from dyn_res intermediate to output_view.
             if use_dyn_res {
                 let upscale_bg = &self.viewport_slots[vp_idx]
                     .dyn_res
@@ -1971,7 +1971,7 @@ impl ViewportRenderer {
                 true
             );
 
-            // Phase 16 : GPU implicit surface (HDR path, before skybox).
+            // GPU implicit surface (HDR path, before skybox).
             if !self.implicit_gpu_data.is_empty() {
                 if let Some(ref dual) = self.resources.implicit_pipeline {
                     render_pass.set_pipeline(dual.for_format(true));
@@ -1982,7 +1982,7 @@ impl ViewportRenderer {
                     }
                 }
             }
-            // Phase 17 : GPU marching cubes indirect draw (HDR path).
+            // GPU marching cubes indirect draw (HDR path).
             if !self.mc_gpu_data.is_empty() {
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for mc in &self.mc_gpu_data {
@@ -2481,7 +2481,7 @@ impl ViewportRenderer {
                 }
 
                 // -----------------------------------------------------------
-                // Projected tetrahedra transparent volume meshes (Phase 6).
+                // Projected tetrahedra transparent volume meshes.
                 // -----------------------------------------------------------
                 if !frame.scene.transparent_volume_meshes.is_empty() {
                     self.resources.ensure_pt_pipeline(device);
@@ -2556,7 +2556,7 @@ impl ViewportRenderer {
         }
 
         // -----------------------------------------------------------------------
-        // Phase 4: Surface LIC passes.
+        // Surface LIC passes.
         // Pass 1: render each LIC mesh into lic_vector_texture (Rgba8Unorm).
         // Pass 2: advect fullscreen triangle into lic_output_texture (R8Unorm).
         // -----------------------------------------------------------------------
@@ -2691,7 +2691,7 @@ impl ViewportRenderer {
             }
         }
 
-        // Phase 5 : effect throttling. Flag was computed in prepare() so that
+        // Effect throttling. Flag was computed in prepare() so that
         // FrameStats reports exactly what fired rather than an approximation.
         let throttle_effects = self.degradation_effects_throttled;
 
@@ -3087,7 +3087,7 @@ impl ViewportRenderer {
             gp_pass.draw(0..3, 0..1);
         }
 
-        // Phase 10B / Phase 12 : screen-space image overlay pass (HDR path).
+        // Screen-space image overlay pass (HDR path).
         // Must run before the editor overlay and axes passes because those
         // discard hdr_depth_view (StoreOp::Discard). The DC pipeline compares
         // per-pixel image depth against the scene depth buffer; if the buffer
@@ -3387,7 +3387,7 @@ impl ViewportRenderer {
                     overlay_pass.draw(0..lb.vertex_count, 0..1);
                 }
             }
-            // Phase 7 : overlay images drawn last inside the overlay pass.
+            // Overlay images drawn last inside the overlay pass.
             if !self.overlay_image_gpu_data.is_empty() {
                 if let Some(pipeline) = &self.resources.screen_image_pipeline {
                     overlay_pass.set_pipeline(pipeline);
@@ -3399,7 +3399,7 @@ impl ViewportRenderer {
             }
         }
 
-        // Phase 4 : resolve timestamp queries -> staging buffer (HDR path).
+        // Resolve timestamp queries -> staging buffer (HDR path).
         if let (Some(qs), Some(res_buf), Some(stg_buf)) = (
             self.ts_query_set.as_ref(),
             self.ts_resolve_buf.as_ref(),

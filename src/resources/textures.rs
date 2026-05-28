@@ -206,7 +206,7 @@ impl ViewportGpuResources {
     }
 
     // -----------------------------------------------------------------------
-    // Async texture upload (Phase 2)
+    // Async texture upload
     // -----------------------------------------------------------------------
 
     /// Non-blocking texture upload.
@@ -382,7 +382,7 @@ impl ViewportGpuResources {
     }
 
     // -----------------------------------------------------------------------
-    // VRAM budget query (Phase 3)
+    // VRAM budget query
     // -----------------------------------------------------------------------
 
     /// Current GPU memory usage for user-uploaded textures.

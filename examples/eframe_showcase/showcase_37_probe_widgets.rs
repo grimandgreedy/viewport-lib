@@ -39,11 +39,9 @@ pub(crate) struct ProbeWidgetState {
     pub built: bool,
     pub scene: Scene,
     pub sub_mode: PwSubMode,
-    // Phase 2 widgets
     pub probe: LineProbeWidget,
     pub sphere: SphereWidget,
     pub bw: BoxWidget,
-    // Phase 11 widgets
     pub plane: PlaneWidget,
     pub disk: DiskWidget,
     pub cylinder: CylinderWidget,

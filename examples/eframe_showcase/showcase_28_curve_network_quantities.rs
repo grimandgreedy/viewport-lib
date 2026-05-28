@@ -1,6 +1,6 @@
 //! Showcase 28: Curve Network Quantities
 //!
-//! Demonstrates the Phase 11 curve-network quantity system on a single helix
+//! Demonstrates the curve-network quantity system on a single helix
 //! polyline. Each mode shows one of the new attributes added to `PolylineItem`:
 //!
 //! - **EdgeScalar**: per-edge scalar -> colourmap (flat constant colour per segment)

@@ -5,7 +5,7 @@
 //! not shared between two active cells) and computing area-weighted vertex normals.
 //!
 //! Per-cell scalar and colour attributes are remapped to per-face attributes so the
-//! existing Phase 2 face-rendering path handles colouring without any new GPU
+//! the face-rendering path handles colouring without any new GPU
 //! infrastructure.  Per-node scalars are averaged over the four quad corner nodes
 //! to produce per-face scalars on the same path.
 //!

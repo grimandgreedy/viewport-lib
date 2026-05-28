@@ -436,7 +436,7 @@ impl ViewportGpuResources {
         }
     }
 
-    /// Lazily create the tensor glyph render pipeline (instanced ellipsoids, Phase 5).
+    /// Lazily create the tensor glyph render pipeline (instanced ellipsoids).
     ///
     /// No-op if already created. Called from `prepare()` when `frame.scene.tensor_glyphs`
     /// is non-empty.
@@ -600,7 +600,7 @@ impl ViewportGpuResources {
         });
     }
 
-    /// Upload one [`TensorGlyphItem`] to the GPU and return draw data (Phase 5).
+    /// Upload one [`TensorGlyphItem`] to the GPU and return draw data.
     ///
     /// Called from `prepare()` for each non-empty item in `frame.scene.tensor_glyphs`.
     /// Reuses the sphere base mesh cached by the glyph pipeline.

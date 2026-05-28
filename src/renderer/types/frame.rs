@@ -192,7 +192,7 @@ impl Default for SurfaceSubmission {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4: Surface LIC
+// Surface LIC
 // ---------------------------------------------------------------------------
 
 /// Configuration for Surface Line Integral Convolution.
@@ -325,13 +325,13 @@ pub struct SceneFrame {
     pub isolines: Vec<crate::geometry::isoline::IsolineItem>,
     /// Streamtube items to render this frame.
     pub streamtube_items: Vec<StreamtubeItem>,
-    /// Screen-space image overlay items to render this frame (Phase 10).
+    /// Screen-space image overlay items to render this frame.
     pub screen_images: Vec<ScreenImageItem>,
-    /// GPU implicit surface items to render this frame (Phase 16).
+    /// GPU implicit surface items to render this frame.
     pub gpu_implicit: Vec<crate::resources::GpuImplicitItem>,
-    /// GPU marching cubes jobs to dispatch this frame (Phase 17).
+    /// GPU marching cubes jobs to dispatch this frame.
     pub gpu_mc_jobs: Vec<crate::resources::GpuMarchingCubesJob>,
-    /// Transparent unstructured volume meshes rendered via projected tetrahedra (Phase 6).
+    /// Transparent unstructured volume meshes rendered via projected tetrahedra.
     pub transparent_volume_meshes: Vec<TransparentVolumeMeshItem>,
     /// Opaque volume mesh items submitted for cell-level picking.
     ///
@@ -343,15 +343,15 @@ pub struct SceneFrame {
     /// Rendering still goes through `surfaces`; submit the `SceneRenderItem`
     /// from `VolumeMeshItem::to_render_item()` there as normal.
     pub volume_mesh_items: Vec<VolumeMeshItem>,
-    /// General tube items to render this frame (Phase 3).
+    /// General tube items to render this frame.
     pub tube_items: Vec<TubeItem>,
-    /// 2D image slice items to render this frame (Phase 3).
+    /// 2D image slice items to render this frame.
     pub image_slices: Vec<ImageSliceItem>,
-    /// Tensor glyph items to render this frame (Phase 5).
+    /// Tensor glyph items to render this frame.
     pub tensor_glyphs: Vec<TensorGlyphItem>,
-    /// Ribbon items to render this frame (Phase 8.1).
+    /// Ribbon items to render this frame.
     pub ribbon_items: Vec<RibbonItem>,
-    /// Volume surface slice items to render this frame (Phase 10).
+    /// Volume surface slice items to render this frame.
     pub volume_surface_slices: Vec<VolumeSurfaceSliceItem>,
     /// Billboard sprite items to render this frame.
     pub sprite_items: Vec<SpriteItem>,

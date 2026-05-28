@@ -1565,7 +1565,7 @@ pub struct GpuTexture {
 }
 
 // ---------------------------------------------------------------------------
-// Async texture upload types (Phase 2 / Phase 3)
+// Async texture upload types
 // ---------------------------------------------------------------------------
 
 /// Handle to a texture being uploaded asynchronously.
@@ -1591,7 +1591,7 @@ pub struct TextureMemoryStats {
 }
 
 // ---------------------------------------------------------------------------
-// Staging buffer pool (Phase 8)
+// Staging buffer pool
 // ---------------------------------------------------------------------------
 
 /// Band capacities for the async texture staging buffer pool (bytes).
@@ -1949,7 +1949,7 @@ pub struct PolylineGpuData {
     pub(crate) wireframe_bind_group: Option<wgpu::BindGroup>,
 }
 
-/// Per-frame GPU data for one screen-space image overlay, created in `prepare()` (Phase 10B/12).
+/// Per-frame GPU data for one screen-space image overlay, created in `prepare()`.
 pub struct ScreenImageGpuData {
     /// Uniform buffer: `ScreenImageUniform` (32 bytes) with NDC extents and alpha.
     pub(crate) _uniform_buf: wgpu::Buffer,
@@ -1961,7 +1961,7 @@ pub struct ScreenImageGpuData {
     /// Uploaded R32Float depth texture. `None` when the item has no depth data.
     pub(crate) _depth_texture: Option<wgpu::Texture>,
     /// Bind group for the depth-composite pipeline (group 0: uniform + colour + sampler + depth).
-    /// `Some` only when the item carries per-pixel depth data (Phase 12).
+    /// `Some` only when the item carries per-pixel depth data.
     pub(crate) depth_bind_group: Option<wgpu::BindGroup>,
 }
 
@@ -2608,7 +2608,7 @@ pub struct ViewportGpuResources {
     /// Per-cascade bind groups for shadow_instanced_pipeline group 0.
     pub(crate) shadow_instanced_cascade_bgs: [Option<wgpu::BindGroup>; 4],
 
-    // --- GPU culling buffers (Phase 2) ---
+    // --- GPU culling buffers ---
     /// Per-instance world-space AABB buffer. Rebuilt on batch cache miss.
     pub(crate) instance_aabb_buf: Option<wgpu::Buffer>,
     pub(crate) instance_aabb_capacity: usize,
@@ -2625,7 +2625,7 @@ pub struct ViewportGpuResources {
     /// Indirect draw args buffers for shadow cascades (one per cascade).
     pub(crate) shadow_indirect_bufs: [Option<wgpu::Buffer>; 4],
 
-    // --- GPU culling pipelines (Phase 3) ---
+    // --- GPU culling pipelines ---
     /// Bind group layout for instanced cull pipelines (group 1).
     /// Extends `instance_bgl` with binding 5: visibility_indices storage buffer.
     pub(crate) instance_cull_bind_group_layout: Option<wgpu::BindGroupLayout>,
@@ -2639,7 +2639,7 @@ pub struct ViewportGpuResources {
     /// OIT-pass transparent instanced pipeline using `vs_main_cull` (indirect draw path).
     pub(crate) oit_instanced_cull_pipeline: Option<wgpu::RenderPipeline>,
 
-    // --- GPU culling : shadow cascade extension (Phase 4) ---
+    // --- GPU culling : shadow cascade extension ---
     /// Shadow instanced cull pipeline (depth-only, uses `vs_shadow_cull`).
     pub(crate) shadow_instanced_cull_pipeline: Option<wgpu::RenderPipeline>,
     /// BGL for shadow cull instance group: binding 0 (instances) + binding 5 (visibility_indices).
@@ -2866,7 +2866,7 @@ pub struct ViewportGpuResources {
     /// Cached glyph base mesh for Cube shape.
     pub(crate) glyph_cube_mesh: Option<GlyphBaseMesh>,
 
-    // --- SciVis Phase 5: tensor glyph rendering (lazily created) ---
+    // --- Tensor glyph rendering (lazily created) ---
     /// Tensor glyph render pipeline. None until first tensor glyph set is submitted.
     pub(crate) tensor_glyph_pipeline: Option<DualPipeline>,
     /// Tensor glyph wireframe pipeline (LineList, same bind groups as tensor_glyph_pipeline).
@@ -2902,13 +2902,13 @@ pub struct ViewportGpuResources {
     /// Bind group layout for streamtube uniforms (group 1).
     pub(crate) streamtube_bgl: Option<wgpu::BindGroupLayout>,
 
-    // --- Phase 3: image slice rendering (lazily created) ---
+    // --- Image slice rendering (lazily created) ---
     /// Image slice render pipeline. None until first slice item is submitted.
     pub(crate) image_slice_pipeline: Option<DualPipeline>,
     /// Bind group layout for image slice uniforms (group 1).
     pub(crate) image_slice_bgl: Option<wgpu::BindGroupLayout>,
 
-    // --- Phase 10: volume surface slice rendering (lazily created) ---
+    // --- Volume surface slice rendering (lazily created) ---
     /// Volume surface slice render pipeline. None until first item is submitted.
     pub(crate) volume_surface_slice_pipeline: Option<DualPipeline>,
     /// Bind group layout for volume surface slice uniforms (group 1).
@@ -2958,7 +2958,7 @@ pub struct ViewportGpuResources {
     /// Last OIT target size [w, h]. Used to detect resize.
     pub(crate) oit_size: [u32; 2],
 
-    // --- Phase 6: Projected tetrahedra transparent volume rendering (lazily created) ---
+    // --- Projected tetrahedra transparent volume rendering (lazily created) ---
     /// Render pipeline for the projected tetrahedra pass. None until first item submitted.
     pub(crate) pt_pipeline: Option<wgpu::RenderPipeline>,
     /// Bind group layout for group 1 of the PT pipeline (uniforms + tet buffer + colourmap).
@@ -3011,7 +3011,7 @@ pub struct ViewportGpuResources {
     /// Bind group for the ground plane pass (rebuilt when shadow atlas changes).
     pub(crate) ground_plane_bind_group: wgpu::BindGroup,
 
-    // --- Phase 16: GPU implicit surface (lazily created) ---
+    // --- GPU implicit surface (lazily created) ---
     /// Render pipeline for GPU-side implicit surface ray-marching. None until first item submitted.
     pub(crate) implicit_pipeline: Option<DualPipeline>,
     /// Bind group layout for group 1 of the implicit pipeline (ImplicitUniformRaw).
@@ -3019,7 +3019,7 @@ pub struct ViewportGpuResources {
     /// Outline mask pipeline for implicit surfaces (ray-march to R8Unorm mask). None until first selected item.
     pub(crate) implicit_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
 
-    // --- Phase 17: GPU marching cubes (lazily created) ---
+    // --- GPU marching cubes (lazily created) ---
     pub(crate) mc_classify_pipeline: Option<wgpu::ComputePipeline>,
     pub(crate) mc_prefix_sum_pipeline: Option<wgpu::ComputePipeline>,
     pub(crate) mc_generate_pipeline: Option<wgpu::ComputePipeline>,
@@ -3036,12 +3036,12 @@ pub struct ViewportGpuResources {
     /// Outline mask pipeline for MC surfaces (stride-24 vertex buffer, draw_indirect). None until first selected item.
     pub(crate) mc_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
 
-    // --- Phase 10B / Phase 12: Screen-space image overlays (lazily created) ---
+    // --- Screen-space image overlays (lazily created) ---
     /// Render pipeline for screen-space image quads. None until first screen image is submitted.
     pub(crate) screen_image_pipeline: Option<wgpu::RenderPipeline>,
     /// Bind group layout for the screen image pipeline (group 0: uniform + texture + sampler).
     pub(crate) screen_image_bgl: Option<wgpu::BindGroupLayout>,
-    /// Depth-composite pipeline (Phase 12). Uses depth_compare: LessEqual and outputs
+    /// Depth-composite pipeline. Uses depth_compare: LessEqual and outputs
     /// frag_depth from a per-pixel image depth texture. None until first dc image is submitted.
     pub(crate) screen_image_dc_pipeline: Option<wgpu::RenderPipeline>,
     /// Bind group layout for the dc pipeline (group 0: uniform + colour tex + sampler + depth tex).

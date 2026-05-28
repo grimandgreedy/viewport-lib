@@ -1,6 +1,6 @@
 //! Showcase 30: Implicit Surface Rendering & Marching Cubes
 //!
-//! Demonstrates Phase 13 (CPU sphere-marching) alongside marching cubes, using
+//! Demonstrates CPU sphere-marching alongside marching cubes, using
 //! the same three-sphere SDF scene rendered three ways:
 //!
 //! - **Merged blobs** : sphere-marching with smooth-min (smin), producing a
@@ -402,7 +402,7 @@ impl App {
         fd.scene.screen_images.push(img);
     }
 
-    /// Submit a GPU implicit surface item for the three-blob scene (Phase 16).
+    /// Submit a GPU implicit surface item for the three-blob scene.
     ///
     /// Only active when `is_sdf_variant == GpuImplicit`. The three sphere
     /// primitives match the CPU-path blob SDF so the two paths are visually
@@ -446,7 +446,7 @@ impl App {
         fd.scene.gpu_implicit.push(item);
     }
 
-    /// Submit a GPU marching cubes job for the gyroid field (Phase 17).
+    /// Submit a GPU marching cubes job for the gyroid field.
     ///
     /// Only active when `is_sdf_variant == GpuMarchingCubes`.
     pub(crate) fn push_gpu_mc_job(&self, fd: &mut viewport_lib::FrameData) {

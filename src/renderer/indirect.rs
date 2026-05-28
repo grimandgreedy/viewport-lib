@@ -27,7 +27,7 @@ pub(super) struct CullResources {
     bgl: wgpu::BindGroupLayout,
     /// 96-byte uniform buffer holding the 6-plane camera frustum for the main pass.
     pub(super) frustum_buf: wgpu::Buffer,
-    /// Per-cascade frustum uniform buffers for shadow GPU culling (Phase 4).
+    /// Per-cascade frustum uniform buffers for shadow GPU culling.
     pub(super) cascade_frustum_bufs: [wgpu::Buffer; 4],
 }
 

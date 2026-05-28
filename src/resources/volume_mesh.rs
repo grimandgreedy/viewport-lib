@@ -3,7 +3,7 @@
 //! Converts volumetric cell connectivity into a standard [`MeshData`] by
 //! extracting boundary faces (faces shared by exactly one cell) and computing
 //! area-weighted vertex normals. Per-cell scalar and colour attributes are
-//! remapped to per-face attributes so the existing Phase 2 face-rendering path
+//! remapped to per-face attributes so the face-rendering path
 //! handles colouring without any new GPU infrastructure.
 //!
 //! # Cell conventions
@@ -425,9 +425,9 @@ fn correct_winding(tri: &mut [u32; 3], interior_ref: &[f32; 3], positions: &[[f3
 /// Convert [`VolumeMeshData`] into a standard [`MeshData`] by extracting the
 /// boundary surface and remapping per-cell attributes to per-face attributes.
 ///
-/// This is the core of Phase 9: after this step the boundary mesh is uploaded
-/// via the existing [`upload_mesh_data`](super::ViewportGpuResources::upload_mesh_data)
-/// path and rendered exactly like any other surface mesh.
+/// After this step the boundary mesh is uploaded
+/// via [`upload_mesh_data`](super::ViewportGpuResources::upload_mesh_data)
+/// and rendered exactly like any other surface mesh.
 ///
 /// Returns `(mesh_data, face_to_cell)` where `face_to_cell[i]` is the cell
 /// index that boundary triangle `i` belongs to.
@@ -572,8 +572,8 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u3
 // Clipped volume mesh extraction
 // ---------------------------------------------------------------------------
 //
-// Design note (Phase 1 - scope and invariants)
-// =============================================
+// Design note: scope and invariants
+// ==================================
 //
 // ## Goal
 //
@@ -1861,9 +1861,9 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Executable specifications for extract_clipped_volume_faces (Phase 5).
-    // These tests document the required invariants and are ignored until the
-    // Phase 2 implementation lands.  Enable them by removing #[ignore].
+    // Executable specifications for extract_clipped_volume_faces.
+    // These tests document the required invariants and are currently ignored.
+    // Enable them by removing #[ignore].
     // -----------------------------------------------------------------------
 
     /// Empty clip-plane slice must produce the same triangles as the boundary

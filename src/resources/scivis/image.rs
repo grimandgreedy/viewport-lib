@@ -3,7 +3,7 @@ use crate::resources::Vertex;
 
 impl ViewportGpuResources {
     // -------------------------------------------------------------------------
-    // Phase 3.2 : 2D Image Slice representation
+    // 2D Image Slice representation
     // -------------------------------------------------------------------------
 
     /// Lazily create the image slice render pipeline.
@@ -250,7 +250,7 @@ impl ViewportGpuResources {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 10B : screen-space image overlays
+    // Screen-space image overlays
     // -------------------------------------------------------------------------
 
     /// Lazily create the screen-space image render pipeline.
@@ -356,7 +356,7 @@ impl ViewportGpuResources {
         self.screen_image_pipeline = Some(pipeline);
     }
 
-    /// Lazily create the depth-composite screen-image render pipeline (Phase 12).
+    /// Lazily create the depth-composite screen-image render pipeline.
     ///
     /// No-op if already created. Called from `prepare()` when any submitted
     /// `ScreenImageItem` carries per-pixel depth data.
@@ -615,7 +615,7 @@ impl ViewportGpuResources {
             ],
         });
 
-        // Phase 12: if the item carries per-pixel depth data, upload a R32Float depth texture
+        // If the item carries per-pixel depth data, upload a R32Float depth texture
         // and create a second bind group for the depth-composite pipeline.
         let (depth_texture_opt, depth_bind_group_opt) = if let Some(depth_values) = &item.depth {
             let dc_bgl = self
@@ -710,7 +710,7 @@ impl ViewportGpuResources {
         }
     }
 
-    /// Upload one [`OverlayImageItem`] to the GPU and return its render data (Phase 7).
+    /// Upload one [`OverlayImageItem`] to the GPU and return its render data.
     ///
     /// Reuses the `screen_image_pipeline` and its bind group layout; the shaders and
     /// uniform layout are identical. No depth path: `OverlayImageItem` has no depth field.
@@ -859,7 +859,7 @@ impl ViewportGpuResources {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 10 : Volume Surface Slice representation
+    // Volume Surface Slice representation
     // -------------------------------------------------------------------------
 
     /// Lazily create the volume surface slice render pipeline.

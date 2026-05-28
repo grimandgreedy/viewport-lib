@@ -43,7 +43,7 @@ use crate::interaction::snap::snap_value;
 use crate::renderer::{ClipObject, ClipShape};
 
 // ---------------------------------------------------------------------------
-// Phase 1: Solver functions
+// Solver functions
 // ---------------------------------------------------------------------------
 
 /// Project a screen-space pointer drag onto a world-space plane normal,
@@ -151,7 +151,7 @@ pub fn ray_plane_intersection(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2: Visual overlay data
+// Visual overlay data
 // ---------------------------------------------------------------------------
 
 /// Visual data for rendering a clip plane handle in the viewport.
@@ -178,7 +178,7 @@ pub(crate) struct ClipPlaneOverlay {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3: Hit testing
+// Hit testing
 // ---------------------------------------------------------------------------
 
 /// Result of a hit test against a clip plane handle.
@@ -281,7 +281,7 @@ pub fn hit_test_normal_handle(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4: ClipPlaneController
+// ClipPlaneController
 // ---------------------------------------------------------------------------
 
 /// Which degree of freedom is being manipulated in a clip plane session.

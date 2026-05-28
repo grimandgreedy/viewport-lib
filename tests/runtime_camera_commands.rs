@@ -1,4 +1,4 @@
-//! Integration tests for runtime camera command writeback (Phase 3).
+//! Integration tests for runtime camera command writeback.
 
 use viewport_lib::camera::camera::{Camera, CameraTarget};
 use viewport_lib::runtime::{

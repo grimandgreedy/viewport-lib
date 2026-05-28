@@ -1,4 +1,4 @@
-//! GPU implicit surface types and pipeline for Phase 16.
+//! GPU implicit surface types and pipeline.
 //!
 //! Public API: [`GpuImplicitItem`], [`ImplicitPrimitive`], [`ImplicitBlendMode`],
 //! [`GpuImplicitOptions`].

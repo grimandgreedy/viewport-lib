@@ -87,7 +87,7 @@ pub(crate) struct ViewportSlot {
     /// Viewport dimensions for which `debug_frag_buf` was allocated.
     pub debug_frag_dims: (u32, u32),
 
-    // --- Per-viewport interaction state (Phase 4) ---
+    // --- Per-viewport interaction state ---
     /// Per-frame outline buffers for selected objects, rebuilt in prepare().
     pub outline_object_buffers: Vec<OutlineObjectBuffers>,
     /// Per-frame outline buffers for selected Gaussian splat sets, rebuilt in prepare().
@@ -248,7 +248,7 @@ pub struct ViewportRenderer {
     point_cloud_gpu_data: Vec<crate::resources::PointCloudGpuData>,
     /// Per-frame glyph GPU data, rebuilt in prepare(), consumed in paint().
     glyph_gpu_data: Vec<crate::resources::GlyphGpuData>,
-    /// Per-frame tensor glyph GPU data, rebuilt in prepare(), consumed in paint() (Phase 5).
+    /// Per-frame tensor glyph GPU data, rebuilt in prepare(), consumed in paint().
     tensor_glyph_gpu_data: Vec<crate::resources::TensorGlyphGpuData>,
     /// Per-frame polyline GPU data, rebuilt in prepare(), consumed in paint().
     polyline_gpu_data: Vec<crate::resources::PolylineGpuData>,
@@ -256,9 +256,9 @@ pub struct ViewportRenderer {
     volume_gpu_data: Vec<crate::resources::VolumeGpuData>,
     /// Per-frame streamtube GPU data, rebuilt in prepare(), consumed in paint().
     streamtube_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
-    /// Per-frame general tube GPU data, rebuilt in prepare(), consumed in paint() (Phase 3).
+    /// Per-frame general tube GPU data, rebuilt in prepare(), consumed in paint().
     tube_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
-    /// Per-frame ribbon GPU data, rebuilt in prepare(), consumed in paint() (Phase 8.1).
+    /// Per-frame ribbon GPU data, rebuilt in prepare(), consumed in paint().
     ribbon_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
     /// Indices into streamtube_gpu_data for selected streamtubes (set in prepare_scene, consumed in prepare_viewport).
     streamtube_selected_gpu_indices: Vec<usize>,
@@ -268,27 +268,27 @@ pub struct ViewportRenderer {
     ribbon_selected_gpu_indices: Vec<usize>,
     /// Indices into polyline_gpu_data for selected user polylines (set in prepare_scene, consumed in prepare_viewport).
     polyline_selected_gpu_indices: Vec<usize>,
-    /// Per-frame image slice GPU data, rebuilt in prepare(), consumed in paint() (Phase 3).
+    /// Per-frame image slice GPU data, rebuilt in prepare(), consumed in paint().
     image_slice_gpu_data: Vec<crate::resources::ImageSliceGpuData>,
-    /// Per-frame volume surface slice GPU data, rebuilt in prepare(), consumed in paint() (Phase 10).
+    /// Per-frame volume surface slice GPU data, rebuilt in prepare(), consumed in paint().
     volume_surface_slice_gpu_data: Vec<crate::resources::VolumeSurfaceSliceGpuData>,
-    /// Per-frame Surface LIC GPU data, rebuilt in prepare(), consumed in paint() (Phase 4).
+    /// Per-frame Surface LIC GPU data, rebuilt in prepare(), consumed in paint().
     lic_gpu_data: Vec<crate::resources::LicSurfaceGpuData>,
-    /// Per-frame GPU implicit surface data, rebuilt in prepare(), consumed in paint() (Phase 16).
+    /// Per-frame GPU implicit surface data, rebuilt in prepare(), consumed in paint().
     implicit_gpu_data: Vec<crate::resources::implicit::ImplicitGpuItem>,
     /// Per-frame decal GPU data, rebuilt in prepare(), consumed in paint() (D1).
     decal_gpu_data: Vec<crate::resources::decal::DecalGpuItem>,
     /// Per-frame decal exclude GPU data, rebuilt in prepare(), consumed in paint() (D5).
     decal_exclude_items: Vec<crate::resources::decal::DecalExcludeGpuItem>,
-    /// Per-frame GPU marching cubes render data, rebuilt in prepare(), consumed in paint() (Phase 17).
+    /// Per-frame GPU marching cubes render data, rebuilt in prepare(), consumed in paint().
     mc_gpu_data: Vec<crate::resources::gpu_marching_cubes::McFrameData>,
     /// Per-frame sprite GPU data, rebuilt in prepare(), consumed in paint().
     sprite_gpu_data: Vec<crate::resources::SpriteGpuData>,
     /// Per-frame Gaussian splat draw data, rebuilt in prepare_viewport_internal(), consumed in paint().
     gaussian_splat_draw_data: Vec<crate::resources::GaussianSplatDrawData>,
-    /// Per-frame screen-image GPU data, rebuilt in prepare(), consumed in paint() (Phase 10B).
+    /// Per-frame screen-image GPU data, rebuilt in prepare(), consumed in paint().
     screen_image_gpu_data: Vec<crate::resources::ScreenImageGpuData>,
-    /// Per-frame overlay image GPU data, rebuilt in prepare(), consumed in paint() (Phase 7).
+    /// Per-frame overlay image GPU data, rebuilt in prepare(), consumed in paint().
     overlay_image_gpu_data: Vec<crate::resources::ScreenImageGpuData>,
     /// Per-frame overlay label GPU data, rebuilt in prepare(), consumed in paint().
     label_gpu_data: Option<crate::resources::LabelGpuData>,
@@ -392,7 +392,7 @@ pub struct ViewportRenderer {
     /// GPU marching cubes jobs from the last `prepare()` call, retained for `pick()` dispatch.
     pick_mc_items: Vec<GpuMcPickItem>,
 
-    // --- Phase 4 : GPU timestamp queries ---
+    // --- GPU timestamp queries ---
     /// Timestamp query set with 2 entries (scene-pass begin + end).
     /// `None` when `TIMESTAMP_QUERY` is unavailable or not yet initialized.
     ts_query_set: Option<wgpu::QuerySet>,
@@ -1026,7 +1026,7 @@ impl ViewportRenderer {
     }
 
     // -----------------------------------------------------------------------
-    // Multi-viewport public API (Phase 5)
+    // Multi-viewport public API
     // -----------------------------------------------------------------------
 
     /// Create a new viewport slot and return its handle.

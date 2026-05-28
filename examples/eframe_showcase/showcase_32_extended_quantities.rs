@@ -1,6 +1,6 @@
-//! Showcase 32: Extended Quantity Coverage (Phase 15)
+//! Showcase 32: Extended Quantity Coverage
 //!
-//! Three sub-modes demonstrating the Phase 15 additions:
+//! Three sub-modes demonstrating additional quantity types:
 //!
 //! **A : Edge/Halfedge/Corner Scalars**: Three spheres coloured by the Z coordinate
 //! of each edge midpoint (Edge) or corner (Halfedge/Corner).  Edge is vertex-averaged

@@ -3,7 +3,7 @@
 //! [`march_implicit_surface`] and [`march_implicit_surface_colour`] accept a
 //! user-supplied SDF closure, fire rays from the camera for each pixel, and
 //! produce a [`crate::renderer::types::ScreenImageItem`] with per-pixel NDC
-//! depth suitable for depth-compositing against scene geometry via Phase 12.
+//! depth suitable for depth-compositing against scene geometry.
 //!
 //! # Usage
 //!
@@ -261,7 +261,7 @@ where
                 ];
 
                 // NDC depth (wgpu: 0 = near plane, 1 = far plane).
-                // Formula from Phase 12 showcase: zfar*(d-znear)/(d*(zfar-znear))
+                // NDC depth formula: zfar*(d-znear)/(d*(zfar-znear))
                 // where d is the positive view-space depth.
                 let view_depth = (hit_pos - eye).dot(forward);
                 *dep = if view_depth > znear {

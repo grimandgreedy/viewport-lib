@@ -7,7 +7,7 @@
 //! [`crate::ViewportGpuResources::set_skin_weights`] is called for a mesh,
 //! which is what marks that mesh as skinnable.
 //!
-//! See `docs/plans/skeletal-animation-plan.md` Phase 5.
+//! See `docs/plans/skeletal-animation-plan.md`.
 
 use std::collections::HashMap;
 

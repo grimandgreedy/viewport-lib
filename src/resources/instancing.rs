@@ -740,7 +740,7 @@ impl ViewportGpuResources {
         self.hdr_solid_instanced_cull_pipeline = Some(hdr_solid_cull);
         self.oit_instanced_cull_pipeline = Some(oit_cull);
 
-        // Shadow instanced cull pipeline (Phase 4).
+        // Shadow instanced cull pipeline.
         // Uses a minimal BGL for group 1: binding 0 (instances) + binding 5 (visibility_indices).
         // Group 0 reuses the existing shadow cascade BGL (single mat4x4 uniform).
         let shadow_cull_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

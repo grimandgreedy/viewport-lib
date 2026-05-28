@@ -1,6 +1,6 @@
 //! Showcase 29: Depth-Composited Render Images
 //!
-//! Demonstrates Phase 12: `ScreenImageItem::depth` for depth-compositing a
+//! Demonstrates `ScreenImageItem::depth` for depth-compositing a
 //! CPU-rendered image against 3D scene geometry.
 //!
 //! The scene has three spheres at clearly different distances from the camera:

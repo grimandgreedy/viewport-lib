@@ -19,9 +19,8 @@ impl ViewportRenderer {
     ///
     /// Call once per frame before any `prepare_viewport_internal` calls.
     ///
-    /// Reads `scene_fx` for lighting, IBL, and compute filters.  Still reads
-    /// `frame.camera` for shadow cascade computation (Phase 1 coupling : see
-    /// multi-viewport-plan.md § shadow strategy; decoupled in Phase 2).
+    /// Reads `scene_fx` for lighting, IBL, and compute filters.  Also reads
+    /// `frame.camera` for shadow cascade computation.
     pub(super) fn prepare_scene_internal(
         &mut self,
         device: &wgpu::Device,
@@ -208,7 +207,7 @@ impl ViewportRenderer {
 
         // -------------------------------------------------------------------
         // Compute CSM cascade matrices for lights[0] (directional).
-        // Phase 1 note: uses frame.camera : see multi-viewport-plan.md § shadow strategy.
+        // Uses frame.camera : see multi-viewport-plan.md § shadow strategy.
         // -------------------------------------------------------------------
         let cascade_count = lighting.shadow_cascade_count.clamp(1, 4) as usize;
         let atlas_res = lighting.shadow_atlas_resolution.max(64);
@@ -786,7 +785,7 @@ impl ViewportRenderer {
             resources.ensure_hdr_instanced_pipelines(device);
 
             // Generation-based cache: skip batch rebuild and GPU upload when nothing changed.
-            // Phase 2: wireframe_mode removed from cache key : wireframe rendering
+            // wireframe_mode removed from cache key : wireframe rendering
             // uses the per-object wireframe_pipeline, not the instanced path, so
             // instance data is now viewport-agnostic.
             //
@@ -833,7 +832,7 @@ impl ViewportRenderer {
                             // Skinned items go through the per-object skinned
                             // pipeline. Batched skinning with palette-array
                             // lookup is a future optimisation; see
-                            // docs/plans/skeletal-animation-plan.md Phase 5.3.
+                            // docs/plans/skeletal-animation-plan.md.
                             && !(item.skin_instance.is_some()
                                 && resources.is_skinned_mesh(item.mesh_id))
                     })
@@ -924,7 +923,7 @@ impl ViewportRenderer {
                                         item.settings.opacity,
                                     ],
                                     selected: if item.settings.selected { 1 } else { 0 },
-                                    wireframe: 0, // Phase 2: always 0 : wireframe uses per-object pipeline
+                                    wireframe: 0, // always 0 : wireframe uses per-object pipeline
                                     ambient: m.ambient,
                                     diffuse: m.diffuse,
                                     specular: m.specular,
@@ -1084,7 +1083,7 @@ impl ViewportRenderer {
             }
 
             // ------------------------------------------------------------------
-            // GPU cull dispatch (Phase 3)
+            // GPU cull dispatch
             //
             // Run `cull_instances` + `write_indirect_args` whenever GPU culling
             // is active and all required buffers are allocated.
@@ -1225,7 +1224,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // SciVis Phase 5 : tensor glyph GPU data upload.
+        // Tensor glyph GPU data upload.
         // ------------------------------------------------------------------
         self.tensor_glyph_gpu_data.clear();
         if !frame.scene.tensor_glyphs.is_empty() {
@@ -1259,7 +1258,7 @@ impl ViewportRenderer {
                 }
                 self.polyline_gpu_data.push(gpu_data);
 
-                // Phase 11: auto-generate GlyphItems for node/edge vector quantities.
+                // Auto-generate GlyphItems for node/edge vector quantities.
                 if !item.node_vectors.is_empty() {
                     resources.ensure_glyph_pipeline(device);
                     let g = crate::quantities::polyline_node_vectors_to_glyphs(item);
@@ -1310,7 +1309,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // Phase 16 : GPU implicit surface items.
+        // GPU implicit surface items.
         // ------------------------------------------------------------------
         self.implicit_gpu_data.clear();
         self.pick_implicit_items.clear();
@@ -1383,7 +1382,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // Phase 17 : GPU marching cubes compute dispatch.
+        // GPU marching cubes compute dispatch.
         // ------------------------------------------------------------------
         self.mc_gpu_data.clear();
         self.pick_mc_items.clear();
@@ -1404,12 +1403,12 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // Phase 10B : screen-space image overlays.
+        // Screen-space image overlays.
         // ------------------------------------------------------------------
         self.screen_image_gpu_data.clear();
         if !frame.scene.screen_images.is_empty() {
             resources.ensure_screen_image_pipeline(device);
-            // Phase 12: ensure dc pipeline if any item carries depth data.
+            // Ensure dc pipeline if any item carries depth data.
             if frame.scene.screen_images.iter().any(|i| i.depth.is_some()) {
                 resources.ensure_screen_image_dc_pipeline(device);
             }
@@ -1425,7 +1424,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // Phase 7 : overlay image overlays (OverlayFrame).
+        // Overlay image overlays (OverlayFrame).
         // ------------------------------------------------------------------
         self.overlay_image_gpu_data.clear();
         if !frame.overlays.images.is_empty() {
@@ -1464,7 +1463,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // Phase 3.3 : General Tube GPU data upload.
+        // General Tube GPU data upload.
         // ------------------------------------------------------------------
         self.tube_gpu_data.clear();
         self.tube_selected_gpu_indices.clear();
@@ -1486,7 +1485,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // Phase 8.1 : Ribbon GPU data upload.
+        // Ribbon GPU data upload.
         // ------------------------------------------------------------------
         self.ribbon_gpu_data.clear();
         self.ribbon_selected_gpu_indices.clear();
@@ -1508,7 +1507,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // Phase 3.2 : Image Slice GPU data upload.
+        // Image Slice GPU data upload.
         // ------------------------------------------------------------------
         self.image_slice_gpu_data.clear();
         if !frame.scene.image_slices.is_empty() {
@@ -1521,7 +1520,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // Phase 10 : Volume Surface Slice GPU data upload.
+        // Volume Surface Slice GPU data upload.
         // ------------------------------------------------------------------
         self.volume_surface_slice_gpu_data.clear();
         if !frame.scene.volume_surface_slices.is_empty() {
@@ -1534,7 +1533,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // Phase 4: Surface LIC GPU data upload.
+        // Surface LIC GPU data upload.
         // ------------------------------------------------------------------
         self.lic_gpu_data.clear();
         {
@@ -1607,15 +1606,14 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // SciVis Phase D : volume GPU data upload.
-        // Phase 1 note: clip_planes are per-viewport but passed here for culling.
-        // Fix in Phase 2/3: upload clip-plane-agnostic data; apply planes in shader.
+        // Volume GPU data upload.
+        // Note: clip_planes are per-viewport but passed here for culling.
         // ------------------------------------------------------------------
         self.volume_gpu_data.clear();
         if !frame.scene.volumes.is_empty() {
             resources.ensure_volume_pipeline(device);
             let clip_objects_for_vol = &frame.effects.clip_objects;
-            // Phase 5: under budget pressure with allow_volume_quality_reduction, double the
+            // Under budget pressure with allow_volume_quality_reduction, double the
             // step size (half the sample count) to reduce GPU raymarch cost.
             let vol_step_multiplier = if self.degradation_volume_quality_reduced {
                 2.0_f32
@@ -1815,7 +1813,7 @@ impl ViewportRenderer {
 
         // ------------------------------------------------------------------
         // Shadow depth pass : CSM: render each cascade into its atlas tile.
-        // Phase 5: skip the pass entirely when over budget and shadow reduction is allowed.
+        // Skip the pass entirely when over budget and shadow reduction is allowed.
         // ------------------------------------------------------------------
         let skip_shadows = self.degradation_shadows_skipped;
 
@@ -1845,7 +1843,7 @@ impl ViewportRenderer {
 
         if lighting.shadows_enabled && !scene_items.is_empty() && !skip_shadows {
             // ------------------------------------------------------------------
-            // Shadow GPU cull dispatch (Phase 4)
+            // Shadow GPU cull dispatch
             //
             // For each active cascade, dispatch `cull_instances` + `write_indirect_args`
             // with the cascade frustum. Results land in `shadow_vis_bufs[c]` and
@@ -1946,7 +1944,7 @@ impl ViewportRenderer {
                         && resources.shadow_vis_bufs[0].is_some();
 
                     if use_shadow_indirect {
-                        // GPU-culled indirect shadow path (Phase 4).
+                        // GPU-culled indirect shadow path.
                         for cascade in 0..effective_cascade_count {
                             let tile_col = (cascade % 2) as f32;
                             let tile_row = (cascade / 2) as f32;
@@ -5635,7 +5633,7 @@ impl ViewportRenderer {
     ) -> crate::renderer::stats::FrameStats {
         let prepare_start = std::time::Instant::now();
 
-        // Phase 4 : read back GPU timestamps from the previous frame, if available.
+        // Read back GPU timestamps from the previous frame, if available.
         // By the time prepare() is called, the previous frame's queue.submit() has
         // already happened, so it is safe to initiate the map here.
         if self.ts_needs_readback {

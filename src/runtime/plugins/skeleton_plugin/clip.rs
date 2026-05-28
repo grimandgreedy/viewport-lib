@@ -18,8 +18,8 @@
 //!
 //! # Out of scope
 //!
-//! - Cubic-spline interpolation. Phase 3 (glTF import) will add it.
-//! - Per-track weight blending. Phase 7 (`BlendNode`) will add it.
+//! - Cubic-spline interpolation (not yet implemented).
+//! - Per-track weight blending via `BlendNode` (not yet implemented).
 
 use super::skeleton::Pose;
 

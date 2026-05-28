@@ -371,7 +371,7 @@ impl ViewportGpuResources {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 3: Per-viewport HDR state : shared infrastructure
+    // Per-viewport HDR state : shared infrastructure
     // -----------------------------------------------------------------------
 
     /// Create all shared HDR/post-process infrastructure (BGLs, pipelines,

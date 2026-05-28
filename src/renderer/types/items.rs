@@ -664,7 +664,7 @@ impl Default for StreamtubeItem {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3 : General Tube representation
+// General Tube representation
 // ---------------------------------------------------------------------------
 
 /// A general tube item: polyline strips swept into a tube mesh with per-point radius
@@ -717,7 +717,7 @@ impl Default for TubeItem {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 8.1 : Ribbon representation
+// Ribbon representation
 // ---------------------------------------------------------------------------
 
 /// A ribbon strip rendered as a flat quad surface swept along a path.
@@ -770,7 +770,7 @@ impl Default for RibbonItem {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3 : 2D Image Slice representation
+// 2D Image Slice representation
 // ---------------------------------------------------------------------------
 
 /// Axis for an axis-aligned image slice.
@@ -830,7 +830,7 @@ impl Default for ImageSliceItem {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 10 : Volume surface slice representation
+// Volume surface slice representation
 // ---------------------------------------------------------------------------
 
 /// A volume slice sampled on an arbitrary surface mesh.
@@ -886,7 +886,7 @@ impl Default for VolumeSurfaceSliceItem {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 10B : Screen-space image overlays
+// Screen-space image overlays
 // ---------------------------------------------------------------------------
 
 /// Anchor corner for a [`ScreenImageItem`].
@@ -918,7 +918,7 @@ pub enum ImageAnchor {
 /// `depth` field and renders after post-processing alongside other semantic
 /// overlays (labels, scalar bars, rulers).
 ///
-/// ## Depth compositing (Phase 12)
+/// ## Depth compositing
 ///
 /// When `depth` is `Some`, the image composites against 3D scene geometry:
 /// pixels whose depth value exceeds the scene depth at that screen position are

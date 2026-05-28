@@ -1,6 +1,6 @@
 //! Showcase 31: Sparse Volume Grids
 //!
-//! Demonstrates Phase 14 : [`SparseVolumeGridData`] topology processing.
+//! Demonstrates [`SparseVolumeGridData`] topology processing.
 //! Three sparse grids are shown side by side, each using different occupancy
 //! masks, to illustrate how boundary face extraction works across different
 //! topologies.

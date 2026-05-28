@@ -1,6 +1,6 @@
 //! Showcase 20: Per-Face Attributes
 //!
-//! Demonstrates the two per-face rendering modes added in Phase 2:
+//! Demonstrates the two per-face rendering modes:
 //!
 //!   Left   : `AttributeKind::Vertex`    smooth, Gouraud-interpolated scalar
 //!   Centre : `AttributeKind::Face`      flat per-triangle scalar, same data

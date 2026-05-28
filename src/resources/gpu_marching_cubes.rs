@@ -1,4 +1,4 @@
-//! GPU marching cubes — Phase 17.
+//! GPU marching cubes.
 //!
 //! Three-pass GPU compute pipeline for isosurface extraction:
 //!   1. Classify — computes case index and triangle count per cell.

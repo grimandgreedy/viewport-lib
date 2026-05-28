@@ -1,11 +1,11 @@
 //! Showcase 26: Unstructured Volume Meshes
 //!
-//! Demonstrates Phase 9 : `VolumeMeshData` topology processing.
+//! Demonstrates `VolumeMeshData` topology processing.
 //!
-//! A 3×3×3 structured grid of cells is visualised via its extracted boundary.
+//! A 3x3x3 structured grid of cells is visualised via its extracted boundary.
 //! Interior faces shared by two cells are discarded automatically by
 //! [`upload_volume_mesh_data`]. Per-cell scalars and colours are remapped to the
-//! boundary faces so the existing Phase 2 face-colouring path applies colourmaps
+//! boundary faces so the face-colouring path applies colourmaps
 //! cell-by-cell with no new GPU work.
 //!
 //! ## Two modes
@@ -22,7 +22,7 @@
 //! ## What to notice
 //! Switching between Hex and Tet shows different faceting on the same sphere:
 //! hexes produce quad-faceted surfaces, tets produce a coarser triangular mesh.
-//! Both render via the same surface pipeline : Phase 9 adds zero GPU complexity.
+//! Both render via the same surface pipeline with no additional GPU complexity.
 
 use crate::App;
 use eframe::egui;

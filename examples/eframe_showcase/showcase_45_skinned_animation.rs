@@ -30,23 +30,16 @@ use viewport_lib::{
 
 // ---------------------------------------------------------------------------
 // Demo selector
-// ---------------------------------------------------------------------------
-//
-// Showcase 47 grows additively across the skeletal-animation plan phases.
-// Each phase adds a new entry to this enum and the supporting state on
-// `Skin47State`; earlier entries stay selectable so the showcase remains a
-// running tour of the substrate's capabilities.
-
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Skin47Demo {
-    /// Phase 1: hand-written sine-wave pose driving a two-joint arm.
+    /// Hand-written sine-wave pose driving a two-joint arm.
     SineWaveArm,
-    /// Phase 2: pose sampled from an AnimationClip via ClipPlayerPlugin.
+    /// Pose sampled from an AnimationClip via ClipPlayerPlugin.
     ClipDrivenArm,
-    /// Phase 3: skinned mesh imported from a glTF file, animated by one of its
+    /// Skinned mesh imported from a glTF file, animated by one of its
     /// own clips. Falls back to a placeholder when the asset is missing.
     GltfCharacter,
-    /// Phase 4: N independently-animated copies of the glTF character on a
+    /// N independently-animated copies of the glTF character on a
     /// grid. One SkinnedActorPlugin owns the shared skeleton and N actors.
     Crowd,
 }
@@ -71,9 +64,8 @@ impl Skin47Demo {
     }
 }
 
-/// Picking strategy exercised by the crowd demo. Showcases Phase 6's two
-/// supported approaches to clicking on a skinned mesh; `Off` disables the
-/// click handler entirely.
+/// Picking strategy exercised by the crowd demo. Two supported approaches to
+/// clicking on a skinned mesh; `Off` disables the click handler entirely.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum CrowdPickStrategy {
     /// No CPU picking. Clicks do nothing.
@@ -299,7 +291,7 @@ pub(crate) struct Skin47State {
     pub crowd_max_uploaded: usize,
 
     // -----------------------------------------------------------------------
-    // Appearance toggles (Phase 5.3 demo)
+    // Appearance toggles
     //
     // Apply to every skinned node currently in the scene. Bumping
     // `appearance_version` re-stamps the scene on the next frame.
@@ -325,7 +317,7 @@ pub(crate) struct Skin47State {
     pub applied_appearance_version: u32,
 
     // -----------------------------------------------------------------------
-    // Crowd picking (Phase 6 demo)
+    // Crowd picking
     // -----------------------------------------------------------------------
     /// Which picking strategy the crowd demo uses. Switching strategies
     /// rebuilds the accelerator on the next frame.
@@ -1735,7 +1727,7 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                     }
 
                     ui.separator();
-                    ui.label("Picking (Phase 6):");
+                    ui.label("Picking:");
                     ui.label("Click a crowd member to pick it. Two CPU strategies:");
                     let current = app.skin_state.crowd_pick_strategy;
                     egui::ComboBox::from_id_salt("skin47_crowd_pick_strategy")
@@ -1812,7 +1804,7 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                     ui.label("- Each actor has its own clip choice, playhead, and play state.");
                     ui.label("- Playheads are staggered around each clip's duration to de-phase.");
                     ui.label("- N x parts unique GPU meshes; one vertex-buffer write per part per frame.");
-                    ui.label("- Phase 5 (GPU skinning) replaces those writes with one joint-palette upload per actor.");
+                    ui.label("- GPU skinning replaces those writes with one joint-palette upload per actor.");
                 }
             }
         }
