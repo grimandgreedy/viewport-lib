@@ -19,6 +19,9 @@ pub mod stats;
 mod shadow_debug_stats;
 pub use shadow_debug_stats::ShadowDebugStats;
 
+#[cfg(test)]
+mod hidden_tests;
+
 pub use self::types::{
     AtlasViewerCorner,
     CameraFrame, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,

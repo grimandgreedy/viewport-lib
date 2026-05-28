@@ -200,7 +200,10 @@ fn vs_main(in: VertexIn) -> VertexOut {
     out.clip_pos  = camera.view_proj * vec4<f32>(world_pos, 1.0);
     out.world_pos = world_pos;
     out.world_nrm = world_nrm;
-    out.unlit     = select(0.0, 1.0, glyph_uniform.use_default_colour != 0u || glyph_uniform.unlit != 0u);
+    // `unlit` is the per-item lighting bypass (matches mesh.wgsl convention).
+    // `use_default_colour` only chooses the colour source; it does not imply
+    // unlit so the per-item flag remains the single source of truth.
+    out.unlit     = select(0.0, 1.0, glyph_uniform.unlit != 0u);
 
     // Determine colour.
     if glyph_uniform.use_default_colour != 0u {

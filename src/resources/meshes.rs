@@ -1251,7 +1251,7 @@ impl ViewportGpuResources {
             has_attribute: 0,
             scalar_min: 0.0,
             scalar_max: 1.0,
-            _pad_scalar: 0,
+            receive_shadows: 1,
             nan_colour: [0.0, 0.0, 0.0, 0.0],
             use_nan_colour: 0,
             use_matcap: 0,
@@ -1361,7 +1361,7 @@ impl ViewportGpuResources {
             has_attribute: 0,
             scalar_min: 0.0,
             scalar_max: 1.0,
-            _pad_scalar: 0,
+            receive_shadows: 1,
             nan_colour: [0.0, 0.0, 0.0, 0.0],
             use_nan_colour: 0,
             use_matcap: 0,
@@ -1794,7 +1794,7 @@ impl ViewportGpuResources {
             scalar_max: scalar_range.1,
             threshold_min: f32::NEG_INFINITY,
             threshold_max: f32::INFINITY,
-            _pad: 0.0,
+            unlit: 0,
         };
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("pt_uniform_buf"),

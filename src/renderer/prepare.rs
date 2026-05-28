@@ -539,7 +539,7 @@ impl ViewportRenderer {
                     has_attribute: has_attr,
                     scalar_min: s_min,
                     scalar_max: s_max,
-                    _pad_scalar: 0,
+                    receive_shadows: if item.settings.receive_shadows { 1 } else { 0 },
                     nan_colour: item.nan_colour.unwrap_or([0.0; 4]),
                     use_nan_colour: if item.nan_colour.is_some() { 1 } else { 0 },
                     use_matcap: if m.matcap_id.is_some() { 1 } else { 0 },
@@ -618,7 +618,7 @@ impl ViewportRenderer {
                     has_attribute: 0,
                     scalar_min: 0.0,
                     scalar_max: 1.0,
-                    _pad_scalar: 0,
+                    receive_shadows: 1,
                     nan_colour: [0.0; 4],
                     use_nan_colour: 0,
                     use_matcap: 0,
@@ -935,7 +935,12 @@ impl ViewportRenderer {
                                     has_normal_map: if m.normal_map_id.is_some() { 1 } else { 0 },
                                     has_ao_map: if m.ao_map_id.is_some() { 1 } else { 0 },
                                     unlit: if item.settings.unlit { 1 } else { 0 },
-                                    _pad_inst: [0; 3],
+                                    receive_shadows: if item.settings.receive_shadows {
+                                        1
+                                    } else {
+                                        0
+                                    },
+                                    _pad_inst: [0; 2],
                                 });
                                 if let Some(mesh) = batch_mesh {
                                     let model = glam::Mat4::from_cols_array_2d(&item.model);
@@ -944,7 +949,11 @@ impl ViewportRenderer {
                                         min: world_aabb.min.into(),
                                         batch_index: batch_idx,
                                         max: world_aabb.max.into(),
-                                        _pad: 0,
+                                        cast_shadows: if item.settings.cast_shadows {
+                                            1
+                                        } else {
+                                            0
+                                        },
                                     });
                                 }
                             }
@@ -1134,7 +1143,8 @@ impl ViewportRenderer {
                         }),
                         instance_count,
                         batch_count,
-                        _pad: [0; 2],
+                        shadow_pass: 0,
+                        _pad: 0,
                     };
 
                     let cull = self.cull_resources.as_ref().unwrap();
@@ -1916,7 +1926,8 @@ impl ViewportRenderer {
                                 }),
                                 instance_count,
                                 batch_count,
-                                _pad: [0; 2],
+                                shadow_pass: 1,
+                                _pad: 0,
                             };
                             cull.dispatch_shadow(
                                 &mut shadow_cull_encoder,
@@ -2116,6 +2127,7 @@ impl ViewportRenderer {
                             let mut drew_skinned = false;
                             for item in scene_items.iter() {
                                 if item.settings.hidden
+                                    || !item.settings.cast_shadows
                                     || item.settings.opacity < 1.0
                                 {
                                     continue;
@@ -2196,6 +2208,9 @@ impl ViewportRenderer {
 
                         for item in scene_items.iter() {
                             if item.settings.hidden {
+                                continue;
+                            }
+                            if !item.settings.cast_shadows {
                                 continue;
                             }
                             if item.settings.opacity < 1.0 {
@@ -2570,7 +2585,7 @@ impl ViewportRenderer {
             }
             // Selected transparent volume meshes: use their boundary surface for the outline.
             for item in &frame.scene.transparent_volume_meshes {
-                if !item.settings.selected {
+                if item.settings.hidden || !item.settings.selected {
                     continue;
                 }
                 let Some(mesh_id) = item.boundary_mesh_id else {
@@ -2607,7 +2622,7 @@ impl ViewportRenderer {
             }
             // Selected volume surface slices: use their mesh directly.
             for item in &frame.scene.volume_surface_slices {
-                if !item.settings.selected {
+                if item.settings.hidden || !item.settings.selected {
                     continue;
                 }
                 let uniform = OutlineUniform {
@@ -2857,7 +2872,7 @@ impl ViewportRenderer {
 
             // Point cloud outline buffers: reuse the same point sprite mask pipeline.
             for item in &frame.scene.point_clouds {
-                if item.positions.is_empty() {
+                if item.settings.hidden || item.positions.is_empty() {
                     continue;
                 }
                 let pixel_radius = (item.point_size * 0.5).max(1.0);
@@ -2973,7 +2988,10 @@ impl ViewportRenderer {
                 let sub_sel = frame.interaction.sub_selection.as_ref();
                 let mut gpu_idx = 0usize;
                 for item in &frame.scene.glyphs {
-                    if item.positions.is_empty() || item.vectors.is_empty() {
+                    if item.settings.hidden
+                        || item.positions.is_empty()
+                        || item.vectors.is_empty()
+                    {
                         continue;
                     }
                     if item.settings.selected {
@@ -3017,7 +3035,7 @@ impl ViewportRenderer {
             {
                 let sub_sel = frame.interaction.sub_selection.as_ref();
                 for (i, item) in frame.scene.sprite_items.iter().enumerate() {
-                    if item.positions.is_empty() {
+                    if item.settings.hidden || item.positions.is_empty() {
                         continue;
                     }
                     if item.settings.selected {
@@ -3093,7 +3111,7 @@ impl ViewportRenderer {
                 let sub_sel = frame.interaction.sub_selection.as_ref();
                 let mut gpu_idx = 0usize;
                 for item in &frame.scene.tensor_glyphs {
-                    if item.positions.is_empty() {
+                    if item.settings.hidden || item.positions.is_empty() {
                         continue;
                     }
                     if item.settings.selected {
@@ -3136,7 +3154,7 @@ impl ViewportRenderer {
             self.resources.ensure_volume_pipeline(device);
             self.resources.ensure_volume_outline_mask_pipeline(device);
             for (i, item) in frame.scene.volumes.iter().enumerate() {
-                if item.settings.selected {
+                if !item.settings.hidden && item.settings.selected {
                     volume_outline_indices.push(i);
                 }
             }
@@ -3147,7 +3165,7 @@ impl ViewportRenderer {
         if frame.interaction.outline_selected {
             let resources = &self.resources;
             for item in &frame.scene.image_slices {
-                if !item.settings.selected {
+                if item.settings.hidden || !item.settings.selected {
                     continue;
                 }
                 use crate::SliceAxis;
@@ -3237,7 +3255,11 @@ impl ViewportRenderer {
             let [vp_w, vp_h] = frame.camera.viewport_size;
             if let Some(bgl) = self.resources.screen_rect_outline_bgl.as_ref() {
                 for item in &frame.scene.screen_images {
-                    if !item.settings.selected || item.width == 0 || item.height == 0 {
+                    if item.settings.hidden
+                        || !item.settings.selected
+                        || item.width == 0
+                        || item.height == 0
+                    {
                         continue;
                     }
                     use crate::ImageAnchor;
@@ -3292,7 +3314,7 @@ impl ViewportRenderer {
         if frame.interaction.outline_selected {
             let mut gpu_idx = 0usize;
             for item in &frame.scene.gpu_implicit {
-                if item.primitives.is_empty() {
+                if item.settings.hidden || item.primitives.is_empty() {
                     continue;
                 }
                 if item.settings.selected {
@@ -3309,7 +3331,7 @@ impl ViewportRenderer {
             Vec::new();
         if frame.interaction.outline_selected {
             for (i, job) in frame.scene.gpu_mc_jobs.iter().enumerate() {
-                if !job.settings.selected {
+                if job.settings.hidden || !job.settings.selected {
                     continue;
                 }
                 self.resources.ensure_mc_pipelines(device);
@@ -5457,6 +5479,9 @@ impl ViewportRenderer {
             let vp_w = frame.camera.viewport_size[0].max(1.0);
             let vp_h = frame.camera.viewport_size[1].max(1.0);
             for item in &frame.scene.gaussian_splats {
+                if item.settings.hidden {
+                    continue;
+                }
                 let store_index = item.id.0;
                 if self
                     .resources

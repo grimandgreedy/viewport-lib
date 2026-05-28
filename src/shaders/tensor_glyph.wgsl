@@ -1,10 +1,13 @@
 // Tensor glyph (instanced ellipsoid) shader for stress/strain tensor visualization.
 //
 // Group 0: Camera uniform (view-projection, eye position) : same layout as mesh.wgsl.
+//          + Lights uniform (binding 3)
 //          + ClipPlanes uniform (binding 4) + ClipVolume uniform (binding 6).
 // Group 1: TensorGlyphUniform (scalar mapping params) + LUT texture + sampler.
 // Group 2: Per-instance storage buffer (TensorInstance: pre-computed model matrix,
 //          normal matrix, scalar).
+
+// #include "scene_lighting.wgsl"
 //
 // Vertex input: the glyph sphere base mesh (position vec3, normal vec3 : full Vertex layout).
 //
@@ -87,6 +90,7 @@ struct TensorInstance {
 };
 
 @group(0) @binding(0) var<uniform>       camera:      Camera;
+@group(0) @binding(3) var<uniform>       lights:      Lights;
 @group(0) @binding(4) var<uniform>       clip_planes: ClipPlanes;
 @group(0) @binding(6) var<uniform>       clip_volume: ClipVolumeUB;
 
@@ -191,14 +195,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         return vec4<f32>(in.colour.rgb, alpha);
     }
 
-    // Simple diffuse lighting with a fixed directional light. Z-up world.
-    // Tensor glyph does not yet bind `LightingSettings`; scene-light support is
-    // tracked in `lighting-shading-consistency-plan.md` C11.
-    let light_dir = normalize(vec3<f32>(0.4, 0.3, 1.5));
-    let n_dot_l   = max(dot(in.world_nrm, light_dir), 0.0);
-    let ambient   = 0.2;
-    let diffuse   = 0.8 * n_dot_l;
-    let shading   = ambient + diffuse;
+    // Hemisphere ambient + directional lights via the shared helper. Ellipsoids
+    // are viewed from any direction so two-sided weighting keeps back-facing
+    // fragments lit.
+    let shaded = apply_scene_lighting(in.world_nrm, in.colour.rgb, true, lights);
 
-    return vec4<f32>(in.colour.rgb * shading, alpha);
+    return vec4<f32>(shaded, alpha);
 }

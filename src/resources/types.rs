@@ -488,7 +488,9 @@ pub(crate) struct ObjectUniform {
     pub(crate) has_attribute: u32,       //   4 bytes, offset 128
     pub(crate) scalar_min: f32,          //   4 bytes, offset 132
     pub(crate) scalar_max: f32,          //   4 bytes, offset 136
-    pub(crate) _pad_scalar: u32,         //   4 bytes, offset 140
+    /// 1 = sample the shadow atlas, 0 = treat the fragment as unshadowed.
+    /// Wired from `ItemSettings.receive_shadows`.
+    pub(crate) receive_shadows: u32,     //   4 bytes, offset 140
     pub(crate) nan_colour: [f32; 4],      //  16 bytes, offset 144
     pub(crate) use_nan_colour: u32,       //   4 bytes, offset 160
     pub(crate) use_matcap: u32,          //   4 bytes, offset 164
@@ -533,7 +535,9 @@ pub(crate) struct InstanceData {
     pub(crate) has_normal_map: u32,  //   4 bytes, offset 120
     pub(crate) has_ao_map: u32,      //   4 bytes, offset 124
     pub(crate) unlit: u32,           //   4 bytes, offset 128
-    pub(crate) _pad_inst: [u32; 3],  //  12 bytes, offset 132
+    /// 1 = sample the shadow atlas, 0 = treat the fragment as unshadowed.
+    pub(crate) receive_shadows: u32, //   4 bytes, offset 132
+    pub(crate) _pad_inst: [u32; 2],  //   8 bytes, offset 136
 }
 
 /// Per-instance GPU data for the object-ID pick pass.
@@ -572,7 +576,8 @@ pub(crate) struct InstanceAabb {
     pub(crate) min: [f32; 3],
     pub(crate) batch_index: u32,
     pub(crate) max: [f32; 3],
-    pub(crate) _pad: u32,
+    /// 1 = item participates in shadow casting, 0 = skipped during shadow cull.
+    pub(crate) cast_shadows: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<InstanceAabb>() == 32);
@@ -630,7 +635,10 @@ pub(crate) struct FrustumUniform {
     pub(crate) instance_count: u32,
     /// Valid batch count in the batch-meta buffer (not the buffer capacity).
     pub(crate) batch_count: u32,
-    pub(crate) _pad: [u32; 2],
+    /// 1 = shadow cull dispatch (instances with `cast_shadows=0` are skipped),
+    /// 0 = main cull dispatch (every visible instance participates).
+    pub(crate) shadow_pass: u32,
+    pub(crate) _pad: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<FrustumUniform>() == 112);
@@ -2089,7 +2097,9 @@ pub(crate) struct ProjectedTetUniform {
     pub(crate) scalar_max: f32,
     pub(crate) threshold_min: f32,
     pub(crate) threshold_max: f32,
-    pub(crate) _pad: f32,
+    /// 1 = skip Beer-Lambert thickness modulation and emit the LUT colour at
+    /// `alpha = 1.0` per visible fragment. Wired from `ItemSettings.unlit`.
+    pub(crate) unlit: u32,
 }
 
 /// One device-limit-bounded chunk of a projected-tet mesh.

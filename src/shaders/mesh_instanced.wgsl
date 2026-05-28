@@ -84,9 +84,9 @@ struct InstanceData {
     has_normal_map: u32,
     has_ao_map: u32,
     unlit: u32,
+    receive_shadows: u32,
     _pad_inst0: u32,
     _pad_inst1: u32,
-    _pad_inst2: u32,
 };
 
 struct ClipVolumeEntry {
@@ -513,7 +513,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
                 radiance = l.colour * l.intensity * dist_falloff * dist_falloff * cone_att;
             }
             var shadow_factor = 1.0;
-            if i == 0u && lights_uniform.shadows_enabled != 0u {
+            if i == 0u && lights_uniform.shadows_enabled != 0u && inst.receive_shadows != 0u {
                 last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L);
                 shadow_factor = last_shadow_sample.factor;
                 let terminator = smoothstep(0.0, 0.75, dot(shadow_normal, L));
@@ -565,7 +565,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
                 attenuation = dist_falloff * dist_falloff * cone_att;
             }
             var shadow = 1.0;
-            if i == 0u && lights_uniform.shadows_enabled != 0u {
+            if i == 0u && lights_uniform.shadows_enabled != 0u && inst.receive_shadows != 0u {
                 last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, light_dir);
                 shadow = last_shadow_sample.factor;
                 let terminator = smoothstep(0.0, 0.75, dot(shadow_normal, light_dir));

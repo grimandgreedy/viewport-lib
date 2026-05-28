@@ -20,9 +20,7 @@
 //!
 //! This showcase exercises the `ItemSettings` surface only. Material-level
 //! shading variants (PBR vs Phong vs Toon) are mesh-only and live in
-//! showcases 5, 6, 7, 19. Volume / GPU-MC / transparent volume mesh / slice
-//! items are intentionally deferred to later phases; see plan section
-//! "Showcase coverage by phase".
+//! showcases 5, 6, 7, 19.
 
 use eframe::egui;
 use viewport_lib::{
@@ -47,12 +45,16 @@ pub(crate) struct LcState {
     pub splat_id: Option<GaussianSplatId>,
     pub volume_id: Option<VolumeId>,
     pub tvm_id: Option<ProjectedTetId>,
+    pub tvm_boundary_mesh_id: Option<MeshId>,
     pub volume_scalar_range: (f32, f32),
 
     pub bcast_hidden: bool,
     pub bcast_unlit: bool,
     pub bcast_opacity: f32,
     pub bcast_wireframe: bool,
+    pub bcast_selected: bool,
+    pub bcast_cast_shadows: bool,
+    pub bcast_receive_shadows: bool,
 
     pub light_yaw_deg: f32,
     pub light_pitch_deg: f32,
@@ -60,6 +62,8 @@ pub(crate) struct LcState {
     pub second_light_enabled: bool,
     pub second_light_yaw_deg: f32,
     pub second_light_intensity: f32,
+    pub second_light_animate: bool,
+    pub second_light_anim_time: f32,
     pub hemisphere_intensity: f32,
     pub sky_colour: [f32; 3],
     pub ground_colour: [f32; 3],
@@ -75,17 +79,25 @@ impl Default for LcState {
             splat_id: None,
             volume_id: None,
             tvm_id: None,
+            tvm_boundary_mesh_id: None,
             volume_scalar_range: (0.0, 1.0),
             bcast_hidden: false,
             bcast_unlit: false,
             bcast_opacity: 1.0,
             bcast_wireframe: false,
+            bcast_selected: false,
+            bcast_cast_shadows: true,
+            bcast_receive_shadows: true,
             light_yaw_deg: 35.0,
             light_pitch_deg: 50.0,
             light_intensity: 1.0,
-            second_light_enabled: false,
+            // Second light enabled by default so the multi-light loop in the
+            // shared `apply_scene_lighting` helper is exercised on every lit cell.
+            second_light_enabled: true,
             second_light_yaw_deg: -120.0,
             second_light_intensity: 0.4,
+            second_light_animate: false,
+            second_light_anim_time: 0.0,
             hemisphere_intensity: 0.4,
             sky_colour: [0.85, 0.92, 1.0],
             ground_colour: [0.40, 0.35, 0.30],
@@ -114,6 +126,9 @@ fn broadcast(state: &LcState, base: &mut ItemSettings) {
     base.unlit = state.bcast_unlit;
     base.opacity = state.bcast_opacity;
     base.wireframe = state.bcast_wireframe;
+    base.selected = state.bcast_selected;
+    base.cast_shadows = state.bcast_cast_shadows;
+    base.receive_shadows = state.bcast_receive_shadows;
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +243,14 @@ impl App {
             ) {
                 self.lc_state.tvm_id = Some(tid);
             }
+            // Boundary surface mesh: required by the selection outline pass so
+            // a selected TVM can render a silhouette ring.
+            if let Ok((mid, _)) = renderer
+                .resources_mut()
+                .upload_volume_mesh_data(&self.device, &data)
+            {
+                self.lc_state.tvm_boundary_mesh_id = Some(mid);
+            }
         }
 
         self.lc_state.built = true;
@@ -252,6 +275,10 @@ pub(crate) fn controls_lc(app: &mut App, ui: &mut egui::Ui) {
     if s.second_light_enabled {
         ui.add(egui::Slider::new(&mut s.second_light_yaw_deg, -180.0..=180.0).text("yaw 2"));
         ui.add(egui::Slider::new(&mut s.second_light_intensity, 0.0..=3.0).text("intensity 2"));
+        ui.checkbox(
+            &mut s.second_light_animate,
+            "animate yaw 2 (rotate light 2 around the scene)",
+        );
     }
     ui.separator();
     ui.label("Hemisphere ambient");
@@ -261,6 +288,11 @@ pub(crate) fn controls_lc(app: &mut App, ui: &mut egui::Ui) {
         ui.color_edit_button_rgb(&mut s.sky_colour);
         ui.label("ground");
         ui.color_edit_button_rgb(&mut s.ground_colour);
+        if ui.button("swap").clicked() {
+            // Swap sky/ground to confirm hemisphere ambient produces a coherent
+            // shift across every lit cell.
+            std::mem::swap(&mut s.sky_colour, &mut s.ground_colour);
+        }
     });
 
     ui.separator();
@@ -271,18 +303,34 @@ pub(crate) fn controls_lc(app: &mut App, ui: &mut egui::Ui) {
     ui.checkbox(&mut s.bcast_unlit, "unlit  (skip lighting where applicable)");
     ui.add(egui::Slider::new(&mut s.bcast_opacity, 0.0..=1.0).text("opacity"));
     ui.checkbox(&mut s.bcast_wireframe, "wireframe (where supported)");
+    ui.checkbox(
+        &mut s.bcast_selected,
+        "selected (outline; suppressed when hidden is also set)",
+    );
+    ui.separator();
+    ui.weak("Shadow opt-out (mesh-family items only):");
+    ui.checkbox(
+        &mut s.bcast_cast_shadows,
+        "cast_shadows (mesh contributes to shadow map)",
+    );
+    ui.checkbox(
+        &mut s.bcast_receive_shadows,
+        "receive_shadows (mesh samples shadow map)",
+    );
 
     ui.separator();
-    ui.weak("Grid (X-Y plane):");
+    ui.weak("Grid (X-Z plane):");
     ui.label("Row 0: Surface mesh | Point cloud | Glyph | Tensor glyph | Polyline");
     ui.label("Row 1: Streamtube | Tube | Ribbon | GPU implicit | Gaussian splat");
     ui.label("Row 2: Volume | Vol. surface slice | Transp. vol. mesh");
     ui.separator();
-    ui.weak("Observe how the four broadcast flags behave per row:");
-    ui.weak("- hidden: every cell disappears");
+    ui.weak("Observe how the broadcast flags behave per row:");
+    ui.weak("- hidden: every cell disappears (outlines too)");
     ui.weak("- unlit: lit cells flatten; intrinsically flat cells stay the same");
     ui.weak("- opacity: every cell becomes translucent (including TVM, volume)");
     ui.weak("- wireframe: mesh-family cells switch; non-mesh cells stay");
+    ui.weak("- selected: outline appears on every cell that supports outlines");
+    ui.weak("- cast/receive_shadows: mesh-only; no-op on non-mesh cells");
 }
 
 // ---------------------------------------------------------------------------
@@ -304,7 +352,15 @@ fn lc_lighting(state: &LcState) -> LightingSettings {
         l
     }];
     if state.second_light_enabled {
-        let yaw2 = state.second_light_yaw_deg.to_radians();
+        // When `second_light_animate` is on, the yaw used here is the user-set
+        // yaw plus the accumulated animation time. The time is advanced in
+        // `lc_collect_scene_items` so it remains a function of the collection step.
+        let base_yaw = state.second_light_yaw_deg.to_radians();
+        let yaw2 = if state.second_light_animate {
+            base_yaw + state.second_light_anim_time
+        } else {
+            base_yaw
+        };
         let dir2 = [yaw2.cos(), yaw2.sin(), 0.4];
         let mut l = LightSource::default();
         l.kind = viewport_lib::LightKind::Directional { direction: dir2 };
@@ -327,6 +383,12 @@ fn lc_lighting(state: &LcState) -> LightingSettings {
 pub(crate) fn lc_collect_scene_items(
     app: &mut App,
 ) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+    // When the second-light rotate toggle is on, advance the anim time by a
+    // fixed step per frame. Wall-clock dt isn't readily available here, so
+    // 0.02 rad/frame keeps the motion subtle and consistent.
+    if app.lc_state.second_light_enabled && app.lc_state.second_light_animate {
+        app.lc_state.second_light_anim_time += 0.02;
+    }
     let mut items = app
         .lc_state
         .scene
@@ -536,8 +598,9 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         fd.scene.gaussian_splats.push(item);
     }
 
-    // Cell (0, 2): volume (ray-march). C6 wires `settings.unlit` into
-    // `enable_shading`, so the broadcast `unlit` toggle disables gradient Phong here.
+    // Cell (0, 2): volume (ray-march). `settings.unlit` flows into the
+    // volume's `enable_shading` gate so the broadcast `unlit` toggle disables
+    // gradient Phong here.
     if let Some(vid) = s.volume_id {
         let p = cell(0, 2);
         let mut v = VolumeItem::default();
@@ -558,7 +621,8 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
     }
 
     // Cell (1, 2): volume surface slice (disk through the small scalar field).
-    // C7: `settings.opacity` now composes with the type's own opacity field.
+    // `settings.opacity` composes multiplicatively with the type's own
+    // `opacity` field at upload time.
     //
     // The default `plane` primitive lies in the X-Y plane (Z-up = horizontal).
     // Rotate it 90 degrees around X so the disk faces the camera in the X-Z plane.
@@ -579,16 +643,16 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         fd.scene.volume_surface_slices.push(ss);
     }
 
-    // Cell (2, 2): transparent volume mesh (single tet). C5: `unlit` is documented
-    // as a no-op on this type. Setting `bcast_unlit` produces no visible change
-    // here, while every other lit cell goes flat.
+    // Cell (2, 2): transparent volume mesh (single tet). The projected-tet
+    // pipeline has no per-fragment lighting calculation; `unlit` is wired to
+    // skip the Beer-Lambert thickness modulation and emit a flat alpha instead.
+    // `boundary_mesh_id` references a surface mesh uploaded at scene-build time
+    // so the selection outline pass has geometry to trace.
     if let Some(tvm_id) = s.tvm_id {
-        // TVM has no model field; the tet vertices were uploaded around the origin.
-        // The user can compare alpha/hidden behaviour against the rest of the grid.
-        let _ = cell(2, 2);
         let mut tv = TransparentVolumeMeshItem::new(tvm_id);
         tv.density = 3.0;
         tv.scalar_range = Some((0.0, 1.0));
+        tv.boundary_mesh_id = s.tvm_boundary_mesh_id;
         broadcast(s, &mut tv.settings);
         fd.scene.transparent_volume_meshes.push(tv);
     }

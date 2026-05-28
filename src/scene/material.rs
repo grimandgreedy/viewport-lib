@@ -27,6 +27,21 @@ pub struct ItemSettings {
     pub pick_id: crate::renderer::PickId,
     /// Whether the item is currently selected. Default `false`.
     pub selected: bool,
+    /// Whether this item casts shadows in the shadow map pass. Default `true`.
+    ///
+    /// Set to `false` for items that should be visible but should not contribute
+    /// to the shadow map (HUD-style overlays, debug helpers, light source
+    /// indicators). Honoured by mesh-family items; non-mesh items currently do
+    /// not participate in the shadow pass and treat this flag as a no-op.
+    pub cast_shadows: bool,
+    /// Whether this item samples the shadow map when shaded. Default `true`.
+    ///
+    /// Set to `false` to render the item as if no shadow caster occludes it.
+    /// Useful for items that should remain fully lit regardless of the scene's
+    /// shadow casters (debug visualisations, glowing markers). Honoured by
+    /// mesh-family items; non-mesh items currently do not sample shadow maps and
+    /// treat this flag as a no-op.
+    pub receive_shadows: bool,
 }
 
 impl Default for ItemSettings {
@@ -38,6 +53,8 @@ impl Default for ItemSettings {
             wireframe: false,
             pick_id: crate::renderer::PickId::NONE,
             selected: false,
+            cast_shadows: true,
+            receive_shadows: true,
         }
     }
 }

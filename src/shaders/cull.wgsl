@@ -25,14 +25,17 @@ struct FrustumUniform {
     planes:         array<FrustumPlane, 6>,
     instance_count: u32,
     batch_count:    u32,
-    _pad:           vec2<u32>,
+    // 1 = shadow cull dispatch (skip non-cast-shadow instances), 0 = main cull.
+    shadow_pass:    u32,
+    _pad:           u32,
 }
 
 struct InstanceAabb {
-    min:         vec3<f32>,
-    batch_index: u32,
-    max:         vec3<f32>,
-    _pad:        u32,
+    min:          vec3<f32>,
+    batch_index:  u32,
+    max:          vec3<f32>,
+    // 1 = participates in shadow casting, 0 = skipped during shadow cull.
+    cast_shadows: u32,
 }
 
 struct BatchMeta {
@@ -82,6 +85,12 @@ fn cull_instances(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     let aabb = instance_aabbs[i];
+
+    // Per-receiver shadow opt-out: shadow cull dispatches skip instances that
+    // are marked as non-shadow casters via `ItemSettings.cast_shadows = false`.
+    if frustum.shadow_pass == 1u && aabb.cast_shadows == 0u {
+        return;
+    }
 
     // Reject if outside any of the 6 frustum planes.
     for (var p = 0u; p < 6u; p++) {

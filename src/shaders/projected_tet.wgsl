@@ -37,7 +37,7 @@ struct PtUniforms {
     scalar_max:    f32,
     threshold_min: f32,
     threshold_max: f32,
-    _pad:          f32,
+    unlit:         u32,
 };
 
 // One tetrahedron on the GPU: four vec4 slots (64 bytes, 16-byte aligned).
@@ -238,8 +238,15 @@ fn fs_main(in: VsOut) -> OitOut {
     }
     let thickness = max(t_exit - t_enter, 0.0);
 
-    // Beer-Lambert opacity.
-    let alpha = 1.0 - exp(-uniforms.density * thickness);
+    // Beer-Lambert opacity, or a flat per-fragment alpha when `unlit` is set.
+    // The flat-alpha mode skips the per-fragment thickness modulation so the
+    // mesh reads as a translucent solid LUT colour, matching the spirit of
+    // `ItemSettings.unlit` on other item types (no per-fragment shading).
+    let alpha = select(
+        1.0 - exp(-uniforms.density * thickness),
+        clamp(uniforms.density * 0.25, 0.05, 0.6),
+        uniforms.unlit != 0u,
+    );
 
     // Map scalar to [0,1] and sample colourmap LUT.
     let scalar = in.v0.w;

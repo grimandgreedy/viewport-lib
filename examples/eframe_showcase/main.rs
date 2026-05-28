@@ -1381,6 +1381,15 @@ impl eframe::App for App {
                         ctx.request_repaint();
                     }
                 }
+                // ----- Lighting consistency (49): request repaint while the
+                // second-light rotation animation is on so the cross-type
+                // response is continuously observable.
+                if self.mode == ShowcaseMode::LightingConsistency
+                    && self.lc_state.second_light_enabled
+                    && self.lc_state.second_light_animate
+                {
+                    ctx.request_repaint();
+                }
             });
     }
 }
@@ -3030,7 +3039,9 @@ impl App {
             || (self.mode == ShowcaseMode::PickLevels
                 && showcase_33_picking_levels::pl_outline_selected(self))
             || (self.mode == ShowcaseMode::SkinnedAnimation
-                && !self.skin_state.selection.is_empty());
+                && !self.skin_state.selection.is_empty())
+            || (self.mode == ShowcaseMode::LightingConsistency
+                && self.lc_state.bcast_selected);
         if scene_graph_outline {
             fd.interaction.outline_width_px = scene_graph_outline_width;
         }

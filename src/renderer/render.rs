@@ -2507,7 +2507,7 @@ impl ViewportRenderer {
                                 scalar_max,
                                 threshold_min: item.threshold_min,
                                 threshold_max: item.threshold_max,
-                                _pad: 0.0,
+                                unlit: if item.settings.unlit { 1 } else { 0 },
                             };
                             queue.write_buffer(
                                 &gpu.uniform_buffer,

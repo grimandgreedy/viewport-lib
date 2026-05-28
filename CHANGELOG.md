@@ -29,7 +29,8 @@ Per-item `hidden`, `unlit`, and `opacity` previously honoured by some types and 
 
 - `settings.hidden = true` now short-circuits the upload path for every item type. Previously point clouds, glyphs, tensor glyphs, polylines, streamtubes, tubes, ribbons, image slices, volume surface slices, GPU implicit, screen image, and volume items uploaded GPU data and emitted draws regardless of the flag. The draw-call macro that iterates the prepared GPU data does no per-item filtering, so the filter had to live at the upload site; it now does.
 - `VolumeItem` now honours `settings.unlit`: the prepare-side write ORs it into the existing `enable_shading` gate, so a single per-item flag disables gradient Phong without touching the volume's own field. The volume ray-marcher's only lighting path is gated by `VolumeUniform.enable_shading`; this routes the standard per-item bypass into that gate.
-- `TransparentVolumeMeshItem` accepts `settings.unlit` as a documented no-op: the projected-tet pipeline has no lighting calculation at all (only Beer-Lambert thickness opacity and a direct LUT colour sample), so there's nothing to skip. The doc on the type spells this out so consumers don't expect a behaviour change.
+- `TransparentVolumeMeshItem` now honours `settings.unlit` by disabling the per-fragment Beer-Lambert thickness integration and emitting a flat density-scaled alpha. The projected-tet pipeline has no per-fragment lighting calculation to skip; this is the most useful interpretation of "unlit" for a volumetric pipeline that already has no lighting.
+- `GaussianSplatItem` draw-data upload now short-circuits on `settings.hidden`. Hidden splats no longer render.
 - `VolumeSurfaceSliceItem.settings.opacity` now multiplies into the type's own `opacity` field at upload time, so consumers can drive transparency through the standard per-item path. The two fields compose multiplicatively; the type field is retained for back-compat with a doc note recommending `settings.opacity` for new code. `unlit` and `wireframe` are documented as accepted-but-no-op on this type (no lighting calculation, no edge-pass pipeline variant).
 
 #### `ItemSettings` extends and replaces `AppearanceSettings` on all scene item types
@@ -55,6 +56,27 @@ pub struct ItemSettings {
     pub selected: bool,
 }
 ```
+
+#### Tensor glyph joins the scene-lighting family
+
+`tensor_glyph.wgsl` now binds the scene `Lights` uniform and computes diffuse shading through the shared `apply_scene_lighting` helper rather than a hardcoded directional light. Tensor glyphs respond to `LightingSettings` direction, intensity, second-light contribution, and hemisphere ambient in the same way every other lit non-mesh type does, and honour `ItemSettings.unlit` for the per-item lighting bypass.
+
+#### Per-receiver shadow opt-out on `ItemSettings`
+
+`ItemSettings` gains two new fields, both defaulting to `true`:
+
+- `cast_shadows`: when `false`, the item is skipped in the shadow pass. Wired in both the direct shadow loops and the GPU-driven indirect path (via a new `cast_shadows` slot on the per-instance AABB plus a `shadow_pass` flag on `FrustumUniform`).
+- `receive_shadows`: when `false`, the lit mesh fragment shader treats the fragment as unshadowed regardless of whether the scene's directional light has a shadow map. Read in `mesh.wgsl`, `mesh_instanced.wgsl`, and the skinned variants.
+
+Both flags are documented as no-ops on non-mesh item types (point clouds, splats, glyphs, slices) because those pipelines do not participate in the shadow pass today.
+
+#### Selection-outline mask honours `hidden`
+
+Selection-outline mask loops for glyph, tensor glyph, image slice, screen image, volume, GPU implicit, transparent volume mesh, volume surface slice, GPU marching cubes, point cloud, and sprite now gate on `settings.hidden` before the existing `settings.selected` check. A `hidden + selected` item used to emit a thin outline mask around empty space; it now emits zero draws.
+
+#### Glyph `unlit` decoupled from `use_default_colour`
+
+`glyph.wgsl` previously OR'd the per-item `unlit` flag with the constant-colour `use_default_colour` flag, so an item with `use_default_colour = true` was always treated as unlit regardless of `ItemSettings.unlit`. The two flags are now orthogonal: `use_default_colour` only picks the colour source, and `unlit` is the single source of truth for the lighting bypass. Consumers that previously relied on the implicit coupling should set both flags explicitly.
 
 ### Fixes
 

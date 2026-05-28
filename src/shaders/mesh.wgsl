@@ -104,7 +104,7 @@ struct Object {
     has_attribute: u32,
     scalar_min: f32,
     scalar_max: f32,
-    _pad_scalar: u32,
+    receive_shadows: u32,
     nan_colour: vec4<f32>,                  // offset 144
     use_nan_colour: u32,                    // offset 160
     use_matcap: u32,                       // offset 164
@@ -784,9 +784,11 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
                 radiance = l.colour * l.intensity * dist_falloff * dist_falloff * cone_att;
             }
 
-            // Shadow factor (lights[0] only) : CSM.
+            // Shadow factor (lights[0] only) : CSM. Per-receiver opt-out via
+            // ItemSettings.receive_shadows skips the sample and treats the
+            // fragment as unshadowed.
             var shadow_factor = 1.0;
-            if i == 0u && lights_uniform.shadows_enabled != 0u {
+            if i == 0u && lights_uniform.shadows_enabled != 0u && object.receive_shadows != 0u {
                 last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L);
                 shadow_factor = last_shadow_sample.factor;
                 // Fade shadow to 1.0 near the terminator (N·L ≈ 0).
@@ -860,7 +862,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
             }
 
             var shadow = 1.0;
-            if i == 0u && lights_uniform.shadows_enabled != 0u {
+            if i == 0u && lights_uniform.shadows_enabled != 0u && object.receive_shadows != 0u {
                 last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, light_dir);
                 shadow = last_shadow_sample.factor;
                 // Terminator fade: suppress shadow map near N·L ≈ 0 to avoid

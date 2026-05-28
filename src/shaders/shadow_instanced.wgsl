@@ -24,9 +24,9 @@ struct InstanceData {
     has_normal_map: u32,
     has_ao_map: u32,
     unlit: u32,
+    receive_shadows: u32,
     _pad_inst0: u32,
     _pad_inst1: u32,
-    _pad_inst2: u32,
 };
 
 @group(0) @binding(0) var<uniform> light: Light;

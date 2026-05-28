@@ -89,7 +89,7 @@ struct Object {
     has_attribute: u32,
     scalar_min: f32,
     scalar_max: f32,
-    _pad_scalar: u32,
+    receive_shadows: u32,
     nan_colour: vec4<f32>,                  // offset 144
     use_nan_colour: u32,                    // offset 160
     use_matcap: u32,                       // offset 164
