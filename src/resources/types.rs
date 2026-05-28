@@ -2321,6 +2321,37 @@ pub(crate) struct ViewportHdrState {
     pub decal_depth_bg: wgpu::BindGroup,
 }
 
+/// Per-viewport scatter-pass intermediates: two RGBA16F ping-pong targets
+/// driven by the temporal-accumulation logic, plus the composite bind groups
+/// and previous-frame view-projection used for reprojection.
+///
+/// Lives on `ViewportRenderer` (not `ViewportHdrState`) so that the scatter
+/// pass can allocate and mutate it without conflicting with the immutable
+/// `slot_hdr` borrow held across the larger paint phase.
+pub(crate) struct ScatterViewportState {
+    // Textures keep the GPU allocation alive; only the views are sampled or
+    // rendered into. The `#[allow]` suppresses the lint that flags them as
+    // unread.
+    #[allow(dead_code)]
+    pub target_a_texture: wgpu::Texture,
+    pub target_a_view: wgpu::TextureView,
+    #[allow(dead_code)]
+    pub target_b_texture: wgpu::Texture,
+    pub target_b_view: wgpu::TextureView,
+    pub composite_bg_a: wgpu::BindGroup,
+    pub composite_bg_b: wgpu::BindGroup,
+    /// Current allocated intermediate size, [width, height].
+    pub size: [u32; 2],
+    /// Whether `size` reflects the downsampled (half-res) allocation.
+    pub downsampled: bool,
+    /// Index of the intermediate the next frame writes to (0 = A, 1 = B).
+    pub parity: u32,
+    /// True when the *other* intermediate holds a usable previous-frame result.
+    pub history_valid: bool,
+    /// Previous frame's view-projection (row-major mat4).
+    pub prev_view_proj: [[f32; 4]; 4],
+}
+
 // ---------------------------------------------------------------------------
 // ViewportGpuResources: top-level GPU resource container
 // ---------------------------------------------------------------------------
@@ -2992,9 +3023,21 @@ pub struct ViewportGpuResources {
     /// 1x1x1 R32Float fallback view bound at the scatter pipeline's 3D
     /// density slot when no volume supplies its own density texture.
     pub(crate) scatter_density_fallback_view: Option<wgpu::TextureView>,
-    /// Combined token of (depth view, bound LUT, bound 3D density texture)
-    /// for `scatter_bind_group` reuse.
+    /// Combined token of (depth view, bound LUT, bound 3D density texture,
+    /// bound history view) for `scatter_bind_group` reuse.
     pub(crate) scatter_bound_depth: u64,
+    /// 1x1 RGBA16F fallback view bound at the scatter pipeline's history slot
+    /// when temporal accumulation is disabled or the history is not yet valid.
+    pub(crate) scatter_history_fallback_view: Option<wgpu::TextureView>,
+    /// Linear-clamp sampler used to read the scatter history texture.
+    pub(crate) scatter_history_sampler: Option<wgpu::Sampler>,
+    /// Composite pipeline that samples the scatter intermediate and blends it
+    /// onto the HDR target with premultiplied alpha-over.
+    pub(crate) scatter_composite_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for the composite pass (one sampled RGBA16F + sampler).
+    pub(crate) scatter_composite_bgl: Option<wgpu::BindGroupLayout>,
+    /// Bilinear-clamp sampler used by the composite pass.
+    pub(crate) scatter_composite_sampler: Option<wgpu::Sampler>,
 
     // --- IBL / environment map resources ---
     /// IBL irradiance equirect texture view (binding 7). None until environment uploaded.

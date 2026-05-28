@@ -3136,6 +3136,11 @@ impl App {
 
         // Lighting consistency (Showcase 49): push all non-mesh items.
         if self.mode == ShowcaseMode::ScatterVolumes && self.svol_state.built {
+            fd.effects.scatter.quality = self.svol_state.quality;
+            fd.effects.scatter.blue_noise_jitter = self.svol_state.blue_noise_jitter;
+            fd.effects.scatter.downsample = self.svol_state.downsample;
+            fd.effects.scatter.temporal = self.svol_state.temporal;
+            fd.effects.scatter.temporal_blend = self.svol_state.temporal_blend;
             self.submit_svol_volumes(&mut fd);
         }
 

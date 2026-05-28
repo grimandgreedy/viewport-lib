@@ -717,6 +717,75 @@ impl Default for EnvironmentMap {
     }
 }
 
+/// Quality presets for the participating-media (`ScatterVolume`) pass.
+///
+/// Trades step count for fidelity. Each preset implies a global default
+/// number of ray-march steps; individual volumes can override via
+/// [`ScatterVolume::step_budget`](crate::scene::scatter_volume::ScatterVolume::step_budget).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum ScatterQuality {
+    /// 8 steps. Cheapest; obvious banding without blue-noise jitter.
+    Low,
+    /// 16 steps. Default; good balance for most scenes.
+    Medium,
+    /// 32 steps. Highest fidelity; the V1 default cost.
+    High,
+}
+
+impl Default for ScatterQuality {
+    fn default() -> Self {
+        Self::Medium
+    }
+}
+
+impl ScatterQuality {
+    /// Global step count implied by this preset.
+    pub fn default_steps(self) -> u32 {
+        match self {
+            Self::Low => 8,
+            Self::Medium => 16,
+            Self::High => 32,
+        }
+    }
+}
+
+/// Per-frame settings for the participating-media (`ScatterVolume`) pass.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub struct ScatterSettings {
+    /// Quality preset. Sets the global default ray-march step count.
+    pub quality: ScatterQuality,
+    /// Enable the blue-noise jitter on the ray-march start offset. Hides
+    /// banding at low step counts at the cost of high-frequency noise that
+    /// temporal accumulation would normally average out. Default `true`.
+    pub blue_noise_jitter: bool,
+    /// Render the scatter pass into a half-resolution offscreen target and
+    /// upsample-composite into the main HDR target. Cuts the per-pixel
+    /// ray-march cost roughly to a quarter. Default `false`.
+    pub downsample: bool,
+    /// Blend each frame's scatter result with the previous frame's reprojected
+    /// result. Smooths out blue-noise jitter and banding over time; produces a
+    /// short trail when the camera moves quickly. Default `false`.
+    pub temporal: bool,
+    /// Exponential-moving-average weight used when `temporal` is enabled.
+    /// Larger values keep more history (smoother but laggier). Default `0.85`.
+    pub temporal_blend: f32,
+}
+
+impl Default for ScatterSettings {
+    fn default() -> Self {
+        Self {
+            quality: ScatterQuality::Medium,
+            blue_noise_jitter: true,
+            downsample: false,
+            temporal: false,
+            temporal_blend: 0.85,
+        }
+    }
+}
+
 /// Global rendering effects and modifiers for one frame.
 ///
 /// Groups lighting, clipping, post-processing, compute filtering, and clip
@@ -726,6 +795,8 @@ impl Default for EnvironmentMap {
 pub struct EffectsFrame {
     /// Per-frame lighting configuration.
     pub lighting: LightingSettings,
+    /// Participating-media (scatter-volume) quality settings.
+    pub scatter: ScatterSettings,
     /// Active clip objects (planes, boxes, spheres). Max 6 planes + 1 box/sphere.
     /// Default: empty (no clipping).
     pub clip_objects: Vec<ClipObject>,
@@ -751,6 +822,7 @@ impl Default for EffectsFrame {
     fn default() -> Self {
         Self {
             lighting: LightingSettings::default(),
+            scatter: ScatterSettings::default(),
             clip_objects: Vec::new(),
             cap_fill_enabled: true,
             post_process: PostProcessSettings::default(),
@@ -793,6 +865,9 @@ pub struct SceneEffects<'a> {
 /// Scene-global effects are passed once via [`SceneEffects`] in
 /// [`ViewportRenderer::prepare_scene`].
 pub struct ViewportEffects<'a> {
+    /// Participating-media quality settings (per-viewport for now; could
+    /// migrate scene-side later if the cost dictates).
+    pub scatter: &'a ScatterSettings,
     /// Active clip objects (planes, boxes, spheres).
     pub clip_objects: &'a [ClipObject],
     /// Whether to render filled caps at clip plane cross-sections.
@@ -826,6 +901,7 @@ impl EffectsFrame {
                 compute_filter_items: &self.compute_filter_items,
             },
             ViewportEffects {
+                scatter: &self.scatter,
                 clip_objects: &self.clip_objects,
                 cap_fill_enabled: self.cap_fill_enabled,
                 post_process: &self.post_process,

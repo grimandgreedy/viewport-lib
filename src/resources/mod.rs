@@ -57,6 +57,7 @@ pub use self::types::{
     SkinWeights, TextureMemoryStats, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
 };
 pub(crate) use self::types::PendingUploadEntry;
+pub(crate) use self::types::ScatterViewportState;
 pub(crate) use self::types::{
     AtlasBlitUniform,
     BatchMeta, BloomUniform, ClipPlanesUniform, ContactShadowUniform, CurveMeshOutlineItem,

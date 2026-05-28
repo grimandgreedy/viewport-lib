@@ -10,7 +10,7 @@ use crate::App;
 use eframe::egui;
 use viewport_lib::{
     BuiltinColourmap, ColourSource, DensityRemap, Emission, EmissionCurve, Material, NoiseDriver,
-    ScatterVolume, ScatterVolumeItem, ViewportRenderer,
+    ScatterQuality, ScatterVolume, ScatterVolumeItem, ViewportRenderer,
     scene::{Scene, aabb::Aabb},
 };
 
@@ -57,6 +57,14 @@ pub(crate) struct SvolState {
     pub sun_colour: [f32; 3],
     pub sun_intensity: f32,
     pub shadows_enabled: bool,
+
+    pub quality: ScatterQuality,
+    pub blue_noise_jitter: bool,
+    pub downsample: bool,
+    pub temporal: bool,
+    pub temporal_blend: f32,
+    pub fire_step_budget_override: bool,
+    pub fire_step_budget: u32,
 }
 
 impl Default for SvolState {
@@ -99,6 +107,13 @@ impl Default for SvolState {
             sun_colour: [1.0, 0.96, 0.86],
             sun_intensity: 2.0,
             shadows_enabled: true,
+            quality: ScatterQuality::Medium,
+            blue_noise_jitter: true,
+            downsample: false,
+            temporal: false,
+            temporal_blend: 0.85,
+            fire_step_budget_override: false,
+            fire_step_budget: 24,
         }
     }
 }
@@ -241,6 +256,9 @@ impl App {
                 nd.scroll_velocity = [0.0, 0.0, s.fire_noise_scroll_z];
                 v.noise = Some(nd);
             }
+            if s.fire_step_budget_override {
+                v.step_budget = Some(s.fire_step_budget);
+            }
             let mut item = ScatterVolumeItem::new(v);
             item.settings.unlit = false;
             fd.scene.scatter_volumes.push(item);
@@ -265,6 +283,42 @@ impl App {
 
 pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
     let s = &mut app.svol_state;
+
+    // Shader time advances per frame; keep frames flowing while the
+    // animation toggle is on so the noise field actually evolves on screen.
+    if s.fire_enabled && s.fire_animate {
+        ui.ctx().request_repaint();
+    }
+
+    ui.heading("Quality");
+    ui.horizontal(|ui| {
+        for (label, q) in [
+            ("Low (8)", ScatterQuality::Low),
+            ("Medium (16)", ScatterQuality::Medium),
+            ("High (32)", ScatterQuality::High),
+        ] {
+            if ui.selectable_label(s.quality == q, label).clicked() {
+                s.quality = q;
+            }
+        }
+    });
+    ui.checkbox(&mut s.blue_noise_jitter, "Blue-noise jitter");
+    ui.checkbox(&mut s.downsample, "Half-res scatter (downsample)");
+    ui.checkbox(&mut s.temporal, "Temporal accumulation");
+    if s.temporal {
+        ui.horizontal(|ui| {
+            ui.label("History weight");
+            ui.add(egui::Slider::new(&mut s.temporal_blend, 0.0..=0.95).step_by(0.01));
+        });
+    }
+    ui.checkbox(&mut s.fire_step_budget_override, "Override fire step budget");
+    if s.fire_step_budget_override {
+        ui.horizontal(|ui| {
+            ui.label("Fire steps");
+            ui.add(egui::Slider::new(&mut s.fire_step_budget, 4..=64));
+        });
+    }
+    ui.separator();
 
     ui.heading("Sun");
     ui.horizontal(|ui| {

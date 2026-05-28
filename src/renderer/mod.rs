@@ -37,7 +37,7 @@ pub use self::types::{
     RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, SceneEffects, SceneFrame,
     SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpriteItem,
     SpriteSizeMode, StreamtubeItem, SurfaceLICConfig, SurfaceSubmission,
-    ScatterVolumeItem,
+    ScatterQuality, ScatterSettings, ScatterVolumeItem,
     TensorGlyphItem, ToneMapping, TransparentVolumeMeshItem, TubeItem, ViewportEffects,
     ViewportFrame, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, aabb_wireframe_polyline,
     sphere_wireframe_polyline,
@@ -380,6 +380,11 @@ pub struct ViewportRenderer {
     /// can re-upload as needed without re-walking the scene frame.
     pub(crate) prepared_scatter_volumes:
         Vec<(crate::scene::scatter_volume::ScatterVolume, f32, u32)>,
+    /// Per-viewport scatter intermediates and temporal history. Indexed by
+    /// `vp_idx`. Grown lazily inside the scatter pass; each entry is
+    /// reallocated when the requested scatter target size or downsample mode
+    /// changes.
+    pub(crate) scatter_viewport_states: Vec<Option<crate::resources::ScatterViewportState>>,
     /// Opaque volume mesh items from the last `prepare()` call, retained for cell-level `pick()` dispatch.
     pick_volume_mesh_items: Vec<VolumeMeshItem>,
     /// Polyline items from the last `prepare()` call, retained for `pick()` dispatch.
@@ -547,6 +552,7 @@ impl ViewportRenderer {
             pick_tvm_items: Vec::new(),
             pick_scatter_volume_items: Vec::new(),
             prepared_scatter_volumes: Vec::new(),
+            scatter_viewport_states: Vec::new(),
             pick_volume_mesh_items: Vec::new(),
             pick_polyline_items: Vec::new(),
             pick_glyph_items: Vec::new(),

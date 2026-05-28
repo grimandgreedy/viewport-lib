@@ -208,7 +208,7 @@ pub use renderer::{
     RenderCamera, RibbonItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
     LicOverlay, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter,
     SliceAxis, SpriteItem, SpriteSizeMode, StreamtubeItem, SurfaceLICConfig,
-    ScatterVolumeItem,
+    ScatterQuality, ScatterSettings, ScatterVolumeItem,
     SurfaceSubmission, TensorGlyphItem, ToneMapping, TransparentVolumeMeshItem, TubeItem,
     ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer, VolumeItem, VolumeMeshItem,
     VolumeSurfaceSliceItem, aabb_wireframe_polyline, sphere_wireframe_polyline,

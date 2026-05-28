@@ -2,61 +2,21 @@
 
 ## [Unreleased changes]
 
-### ScatterVolume animated noise (volumetric effects V4)
+### Volumetric effects (fog, smoke, clouds, fire)
 
-`ScatterVolume.noise: Option<NoiseDriver>` is now honoured: procedural fbm value noise modulates the per-step local density, optionally drifting in world space (`scroll_velocity`) and/or evolving in place (`time_scale` domain warp).
+A new scene item, the scatter volume, renders ray-marched participating media: atmospheric fog, smoke columns, cloud layers, fire, magic effects. Each volume is a box or a sphere placed in the scene with a density, a colour, and a handful of look knobs; the renderer composites visible volumes onto the scene every frame with no upload step. Up to 16 volumes can overlap a single pixel.
 
-API:
-- `NoiseDriver { scale, octaves, scroll_velocity, time_scale, lacunarity }` — `scale` is base frequency in inverse world units; `octaves` is clamped to 1..=6 by the shader; `lacunarity` defaults to 2.0.
-- Shader noise function is a 3D fbm value noise (cheaper than gradient Perlin; good enough for fog / smoke / fire). Each march step samples it and multiplies the remapped density.
-- `ScatterUniforms` now carries `time` (elapsed seconds since `ViewportRenderer` construction). Static noise (`time_scale = 0`, zero scroll) is wallpaper; non-zero `time_scale` makes the field evolve without translating (good for fire flicker); non-zero `scroll_velocity` makes it drift (good for smoke columns and cloud layers).
-
-GPU packing grew to 144 bytes per volume (added `noise_pack` and `noise_vel`).
-
-`ScatterVolume.density_texture: Option<VolumeId>` accepts an externally uploaded 3D scalar field (use the existing `ViewportGpuResources::upload_volume` API). The scatter pipeline binds it at a new 3D-texture slot and samples it at normalized coordinates within the volume's world-space AABB (sphere shapes use their bounding cube). When set, the texture takes precedence over the procedural noise; consumers wanting baked sim output as the density source plug it in here. Only one density texture is bound per pass (first volume with a texture wins); per-frame multi-texture atlases are a possible future optimisation.
-
-Showcase 50 bakes a 32^3 hollow-shell density at startup and exposes a "Use baked 3D density texture" toggle on the sphere volume.
-
-### ScatterVolume authoring richness (volumetric effects V3)
-
-`ScatterVolume.density_remap`, `ScatterVolume.emission`, and `ColourSource::Ramp` are honoured at sample time:
-
-- `DensityRemap::Smoothstep { lo, hi }`: radial fall-off computed from the volume's *own shape centre* (not world origin). Density is full strength up to `lo` and decays to zero at `hi`, regardless of where the volume sits in world space.
-- `DensityRemap::ExpFalloff { center, falloff }`: exponential decay from an explicit world-space centre.
-- `Emission::Strength { strength, curve }` with `EmissionCurve::Linear`, `Power(exp)`, or `Threshold(min_density)`: self-emitted radiance proportional to local (remapped) density. Added unconditionally each step — emission is not shadow-attenuated.
-- `ColourSource::Ramp(ColourmapId)`: the scatter pipeline binds the active ramp's 256x1 LUT each frame; the shader samples it at the remapped density value. `colour_density.rgb` becomes a tint that multiplies the LUT sample (default white). The first Ramp volume in the frame wins for the pass; a per-frame LUT atlas for multiple ramps is a follow-up.
-- `ItemSettings.unlit` continues to skip per-step in-scattering; emission still contributes, so an unlit emissive volume reads as a pure glow.
-
-Emissive volumes also derive a virtual point light each frame, placed at the volume centroid. Nearby opaque surfaces receive warm light from "fire-like" volumes without the consumer authoring a matching light by hand. Intensity scales with `emission_strength * density * opacity`; range scales with shape size. Virtual lights are appended after the consumer's own lights and drop if the 8-slot uniform cap is hit.
-
-GPU packing grew to 112 bytes per volume (added `remap_kind`, `emission_kind`, `remap_data`, `remap_data2`). `GpuScatterVolume::pack(volume, density_multiplier, flags)` keeps the same signature.
-
-Showcase 50 demonstrates Smoothstep (soft-edge global fog), ExpFalloff + Inferno ramp (fire orb), Power emission curve, and virtual-light illumination of nearby pillars.
-
-### ScatterVolume lighting (volumetric effects V2)
-
-`ScatterVolume` now interacts with scene lights. The fragment shader switched from per-interval uniform composition to a per-step ray-march. At each step it samples the primary directional light, applies a Henyey-Greenstein phase function driven by `ScatterVolume.anisotropy`, samples the cascaded shadow atlas (single-tap; PCF would be prohibitively expensive in the march loop) and accumulates in-scattering with Beer-Lambert absorption. Hemisphere ambient (`sky_colour` / `ground_colour`) lifts otherwise-black volumes.
-
-God-ray shafts are emergent: any directional light with shadows enabled produces visible shafts through a `ScatterVolume` with no extra authoring. `ItemSettings.unlit` short-circuits the per-step lighting back to V1's uniform composite. `ItemSettings.receive_shadows = false` skips the shadow sample and treats the sun as fully unoccluded inside the volume.
-
-API additions:
-- `ScatterVolume.anisotropy: f32` (clamped to ±0.95). 0 = isotropic fog; positive = forward-scattering (clouds, ~0.7); negative = back-scattering.
-- `GpuScatterVolume` gains `flags: u32` (unlit + receive_shadows bits) and `params: vec4<f32>` (anisotropy in `.x`). `pack(volume, opacity, flags)` is the new signature.
-
-Showcase 50 adds sun-direction and intensity sliders, shadow toggle, per-volume anisotropy sliders, and unlit / receive-shadows toggles.
-
-### ScatterVolume (volumetric effects V1)
-
-New scene item type `ScatterVolume` for per-pixel ray-marched participating media (fog, smoke, haze). Box and Sphere shapes carry uniform density and a flat colour; the renderer composites visible volumes onto the HDR target after opaque + decals + OIT. No upload step is required: push items onto `SceneFrame::scatter_volumes` each frame. `ItemSettings` integration is consistent with other items (`hidden`, `opacity` as a density multiplier, `pick_id` for object picking). Camera-inside-volume is handled correctly.
-
-API:
-- `viewport_lib::ScatterVolume`, `ScatterShape::{Box, Sphere}`, `ColourSource`, `Emission`, `DensityRemap`, `NoiseDriver` (later phases of `docs/plans/volumetric-effects-plan.md` extend these without breaking the surface).
-- `ScatterVolumeItem` wraps a `ScatterVolume` with per-item settings; push to `SceneFrame::scatter_volumes`.
-- Convenience constructors: `ScatterVolume::box_uniform(...)`, `ScatterVolume::sphere_uniform(...)`.
-
-V1 ships uniform density + flat colour. Anisotropic phase, shadow-map sampling, ramp colours, emission, noise, animation, temporal accumulation, and refraction land in future phases. Hard cap of 16 simultaneously visible volumes per fragment.
-
-Showcase: `showcase-50: Scatter Volumes`.
+- Lighting: scene lights shine through volumes the same way they shine through air. The directional sun produces visible shafts where shadow casters block its rays, and dense volumes self-shadow. A backscattering knob (Henyey-Greenstein anisotropy) controls the look from isotropic fog (zero) through forward-scattering clouds with bright silver linings (positive) to back-scattering volumes lit from behind.
+- Emission: volumes can glow on their own. A glowing volume reads as light leaking out of the medium and, separately, casts a soft warm light on nearby surfaces — drop a fire next to a wall and the wall gets warmer, with no extra lighting setup.
+- Colour ramps: any built-in colourmap can drive a volume's colour as a gradient from edges to centre, which is what turns a sphere into a fire (Inferno: red base, yellow heart, near-white core).
+- Density shaping: soft-edge fall-off (smoothstep around the volume centre) and exponential fall-off from a point. Soft edges fix the otherwise-hard silhouette that bounded fog naturally produces.
+- Animation: procedural 3D noise can drive the density so it drifts (smoke columns rising, cloud layers sliding) or flickers in place (fire). Each volume gets its own scale, octaves, scroll velocity, and time rate.
+- External 3D textures: any uploaded scalar field can stand in for the procedural noise — drop in baked simulation output, render it as fog.
+- Per-item flags work the same way they do on every other scene item: hidden, opacity as a density multiplier, picking with a click, selection outline of the shape, "unlit" to skip lighting calculations, "receive_shadows" to opt out of the shaft effect. Camera inside a volume renders correctly.
+- Quality presets: Low, Medium, High control the ray-march step count globally; individual volumes can override their own budget. A blue-noise jitter on the start offset hides the banding low step counts produce.
+- Half-resolution rendering: a toggle renders the scatter pass into a half-res offscreen and bilinearly upsamples back into the main image. Roughly quarters the ray-march cost; the upsample is a straight blit, so volume edges may soften slightly against high-contrast geometry.
+- Temporal accumulation: another toggle blends each frame's scatter result with the previous frame's reprojected result, with an adjustable history weight. Smooths out the blue-noise jitter and any residual banding; produces a short trail when the camera moves quickly, which is the standard temporal-accumulation tradeoff.
+- Showcase: `showcase-50: Scatter Volumes` walks through everything above with sliders.
 
 ### ShadingModel enum (breaking)
 

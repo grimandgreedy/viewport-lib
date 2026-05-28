@@ -43,6 +43,11 @@ pub struct ScatterVolume {
     /// density at each march step then comes only from the base `density`
     /// times the active remap and (if set) the density texture.
     pub noise: Option<NoiseDriver>,
+    /// Per-volume ray-march step count override. `None` uses the global
+    /// step count from `ScatterSettings::quality`. Use a higher value for
+    /// volumes that need extra detail (clouds, fire); a lower value for
+    /// cheap background fog.
+    pub step_budget: Option<u32>,
     /// External 3D density texture (typically baked sim output) that
     /// modulates per-step density instead of procedural noise. Uploaded
     /// via [`upload_volume`](crate::resources::ViewportGpuResources::upload_volume).
@@ -67,6 +72,7 @@ impl Default for ScatterVolume {
             emission: Emission::None,
             density_remap: DensityRemap::Identity,
             noise: None,
+            step_budget: None,
             density_texture: None,
         }
     }
@@ -252,7 +258,8 @@ pub struct GpuScatterVolume {
     /// flag is set, rgb is a tint that multiplies the LUT sample.
     pub colour_density: [f32; 4],
     /// Scalar parameters: x = Henyey-Greenstein anisotropy g,
-    /// y = emission_strength, z = emission_curve_param, w = reserved.
+    /// y = emission_strength, z = emission_curve_param, w = step_budget
+    /// (per-volume march steps; 0 = use global default).
     pub params: [f32; 4],
     /// Per-remap centre + a leading scalar: `(center.x, center.y, center.z, a)`.
     /// Smoothstep: `a = lo`. ExpFalloff: `a = falloff`. Identity: unused.
@@ -366,6 +373,10 @@ impl GpuScatterVolume {
             // Density texture takes precedence over noise per the docs.
             effective_flags &= !SCATTER_FLAG_USE_NOISE;
         }
+        let step_budget_f = volume
+            .step_budget
+            .map(|b| b.clamp(1, 128) as f32)
+            .unwrap_or(0.0);
         Some(Self {
             shape_kind,
             flags: effective_flags,
@@ -374,7 +385,7 @@ impl GpuScatterVolume {
             p0,
             p1,
             colour_density: [colour[0], colour[1], colour[2], density],
-            params: [anisotropy, emission_strength, emission_param, 0.0],
+            params: [anisotropy, emission_strength, emission_param, step_budget_f],
             remap_data,
             remap_data2,
             noise_pack,

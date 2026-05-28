@@ -2556,15 +2556,113 @@ impl ViewportRenderer {
         }
 
         // -----------------------------------------------------------------------
-        // Scatter-volume pass: participating-media composite onto HDR target.
+        // Scatter-volume pass: render participating media into a per-viewport
+        // ping-pong intermediate (half- or full-res RGBA16F) with optional
+        // temporal reprojection against the previous frame's result, then
+        // composite-blit into the HDR target.
         // -----------------------------------------------------------------------
         if !self.prepared_scatter_volumes.is_empty() {
+            let scatter = &frame.effects.scatter;
+            let [sw, sh] = slot_hdr.scene_size;
+            let want_downsample = scatter.downsample;
+            let (tw, th) = if want_downsample {
+                ((sw / 2).max(1), (sh / 2).max(1))
+            } else {
+                (sw.max(1), sh.max(1))
+            };
+
+            // Grow the per-viewport scatter state slot lazily.
+            while self.scatter_viewport_states.len() <= vp_idx {
+                self.scatter_viewport_states.push(None);
+            }
+
+            // Ensure the scatter and composite pipelines exist before we
+            // build any bind groups that depend on their layouts.
             self.resources
                 .ensure_scatter_pipeline(device, wgpu::TextureFormat::Rgba16Float);
-            let depth_token = vp_idx as u64 * 1000
-                + slot_hdr.hdr_depth_texture.width() as u64 * 7919
-                + slot_hdr.hdr_depth_texture.height() as u64;
+            self.resources
+                .ensure_scatter_composite_pipeline(device, wgpu::TextureFormat::Rgba16Float);
+
+            // (Re)allocate the intermediates if the requested size or
+            // downsample mode changed, or this is the first frame.
+            let needs_alloc = match self.scatter_viewport_states[vp_idx].as_ref() {
+                None => true,
+                Some(s) => s.size != [tw, th] || s.downsampled != want_downsample,
+            };
+            if needs_alloc {
+                let make_tex = |label: &str| {
+                    device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some(label),
+                        size: wgpu::Extent3d {
+                            width: tw,
+                            height: th,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                            | wgpu::TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    })
+                };
+                let a_tex = make_tex("scatter_target_a");
+                let b_tex = make_tex("scatter_target_b");
+                let a_view = a_tex.create_view(&wgpu::TextureViewDescriptor::default());
+                let b_view = b_tex.create_view(&wgpu::TextureViewDescriptor::default());
+                let composite_bg_a =
+                    self.resources.make_scatter_composite_bg(device, &a_view);
+                let composite_bg_b =
+                    self.resources.make_scatter_composite_bg(device, &b_view);
+                self.scatter_viewport_states[vp_idx] =
+                    Some(crate::resources::ScatterViewportState {
+                        target_a_texture: a_tex,
+                        target_a_view: a_view,
+                        target_b_texture: b_tex,
+                        target_b_view: b_view,
+                        composite_bg_a,
+                        composite_bg_b,
+                        size: [tw, th],
+                        downsampled: want_downsample,
+                        parity: 0,
+                        history_valid: false,
+                        prev_view_proj: [[0.0; 4]; 4],
+                    });
+            }
+
+            // Read state needed before any &mut self resource calls.
+            let (parity, history_valid, prev_view_proj) = {
+                let s = self.scatter_viewport_states[vp_idx].as_ref().unwrap();
+                (s.parity, s.history_valid, s.prev_view_proj)
+            };
+            // Token combines viewport, size, and parity so the scatter bind
+            // group rebuilds when the per-frame history binding changes.
+            let depth_token = (vp_idx as u64).wrapping_mul(1_000_003)
+                ^ (tw as u64).wrapping_mul(7919)
+                ^ (th as u64).wrapping_mul(31)
+                ^ (parity as u64).wrapping_mul(1009);
+            let history_token = if scatter.temporal && history_valid {
+                (parity as u64).wrapping_mul(0xA24BAED4963EE407) ^ depth_token
+            } else {
+                0
+            };
+
+            let history_view: Option<&wgpu::TextureView> = if scatter.temporal && history_valid
+            {
+                let s = self.scatter_viewport_states[vp_idx].as_ref().unwrap();
+                // Write target = parity; history = the other one.
+                Some(if parity == 0 {
+                    &s.target_b_view
+                } else {
+                    &s.target_a_view
+                })
+            } else {
+                None
+            };
+
             let time_seconds = self.start_instant.elapsed().as_secs_f32();
+            let global_steps = scatter.quality.default_steps();
             let n = self.resources.write_scatter_volumes(
                 device,
                 queue,
@@ -2572,20 +2670,38 @@ impl ViewportRenderer {
                 &slot_hdr.hdr_depth_only_view,
                 depth_token,
                 time_seconds,
+                global_steps,
+                scatter.blue_noise_jitter,
+                self.frame_counter,
+                history_view,
+                history_token,
+                prev_view_proj,
+                scatter.temporal,
+                history_valid,
+                scatter.temporal_blend,
             );
             if n > 0 {
+                let s = self.scatter_viewport_states[vp_idx].as_ref().unwrap();
+                let (target_view, composite_bg) = if parity == 0 {
+                    (&s.target_a_view, &s.composite_bg_a)
+                } else {
+                    (&s.target_b_view, &s.composite_bg_b)
+                };
                 if let (Some(pipeline), Some(bg)) = (
                     self.resources.scatter_pipeline.as_ref(),
                     self.resources.scatter_bind_group.as_ref(),
                 ) {
-                    let hdr_view = &slot_hdr.hdr_view;
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("scatter_volume_pass"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: hdr_view,
+                            view: target_view,
                             resolve_target: None,
                             ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Load,
+                                // Clear so the premultiplied alpha-over blend
+                                // baked into the pipeline reduces to "replace"
+                                // (the intermediate is the only sink for the
+                                // scatter shader's output this frame).
+                                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                                 store: wgpu::StoreOp::Store,
                             },
                             depth_slice: None,
@@ -2599,6 +2715,40 @@ impl ViewportRenderer {
                     pass.set_bind_group(1, bg, &[]);
                     pass.draw(0..3, 0..1);
                 }
+                // Composite the intermediate onto HDR (alpha-over).
+                if let Some(composite_pipeline) =
+                    self.resources.scatter_composite_pipeline.as_ref()
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("scatter_composite_pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &slot_hdr.hdr_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    pass.set_pipeline(composite_pipeline);
+                    pass.set_bind_group(0, composite_bg, &[]);
+                    pass.draw(0..3, 0..1);
+                }
+
+                // Advance ping-pong state for next frame. Record the current
+                // view-projection so next frame can reproject from it.
+                let s = self.scatter_viewport_states[vp_idx].as_mut().unwrap();
+                s.prev_view_proj = frame.camera.render_camera.view_proj().to_cols_array_2d();
+                s.parity = 1 - s.parity;
+                s.history_valid = scatter.temporal;
+            } else if let Some(s) = self.scatter_viewport_states[vp_idx].as_mut() {
+                // No volumes packed this frame: invalidate history so a
+                // future re-enable starts clean.
+                s.history_valid = false;
             }
         }
 

@@ -2791,6 +2791,11 @@ impl ViewportGpuResources {
             scatter_colourmap_sampler: None,
             scatter_density_fallback_view: None,
             scatter_bound_depth: 0,
+            scatter_history_fallback_view: None,
+            scatter_history_sampler: None,
+            scatter_composite_pipeline: None,
+            scatter_composite_bgl: None,
+            scatter_composite_sampler: None,
             // IBL / environment map resources.
             ibl_irradiance_view: None,
             ibl_prefiltered_view: None,

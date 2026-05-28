@@ -86,7 +86,9 @@ struct GpuScatterVolume {
 };
 
 const MAX_SCATTER_VOLUMES: u32 = 16u;
-const MARCH_STEPS:         u32 = 24u;
+// Per-fragment ray-march step count. Runtime-controlled via
+// `uniforms.count_pack.y` (global) and `iv.step_budget` (per volume).
+const MAX_MARCH_STEPS:     u32 = 128u;
 const FLAG_UNLIT:               u32 = 1u;
 const FLAG_RECEIVE_SHADOWS:     u32 = 2u;
 const FLAG_USE_RAMP:            u32 = 4u;
@@ -106,6 +108,11 @@ struct ScatterUniforms {
     count_pack: vec4<u32>,
     // x = elapsed seconds since renderer start, yzw reserved.
     time_pack:  vec4<f32>,
+    // Previous-frame view_proj for temporal reprojection.
+    prev_view_proj: mat4x4<f32>,
+    // x = history blend factor (0..1), y = history valid (0/1),
+    // z = temporal enabled (0/1), w = reserved.
+    temporal_pack: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera:         Camera;
@@ -126,6 +133,11 @@ struct ScatterUniforms {
 // `FLAG_USE_DENSITY_TEXTURE`; otherwise a 1x1x1 fallback (value = 1.0) is bound.
 @group(1) @binding(5) var          density_texture: texture_3d<f32>;
 @group(1) @binding(6) var          density_sampler: sampler;
+// Previous-frame scatter result, sampled with bilinear UV reprojection for
+// temporal accumulation. Bound to a 1x1 fallback texture when temporal is
+// disabled or the history is not yet valid.
+@group(1) @binding(7) var          history_tex:     texture_2d<f32>;
+@group(1) @binding(8) var          history_sampler: sampler;
 
 struct VsOut {
     @builtin(position) clip_pos: vec4<f32>,
@@ -155,16 +167,25 @@ struct Interval {
     emission_kind:     u32,
     emission_strength: f32,
     emission_param:    f32,
+    step_budget:       u32,
     remap_data:        vec4<f32>,
     remap_data2:       vec4<f32>,
     noise_pack:        vec4<f32>,
     noise_vel:         vec4<f32>,
-    // World-space AABB used to compute normalized [0, 1] coordinates for
-    // the 3D density-texture sample. Box: shape min/max. Sphere: centre
-    // +/- radius.
     tex_aabb_min:      vec3<f32>,
     tex_aabb_max:      vec3<f32>,
 };
+
+// Cheap hash-based pseudo blue-noise. Not the proper precomputed Cranley-
+// Patterson sequence the plan calls for, but it has flat power spectrum at
+// the screen-tile scale, which is what matters for hiding banding. Seed by
+// pixel + frame index so the noise differs each frame; temporal
+// accumulation (future) would integrate this out.
+fn pseudo_blue_noise(pixel: vec2<f32>, frame: u32) -> f32 {
+    let p = pixel + vec2<f32>(f32(frame & 0xFFFFu) * 0.61803398, f32(frame >> 16u) * 0.37207937);
+    let h = sin(dot(p, vec2<f32>(12.9898, 78.233))) * 43758.5453123;
+    return fract(h);
+}
 
 // 3D value noise (no gradient table; cheaper than classic Perlin and good
 // enough for fog / smoke / fire). Hash takes integer lattice coordinates.
@@ -417,6 +438,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         entry.emission_kind = v.shape_pack.w;
         entry.emission_strength = v.params.y;
         entry.emission_param = v.params.z;
+        entry.step_budget = u32(v.params.w);
         entry.remap_data = v.remap_data;
         entry.remap_data2 = v.remap_data2;
         entry.noise_pack = v.noise_pack;
@@ -471,8 +493,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let iv = intervals[k];
         let unlit = (iv.flags & FLAG_UNLIT) != 0u;
         let recv_shadows = (iv.flags & FLAG_RECEIVE_SHADOWS) != 0u;
+        let global_steps = max(uniforms.count_pack.y, 1u);
+        let blue_noise_on = uniforms.count_pack.z != 0u;
+        let frame_idx = uniforms.count_pack.w;
+        // Per-volume override beats global; both are clamped at pack time.
+        var steps = global_steps;
+        if iv.step_budget > 0u { steps = iv.step_budget; }
+        steps = min(steps, MAX_MARCH_STEPS);
         let thickness = iv.t_exit - iv.t_enter;
-        let dt = thickness / f32(MARCH_STEPS);
+        let dt = thickness / f32(steps);
         let cos_theta = dot(ray_dir, sun_dir);
         let phase = phase_hg(cos_theta, iv.aniso);
         // Hemisphere ambient: a coarse split between sky / ground for the
@@ -483,6 +512,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let use_ramp = (iv.flags & FLAG_USE_RAMP) != 0u;
         let use_density_tex = (iv.flags & FLAG_USE_DENSITY_TEXTURE) != 0u;
         let time = uniforms.time_pack.x;
+        // Blue-noise jitter on the march start offset hides banding at low
+        // step counts. Without temporal accumulation it adds high-frequency
+        // dithering, which the eye tolerates much better than banding.
+        var jitter = 0.5;
+        if blue_noise_on {
+            let pixel = in.clip_pos.xy;
+            jitter = pseudo_blue_noise(pixel, frame_idx);
+        }
         // World-space AABB for density-texture sampling. For Box volumes the
         // ray-intersection uses p0..p1 directly; for Sphere we have centre
         // (p0.xyz) and radius (p0.w), so the AABB is centre +/- radius.
@@ -498,8 +535,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         // (See Interval struct below.)
         aabb_min = iv.tex_aabb_min;
         aabb_max = iv.tex_aabb_max;
-        for (var s: u32 = 0u; s < MARCH_STEPS; s = s + 1u) {
-            let t = iv.t_enter + (f32(s) + 0.5) * dt;
+        for (var s: u32 = 0u; s < MAX_MARCH_STEPS; s = s + 1u) {
+            if s >= steps { break; }
+            let t = iv.t_enter + (f32(s) + jitter) * dt;
             let p = eye + ray_dir * t;
             let remap = apply_remap(iv.remap_kind, iv.remap_data, iv.remap_data2, p);
             var modulator: f32;
@@ -553,5 +591,50 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         if acc_a > 0.995 { break; }
     }
 
-    return vec4<f32>(acc_rgb, acc_a);
+    var curr = vec4<f32>(acc_rgb, acc_a);
+
+    // Temporal accumulation: reproject the current pixel into the previous
+    // frame and blend with the history result. The reprojection uses opaque
+    // depth when available (so the trail follows scene surfaces) and falls
+    // back to a midpoint along the ray when the pixel hits sky.
+    let temporal_on = uniforms.temporal_pack.z > 0.5;
+    let history_valid = uniforms.temporal_pack.y > 0.5;
+    if temporal_on && history_valid {
+        var depth_for_reproj = depth;
+        var t_reproj: f32 = 0.0;
+        if depth >= 1.0 {
+            // Sky / no opaque hit: project the midpoint of the first
+            // interval. Better than a fixed depth because volumes near the
+            // camera get a tighter reproject.
+            if n_intervals > 0u {
+                t_reproj = 0.5 * (intervals[0].t_enter + intervals[0].t_exit);
+            } else {
+                t_reproj = 0.0;
+            }
+        }
+        var world_for_reproj: vec3<f32>;
+        if depth < 1.0 {
+            let ndc = vec4<f32>(ndc_xy, depth, 1.0);
+            let world_h = camera.inv_view_proj * ndc;
+            world_for_reproj = world_h.xyz / world_h.w;
+        } else {
+            world_for_reproj = eye + ray_dir * t_reproj;
+        }
+        let prev_clip = uniforms.prev_view_proj * vec4<f32>(world_for_reproj, 1.0);
+        if prev_clip.w > 1e-4 {
+            let prev_ndc = prev_clip.xyz / prev_clip.w;
+            let prev_uv = vec2<f32>(prev_ndc.x * 0.5 + 0.5, 1.0 - (prev_ndc.y * 0.5 + 0.5));
+            // Reject samples that fell off-screen, behind the previous near
+            // plane, or past the previous far plane.
+            if prev_uv.x >= 0.0 && prev_uv.x <= 1.0 &&
+               prev_uv.y >= 0.0 && prev_uv.y <= 1.0 &&
+               prev_ndc.z >= 0.0 && prev_ndc.z <= 1.0 {
+                let hist = textureSampleLevel(history_tex, history_sampler, prev_uv, 0.0);
+                let blend = uniforms.temporal_pack.x;
+                curr = mix(curr, hist, blend);
+            }
+        }
+    }
+
+    return curr;
 }
