@@ -2,6 +2,19 @@
 
 ## [Unreleased changes]
 
+### ScatterVolume (volumetric effects V1)
+
+New scene item type `ScatterVolume` for per-pixel ray-marched participating media (fog, smoke, haze). Box and Sphere shapes carry uniform density and a flat colour; the renderer composites visible volumes onto the HDR target after opaque + decals + OIT. No upload step is required: push items onto `SceneFrame::scatter_volumes` each frame. `ItemSettings` integration is consistent with other items (`hidden`, `opacity` as a density multiplier, `pick_id` for object picking). Camera-inside-volume is handled correctly.
+
+API:
+- `viewport_lib::ScatterVolume`, `ScatterShape::{Box, Sphere}`, `ColourSource`, `Emission`, `DensityRemap`, `NoiseDriver` (later phases of `docs/plans/volumetric-effects-plan.md` extend these without breaking the surface).
+- `ScatterVolumeItem` wraps a `ScatterVolume` with per-item settings; push to `SceneFrame::scatter_volumes`.
+- Convenience constructors: `ScatterVolume::box_uniform(...)`, `ScatterVolume::sphere_uniform(...)`.
+
+V1 ships uniform density + flat colour. Anisotropic phase, shadow-map sampling, ramp colours, emission, noise, animation, temporal accumulation, and refraction land in future phases. Hard cap of 16 simultaneously visible volumes per fragment.
+
+Showcase: `showcase-50: Scatter Volumes`.
+
 ### ShadingModel enum (breaking)
 
 Replaced `Material::use_pbr: bool` and `Material::matcap_id: Option<MatcapId>` with a single `Material::shading_model: ShadingModel` field. Variants: `Phong` (default), `Pbr`, `Matcap(MatcapId)`. The `Material::pbr()` and `Material::pbr_with_ao()` constructors are unchanged. Query helpers `Material::is_pbr()` and `Material::matcap_id() -> Option<MatcapId>` cover read sites. Existing assignments migrate as:

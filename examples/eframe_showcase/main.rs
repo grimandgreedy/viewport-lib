@@ -65,6 +65,7 @@ mod showcase_44_debug_draw;
 mod showcase_45_skinned_animation;
 mod showcase_48_decals;
 mod showcase_49_lighting_consistency;
+mod showcase_50_scatter_volumes;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -213,6 +214,7 @@ fn main() -> eframe::Result {
                 skin_state: showcase_45_skinned_animation::Skin47State::default(),
                 decal48_state: showcase_48_decals::Decal48State::default(),
                 lc_state: showcase_49_lighting_consistency::LcState::default(),
+                svol_state: showcase_50_scatter_volumes::SvolState::default(),
             }))
         }),
     )
@@ -273,6 +275,7 @@ enum ShowcaseMode {
     SkinnedAnimation,
     Decals,
     LightingConsistency,
+    ScatterVolumes,
 }
 
 impl ShowcaseMode {
@@ -325,6 +328,7 @@ impl ShowcaseMode {
             Self::SkinnedAnimation => "45: Skeletal Animation",
             Self::Decals => "48: Decals",
             Self::LightingConsistency => "49: Lighting Consistency",
+            Self::ScatterVolumes => "50: Scatter Volumes",
         }
     }
 }
@@ -492,6 +496,7 @@ pub(crate) struct App {
 
     // --- Showcase 49 ---
     pub(crate) lc_state: showcase_49_lighting_consistency::LcState,
+    pub(crate) svol_state: showcase_50_scatter_volumes::SvolState,
 }
 
 // ---------------------------------------------------------------------------
@@ -672,6 +677,7 @@ impl eframe::App for App {
                     ShowcaseMode::SkinnedAnimation,
                     ShowcaseMode::Decals,
                     ShowcaseMode::LightingConsistency,
+                    ShowcaseMode::ScatterVolumes,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1400,7 +1406,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 46] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 48] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1447,6 +1453,8 @@ impl App {
             ShowcaseMode::DebugDraw,
             ShowcaseMode::SkinnedAnimation,
             ShowcaseMode::Decals,
+            ShowcaseMode::LightingConsistency,
+            ShowcaseMode::ScatterVolumes,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1576,6 +1584,7 @@ impl App {
             ShowcaseMode::SkinnedAnimation => !self.skin_state.built,
             ShowcaseMode::Decals => !self.decal48_state.built,
             ShowcaseMode::LightingConsistency => !self.lc_state.built,
+            ShowcaseMode::ScatterVolumes => !self.svol_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -2020,6 +2029,9 @@ impl App {
             ShowcaseMode::LightingConsistency => {
                 self.build_lc_scene(renderer);
             }
+            ShowcaseMode::ScatterVolumes => {
+                self.build_svol_scene(renderer);
+            }
             _ => {}
         }
     }
@@ -2124,6 +2136,9 @@ impl App {
             }
             ShowcaseMode::LightingConsistency => {
                 showcase_49_lighting_consistency::controls_lc(self, ui)
+            }
+            ShowcaseMode::ScatterVolumes => {
+                showcase_50_scatter_volumes::controls_svol(self, ui)
             }
         }
     }
@@ -2921,6 +2936,12 @@ impl App {
                     showcase_49_lighting_consistency::lc_collect_scene_items(self);
                 (items, Some(BG_COLOUR), lighting, sg, ss)
             }
+
+            ShowcaseMode::ScatterVolumes => {
+                let items = self.svol_state.scene.collect_render_items(&Selection::new());
+                let sg = self.svol_state.scene.version();
+                (items, Some(BG_COLOUR), LightingSettings::default(), sg, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -3100,6 +3121,10 @@ impl App {
         }
 
         // Lighting consistency (Showcase 49): push all non-mesh items.
+        if self.mode == ShowcaseMode::ScatterVolumes && self.svol_state.built {
+            self.submit_svol_volumes(&mut fd);
+        }
+
         if self.mode == ShowcaseMode::LightingConsistency && self.lc_state.built {
             showcase_49_lighting_consistency::submit_lc_items(self, &mut fd);
         }

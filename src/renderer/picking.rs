@@ -770,6 +770,37 @@ impl ViewportRenderer {
         // 2. Opaque volume mesh cell picks are handled in section 1 above via
         // vm_cell_map (face_to_cell conversion on surface Face hits).
 
+        // 2c. Scatter-volume object picks. Ray-vs-shape intersection only;
+        // there is no sub-object level for participating media in V1.
+        if wants_object {
+            for item in &self.pick_scatter_volume_items {
+                if item.settings.hidden || item.settings.pick_id == PickId::NONE {
+                    continue;
+                }
+                if let Some((t_enter, _)) = crate::scene::scatter_volume::ray_intersect(
+                    &item.volume.shape,
+                    ray_origin,
+                    ray_dir,
+                ) {
+                    let world_pos = ray_origin + ray_dir * t_enter;
+                    let normal = (world_pos - match item.volume.shape {
+                        crate::scene::scatter_volume::ScatterShape::Box(b) => {
+                            (b.min + b.max) * 0.5
+                        }
+                        crate::scene::scatter_volume::ScatterShape::Sphere { center, .. } => {
+                            glam::Vec3::from(center)
+                        }
+                    })
+                    .try_normalize()
+                    .unwrap_or(glam::Vec3::Z);
+                    consider(
+                        t_enter,
+                        PickHit::object_hit(item.settings.pick_id.0, world_pos, normal),
+                    );
+                }
+            }
+        }
+
         // 2b. Transparent volume mesh cell picks (CELL or OBJECT fallback).
         if wants_cell || wants_object {
             for item in &self.pick_tvm_items {

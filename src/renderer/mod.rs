@@ -37,6 +37,7 @@ pub use self::types::{
     RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, SceneEffects, SceneFrame,
     SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpriteItem,
     SpriteSizeMode, StreamtubeItem, SurfaceLICConfig, SurfaceSubmission,
+    ScatterVolumeItem,
     TensorGlyphItem, ToneMapping, TransparentVolumeMeshItem, TubeItem, ViewportEffects,
     ViewportFrame, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, aabb_wireframe_polyline,
 };
@@ -368,6 +369,13 @@ pub struct ViewportRenderer {
     pick_volume_items: Vec<VolumeItem>,
     /// Transparent volume mesh items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_tvm_items: Vec<TransparentVolumeMeshItem>,
+    /// Scatter volume items from the last `prepare()` call, retained for `pick()` dispatch.
+    pick_scatter_volume_items: Vec<crate::renderer::types::ScatterVolumeItem>,
+    /// Volumes packed into the GPU storage buffer this frame (volume, density_multiplier).
+    /// Stored so `render_viewport` can re-upload as needed without re-walking
+    /// the scene frame.
+    pub(crate) prepared_scatter_volumes:
+        Vec<(crate::scene::scatter_volume::ScatterVolume, f32)>,
     /// Opaque volume mesh items from the last `prepare()` call, retained for cell-level `pick()` dispatch.
     pick_volume_mesh_items: Vec<VolumeMeshItem>,
     /// Polyline items from the last `prepare()` call, retained for `pick()` dispatch.
@@ -532,6 +540,8 @@ impl ViewportRenderer {
             pick_splat_items: Vec::new(),
             pick_volume_items: Vec::new(),
             pick_tvm_items: Vec::new(),
+            pick_scatter_volume_items: Vec::new(),
+            prepared_scatter_volumes: Vec::new(),
             pick_volume_mesh_items: Vec::new(),
             pick_polyline_items: Vec::new(),
             pick_glyph_items: Vec::new(),

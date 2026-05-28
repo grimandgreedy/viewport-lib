@@ -25,6 +25,8 @@ mod overlay_shape;
 mod overlay_text;
 mod overlays;
 mod postprocess;
+/// Scatter-volume participating-media pipeline state and uploads.
+pub mod scatter_volume;
 mod scivis;
 mod skin;
 /// Sparse voxel grid topology processing (boundary face extraction).

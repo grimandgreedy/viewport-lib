@@ -2976,6 +2976,20 @@ pub struct ViewportGpuResources {
     /// Uploaded projected-tet meshes. Index = ProjectedTetId value.
     pub(crate) projected_tet_store: Vec<GpuProjectedTetMesh>,
 
+    // --- Scatter-volume (participating media) rendering (lazily created) ---
+    /// Render pipeline for the scatter-volume pass. None until first item submitted.
+    pub(crate) scatter_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for group 1 of the scatter pipeline.
+    pub(crate) scatter_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    /// Per-frame uniform buffer holding the packed `GpuScatterVolume` array + count.
+    pub(crate) scatter_uniform_buffer: Option<wgpu::Buffer>,
+    /// Per-frame bind group; rebuilt only when the opaque depth view changes.
+    pub(crate) scatter_bind_group: Option<wgpu::BindGroup>,
+    /// Linear sampler used to read opaque depth in the scatter pass.
+    pub(crate) scatter_depth_sampler: Option<wgpu::Sampler>,
+    /// Identity hash of the depth view bound in `scatter_bind_group`.
+    pub(crate) scatter_bound_depth: u64,
+
     // --- IBL / environment map resources ---
     /// IBL irradiance equirect texture view (binding 7). None until environment uploaded.
     pub ibl_irradiance_view: Option<wgpu::TextureView>,

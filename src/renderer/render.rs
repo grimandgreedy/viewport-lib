@@ -2556,6 +2556,51 @@ impl ViewportRenderer {
         }
 
         // -----------------------------------------------------------------------
+        // Scatter-volume pass: participating-media composite onto HDR target.
+        // -----------------------------------------------------------------------
+        if !self.prepared_scatter_volumes.is_empty() {
+            self.resources
+                .ensure_scatter_pipeline(device, wgpu::TextureFormat::Rgba16Float);
+            let depth_token = vp_idx as u64 * 1000
+                + slot_hdr.hdr_depth_texture.width() as u64 * 7919
+                + slot_hdr.hdr_depth_texture.height() as u64;
+            let n = self.resources.write_scatter_volumes(
+                device,
+                queue,
+                &self.prepared_scatter_volumes,
+                &slot_hdr.hdr_depth_only_view,
+                depth_token,
+            );
+            if n > 0 {
+                if let (Some(pipeline), Some(bg)) = (
+                    self.resources.scatter_pipeline.as_ref(),
+                    self.resources.scatter_bind_group.as_ref(),
+                ) {
+                    let hdr_view = &slot_hdr.hdr_view;
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("scatter_volume_pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: hdr_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    pass.set_pipeline(pipeline);
+                    pass.set_bind_group(0, camera_bg, &[]);
+                    pass.set_bind_group(1, bg, &[]);
+                    pass.draw(0..3, 0..1);
+                }
+            }
+        }
+
+        // -----------------------------------------------------------------------
         // Surface LIC passes.
         // Pass 1: render each LIC mesh into lic_vector_texture (Rgba8Unorm).
         // Pass 2: advect fullscreen triangle into lic_output_texture (R8Unorm).

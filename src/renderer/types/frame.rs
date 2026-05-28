@@ -367,6 +367,31 @@ pub struct SceneFrame {
     pub gaussian_splats: Vec<GaussianSplatItem>,
     /// Screen-space decal items to render this frame (D1).
     pub decals: Vec<DecalItem>,
+    /// Participating-media volumes (fog, smoke, clouds) to render this frame.
+    pub scatter_volumes: Vec<ScatterVolumeItem>,
+}
+
+/// A participating-media volume submitted for one frame.
+///
+/// Wraps a [`ScatterVolume`](crate::scene::scatter_volume::ScatterVolume) with
+/// per-item settings (`hidden`, `pick_id`, `opacity`, `selected`, ...). Push
+/// these onto `SceneFrame::scatter_volumes`; no upload step is required.
+#[derive(Debug, Clone)]
+pub struct ScatterVolumeItem {
+    /// The volume definition (shape, density, colour, future parameters).
+    pub volume: crate::scene::scatter_volume::ScatterVolume,
+    /// Per-item render settings (visibility, opacity, picking, selection).
+    pub settings: crate::scene::material::ItemSettings,
+}
+
+impl ScatterVolumeItem {
+    /// Visible item with default settings.
+    pub fn new(volume: crate::scene::scatter_volume::ScatterVolume) -> Self {
+        Self {
+            volume,
+            settings: crate::scene::material::ItemSettings::default(),
+        }
+    }
 }
 
 impl Default for SceneFrame {
@@ -393,6 +418,7 @@ impl Default for SceneFrame {
             sprite_items: Vec::new(),
             gaussian_splats: Vec::new(),
             decals: Vec::new(),
+            scatter_volumes: Vec::new(),
         }
     }
 }

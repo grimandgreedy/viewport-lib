@@ -2782,6 +2782,13 @@ impl ViewportGpuResources {
             pt_pipeline: None,
             pt_bind_group_layout: None,
             projected_tet_store: Vec::new(),
+            // Scatter-volume (participating media) pipeline (lazily created).
+            scatter_pipeline: None,
+            scatter_bind_group_layout: None,
+            scatter_uniform_buffer: None,
+            scatter_bind_group: None,
+            scatter_depth_sampler: None,
+            scatter_bound_depth: 0,
             // IBL / environment map resources.
             ibl_irradiance_view: None,
             ibl_prefiltered_view: None,

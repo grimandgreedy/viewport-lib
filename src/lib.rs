@@ -106,7 +106,11 @@ pub use interaction::selection;
 pub use interaction::snap;
 pub use scene::aabb;
 pub use scene::material;
+pub use scene::scatter_volume;
 pub use scene::traits;
+pub use scene::scatter_volume::{
+    ColourSource, DensityRemap, Emission, EmissionCurve, NoiseDriver, ScatterShape, ScatterVolume,
+};
 pub use widgets::axes_indicator;
 
 // ---------------------------------------------------------------------------
@@ -204,6 +208,7 @@ pub use renderer::{
     RenderCamera, RibbonItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
     LicOverlay, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter,
     SliceAxis, SpriteItem, SpriteSizeMode, StreamtubeItem, SurfaceLICConfig,
+    ScatterVolumeItem,
     SurfaceSubmission, TensorGlyphItem, ToneMapping, TransparentVolumeMeshItem, TubeItem,
     ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer, VolumeItem, VolumeMeshItem,
     VolumeSurfaceSliceItem, aabb_wireframe_polyline,
