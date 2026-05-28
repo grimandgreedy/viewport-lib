@@ -725,17 +725,20 @@ impl Default for EnvironmentMap {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ScatterQuality {
-    /// 8 steps. Cheapest; obvious banding without blue-noise jitter.
+    /// 8 steps. Default. Cheap enough to run on many overlapping volumes;
+    /// the bundled defaults pair this with temporal accumulation and
+    /// half-resolution rendering so banding is not visible.
     Low,
-    /// 16 steps. Default; good balance for most scenes.
+    /// 16 steps. Mid-tier; useful at full resolution without temporal blending.
     Medium,
-    /// 32 steps. Highest fidelity; the V1 default cost.
+    /// 32 steps. Highest fidelity; pick this when motion clarity matters more
+    /// than per-frame cost.
     High,
 }
 
 impl Default for ScatterQuality {
     fn default() -> Self {
-        Self::Medium
+        Self::Low
     }
 }
 
@@ -776,11 +779,15 @@ pub struct ScatterSettings {
 
 impl Default for ScatterSettings {
     fn default() -> Self {
+        // Defaults pick the conventional game-engine setup: half-resolution
+        // ray-march with temporal accumulation so the per-frame cost stays
+        // reasonable when many volumes overlap. Consumers that prioritise
+        // motion clarity over throughput can switch to full-res / non-temporal.
         Self {
-            quality: ScatterQuality::Medium,
+            quality: ScatterQuality::Low,
             blue_noise_jitter: true,
-            downsample: false,
-            temporal: false,
+            downsample: true,
+            temporal: true,
             temporal_blend: 0.85,
         }
     }

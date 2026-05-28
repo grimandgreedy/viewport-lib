@@ -14,8 +14,9 @@ A new scene item, the scatter volume, renders ray-marched participating media: a
 - External 3D textures: any uploaded scalar field can stand in for the procedural noise — drop in baked simulation output, render it as fog.
 - Per-item flags work the same way they do on every other scene item: hidden, opacity as a density multiplier, picking with a click, selection outline of the shape, "unlit" to skip lighting calculations, "receive_shadows" to opt out of the shaft effect. Camera inside a volume renders correctly.
 - Quality presets: Low, Medium, High control the ray-march step count globally; individual volumes can override their own budget. A blue-noise jitter on the start offset hides the banding low step counts produce.
-- Half-resolution rendering: a toggle renders the scatter pass into a half-res offscreen and bilinearly upsamples back into the main image. Roughly quarters the ray-march cost; the upsample is a straight blit, so volume edges may soften slightly against high-contrast geometry.
-- Temporal accumulation: another toggle blends each frame's scatter result with the previous frame's reprojected result, with an adjustable history weight. Smooths out the blue-noise jitter and any residual banding; produces a short trail when the camera moves quickly, which is the standard temporal-accumulation tradeoff.
+- Half-resolution rendering: the scatter pass renders into a half-res offscreen and bilinearly upsamples back into the main image. Roughly quarters the ray-march cost; the upsample is a straight blit, so volume edges may soften slightly against high-contrast geometry.
+- Temporal accumulation: each frame's scatter result is blended with the previous frame's reprojected result, with an adjustable history weight. Smooths out the blue-noise jitter and any residual banding; produces a short trail when the camera moves quickly, which is the standard temporal-accumulation tradeoff.
+- Defaults: Low quality (8 steps), half-resolution, and temporal accumulation all on, so ten overlapping volumes stay performant without extra setup. Consumers that prioritise crisp motion can switch to Medium / High and turn temporal off.
 - Showcase: `showcase-50: Scatter Volumes` walks through everything above with sliders.
 
 ### ShadingModel enum (breaking)
