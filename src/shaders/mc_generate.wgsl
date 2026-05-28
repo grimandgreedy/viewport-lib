@@ -1,4 +1,4 @@
-// mc_generate.wgsl - Phase 17 GPU marching cubes: vertex + normal generation.
+// mc_generate.wgsl - GPU marching cubes: vertex + normal generation.
 //
 // One thread per cell. Reads case_indices and prefix-sum offsets, then emits
 // triangle vertices into the pre-allocated vertex buffer.

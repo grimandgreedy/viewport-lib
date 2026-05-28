@@ -13,6 +13,8 @@
 //
 // Each instance is oriented so the glyph local +Y axis aligns with the direction vector.
 // Scale = global_scale * (optional magnitude scaling).
+
+// #include "scene_lighting.wgsl"
 // Colour = LUT(scalar) or LUT(magnitude) depending on has_scalars.
 
 struct Camera {
@@ -80,30 +82,7 @@ struct ClipVolumeUB {
     volumes: array<ClipVolumeEntry, 4>,
 };
 
-struct SingleLight {
-    light_view_proj: mat4x4<f32>,
-    pos_or_dir:      vec3<f32>,
-    light_type:      u32,
-    colour:           vec3<f32>,
-    intensity:       f32,
-    range:           f32,
-    inner_angle:     f32,
-    outer_angle:     f32,
-    spot_direction:  vec3<f32>,
-    _pad:            vec2<f32>,
-};
-
-struct Lights {
-    count:                u32,
-    hemisphere_intensity: f32,
-    _pad0:                u32,
-    _pad1:                u32,
-    sky_colour:            vec3<f32>,
-    _pad2:                f32,
-    ground_colour:         vec3<f32>,
-    _pad3:                f32,
-    lights:               array<SingleLight, 8>,
-};
+// `SingleLight` and `Lights` come from the included `scene_lighting.wgsl`.
 
 @group(0) @binding(0) var<uniform> camera:      Camera;
 @group(0) @binding(3) var<uniform> lights:      Lights;
@@ -267,28 +246,11 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         return vec4<f32>(in.colour.rgb, alpha);
     }
 
-    // Diffuse shading from scene directional lights.
-    // abs(n_dot_l) gives two-sided lighting so back faces of the shaft are not
-    // dark -- glyphs are small instanced objects viewed from any direction.
+    // Hemisphere ambient + directional lights via the shared helper. Glyphs are
+    // small instanced objects viewed from any direction, so two-sided weighting
+    // (`|dot(N, L)|`) keeps back faces of the shaft lit instead of going dark.
     let n = normalize(in.world_nrm);
+    let shaded_rgb = apply_scene_lighting(n, in.colour.rgb, true, lights);
 
-    var light_dir: vec3<f32>;
-    var light_rgb: vec3<f32>;
-    if lights.count > 0u && lights.lights[0].light_type == 0u {
-        // `pos_or_dir` is the surface-to-light direction (matches mesh.wgsl).
-        light_dir = normalize(lights.lights[0].pos_or_dir);
-        light_rgb = lights.lights[0].colour * lights.lights[0].intensity;
-    } else {
-        // No scene lights: fallback to a direction pointing toward an above-front
-        // light source in the Z-up world (matches mesh.wgsl convention).
-        light_dir = normalize(vec3<f32>(0.4, 0.3, 1.5));
-        light_rgb = vec3<f32>(1.0);
-    }
-
-    let n_dot_l = abs(dot(n, light_dir));
-    let ambient = 0.2;
-    let diffuse = 0.8 * n_dot_l;
-    let shading = ambient + diffuse;
-
-    return vec4<f32>(in.colour.rgb * light_rgb * shading, alpha);
+    return vec4<f32>(shaded_rgb, alpha);
 }

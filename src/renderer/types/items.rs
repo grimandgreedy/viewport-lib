@@ -228,7 +228,7 @@ impl VolumeMeshItem {
 }
 
 // ---------------------------------------------------------------------------
-// SciVis Phase B : point cloud and glyph renderers
+// point cloud and glyph renderers
 // ---------------------------------------------------------------------------
 
 /// Render mode for point cloud items.
@@ -625,7 +625,7 @@ pub fn aabb_wireframe_polyline(aabb: &crate::scene::aabb::Aabb, colour: [f32; 4]
 }
 
 // ---------------------------------------------------------------------------
-// SciVis Phase M : streamtube renderer
+// streamtube renderer
 // ---------------------------------------------------------------------------
 
 /// A streamtube item: polyline strips rendered as instanced 3D cylinder segments.
@@ -988,7 +988,7 @@ impl Default for ScreenImageItem {
 }
 
 // ---------------------------------------------------------------------------
-// Phase G : GPU compute filter types
+// GPU compute filter types
 // ---------------------------------------------------------------------------
 
 /// Whether a filter runs on CPU or GPU compute shader.

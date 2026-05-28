@@ -2638,7 +2638,7 @@ impl ViewportRenderer {
     }
 
     // -----------------------------------------------------------------------
-    // Phase K : GPU object-ID picking
+    // GPU object-ID picking
     // -----------------------------------------------------------------------
 
     /// GPU object-ID pick: renders the scene to an offscreen `R32Uint` texture

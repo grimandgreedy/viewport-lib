@@ -536,7 +536,7 @@ pub(crate) struct InstanceData {
     pub(crate) _pad_inst: [u32; 3],  //  12 bytes, offset 132
 }
 
-/// Per-instance GPU data for the object-ID pick pass (Phase K).
+/// Per-instance GPU data for the object-ID pick pass.
 ///
 /// Stores only the model matrix and a sentinel object ID : none of the material
 /// fields needed by the full [`InstanceData`] struct.
@@ -1767,7 +1767,7 @@ pub struct GpuMesh {
 }
 
 // ---------------------------------------------------------------------------
-// SciVis Phase B : GPU data types for point cloud and glyph renderers
+// GPU data types for point cloud and glyph renderers
 // ---------------------------------------------------------------------------
 
 /// Cached GPU vertex + index buffers for a glyph base mesh (arrow, sphere, cube).
@@ -2846,7 +2846,7 @@ pub struct ViewportGpuResources {
     /// Polyline outline mask pipeline (R8Unorm, same instance layout as polyline). None until first selected polyline.
     pub(crate) polyline_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
 
-    // --- SciVis Phase B: point cloud and glyph pipelines (lazily created) ---
+    // --- point cloud and glyph pipelines (lazily created) ---
     /// Point cloud render pipeline. None until first point cloud is submitted.
     pub(crate) point_cloud_pipeline: Option<DualPipeline>,
     /// Glyph render pipeline. None until first glyph set is submitted.
@@ -2876,7 +2876,7 @@ pub struct ViewportGpuResources {
     /// Bind group layout for tensor glyph instance storage (group 2).
     pub(crate) tensor_glyph_instance_bgl: Option<wgpu::BindGroupLayout>,
 
-    // --- SciVis Phase M8: polyline rendering (lazily created) ---
+    // --- polyline rendering (lazily created) ---
     /// Polyline render pipeline. None until first polyline set is submitted.
     pub(crate) polyline_pipeline: Option<DualPipeline>,
     /// Clip-exempt polyline pipeline: same as polyline_pipeline but uses fs_main_no_clip
@@ -2890,7 +2890,7 @@ pub struct ViewportGpuResources {
     /// Bind group layout for the wireframe polyline pipeline (group 1: segment storage buffer).
     pub(crate) polyline_wireframe_bgl: Option<wgpu::BindGroupLayout>,
 
-    // --- SciVis Phase M: streamtube rendering (lazily created) ---
+    // --- streamtube rendering (lazily created) ---
     /// Streamtube render pipeline. None until first streamtube item is submitted.
     pub(crate) streamtube_pipeline: Option<DualPipeline>,
     /// Streamtube wireframe pipeline (LineList topology, cull_mode None). None until first wireframe streamtube.
@@ -2914,7 +2914,7 @@ pub struct ViewportGpuResources {
     /// Bind group layout for volume surface slice uniforms (group 1).
     pub(crate) volume_surface_slice_bgl: Option<wgpu::BindGroupLayout>,
 
-    // --- SciVis Phase D: volume rendering (lazily created) ---
+    // --- volume rendering (lazily created) ---
     /// Uploaded 3D volume textures. Index = VolumeId value.
     pub(crate) volume_textures: Vec<(wgpu::Texture, wgpu::TextureView)>,
     /// Volume render pipeline. None until first volume is submitted.
@@ -2928,13 +2928,13 @@ pub struct ViewportGpuResources {
     pub(crate) volume_default_opacity_lut: Option<wgpu::Texture>,
     pub(crate) volume_default_opacity_lut_view: Option<wgpu::TextureView>,
 
-    // --- Phase G: GPU compute filtering (lazily created) ---
+    // --- GPU compute filtering (lazily created) ---
     /// Compute pipeline for Clip / Threshold index compaction. None until first use.
     pub(crate) compute_filter_pipeline: Option<wgpu::ComputePipeline>,
     /// Bind group layout for the compute filter shader (group 0). None until first use.
     pub(crate) compute_filter_bgl: Option<wgpu::BindGroupLayout>,
 
-    // --- Phase J: Order-independent transparency (OIT) : lazily created ---
+    // --- Order-independent transparency (OIT) : lazily created ---
     // These fields are superseded by ViewportHdrState.oit_* but kept for ensure_oit_targets compat.
     #[allow(dead_code)]
     /// Weighted-blended accumulation texture (Rgba16Float, viewport-sized).
@@ -3051,7 +3051,7 @@ pub struct ViewportGpuResources {
     /// Bind group layout for screen_rect_outline_mask_pipeline (binding 0: NdcRectUniform).
     pub(crate) screen_rect_outline_bgl: Option<wgpu::BindGroupLayout>,
 
-    // --- Phase K: GPU object-ID picking (lazily created) ---
+    // --- GPU object-ID picking (lazily created) ---
     /// Render pipeline that outputs flat u32 object IDs to R32Uint + R32Float targets.
     /// `None` until `ensure_pick_pipeline` is first called.
     pub(crate) pick_pipeline: Option<wgpu::RenderPipeline>,

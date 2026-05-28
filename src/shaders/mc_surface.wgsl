@@ -1,4 +1,4 @@
-// mc_surface.wgsl - Phase 17 GPU marching cubes: lightweight Phong surface shader.
+// mc_surface.wgsl - GPU marching cubes: lightweight Phong surface shader.
 //
 // Consumes the 24-byte McVertex buffer produced by mc_generate.wgsl:
 //   location 0 : position  vec3<f32>  (bytes  0-11)
@@ -10,9 +10,15 @@
 //
 // Group 1 : per-draw material
 //   binding 0 : McSurfaceUniform (base_colour vec3, roughness f32)
+//
+// Uses the canonical `SingleLight` / `Lights` structs from `scene_lighting.wgsl`
+// but keeps an inline per-light loop because it adds a Blinn-Phong specular term
+// that the shared helper does not cover.
+
+// #include "scene_lighting.wgsl"
 
 // ---------------------------------------------------------------------------
-// Group 0: camera + lights (identical structs to implicit.wgsl)
+// Group 0: camera + lights
 // ---------------------------------------------------------------------------
 
 struct Camera {
@@ -25,34 +31,7 @@ struct Camera {
     view:          mat4x4<f32>,
 };
 
-struct SingleLight {
-    light_view_proj: mat4x4<f32>,
-    pos_or_dir:      vec3<f32>,
-    light_type:      u32,
-    colour:           vec3<f32>,
-    intensity:       f32,
-    range:           f32,
-    inner_angle:     f32,
-    outer_angle:     f32,
-    spot_direction:  vec3<f32>,
-    _pad:            vec2<f32>,
-};
-
-struct Lights {
-    count:                u32,
-    shadow_bias:          f32,
-    shadows_enabled:      u32,
-    _pad:                 u32,
-    sky_colour:            vec3<f32>,
-    hemisphere_intensity: f32,
-    ground_colour:         vec3<f32>,
-    _pad2:                f32,
-    lights:               array<SingleLight, 8>,
-    ibl_enabled:          u32,
-    ibl_intensity:        f32,
-    ibl_rotation:         f32,
-    show_skybox:          u32,
-};
+// `SingleLight` and `Lights` come from the included `scene_lighting.wgsl`.
 
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(3) var<uniform> lights: Lights;
@@ -110,8 +89,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let N = normalize(in.world_norm);
     let V = normalize(camera.eye_pos - in.world_pos);
 
-    // Hemisphere ambient.
-    let up_dot = dot(N, vec3<f32>(0.0, 1.0, 0.0)) * 0.5 + 0.5;
+    // Hemisphere ambient (Z-up world).
+    let up_dot = clamp(N.z * 0.5 + 0.5, 0.0, 1.0);
     let ambient = mix(
         lights.ground_colour * lights.hemisphere_intensity,
         lights.sky_colour    * lights.hemisphere_intensity,

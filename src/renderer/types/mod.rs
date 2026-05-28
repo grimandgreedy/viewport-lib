@@ -154,7 +154,7 @@ macro_rules! emit_draw_calls {
         let frame = $frame;
         let use_instancing: bool = $use_instancing;
         let _vp_slot: Option<&ViewportSlot> = $slot;
-        // Phase G compute filter results: used by per-object path to override index buffers.
+        // Compute filter results: used by per-object path to override index buffers.
         let compute_filter_results: &[crate::resources::ComputeFilterResult] = $compute_filter_results;
         let batches: &[InstancedBatch] = $batches;
         let camera_bg: &wgpu::BindGroup = $camera_bg;
@@ -432,7 +432,7 @@ macro_rules! emit_draw_calls {
                             }
                         } else {
                             render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                            // Phase G: check for a compute-filtered index buffer override.
+                            // Check for a compute-filtered index buffer override.
                             let filter_result = compute_filter_results
                                 .iter()
                                 .find(|r| r.mesh_id == item.mesh_id);
@@ -746,7 +746,7 @@ macro_rules! emit_scivis_draw_calls {
             }
         }
 
-        // Streamtube pass (SciVis Phase M : connected tube mesh per strip set).
+        // Streamtube pass: connected tube mesh per strip set).
         if !$streamtube_gpu_data.is_empty() {
             render_pass.set_bind_group(0, camera_bg, &[]);
             for tube in $streamtube_gpu_data.iter() {

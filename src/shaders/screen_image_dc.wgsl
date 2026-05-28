@@ -1,4 +1,4 @@
-// Depth-composited screen-space image overlay shader (Phase 12).
+// Depth-composited screen-space image overlay shader.
 //
 // Identical quad geometry to screen_image.wgsl, but the fragment shader:
 //   1. samples the per-pixel image depth from a separate R32Float texture,

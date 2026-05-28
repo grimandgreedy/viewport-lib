@@ -33,7 +33,7 @@ impl ViewportRenderer {
         self.resources
             .submit_pending_texture_uploads(device, queue);
 
-        // Phase G : GPU compute filtering.
+        // GPU compute filtering.
         // Dispatch before the render pass. Completely skipped when list is empty (zero overhead).
         if !scene_fx.compute_filter_items.is_empty() {
             self.compute_filter_results =
@@ -1180,7 +1180,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // SciVis Phase B : point cloud and glyph GPU data upload.
+        // point cloud and glyph GPU data upload.
         // ------------------------------------------------------------------
         self.point_cloud_gpu_data.clear();
         if !frame.scene.point_clouds.is_empty() {
@@ -1240,7 +1240,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // SciVis Phase M8 : polyline GPU data upload.
+        // polyline GPU data upload.
         // ------------------------------------------------------------------
         self.polyline_gpu_data.clear();
         self.polyline_selected_gpu_indices.clear();
@@ -1281,7 +1281,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // SciVis Phase L : isoline extraction and upload via polyline pipeline.
+        // isoline extraction and upload via polyline pipeline.
         // ------------------------------------------------------------------
         if !frame.scene.isolines.is_empty() {
             resources.ensure_polyline_pipeline(device);
@@ -1445,7 +1445,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // SciVis Phase M : streamtube GPU data upload.
+        // streamtube GPU data upload.
         // ------------------------------------------------------------------
         self.streamtube_gpu_data.clear();
         self.streamtube_selected_gpu_indices.clear();

@@ -1,4 +1,4 @@
-// GPU implicit surface shader (Phase 16).
+// GPU implicit surface shader
 //
 // Renders descriptor-driven SDFs via ray-marching in the fragment stage.
 // Outputs both colour and frag_depth so the result depth-composites against
@@ -12,6 +12,8 @@
 //
 // Vertex stage : full-screen quad (two triangles, no vertex buffer).
 // Fragment stage : reconstruct world-space ray -> sphere-march -> shade -> write depth.
+
+// #include "scene_lighting.wgsl"
 
 // ---------------------------------------------------------------------------
 // Group 0 : camera + lights
@@ -27,34 +29,7 @@ struct Camera {
     view:          mat4x4<f32>,
 };
 
-struct SingleLight {
-    light_view_proj: mat4x4<f32>,
-    pos_or_dir:      vec3<f32>,
-    light_type:      u32,
-    colour:           vec3<f32>,
-    intensity:       f32,
-    range:           f32,
-    inner_angle:     f32,
-    outer_angle:     f32,
-    spot_direction:  vec3<f32>,
-    _pad:            vec2<f32>,
-};
-
-struct Lights {
-    count:                u32,
-    shadow_bias:          f32,
-    shadows_enabled:      u32,
-    _pad:                 u32,
-    sky_colour:            vec3<f32>,
-    hemisphere_intensity: f32,
-    ground_colour:         vec3<f32>,
-    _pad2:                f32,
-    lights:               array<SingleLight, 8>,
-    ibl_enabled:          u32,
-    ibl_intensity:        f32,
-    ibl_rotation:         f32,
-    show_skybox:          u32,
-};
+// `SingleLight` and `Lights` come from the included `scene_lighting.wgsl`.
 
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(3) var<uniform> lights: Lights;
@@ -272,25 +247,11 @@ fn fs_main(in: VertexOutput) -> FragOutput {
         return out_u;
     }
 
-    // Normal and shading.
+    // Normal and shading via the shared helper. Implicit surfaces have a
+    // well-defined outward normal so one-sided weighting is appropriate.
     let normal = estimate_normal(hit_pos);
-
-    // First directional light (or hardcoded fallback).
-    var light_dir: vec3<f32>;
-    var light_rgb: vec3<f32>;
-    if lights.count > 0u && lights.lights[0].light_type == 0u {
-        // `pos_or_dir` is the surface-to-light direction (matches mesh.wgsl).
-        light_dir = normalize(lights.lights[0].pos_or_dir);
-        light_rgb = lights.lights[0].colour * lights.lights[0].intensity;
-    } else {
-        light_dir = normalize(vec3<f32>(0.577, 0.577, 0.577));
-        light_rgb = vec3<f32>(1.0);
-    }
-
-    const AMBIENT: f32 = 0.25;
-    let diffuse   = max(dot(normal, light_dir), 0.0);
-    let shade_fac = AMBIENT + (1.0 - AMBIENT) * diffuse;
-    let shaded    = vec4<f32>(base_colour.rgb * light_rgb * shade_fac, alpha);
+    let shaded_rgb = apply_scene_lighting(normal, base_colour.rgb, false, lights);
+    let shaded    = vec4<f32>(shaded_rgb, alpha);
 
     // Compute NDC depth of the hit point so the hardware depth test fires correctly.
     let clip_hit = camera.view_proj * vec4<f32>(hit_pos, 1.0);

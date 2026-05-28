@@ -2,10 +2,13 @@
 //
 // The CPU generates a full connected tube mesh (parallel-transport frame, SIDES=12)
 // with world-space positions and outward-facing normals baked in.  This shader
-// simply transforms the mesh into clip space and applies Blinn-Phong shading.
+// simply transforms the mesh into clip space and applies diffuse shading via
+// the shared `apply_scene_lighting` helper.
 //
 // Group 0: Camera uniform (view-projection, eye position) + Lights + ClipPlanes + ClipVolume.
 // Group 1: StreamtubeUniform : colour (vec4) + radius (f32, unused here : mesh already scaled).
+
+// #include "scene_lighting.wgsl"
 
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -55,34 +58,7 @@ struct ClipVolumeUB {
     volumes: array<ClipVolumeEntry, 4>,
 };
 
-struct SingleLight {
-    light_view_proj: mat4x4<f32>,
-    pos_or_dir:      vec3<f32>,
-    light_type:      u32,
-    colour:           vec3<f32>,
-    intensity:       f32,
-    range:           f32,
-    inner_angle:     f32,
-    outer_angle:     f32,
-    spot_direction:  vec3<f32>,
-    _pad:            vec2<f32>,
-};
-
-struct Lights {
-    count:                u32,
-    shadow_bias:          f32,
-    shadows_enabled:      u32,
-    _pad:                 u32,
-    sky_colour:            vec3<f32>,
-    hemisphere_intensity: f32,
-    ground_colour:         vec3<f32>,
-    _pad2:                f32,
-    lights:               array<SingleLight, 8>,
-    ibl_enabled:          u32,
-    ibl_intensity:        f32,
-    ibl_rotation:         f32,
-    show_skybox:          u32,
-};
+// `SingleLight` and `Lights` come from the included `scene_lighting.wgsl`.
 
 @group(0) @binding(0) var<uniform> camera:      Camera;
 @group(0) @binding(3) var<uniform> lights:      Lights;
@@ -170,22 +146,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 
     let n = normalize(in.world_nrm);
 
-    // Scene directional lights, with hardcoded fallback when none are set.
-    var light_dir: vec3<f32>;
-    var light_rgb: vec3<f32>;
-    if lights.count > 0u && lights.lights[0].light_type == 0u {
-        // `pos_or_dir` is the surface-to-light direction (matches mesh.wgsl).
-        light_dir = normalize(lights.lights[0].pos_or_dir);
-        light_rgb = lights.lights[0].colour * lights.lights[0].intensity;
-    } else {
-        // No scene lights: fallback to a direction pointing toward an above-front
-        // light source in the Z-up world (matches mesh.wgsl convention).
-        light_dir = normalize(vec3<f32>(0.4, 0.3, 1.5));
-        light_rgb = vec3<f32>(1.0);
-    }
+    // Hemisphere ambient + directional lights via the shared helper. One-sided
+    // surface (outward-facing tube normals).
+    let shaded = apply_scene_lighting(n, base_colour.rgb, false, lights);
 
-    let n_dot_l = max(dot(n, light_dir), 0.0);
-    let shading = 0.2 + 0.8 * n_dot_l;
-
-    return vec4<f32>(base_colour.rgb * light_rgb * shading, alpha);
+    return vec4<f32>(shaded, alpha);
 }

@@ -312,7 +312,7 @@ pub struct ViewportRenderer {
     /// shadow info, and grid. Slots are grown lazily in `prepare` via
     /// `ensure_viewport_slot`. There are at most 4 in the current UI.
     viewport_slots: Vec<ViewportSlot>,
-    /// Phase G : GPU compute filter results from the last `prepare()` call.
+    /// GPU compute filter results from the last `prepare()` call.
     ///
     /// Each entry contains a compacted index buffer + count for one filtered mesh.
     /// Consumed during `paint()` to override the mesh's default index buffer.
@@ -414,7 +414,7 @@ pub struct ViewportRenderer {
     /// True when `indirect_readback_buf` holds unread data from the previous cull pass.
     indirect_readback_pending: bool,
 
-    // --- Per-pass degradation state (Phases 6 + 11) ---
+    // --- Per-pass degradation state ---
     /// Tiered degradation ladder position (0 = none, 1 = shadows, 2 = volumes, 3 = effects).
     /// Advanced one step per over-budget frame once render scale hits minimum;
     /// reversed one step per comfortably-under-budget frame.

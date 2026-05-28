@@ -9,8 +9,6 @@
 // bind-pose vertex buffer is unchanged. Linear blend skinning is applied to
 // position and normal in this shader before the standard model transform.
 //
-// See `docs/plans/skeletal-animation-plan.md` Phase 5.
-
 // ---------------------------------------------------------------------------
 // Bindings (only those the vertex stage needs are declared; the rest of
 // `mesh.wgsl`'s bindings remain available to `fs_main` via the shared bind

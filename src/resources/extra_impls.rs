@@ -389,7 +389,7 @@ pub(super) fn build_glyph_sphere() -> (Vec<Vertex>, Vec<u32>) {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Phase G : in-place attribute hot-swap
+// in-place attribute hot-swap
 // ---------------------------------------------------------------------------
 
 impl ViewportGpuResources {
@@ -560,7 +560,7 @@ impl ViewportGpuResources {
 }
 
 // ---------------------------------------------------------------------------
-// Phase G : GPU compute filter pipeline and dispatch
+// GPU compute filter pipeline and dispatch
 // ---------------------------------------------------------------------------
 
 /// Output from a single GPU compute filter dispatch.
@@ -681,7 +681,7 @@ impl ViewportGpuResources {
     }
 
     // -----------------------------------------------------------------------
-    // Phase J: OIT (order-independent transparency) resource management
+    // OIT (order-independent transparency) resource management
     // -----------------------------------------------------------------------
 
     /// Ensure OIT accum/reveal textures, pipelines, and composite bind group exist
@@ -1319,7 +1319,7 @@ impl ViewportGpuResources {
     }
 
     // -----------------------------------------------------------------------
-    // Phase K: GPU object-ID picking pipeline (lazily created)
+    // GPU object-ID picking pipeline (lazily created)
     // -----------------------------------------------------------------------
 
     /// Lazily create the GPU pick pipeline and associated bind group layouts.

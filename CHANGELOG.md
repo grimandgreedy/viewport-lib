@@ -23,6 +23,15 @@ Added `Material::solid`, `Material::textured`, and `Material::pbr_with_ao` for t
 
 ### Improvements
 
+#### `ItemSettings` flags now behave consistently on every item type
+
+Per-item `hidden`, `unlit`, and `opacity` previously honoured by some types and silently ignored by others. All three now follow the same contract everywhere: if the type has the underlying mechanism (lighting, alpha output, draw enumeration) the flag drives it; if it doesn't, the flag is a documented no-op.
+
+- `settings.hidden = true` now short-circuits the upload path for every item type. Previously point clouds, glyphs, tensor glyphs, polylines, streamtubes, tubes, ribbons, image slices, volume surface slices, GPU implicit, screen image, and volume items uploaded GPU data and emitted draws regardless of the flag. The draw-call macro that iterates the prepared GPU data does no per-item filtering, so the filter had to live at the upload site; it now does.
+- `VolumeItem` now honours `settings.unlit`: the prepare-side write ORs it into the existing `enable_shading` gate, so a single per-item flag disables gradient Phong without touching the volume's own field. The volume ray-marcher's only lighting path is gated by `VolumeUniform.enable_shading`; this routes the standard per-item bypass into that gate.
+- `TransparentVolumeMeshItem` accepts `settings.unlit` as a documented no-op: the projected-tet pipeline has no lighting calculation at all (only Beer-Lambert thickness opacity and a direct LUT colour sample), so there's nothing to skip. The doc on the type spells this out so consumers don't expect a behaviour change.
+- `VolumeSurfaceSliceItem.settings.opacity` now multiplies into the type's own `opacity` field at upload time, so consumers can drive transparency through the standard per-item path. The two fields compose multiplicatively; the type field is retained for back-compat with a doc note recommending `settings.opacity` for new code. `unlit` and `wireframe` are documented as accepted-but-no-op on this type (no lighting calculation, no edge-pass pipeline variant).
+
 #### `ItemSettings` extends and replaces `AppearanceSettings` on all scene item types
 All renderable item types now express pick identity and selection state through a single `settings: ItemSettings` field. The former `id: u64`, `pick_id: u64`, `selected: bool`, and `appearance: AppearanceSettings` top-level fields are removed.
 - Renamed `AppearanceSettings` -> `ItemSettings` and standardised the settings across all first-class scene item types.
@@ -46,6 +55,20 @@ pub struct ItemSettings {
     pub selected: bool,
 }
 ```
+
+### Fixes
+
+#### Light direction convention unified across non-mesh shaders
+
+`mesh.wgsl` treats `LightSource.pos_or_dir` as the surface-to-light direction (matching the doc on `LightSource::default()`), but five other shaders -- glyph, streamtube, ribbon, GPU implicit, and GPU marching cubes -- were negating it and treating it as a light-travel direction. The two conventions are opposite. With a directional light pointing upward (light source above the scene), meshes lit from above as intended, but glyphs, streamtubes, ribbons, implicit surfaces, and marching-cubes surfaces lit from below. All five shaders now match the mesh convention, so a single `LightSource.direction` produces a coherent response across every lit type in the same scene.
+
+The hardcoded no-scene-lights fallback in glyph, streamtube, ribbon, and tensor glyph shaders also moved from a Y-up biased `(0.3, 1.0, 0.5)` to a Z-up `(0.4, 0.3, 1.5)` matching `LightSource::default()`, so untextured demos without an explicit `LightingSettings` light from above in Z-up scenes.
+
+### Examples
+
+#### Showcase 49: Lighting and Shading Consistency
+
+New grid of 13 item types (surface mesh, point cloud, glyph, tensor glyph, polyline, streamtube, tube, ribbon, GPU implicit, Gaussian splat, volume, volume surface slice, transparent volume mesh) sharing one `LightingSettings` and one set of broadcast `ItemSettings` flags. Toggling `hidden`, `unlit`, `opacity`, or `wireframe` applies the change to every item simultaneously, showing how the same per-item flag behaves across mesh, volumetric, scivis, and procedural types. Scene-light controls (yaw / pitch / intensity, optional second directional light, hemisphere ambient + sky / ground colours) make the cross-type lighting response observable side-by-side.
 
 ### Breaking changes
 

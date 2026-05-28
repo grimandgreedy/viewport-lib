@@ -1,4 +1,4 @@
-// mc_prefix_sum.wgsl - Phase 17 GPU marching cubes: hierarchical exclusive prefix sum.
+// mc_prefix_sum.wgsl - GPU marching cubes: hierarchical exclusive prefix sum.
 //
 // Three dispatches (controlled by PrefixSumParams.level):
 //
