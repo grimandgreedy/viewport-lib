@@ -465,6 +465,7 @@ impl App {
             _t.ground_colour = [1.0, 1.0, 1.0];
             _t
         };
+        let ppp = ui.ctx().pixels_per_point();
         let scene_gen = self.mv_state.scene.version();
         let sel_gen = self.mv_state.selection.version();
         let has_selection = !self.mv_state.selection.is_empty();
@@ -488,7 +489,8 @@ impl App {
             let qh = qr.height();
 
             let camera_frame = CameraFrame::from_camera(&self.mv_state.cameras[i], [qw, qh])
-                .with_viewport_id(viewports[i]);
+                .with_viewport_id(viewports[i])
+                .with_pixels_per_point(ppp);
 
             let mut fd = FrameData::new(
                 camera_frame,

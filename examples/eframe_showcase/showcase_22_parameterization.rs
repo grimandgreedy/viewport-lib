@@ -100,7 +100,8 @@ impl App {
                        base_idx: usize,
                        node_ids: &mut [NodeId; 16],
                        colour: [f32; 3],
-                       two_sided: bool| {
+                       two_sided: bool,
+                       rotate_x_90: bool| {
             for (col, (mode, label)) in MODES.iter().enumerate() {
                 let mesh_id = upload_mesh(renderer, mesh_data);
                 let mat = {
@@ -113,12 +114,12 @@ impl App {
                     };
                     m
                 };
-                let node_id = scene.add_named(
-                    *label,
-                    Some(mesh_id),
-                    glam::Mat4::from_translation(glam::Vec3::new(X_POSITIONS[col], 0.0, z)),
-                    mat,
-                );
+                let mut transform =
+                    glam::Mat4::from_translation(glam::Vec3::new(X_POSITIONS[col], 0.0, z));
+                if rotate_x_90 {
+                    transform *= glam::Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2);
+                }
+                let node_id = scene.add_named(*label, Some(mesh_id), transform, mat);
                 node_ids[base_idx + col] = node_id;
             }
         };
@@ -132,6 +133,7 @@ impl App {
             &mut self.param_vis_state.node_ids,
             [0.55, 0.70, 0.65],
             false,
+            true,
         );
         add_row(
             &mut self.param_vis_state.scene,
@@ -141,6 +143,7 @@ impl App {
             IDX_SPHERE,
             &mut self.param_vis_state.node_ids,
             [0.7, 0.7, 0.7],
+            false,
             false,
         );
         add_row(
@@ -152,6 +155,7 @@ impl App {
             &mut self.param_vis_state.node_ids,
             [0.72, 0.65, 0.55],
             false,
+            false,
         );
         add_row(
             &mut self.param_vis_state.scene,
@@ -161,6 +165,7 @@ impl App {
             IDX_PLANE,
             &mut self.param_vis_state.node_ids,
             [0.65, 0.65, 0.80],
+            true,
             true,
         );
 

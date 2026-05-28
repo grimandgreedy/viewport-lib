@@ -344,7 +344,7 @@ impl App {
             .to_cols_array_2d();
         ground.material = Material::from_colour([0.88, 0.84, 0.76]);
         ground.material.roughness = 0.85;
-        ground.material.backface_policy = BackfacePolicy::Identical;
+        ground.material.backface_policy = BackfacePolicy::Cull;
         items.push(ground);
         
         // Sphere: light sage green. Acne is easy to spot on light curved surfaces.
@@ -441,7 +441,7 @@ impl App {
             glam::Mat4::from_translation(glam::Vec3::new(2.5, -2.5, 0.005)).to_cols_array_2d();
         percy.material = Material::default();
         percy.material.texture_id = Some(self.tex_percy);
-        percy.material.backface_policy = BackfacePolicy::Identical;
+        percy.material.backface_policy = BackfacePolicy::Cull;
         items.push(percy);
 
         items
@@ -558,11 +558,13 @@ impl eframe::App for App {
             fd.effects.atlas_viewer_scale = self.atlas_viewer_scale;
 
             // Pixel inspector: on left-click, submit the clicked pixel for readback.
+            // Convert from CSS pixels (egui) to physical pixels (what the shader writes).
             if self.pixel_inspector_active && self.debug_vis_active {
                 if response.clicked() {
                     if let Some(pos) = response.interact_pointer_pos() {
-                        let px = (pos.x - rect.left()) as u32;
-                        let py = (pos.y - rect.top()) as u32;
+                        let ppp = ui.ctx().pixels_per_point();
+                        let px = ((pos.x - rect.left()) * ppp) as u32;
+                        let py = ((pos.y - rect.top()) * ppp) as u32;
                         self.last_picked_pos = Some((px, py));
                         if let Ok(mut req) = self.pixel_read_req.lock() {
                             *req = Some((px, py));

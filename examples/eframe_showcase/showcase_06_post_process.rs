@@ -32,7 +32,7 @@ impl Default for PostProcessState {
             scene: Scene::new(),
             shadow_pcss: true,
             point_light_on: true,
-            dir_intensity: 0.6,
+            dir_intensity: 2.0,
             dof_enabled: false,
             dof_focal_dist: 5.0,
             dof_focal_range: 1.0,

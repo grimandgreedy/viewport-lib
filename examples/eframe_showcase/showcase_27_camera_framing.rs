@@ -319,8 +319,8 @@ impl App {
                 _t.kind = LightKind::Directional {
                     direction: [0.3, -0.5, 0.8],
                 };
-                _t.colour = [1.0, 0.97, 0.90];
-                _t.intensity = 1.8;
+                _t.colour = [0.8, 0.77, 0.90];
+                _t.intensity = 0.8;
                 _t
             }];
             _t.shadows_enabled = true;

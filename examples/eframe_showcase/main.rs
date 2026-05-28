@@ -2264,7 +2264,7 @@ impl App {
                     } else {
                         ShadowFilter::Pcf
                     };
-                    _t.hemisphere_intensity = 0.5;
+                    _t.hemisphere_intensity = 0.4;
                     _t.sky_colour = [1.0, 1.0, 1.0];
                     _t.ground_colour = [1.0, 1.0, 1.0];
                     _t

@@ -304,11 +304,17 @@ impl ViewportRenderer {
 
         // Atlas tile layout (2x2 grid):
         // [0] = top-left, [1] = top-right, [2] = bottom-left, [3] = bottom-right
+        //
+        // UV extents are computed from tile_size relative to the fixed SHADOW_ATLAS_SIZE
+        // texture. When atlas_res < SHADOW_ATLAS_SIZE only the top-left portion of the
+        // texture is rendered into (via scissor rect), so the UV rects must match that
+        // footprint rather than always covering 0.0..0.5.
+        let tile_uv = tile_size as f32 / crate::resources::SHADOW_ATLAS_SIZE as f32;
         let atlas_rects: [[f32; 4]; 8] = [
-            [0.0, 0.0, 0.5, 0.5], // cascade 0
-            [0.5, 0.0, 1.0, 0.5], // cascade 1
-            [0.0, 0.5, 0.5, 1.0], // cascade 2
-            [0.5, 0.5, 1.0, 1.0], // cascade 3
+            [0.0,      0.0,      tile_uv,       tile_uv      ], // cascade 0
+            [tile_uv,  0.0,      tile_uv * 2.0, tile_uv      ], // cascade 1
+            [0.0,      tile_uv,  tile_uv,       tile_uv * 2.0], // cascade 2
+            [tile_uv,  tile_uv,  tile_uv * 2.0, tile_uv * 2.0], // cascade 3
             [0.0; 4],
             [0.0; 4],
             [0.0; 4],
@@ -2296,12 +2302,15 @@ impl ViewportRenderer {
                     }
                 }
 
+                let ppp = frame.camera.pixels_per_point;
                 let clip_uniform = ClipPlanesUniform {
                     planes,
                     count,
                     _pad0: 0,
-                    viewport_width: frame.camera.viewport_size[0].max(1.0),
-                    viewport_height: frame.camera.viewport_size[1].max(1.0),
+                    // Physical pixels: clip_pos in the fragment shader is in physical pixels,
+                    // so split-screen and pixel-inspector buffer stride must match.
+                    viewport_width: (frame.camera.viewport_size[0] * ppp).max(1.0),
+                    viewport_height: (frame.camera.viewport_size[1] * ppp).max(1.0),
                 };
                 // Write to per-viewport slot buffer.
                 if let Some(slot) = self.viewport_slots.get(frame.camera.viewport_index) {
@@ -5525,11 +5534,14 @@ impl ViewportRenderer {
         }
 
         // Debug fragment buffer: allocate or resize when debug_vis is active.
+        // Must use physical pixels: clip_pos in the shader is in physical pixels,
+        // and viewport_width in ClipPlanesUniform (the buffer stride) is now physical too.
         {
             let vp_idx = frame.camera.viewport_index;
             let debug_active = frame.effects.lighting.debug_vis.active;
-            let vw = frame.camera.viewport_size[0].max(1.0) as u32;
-            let vh = frame.camera.viewport_size[1].max(1.0) as u32;
+            let ppp = frame.camera.pixels_per_point;
+            let vw = (frame.camera.viewport_size[0] * ppp).max(1.0) as u32;
+            let vh = (frame.camera.viewport_size[1] * ppp).max(1.0) as u32;
             let slot = &self.viewport_slots[vp_idx];
 
             if debug_active && slot.debug_frag_dims != (vw, vh) {
