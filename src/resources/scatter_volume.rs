@@ -17,8 +17,11 @@ pub const MAX_SCATTER_VOLUMES: usize = 16;
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ScatterUniformsRaw {
     pub volumes: [GpuScatterVolume; MAX_SCATTER_VOLUMES],
-    pub count: u32,
-    pub _pad: [u32; 3],
+    // x = count, yzw reserved. Stored as a vec4 so the WGSL tail (count + time)
+    // aligns to the std140 vec4 boundary the uniform layout requires.
+    pub count_pack: [u32; 4],
+    // x = elapsed seconds, yzw reserved.
+    pub time_pack: [f32; 4],
 }
 
 impl Default for ScatterUniformsRaw {
@@ -35,9 +38,11 @@ impl Default for ScatterUniformsRaw {
                 params: [0.0; 4],
                 remap_data: [0.0; 4],
                 remap_data2: [0.0; 4],
+                noise_pack: [0.0; 4],
+                noise_vel: [0.0; 4],
             }; MAX_SCATTER_VOLUMES],
-            count: 0,
-            _pad: [0; 3],
+            count_pack: [0; 4],
+            time_pack: [0.0; 4],
         }
     }
 }
@@ -98,9 +103,74 @@ impl crate::resources::ViewportGpuResources {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // binding 5: 3D density texture (R32Float, non-filterable)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D3,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // binding 6: non-filtering sampler for the 3D density texture
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
             ],
         });
         self.scatter_bind_group_layout = Some(bgl);
+    }
+
+    /// Ensure the 1x1x1 R32Float fallback texture (bound when no volume
+    /// supplies its own 3D density texture) exists.
+    fn ensure_scatter_density_fallback(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if self.scatter_density_fallback_view.is_some() {
+            return;
+        }
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("scatter_density_fallback"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D3,
+            format: wgpu::TextureFormat::R32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        // Initialise to 1.0 so volumes that mistakenly enable
+        // `USE_DENSITY_TEXTURE` without supplying one render as the base
+        // density rather than as fully transparent.
+        let data: [f32; 1] = [1.0];
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(&data),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.scatter_density_fallback_view =
+            Some(tex.create_view(&wgpu::TextureViewDescriptor::default()));
     }
 
     /// Ensure the colourmap-LUT sampler used by the scatter pass exists.
@@ -245,11 +315,13 @@ impl crate::resources::ViewportGpuResources {
         volumes: &[(ScatterVolume, f32, u32)],
         depth_view: &wgpu::TextureView,
         depth_view_token: u64,
+        time_seconds: f32,
     ) -> u32 {
         self.ensure_scatter_bind_group_layout(device);
         self.ensure_scatter_uniform_buffer(device);
         self.ensure_scatter_depth_sampler(device);
         self.ensure_scatter_colourmap_sampler(device);
+        self.ensure_scatter_density_fallback(device, queue);
 
         let mut raw = ScatterUniformsRaw::default();
         let mut n: u32 = 0;
@@ -262,7 +334,8 @@ impl crate::resources::ViewportGpuResources {
                 n += 1;
             }
         }
-        raw.count = n;
+        raw.count_pack[0] = n;
+        raw.time_pack[0] = time_seconds;
 
         if let Some(buf) = self.scatter_uniform_buffer.as_ref() {
             queue.write_buffer(buf, 0, bytemuck::bytes_of(&raw));
@@ -281,8 +354,21 @@ impl crate::resources::ViewportGpuResources {
             }
         }
 
-        // Rebuild bind group when the depth view or the bound LUT changes.
-        let token = depth_view_token ^ (lut_id.wrapping_mul(0x9E3779B97F4A7C15));
+        // Resolve the 3D density texture to bind, applying the same
+        // "first-wins" policy. Fallback 1x1x1 view binds otherwise.
+        let mut density_id: u64 = u64::MAX;
+        for (volume, _, _) in volumes.iter() {
+            if let Some(id) = volume.density_texture {
+                density_id = id.0 as u64;
+                break;
+            }
+        }
+
+        // Rebuild bind group when any of (depth view, bound LUT, bound
+        // density texture) changes.
+        let token = depth_view_token
+            ^ (lut_id.wrapping_mul(0x9E3779B97F4A7C15))
+            ^ (density_id.wrapping_mul(0xBF58476D1CE4E5B9));
         if self.scatter_bind_group.is_none() || self.scatter_bound_depth != token {
             let bgl = self.scatter_bind_group_layout.as_ref().unwrap();
             let buf = self.scatter_uniform_buffer.as_ref().unwrap();
@@ -294,6 +380,15 @@ impl crate::resources::ViewportGpuResources {
                 self.colourmap_views
                     .get(lut_id as usize)
                     .unwrap_or(&self.fallback_lut_view)
+            };
+            let density_fallback = self.scatter_density_fallback_view.as_ref().unwrap();
+            let density_view: &wgpu::TextureView = if density_id == u64::MAX {
+                density_fallback
+            } else {
+                self.volume_textures
+                    .get(density_id as usize)
+                    .map(|(_, v)| v)
+                    .unwrap_or(density_fallback)
             };
             let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("scatter_volume_bind_group"),
@@ -318,6 +413,14 @@ impl crate::resources::ViewportGpuResources {
                     wgpu::BindGroupEntry {
                         binding: 4,
                         resource: wgpu::BindingResource::Sampler(lut_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::TextureView(density_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: wgpu::BindingResource::Sampler(depth_sampler),
                     },
                 ],
             });

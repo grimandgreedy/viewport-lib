@@ -2564,12 +2564,14 @@ impl ViewportRenderer {
             let depth_token = vp_idx as u64 * 1000
                 + slot_hdr.hdr_depth_texture.width() as u64 * 7919
                 + slot_hdr.hdr_depth_texture.height() as u64;
+            let time_seconds = self.start_instant.elapsed().as_secs_f32();
             let n = self.resources.write_scatter_volumes(
                 device,
                 queue,
                 &self.prepared_scatter_volumes,
                 &slot_hdr.hdr_depth_only_view,
                 depth_token,
+                time_seconds,
             );
             if n > 0 {
                 if let (Some(pipeline), Some(bg)) = (

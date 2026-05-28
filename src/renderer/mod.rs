@@ -355,6 +355,9 @@ pub struct ViewportRenderer {
     /// Clamped to `[policy.min_render_scale, policy.max_render_scale]`.
     /// Reported in `FrameStats::render_scale` each frame.
     current_render_scale: f32,
+    /// Instant the renderer was constructed. Used as the t=0 reference for
+    /// per-frame animated effects (e.g. `ScatterVolume::noise` time scrolling).
+    start_instant: std::time::Instant,
     /// Instant recorded at the start of the most recent `prepare()` call.
     /// Used to compute `total_frame_ms` on the following frame.
     last_prepare_instant: Option<std::time::Instant>,
@@ -534,6 +537,7 @@ impl ViewportRenderer {
             runtime_mode: crate::renderer::stats::RuntimeMode::Interactive,
             performance_policy: crate::renderer::stats::PerformancePolicy::default(),
             current_render_scale: 1.0,
+            start_instant: std::time::Instant::now(),
             last_prepare_instant: None,
             frame_counter: 0,
             pick_scene_items: Vec::new(),

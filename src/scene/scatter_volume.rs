@@ -39,8 +39,19 @@ pub struct ScatterVolume {
     /// Density curve applied before colour and emission sampling. V1 reads only
     /// `DensityRemap::Identity`.
     pub density_remap: DensityRemap,
-    /// Procedural / external density driver. V1 ignores this field; V4 honours it.
+    /// Procedural noise driver. None disables the noise modulation; the
+    /// density at each march step then comes only from the base `density`
+    /// times the active remap and (if set) the density texture.
     pub noise: Option<NoiseDriver>,
+    /// External 3D density texture (typically baked sim output) that
+    /// modulates per-step density instead of procedural noise. Uploaded
+    /// via [`upload_volume`](crate::resources::ViewportGpuResources::upload_volume).
+    /// The texture is sampled at normalized coordinates inside the volume's
+    /// world-space AABB. When both `noise` and `density_texture` are set
+    /// the texture takes precedence (noise is ignored for that volume).
+    /// Only one density texture can be bound per frame; the first volume
+    /// in `SceneFrame::scatter_volumes` with a texture wins for the pass.
+    pub density_texture: Option<crate::resources::VolumeId>,
 }
 
 impl Default for ScatterVolume {
@@ -56,6 +67,7 @@ impl Default for ScatterVolume {
             emission: Emission::None,
             density_remap: DensityRemap::Identity,
             noise: None,
+            density_texture: None,
         }
     }
 }
@@ -181,18 +193,25 @@ pub enum DensityRemap {
     },
 }
 
-/// Procedural / external density driver. Stub for V4; V1 ignores this entirely.
+/// Procedural noise driver: fbm value noise modulates per-step density and,
+/// when `time_scale` is non-zero, evolves over time.
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct NoiseDriver {
-    /// Base frequency in world units.
+    /// Base frequency in inverse world units. Higher = finer detail.
     pub scale: f32,
-    /// Number of fbm octaves.
+    /// Number of fbm octaves (clamped to 1..=6 by the shader).
     pub octaves: u32,
-    /// Animation scroll velocity (world units per second).
+    /// Animation scroll velocity (world units per second). Adds to the
+    /// sample position each frame for drifting smoke / flowing clouds.
     pub scroll_velocity: [f32; 3],
-    /// Per-second time scale on the noise domain warp.
+    /// Per-second domain-warp rate. Non-zero values make the noise field
+    /// evolve in place without drifting in any direction (good for fire
+    /// flicker). 0 = static (only `scroll_velocity` animates).
     pub time_scale: f32,
+    /// Fbm frequency multiplier per octave. Typical values 1.8..2.2; 2.0
+    /// is the standard. Clamped to 1.1..=4.0 by the shader.
+    pub lacunarity: f32,
 }
 
 impl Default for NoiseDriver {
@@ -202,6 +221,7 @@ impl Default for NoiseDriver {
             octaves: 3,
             scroll_velocity: [0.0; 3],
             time_scale: 0.0,
+            lacunarity: 2.0,
         }
     }
 }
@@ -239,6 +259,11 @@ pub struct GpuScatterVolume {
     pub remap_data: [f32; 4],
     /// Per-remap overflow: `x = hi` for Smoothstep; unused otherwise.
     pub remap_data2: [f32; 4],
+    /// Procedural noise driver: `(scale, octaves_as_f32, time_scale, lacunarity)`.
+    /// Only honoured when the `USE_NOISE` flag is set.
+    pub noise_pack: [f32; 4],
+    /// Noise animation: `(scroll_velocity.xyz, _)` in world units per second.
+    pub noise_vel: [f32; 4],
 }
 
 /// Flag bit: skip in-scattering (treat the volume as `unlit`).
@@ -247,6 +272,10 @@ pub const SCATTER_FLAG_UNLIT: u32 = 1;
 pub const SCATTER_FLAG_RECEIVE_SHADOWS: u32 = 2;
 /// Flag bit: this volume's colour comes from the bound colourmap LUT.
 pub const SCATTER_FLAG_USE_RAMP: u32 = 4;
+/// Flag bit: modulate per-step density by procedural noise.
+pub const SCATTER_FLAG_USE_NOISE: u32 = 8;
+/// Flag bit: modulate per-step density by sampling the bound 3D density texture.
+pub const SCATTER_FLAG_USE_DENSITY_TEXTURE: u32 = 16;
 
 impl GpuScatterVolume {
     /// Pack a CPU `ScatterVolume` into the GPU layout. `density_multiplier`
@@ -312,6 +341,31 @@ impl GpuScatterVolume {
                 EmissionCurve::Threshold(min_density) => (3u32, strength, min_density),
             },
         };
+        let (noise_pack, noise_vel) = match volume.noise {
+            None => ([0.0; 4], [0.0; 4]),
+            Some(n) => {
+                effective_flags |= SCATTER_FLAG_USE_NOISE;
+                (
+                    [
+                        n.scale.max(1e-4),
+                        n.octaves.clamp(1, 6) as f32,
+                        n.time_scale,
+                        n.lacunarity.clamp(1.1, 4.0),
+                    ],
+                    [
+                        n.scroll_velocity[0],
+                        n.scroll_velocity[1],
+                        n.scroll_velocity[2],
+                        0.0,
+                    ],
+                )
+            }
+        };
+        if volume.density_texture.is_some() {
+            effective_flags |= SCATTER_FLAG_USE_DENSITY_TEXTURE;
+            // Density texture takes precedence over noise per the docs.
+            effective_flags &= !SCATTER_FLAG_USE_NOISE;
+        }
         Some(Self {
             shape_kind,
             flags: effective_flags,
@@ -323,6 +377,8 @@ impl GpuScatterVolume {
             params: [anisotropy, emission_strength, emission_param, 0.0],
             remap_data,
             remap_data2,
+            noise_pack,
+            noise_vel,
         })
     }
 }

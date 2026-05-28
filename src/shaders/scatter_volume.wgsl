@@ -81,13 +81,17 @@ struct GpuScatterVolume {
     params:         vec4<f32>,   // x=anisotropy, y=emission_strength, z=emission_param, w=reserved
     remap_data:     vec4<f32>,   // Smoothstep: (center.xyz, lo). ExpFalloff: (center.xyz, falloff).
     remap_data2:    vec4<f32>,   // Smoothstep: (hi,_,_,_). ExpFalloff: unused.
+    noise_pack:     vec4<f32>,   // (scale, octaves_as_f32, time_scale, lacunarity)
+    noise_vel:      vec4<f32>,   // (scroll.xyz, _)
 };
 
 const MAX_SCATTER_VOLUMES: u32 = 16u;
 const MARCH_STEPS:         u32 = 24u;
-const FLAG_UNLIT:           u32 = 1u;
-const FLAG_RECEIVE_SHADOWS: u32 = 2u;
-const FLAG_USE_RAMP:        u32 = 4u;
+const FLAG_UNLIT:               u32 = 1u;
+const FLAG_RECEIVE_SHADOWS:     u32 = 2u;
+const FLAG_USE_RAMP:            u32 = 4u;
+const FLAG_USE_NOISE:           u32 = 8u;
+const FLAG_USE_DENSITY_TEXTURE: u32 = 16u;
 const REMAP_IDENTITY:    u32 = 0u;
 const REMAP_SMOOTHSTEP:  u32 = 1u;
 const REMAP_EXP_FALLOFF: u32 = 2u;
@@ -98,7 +102,10 @@ const EMISSION_THRESHOLD: u32 = 3u;
 
 struct ScatterUniforms {
     volumes:    array<GpuScatterVolume, MAX_SCATTER_VOLUMES>,
+    // x = count, yzw = pad (storage is vec4<u32>; first lane reused for time).
     count_pack: vec4<u32>,
+    // x = elapsed seconds since renderer start, yzw reserved.
+    time_pack:  vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera:         Camera;
@@ -115,6 +122,10 @@ struct ScatterUniforms {
 // `FLAG_USE_RAMP`; otherwise a 1x1 fallback texture is bound.
 @group(1) @binding(3) var          colourmap_lut:    texture_2d<f32>;
 @group(1) @binding(4) var          colourmap_sampler: sampler;
+// External 3D density texture. Bound only when at least one volume has
+// `FLAG_USE_DENSITY_TEXTURE`; otherwise a 1x1x1 fallback (value = 1.0) is bound.
+@group(1) @binding(5) var          density_texture: texture_3d<f32>;
+@group(1) @binding(6) var          density_sampler: sampler;
 
 struct VsOut {
     @builtin(position) clip_pos: vec4<f32>,
@@ -146,7 +157,103 @@ struct Interval {
     emission_param:    f32,
     remap_data:        vec4<f32>,
     remap_data2:       vec4<f32>,
+    noise_pack:        vec4<f32>,
+    noise_vel:         vec4<f32>,
+    // World-space AABB used to compute normalized [0, 1] coordinates for
+    // the 3D density-texture sample. Box: shape min/max. Sphere: centre
+    // +/- radius.
+    tex_aabb_min:      vec3<f32>,
+    tex_aabb_max:      vec3<f32>,
 };
+
+// 3D value noise (no gradient table; cheaper than classic Perlin and good
+// enough for fog / smoke / fire). Hash takes integer lattice coordinates.
+fn hash31(p: vec3<f32>) -> f32 {
+    let h = dot(p, vec3<f32>(127.1, 311.7, 74.7));
+    return fract(sin(h) * 43758.5453123);
+}
+
+fn value_noise_3d(p: vec3<f32>) -> f32 {
+    let pi = floor(p);
+    let pf = fract(p);
+    // Smoothstep weights (Perlin's fade for nicer interpolation).
+    let w = pf * pf * (3.0 - 2.0 * pf);
+    let n000 = hash31(pi + vec3<f32>(0.0, 0.0, 0.0));
+    let n100 = hash31(pi + vec3<f32>(1.0, 0.0, 0.0));
+    let n010 = hash31(pi + vec3<f32>(0.0, 1.0, 0.0));
+    let n110 = hash31(pi + vec3<f32>(1.0, 1.0, 0.0));
+    let n001 = hash31(pi + vec3<f32>(0.0, 0.0, 1.0));
+    let n101 = hash31(pi + vec3<f32>(1.0, 0.0, 1.0));
+    let n011 = hash31(pi + vec3<f32>(0.0, 1.0, 1.0));
+    let n111 = hash31(pi + vec3<f32>(1.0, 1.0, 1.0));
+    let nx00 = mix(n000, n100, w.x);
+    let nx10 = mix(n010, n110, w.x);
+    let nx01 = mix(n001, n101, w.x);
+    let nx11 = mix(n011, n111, w.x);
+    let nxy0 = mix(nx00, nx10, w.y);
+    let nxy1 = mix(nx01, nx11, w.y);
+    return mix(nxy0, nxy1, w.z);  // [0, 1]
+}
+
+// Fractal Brownian motion: sum value-noise octaves with frequency growing by
+// `lacunarity` and amplitude halving per octave. `octaves` clamped to [1, 6].
+fn fbm_value_noise(p_in: vec3<f32>, octaves_f: f32, lacunarity: f32) -> f32 {
+    let octaves = u32(clamp(octaves_f, 1.0, 6.0));
+    var sum = 0.0;
+    var amp = 1.0;
+    var amp_sum = 0.0;
+    var freq = 1.0;
+    var p = p_in;
+    for (var i = 0u; i < octaves; i = i + 1u) {
+        sum = sum + value_noise_3d(p * freq) * amp;
+        amp_sum = amp_sum + amp;
+        amp = amp * 0.5;
+        freq = freq * lacunarity;
+    }
+    return sum / max(amp_sum, 1e-4);  // [0, 1]
+}
+
+// Apply the per-volume noise driver at a world position. Returns a unitless
+// multiplier in roughly [0, 1.4] (the centred mean is around 0.6-0.8). The
+// shader multiplies the local density by this value, so static density is
+// preserved on average.
+fn apply_noise(
+    flags: u32,
+    noise_pack: vec4<f32>,
+    noise_vel: vec3<f32>,
+    world_pos: vec3<f32>,
+    time: f32,
+) -> f32 {
+    if (flags & FLAG_USE_NOISE) == 0u {
+        return 1.0;
+    }
+    let scale = max(noise_pack.x, 1e-4);
+    let octaves = noise_pack.y;
+    let time_scale = noise_pack.z;
+    let lacunarity = max(noise_pack.w, 1.1);
+    let warp = vec3<f32>(
+        sin(time * time_scale * 0.71),
+        cos(time * time_scale * 0.83),
+        sin(time * time_scale * 0.59 + 1.7),
+    );
+    let p = (world_pos + noise_vel * time) * scale + warp;
+    return fbm_value_noise(p, octaves, lacunarity);
+}
+
+// Sample the bound 3D density texture at normalized coordinates within the
+// volume's world-space AABB. Returns the texture value (typically [0, 1]).
+// `aabb_min` and `aabb_max` describe the volume's spatial bounds:
+//   Box: shape min / max.
+//   Sphere: centre +/- radius (bounding cube).
+fn sample_density_texture(
+    aabb_min: vec3<f32>,
+    aabb_max: vec3<f32>,
+    world_pos: vec3<f32>,
+) -> f32 {
+    let extent = max(aabb_max - aabb_min, vec3<f32>(1e-4));
+    let uvw = clamp((world_pos - aabb_min) / extent, vec3<f32>(0.0), vec3<f32>(1.0));
+    return textureSampleLevel(density_texture, density_sampler, uvw, 0.0).r;
+}
 
 // Apply the per-volume density remap at a world position. Returns a unitless
 // scalar in [0, 1] that the per-step extinction multiplies the base density by.
@@ -312,6 +419,16 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         entry.emission_param = v.params.z;
         entry.remap_data = v.remap_data;
         entry.remap_data2 = v.remap_data2;
+        entry.noise_pack = v.noise_pack;
+        entry.noise_vel = v.noise_vel;
+        if v.shape_pack.x == 0u {
+            entry.tex_aabb_min = v.p0.xyz;
+            entry.tex_aabb_max = v.p1.xyz;
+        } else {
+            let r = v.p0.w;
+            entry.tex_aabb_min = v.p0.xyz - vec3<f32>(r);
+            entry.tex_aabb_max = v.p0.xyz + vec3<f32>(r);
+        }
         intervals[n_intervals] = entry;
         n_intervals = n_intervals + 1u;
     }
@@ -364,11 +481,34 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let zenith = clamp(sun_dir.z * 0.5 + 0.5, 0.0, 1.0);
         let ambient = mix(ambient_bot, ambient_top, zenith);
         let use_ramp = (iv.flags & FLAG_USE_RAMP) != 0u;
+        let use_density_tex = (iv.flags & FLAG_USE_DENSITY_TEXTURE) != 0u;
+        let time = uniforms.time_pack.x;
+        // World-space AABB for density-texture sampling. For Box volumes the
+        // ray-intersection uses p0..p1 directly; for Sphere we have centre
+        // (p0.xyz) and radius (p0.w), so the AABB is centre +/- radius.
+        var aabb_min: vec3<f32>;
+        var aabb_max: vec3<f32>;
+        // The original `GpuScatterVolume` for this interval is not retained
+        // verbatim, but we can reconstruct the AABB from p0/p1 and the
+        // shape kind. Re-fetch from the uniforms array by stable ordering
+        // would be cleaner; for V4 we encode the shape kind into a single
+        // bit of `remap_data.w` only when noise/texture flag is set, but
+        // that conflicts with existing remap semantics. Instead we accept
+        // a small redundancy: pass the AABB through with each interval.
+        // (See Interval struct below.)
+        aabb_min = iv.tex_aabb_min;
+        aabb_max = iv.tex_aabb_max;
         for (var s: u32 = 0u; s < MARCH_STEPS; s = s + 1u) {
             let t = iv.t_enter + (f32(s) + 0.5) * dt;
             let p = eye + ray_dir * t;
             let remap = apply_remap(iv.remap_kind, iv.remap_data, iv.remap_data2, p);
-            let local_density = iv.density * remap;
+            var modulator: f32;
+            if use_density_tex {
+                modulator = sample_density_texture(aabb_min, aabb_max, p);
+            } else {
+                modulator = apply_noise(iv.flags, iv.noise_pack, iv.noise_vel.xyz, p, time);
+            }
+            let local_density = iv.density * remap * modulator;
             let step_extinction = local_density * dt;
             let step_alpha = 1.0 - exp(-step_extinction);
 

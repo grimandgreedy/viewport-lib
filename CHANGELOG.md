@@ -2,6 +2,21 @@
 
 ## [Unreleased changes]
 
+### ScatterVolume animated noise (volumetric effects V4)
+
+`ScatterVolume.noise: Option<NoiseDriver>` is now honoured: procedural fbm value noise modulates the per-step local density, optionally drifting in world space (`scroll_velocity`) and/or evolving in place (`time_scale` domain warp).
+
+API:
+- `NoiseDriver { scale, octaves, scroll_velocity, time_scale, lacunarity }` — `scale` is base frequency in inverse world units; `octaves` is clamped to 1..=6 by the shader; `lacunarity` defaults to 2.0.
+- Shader noise function is a 3D fbm value noise (cheaper than gradient Perlin; good enough for fog / smoke / fire). Each march step samples it and multiplies the remapped density.
+- `ScatterUniforms` now carries `time` (elapsed seconds since `ViewportRenderer` construction). Static noise (`time_scale = 0`, zero scroll) is wallpaper; non-zero `time_scale` makes the field evolve without translating (good for fire flicker); non-zero `scroll_velocity` makes it drift (good for smoke columns and cloud layers).
+
+GPU packing grew to 144 bytes per volume (added `noise_pack` and `noise_vel`).
+
+`ScatterVolume.density_texture: Option<VolumeId>` accepts an externally uploaded 3D scalar field (use the existing `ViewportGpuResources::upload_volume` API). The scatter pipeline binds it at a new 3D-texture slot and samples it at normalized coordinates within the volume's world-space AABB (sphere shapes use their bounding cube). When set, the texture takes precedence over the procedural noise; consumers wanting baked sim output as the density source plug it in here. Only one density texture is bound per pass (first volume with a texture wins); per-frame multi-texture atlases are a possible future optimisation.
+
+Showcase 50 bakes a 32^3 hollow-shell density at startup and exposes a "Use baked 3D density texture" toggle on the sphere volume.
+
 ### ScatterVolume authoring richness (volumetric effects V3)
 
 `ScatterVolume.density_remap`, `ScatterVolume.emission`, and `ColourSource::Ramp` are honoured at sample time:

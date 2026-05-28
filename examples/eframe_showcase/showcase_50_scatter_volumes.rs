@@ -9,7 +9,7 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BuiltinColourmap, ColourSource, DensityRemap, Emission, EmissionCurve, Material,
+    BuiltinColourmap, ColourSource, DensityRemap, Emission, EmissionCurve, Material, NoiseDriver,
     ScatterVolume, ScatterVolumeItem, ViewportRenderer,
     scene::{Scene, aabb::Aabb},
 };
@@ -33,6 +33,8 @@ pub(crate) struct SvolState {
     pub sphere_colour: [f32; 3],
     pub sphere_radius: f32,
     pub sphere_anisotropy: f32,
+    pub sphere_use_texture: bool,
+    pub sphere_texture_id: Option<viewport_lib::VolumeId>,
 
     pub fire_enabled: bool,
     pub fire_density: f32,
@@ -42,6 +44,11 @@ pub(crate) struct SvolState {
     pub fire_falloff: f32,
     pub fire_use_ramp: bool,
     pub fire_ramp_id: viewport_lib::ColourmapId,
+    pub fire_animate: bool,
+    pub fire_noise_scale: f32,
+    pub fire_noise_octaves: u32,
+    pub fire_noise_time_scale: f32,
+    pub fire_noise_scroll_z: f32,
 
     pub show_global_outline: bool,
     pub show_sphere_outline: bool,
@@ -71,6 +78,8 @@ impl Default for SvolState {
             sphere_colour: [0.95, 0.65, 0.45],
             sphere_radius: 1.6,
             sphere_anisotropy: 0.0,
+            sphere_use_texture: false,
+            sphere_texture_id: None,
             fire_enabled: false,
             fire_density: 1.2,
             fire_colour: [1.0, 0.55, 0.18],
@@ -79,6 +88,11 @@ impl Default for SvolState {
             fire_falloff: 1.4,
             fire_use_ramp: true,
             fire_ramp_id: viewport_lib::ColourmapId(0),
+            fire_animate: true,
+            fire_noise_scale: 2.5,
+            fire_noise_octaves: 4,
+            fire_noise_time_scale: 1.6,
+            fire_noise_scroll_z: 0.4,
             show_global_outline: false,
             show_sphere_outline: true,
             sun_dir: [-0.6, 0.2, 0.6],
@@ -145,6 +159,33 @@ impl App {
         self.svol_state.fire_ramp_id =
             renderer.resources().builtin_colourmap_id(BuiltinColourmap::Inferno);
 
+        // Bake a 32^3 procedural density (a hollow spherical shell with
+        // sinusoidal modulation) and upload it as a 3D R32Float texture.
+        // The sphere volume can opt in to using this instead of fbm noise.
+        let dim: u32 = 32;
+        let n = dim as usize;
+        let mut data: Vec<f32> = Vec::with_capacity(n * n * n);
+        for z in 0..n {
+            for y in 0..n {
+                for x in 0..n {
+                    let fx = (x as f32 + 0.5) / n as f32 - 0.5;
+                    let fy = (y as f32 + 0.5) / n as f32 - 0.5;
+                    let fz = (z as f32 + 0.5) / n as f32 - 0.5;
+                    let r = (fx * fx + fy * fy + fz * fz).sqrt();
+                    let shell = (1.0 - (r * 4.0 - 1.6).abs()).max(0.0);
+                    let swirl = 0.5
+                        + 0.5
+                            * ((fx * 24.0 + fz * 16.0).sin()
+                                * (fy * 18.0 + fx * 12.0).sin());
+                    data.push((shell * swirl).clamp(0.0, 1.0));
+                }
+            }
+        }
+        let tex_id = renderer
+            .resources_mut()
+            .upload_volume(&self.device, &self.queue, &data, [dim, dim, dim]);
+        self.svol_state.sphere_texture_id = Some(tex_id);
+
         self.svol_state.built = true;
     }
 
@@ -192,6 +233,14 @@ impl App {
                 center,
                 falloff: s.fire_falloff,
             };
+            if s.fire_animate {
+                let mut nd = NoiseDriver::default();
+                nd.scale = s.fire_noise_scale;
+                nd.octaves = s.fire_noise_octaves;
+                nd.time_scale = s.fire_noise_time_scale;
+                nd.scroll_velocity = [0.0, 0.0, s.fire_noise_scroll_z];
+                v.noise = Some(nd);
+            }
             let mut item = ScatterVolumeItem::new(v);
             item.settings.unlit = false;
             fd.scene.scatter_volumes.push(item);
@@ -203,6 +252,9 @@ impl App {
                 s.sphere_density,
                 s.sphere_colour,
             );
+            if s.sphere_use_texture {
+                v.density_texture = s.sphere_texture_id;
+            }
             v.anisotropy = s.sphere_anisotropy;
             let mut item = ScatterVolumeItem::new(v);
             item.settings.selected = s.show_sphere_outline;
@@ -285,6 +337,10 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
         ui.label("Colour");
         ui.color_edit_button_rgb(&mut s.sphere_colour);
     });
+    ui.checkbox(
+        &mut s.sphere_use_texture,
+        "Use baked 3D density texture (V4)",
+    );
 
     ui.separator();
     ui.heading("Fire (Sphere with emission + ExpFalloff)");
@@ -310,6 +366,25 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
         ui.color_edit_button_rgb(&mut s.fire_colour);
     });
     ui.checkbox(&mut s.fire_use_ramp, "Use Inferno colourmap (Ramp)");
+    ui.checkbox(&mut s.fire_animate, "Animate (V4 noise)");
+    if s.fire_animate {
+        ui.horizontal(|ui| {
+            ui.label("Noise scale");
+            ui.add(egui::Slider::new(&mut s.fire_noise_scale, 0.5..=8.0).step_by(0.1));
+        });
+        ui.horizontal(|ui| {
+            ui.label("Octaves");
+            ui.add(egui::Slider::new(&mut s.fire_noise_octaves, 1..=6));
+        });
+        ui.horizontal(|ui| {
+            ui.label("Time scale");
+            ui.add(egui::Slider::new(&mut s.fire_noise_time_scale, 0.0..=5.0).step_by(0.05));
+        });
+        ui.horizontal(|ui| {
+            ui.label("Vertical scroll");
+            ui.add(egui::Slider::new(&mut s.fire_noise_scroll_z, -2.0..=2.0).step_by(0.05));
+        });
+    }
 
     ui.separator();
     if ui.button("Teleport camera inside global volume").clicked() {
@@ -324,9 +399,8 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
     ui.checkbox(&mut s.show_global_outline, "Show global outline");
     ui.checkbox(&mut s.show_sphere_outline, "Show sphere outline");
     ui.label(
-        "V3 adds density remaps, emission, colour ramps, and a virtual point\n\
-         light derived from emissive volumes (warm light on nearby surfaces).\n\
-         Smoothstep uses the volume's own centre; fire uses ExpFalloff + the\n\
-         Inferno LUT.",
+        "V4 adds procedural noise + animation. Fire flickers via turbulent\n\
+         noise with a time-domain warp; smoke / clouds would use scroll\n\
+         velocity instead. External 3D density textures are a follow-up.",
     );
 }
