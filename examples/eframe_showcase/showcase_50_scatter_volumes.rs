@@ -9,8 +9,8 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    DensityRemap, Emission, EmissionCurve, Material, ScatterVolume, ScatterVolumeItem,
-    ViewportRenderer,
+    BuiltinColourmap, ColourSource, DensityRemap, Emission, EmissionCurve, Material,
+    ScatterVolume, ScatterVolumeItem, ViewportRenderer,
     scene::{Scene, aabb::Aabb},
 };
 
@@ -40,6 +40,8 @@ pub(crate) struct SvolState {
     pub fire_radius: f32,
     pub fire_emission: f32,
     pub fire_falloff: f32,
+    pub fire_use_ramp: bool,
+    pub fire_ramp_id: viewport_lib::ColourmapId,
 
     pub show_global_outline: bool,
     pub show_sphere_outline: bool,
@@ -75,6 +77,8 @@ impl Default for SvolState {
             fire_radius: 1.0,
             fire_emission: 4.0,
             fire_falloff: 1.4,
+            fire_use_ramp: true,
+            fire_ramp_id: viewport_lib::ColourmapId(0),
             show_global_outline: false,
             show_sphere_outline: true,
             sun_dir: [-0.6, 0.2, 0.6],
@@ -138,6 +142,9 @@ impl App {
             hot_mat,
         );
 
+        self.svol_state.fire_ramp_id =
+            renderer.resources().builtin_colourmap_id(BuiltinColourmap::Inferno);
+
         self.svol_state.built = true;
     }
 
@@ -174,6 +181,9 @@ impl App {
                 s.fire_density,
                 s.fire_colour,
             );
+            if s.fire_use_ramp {
+                v.colour = ColourSource::Ramp(s.fire_ramp_id);
+            }
             v.emission = Emission::Strength {
                 strength: s.fire_emission,
                 curve: EmissionCurve::Power(2.0),
@@ -183,9 +193,6 @@ impl App {
                 falloff: s.fire_falloff,
             };
             let mut item = ScatterVolumeItem::new(v);
-            // Fire reads as self-illuminated; nearby surfaces are not lit by
-            // the volume itself in V3 (a virtual point light for surface
-            // illumination is reserved for a follow-up phase).
             item.settings.unlit = false;
             fd.scene.scatter_volumes.push(item);
         }
@@ -299,9 +306,10 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
         ui.add(egui::Slider::new(&mut s.fire_falloff, 0.2..=4.0).step_by(0.05));
     });
     ui.horizontal(|ui| {
-        ui.label("Colour");
+        ui.label("Tint");
         ui.color_edit_button_rgb(&mut s.fire_colour);
     });
+    ui.checkbox(&mut s.fire_use_ramp, "Use Inferno colourmap (Ramp)");
 
     ui.separator();
     if ui.button("Teleport camera inside global volume").clicked() {
@@ -316,9 +324,9 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
     ui.checkbox(&mut s.show_global_outline, "Show global outline");
     ui.checkbox(&mut s.show_sphere_outline, "Show sphere outline");
     ui.label(
-        "V3 adds density remaps and emission. Soft-edge fog uses a radial\n\
-         smoothstep; fire uses ExpFalloff + Power emission. Colour ramps\n\
-         (ColourSource::Ramp) and the fire-as-light virtual-light hook are\n\
-         reserved for a follow-up phase.",
+        "V3 adds density remaps, emission, colour ramps, and a virtual point\n\
+         light derived from emissive volumes (warm light on nearby surfaces).\n\
+         Smoothstep uses the volume's own centre; fire uses ExpFalloff + the\n\
+         Inferno LUT.",
     );
 }

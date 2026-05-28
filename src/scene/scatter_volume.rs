@@ -95,6 +95,17 @@ impl ScatterVolume {
             }
         }
     }
+
+    /// World-space centre of the volume's shape.
+    pub fn shape_centre(&self) -> [f32; 3] {
+        match self.shape {
+            ScatterShape::Box(b) => {
+                let c = (b.min + b.max) * 0.5;
+                [c.x, c.y, c.z]
+            }
+            ScatterShape::Sphere { center, .. } => center,
+        }
+    }
 }
 
 /// Spatial bounds of a [`ScatterVolume`].
@@ -199,14 +210,15 @@ impl Default for NoiseDriver {
 /// custom render paths can pack their own buffers; ordinary use does not need
 /// to touch this.
 ///
-/// Layout: 96 bytes, 16-byte aligned. Matches `GpuScatterVolume` in
+/// Layout: 112 bytes, 16-byte aligned. Matches `GpuScatterVolume` in
 /// `src/shaders/scatter_volume.wgsl`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuScatterVolume {
     /// 0 = Box, 1 = Sphere. Future variants extend this number.
     pub shape_kind: u32,
-    /// Bit flags: 1 = unlit (skip in-scattering), 2 = receive_shadows.
+    /// Bit flags: 1 = unlit (skip in-scattering), 2 = receive_shadows,
+    /// 4 = use_ramp (sample colourmap LUT instead of flat colour).
     pub flags: u32,
     /// Density remap kind: 0 = Identity, 1 = Smoothstep, 2 = ExpFalloff.
     pub remap_kind: u32,
@@ -216,20 +228,25 @@ pub struct GpuScatterVolume {
     pub p0: [f32; 4],
     /// Box: `max.xyz, _`. Sphere: unused.
     pub p1: [f32; 4],
-    /// RGB scattered colour and density (a = density).
+    /// RGB scattered colour and density (a = density). When the `use_ramp`
+    /// flag is set, rgb is a tint that multiplies the LUT sample.
     pub colour_density: [f32; 4],
     /// Scalar parameters: x = Henyey-Greenstein anisotropy g,
     /// y = emission_strength, z = emission_curve_param, w = reserved.
     pub params: [f32; 4],
-    /// Density remap data. Smoothstep: `(lo, hi, 0, 0)`. ExpFalloff:
-    /// `(center.x, center.y, center.z, falloff)`. Identity: unused.
+    /// Per-remap centre + a leading scalar: `(center.x, center.y, center.z, a)`.
+    /// Smoothstep: `a = lo`. ExpFalloff: `a = falloff`. Identity: unused.
     pub remap_data: [f32; 4],
+    /// Per-remap overflow: `x = hi` for Smoothstep; unused otherwise.
+    pub remap_data2: [f32; 4],
 }
 
 /// Flag bit: skip in-scattering (treat the volume as `unlit`).
 pub const SCATTER_FLAG_UNLIT: u32 = 1;
 /// Flag bit: sample the shadow map at each march step.
 pub const SCATTER_FLAG_RECEIVE_SHADOWS: u32 = 2;
+/// Flag bit: this volume's colour comes from the bound colourmap LUT.
+pub const SCATTER_FLAG_USE_RAMP: u32 = 4;
 
 impl GpuScatterVolume {
     /// Pack a CPU `ScatterVolume` into the GPU layout. `density_multiplier`
@@ -241,13 +258,18 @@ impl GpuScatterVolume {
         if !(density > 0.0) {
             return None;
         }
+        let mut effective_flags = flags;
         let colour = match volume.colour {
             ColourSource::Flat(rgb) => rgb,
-            // V3 ships `Flat`. `Ramp` is reserved for a follow-up phase that
-            // adds the colourmap LUT binding to the scatter pipeline. A Ramp
-            // volume renders as mid-grey for now so it is visible but
-            // obviously placeholder.
-            ColourSource::Ramp(_) => [0.5, 0.5, 0.5],
+            ColourSource::Ramp(_) => {
+                // Tag the volume so the shader samples the bound colourmap
+                // LUT. `colour_density.rgb` becomes a tint applied on top of
+                // the LUT sample; default to white so the LUT shows through
+                // unchanged. Consumers wanting a tinted ramp can construct
+                // with a tinted `Flat` colour before switching to `Ramp`.
+                effective_flags |= SCATTER_FLAG_USE_RAMP;
+                [1.0, 1.0, 1.0]
+            }
         };
         let (shape_kind, p0, p1) = match volume.shape {
             ScatterShape::Box(b) => (
@@ -262,12 +284,25 @@ impl GpuScatterVolume {
             ),
         };
         let anisotropy = volume.anisotropy.clamp(-0.95, 0.95);
-        let (remap_kind, remap_data) = match volume.density_remap {
-            DensityRemap::Identity => (0u32, [0.0; 4]),
-            DensityRemap::Smoothstep { lo, hi } => (1u32, [lo, hi, 0.0, 0.0]),
-            DensityRemap::ExpFalloff { center, falloff } => {
-                (2u32, [center[0], center[1], center[2], falloff])
+        let centre = match volume.shape {
+            ScatterShape::Box(b) => {
+                let c = (b.min + b.max) * 0.5;
+                [c.x, c.y, c.z]
             }
+            ScatterShape::Sphere { center, .. } => center,
+        };
+        let (remap_kind, remap_data, remap_data2) = match volume.density_remap {
+            DensityRemap::Identity => (0u32, [0.0; 4], [0.0; 4]),
+            DensityRemap::Smoothstep { lo, hi } => (
+                1u32,
+                [centre[0], centre[1], centre[2], lo],
+                [hi, 0.0, 0.0, 0.0],
+            ),
+            DensityRemap::ExpFalloff { center, falloff } => (
+                2u32,
+                [center[0], center[1], center[2], falloff],
+                [0.0; 4],
+            ),
         };
         let (emission_kind, emission_strength, emission_param) = match volume.emission {
             Emission::None => (0u32, 0.0, 0.0),
@@ -279,7 +314,7 @@ impl GpuScatterVolume {
         };
         Some(Self {
             shape_kind,
-            flags,
+            flags: effective_flags,
             remap_kind,
             emission_kind,
             p0,
@@ -287,6 +322,7 @@ impl GpuScatterVolume {
             colour_density: [colour[0], colour[1], colour[2], density],
             params: [anisotropy, emission_strength, emission_param, 0.0],
             remap_data,
+            remap_data2,
         })
     }
 }

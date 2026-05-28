@@ -6,7 +6,7 @@
 //! pass and [`ViewportGpuResources::write_scatter_volumes`] each frame to
 //! upload the packed volume array.
 
-use crate::scene::scatter_volume::{GpuScatterVolume, ScatterVolume};
+use crate::scene::scatter_volume::{ColourSource, GpuScatterVolume, ScatterVolume};
 
 /// Hard cap on the number of volumes processed by the shader per fragment.
 /// Must match `MAX_SCATTER_VOLUMES` in `src/shaders/scatter_volume.wgsl`.
@@ -34,6 +34,7 @@ impl Default for ScatterUniformsRaw {
                 colour_density: [0.0; 4],
                 params: [0.0; 4],
                 remap_data: [0.0; 4],
+                remap_data2: [0.0; 4],
             }; MAX_SCATTER_VOLUMES],
             count: 0,
             _pad: [0; 3],
@@ -79,9 +80,44 @@ impl crate::resources::ViewportGpuResources {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 },
+                // binding 3: colourmap LUT (256x1 RGBA texture) for Ramp colour sources
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // binding 4: linear-clamp sampler for the colourmap LUT
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
         self.scatter_bind_group_layout = Some(bgl);
+    }
+
+    /// Ensure the colourmap-LUT sampler used by the scatter pass exists.
+    fn ensure_scatter_colourmap_sampler(&mut self, device: &wgpu::Device) {
+        if self.scatter_colourmap_sampler.is_some() {
+            return;
+        }
+        self.scatter_colourmap_sampler = Some(device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("scatter_volume_colourmap_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        }));
     }
 
     /// Lazily build the scatter-volume render pipeline.
@@ -213,6 +249,7 @@ impl crate::resources::ViewportGpuResources {
         self.ensure_scatter_bind_group_layout(device);
         self.ensure_scatter_uniform_buffer(device);
         self.ensure_scatter_depth_sampler(device);
+        self.ensure_scatter_colourmap_sampler(device);
 
         let mut raw = ScatterUniformsRaw::default();
         let mut n: u32 = 0;
@@ -231,12 +268,33 @@ impl crate::resources::ViewportGpuResources {
             queue.write_buffer(buf, 0, bytemuck::bytes_of(&raw));
         }
 
-        // Rebuild bind group when the bound depth view changes (resize, new
-        // viewport) or on first use.
-        if self.scatter_bind_group.is_none() || self.scatter_bound_depth != depth_view_token {
+        // Resolve the LUT to bind: the first Ramp volume's colourmap wins
+        // for the whole pass. Other Ramp volumes share it; consumers wanting
+        // multiple ramps per frame must defer to a follow-up phase that
+        // builds a per-frame LUT atlas. Fallback view is bound when no
+        // Ramp volume is present so the binding is always valid.
+        let mut lut_id: u64 = u64::MAX;
+        for (volume, _, _) in volumes.iter() {
+            if let ColourSource::Ramp(id) = volume.colour {
+                lut_id = id.0 as u64;
+                break;
+            }
+        }
+
+        // Rebuild bind group when the depth view or the bound LUT changes.
+        let token = depth_view_token ^ (lut_id.wrapping_mul(0x9E3779B97F4A7C15));
+        if self.scatter_bind_group.is_none() || self.scatter_bound_depth != token {
             let bgl = self.scatter_bind_group_layout.as_ref().unwrap();
             let buf = self.scatter_uniform_buffer.as_ref().unwrap();
-            let sampler = self.scatter_depth_sampler.as_ref().unwrap();
+            let depth_sampler = self.scatter_depth_sampler.as_ref().unwrap();
+            let lut_sampler = self.scatter_colourmap_sampler.as_ref().unwrap();
+            let lut_view: &wgpu::TextureView = if lut_id == u64::MAX {
+                &self.fallback_lut_view
+            } else {
+                self.colourmap_views
+                    .get(lut_id as usize)
+                    .unwrap_or(&self.fallback_lut_view)
+            };
             let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("scatter_volume_bind_group"),
                 layout: bgl,
@@ -251,12 +309,20 @@ impl crate::resources::ViewportGpuResources {
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::Sampler(sampler),
+                        resource: wgpu::BindingResource::Sampler(depth_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(lut_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::Sampler(lut_sampler),
                     },
                 ],
             });
             self.scatter_bind_group = Some(bg);
-            self.scatter_bound_depth = depth_view_token;
+            self.scatter_bound_depth = token;
         }
 
         n

@@ -77,15 +77,17 @@ struct GpuScatterVolume {
     shape_pack:     vec4<u32>,   // x=kind (0=box,1=sphere), y=flags, z=remap_kind, w=emission_kind
     p0:             vec4<f32>,
     p1:             vec4<f32>,
-    colour_density: vec4<f32>,   // rgb=colour, a=density
+    colour_density: vec4<f32>,   // rgb=colour OR tint when FLAG_USE_RAMP, a=density
     params:         vec4<f32>,   // x=anisotropy, y=emission_strength, z=emission_param, w=reserved
-    remap_data:     vec4<f32>,   // Smoothstep: (lo,hi,_,_). ExpFalloff: (center.xyz, falloff).
+    remap_data:     vec4<f32>,   // Smoothstep: (center.xyz, lo). ExpFalloff: (center.xyz, falloff).
+    remap_data2:    vec4<f32>,   // Smoothstep: (hi,_,_,_). ExpFalloff: unused.
 };
 
 const MAX_SCATTER_VOLUMES: u32 = 16u;
 const MARCH_STEPS:         u32 = 24u;
 const FLAG_UNLIT:           u32 = 1u;
 const FLAG_RECEIVE_SHADOWS: u32 = 2u;
+const FLAG_USE_RAMP:        u32 = 4u;
 const REMAP_IDENTITY:    u32 = 0u;
 const REMAP_SMOOTHSTEP:  u32 = 1u;
 const REMAP_EXP_FALLOFF: u32 = 2u;
@@ -106,9 +108,13 @@ struct ScatterUniforms {
 @group(0) @binding(4) var<uniform> clip_planes:    ClipPlanes;
 @group(0) @binding(5) var<uniform> shadow_atlas:   ShadowAtlas;
 
-@group(1) @binding(0) var<uniform> uniforms:      ScatterUniforms;
-@group(1) @binding(1) var          opaque_depth:  texture_depth_2d;
-@group(1) @binding(2) var          depth_sampler: sampler;
+@group(1) @binding(0) var<uniform> uniforms:        ScatterUniforms;
+@group(1) @binding(1) var          opaque_depth:    texture_depth_2d;
+@group(1) @binding(2) var          depth_sampler:   sampler;
+// Active colourmap LUT (256x1). Bound only when at least one volume has
+// `FLAG_USE_RAMP`; otherwise a 1x1 fallback texture is bound.
+@group(1) @binding(3) var          colourmap_lut:    texture_2d<f32>;
+@group(1) @binding(4) var          colourmap_sampler: sampler;
 
 struct VsOut {
     @builtin(position) clip_pos: vec4<f32>,
@@ -139,26 +145,32 @@ struct Interval {
     emission_strength: f32,
     emission_param:    f32,
     remap_data:        vec4<f32>,
+    remap_data2:       vec4<f32>,
 };
 
 // Apply the per-volume density remap at a world position. Returns a unitless
 // scalar in [0, 1] that the per-step extinction multiplies the base density by.
-fn apply_remap(kind: u32, data: vec4<f32>, world_pos: vec3<f32>) -> f32 {
+fn apply_remap(
+    kind: u32,
+    data: vec4<f32>,
+    data2: vec4<f32>,
+    world_pos: vec3<f32>,
+) -> f32 {
     if kind == REMAP_SMOOTHSTEP {
-        // data.xy = (lo, hi). We do not have a per-voxel scalar yet (V4
-        // brings noise), so remap on the distance to the volume centre is
-        // the right shape for "soft edge" fog: lo = inner radius, hi = outer.
-        // The smoothstep is inverted so densities are highest near the centre.
-        let lo = data.x;
-        let hi = max(data.y, lo + 1e-4);
-        let r = length(world_pos);
+        // Radial smoothstep around the volume's own centre. Density is full
+        // strength up to `lo` and decays to zero at `hi`, regardless of the
+        // volume's position in world space.
+        let centre = data.xyz;
+        let lo = data.w;
+        let hi = max(data2.x, lo + 1e-4);
+        let r = length(world_pos - centre);
         let t = clamp((r - lo) / (hi - lo), 0.0, 1.0);
         let s_curve = t * t * (3.0 - 2.0 * t);
         return 1.0 - s_curve;
     } else if kind == REMAP_EXP_FALLOFF {
-        let center = data.xyz;
+        let centre = data.xyz;
         let falloff = max(data.w, 1e-4);
-        let r = length(world_pos - center);
+        let r = length(world_pos - centre);
         return exp(-falloff * r);
     }
     return 1.0;
@@ -299,6 +311,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         entry.emission_strength = v.params.y;
         entry.emission_param = v.params.z;
         entry.remap_data = v.remap_data;
+        entry.remap_data2 = v.remap_data2;
         intervals[n_intervals] = entry;
         n_intervals = n_intervals + 1u;
     }
@@ -350,13 +363,26 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         // blend gives a reasonable shape.
         let zenith = clamp(sun_dir.z * 0.5 + 0.5, 0.0, 1.0);
         let ambient = mix(ambient_bot, ambient_top, zenith);
+        let use_ramp = (iv.flags & FLAG_USE_RAMP) != 0u;
         for (var s: u32 = 0u; s < MARCH_STEPS; s = s + 1u) {
             let t = iv.t_enter + (f32(s) + 0.5) * dt;
             let p = eye + ray_dir * t;
-            let remap = apply_remap(iv.remap_kind, iv.remap_data, p);
+            let remap = apply_remap(iv.remap_kind, iv.remap_data, iv.remap_data2, p);
             let local_density = iv.density * remap;
             let step_extinction = local_density * dt;
             let step_alpha = 1.0 - exp(-step_extinction);
+
+            // Local colour: either the volume's flat colour (tint of [1,1,1]
+            // by default for Ramp volumes) or a colourmap LUT sample driven
+            // by the remap value `remap` in [0, 1].
+            var local_colour = iv.colour_rgb;
+            if use_ramp {
+                let lut_uv = vec2<f32>(clamp(remap, 0.0, 1.0), 0.5);
+                let lut_sample = textureSampleLevel(
+                    colourmap_lut, colourmap_sampler, lut_uv, 0.0,
+                );
+                local_colour = lut_sample.rgb * iv.colour_rgb;
+            }
 
             // In-scattering: sun (shadowed) + ambient, modulated by volume
             // colour. Skipped when `unlit` so the volume reads as a flat
@@ -367,7 +393,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
                 if recv_shadows {
                     sun_contrib = sun_contrib * sample_sun_shadow(p);
                 }
-                in_scatter = (sun_contrib + ambient) * iv.colour_rgb;
+                in_scatter = (sun_contrib + ambient) * local_colour;
             }
 
             // Emission: self-emitted radiance proportional to the local
@@ -376,7 +402,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             var emission = vec3<f32>(0.0);
             if iv.emission_kind != EMISSION_NONE {
                 let f = emission_factor(iv.emission_kind, iv.emission_param, local_density);
-                emission = iv.colour_rgb * (iv.emission_strength * f);
+                emission = local_colour * (iv.emission_strength * f);
             }
 
             let one_minus_acc = 1.0 - acc_a;

@@ -2,16 +2,21 @@
 
 ## [Unreleased changes]
 
-### ScatterVolume authoring richness (volumetric effects V3, partial)
+### ScatterVolume authoring richness (volumetric effects V3)
 
-`ScatterVolume.density_remap` and `ScatterVolume.emission` are now honoured at sample time:
+`ScatterVolume.density_remap`, `ScatterVolume.emission`, and `ColourSource::Ramp` are honoured at sample time:
 
-- `DensityRemap::Smoothstep { lo, hi }`: radial fall-off (distance from world origin). Use for soft-edge fog — the silhouette that V2 left looking abrupt is now a smooth gradient.
-- `DensityRemap::ExpFalloff { center, falloff }`: exponential decay from a world-space centre. Use for fire / magic-orb cores that should peak at the centre and trail off.
+- `DensityRemap::Smoothstep { lo, hi }`: radial fall-off computed from the volume's *own shape centre* (not world origin). Density is full strength up to `lo` and decays to zero at `hi`, regardless of where the volume sits in world space.
+- `DensityRemap::ExpFalloff { center, falloff }`: exponential decay from an explicit world-space centre.
 - `Emission::Strength { strength, curve }` with `EmissionCurve::Linear`, `Power(exp)`, or `Threshold(min_density)`: self-emitted radiance proportional to local (remapped) density. Added unconditionally each step — emission is not shadow-attenuated.
-- `ItemSettings.unlit` continues to skip the per-step in-scattering; emission still contributes, so an unlit emissive volume reads as a pure glow.
+- `ColourSource::Ramp(ColourmapId)`: the scatter pipeline binds the active ramp's 256x1 LUT each frame; the shader samples it at the remapped density value. `colour_density.rgb` becomes a tint that multiplies the LUT sample (default white). The first Ramp volume in the frame wins for the pass; a per-frame LUT atlas for multiple ramps is a follow-up.
+- `ItemSettings.unlit` continues to skip per-step in-scattering; emission still contributes, so an unlit emissive volume reads as a pure glow.
 
-GPU packing grew to 96 bytes per volume (added `remap_kind`, `emission_kind`, and a `remap_data: vec4<f32>` slot). `GpuScatterVolume::pack(volume, density_multiplier, flags)` keeps the same signature.
+Emissive volumes also derive a virtual point light each frame, placed at the volume centroid. Nearby opaque surfaces receive warm light from "fire-like" volumes without the consumer authoring a matching light by hand. Intensity scales with `emission_strength * density * opacity`; range scales with shape size. Virtual lights are appended after the consumer's own lights and drop if the 8-slot uniform cap is hit.
+
+GPU packing grew to 112 bytes per volume (added `remap_kind`, `emission_kind`, `remap_data`, `remap_data2`). `GpuScatterVolume::pack(volume, density_multiplier, flags)` keeps the same signature.
+
+Showcase 50 demonstrates Smoothstep (soft-edge global fog), ExpFalloff + Inferno ramp (fire orb), Power emission curve, and virtual-light illumination of nearby pillars.
 
 ### ScatterVolume lighting (volumetric effects V2)
 

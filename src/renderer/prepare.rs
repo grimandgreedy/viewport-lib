@@ -123,6 +123,99 @@ impl ViewportRenderer {
             }
         }
 
+        /// Derive virtual point lights from emissive scatter volumes so
+        /// nearby opaque surfaces receive warm light from "fire-like" volumes.
+        ///
+        /// Cheap approximation: one virtual `Point` light per emissive
+        /// volume, placed at the shape's centre. Intensity scales with
+        /// `emission_strength * density`; range scales with the shape's
+        /// longest axis. For `ColourSource::Ramp`, the colour is sampled
+        /// from the CPU-side LUT at the "hot end" of the ramp (the point
+        /// where emission contributes most), then multiplied by the tint.
+        fn derive_scatter_volume_virtual_lights(
+            items: &[crate::renderer::types::ScatterVolumeItem],
+            colourmaps_cpu: &[[[u8; 4]; 256]],
+        ) -> Vec<LightSource> {
+            use crate::scene::scatter_volume::{
+                ColourSource, Emission, EmissionCurve, ScatterShape,
+            };
+            // Sample the LUT at the value where emission peaks. For Linear
+            // and Power curves emission grows with density, so the centre
+            // of the volume (highest local density, typically remap = 1)
+            // dominates the illumination. Threshold emission is a step
+            // function; sampling just past the threshold is the most
+            // representative point.
+            fn lut_sample(lut: &[[u8; 4]; 256], t: f32) -> [f32; 3] {
+                let idx = (t.clamp(0.0, 1.0) * 255.0).round() as usize;
+                let p = lut[idx];
+                [
+                    p[0] as f32 / 255.0,
+                    p[1] as f32 / 255.0,
+                    p[2] as f32 / 255.0,
+                ]
+            }
+            let mut lights: Vec<LightSource> = Vec::new();
+            for item in items {
+                if item.settings.hidden {
+                    continue;
+                }
+                let (strength, sample_t) = match item.volume.emission {
+                    Emission::None => (0.0, 0.0),
+                    Emission::Strength { strength, curve } => match curve {
+                        EmissionCurve::Linear | EmissionCurve::Power(_) => (strength, 0.95),
+                        EmissionCurve::Threshold(min_d) => {
+                            (strength, (min_d + 0.05).clamp(0.0, 1.0))
+                        }
+                    },
+                };
+                if strength <= 0.0 {
+                    continue;
+                }
+                let centre = item.volume.shape_centre();
+                let (extent, size) = match item.volume.shape {
+                    ScatterShape::Box(b) => {
+                        let half = (b.max - b.min) * 0.5;
+                        let r = half.length();
+                        (r, r)
+                    }
+                    ScatterShape::Sphere { radius, .. } => (radius, radius),
+                };
+                let tint: [f32; 3] = match item.volume.colour {
+                    ColourSource::Flat(rgb) => rgb,
+                    ColourSource::Ramp(_) => [1.0, 1.0, 1.0],
+                };
+                let ramp_sample: [f32; 3] = match item.volume.colour {
+                    ColourSource::Flat(_) => [1.0, 1.0, 1.0],
+                    ColourSource::Ramp(id) => match colourmaps_cpu.get(id.0) {
+                        Some(lut) => lut_sample(lut, sample_t),
+                        None => [1.0, 1.0, 1.0],
+                    },
+                };
+                let colour = [
+                    tint[0] * ramp_sample[0],
+                    tint[1] * ramp_sample[1],
+                    tint[2] * ramp_sample[2],
+                ];
+                // Intensity model: emission * density folded into a unitless
+                // scalar. Volume size enters through `range` rather than
+                // intensity to keep illumination consistent across resizes.
+                let intensity = strength * item.volume.density * item.settings.opacity;
+                if !(intensity > 0.0) {
+                    continue;
+                }
+                let range = (size * 4.0).max(extent * 2.0);
+                let mut light = LightSource::default();
+                light.kind = crate::renderer::types::LightKind::Point {
+                    position: centre,
+                    range,
+                };
+                light.colour = colour;
+                light.intensity = intensity;
+                lights.push(light);
+            }
+            lights
+        }
+
         /// Convert a `LightSource` to `SingleLightUniform`, computing shadow matrix for lights[0].
         fn build_single_light_uniform(
             src: &LightSource,
@@ -185,8 +278,23 @@ impl ViewportRenderer {
             }
         }
 
+        // Derive virtual point lights from emissive scatter volumes. These
+        // give nearby opaque surfaces warm illumination from "fire-like"
+        // volumes without the consumer having to author a matching light by
+        // hand. The lights are appended after the consumer's own lights and
+        // are dropped if the 8-slot cap is hit.
+        let virtual_scatter_lights = derive_scatter_volume_virtual_lights(
+            &frame.scene.scatter_volumes,
+            &resources.colourmaps_cpu,
+        );
+        let combined_lights: Vec<&LightSource> = lighting
+            .lights
+            .iter()
+            .chain(virtual_scatter_lights.iter())
+            .collect();
+
         // Build the LightsUniform for all active lights (max 8).
-        let light_count = lighting.lights.len().min(8) as u32;
+        let light_count = combined_lights.len().min(8) as u32;
         let mut lights_arr = [SingleLightUniform {
             light_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
             pos_or_dir: [0.0; 3],
@@ -201,7 +309,7 @@ impl ViewportRenderer {
             _pad: [0.0; 5],
         }; 8];
 
-        for (i, src) in lighting.lights.iter().take(8).enumerate() {
+        for (i, src) in combined_lights.iter().take(8).enumerate() {
             lights_arr[i] = build_single_light_uniform(src, shadow_center, shadow_extent, i == 0);
         }
 

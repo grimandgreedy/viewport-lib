@@ -2987,7 +2987,9 @@ pub struct ViewportGpuResources {
     pub(crate) scatter_bind_group: Option<wgpu::BindGroup>,
     /// Linear sampler used to read opaque depth in the scatter pass.
     pub(crate) scatter_depth_sampler: Option<wgpu::Sampler>,
-    /// Identity hash of the depth view bound in `scatter_bind_group`.
+    /// Linear-clamp sampler used to read the colourmap LUT in the scatter pass.
+    pub(crate) scatter_colourmap_sampler: Option<wgpu::Sampler>,
+    /// Combined token of (depth view, bound LUT) for `scatter_bind_group` reuse.
     pub(crate) scatter_bound_depth: u64,
 
     // --- IBL / environment map resources ---
