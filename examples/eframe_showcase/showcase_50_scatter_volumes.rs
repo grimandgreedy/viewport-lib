@@ -20,15 +20,23 @@ pub(crate) struct SvolState {
     pub global_enabled: bool,
     pub global_density: f32,
     pub global_colour: [f32; 3],
+    pub global_anisotropy: f32,
+    pub global_unlit: bool,
+    pub global_receive_shadows: bool,
 
     pub sphere_enabled: bool,
     pub sphere_density: f32,
     pub sphere_colour: [f32; 3],
     pub sphere_radius: f32,
+    pub sphere_anisotropy: f32,
 
-    pub camera_inside: bool,
     pub show_global_outline: bool,
     pub show_sphere_outline: bool,
+
+    pub sun_dir: [f32; 3],
+    pub sun_colour: [f32; 3],
+    pub sun_intensity: f32,
+    pub shadows_enabled: bool,
 }
 
 impl Default for SvolState {
@@ -39,13 +47,20 @@ impl Default for SvolState {
             global_enabled: true,
             global_density: 0.08,
             global_colour: [0.78, 0.82, 0.88],
+            global_anisotropy: 0.3,
+            global_unlit: false,
+            global_receive_shadows: true,
             sphere_enabled: true,
             sphere_density: 0.4,
             sphere_colour: [0.95, 0.65, 0.45],
             sphere_radius: 1.6,
-            camera_inside: false,
+            sphere_anisotropy: 0.0,
             show_global_outline: false,
             show_sphere_outline: true,
+            sun_dir: [-0.6, 0.2, 0.6],
+            sun_colour: [1.0, 0.96, 0.86],
+            sun_intensity: 2.0,
+            shadows_enabled: true,
         }
     }
 }
@@ -110,33 +125,29 @@ impl App {
     pub(crate) fn submit_svol_volumes(&self, fd: &mut viewport_lib::FrameData) {
         let s = &self.svol_state;
         if s.global_enabled {
-            // When the camera-inside toggle is on, lift the box ceiling so it
-            // encloses the eye. When off, cap the box below the typical orbit
-            // height so the eye sits outside and looks down into the fog.
-            let (z_min, z_max) = if s.camera_inside {
-                (-1.0_f32, 10.0)
-            } else {
-                (-1.0_f32, 2.5)
-            };
-            let v = ScatterVolume::box_uniform(
+            let mut v = ScatterVolume::box_uniform(
                 Aabb {
-                    min: glam::Vec3::new(-12.0, -12.0, z_min),
-                    max: glam::Vec3::new(12.0, 12.0, z_max),
+                    min: glam::Vec3::new(-12.0, -12.0, -1.0),
+                    max: glam::Vec3::new(12.0, 12.0, 6.0),
                 },
                 s.global_density,
                 s.global_colour,
             );
+            v.anisotropy = s.global_anisotropy;
             let mut item = ScatterVolumeItem::new(v);
             item.settings.selected = s.show_global_outline;
+            item.settings.unlit = s.global_unlit;
+            item.settings.receive_shadows = s.global_receive_shadows;
             fd.scene.scatter_volumes.push(item);
         }
         if s.sphere_enabled {
-            let v = ScatterVolume::sphere_uniform(
+            let mut v = ScatterVolume::sphere_uniform(
                 [4.0, 0.0, 1.8],
                 s.sphere_radius,
                 s.sphere_density,
                 s.sphere_colour,
             );
+            v.anisotropy = s.sphere_anisotropy;
             let mut item = ScatterVolumeItem::new(v);
             item.settings.selected = s.show_sphere_outline;
             fd.scene.scatter_volumes.push(item);
@@ -147,6 +158,30 @@ impl App {
 pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
     let s = &mut app.svol_state;
 
+    ui.heading("Sun");
+    ui.horizontal(|ui| {
+        ui.label("Dir X");
+        ui.add(egui::Slider::new(&mut s.sun_dir[0], -1.0..=1.0).step_by(0.01));
+    });
+    ui.horizontal(|ui| {
+        ui.label("Dir Y");
+        ui.add(egui::Slider::new(&mut s.sun_dir[1], -1.0..=1.0).step_by(0.01));
+    });
+    ui.horizontal(|ui| {
+        ui.label("Dir Z");
+        ui.add(egui::Slider::new(&mut s.sun_dir[2], 0.05..=1.0).step_by(0.01));
+    });
+    ui.horizontal(|ui| {
+        ui.label("Intensity");
+        ui.add(egui::Slider::new(&mut s.sun_intensity, 0.0..=5.0).step_by(0.05));
+    });
+    ui.horizontal(|ui| {
+        ui.label("Colour");
+        ui.color_edit_button_rgb(&mut s.sun_colour);
+    });
+    ui.checkbox(&mut s.shadows_enabled, "Cast shadows (god rays)");
+
+    ui.separator();
     ui.heading("Global fog (Box)");
     ui.checkbox(&mut s.global_enabled, "Enabled");
     ui.horizontal(|ui| {
@@ -154,9 +189,15 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
         ui.add(egui::Slider::new(&mut s.global_density, 0.0..=0.4).step_by(0.005));
     });
     ui.horizontal(|ui| {
+        ui.label("Anisotropy g");
+        ui.add(egui::Slider::new(&mut s.global_anisotropy, -0.9..=0.9).step_by(0.01));
+    });
+    ui.horizontal(|ui| {
         ui.label("Colour");
         ui.color_edit_button_rgb(&mut s.global_colour);
     });
+    ui.checkbox(&mut s.global_unlit, "Unlit (skip in-scattering)");
+    ui.checkbox(&mut s.global_receive_shadows, "Receive shadows (shafts)");
 
     ui.separator();
     ui.heading("Localized haze (Sphere)");
@@ -170,16 +211,29 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
         ui.add(egui::Slider::new(&mut s.sphere_radius, 0.5..=4.0).step_by(0.05));
     });
     ui.horizontal(|ui| {
+        ui.label("Anisotropy g");
+        ui.add(egui::Slider::new(&mut s.sphere_anisotropy, -0.9..=0.9).step_by(0.01));
+    });
+    ui.horizontal(|ui| {
         ui.label("Colour");
         ui.color_edit_button_rgb(&mut s.sphere_colour);
     });
 
     ui.separator();
-    ui.checkbox(&mut s.camera_inside, "Camera inside global volume");
+    if ui.button("Teleport camera inside global volume").clicked() {
+        app.camera.center = glam::Vec3::new(0.0, 0.0, 2.5);
+        app.camera.distance = 0.5;
+    }
+    if ui.button("Teleport camera outside global volume").clicked() {
+        app.camera.center = glam::Vec3::new(0.0, 0.0, 1.5);
+        app.camera.distance = 14.0;
+    }
+    let s = &mut app.svol_state;
     ui.checkbox(&mut s.show_global_outline, "Show global outline");
     ui.checkbox(&mut s.show_sphere_outline, "Show sphere outline");
     ui.label(
-        "V1 ships uniform density + flat colour + camera-inside handling.\n\
-         Lighting (V2), ramps + emission (V3), and noise (V4) are future phases.",
+        "V2 ships sun lighting, Henyey-Greenstein phase, and god rays from\n\
+         the cascaded shadow atlas. Try negative anisotropy with the sun behind\n\
+         the camera, or positive with the sun ahead.",
     );
 }

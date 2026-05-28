@@ -2,6 +2,18 @@
 
 ## [Unreleased changes]
 
+### ScatterVolume lighting (volumetric effects V2)
+
+`ScatterVolume` now interacts with scene lights. The fragment shader switched from per-interval uniform composition to a per-step ray-march. At each step it samples the primary directional light, applies a Henyey-Greenstein phase function driven by `ScatterVolume.anisotropy`, samples the cascaded shadow atlas (single-tap; PCF would be prohibitively expensive in the march loop) and accumulates in-scattering with Beer-Lambert absorption. Hemisphere ambient (`sky_colour` / `ground_colour`) lifts otherwise-black volumes.
+
+God-ray shafts are emergent: any directional light with shadows enabled produces visible shafts through a `ScatterVolume` with no extra authoring. `ItemSettings.unlit` short-circuits the per-step lighting back to V1's uniform composite. `ItemSettings.receive_shadows = false` skips the shadow sample and treats the sun as fully unoccluded inside the volume.
+
+API additions:
+- `ScatterVolume.anisotropy: f32` (clamped to ±0.95). 0 = isotropic fog; positive = forward-scattering (clouds, ~0.7); negative = back-scattering.
+- `GpuScatterVolume` gains `flags: u32` (unlit + receive_shadows bits) and `params: vec4<f32>` (anisotropy in `.x`). `pack(volume, opacity, flags)` is the new signature.
+
+Showcase 50 adds sun-direction and intensity sliders, shadow toggle, per-volume anisotropy sliders, and unlit / receive-shadows toggles.
+
 ### ScatterVolume (volumetric effects V1)
 
 New scene item type `ScatterVolume` for per-pixel ray-marched participating media (fog, smoke, haze). Box and Sphere shapes carry uniform density and a flat colour; the renderer composites visible volumes onto the HDR target after opaque + decals + OIT. No upload step is required: push items onto `SceneFrame::scatter_volumes` each frame. `ItemSettings` integration is consistent with other items (`hidden`, `opacity` as a density multiplier, `pick_id` for object picking). Camera-inside-volume is handled correctly.

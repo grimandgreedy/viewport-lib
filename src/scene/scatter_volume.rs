@@ -198,27 +198,39 @@ impl Default for NoiseDriver {
 /// CPU representation of the GPU storage entry. Public so consumers writing
 /// custom render paths can pack their own buffers; ordinary use does not need
 /// to touch this.
+///
+/// Layout: 80 bytes, 16-byte aligned. Matches `GpuScatterVolume` in
+/// `src/shaders/scatter_volume.wgsl`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuScatterVolume {
     /// 0 = Box, 1 = Sphere. Future variants extend this number.
     pub shape_kind: u32,
-    /// Padding to bring the next field to a 16-byte boundary.
-    pub _pad0: [u32; 3],
+    /// Bit flags: 1 = unlit (skip in-scattering), 2 = receive_shadows.
+    pub flags: u32,
+    /// Padding to bring `p0` to a 16-byte boundary.
+    pub _pad0: [u32; 2],
     /// Box: `min.xyz`, `_`. Sphere: `center.xyz, radius`.
     pub p0: [f32; 4],
     /// Box: `max.xyz, _`. Sphere: unused.
     pub p1: [f32; 4],
     /// RGB scattered colour and density (a = density).
     pub colour_density: [f32; 4],
+    /// V2 scalar parameters: `x` = Henyey-Greenstein anisotropy g, others reserved.
+    pub params: [f32; 4],
 }
+
+/// Flag bit: skip in-scattering (treat the volume as `unlit`).
+pub const SCATTER_FLAG_UNLIT: u32 = 1;
+/// Flag bit: sample the shadow map at each march step.
+pub const SCATTER_FLAG_RECEIVE_SHADOWS: u32 = 2;
 
 impl GpuScatterVolume {
     /// Pack a CPU `ScatterVolume` into the GPU layout. `density_multiplier`
-    /// folds `ItemSettings::opacity` into the effective density. Returns
-    /// `None` if the resulting density is non-positive (the renderer should
-    /// skip the volume entirely).
-    pub fn pack(volume: &ScatterVolume, density_multiplier: f32) -> Option<Self> {
+    /// folds `ItemSettings::opacity` into the effective density. `flags` is
+    /// the per-volume settings bitfield (see `SCATTER_FLAG_*` constants).
+    /// Returns `None` if the resulting density is non-positive.
+    pub fn pack(volume: &ScatterVolume, density_multiplier: f32, flags: u32) -> Option<Self> {
         let density = volume.density * density_multiplier;
         if !(density > 0.0) {
             return None;
@@ -241,12 +253,15 @@ impl GpuScatterVolume {
                 [0.0; 4],
             ),
         };
+        let anisotropy = volume.anisotropy.clamp(-0.95, 0.95);
         Some(Self {
             shape_kind,
-            _pad0: [0; 3],
+            flags,
+            _pad0: [0; 2],
             p0,
             p1,
             colour_density: [colour[0], colour[1], colour[2], density],
+            params: [anisotropy, 0.0, 0.0, 0.0],
         })
     }
 }
@@ -326,7 +341,7 @@ mod tests {
     #[test]
     fn pack_zero_density_returns_none() {
         let v = ScatterVolume::default();
-        assert!(GpuScatterVolume::pack(&v, 1.0).is_none());
+        assert!(GpuScatterVolume::pack(&v, 1.0, 0).is_none());
     }
 
     #[test]
@@ -339,7 +354,7 @@ mod tests {
             0.2,
             [0.1, 0.2, 0.3],
         );
-        let g = GpuScatterVolume::pack(&v, 1.0).unwrap();
+        let g = GpuScatterVolume::pack(&v, 1.0, 0).unwrap();
         assert_eq!(g.shape_kind, 0);
         assert_eq!(&g.p0[..3], &[-1.0, -2.0, -3.0]);
         assert_eq!(&g.p1[..3], &[4.0, 5.0, 6.0]);
@@ -349,7 +364,7 @@ mod tests {
     #[test]
     fn pack_sphere_round_trips() {
         let v = ScatterVolume::sphere_uniform([1.0, 2.0, 3.0], 4.0, 0.5, [0.4, 0.5, 0.6]);
-        let g = GpuScatterVolume::pack(&v, 1.0).unwrap();
+        let g = GpuScatterVolume::pack(&v, 1.0, 0).unwrap();
         assert_eq!(g.shape_kind, 1);
         assert_eq!(g.p0, [1.0, 2.0, 3.0, 4.0]);
         assert_eq!(g.colour_density, [0.4, 0.5, 0.6, 0.5]);
@@ -365,7 +380,7 @@ mod tests {
             0.4,
             [1.0; 3],
         );
-        let g = GpuScatterVolume::pack(&v, 0.5).unwrap();
+        let g = GpuScatterVolume::pack(&v, 0.5, 0).unwrap();
         assert!((g.colour_density[3] - 0.2).abs() < 1e-6);
     }
 

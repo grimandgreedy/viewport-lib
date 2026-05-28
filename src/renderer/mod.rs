@@ -372,11 +372,11 @@ pub struct ViewportRenderer {
     pick_tvm_items: Vec<TransparentVolumeMeshItem>,
     /// Scatter volume items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_scatter_volume_items: Vec<crate::renderer::types::ScatterVolumeItem>,
-    /// Volumes packed into the GPU storage buffer this frame (volume, density_multiplier).
-    /// Stored so `render_viewport` can re-upload as needed without re-walking
-    /// the scene frame.
+    /// Volumes packed into the GPU storage buffer this frame
+    /// (volume, density_multiplier, flag bits). Stored so `render_viewport`
+    /// can re-upload as needed without re-walking the scene frame.
     pub(crate) prepared_scatter_volumes:
-        Vec<(crate::scene::scatter_volume::ScatterVolume, f32)>,
+        Vec<(crate::scene::scatter_volume::ScatterVolume, f32, u32)>,
     /// Opaque volume mesh items from the last `prepare()` call, retained for cell-level `pick()` dispatch.
     pick_volume_mesh_items: Vec<VolumeMeshItem>,
     /// Polyline items from the last `prepare()` call, retained for `pick()` dispatch.

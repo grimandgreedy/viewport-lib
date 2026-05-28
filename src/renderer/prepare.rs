@@ -1291,16 +1291,18 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // Scatter-volume selection / wireframe outlines: emit a polyline of
-        // the volume bounds for each selected or wireframe-flagged volume.
+        // Scatter-volume bounds outlines: emit a polyline of the volume
+        // shape for each volume whose `selected` or `wireframe` flag is set,
+        // or when global wireframe mode is on. Scatter volumes have no other
+        // selection feedback, so the outline is independent of
+        // `interaction.outline_selected` (which gates surface-mesh outlines).
         // ------------------------------------------------------------------
         if !frame.scene.scatter_volumes.is_empty() {
             for item in &frame.scene.scatter_volumes {
                 if item.settings.hidden {
                     continue;
                 }
-                let show_outline = (frame.interaction.outline_selected
-                    && item.settings.selected)
+                let show_outline = item.settings.selected
                     || item.settings.wireframe
                     || frame.viewport.wireframe_mode;
                 if !show_outline {
@@ -1322,9 +1324,6 @@ impl ViewportRenderer {
                 };
                 let mut gpu_data = resources.upload_polyline(device, queue, &polyline, vp_size);
                 gpu_data.wireframe = true;
-                if frame.interaction.outline_selected && item.settings.selected {
-                    self.polyline_selected_gpu_indices.push(self.polyline_gpu_data.len());
-                }
                 self.polyline_gpu_data.push(gpu_data);
             }
         }
@@ -5897,8 +5896,15 @@ impl ViewportRenderer {
                 if item.settings.hidden || item.settings.wireframe || global_wireframe {
                     continue;
                 }
+                let mut flags: u32 = 0;
+                if item.settings.unlit {
+                    flags |= crate::scene::scatter_volume::SCATTER_FLAG_UNLIT;
+                }
+                if item.settings.receive_shadows {
+                    flags |= crate::scene::scatter_volume::SCATTER_FLAG_RECEIVE_SHADOWS;
+                }
                 self.prepared_scatter_volumes
-                    .push((item.volume.clone(), item.settings.opacity));
+                    .push((item.volume.clone(), item.settings.opacity, flags));
             }
             self.pick_volume_mesh_items = frame.scene.volume_mesh_items.clone();
             self.pick_polyline_items = frame.scene.polylines.clone();

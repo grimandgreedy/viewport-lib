@@ -26,10 +26,12 @@ impl Default for ScatterUniformsRaw {
         Self {
             volumes: [GpuScatterVolume {
                 shape_kind: 0,
-                _pad0: [0; 3],
+                flags: 0,
+                _pad0: [0; 2],
                 p0: [0.0; 4],
                 p1: [0.0; 4],
                 colour_density: [0.0; 4],
+                params: [0.0; 4],
             }; MAX_SCATTER_VOLUMES],
             count: 0,
             _pad: [0; 3],
@@ -202,7 +204,7 @@ impl crate::resources::ViewportGpuResources {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        volumes: &[(ScatterVolume, f32)],
+        volumes: &[(ScatterVolume, f32, u32)],
         depth_view: &wgpu::TextureView,
         depth_view_token: u64,
     ) -> u32 {
@@ -212,11 +214,11 @@ impl crate::resources::ViewportGpuResources {
 
         let mut raw = ScatterUniformsRaw::default();
         let mut n: u32 = 0;
-        for (volume, mult) in volumes.iter() {
+        for (volume, mult, flags) in volumes.iter() {
             if n as usize >= MAX_SCATTER_VOLUMES {
                 break;
             }
-            if let Some(packed) = GpuScatterVolume::pack(volume, *mult) {
+            if let Some(packed) = GpuScatterVolume::pack(volume, *mult, *flags) {
                 raw.volumes[n as usize] = packed;
                 n += 1;
             }

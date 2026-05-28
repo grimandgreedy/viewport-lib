@@ -2940,7 +2940,21 @@ impl App {
             ShowcaseMode::ScatterVolumes => {
                 let items = self.svol_state.scene.collect_render_items(&Selection::new());
                 let sg = self.svol_state.scene.version();
-                (items, Some(BG_COLOUR), LightingSettings::default(), sg, 0)
+                let dir = self.svol_state.sun_dir;
+                let mut sun = LightSource::default();
+                sun.kind = LightKind::Directional { direction: dir };
+                sun.colour = self.svol_state.sun_colour;
+                sun.intensity = self.svol_state.sun_intensity;
+                let lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.lights = vec![sun];
+                    _t.shadows_enabled = self.svol_state.shadows_enabled;
+                    _t.sky_colour = [0.45, 0.55, 0.7];
+                    _t.ground_colour = [0.2, 0.18, 0.15];
+                    _t.hemisphere_intensity = 0.35;
+                    _t
+                };
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
         };
 
