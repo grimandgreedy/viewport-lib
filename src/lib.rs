@@ -125,7 +125,7 @@ pub use camera::view_preset::ViewPreset;
 pub use scene::aabb::Aabb;
 pub use scene::material::{
     ItemSettings, BackfacePattern, BackfacePolicy, Material, ParamVis, ParamVisMode,
-    PatternConfig,
+    PatternConfig, ShadingModel,
 };
 pub use scene::scene::{DecalHandle, Group, GroupId, Layer, LayerId, LiveDecal, Scene, SceneNode, SceneStats};
 pub use scene::traits::{RenderMode, ViewportObject};

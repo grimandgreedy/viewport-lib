@@ -1085,8 +1085,13 @@ fn apply_skin47_appearance(state: &mut Skin47State, renderer: &viewport_lib::Vie
         };
         let base_colour = node.material().base_colour;
         let mut mat = Material::from_colour(base_colour);
-        mat.use_pbr = state.use_pbr;
-        mat.matcap_id = matcap_id;
+        mat.shading_model = if let Some(id) = matcap_id {
+            viewport_lib::ShadingModel::Matcap(id)
+        } else if state.use_pbr {
+            viewport_lib::ShadingModel::Pbr
+        } else {
+            viewport_lib::ShadingModel::Phong
+        };
         mat.backface_policy = if state.two_sided {
             BackfacePolicy::Tint(0.4)
         } else {

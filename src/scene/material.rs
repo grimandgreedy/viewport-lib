@@ -59,6 +59,34 @@ impl Default for ItemSettings {
     }
 }
 
+/// Lit shading model selected by a [`Material`].
+///
+/// The variants are mutually exclusive: a material picks one path. The `unlit`
+/// per-item bypass on [`ItemSettings`] is checked independently and takes
+/// precedence over the shading model.
+///
+/// New shading models (Toon, SSS, Gooch, ...) are added here in future phases
+/// of `docs/plans/shading-models-plan.md`. The glTF PBR extensions (clearcoat,
+/// sheen, anisotropy, iridescence) layer on top of `Pbr` as separate fields on
+/// `Material` rather than as variants here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum ShadingModel {
+    /// Blinn-Phong lit shading using `ambient` / `diffuse` / `specular` / `shininess`.
+    Phong,
+    /// Cook-Torrance GGX physically based shading driven by `metallic` and `roughness`.
+    Pbr,
+    /// Matcap lookup. Replaces the lit path with a captured-lighting texture.
+    /// Blendable matcaps tint with `base_colour`; static matcaps override colour entirely.
+    Matcap(crate::resources::MatcapId),
+}
+
+impl Default for ShadingModel {
+    fn default() -> Self {
+        Self::Phong
+    }
+}
+
 /// Procedural UV visualization mode for parameterization inspection.
 ///
 /// When set on a [`Material`], the mesh fragment shader ignores the albedo texture and
@@ -258,7 +286,8 @@ pub struct Material {
     ///
     /// Matches the glTF `metallicRoughnessTexture`: G channel encodes roughness,
     /// B channel encodes metallic. Each channel is multiplied by the corresponding
-    /// scalar factor (`roughness`, `metallic`). Only sampled when `use_pbr` is true.
+    /// scalar factor (`roughness`, `metallic`). Only sampled when the material's
+    /// `shading_model` is `ShadingModel::Pbr`.
     pub metallic_roughness_texture_id: Option<u64>,
     /// Self-illumination colour added after lighting. Default [0.0, 0.0, 0.0].
     ///
@@ -274,18 +303,13 @@ pub struct Material {
     /// `Mask(cutoff)` discards fragments below the cutoff using the alpha channel.
     /// `Blend` routes the mesh through the OIT transparent pass.
     pub alpha_mode: AlphaMode,
-    /// Use Cook-Torrance PBR shading instead of Blinn-Phong. Default false.
+    /// Which lit shading model evaluates this surface. Default [`ShadingModel::Phong`].
     ///
-    /// When true, `metallic` and `roughness` drive the GGX BRDF.
-    /// PBR outputs linear HDR values; enable `post_process.enabled` for correct tone mapping.
-    pub use_pbr: bool,
-    /// Optional matcap texture identifier. When set, matcap shading replaces
-    /// Blinn-Phong/PBR. Default None.
-    ///
-    /// Obtain a `MatcapId` from [`ViewportGpuResources::builtin_matcap_id`] or
-    /// [`ViewportGpuResources::upload_matcap`].  Blendable matcaps (alpha-channel)
-    /// tint the result with `base_colour`; static matcaps override colour entirely.
-    pub matcap_id: Option<crate::resources::MatcapId>,
+    /// `Phong` uses Blinn-Phong; `Pbr` uses Cook-Torrance GGX driven by `metallic`
+    /// and `roughness`; `Matcap(id)` replaces the lit path with a matcap texture
+    /// lookup. The `unlit` per-item bypass on [`ItemSettings`] is checked
+    /// independently and takes precedence over any value here.
+    pub shading_model: ShadingModel,
     /// UV parameterization visualization. When set, replaces albedo/lighting with a
     /// procedural pattern in UV space : useful for inspecting parameterization quality.
     ///
@@ -316,8 +340,7 @@ impl Default for Material {
             emissive: [0.0, 0.0, 0.0],
             emissive_texture_id: None,
             alpha_mode: AlphaMode::Opaque,
-            use_pbr: false,
-            matcap_id: None,
+            shading_model: ShadingModel::Phong,
             param_vis: None,
             backface_policy: BackfacePolicy::Cull,
         }
@@ -353,10 +376,23 @@ impl Material {
     pub fn pbr(base_colour: [f32; 3], metallic: f32, roughness: f32) -> Self {
         Self {
             base_colour,
-            use_pbr: true,
+            shading_model: ShadingModel::Pbr,
             metallic,
             roughness,
             ..Default::default()
+        }
+    }
+
+    /// Returns `true` when the material's shading model is Cook-Torrance PBR.
+    pub fn is_pbr(&self) -> bool {
+        matches!(self.shading_model, ShadingModel::Pbr)
+    }
+
+    /// Returns the matcap id when the material uses a matcap shading model.
+    pub fn matcap_id(&self) -> Option<crate::resources::MatcapId> {
+        match self.shading_model {
+            ShadingModel::Matcap(id) => Some(id),
+            _ => None,
         }
     }
 
@@ -388,7 +424,7 @@ impl Material {
     /// - `roughness`: 0.0 = mirror, 1.0 = fully rough
     /// - `ao_map`: baked AO texture id, or `None` to disable AO
     ///
-    /// Sets `use_pbr = true`. All other fields take defaults.
+    /// Sets `shading_model = ShadingModel::Pbr`. All other fields take defaults.
     /// Use [`Material::pbr`] when no AO map is needed.
     pub fn pbr_with_ao(
         base_colour: [f32; 3],
@@ -398,7 +434,7 @@ impl Material {
     ) -> Self {
         Self {
             base_colour,
-            use_pbr: true,
+            shading_model: ShadingModel::Pbr,
             metallic,
             roughness,
             ao_map_id: ao_map,
@@ -438,11 +474,11 @@ mod tests {
         assert!((m.base_colour[0] - 0.7).abs() < 1e-6);
         assert!((m.ambient - 0.15).abs() < 1e-6);
         assert!((m.diffuse - 0.75).abs() < 1e-6);
-        assert!(!m.use_pbr);
+        assert!(!m.is_pbr());
         assert!(m.texture_id.is_none());
         assert!(m.normal_map_id.is_none());
         assert!(m.ao_map_id.is_none());
-        assert!(m.matcap_id.is_none());
+        assert!(m.matcap_id().is_none());
         assert!(m.param_vis.is_none());
     }
 
@@ -459,7 +495,7 @@ mod tests {
     #[test]
     fn pbr_constructor() {
         let m = Material::pbr([0.8, 0.2, 0.1], 0.9, 0.3);
-        assert!(m.use_pbr);
+        assert!(m.is_pbr());
         assert!((m.metallic - 0.9).abs() < 1e-6);
         assert!((m.roughness - 0.3).abs() < 1e-6);
         assert!((m.base_colour[0] - 0.8).abs() < 1e-6);
@@ -526,7 +562,7 @@ mod tests {
         assert!((a.base_colour[0] - b.base_colour[0]).abs() < 1e-6);
         assert!((a.base_colour[1] - b.base_colour[1]).abs() < 1e-6);
         assert!((a.base_colour[2] - b.base_colour[2]).abs() < 1e-6);
-        assert_eq!(a.use_pbr, b.use_pbr);
+        assert_eq!(a.is_pbr(), b.is_pbr());
         assert_eq!(a.texture_id, b.texture_id);
         assert_eq!(a.ao_map_id, b.ao_map_id);
         assert!((a.ambient - b.ambient).abs() < 1e-6);
@@ -538,13 +574,13 @@ mod tests {
         assert_eq!(m.texture_id, Some(42));
         let def = Material::default();
         assert!((m.base_colour[0] - def.base_colour[0]).abs() < 1e-6);
-        assert!(!m.use_pbr);
+        assert!(!m.is_pbr());
     }
 
     #[test]
     fn pbr_with_ao_sets_fields() {
         let m = Material::pbr_with_ao([0.8, 0.2, 0.1], 0.9, 0.3, Some(7));
-        assert!(m.use_pbr);
+        assert!(m.is_pbr());
         assert!((m.metallic - 0.9).abs() < 1e-6);
         assert!((m.roughness - 0.3).abs() < 1e-6);
         assert_eq!(m.ao_map_id, Some(7));

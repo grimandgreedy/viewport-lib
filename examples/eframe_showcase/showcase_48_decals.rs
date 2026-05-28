@@ -640,7 +640,7 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
     // D9: column standing on the ground, right side. Wax matcap with black base colour.
     let column_mat = {
         let mut m = Material::from_colour([0.0, 0.0, 0.0]);
-        m.matcap_id = Some(res.builtin_matcap_id(BuiltinMatcap::Wax));
+        m.shading_model = viewport_lib::ShadingModel::Matcap(res.builtin_matcap_id(BuiltinMatcap::Wax));
         m
     };
     let column_node = scene.add(

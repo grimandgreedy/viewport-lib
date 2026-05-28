@@ -96,7 +96,7 @@ impl App {
             let matcap_id = renderer.resources().builtin_matcap_id(*preset);
             let mat = {
                 let mut m = Material::from_colour(self.matcap_state.blendable_colour);
-                m.matcap_id = Some(matcap_id);
+                m.shading_model = viewport_lib::ShadingModel::Matcap(matcap_id);
                 m
             };
             let node_id = self.matcap_state.scene.add_named(
@@ -123,7 +123,7 @@ impl App {
             glam::Mat4::from_translation(glam::Vec3::new(0.0, -3.5, 0.0)),
             {
                 let mut m = Material::default();
-                m.matcap_id = Some(custom_id);
+                m.shading_model = viewport_lib::ShadingModel::Matcap(custom_id);
                 m
             },
         );
@@ -143,7 +143,7 @@ impl App {
         if let Some(node_id) = self.matcap_state.custom_node {
             self.matcap_state.scene.set_material(node_id, {
                 let mut m = Material::default();
-                m.matcap_id = Some(id);
+                m.shading_model = viewport_lib::ShadingModel::Matcap(id);
                 m
             });
         }
@@ -160,7 +160,7 @@ impl App {
                 .scene
                 .set_material(self.matcap_state.builtin_node_ids[i], {
                     let mut m = Material::from_colour(self.matcap_state.blendable_colour);
-                    m.matcap_id = Some(matcap_id);
+                    m.shading_model = viewport_lib::ShadingModel::Matcap(matcap_id);
                     m
                 });
         }

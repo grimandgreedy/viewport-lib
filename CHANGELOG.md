@@ -2,6 +2,14 @@
 
 ## [Unreleased changes]
 
+### ShadingModel enum (breaking)
+
+Replaced `Material::use_pbr: bool` and `Material::matcap_id: Option<MatcapId>` with a single `Material::shading_model: ShadingModel` field. Variants: `Phong` (default), `Pbr`, `Matcap(MatcapId)`. The `Material::pbr()` and `Material::pbr_with_ao()` constructors are unchanged. Query helpers `Material::is_pbr()` and `Material::matcap_id() -> Option<MatcapId>` cover read sites. Existing assignments migrate as:
+- `m.use_pbr = true;` -> `m.shading_model = ShadingModel::Pbr;`
+- `m.matcap_id = Some(id);` -> `m.shading_model = ShadingModel::Matcap(id);`
+
+GPU layout and shaders are unchanged: `prepare.rs` still flattens to the `use_pbr` / `use_matcap` flags inside `ObjectUniform`. Unlit remains on `ItemSettings.unlit` and is intentionally not a `ShadingModel` variant.
+
 
 ### Decals
 

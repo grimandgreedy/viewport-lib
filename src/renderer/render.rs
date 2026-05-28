@@ -1567,7 +1567,7 @@ impl ViewportRenderer {
                             !item.settings.hidden
                                 && (item.active_attribute.is_some()
                                     || item.material.is_two_sided()
-                                    || item.material.matcap_id.is_some())
+                                    || item.material.matcap_id().is_some())
                                 && resources.mesh_store.get(item.mesh_id).is_some()
                         })
                         .collect();
@@ -2253,7 +2253,7 @@ impl ViewportRenderer {
                         && (i.settings.opacity < 1.0 || i.material.is_blend())
                         && (i.active_attribute.is_some()
                             || i.material.is_two_sided()
-                            || i.material.matcap_id.is_some())
+                            || i.material.matcap_id().is_some())
                 })
         } else {
             scene_items
@@ -2411,7 +2411,7 @@ impl ViewportRenderer {
                             if skin_bg.is_none()
                                 && item.active_attribute.is_none()
                                 && !item.material.is_two_sided()
-                                && item.material.matcap_id.is_none()
+                                && item.material.matcap_id().is_none()
                             {
                                 continue;
                             }

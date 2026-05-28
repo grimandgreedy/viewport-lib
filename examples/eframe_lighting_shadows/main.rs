@@ -394,7 +394,7 @@ impl App {
         clay.model =
             glam::Mat4::from_translation(glam::Vec3::new(-4.5, 2.5, 0.7)).to_cols_array_2d();
         clay.material = Material::from_colour([0.92, 0.90, 0.88]);
-        clay.material.matcap_id = Some(self.matcap_clay);
+        clay.material.shading_model = viewport_lib::ShadingModel::Matcap(self.matcap_clay);
         items.push(clay);
 
         // Ceramic matcap sphere (static): white base, high-contrast sheen.
@@ -404,7 +404,7 @@ impl App {
         ceramic.model =
             glam::Mat4::from_translation(glam::Vec3::new(-1.5, 2.5, 0.7)).to_cols_array_2d();
         ceramic.material = Material::from_colour([1.0, 1.0, 1.0]);
-        ceramic.material.matcap_id = Some(self.matcap_ceramic);
+        ceramic.material.shading_model = viewport_lib::ShadingModel::Matcap(self.matcap_ceramic);
         items.push(ceramic);
 
         // PBR metallic sphere: near-white, very smooth. Specular response reveals shadow

@@ -459,7 +459,7 @@ impl ViewportRenderer {
         // (both bypass the instanced path).
         let has_scalar_items = scene_items.iter().any(|i| i.active_attribute.is_some());
         let has_two_sided_items = scene_items.iter().any(|i| i.material.is_two_sided());
-        let has_matcap_items = scene_items.iter().any(|i| i.material.matcap_id.is_some());
+        let has_matcap_items = scene_items.iter().any(|i| i.material.matcap_id().is_some());
         let has_param_vis_items = scene_items.iter().any(|i| i.material.param_vis.is_some());
         let has_wireframe_items = scene_items.iter().any(|i| i.settings.wireframe);
         let has_normal_vis_items = scene_items.iter().any(|i| i.show_normals);
@@ -486,7 +486,7 @@ impl ViewportRenderer {
                     && !frame.viewport.wireframe_mode
                     && item.active_attribute.is_none()
                     && !item.material.is_two_sided()
-                    && item.material.matcap_id.is_none()
+                    && item.material.matcap_id().is_none()
                     && item.material.param_vis.is_none()
                     && !item.settings.wireframe
                     && item.warp_attribute.is_none()
@@ -531,7 +531,7 @@ impl ViewportRenderer {
                     specular: m.specular,
                     shininess: m.shininess,
                     has_texture: if m.texture_id.is_some() { 1 } else { 0 },
-                    use_pbr: if m.use_pbr { 1 } else { 0 },
+                    use_pbr: if m.is_pbr() { 1 } else { 0 },
                     metallic: m.metallic,
                     roughness: m.roughness,
                     has_normal_map: if m.normal_map_id.is_some() { 1 } else { 0 },
@@ -542,8 +542,8 @@ impl ViewportRenderer {
                     receive_shadows: if item.settings.receive_shadows { 1 } else { 0 },
                     nan_colour: item.nan_colour.unwrap_or([0.0; 4]),
                     use_nan_colour: if item.nan_colour.is_some() { 1 } else { 0 },
-                    use_matcap: if m.matcap_id.is_some() { 1 } else { 0 },
-                    matcap_blendable: m.matcap_id.map_or(0, |id| if id.blendable { 1 } else { 0 }),
+                    use_matcap: if m.matcap_id().is_some() { 1 } else { 0 },
+                    matcap_blendable: m.matcap_id().map_or(0, |id| if id.blendable { 1 } else { 0 }),
                     unlit: if item.settings.unlit { 1 } else { 0 },
                     use_face_colour: u32::from(item.active_attribute.as_ref().map_or(false, |a| {
                         a.kind == crate::resources::AttributeKind::FaceColour
@@ -669,7 +669,7 @@ impl ViewportRenderer {
                     item.material.ao_map_id,
                     item.colourmap_id,
                     item.active_attribute.as_ref().map(|a| a.name.as_str()),
-                    item.material.matcap_id,
+                    item.material.matcap_id(),
                     item.warp_attribute.as_deref(),
                     item.material.metallic_roughness_texture_id,
                     item.material.emissive_texture_id,
@@ -806,7 +806,7 @@ impl ViewportRenderer {
                     !item.settings.hidden
                         && item.active_attribute.is_none()
                         && !item.material.is_two_sided()
-                        && item.material.matcap_id.is_none()
+                        && item.material.matcap_id().is_none()
                         && item.material.param_vis.is_none()
                         && resources.mesh_store.get(item.mesh_id).is_some()
                         && !compute_filter_results.iter().any(|r| r.mesh_id == item.mesh_id)
@@ -825,7 +825,7 @@ impl ViewportRenderer {
                         !item.settings.hidden
                             && item.active_attribute.is_none()
                             && !item.material.is_two_sided()
-                            && item.material.matcap_id.is_none()
+                            && item.material.matcap_id().is_none()
                             && item.material.param_vis.is_none()
                             && resources.mesh_store.get(item.mesh_id).is_some()
                             && !compute_filter_results.iter().any(|r| r.mesh_id == item.mesh_id)
@@ -929,7 +929,7 @@ impl ViewportRenderer {
                                     specular: m.specular,
                                     shininess: m.shininess,
                                     has_texture: if m.texture_id.is_some() { 1 } else { 0 },
-                                    use_pbr: if m.use_pbr { 1 } else { 0 },
+                                    use_pbr: if m.is_pbr() { 1 } else { 0 },
                                     metallic: m.metallic,
                                     roughness: m.roughness,
                                     has_normal_map: if m.normal_map_id.is_some() { 1 } else { 0 },
