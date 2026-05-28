@@ -1,9 +1,11 @@
 //! Showcase 50: Scatter Volumes (participating media).
 //!
-//! V1 of the volumetric-effects plan. Demonstrates the new `ScatterVolume`
-//! item type with a Box ("global fog") and a Sphere ("localized haze")
-//! placed in a small corridor scene. Sliders control density and colour;
-//! a toggle moves the camera inside the global volume to verify the
+//! Demonstrates the `ScatterVolume` item type with a Box ("global fog"), a
+//! Sphere ("localized haze"), and an optional fire sphere (colour ramp +
+//! emission + animated noise) placed in a small corridor scene. Sliders
+//! control density, colour, lighting, animation, and the quality settings
+//! (step count, half-resolution rendering, temporal accumulation). A toggle
+//! moves the camera inside the global volume to verify the
 //! camera-inside-volume rendering path.
 
 use crate::App;
@@ -88,19 +90,19 @@ impl Default for SvolState {
             sphere_anisotropy: 0.0,
             sphere_use_texture: false,
             sphere_texture_id: None,
-            fire_enabled: false,
-            fire_density: 1.2,
+            fire_enabled: true,
+            fire_density: 2.0,
             fire_colour: [1.0, 0.55, 0.18],
-            fire_radius: 1.0,
+            fire_radius: 2.0,
             fire_emission: 4.0,
-            fire_falloff: 1.4,
+            fire_falloff: 1.2,
             fire_use_ramp: true,
             fire_ramp_id: viewport_lib::ColourmapId(0),
             fire_animate: true,
             fire_noise_scale: 2.5,
             fire_noise_octaves: 4,
-            fire_noise_time_scale: 1.6,
-            fire_noise_scroll_z: 0.4,
+            fire_noise_time_scale: 2.5,
+            fire_noise_scroll_z: 1.5,
             show_global_outline: false,
             show_sphere_outline: true,
             sun_dir: [-0.6, 0.2, 0.6],
@@ -260,7 +262,12 @@ impl App {
                 v.step_budget = Some(s.fire_step_budget);
             }
             let mut item = ScatterVolumeItem::new(v);
-            item.settings.unlit = false;
+            // Self-emissive volumes read better as unlit: in-scattering the
+            // sun and ambient through the LUT's dark low-density colours
+            // produces a darker veil around the bright core that reads as
+            // a discrete sphere silhouette. The emission contribution alone
+            // carries the look.
+            item.settings.unlit = true;
             fd.scene.scatter_volumes.push(item);
         }
         if s.sphere_enabled {
@@ -360,7 +367,7 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
     });
     ui.checkbox(&mut s.global_unlit, "Unlit (skip in-scattering)");
     ui.checkbox(&mut s.global_receive_shadows, "Receive shadows (shafts)");
-    ui.checkbox(&mut s.global_soft_edges, "Smoothstep soft edges (V3)");
+    ui.checkbox(&mut s.global_soft_edges, "Smoothstep soft edges");
     if s.global_soft_edges {
         ui.horizontal(|ui| {
             ui.label("Inner radius");
@@ -393,7 +400,7 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
     });
     ui.checkbox(
         &mut s.sphere_use_texture,
-        "Use baked 3D density texture (V4)",
+        "Use baked 3D density texture",
     );
 
     ui.separator();
@@ -420,7 +427,7 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
         ui.color_edit_button_rgb(&mut s.fire_colour);
     });
     ui.checkbox(&mut s.fire_use_ramp, "Use Inferno colourmap (Ramp)");
-    ui.checkbox(&mut s.fire_animate, "Animate (V4 noise)");
+    ui.checkbox(&mut s.fire_animate, "Animate (procedural noise)");
     if s.fire_animate {
         ui.horizontal(|ui| {
             ui.label("Noise scale");
@@ -453,8 +460,8 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
     ui.checkbox(&mut s.show_global_outline, "Show global outline");
     ui.checkbox(&mut s.show_sphere_outline, "Show sphere outline");
     ui.label(
-        "V4 adds procedural noise + animation. Fire flickers via turbulent\n\
-         noise with a time-domain warp; smoke / clouds would use scroll\n\
-         velocity instead. External 3D density textures are a follow-up.",
+        "Procedural noise animation: fire flickers via turbulent noise with a\n\
+         time-domain warp; smoke / clouds would use scroll velocity instead.\n\
+         External 3D density textures can be uploaded as scalar volumes.",
     );
 }

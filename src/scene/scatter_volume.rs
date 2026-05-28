@@ -1,14 +1,10 @@
 //! Participating-media volume primitive: per-pixel ray-marched fog / smoke / clouds.
 //!
 //! A `ScatterVolume` is a box- or sphere-bounded region of participating media.
-//! The renderer ray-marches every visible volume per fragment, accumulating
-//! absorption (Beer-Lambert) and a scattered colour, and composites the result
-//! over the opaque scene.
-//!
-//! V1 ships shape + uniform density + flat colour. Future phases (see
-//! `docs/plans/volumetric-effects-plan.md`) extend the parameter set without
-//! changing the public API: V2 adds anisotropic phase functions and shadow-map
-//! sampling, V3 adds colour ramps and emission, V4 adds noise drivers.
+//! The renderer rasterises each visible volume through its screen-space
+//! bounding rectangle, ray-marches the bound region per covered fragment,
+//! accumulates absorption (Beer-Lambert) plus a lit / emissive scattered
+//! colour, and composites the result over the opaque scene.
 
 use crate::scene::aabb::Aabb;
 
@@ -26,18 +22,16 @@ pub struct ScatterVolume {
     ///
     /// Typical range 0.05 to 1.0. A value of 0 disables the volume.
     pub density: f32,
-    /// Colour source. V1 reads only `ColourSource::Flat`; ramps land in V3.
+    /// Colour source: a flat RGB or a colourmap LUT indexed by local density.
     pub colour: ColourSource,
     /// Henyey-Greenstein phase anisotropy in [-1, 1].
     ///
-    /// V1 has no lighting integration so this is unused. V2 honours it.
     /// 0.0 = isotropic (fog), positive = forward scattering (clouds, ~0.7),
     /// negative = back scattering.
     pub anisotropy: f32,
-    /// Self-emission. V1 reads only `Emission::None`; emissive volumes land in V3.
+    /// Self-emission. `Emission::None` disables emissive contribution.
     pub emission: Emission,
-    /// Density curve applied before colour and emission sampling. V1 reads only
-    /// `DensityRemap::Identity`.
+    /// Density curve applied before colour and emission sampling.
     pub density_remap: DensityRemap,
     /// Procedural noise driver. None disables the noise modulation; the
     /// density at each march step then comes only from the base `density`
@@ -146,7 +140,7 @@ pub enum ScatterShape {
 pub enum ColourSource {
     /// Single RGB colour applied uniformly throughout the volume.
     Flat([f32; 3]),
-    /// Density-indexed lookup through a colourmap LUT. Honoured in V3+.
+    /// Density-indexed lookup through a colourmap LUT.
     Ramp(crate::resources::ColourmapId),
 }
 
@@ -154,9 +148,9 @@ pub enum ColourSource {
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub enum Emission {
-    /// No emission. V1 default.
+    /// No emission.
     None,
-    /// Emission proportional to a function of local density. Honoured in V3+.
+    /// Emission proportional to a function of local density.
     Strength {
         /// Multiplier on the volume's colour to produce emitted radiance.
         strength: f32,
@@ -165,7 +159,7 @@ pub enum Emission {
     },
 }
 
-/// Curve mapping local density to an emission multiplier. Honoured in V3+.
+/// Curve mapping local density to an emission multiplier.
 #[derive(Debug, Clone, Copy)]
 pub enum EmissionCurve {
     /// Linear in density.
@@ -177,7 +171,6 @@ pub enum EmissionCurve {
 }
 
 /// Remap of the raw density value before colour and emission sampling.
-/// Honoured in V3+.
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub enum DensityRemap {

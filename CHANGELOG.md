@@ -17,6 +17,7 @@ A new scene item, the scatter volume, renders ray-marched participating media: a
 - Half-resolution rendering: the scatter pass renders into a half-res offscreen and bilinearly upsamples back into the main image. Roughly quarters the ray-march cost; the upsample is a straight blit, so volume edges may soften slightly against high-contrast geometry.
 - Temporal accumulation: each frame's scatter result is blended with the previous frame's reprojected result, with an adjustable history weight. Smooths out the blue-noise jitter and any residual banding; produces a short trail when the camera moves quickly, which is the standard temporal-accumulation tradeoff.
 - Defaults: Low quality (8 steps), half-resolution, and temporal accumulation all on, so ten overlapping volumes stay performant without extra setup. Consumers that prioritise crisp motion can switch to Medium / High and turn temporal off.
+- Tile-based culling: each visible volume is rasterised through its own screen-space bounding rectangle rather than as part of a fullscreen pass. Pixels outside a volume's projection cost zero on that volume, so scenes with many small volumes (cloud here, fog patch there, fire over there) only pay for the pixels each volume actually touches. Volumes that fall fully off-screen contribute nothing.
 - Showcase: `showcase-50: Scatter Volumes` walks through everything above with sliders.
 
 ### ShadingModel enum (breaking)

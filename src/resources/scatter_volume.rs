@@ -1,84 +1,151 @@
 //! Scatter-volume pipeline state and per-frame upload.
 //!
-//! Owns the lazily-created bind group layout, render pipeline, and uniform
-//! buffer for the participating-media pass. The renderer calls
-//! [`ViewportGpuResources::ensure_scatter_pipeline`] before recording the
-//! pass and [`ViewportGpuResources::write_scatter_volumes`] each frame to
-//! upload the packed volume array.
+//! The scatter pass renders each visible `ScatterVolume` as a separate
+//! instanced draw whose vertex shader projects the volume's world bounding box
+//! to a screen-space rectangle. Only pixels inside that rectangle execute the
+//! ray-march; volumes that do not touch a pixel cost nothing on that pixel.
+//!
+//! Pipeline layout:
+//!
+//!   group 0: shared camera (matches mesh / projected_tet bindings)
+//!   group 1: per-volume `GpuScatterVolume` uniform with dynamic offset
+//!   group 2: per-volume colourmap LUT + 3D density texture + samplers
+//!   group 3: shared per-frame uniform (time / blue noise / frame index) +
+//!            opaque depth texture + depth sampler
+//!
+//! The temporal blend is no longer inside the scatter shader -- a separate
+//! single-attachment temporal-resolve pass (when `ScatterSettings::temporal`
+//! is on) reads `raw_current` and the previous frame's history slot, blends,
+//! and writes the new history slot. The composite pass then samples either
+//! the history slot (when temporal is on) or `raw_current` (when off) and
+//! composites onto the HDR target with premultiplied alpha-over.
 
 use crate::scene::scatter_volume::{ColourSource, GpuScatterVolume, ScatterVolume};
 
-/// Hard cap on the number of volumes processed by the shader per fragment.
-/// Must match `MAX_SCATTER_VOLUMES` in `src/shaders/scatter_volume.wgsl`.
+/// Hard cap on the number of volumes per frame. Same as the original cap; the
+/// per-volume draw flow handles up to this many active volumes.
 pub const MAX_SCATTER_VOLUMES: usize = 16;
 
-/// CPU twin of the WGSL `ScatterUniforms` struct.
+/// Per-frame uniform layout shared across every per-volume draw.
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct ScatterUniformsRaw {
-    pub volumes: [GpuScatterVolume; MAX_SCATTER_VOLUMES],
-    // x = count, y = global step count, z = blue_noise_jitter (0/1),
-    // w = frame index (low 32 bits).
-    pub count_pack: [u32; 4],
-    // x = elapsed seconds, yzw reserved.
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+pub(crate) struct ScatterFrameUniformRaw {
+    /// x = elapsed seconds since renderer start. yzw reserved.
     pub time_pack: [f32; 4],
-    /// Previous frame's view-projection. Used by the shader to reproject the
-    /// current pixel into the history buffer for temporal accumulation.
+    /// x = global step count, y = blue noise enabled (0/1),
+    /// z = frame index low 32, w = reserved.
+    pub count_pack: [u32; 4],
+}
+
+/// Uniform layout for the temporal-resolve pass.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+pub(crate) struct ScatterTemporalUniformRaw {
     pub prev_view_proj: [[f32; 4]; 4],
-    /// Temporal-blend parameters.
-    /// x = blend factor (history weight, 0..1),
-    /// y = history_valid (0 / 1),
-    /// z = temporal_enabled (0 / 1),
-    /// w = reserved.
+    /// x = blend factor (0..1), y = history valid (0/1),
+    /// z = reserved, w = reserved.
     pub temporal_pack: [f32; 4],
 }
 
-impl Default for ScatterUniformsRaw {
-    fn default() -> Self {
-        Self {
-            volumes: [GpuScatterVolume {
-                shape_kind: 0,
-                flags: 0,
-                remap_kind: 0,
-                emission_kind: 0,
-                p0: [0.0; 4],
-                p1: [0.0; 4],
-                colour_density: [0.0; 4],
-                params: [0.0; 4],
-                remap_data: [0.0; 4],
-                remap_data2: [0.0; 4],
-                noise_pack: [0.0; 4],
-                noise_vel: [0.0; 4],
-            }; MAX_SCATTER_VOLUMES],
-            count_pack: [0; 4],
-            time_pack: [0.0; 4],
-            prev_view_proj: [[0.0; 4]; 4],
-            temporal_pack: [0.0; 4],
-        }
-    }
-}
-
 impl crate::resources::ViewportGpuResources {
-    /// Lazily build the scatter-volume bind group layout.
-    pub(crate) fn ensure_scatter_bind_group_layout(&mut self, device: &wgpu::Device) {
-        if self.scatter_bind_group_layout.is_some() {
+    // ---------------------------------------------------------------------
+    // Bind group layouts
+    // ---------------------------------------------------------------------
+
+    fn ensure_scatter_per_volume_bgl(&mut self, device: &wgpu::Device) {
+        if self.scatter_per_volume_bgl.is_some() {
             return;
         }
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("scatter_volume_bgl"),
+            label: Some("scatter_per_volume_bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    // GpuScatterVolume = 144 bytes; the actual slot stride is
+                    // padded to `min_uniform_buffer_offset_alignment`. The
+                    // bound range is exactly the struct size.
+                    min_binding_size: std::num::NonZeroU64::new(
+                        std::mem::size_of::<GpuScatterVolume>() as u64,
+                    ),
+                },
+                count: None,
+            }],
+        });
+        self.scatter_per_volume_bgl = Some(bgl);
+    }
+
+    fn ensure_scatter_per_volume_tex_bgl(&mut self, device: &wgpu::Device) {
+        if self.scatter_per_volume_tex_bgl.is_some() {
+            return;
+        }
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("scatter_per_volume_tex_bgl"),
             entries: &[
-                // binding 0: uniform buffer (volumes array + count)
+                // 0: colourmap LUT (256x1 RGBA, used when FLAG_USE_RAMP).
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // 1: LUT sampler.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // 2: 3D density texture (used when FLAG_USE_DENSITY_TEXTURE).
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D3,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // 3: 3D density sampler.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
+            ],
+        });
+        self.scatter_per_volume_tex_bgl = Some(bgl);
+    }
+
+    fn ensure_scatter_frame_bgl(&mut self, device: &wgpu::Device) {
+        if self.scatter_frame_bgl.is_some() {
+            return;
+        }
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("scatter_frame_bgl"),
+            entries: &[
+                // 0: per-frame uniform (time, blue noise, frame index).
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: None,
+                        min_binding_size: std::num::NonZeroU64::new(
+                            std::mem::size_of::<ScatterFrameUniformRaw>() as u64,
+                        ),
                     },
                     count: None,
                 },
-                // binding 1: opaque depth texture
+                // 1: opaque depth texture.
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -89,16 +156,41 @@ impl crate::resources::ViewportGpuResources {
                     },
                     count: None,
                 },
-                // binding 2: depth sampler
+                // 2: depth sampler (NonFiltering for the textureLoad path).
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 },
-                // binding 3: colourmap LUT (256x1 RGBA texture) for Ramp colour sources
+            ],
+        });
+        self.scatter_frame_bgl = Some(bgl);
+    }
+
+    fn ensure_scatter_temporal_resolve_bgl(&mut self, device: &wgpu::Device) {
+        if self.scatter_temporal_resolve_bgl.is_some() {
+            return;
+        }
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("scatter_temporal_resolve_bgl"),
+            entries: &[
+                // 0: temporal uniform (prev_view_proj + temporal_pack).
                 wgpu::BindGroupLayoutEntry {
-                    binding: 3,
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: std::num::NonZeroU64::new(
+                            std::mem::size_of::<ScatterTemporalUniformRaw>() as u64,
+                        ),
+                    },
+                    count: None,
+                },
+                // 1: raw_current texture (this frame's scatter output).
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -107,58 +199,47 @@ impl crate::resources::ViewportGpuResources {
                     },
                     count: None,
                 },
-                // binding 4: linear-clamp sampler for the colourmap LUT
+                // 2: history_prev texture.
                 wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // binding 5: 3D density texture (R32Float, non-filterable)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
+                    binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D3,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
-                // binding 6: non-filtering sampler for the 3D density texture
+                // 3: bilinear sampler (reuses scatter composite sampler).
                 wgpu::BindGroupLayoutEntry {
-                    binding: 6,
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // 4: opaque depth texture (for reprojection).
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // 5: depth sampler.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 },
-                // binding 7: previous-frame scatter history texture (RGBA16F).
-                // Bound either to the inactive ping-pong target (history valid)
-                // or to a 1x1 fallback (history invalid / temporal disabled).
-                wgpu::BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 8: linear-clamp sampler for the history texture.
-                wgpu::BindGroupLayoutEntry {
-                    binding: 8,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
             ],
         });
-        self.scatter_bind_group_layout = Some(bgl);
+        self.scatter_temporal_resolve_bgl = Some(bgl);
     }
 
-    /// Ensure the 1x1x1 R32Float fallback texture (bound when no volume
-    /// supplies its own 3D density texture) exists.
     fn ensure_scatter_density_fallback(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         if self.scatter_density_fallback_view.is_some() {
             return;
@@ -177,9 +258,6 @@ impl crate::resources::ViewportGpuResources {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        // Initialise to 1.0 so volumes that mistakenly enable
-        // `USE_DENSITY_TEXTURE` without supplying one render as the base
-        // density rather than as fully transparent.
         let data: [f32; 1] = [1.0];
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
@@ -204,13 +282,28 @@ impl crate::resources::ViewportGpuResources {
             Some(tex.create_view(&wgpu::TextureViewDescriptor::default()));
     }
 
-    /// Ensure the colourmap-LUT sampler used by the scatter pass exists.
+    fn ensure_scatter_depth_sampler(&mut self, device: &wgpu::Device) {
+        if self.scatter_depth_sampler.is_some() {
+            return;
+        }
+        self.scatter_depth_sampler = Some(device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("scatter_depth_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        }));
+    }
+
     fn ensure_scatter_colourmap_sampler(&mut self, device: &wgpu::Device) {
         if self.scatter_colourmap_sampler.is_some() {
             return;
         }
         self.scatter_colourmap_sampler = Some(device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("scatter_volume_colourmap_sampler"),
+            label: Some("scatter_colourmap_sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -221,7 +314,10 @@ impl crate::resources::ViewportGpuResources {
         }));
     }
 
-    /// Lazily build the scatter-volume render pipeline.
+    // ---------------------------------------------------------------------
+    // Pipelines
+    // ---------------------------------------------------------------------
+
     pub(crate) fn ensure_scatter_pipeline(
         &mut self,
         device: &wgpu::Device,
@@ -230,11 +326,13 @@ impl crate::resources::ViewportGpuResources {
         if self.scatter_pipeline.is_some() {
             return;
         }
-        self.ensure_scatter_bind_group_layout(device);
-        let bgl = self
-            .scatter_bind_group_layout
-            .as_ref()
-            .expect("scatter bgl exists");
+        self.ensure_scatter_per_volume_bgl(device);
+        self.ensure_scatter_per_volume_tex_bgl(device);
+        self.ensure_scatter_frame_bgl(device);
+
+        let per_vol = self.scatter_per_volume_bgl.as_ref().unwrap();
+        let per_tex = self.scatter_per_volume_tex_bgl.as_ref().unwrap();
+        let frame_bgl = self.scatter_frame_bgl.as_ref().unwrap();
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scatter_volume_shader"),
@@ -245,11 +343,12 @@ impl crate::resources::ViewportGpuResources {
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("scatter_volume_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, bgl],
+            bind_group_layouts: &[&self.camera_bind_group_layout, per_vol, per_tex, frame_bgl],
             push_constant_ranges: &[],
         });
 
-        // Premultiplied alpha-over blend: out = src.rgb + dst.rgb * (1 - src.a)
+        // Premultiplied alpha-over: per-volume draws composite into the
+        // (cleared) raw_current target in back-to-front order.
         let blend = wgpu::BlendState {
             color: wgpu::BlendComponent {
                 src_factor: wgpu::BlendFactor::One,
@@ -287,9 +386,6 @@ impl crate::resources::ViewportGpuResources {
                 cull_mode: None,
                 ..Default::default()
             },
-            // Fullscreen triangle does its own depth handling via the sampled
-            // opaque depth texture. No depth-stencil attachment is bound at
-            // the pass level, and the pipeline declares no depth state.
             depth_stencil: None,
             multisample: wgpu::MultisampleState {
                 count: 1,
@@ -302,272 +398,6 @@ impl crate::resources::ViewportGpuResources {
         self.scatter_pipeline = Some(pipeline);
     }
 
-    /// Ensure the per-frame uniform buffer exists.
-    fn ensure_scatter_uniform_buffer(&mut self, device: &wgpu::Device) {
-        if self.scatter_uniform_buffer.is_some() {
-            return;
-        }
-        let buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("scatter_volume_uniform"),
-            size: std::mem::size_of::<ScatterUniformsRaw>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        self.scatter_uniform_buffer = Some(buf);
-    }
-
-    /// Ensure the linear depth sampler used by the scatter pass exists.
-    fn ensure_scatter_depth_sampler(&mut self, device: &wgpu::Device) {
-        if self.scatter_depth_sampler.is_some() {
-            return;
-        }
-        self.scatter_depth_sampler = Some(device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("scatter_volume_depth_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        }));
-    }
-
-    /// Ensure the 1x1 RGBA16F fallback view bound to the history slot when
-    /// temporal accumulation is disabled or the history is not yet valid.
-    fn ensure_scatter_history_fallback(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        if self.scatter_history_fallback_view.is_some() {
-            return;
-        }
-        let tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("scatter_history_fallback"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        // Initialise to zero so the history blend reads as "no contribution".
-        let zero: [u16; 4] = [0, 0, 0, 0];
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &tex,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            bytemuck::cast_slice(&zero),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(8),
-                rows_per_image: Some(1),
-            },
-            wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
-        self.scatter_history_fallback_view =
-            Some(tex.create_view(&wgpu::TextureViewDescriptor::default()));
-    }
-
-    /// Ensure the linear sampler used to read the scatter history texture.
-    fn ensure_scatter_history_sampler(&mut self, device: &wgpu::Device) {
-        if self.scatter_history_sampler.is_some() {
-            return;
-        }
-        self.scatter_history_sampler = Some(device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("scatter_history_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        }));
-    }
-
-    /// Pack visible volumes into the uniform buffer and (re)build the bind
-    /// group if the depth view has changed. Volumes whose effective density
-    /// after `density_multiplier` is non-positive are skipped.
-    ///
-    /// `history_view` is the inactive ping-pong target read by the temporal
-    /// blend. Pass `None` to bind the 1x1 fallback (e.g. when temporal is
-    /// disabled or the history is not yet valid).
-    ///
-    /// Returns the number of volumes packed (0 if the scatter pass should
-    /// be skipped this frame).
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn write_scatter_volumes(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        volumes: &[(ScatterVolume, f32, u32)],
-        depth_view: &wgpu::TextureView,
-        depth_view_token: u64,
-        time_seconds: f32,
-        global_steps: u32,
-        blue_noise_jitter: bool,
-        frame_index: u64,
-        history_view: Option<&wgpu::TextureView>,
-        history_token: u64,
-        prev_view_proj: [[f32; 4]; 4],
-        temporal_enabled: bool,
-        history_valid: bool,
-        temporal_blend: f32,
-    ) -> u32 {
-        self.ensure_scatter_bind_group_layout(device);
-        self.ensure_scatter_uniform_buffer(device);
-        self.ensure_scatter_depth_sampler(device);
-        self.ensure_scatter_colourmap_sampler(device);
-        self.ensure_scatter_density_fallback(device, queue);
-        self.ensure_scatter_history_fallback(device, queue);
-        self.ensure_scatter_history_sampler(device);
-
-        let mut raw = ScatterUniformsRaw::default();
-        let mut n: u32 = 0;
-        for (volume, mult, flags) in volumes.iter() {
-            if n as usize >= MAX_SCATTER_VOLUMES {
-                break;
-            }
-            if let Some(packed) = GpuScatterVolume::pack(volume, *mult, *flags) {
-                raw.volumes[n as usize] = packed;
-                n += 1;
-            }
-        }
-        raw.count_pack[0] = n;
-        raw.count_pack[1] = global_steps.clamp(1, 128);
-        raw.count_pack[2] = if blue_noise_jitter { 1 } else { 0 };
-        raw.count_pack[3] = frame_index as u32;
-        raw.time_pack[0] = time_seconds;
-        raw.prev_view_proj = prev_view_proj;
-        raw.temporal_pack = [
-            temporal_blend.clamp(0.0, 0.99),
-            if history_valid { 1.0 } else { 0.0 },
-            if temporal_enabled { 1.0 } else { 0.0 },
-            0.0,
-        ];
-
-        if let Some(buf) = self.scatter_uniform_buffer.as_ref() {
-            queue.write_buffer(buf, 0, bytemuck::bytes_of(&raw));
-        }
-
-        // Resolve the LUT to bind: the first Ramp volume's colourmap wins
-        // for the whole pass. Other Ramp volumes share it; consumers wanting
-        // multiple ramps per frame must defer to a follow-up phase that
-        // builds a per-frame LUT atlas. Fallback view is bound when no
-        // Ramp volume is present so the binding is always valid.
-        let mut lut_id: u64 = u64::MAX;
-        for (volume, _, _) in volumes.iter() {
-            if let ColourSource::Ramp(id) = volume.colour {
-                lut_id = id.0 as u64;
-                break;
-            }
-        }
-
-        // Resolve the 3D density texture to bind, applying the same
-        // "first-wins" policy. Fallback 1x1x1 view binds otherwise.
-        let mut density_id: u64 = u64::MAX;
-        for (volume, _, _) in volumes.iter() {
-            if let Some(id) = volume.density_texture {
-                density_id = id.0 as u64;
-                break;
-            }
-        }
-
-        // Rebuild bind group when any of (depth view, bound LUT, bound
-        // density texture, history view) changes.
-        let token = depth_view_token
-            ^ (lut_id.wrapping_mul(0x9E3779B97F4A7C15))
-            ^ (density_id.wrapping_mul(0xBF58476D1CE4E5B9))
-            ^ (history_token.wrapping_mul(0x94D049BB133111EB));
-        if self.scatter_bind_group.is_none() || self.scatter_bound_depth != token {
-            let bgl = self.scatter_bind_group_layout.as_ref().unwrap();
-            let buf = self.scatter_uniform_buffer.as_ref().unwrap();
-            let depth_sampler = self.scatter_depth_sampler.as_ref().unwrap();
-            let lut_sampler = self.scatter_colourmap_sampler.as_ref().unwrap();
-            let lut_view: &wgpu::TextureView = if lut_id == u64::MAX {
-                &self.fallback_lut_view
-            } else {
-                self.colourmap_views
-                    .get(lut_id as usize)
-                    .unwrap_or(&self.fallback_lut_view)
-            };
-            let density_fallback = self.scatter_density_fallback_view.as_ref().unwrap();
-            let density_view: &wgpu::TextureView = if density_id == u64::MAX {
-                density_fallback
-            } else {
-                self.volume_textures
-                    .get(density_id as usize)
-                    .map(|(_, v)| v)
-                    .unwrap_or(density_fallback)
-            };
-            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("scatter_volume_bind_group"),
-                layout: bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: buf.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(depth_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Sampler(depth_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::TextureView(lut_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: wgpu::BindingResource::Sampler(lut_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: wgpu::BindingResource::TextureView(density_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 6,
-                        resource: wgpu::BindingResource::Sampler(depth_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 7,
-                        resource: wgpu::BindingResource::TextureView(
-                            history_view.unwrap_or_else(|| {
-                                self.scatter_history_fallback_view.as_ref().unwrap()
-                            }),
-                        ),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 8,
-                        resource: wgpu::BindingResource::Sampler(
-                            self.scatter_history_sampler.as_ref().unwrap(),
-                        ),
-                    },
-                ],
-            });
-            self.scatter_bind_group = Some(bg);
-            self.scatter_bound_depth = token;
-        }
-
-        n
-    }
-
-    /// Lazily build the composite pipeline that samples a half-/full-res
-    /// scatter intermediate and writes premultiplied alpha-over into the HDR
-    /// target.
     pub(crate) fn ensure_scatter_composite_pipeline(
         &mut self,
         device: &wgpu::Device,
@@ -667,8 +497,291 @@ impl crate::resources::ViewportGpuResources {
         self.scatter_composite_sampler = Some(sampler);
     }
 
-    /// Build a composite bind group sampling the given intermediate view.
-    /// Caller stores the result on the per-viewport HDR slot.
+    pub(crate) fn ensure_scatter_temporal_resolve_pipeline(
+        &mut self,
+        device: &wgpu::Device,
+    ) {
+        if self.scatter_temporal_resolve_pipeline.is_some() {
+            return;
+        }
+        self.ensure_scatter_temporal_resolve_bgl(device);
+        let bgl = self.scatter_temporal_resolve_bgl.as_ref().unwrap();
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("scatter_temporal_resolve_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/scatter_temporal_resolve.wgsl")).into(),
+            ),
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("scatter_temporal_resolve_pipeline_layout"),
+            bind_group_layouts: &[bgl],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("scatter_temporal_resolve_pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    // History textures are RGBA16F.
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    // Replace blend -- this pass owns the new history fully.
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        });
+        self.scatter_temporal_resolve_pipeline = Some(pipeline);
+    }
+
+    // ---------------------------------------------------------------------
+    // Per-frame uniform / bind group construction
+    // ---------------------------------------------------------------------
+
+    /// Pack visible volumes into the per-volume dynamic-offset uniform buffer.
+    /// Volumes are written in submission order (caller is responsible for
+    /// back-to-front sort). Returns the number of slots written.
+    pub(crate) fn write_scatter_per_volume_buffer(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        volumes: &[(ScatterVolume, f32, u32)],
+    ) -> u32 {
+        // Stride = aligned per-volume uniform slot size. Recomputed once.
+        let align = device.limits().min_uniform_buffer_offset_alignment as u64;
+        let struct_size = std::mem::size_of::<GpuScatterVolume>() as u64;
+        let stride = ((struct_size + align - 1) / align * align).max(struct_size) as u32;
+        let capacity = volumes.len().min(MAX_SCATTER_VOLUMES).max(1) as u32;
+        let buffer_size = (stride as u64) * (capacity as u64);
+
+        let need_realloc = self.scatter_per_volume_buffer.is_none()
+            || self.scatter_per_volume_stride != stride
+            || self.scatter_per_volume_capacity < capacity;
+        if need_realloc {
+            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("scatter_per_volume_uniform"),
+                size: buffer_size,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.scatter_per_volume_buffer = Some(buf);
+            self.scatter_per_volume_stride = stride;
+            self.scatter_per_volume_capacity = capacity;
+            self.scatter_per_volume_bg = None;
+        }
+
+        // Build the dynamic-offset bind group lazily.
+        if self.scatter_per_volume_bg.is_none() {
+            self.ensure_scatter_per_volume_bgl(device);
+            let bgl = self.scatter_per_volume_bgl.as_ref().unwrap();
+            let buf = self.scatter_per_volume_buffer.as_ref().unwrap();
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("scatter_per_volume_bg"),
+                layout: bgl,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: buf,
+                        offset: 0,
+                        size: std::num::NonZeroU64::new(struct_size),
+                    }),
+                }],
+            });
+            self.scatter_per_volume_bg = Some(bg);
+        }
+
+        // Pack and upload.
+        let mut bytes = vec![0u8; buffer_size as usize];
+        let mut n: u32 = 0;
+        for (volume, mult, flags) in volumes.iter() {
+            if n as usize >= MAX_SCATTER_VOLUMES {
+                break;
+            }
+            if let Some(packed) = GpuScatterVolume::pack(volume, *mult, *flags) {
+                let offset = (n as usize) * (stride as usize);
+                let src = bytemuck::bytes_of(&packed);
+                bytes[offset..offset + src.len()].copy_from_slice(src);
+                n += 1;
+            }
+        }
+        if let Some(buf) = self.scatter_per_volume_buffer.as_ref() {
+            queue.write_buffer(buf, 0, &bytes[..(n as usize * stride as usize).max(stride as usize)]);
+        }
+        n
+    }
+
+    /// Write the per-frame uniform (time / blue noise / frame index) and
+    /// build / rebuild the frame bind group for the given opaque depth view.
+    pub(crate) fn write_scatter_frame_uniform(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        depth_view: &wgpu::TextureView,
+        depth_view_token: u64,
+        time_seconds: f32,
+        global_steps: u32,
+        blue_noise_jitter: bool,
+        frame_index: u64,
+    ) {
+        self.ensure_scatter_frame_bgl(device);
+        self.ensure_scatter_depth_sampler(device);
+        if self.scatter_frame_uniform_buffer.is_none() {
+            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("scatter_frame_uniform"),
+                size: std::mem::size_of::<ScatterFrameUniformRaw>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.scatter_frame_uniform_buffer = Some(buf);
+            self.scatter_frame_bg = None;
+        }
+        let raw = ScatterFrameUniformRaw {
+            time_pack: [time_seconds, 0.0, 0.0, 0.0],
+            count_pack: [
+                global_steps.clamp(1, 128),
+                if blue_noise_jitter { 1 } else { 0 },
+                frame_index as u32,
+                0,
+            ],
+        };
+        if let Some(buf) = self.scatter_frame_uniform_buffer.as_ref() {
+            queue.write_buffer(buf, 0, bytemuck::bytes_of(&raw));
+        }
+        if self.scatter_frame_bg.is_none() || self.scatter_bound_depth != depth_view_token {
+            let bgl = self.scatter_frame_bgl.as_ref().unwrap();
+            let buf = self.scatter_frame_uniform_buffer.as_ref().unwrap();
+            let sampler = self.scatter_depth_sampler.as_ref().unwrap();
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("scatter_frame_bg"),
+                layout: bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(depth_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                ],
+            });
+            self.scatter_frame_bg = Some(bg);
+            self.scatter_bound_depth = depth_view_token;
+        }
+    }
+
+    /// Look up or build a group 2 bind group for the (lut_id, density_id)
+    /// pair. Pass `u32::MAX` for either id to bind the fallback.
+    pub(crate) fn ensure_scatter_per_volume_tex_bg(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        lut_id: usize,
+        density_id: usize,
+    ) -> wgpu::BindGroup {
+        self.ensure_scatter_per_volume_tex_bgl(device);
+        self.ensure_scatter_colourmap_sampler(device);
+        self.ensure_scatter_density_fallback(device, queue);
+
+        let key = (lut_id, density_id);
+        if let Some((_, bg)) = self.scatter_per_volume_tex_cache.iter().find(|(k, _)| *k == key) {
+            return bg.clone();
+        }
+        let bgl = self.scatter_per_volume_tex_bgl.as_ref().unwrap();
+        let lut_sampler = self.scatter_colourmap_sampler.as_ref().unwrap();
+        let density_sampler = self.scatter_depth_sampler.as_ref().unwrap();
+        let lut_view: &wgpu::TextureView = if lut_id == usize::MAX {
+            &self.fallback_lut_view
+        } else {
+            self.colourmap_views
+                .get(lut_id)
+                .unwrap_or(&self.fallback_lut_view)
+        };
+        let density_fallback = self.scatter_density_fallback_view.as_ref().unwrap();
+        let density_view: &wgpu::TextureView = if density_id == usize::MAX {
+            density_fallback
+        } else {
+            self.volume_textures
+                .get(density_id)
+                .map(|(_, v)| v)
+                .unwrap_or(density_fallback)
+        };
+        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("scatter_per_volume_tex_bg"),
+            layout: bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(lut_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(lut_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(density_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(density_sampler),
+                },
+            ],
+        });
+        self.scatter_per_volume_tex_cache.push((key, bg.clone()));
+        bg
+    }
+
+    /// Resolve a volume's `(lut_id, density_id)` pair. `usize::MAX` indicates
+    /// the fallback should be bound.
+    pub(crate) fn scatter_volume_tex_ids(volume: &ScatterVolume) -> (usize, usize) {
+        let lut_id = match volume.colour {
+            ColourSource::Ramp(id) => id.0,
+            _ => usize::MAX,
+        };
+        let density_id = volume.density_texture.map(|id| id.0).unwrap_or(usize::MAX);
+        (lut_id, density_id)
+    }
+
+    /// Clear the per-volume texture bind group cache. Call when the
+    /// underlying texture vectors may have been mutated (uploads added).
+    pub(crate) fn clear_scatter_per_volume_tex_cache(&mut self) {
+        self.scatter_per_volume_tex_cache.clear();
+    }
+
+    /// Stride between dynamic-offset slots, in bytes.
+    pub(crate) fn scatter_per_volume_stride(&self) -> u32 {
+        self.scatter_per_volume_stride
+    }
+
+    // ---------------------------------------------------------------------
+    // Composite + temporal-resolve helpers
+    // ---------------------------------------------------------------------
+
     pub(crate) fn make_scatter_composite_bg(
         &self,
         device: &wgpu::Device,
@@ -677,7 +790,7 @@ impl crate::resources::ViewportGpuResources {
         let bgl = self.scatter_composite_bgl.as_ref().unwrap();
         let sampler = self.scatter_composite_sampler.as_ref().unwrap();
         device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("scatter_composite_bind_group"),
+            label: Some("scatter_composite_bg"),
             layout: bgl,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -690,5 +803,92 @@ impl crate::resources::ViewportGpuResources {
                 },
             ],
         })
+    }
+
+    /// Build a temporal-resolve bind group sampling `(raw_view, history_view)`
+    /// alongside the bound depth and uniform.
+    pub(crate) fn make_scatter_temporal_resolve_bg(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        raw_view: &wgpu::TextureView,
+        history_view: &wgpu::TextureView,
+        depth_view: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        // The composite sampler is built by the composite pipeline; the
+        // depth sampler is built when the per-frame uniform is written.
+        // Either may not exist yet on the first frame, so ensure both here.
+        self.ensure_scatter_temporal_resolve_bgl(device);
+        self.ensure_scatter_depth_sampler(device);
+        self.ensure_scatter_composite_pipeline(device, wgpu::TextureFormat::Rgba16Float);
+        if self.scatter_temporal_resolve_uniform_buffer.is_none() {
+            self.write_scatter_temporal_uniform(device, queue, [[0.0; 4]; 4], 0.0, false);
+        }
+        let bgl = self.scatter_temporal_resolve_bgl.as_ref().unwrap();
+        let buf = self.scatter_temporal_resolve_uniform_buffer.as_ref().unwrap();
+        let bilinear = self.scatter_composite_sampler.as_ref().unwrap();
+        let depth_sampler = self.scatter_depth_sampler.as_ref().unwrap();
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("scatter_temporal_resolve_bg"),
+            layout: bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(raw_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(history_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(bilinear),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(depth_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Sampler(depth_sampler),
+                },
+            ],
+        })
+    }
+
+    /// Write the temporal-resolve uniform.
+    pub(crate) fn write_scatter_temporal_uniform(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        prev_view_proj: [[f32; 4]; 4],
+        blend: f32,
+        history_valid: bool,
+    ) {
+        if self.scatter_temporal_resolve_uniform_buffer.is_none() {
+            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("scatter_temporal_resolve_uniform"),
+                size: std::mem::size_of::<ScatterTemporalUniformRaw>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.scatter_temporal_resolve_uniform_buffer = Some(buf);
+        }
+        let raw = ScatterTemporalUniformRaw {
+            prev_view_proj,
+            temporal_pack: [
+                blend.clamp(0.0, 0.99),
+                if history_valid { 1.0 } else { 0.0 },
+                0.0,
+                0.0,
+            ],
+        };
+        if let Some(buf) = self.scatter_temporal_resolve_uniform_buffer.as_ref() {
+            queue.write_buffer(buf, 0, bytemuck::bytes_of(&raw));
+        }
     }
 }

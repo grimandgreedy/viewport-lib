@@ -4402,8 +4402,15 @@ impl ViewportRenderer {
         // ---------------------------------------------------------------
         // Overlay labels
         // ---------------------------------------------------------------
+        // Rects and labels are merged into a single z_order-sorted vertex buffer so
+        // that rects and labels at the same z_order interleave correctly (e.g. a
+        // console background rect at i32::MAX sits below console text at i32::MAX
+        // but above HUD labels at 0).
         self.label_gpu_data = None;
-        if !frame.overlays.labels.is_empty() {
+        self.overlay_rect_gpu_data = None;
+        let has_overlay =
+            !frame.overlays.labels.is_empty() || !frame.overlays.rects.is_empty();
+        if has_overlay {
             self.resources.ensure_overlay_text_pipeline(device);
             let vp_w = frame.camera.viewport_size[0];
             let vp_h = frame.camera.viewport_size[1];
@@ -4411,19 +4418,17 @@ impl ViewportRenderer {
                 let view = &frame.camera.render_camera.view;
                 let proj = &frame.camera.render_camera.projection;
 
-                // Sort by z_order for correct draw ordering.
-                let mut sorted_labels: Vec<&crate::renderer::types::LabelItem> =
-                    frame.overlays.labels.iter().collect();
-                sorted_labels.sort_by_key(|l| l.z_order);
+                // Each item (label or rect) contributes a (z_order, verts) batch.
+                // Sorting batches by z_order before flattening gives correct draw order.
+                let mut batches: Vec<(i32, Vec<crate::resources::OverlayTextVertex>)> =
+                    Vec::new();
 
-                let mut verts: Vec<crate::resources::OverlayTextVertex> = Vec::new();
-
-                for label in &sorted_labels {
+                // --- Labels ---
+                for label in &frame.overlays.labels {
                     if label.text.is_empty() || label.opacity <= 0.0 {
                         continue;
                     }
 
-                    // Resolve screen position from anchor.
                     let screen_pos = if let Some(sa) = label.screen_anchor {
                         Some(sa)
                     } else if let Some(wa) = label.world_anchor {
@@ -4437,7 +4442,6 @@ impl ViewportRenderer {
 
                     let opacity = label.opacity.clamp(0.0, 1.0);
 
-                    // Layout text (with optional word wrapping).
                     let layout = if let Some(max_w) = label.max_width {
                         self.resources.glyph_atlas.layout_text_wrapped(
                             &label.text,
@@ -4455,25 +4459,25 @@ impl ViewportRenderer {
                         )
                     };
 
-                    // Compute ascent so glyphs are positioned below the anchor.
                     let font_index = label.font.map_or(0, |h| h.0);
                     let ascent = self
                         .resources
                         .glyph_atlas
                         .font_ascent(font_index, label.font_size);
 
-                    // Horizontal alignment.
                     let align_offset = match label.anchor_align {
                         crate::renderer::types::LabelAnchor::Leading => 6.0,
                         crate::renderer::types::LabelAnchor::Center => -layout.total_width * 0.5,
-                        crate::renderer::types::LabelAnchor::Trailing => -layout.total_width - 6.0,
+                        crate::renderer::types::LabelAnchor::Trailing => {
+                            -layout.total_width - 6.0
+                        }
                     };
 
-                    // Text origin with alignment + user offset.
                     let text_x = anchor_px[0] + align_offset + label.offset[0];
                     let text_y = anchor_px[1] - layout.height * 0.5 + label.offset[1];
 
-                    // Background box (drawn first, behind text).
+                    let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+
                     if label.background {
                         let pad = label.padding;
                         let bx0 = text_x - pad;
@@ -4483,7 +4487,7 @@ impl ViewportRenderer {
                         let bg_colour = apply_opacity(label.background_colour, opacity);
                         if label.border_radius > 0.0 {
                             emit_rounded_quad(
-                                &mut verts,
+                                &mut batch,
                                 bx0,
                                 by0,
                                 bx1,
@@ -4494,17 +4498,18 @@ impl ViewportRenderer {
                                 vp_h,
                             );
                         } else {
-                            emit_solid_quad(&mut verts, bx0, by0, bx1, by1, bg_colour, vp_w, vp_h);
+                            emit_solid_quad(
+                                &mut batch, bx0, by0, bx1, by1, bg_colour, vp_w, vp_h,
+                            );
                         }
                     }
 
-                    // Leader line.
                     if label.leader_line {
                         if let Some(wa) = label.world_anchor {
                             let world_px = project_to_screen(wa, view, proj, vp_w, vp_h);
                             if let Some(wp) = world_px {
                                 emit_line_quad(
-                                    &mut verts,
+                                    &mut batch,
                                     wp[0],
                                     wp[1],
                                     text_x,
@@ -4518,13 +4523,12 @@ impl ViewportRenderer {
                         }
                     }
 
-                    // Glyph quads.
                     let text_colour = apply_opacity(label.colour, opacity);
                     for gq in &layout.quads {
                         let gx = text_x + gq.pos[0];
                         let gy = text_y + ascent + gq.pos[1];
                         emit_textured_quad(
-                            &mut verts,
+                            &mut batch,
                             gx,
                             gy,
                             gx + gq.size[0],
@@ -4536,17 +4540,63 @@ impl ViewportRenderer {
                             vp_h,
                         );
                     }
+
+                    batches.push((label.z_order, batch));
                 }
 
                 // Upload atlas if new glyphs were rasterized.
                 self.resources.glyph_atlas.upload_if_dirty(queue);
 
+                // --- Rects ---
+                for rect in &frame.overlays.rects {
+                    if rect.opacity <= 0.0 {
+                        continue;
+                    }
+                    let x0 = rect.position[0];
+                    let y0 = rect.position[1];
+                    let x1 = x0 + rect.size[0];
+                    let y1 = y0 + rect.size[1];
+
+                    let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+
+                    if rect.border_width > 0.0 {
+                        let bw = rect.border_width;
+                        let mut bc = rect.border_colour;
+                        bc[3] *= rect.opacity;
+                        emit_rounded_quad(
+                            &mut batch,
+                            x0 - bw,
+                            y0 - bw,
+                            x1 + bw,
+                            y1 + bw,
+                            rect.corner_radius + bw,
+                            bc,
+                            vp_w,
+                            vp_h,
+                        );
+                    }
+
+                    let mut fc = rect.colour;
+                    fc[3] *= rect.opacity;
+                    emit_rounded_quad(
+                        &mut batch, x0, y0, x1, y1, rect.corner_radius, fc, vp_w, vp_h,
+                    );
+
+                    batches.push((rect.z_order, batch));
+                }
+
+                // Stable sort preserves submission order for equal z_order values.
+                batches.sort_by_key(|(z, _)| *z);
+                let verts: Vec<crate::resources::OverlayTextVertex> =
+                    batches.into_iter().flat_map(|(_, v)| v).collect();
+
                 if !verts.is_empty() {
-                    let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("overlay_label_vbuf"),
-                        contents: bytemuck::cast_slice(&verts),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
+                    let vertex_buf =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("overlay_label_vbuf"),
+                            contents: bytemuck::cast_slice(&verts),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        });
                     let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -5523,96 +5573,8 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // Overlay rects
+        // Overlay rects — handled by the unified label+rect pass above.
         // ------------------------------------------------------------------
-        self.overlay_rect_gpu_data = None;
-        if !frame.overlays.rects.is_empty() {
-            self.resources.ensure_overlay_text_pipeline(device);
-            let vp_w = frame.camera.viewport_size[0];
-            let vp_h = frame.camera.viewport_size[1];
-            if vp_w > 0.0 && vp_h > 0.0 {
-                let mut verts: Vec<crate::resources::OverlayTextVertex> = Vec::new();
-
-                let mut sorted: Vec<&crate::renderer::types::OverlayRectItem> =
-                    frame.overlays.rects.iter().collect();
-                sorted.sort_by_key(|r| r.z_order);
-
-                for rect in &sorted {
-                    if rect.opacity <= 0.0 {
-                        continue;
-                    }
-                    let x0 = rect.position[0];
-                    let y0 = rect.position[1];
-                    let x1 = x0 + rect.size[0];
-                    let y1 = y0 + rect.size[1];
-
-                    // Border: slightly expanded rect drawn behind the fill.
-                    if rect.border_width > 0.0 {
-                        let bw = rect.border_width;
-                        let mut bc = rect.border_colour;
-                        bc[3] *= rect.opacity;
-                        emit_rounded_quad(
-                            &mut verts,
-                            x0 - bw,
-                            y0 - bw,
-                            x1 + bw,
-                            y1 + bw,
-                            rect.corner_radius + bw,
-                            bc,
-                            vp_w,
-                            vp_h,
-                        );
-                    }
-
-                    // Fill.
-                    let mut fc = rect.colour;
-                    fc[3] *= rect.opacity;
-                    emit_rounded_quad(
-                        &mut verts,
-                        x0,
-                        y0,
-                        x1,
-                        y1,
-                        rect.corner_radius,
-                        fc,
-                        vp_w,
-                        vp_h,
-                    );
-                }
-
-                if !verts.is_empty() {
-                    let vertex_buf =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("overlay_rect_vbuf"),
-                            contents: bytemuck::cast_slice(&verts),
-                            usage: wgpu::BufferUsages::VERTEX,
-                        });
-                    let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
-                    let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
-                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("overlay_rect_bg"),
-                        layout: bgl,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::TextureView(
-                                    &self.resources.glyph_atlas.view,
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::Sampler(sampler),
-                            },
-                        ],
-                    });
-                    self.overlay_rect_gpu_data = Some(crate::resources::LabelGpuData {
-                        vertex_buf,
-                        vertex_count: verts.len() as u32,
-                        bind_group,
-                    });
-                }
-            }
-        }
 
         // ------------------------------------------------------------------
         // Gaussian splat: per-viewport GPU sort.
@@ -6000,6 +5962,7 @@ impl ViewportRenderer {
             self.pick_scatter_volume_items = frame.scene.scatter_volumes.clone();
             self.prepared_scatter_volumes.clear();
             let global_wireframe = frame.viewport.wireframe_mode;
+            let eye = frame.camera.render_camera.eye_position;
             for item in &frame.scene.scatter_volumes {
                 if item.settings.hidden || item.settings.wireframe || global_wireframe {
                     continue;
@@ -6014,6 +5977,20 @@ impl ViewportRenderer {
                 self.prepared_scatter_volumes
                     .push((item.volume.clone(), item.settings.opacity, flags));
             }
+            // Sort back-to-front by squared distance from the eye so the
+            // per-volume scatter draws composite in the correct order under
+            // the existing premultiplied alpha-over blend.
+            self.prepared_scatter_volumes.sort_by(|a, b| {
+                let ca = a.0.shape_centre();
+                let cb = b.0.shape_centre();
+                let da = (ca[0] - eye[0]).powi(2)
+                    + (ca[1] - eye[1]).powi(2)
+                    + (ca[2] - eye[2]).powi(2);
+                let db = (cb[0] - eye[0]).powi(2)
+                    + (cb[1] - eye[1]).powi(2)
+                    + (cb[2] - eye[2]).powi(2);
+                db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
+            });
             self.pick_volume_mesh_items = frame.scene.volume_mesh_items.clone();
             self.pick_polyline_items = frame.scene.polylines.clone();
             self.pick_glyph_items = frame.scene.glyphs.clone();

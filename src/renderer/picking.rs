@@ -771,7 +771,7 @@ impl ViewportRenderer {
         // vm_cell_map (face_to_cell conversion on surface Face hits).
 
         // 2c. Scatter-volume object picks. Ray-vs-shape intersection only;
-        // there is no sub-object level for participating media in V1.
+        // there is no sub-object level for participating media
         if wants_object {
             for item in &self.pick_scatter_volume_items {
                 if item.settings.hidden || item.settings.pick_id == PickId::NONE {

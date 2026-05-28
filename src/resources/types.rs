@@ -2329,24 +2329,42 @@ pub(crate) struct ViewportHdrState {
 /// pass can allocate and mutate it without conflicting with the immutable
 /// `slot_hdr` borrow held across the larger paint phase.
 pub(crate) struct ScatterViewportState {
-    // Textures keep the GPU allocation alive; only the views are sampled or
-    // rendered into. The `#[allow]` suppresses the lint that flags them as
-    // unread.
+    // Textures keep the GPU allocation alive; views are sampled or rendered
+    // into.
+    /// Per-volume scatter draws accumulate into this target each frame.
+    /// Cleared at the start of the scatter pass.
     #[allow(dead_code)]
-    pub target_a_texture: wgpu::Texture,
-    pub target_a_view: wgpu::TextureView,
+    pub raw_current_texture: wgpu::Texture,
+    pub raw_current_view: wgpu::TextureView,
+    /// History ping-pong. The temporal-resolve pass reads one slot
+    /// (history_prev) and writes the other (history_new). `parity` selects.
     #[allow(dead_code)]
-    pub target_b_texture: wgpu::Texture,
-    pub target_b_view: wgpu::TextureView,
-    pub composite_bg_a: wgpu::BindGroup,
-    pub composite_bg_b: wgpu::BindGroup,
+    pub history_a_texture: wgpu::Texture,
+    pub history_a_view: wgpu::TextureView,
+    #[allow(dead_code)]
+    pub history_b_texture: wgpu::Texture,
+    pub history_b_view: wgpu::TextureView,
+    /// Composite bind group reading the raw-current texture.
+    /// Used when temporal accumulation is disabled.
+    pub composite_bg_raw: wgpu::BindGroup,
+    /// Composite bind groups reading either history slot, used as the source
+    /// after the temporal-resolve pass has written history_new.
+    pub composite_bg_history_a: wgpu::BindGroup,
+    pub composite_bg_history_b: wgpu::BindGroup,
+    /// Temporal-resolve bind groups, keyed by which history slot is being
+    /// read as the previous-frame input. Each binds raw_current + the chosen
+    /// history slot.
+    pub temporal_resolve_bg_read_a: wgpu::BindGroup,
+    pub temporal_resolve_bg_read_b: wgpu::BindGroup,
     /// Current allocated intermediate size, [width, height].
     pub size: [u32; 2],
     /// Whether `size` reflects the downsampled (half-res) allocation.
     pub downsampled: bool,
-    /// Index of the intermediate the next frame writes to (0 = A, 1 = B).
+    /// Index of the history slot the next frame writes to (0 = A, 1 = B).
+    /// The other slot is read as the previous-frame history.
     pub parity: u32,
-    /// True when the *other* intermediate holds a usable previous-frame result.
+    /// True when the history slot opposite `parity` holds a usable
+    /// previous-frame composite result.
     pub history_valid: bool,
     /// Previous frame's view-projection (row-major mat4).
     pub prev_view_proj: [[f32; 4]; 4],
@@ -3008,36 +3026,66 @@ pub struct ViewportGpuResources {
     pub(crate) projected_tet_store: Vec<GpuProjectedTetMesh>,
 
     // --- Scatter-volume (participating media) rendering (lazily created) ---
+    //
+    // Pipeline layout uses four bind groups:
+    //   group 0: shared camera (existing camera_bind_group_layout)
+    //   group 1: per-volume `GpuScatterVolume` uniform with dynamic offset
+    //   group 2: per-volume colourmap LUT + 3D density texture (cached by id)
+    //   group 3: shared per-frame uniform + opaque depth + samplers
+    //
     /// Render pipeline for the scatter-volume pass. None until first item submitted.
     pub(crate) scatter_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for group 1 of the scatter pipeline.
-    pub(crate) scatter_bind_group_layout: Option<wgpu::BindGroupLayout>,
-    /// Per-frame uniform buffer holding the packed `GpuScatterVolume` array + count.
-    pub(crate) scatter_uniform_buffer: Option<wgpu::Buffer>,
-    /// Per-frame bind group; rebuilt only when the opaque depth view changes.
-    pub(crate) scatter_bind_group: Option<wgpu::BindGroup>,
+    /// Group 1 layout (per-volume uniform with dynamic offset).
+    pub(crate) scatter_per_volume_bgl: Option<wgpu::BindGroupLayout>,
+    /// Group 2 layout (per-volume LUT + density texture + samplers).
+    pub(crate) scatter_per_volume_tex_bgl: Option<wgpu::BindGroupLayout>,
+    /// Group 3 layout (per-frame uniform + opaque depth + samplers).
+    pub(crate) scatter_frame_bgl: Option<wgpu::BindGroupLayout>,
+    /// Per-volume uniform buffer holding the packed `GpuScatterVolume` array,
+    /// stride-padded to `min_uniform_buffer_offset_alignment` for dynamic
+    /// offsetting.
+    pub(crate) scatter_per_volume_buffer: Option<wgpu::Buffer>,
+    /// Bind group for the per-volume uniform (group 1). Rebuilt only when the
+    /// buffer is reallocated.
+    pub(crate) scatter_per_volume_bg: Option<wgpu::BindGroup>,
+    /// Stride between dynamic-offset uniform slots, in bytes.
+    pub(crate) scatter_per_volume_stride: u32,
+    /// Capacity of `scatter_per_volume_buffer` in slots.
+    pub(crate) scatter_per_volume_capacity: u32,
+    /// Per-frame uniform buffer (group 3 binding 0).
+    pub(crate) scatter_frame_uniform_buffer: Option<wgpu::Buffer>,
+    /// Cache of group 2 bind groups, keyed by `(lut_id, density_id)`. Built
+    /// on demand each frame; invalidated when the source texture vec grows.
+    pub(crate) scatter_per_volume_tex_cache:
+        Vec<((usize, usize), wgpu::BindGroup)>,
+    /// Bind group for group 3, rebuilt when opaque depth view changes.
+    pub(crate) scatter_frame_bg: Option<wgpu::BindGroup>,
     /// Linear sampler used to read opaque depth in the scatter pass.
     pub(crate) scatter_depth_sampler: Option<wgpu::Sampler>,
     /// Linear-clamp sampler used to read the colourmap LUT in the scatter pass.
     pub(crate) scatter_colourmap_sampler: Option<wgpu::Sampler>,
-    /// 1x1x1 R32Float fallback view bound at the scatter pipeline's 3D
-    /// density slot when no volume supplies its own density texture.
+    /// 1x1x1 R32Float fallback view bound at the per-volume 3D density slot
+    /// when a volume does not supply its own density texture.
     pub(crate) scatter_density_fallback_view: Option<wgpu::TextureView>,
-    /// Combined token of (depth view, bound LUT, bound 3D density texture,
-    /// bound history view) for `scatter_bind_group` reuse.
+    /// Token combining (depth view, frame uniform buffer) for `scatter_frame_bg`
+    /// reuse.
     pub(crate) scatter_bound_depth: u64,
-    /// 1x1 RGBA16F fallback view bound at the scatter pipeline's history slot
-    /// when temporal accumulation is disabled or the history is not yet valid.
-    pub(crate) scatter_history_fallback_view: Option<wgpu::TextureView>,
-    /// Linear-clamp sampler used to read the scatter history texture.
-    pub(crate) scatter_history_sampler: Option<wgpu::Sampler>,
-    /// Composite pipeline that samples the scatter intermediate and blends it
-    /// onto the HDR target with premultiplied alpha-over.
+    /// Composite pipeline that samples a scatter intermediate (raw or history)
+    /// and blends it onto the HDR target with premultiplied alpha-over.
     pub(crate) scatter_composite_pipeline: Option<wgpu::RenderPipeline>,
     /// Bind group layout for the composite pass (one sampled RGBA16F + sampler).
     pub(crate) scatter_composite_bgl: Option<wgpu::BindGroupLayout>,
     /// Bilinear-clamp sampler used by the composite pass.
     pub(crate) scatter_composite_sampler: Option<wgpu::Sampler>,
+    /// Temporal-resolve pipeline: reads (raw_current, history_prev) and writes
+    /// the mixed result to history_new. Half-res when downsample is on.
+    pub(crate) scatter_temporal_resolve_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for the temporal-resolve pass (uniform + raw + history
+    /// + opaque depth + samplers).
+    pub(crate) scatter_temporal_resolve_bgl: Option<wgpu::BindGroupLayout>,
+    /// Per-frame uniform buffer for the temporal-resolve pass (mat4 + vec4
+    /// temporal pack + viewport dims).
+    pub(crate) scatter_temporal_resolve_uniform_buffer: Option<wgpu::Buffer>,
 
     // --- IBL / environment map resources ---
     /// IBL irradiance equirect texture view (binding 7). None until environment uploaded.
