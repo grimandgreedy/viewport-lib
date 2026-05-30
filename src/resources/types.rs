@@ -460,7 +460,8 @@ pub type LightUniform = LightsUniform;
 /// - backface_colour:            [f32;4]   = 16 bytes  offset 192
 /// - has_warp:                   u32      =  4 bytes  offset 208
 /// - warp_scale:                 f32      =  4 bytes  offset 212
-/// - _pad_warp:                  [u32;2]  =  8 bytes  offset 216
+/// - has_position_override:      u32      =  4 bytes  offset 216
+/// - has_normal_override:        u32      =  4 bytes  offset 220
 /// - emissive:                   [f32;3]  = 12 bytes  offset 224
 /// - _pad_emissive:              u32      =  4 bytes  offset 236
 /// - alpha_mode:                 u32      =  4 bytes  offset 240  (0=Opaque, 1=Mask, 2=Blend)
@@ -503,7 +504,11 @@ pub(crate) struct ObjectUniform {
     pub(crate) backface_colour: [f32; 4], //  16 bytes, offset 192
     pub(crate) has_warp: u32,                    //   4 bytes, offset 208
     pub(crate) warp_scale: f32,                  //   4 bytes, offset 212
-    pub(crate) _pad_warp: [u32; 2],              //   8 bytes, offset 216
+    /// 1 when a per-vertex position storage buffer is bound at group 1 binding 13.
+    /// Wired from `GpuMesh::position_override_buffer.is_some()`.
+    pub(crate) has_position_override: u32,       //   4 bytes, offset 216
+    /// 1 when a per-vertex normal storage buffer is bound at group 1 binding 14.
+    pub(crate) has_normal_override: u32,         //   4 bytes, offset 220
     pub(crate) emissive: [f32; 3],               //  12 bytes, offset 224
     pub(crate) _pad_emissive: u32,               //   4 bytes, offset 236
     pub(crate) alpha_mode: u32,                  //   4 bytes, offset 240  (0=Opaque, 1=Mask, 2=Blend)
@@ -1745,8 +1750,12 @@ pub struct GpuMesh {
     /// texture assignment changes (tracked via `last_tex_key`).
     pub object_bind_group: wgpu::BindGroup,
     /// Last texture/attribute key used to build `object_bind_group`. `u64::MAX` = fallback / none.
-    /// Fields: `(albedo, normal_map, ao_map, lut, attr_hash, matcap, warp_hash, metallic_roughness, emissive)`
-    pub(crate) last_tex_key: (u64, u64, u64, u64, u64, u64, u64, u64, u64),
+    /// Fields: `(albedo, normal_map, ao_map, lut, attr_hash, matcap, warp_hash, metallic_roughness, emissive, position_override_gen, normal_override_gen)`.
+    /// The trailing two slots are bumped by `set_position_override_buffer`,
+    /// `set_normal_override_buffer`, and their `clear_*` counterparts, so the
+    /// next `update_mesh_texture_bind_group` call rebuilds with the real
+    /// override buffer (or the fallback) at bindings 13/14.
+    pub(crate) last_tex_key: (u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64),
     /// Per-named-attribute GPU storage buffers (f32 per vertex, STORAGE usage).
     pub attribute_buffers: std::collections::HashMap<String, wgpu::Buffer>,
     /// Scalar range `(min, max)` per attribute, computed at upload time.
@@ -1761,6 +1770,24 @@ pub struct GpuMesh {
     /// Per-vertex vector attribute buffers: flat `array<f32>` with 3 values per vertex.
     /// Uploaded from `AttributeData::VertexVector`; used by the Surface LIC surface pass.
     pub vector_attribute_buffers: std::collections::HashMap<String, wgpu::Buffer>,
+    /// Optional per-vertex position override buffer.
+    ///
+    /// When `Some`, the standard mesh pipeline reads positions from this buffer
+    /// (group 1 binding 13, an `array<vec3<f32>>`) instead of the vertex
+    /// buffer's position attribute. Set via
+    /// `ViewportGpuResources::set_position_override_buffer` and consumed by a
+    /// `GpuPlugin`'s compute output. Mutually exclusive per frame with
+    /// `write_mesh_positions_normals`; the two paths race if both are used.
+    pub position_override_buffer: Option<wgpu::Buffer>,
+    /// Optional per-vertex normal override buffer. Same contract as
+    /// `position_override_buffer` but bound at group 1 binding 14.
+    pub normal_override_buffer: Option<wgpu::Buffer>,
+    /// Monotonic counter bumped each time `set_position_override_buffer` or
+    /// `clear_position_override` is called. Folded into `last_tex_key` so the
+    /// object bind group rebuilds on the next `prepare()` call.
+    pub(crate) position_override_gen: u64,
+    /// Same idea for normal override (re)bind tracking.
+    pub(crate) normal_override_gen: u64,
     /// Uniform buffer for normal-line rendering: always has selected=0, wireframe=0.
     /// Updated each frame in prepare() with the object's model matrix only.
     pub normal_uniform_buf: wgpu::Buffer,
@@ -2863,6 +2890,13 @@ pub struct ViewportGpuResources {
     pub(crate) fallback_face_colour_buf: wgpu::Buffer,
     /// Fallback 12-byte zero storage buffer (bound to binding 9 when no warp attribute is active).
     pub(crate) fallback_warp_buf: wgpu::Buffer,
+    /// Fallback 12-byte zero storage buffer (bound to binding 13 when no
+    /// position override is active). Single `vec3<f32>(0,0,0)` entry; the
+    /// shader bounds-checks `arrayLength` before reading.
+    pub(crate) fallback_position_override_buf: wgpu::Buffer,
+    /// Fallback 12-byte zero storage buffer (bound to binding 14 when no
+    /// normal override is active).
+    pub(crate) fallback_normal_override_buf: wgpu::Buffer,
     /// IDs of built-in preset colourmaps, in BuiltinColourmap discriminant order.
     /// `None` until `ensure_colourmaps_initialized()` has been called.
     pub(crate) builtin_colourmap_ids: Option<[ColourmapId; 10]>,

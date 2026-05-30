@@ -561,6 +561,16 @@ impl ViewportGpuResources {
         let attr_hash = active_attr.map(|n| hash_str(n)).unwrap_or(u64::MAX);
         let warp_hash = warp_attr.map(|n| hash_str(n)).unwrap_or(u64::MAX);
 
+        // The last two slots track GPU position/normal override (re)bind events.
+        // Bumped by `set_*_override_buffer` / `clear_*_override`, so a fresh
+        // override forces a bind-group rebuild here.
+        let (pos_override_gen, nrm_override_gen) = {
+            let Some(mesh) = self.mesh_store.get(mesh_id) else {
+                return;
+            };
+            (mesh.position_override_gen, mesh.normal_override_gen)
+        };
+
         let key = (
             albedo_id.unwrap_or(u64::MAX),
             normal_map_id.unwrap_or(u64::MAX),
@@ -571,6 +581,8 @@ impl ViewportGpuResources {
             warp_hash,
             metallic_roughness_id.unwrap_or(u64::MAX),
             emissive_texture_id.unwrap_or(u64::MAX),
+            pos_override_gen,
+            nrm_override_gen,
         );
 
         {
@@ -639,6 +651,15 @@ impl ViewportGpuResources {
             None => &self.fallback_warp_buf,
         };
 
+        let position_override_buf: &wgpu::Buffer = mesh
+            .position_override_buffer
+            .as_ref()
+            .unwrap_or(&self.fallback_position_override_buf);
+        let normal_override_buf: &wgpu::Buffer = mesh
+            .normal_override_buffer
+            .as_ref()
+            .unwrap_or(&self.fallback_normal_override_buf);
+
         let metallic_roughness_view: &wgpu::TextureView = match metallic_roughness_id {
             Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
             _ => &self.fallback_metallic_roughness_texture_view,
@@ -703,6 +724,14 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 12,
                     resource: wgpu::BindingResource::TextureView(emissive_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: position_override_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: normal_override_buf.as_entire_binding(),
                 },
             ],
         });

@@ -47,6 +47,8 @@ impl ViewportGpuResources {
             &self.fallback_texture.view,
             &self.fallback_face_colour_buf,
             &self.fallback_warp_buf,
+            &self.fallback_position_override_buf,
+            &self.fallback_normal_override_buf,
             &self.fallback_metallic_roughness_texture_view,
             &self.fallback_emissive_texture_view,
             vertices,
@@ -123,6 +125,8 @@ impl ViewportGpuResources {
             &self.fallback_texture.view,
             &self.fallback_face_colour_buf,
             &self.fallback_warp_buf,
+            &self.fallback_position_override_buf,
+            &self.fallback_normal_override_buf,
             &self.fallback_metallic_roughness_texture_view,
             &self.fallback_emissive_texture_view,
             &vertices,
@@ -207,6 +211,14 @@ impl ViewportGpuResources {
     ///
     /// The normal line visualization buffer is also updated in place if it was created at upload time.
     ///
+    /// Mutually exclusive per frame with
+    /// [`set_position_override_buffer`](Self::set_position_override_buffer) and
+    /// [`set_normal_override_buffer`](Self::set_normal_override_buffer) for the
+    /// same mesh: the two write paths race. A debug assertion fires if both
+    /// are active. To switch from GPU-compute deformation back to CPU writes,
+    /// call [`clear_position_override`](Self::clear_position_override) /
+    /// [`clear_normal_override`](Self::clear_normal_override) first.
+    ///
     /// # Errors
     ///
     /// Returns [`ViewportError::MeshIndexOutOfBounds`](crate::error::ViewportError::MeshIndexOutOfBounds)
@@ -236,6 +248,12 @@ impl ViewportGpuResources {
 
         let existing_vertex_count = {
             let mesh = self.mesh_store.get(mesh_id).unwrap();
+            debug_assert!(
+                mesh.position_override_buffer.is_none()
+                    && mesh.normal_override_buffer.is_none(),
+                "write_mesh_positions_normals called on mesh {} that has a GPU position/normal override bound. The CPU write and the GPU override race; call clear_position_override / clear_normal_override first.",
+                mesh_id.index(),
+            );
             (mesh.vertex_buffer.size() / std::mem::size_of::<Vertex>() as u64) as usize
         };
         if positions.len() != existing_vertex_count {
@@ -309,6 +327,133 @@ impl ViewportGpuResources {
             self.frame_upload_bytes += (nl.len() * std::mem::size_of::<Vertex>()) as u64;
         }
 
+        Ok(())
+    }
+
+    /// Bind a GPU storage buffer of per-vertex positions to `mesh_id`. The
+    /// standard mesh and skinned-mesh pipelines read positions from this
+    /// buffer instead of the vertex buffer's position attribute on every frame
+    /// the binding is present.
+    ///
+    /// Intended consumer: a [`GpuPlugin`](crate::runtime::GpuPlugin) that
+    /// computes deformed positions on the GPU in `pre_prepare` (cloth, hair,
+    /// GPU particles, audio-reactive displacement). The override path
+    /// sidesteps the CPU round-trip that
+    /// [`write_mesh_positions_normals`](Self::write_mesh_positions_normals)
+    /// requires.
+    ///
+    /// The buffer must:
+    ///   - have [`wgpu::BufferUsages::STORAGE`],
+    ///   - hold at least 3 `f32` per vertex (12 bytes each), in flat
+    ///     `[x, y, z, x, y, z, ...]` order. This matches the warp-attribute
+    ///     buffer layout and avoids WGSL's 16-byte vec3 stride padding, so a
+    ///     consumer compute shader can write tight `vec3` data directly.
+    ///
+    /// The shader bounds-checks `arrayLength` before reading, so a smaller
+    /// buffer falls back to `in.position` for out-of-range vertex indices.
+    ///
+    /// Override and skinning compose: when both are active, the override
+    /// replaces the bind-pose input and skinning is then applied on top.
+    ///
+    /// Do not call this in the same frame as `write_mesh_positions_normals`
+    /// for the same mesh; the two write paths race and the result is
+    /// undefined. Pick one source for positions per frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::MeshIndexOutOfBounds`](crate::error::ViewportError::MeshIndexOutOfBounds)
+    /// if `mesh_id` is not registered.
+    pub fn set_position_override_buffer(
+        &mut self,
+        mesh_id: crate::resources::mesh_store::MeshId,
+        buffer: wgpu::Buffer,
+    ) -> crate::error::ViewportResult<()> {
+        let store_len = self.mesh_store.len();
+        let mesh = self.mesh_store.get_mut(mesh_id).ok_or(
+            crate::error::ViewportError::MeshIndexOutOfBounds {
+                index: mesh_id.index(),
+                count: store_len,
+            },
+        )?;
+        mesh.position_override_buffer = Some(buffer);
+        // Bump only the gen counter; don't touch `last_tex_key.9` here. The
+        // bind-group rebuild path reads `position_override_gen` into the new
+        // key and compares against `last_tex_key`; the mismatch is what
+        // triggers the rebuild that actually swaps the fallback binding for
+        // this buffer.
+        mesh.position_override_gen = mesh.position_override_gen.wrapping_add(1);
+        Ok(())
+    }
+
+    /// Same idea as [`set_position_override_buffer`](Self::set_position_override_buffer)
+    /// but for per-vertex normals (bound at group 1 binding 14).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::MeshIndexOutOfBounds`](crate::error::ViewportError::MeshIndexOutOfBounds)
+    /// if `mesh_id` is not registered.
+    pub fn set_normal_override_buffer(
+        &mut self,
+        mesh_id: crate::resources::mesh_store::MeshId,
+        buffer: wgpu::Buffer,
+    ) -> crate::error::ViewportResult<()> {
+        let store_len = self.mesh_store.len();
+        let mesh = self.mesh_store.get_mut(mesh_id).ok_or(
+            crate::error::ViewportError::MeshIndexOutOfBounds {
+                index: mesh_id.index(),
+                count: store_len,
+            },
+        )?;
+        mesh.normal_override_buffer = Some(buffer);
+        // See `set_position_override_buffer` for why this only bumps the gen
+        // counter and not `last_tex_key.10`.
+        mesh.normal_override_gen = mesh.normal_override_gen.wrapping_add(1);
+        Ok(())
+    }
+
+    /// Revert the position source to the mesh's vertex buffer attribute.
+    /// Drops the override buffer handle; if no other owner holds it, wgpu
+    /// frees it after the in-flight frames complete.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::MeshIndexOutOfBounds`](crate::error::ViewportError::MeshIndexOutOfBounds)
+    /// if `mesh_id` is not registered.
+    pub fn clear_position_override(
+        &mut self,
+        mesh_id: crate::resources::mesh_store::MeshId,
+    ) -> crate::error::ViewportResult<()> {
+        let store_len = self.mesh_store.len();
+        let mesh = self.mesh_store.get_mut(mesh_id).ok_or(
+            crate::error::ViewportError::MeshIndexOutOfBounds {
+                index: mesh_id.index(),
+                count: store_len,
+            },
+        )?;
+        mesh.position_override_buffer = None;
+        mesh.position_override_gen = mesh.position_override_gen.wrapping_add(1);
+        Ok(())
+    }
+
+    /// Revert the normal source to the mesh's vertex buffer attribute.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::MeshIndexOutOfBounds`](crate::error::ViewportError::MeshIndexOutOfBounds)
+    /// if `mesh_id` is not registered.
+    pub fn clear_normal_override(
+        &mut self,
+        mesh_id: crate::resources::mesh_store::MeshId,
+    ) -> crate::error::ViewportResult<()> {
+        let store_len = self.mesh_store.len();
+        let mesh = self.mesh_store.get_mut(mesh_id).ok_or(
+            crate::error::ViewportError::MeshIndexOutOfBounds {
+                index: mesh_id.index(),
+                count: store_len,
+            },
+        )?;
+        mesh.normal_override_buffer = None;
+        mesh.normal_override_gen = mesh.normal_override_gen.wrapping_add(1);
         Ok(())
     }
 
@@ -430,6 +575,8 @@ impl ViewportGpuResources {
             &self.fallback_texture.view,
             &self.fallback_face_colour_buf,
             &self.fallback_warp_buf,
+            &self.fallback_position_override_buf,
+            &self.fallback_normal_override_buf,
             &self.fallback_metallic_roughness_texture_view,
             &self.fallback_emissive_texture_view,
             &vertices,
@@ -1141,6 +1288,8 @@ impl ViewportGpuResources {
         fallback_matcap_view: &wgpu::TextureView,
         fallback_face_colour_buf: &wgpu::Buffer,
         fallback_warp_buf: &wgpu::Buffer,
+        fallback_position_override_buf: &wgpu::Buffer,
+        fallback_normal_override_buf: &wgpu::Buffer,
         fallback_metallic_roughness_view: &wgpu::TextureView,
         fallback_emissive_view: &wgpu::TextureView,
         vertices: &[Vertex],
@@ -1159,6 +1308,8 @@ impl ViewportGpuResources {
             fallback_matcap_view,
             fallback_face_colour_buf,
             fallback_warp_buf,
+            fallback_position_override_buf,
+            fallback_normal_override_buf,
             fallback_metallic_roughness_view,
             fallback_emissive_view,
             vertices,
@@ -1180,6 +1331,8 @@ impl ViewportGpuResources {
         fallback_matcap_view: &wgpu::TextureView,
         fallback_face_colour_buf: &wgpu::Buffer,
         fallback_warp_buf: &wgpu::Buffer,
+        fallback_position_override_buf: &wgpu::Buffer,
+        fallback_normal_override_buf: &wgpu::Buffer,
         fallback_metallic_roughness_view: &wgpu::TextureView,
         fallback_emissive_view: &wgpu::TextureView,
         vertices: &[Vertex],
@@ -1264,7 +1417,8 @@ impl ViewportGpuResources {
             backface_colour: [0.0; 4],
             has_warp: 0,
             warp_scale: 1.0,
-            _pad_warp: [0; 2],
+            has_position_override: 0,
+            has_normal_override: 0,
             emissive: [0.0; 3],
             _pad_emissive: 0,
             alpha_mode: 0,
@@ -1340,6 +1494,14 @@ impl ViewportGpuResources {
                     binding: 12,
                     resource: wgpu::BindingResource::TextureView(fallback_emissive_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: fallback_position_override_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: fallback_normal_override_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -1374,7 +1536,8 @@ impl ViewportGpuResources {
             backface_colour: [0.0; 4],
             has_warp: 0,
             warp_scale: 1.0,
-            _pad_warp: [0; 2],
+            has_position_override: 0,
+            has_normal_override: 0,
             emissive: [0.0; 3],
             _pad_emissive: 0,
             alpha_mode: 0,
@@ -1450,6 +1613,14 @@ impl ViewportGpuResources {
                     binding: 12,
                     resource: wgpu::BindingResource::TextureView(fallback_emissive_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: fallback_position_override_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: fallback_normal_override_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -1498,6 +1669,8 @@ impl ViewportGpuResources {
                 u64::MAX,
                 u64::MAX,
                 u64::MAX,
+                0,
+                0,
             ),
             normal_uniform_buf,
             normal_bind_group,
@@ -1510,6 +1683,10 @@ impl ViewportGpuResources {
             face_attribute_buffers: std::collections::HashMap::new(),
             face_colour_buffers: std::collections::HashMap::new(),
             vector_attribute_buffers: std::collections::HashMap::new(),
+            position_override_buffer: None,
+            normal_override_buffer: None,
+            position_override_gen: 0,
+            normal_override_gen: 0,
         }
     }
 
@@ -1809,5 +1986,116 @@ impl ViewportGpuResources {
         uniform_buffer.unmap();
 
         (pending, scalar_range, uniform_buffer)
+    }
+}
+
+#[cfg(test)]
+mod override_tests {
+    use crate::ViewportGpuResources;
+    use crate::geometry::primitives;
+
+    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+    }
+
+    fn dummy_override_buffer(device: &wgpu::Device, vertex_count: usize) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("test_override_buf"),
+            size: (vertex_count * 12) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    #[test]
+    fn set_position_override_roundtrip() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let plane = primitives::grid_plane(1.0, 1.0, 2, 2);
+        let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();
+        let vertex_count = plane.positions.len();
+
+        // Initial state.
+        {
+            let mesh = resources.mesh_store.get(mesh_id).unwrap();
+            assert!(mesh.position_override_buffer.is_none());
+            let gen0 = mesh.position_override_gen;
+            assert_eq!(gen0, 0);
+        }
+
+        let buf = dummy_override_buffer(&device, vertex_count);
+        resources
+            .set_position_override_buffer(mesh_id, buf)
+            .unwrap();
+
+        {
+            let mesh = resources.mesh_store.get(mesh_id).unwrap();
+            assert!(mesh.position_override_buffer.is_some());
+            assert_eq!(mesh.position_override_gen, 1);
+        }
+
+        resources.clear_position_override(mesh_id).unwrap();
+        {
+            let mesh = resources.mesh_store.get(mesh_id).unwrap();
+            assert!(mesh.position_override_buffer.is_none());
+            assert_eq!(mesh.position_override_gen, 2);
+        }
+    }
+
+    #[test]
+    fn set_normal_override_roundtrip() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let plane = primitives::grid_plane(1.0, 1.0, 2, 2);
+        let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();
+        let vertex_count = plane.positions.len();
+
+        let buf = dummy_override_buffer(&device, vertex_count);
+        resources.set_normal_override_buffer(mesh_id, buf).unwrap();
+        {
+            let mesh = resources.mesh_store.get(mesh_id).unwrap();
+            assert!(mesh.normal_override_buffer.is_some());
+            assert_eq!(mesh.normal_override_gen, 1);
+        }
+
+        resources.clear_normal_override(mesh_id).unwrap();
+        {
+            let mesh = resources.mesh_store.get(mesh_id).unwrap();
+            assert!(mesh.normal_override_buffer.is_none());
+            assert_eq!(mesh.normal_override_gen, 2);
+        }
+    }
+
+    #[test]
+    fn override_on_unknown_mesh_id_errors() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        // Fabricate an id that is beyond the store.
+        let bogus = crate::resources::mesh_store::MeshId::from_index(9999);
+        let buf = dummy_override_buffer(&device, 4);
+        let err = resources.set_position_override_buffer(bogus, buf);
+        assert!(matches!(
+            err,
+            Err(crate::error::ViewportError::MeshIndexOutOfBounds { .. })
+        ));
     }
 }

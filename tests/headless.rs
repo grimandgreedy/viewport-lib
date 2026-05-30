@@ -295,3 +295,131 @@ fn render_offscreen_produces_rgba_pixels() {
     let has_nonzero = pixels.iter().any(|&b| b != 0);
     assert!(has_nonzero, "offscreen render produced all-zero image");
 }
+
+/// Regression test for the silent-skip bug where a `set_position_override_buffer`
+/// binding would render nothing when the item was routed through the instanced
+/// pipeline. `mesh_instanced.wgsl` has no awareness of the override binding,
+/// so the consumer's compute output is dropped on the floor. The fix is twofold:
+///   1. Items with a bound override are excluded from the instanced batches
+///      (forced through the per-object pipeline that does know about overrides).
+///   2. The per-item `ObjectUniform` write loop is entered (and the override
+///      item is not skipped within it) so `has_position_override = 1` reaches
+///      the shader.
+///
+/// The test renders one red plane with an override displacing every vertex
+/// far behind the camera. A second decoy item is added so the visible-item
+/// count exceeds `INSTANCING_THRESHOLD = 1` and the instanced pipeline is
+/// actually engaged. If the bug returns, the red plane remains visible
+/// because the instanced shader ignores the override entirely.
+#[test]
+fn position_override_takes_effect_through_render_path() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // Two simple plane meshes: a red "test" plane that will get the override,
+    // and a blue "decoy" plane that exists only to push the visible-item
+    // count past INSTANCING_THRESHOLD = 1 so the instanced pipeline engages.
+    let mut mesh = MeshData::default();
+    mesh.positions = vec![
+        [-0.5, -0.5, 0.0],
+        [0.5, -0.5, 0.0],
+        [0.5, 0.5, 0.0],
+        [-0.5, 0.5, 0.0],
+    ];
+    mesh.normals = vec![[0.0, 0.0, 1.0]; 4];
+    mesh.indices = vec![0, 1, 2, 0, 2, 3];
+    let red_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &mesh)
+        .unwrap();
+    let blue_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &mesh)
+        .unwrap();
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: 1.0,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+
+    // Red plane (target of the override) at the origin; blue decoy off to the
+    // side so it doesn't overdraw the red region we measure.
+    let mut red_item = SceneRenderItem::default();
+    red_item.mesh_id = red_id;
+    red_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    red_item.material = Material::from_colour([1.0, 0.0, 0.0]);
+
+    let mut blue_item = SceneRenderItem::default();
+    blue_item.mesh_id = blue_id;
+    blue_item.model = glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0))
+        .to_cols_array_2d();
+    blue_item.material = Material::from_colour([0.0, 0.0, 1.0]);
+
+    frame.scene.surfaces = SurfaceSubmission::Flat(
+        vec![red_item.clone(), blue_item.clone()].into(),
+    );
+
+    // ---- Render 1: no override. The red plane should be visible. ----
+    let baseline = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    let count_red = |pixels: &[u8]| -> usize {
+        pixels
+            .chunks_exact(4)
+            .filter(|rgba| rgba[0] > 50 && rgba[1] < 30 && rgba[2] < 30)
+            .count()
+    };
+    let baseline_red = count_red(&baseline);
+    assert!(
+        baseline_red > 0,
+        "baseline render should show the red plane; got {baseline_red} red pixels",
+    );
+
+    // ---- Render 2: bind an override on the red plane that pushes every
+    // vertex far behind the camera. If the fix is in place, the red plane
+    // disappears regardless of whether instancing is active. If the bug
+    // returns, the red plane stays put because the instanced shader ignores
+    // the override.
+    let displaced: Vec<f32> = (0..4)
+        .flat_map(|_| [0.0_f32, 0.0, -1000.0])
+        .collect();
+    let override_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("test_position_override"),
+        size: (displaced.len() * std::mem::size_of::<f32>()) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&override_buf, 0, bytemuck::cast_slice(&displaced));
+    renderer
+        .resources_mut()
+        .set_position_override_buffer(red_id, override_buf)
+        .unwrap();
+
+    let overridden = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    let overridden_red = count_red(&overridden);
+
+    assert_eq!(
+        overridden_red, 0,
+        "with the position override pushing the red plane's vertices off-screen,\n\
+         no red pixels should remain. Got {overridden_red} red (baseline had \
+         {baseline_red}). If this regresses, the item was routed through the \
+         instanced pipeline (`mesh_instanced.wgsl`) which has no awareness of \
+         `has_position_override`, OR the per-item ObjectUniform write was \
+         skipped so the shader flag stayed at 0.",
+    );
+}

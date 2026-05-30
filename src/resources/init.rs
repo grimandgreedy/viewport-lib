@@ -310,6 +310,29 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
+                // binding 13: position override storage buffer (VERTEX, read-only).
+                // Fallback sentinel (1x vec3<f32>) is bound when no override is set.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 13,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // binding 14: normal override storage buffer (VERTEX, read-only).
+                wgpu::BindGroupLayoutEntry {
+                    binding: 14,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -1779,6 +1802,34 @@ impl ViewportGpuResources {
         }
         fallback_warp_buf.unmap();
 
+        let fallback_position_override_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("fallback_position_override_buf"),
+            size: 12, // one vec3<f32>
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        {
+            let mut view = fallback_position_override_buf
+                .slice(..)
+                .get_mapped_range_mut();
+            view.copy_from_slice(&[0u8; 12]);
+        }
+        fallback_position_override_buf.unmap();
+
+        let fallback_normal_override_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("fallback_normal_override_buf"),
+            size: 12,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        {
+            let mut view = fallback_normal_override_buf
+                .slice(..)
+                .get_mapped_range_mut();
+            view.copy_from_slice(&[0u8; 12]);
+        }
+        fallback_normal_override_buf.unmap();
+
         // ------------------------------------------------------------------
         // Hardcoded unit cube mesh (test scene object)
         // Created here : after fallback textures : so the combined bind group
@@ -1798,6 +1849,8 @@ impl ViewportGpuResources {
             &fallback_texture.view,
             &fallback_face_colour_buf,
             &fallback_warp_buf,
+            &fallback_position_override_buf,
+            &fallback_normal_override_buf,
             &fallback_metallic_roughness_texture_view,
             &fallback_emissive_texture_view,
             &cube_verts,
@@ -2713,6 +2766,8 @@ impl ViewportGpuResources {
             fallback_scalar_buf,
             fallback_face_colour_buf,
             fallback_warp_buf,
+            fallback_position_override_buf,
+            fallback_normal_override_buf,
             builtin_colourmap_ids: None,
             colourmaps_initialized: false,
             gaussian_splat_pipeline: None,

@@ -2,6 +2,20 @@
 
 ## [Unreleased changes]
 
+### GPU compute plugin hook
+
+Plugins can now run their own GPU work each frame and feed the result straight into the standard mesh pipeline. Before, plugins could only update the scene CPU-side; anything that wanted to run a compute shader or hand the renderer a GPU buffer had to fork the lib.
+
+- A new `GpuPlugin` trait, registered through `ViewportRuntime::with_gpu_plugin`. Plugins run in priority order each frame, between the scene step and the renderer's own work.
+- Position and normal override buffers: a plugin can hand the renderer a GPU buffer of per-vertex positions or normals, and the standard mesh pipeline reads from it instead of the vertex buffer. No CPU round-trip and no re-upload each frame.
+- Override and skinning compose: a skinned mesh can be driven from a GPU simulation at the bind-pose stage, with skinning still applied on top.
+- A post-paint hook is available for screen-space effects that need to sample the rendered color, depth, or pick-id targets.
+- Showcase 50 (GPU Wave) demonstrates the path end-to-end: an animated wave surface produced by a compute shader, a flotilla of buoys driven by a second plugin that reads the wave's output buffer, and a CPU vs GPU toggle that shows the per-frame cost gap.
+
+### Fixed: GPU position and normal overrides were silently ignored on most scenes
+
+`set_position_override_buffer` and `set_normal_override_buffer` would accept the binding but the renderer would draw the mesh at its rest position anyway, because the override-bound item was being routed through a code path that did not know about the override. Items with an override now go through the per-object pipeline and the override actually takes effect. A regression test renders an override that pushes every vertex off-screen and fails if the mesh stays visible.
+
 ### Volumetric effects (fog, smoke, clouds, fire)
 
 A new scene item, the scatter volume, renders ray-marched participating media: atmospheric fog, smoke columns, cloud layers, fire, magic effects. Each volume is a box or a sphere placed in the scene with a density, a colour, and a handful of look knobs; the renderer composites visible volumes onto the scene every frame with no upload step. Up to 16 volumes can overlap a single pixel.

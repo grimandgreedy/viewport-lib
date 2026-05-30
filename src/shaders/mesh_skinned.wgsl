@@ -58,8 +58,8 @@ struct Object {
     backface_colour: vec4<f32>,
     has_warp: u32,
     warp_scale: f32,
-    _pad_warp0: u32,
-    _pad_warp1: u32,
+    has_position_override: u32,
+    has_normal_override: u32,
     emissive: vec3<f32>,
     _pad_emissive: u32,
     alpha_mode: u32,
@@ -76,6 +76,15 @@ struct Object {
 @group(1) @binding(6) var<storage, read> scalar_buffer: array<f32>;
 @group(1) @binding(8) var<storage, read> face_colour_buffer: array<vec4<f32>>;
 @group(1) @binding(9) var<storage, read> warp_buffer: array<f32>;
+// Position / normal overrides bound by a `GpuPlugin`. Composition order:
+//   1. Override (if present) replaces the bind-pose input,
+//   2. Warp is added on top,
+//   3. Skinning runs on the result.
+// This makes override + skinning useful: a plugin can compute-deform the bind
+// pose and still get skinning applied. When no skinning is needed, the
+// behaviour matches `mesh.wgsl` exactly.
+@group(1) @binding(13) var<storage, read> position_override_buffer: array<f32>;
+@group(1) @binding(14) var<storage, read> normal_override_buffer:   array<f32>;
 
 // One entry per vertex: 4 weights, then joint indices packed as two u32s
 // (low/high u16 pair). Field order matches `PackedSkinVertex` in
@@ -147,6 +156,17 @@ fn vs_main(in: VertexIn) -> VertexOut {
     // vertex follows its joint cleanly. Mirrors mesh.wgsl's vs_main behaviour
     // for warp + skinning composition.
     var bind_local = in.position;
+    if object.has_position_override != 0u {
+        let pi = in.vertex_index * 3u;
+        let plen = arrayLength(&position_override_buffer);
+        if pi + 2u < plen {
+            bind_local = vec3<f32>(
+                position_override_buffer[pi],
+                position_override_buffer[pi + 1u],
+                position_override_buffer[pi + 2u],
+            );
+        }
+    }
     if object.has_warp != 0u {
         let wi = in.vertex_index * 3u;
         let warp_len = arrayLength(&warp_buffer);
@@ -158,6 +178,18 @@ fn vs_main(in: VertexIn) -> VertexOut {
             ) * object.warp_scale;
         }
     }
+    var bind_normal = in.normal;
+    if object.has_normal_override != 0u {
+        let ni = in.vertex_index * 3u;
+        let nlen = arrayLength(&normal_override_buffer);
+        if ni + 2u < nlen {
+            bind_normal = vec3<f32>(
+                normal_override_buffer[ni],
+                normal_override_buffer[ni + 1u],
+                normal_override_buffer[ni + 2u],
+            );
+        }
+    }
 
     let skin = skin_matrix(in.vertex_index);
     let local_pos = (skin * vec4<f32>(bind_local, 1.0)).xyz;
@@ -167,7 +199,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
         skin[1].xyz,
         skin[2].xyz,
     );
-    let local_normal = skin3 * in.normal;
+    let local_normal = skin3 * bind_normal;
     let local_tangent = skin3 * in.tangent.xyz;
 
     let world_pos = object.model * vec4<f32>(local_pos, 1.0);

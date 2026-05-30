@@ -2,9 +2,9 @@
 //!
 //! A simply-supported rectangular beam under a central point load.
 //!
-//! Above: the beam solid, rendered as a hex volume mesh coloured by von Mises
-//! stress. This is what a scalar field shows you: how intense the stress is,
-//! but not its direction.
+//! Above: the beam solid, rendered as a hex volume mesh coloured by sigma_xx
+//! (bending stress). This is what a scalar field shows you: the magnitude and
+//! sign of one stress component, but not the principal directions.
 //!
 //! Below: principal stress tensor glyphs at each cell centroid. The same load
 //! produces three qualitatively different glyph shapes depending on location:
@@ -99,7 +99,7 @@ impl Default for TensorGlyphState {
             beam_cells: Vec::new(),
             scale: 0.45,
             density: 1.0,
-            colourmap: BuiltinColourmap::RdBu,
+            colourmap: BuiltinColourmap::Inferno,
             selection: None,
             sub_selection: SubSelection::new(),
         }
@@ -371,10 +371,11 @@ pub(crate) fn beam_scene_items(app: &App) -> Vec<SceneRenderItem> {
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.active_attribute = Some(AttributeRef {
-        name: "von_mises".to_string(),
+        name: "sigma_xx".to_string(),
         kind: AttributeKind::Face,
     });
-    item.colourmap_id = Some(ColourmapId(0)); // viridis
+    item.scalar_range = Some((-1.2, 1.2));
+    item.colourmap_id = Some(ColourmapId(app.tg_state.colourmap as usize));
     item.material.backface_policy = BackfacePolicy::Identical;
     // Must match the VolumeMeshItem pick_id so the picking loop can convert face hits to cells.
     item.settings.pick_id = PickId(PICK_BEAM_MESH);
@@ -497,8 +498,8 @@ pub(crate) fn controls_tensor_glyphs(app: &mut App, ui: &mut egui::Ui) {
     }
     ui.separator();
 
-    ui.label("Above: beam volume mesh, coloured by von Mises stress (scalar).");
-    ui.label("  Shows intensity -- not direction.");
+    ui.label("Above: beam volume mesh, coloured by sigma_xx (bending stress).");
+    ui.label("  Shows magnitude and sign, but not the principal directions.");
     ui.separator();
 
     ui.label("Below: principal stress tensor glyphs.");

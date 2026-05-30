@@ -67,6 +67,7 @@ mod showcase_46_decals;
 mod showcase_47_lighting_consistency;
 mod showcase_48_scatter_volumes;
 mod showcase_49_scene_lights;
+mod showcase_50_gpu_wave;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -217,6 +218,7 @@ fn main() -> eframe::Result {
                 lc_state: showcase_47_lighting_consistency::LcState::default(),
                 svol_state: showcase_48_scatter_volumes::SvolState::default(),
                 sl_state: showcase_49_scene_lights::SlState::default(),
+                wave_state: showcase_50_gpu_wave::WaveState::default(),
             }))
         }),
     )
@@ -279,6 +281,7 @@ enum ShowcaseMode {
     LightingConsistency,
     ScatterVolumes,
     SceneLights,
+    GpuWave,
 }
 
 impl ShowcaseMode {
@@ -333,6 +336,7 @@ impl ShowcaseMode {
             Self::LightingConsistency => "47: Lighting Consistency",
             Self::ScatterVolumes => "48: Scatter Volumes",
             Self::SceneLights => "49: Scene Lights",
+            Self::GpuWave => "50: GPU Wave (compute plugin)",
         }
     }
 }
@@ -504,6 +508,9 @@ pub(crate) struct App {
 
     // --- Showcase 51 ---
     pub(crate) sl_state: showcase_49_scene_lights::SlState,
+
+    // --- Showcase 50 ---
+    pub(crate) wave_state: showcase_50_gpu_wave::WaveState,
 }
 
 // ---------------------------------------------------------------------------
@@ -686,6 +693,7 @@ impl eframe::App for App {
                     ShowcaseMode::LightingConsistency,
                     ShowcaseMode::ScatterVolumes,
                     ShowcaseMode::SceneLights,
+                    ShowcaseMode::GpuWave,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1418,6 +1426,13 @@ impl eframe::App for App {
                 if self.mode == ShowcaseMode::SceneLights && self.sl_state.animate {
                     ctx.request_repaint();
                 }
+                // ----- GPU wave (50): always animate while built and not paused.
+                if self.mode == ShowcaseMode::GpuWave
+                    && self.wave_state.built
+                    && !self.wave_state.paused
+                {
+                    ctx.request_repaint();
+                }
             });
     }
 }
@@ -1428,7 +1443,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 49] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 50] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1478,6 +1493,7 @@ impl App {
             ShowcaseMode::LightingConsistency,
             ShowcaseMode::ScatterVolumes,
             ShowcaseMode::SceneLights,
+            ShowcaseMode::GpuWave,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1609,6 +1625,7 @@ impl App {
             ShowcaseMode::LightingConsistency => !self.lc_state.built,
             ShowcaseMode::ScatterVolumes => !self.svol_state.built,
             ShowcaseMode::SceneLights => !self.sl_state.built,
+            ShowcaseMode::GpuWave => !self.wave_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -2066,6 +2083,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::GpuWave => {
+                self.build_wave_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 14.0,
+                    orientation: glam::Quat::from_rotation_z(0.4)
+                        * glam::Quat::from_rotation_x(1.1),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2176,6 +2203,9 @@ impl App {
             }
             ShowcaseMode::SceneLights => {
                 showcase_49_scene_lights::controls_sl(self, ui)
+            }
+            ShowcaseMode::GpuWave => {
+                showcase_50_gpu_wave::controls_wave(self, ui)
             }
         }
     }
@@ -2998,6 +3028,11 @@ impl App {
                 let (items, lighting, sg) = showcase_49_scene_lights::sl_collect(self);
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
+
+            ShowcaseMode::GpuWave => {
+                let (items, lighting) = showcase_50_gpu_wave::wave_collect(self);
+                (items, Some(BG_COLOUR), lighting, 0, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -3192,6 +3227,14 @@ impl App {
 
         if self.mode == ShowcaseMode::SceneLights && self.sl_state.built {
             showcase_49_scene_lights::submit_sl_items(self, &mut fd);
+        }
+
+        if self.mode == ShowcaseMode::GpuWave && self.wave_state.built {
+            let rs = frame.wgpu_render_state().expect("wgpu required");
+            let mut guard = rs.renderer.write();
+            if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
+                showcase_50_gpu_wave::submit_wave_items(self, &mut fd, renderer);
+            }
         }
 
 

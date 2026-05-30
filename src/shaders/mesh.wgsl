@@ -117,8 +117,8 @@ struct Object {
     backface_colour: vec4<f32>,             // offset 192
     has_warp: u32,                         // offset 208
     warp_scale: f32,                       // offset 212
-    _pad_warp0: u32,                       // offset 216
-    _pad_warp1: u32,                       // offset 220
+    has_position_override: u32,            // offset 216 : 1 when a per-vertex position storage buffer is bound at binding 13
+    has_normal_override: u32,              // offset 220 : 1 when a per-vertex normal storage buffer is bound at binding 14
     emissive: vec3<f32>,                   // offset 224
     _pad_emissive: u32,                    // offset 236
     alpha_mode: u32,                       // offset 240 : 0=Opaque 1=Mask 2=Blend
@@ -204,6 +204,14 @@ fn clip_volume_test(p: vec3<f32>) -> bool {
 @group(1) @binding(10) var lut_sampler: sampler;
 @group(1) @binding(11) var metallic_roughness_tex: texture_2d<f32>;
 @group(1) @binding(12) var emissive_tex: texture_2d<f32>;
+// Optional per-vertex override storage buffers a `GpuPlugin` may bind via
+// `ViewportGpuResources::set_position_override_buffer` / `set_normal_override_buffer`.
+// Flat `array<f32>` with 3 values per vertex so consumer compute shaders can
+// write tight `vec3` data without WGSL's 16-byte vec3 stride padding (matches
+// the warp_buffer convention). When unbound, a 12-byte zero sentinel is bound
+// so the bind group layout is satisfied.
+@group(1) @binding(13) var<storage, read> position_override_buffer: array<f32>;
+@group(1) @binding(14) var<storage, read> normal_override_buffer:   array<f32>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -231,12 +239,38 @@ struct VertexOut {
 @vertex
 fn vs_main(in: VertexIn) -> VertexOut {
     var out: VertexOut;
+    // Override > vertex attribute. When a plugin has bound a per-vertex position
+    // storage buffer, replace `in.position` outright; warp is then layered on top
+    // additively. Same idea for normals further down.
     var local_pos = in.position;
+    if object.has_position_override != 0u {
+        let pi = in.vertex_index * 3u;
+        let plen = arrayLength(&position_override_buffer);
+        if pi + 2u < plen {
+            local_pos = vec3<f32>(
+                position_override_buffer[pi],
+                position_override_buffer[pi + 1u],
+                position_override_buffer[pi + 2u],
+            );
+        }
+    }
     if object.has_warp != 0u {
         let wi = in.vertex_index * 3u;
         let warp_len = arrayLength(&warp_buffer);
         if wi + 2u < warp_len {
             local_pos += vec3<f32>(warp_buffer[wi], warp_buffer[wi + 1u], warp_buffer[wi + 2u]) * object.warp_scale;
+        }
+    }
+    var local_normal = in.normal;
+    if object.has_normal_override != 0u {
+        let ni = in.vertex_index * 3u;
+        let nlen = arrayLength(&normal_override_buffer);
+        if ni + 2u < nlen {
+            local_normal = vec3<f32>(
+                normal_override_buffer[ni],
+                normal_override_buffer[ni + 1u],
+                normal_override_buffer[ni + 2u],
+            );
         }
     }
     let world_pos = object.model * vec4<f32>(local_pos, 1.0);
@@ -248,7 +282,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
         object.model[1].xyz,
         object.model[2].xyz,
     );
-    out.world_normal = normalize(model3 * in.normal);
+    out.world_normal = normalize(model3 * local_normal);
     out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
     out.uv = in.uv;
     // Read scalar attribute value for this vertex, guarded by has_attribute and buffer length.

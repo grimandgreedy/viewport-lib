@@ -44,6 +44,8 @@ pub mod context;
 /// Debug draw accumulator for runtime plugins.
 pub mod debug_draw;
 pub mod events;
+/// GPU plugin trait and lifecycle hooks.
+pub mod gpu_plugin;
 /// Plugin authoring guide.
 pub mod guide;
 /// Async job handoff types for runtime plugins.
@@ -63,6 +65,7 @@ pub use camera_follow::CameraFollow;
 pub use context::{RuntimeFrameContext, RuntimeStepContext, SimulationStepContext};
 pub use debug_draw::{DebugDraw, DebugLayer, DebugPrim};
 pub use events::RuntimeEventBus;
+pub use gpu_plugin::{gpu_phase, GpuFrameContext, GpuPlugin, PostPaintTargets};
 pub use jobs::{JobPoll, JobSender, JobSlot};
 pub use mode::SceneRuntimeMode;
 pub use output::{CameraCommand, ContactEvent, NodeTransformOp, RuntimeOutput, SelectionOp, SkinnedMeshUpdate, SkinnedPoseUpdate, TransformWriteback};
@@ -1279,6 +1282,10 @@ mod tests {
 pub struct ViewportRuntime {
     mode: SceneRuntimeMode,
     plugins: Vec<Box<dyn RuntimePlugin>>,
+    gpu_plugins: Vec<Box<dyn GpuPlugin>>,
+    /// False until every registered GPU plugin has had `init_gpu` called.
+    /// Cleared again when a new GPU plugin is registered.
+    gpu_initialized: bool,
     fixed_timestep: Option<FixedTimestep>,
     snapshots: TransformSnapshotTable,
     step_index: u64,
@@ -1305,6 +1312,8 @@ impl ViewportRuntime {
         Self {
             mode: SceneRuntimeMode::default(),
             plugins: Vec::new(),
+            gpu_plugins: Vec::new(),
+            gpu_initialized: false,
             fixed_timestep: None,
             snapshots: TransformSnapshotTable::new(),
             step_index: 0,
@@ -1362,6 +1371,92 @@ impl ViewportRuntime {
     pub fn with_plugin(mut self, plugin: impl RuntimePlugin) -> Self {
         self.plugins.push(Box::new(plugin));
         self
+    }
+
+    /// Register a GPU plugin. GPU plugins encode wgpu command buffers from
+    /// [`ViewportRuntime::pre_prepare`], which the host calls each frame after
+    /// `step` and before `renderer.prepare()`. Plugins run in ascending
+    /// priority order; equal priorities preserve registration order.
+    ///
+    /// Registering a plugin after the runtime has already run a frame re-runs
+    /// every GPU plugin's `init_gpu` on the next `pre_prepare`. Implementations
+    /// should be idempotent or guard their own one-time setup.
+    pub fn with_gpu_plugin(mut self, plugin: impl GpuPlugin) -> Self {
+        self.gpu_plugins.push(Box::new(plugin));
+        self.gpu_initialized = false;
+        self
+    }
+
+    /// Run every registered GPU plugin's `pre_prepare` in ascending priority
+    /// order and return the concatenated command buffers.
+    ///
+    /// Call after [`step`](Self::step) and before `renderer.prepare()`. The
+    /// returned buffers should be submitted ahead of the renderer's own:
+    ///
+    /// ```text
+    /// let plugin_bufs  = runtime.pre_prepare(device, queue, &gpu_ctx);
+    /// let prepare_bufs = renderer.pass().prepare(device, queue, &frame);
+    /// queue.submit(plugin_bufs.into_iter().chain(prepare_bufs));
+    /// ```
+    ///
+    /// wgpu submit ordering guarantees plugin work completes before
+    /// `prepare()`'s, so any storage buffer written by a plugin is observable
+    /// by the standard render passes in the same frame.
+    ///
+    /// On the first call (or after a new plugin is registered), every plugin's
+    /// `init_gpu` is invoked once before any `pre_prepare`.
+    pub fn pre_prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        ctx: &GpuFrameContext<'_>,
+    ) -> Vec<wgpu::CommandBuffer> {
+        if !self.gpu_initialized {
+            for p in self.gpu_plugins.iter_mut() {
+                p.init_gpu(device);
+            }
+            self.gpu_initialized = true;
+        }
+        // Stable sort: equal priorities preserve registration order. Same
+        // contract as the CPU plugin list.
+        self.gpu_plugins.sort_by_key(|p| p.priority());
+
+        let mut out = Vec::new();
+        for p in self.gpu_plugins.iter_mut() {
+            out.extend(p.pre_prepare(device, queue, ctx));
+        }
+        out
+    }
+
+    /// Run every registered GPU plugin's `post_paint` in ascending priority
+    /// order and return the concatenated command buffers.
+    ///
+    /// Call after `renderer.paint_to()` has run for the frame. The host
+    /// supplies views of the just-rendered color and depth targets (and
+    /// optionally a pick-id view), and is responsible for compositing any
+    /// plugin overlay output into the final image: the lib does not loop
+    /// plugin output back into the rendered color.
+    ///
+    /// Plugins registered after the first frame still go through `init_gpu`
+    /// on the next `pre_prepare`; this method does not trigger init on its
+    /// own to keep the post-paint path deterministic.
+    pub fn post_paint(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        targets: &PostPaintTargets<'_>,
+        ctx: &GpuFrameContext<'_>,
+    ) -> Vec<wgpu::CommandBuffer> {
+        // Stable sort: equal priorities preserve registration order. The list
+        // is already sorted if `pre_prepare` ran first this frame; sorting
+        // again is cheap and keeps `post_paint` safe to call standalone.
+        self.gpu_plugins.sort_by_key(|p| p.priority());
+
+        let mut out = Vec::new();
+        for p in self.gpu_plugins.iter_mut() {
+            out.extend(p.post_paint(device, queue, targets, ctx));
+        }
+        out
     }
 
     /// Enable fixed-timestep accumulation for physics plugins.

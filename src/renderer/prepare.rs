@@ -572,6 +572,19 @@ impl ViewportRenderer {
         let has_param_vis_items = scene_items.iter().any(|i| i.material.param_vis.is_some());
         let has_wireframe_items = scene_items.iter().any(|i| i.settings.wireframe);
         let has_normal_vis_items = scene_items.iter().any(|i| i.show_normals);
+        // Items whose mesh has a position or normal override bound. The shader
+        // flag that drives the override binding lives in the per-item
+        // ObjectUniform, so we must enter the write loop for those items even
+        // if no other "special" flag is set anywhere in the scene.
+        let has_override_items = scene_items.iter().any(|i| {
+            resources
+                .mesh_store
+                .get(i.mesh_id)
+                .map_or(false, |m| {
+                    m.position_override_buffer.is_some()
+                        || m.normal_override_buffer.is_some()
+                })
+        });
         // Collect per-item uniforms when wireframe mode is on so we can give each
         // visible item its own bind group (the mesh's shared object_uniform_buf gets
         // overwritten when multiple items reference the same MeshId).
@@ -585,12 +598,30 @@ impl ViewportRenderer {
             || has_param_vis_items
             || has_wireframe_items
             || has_normal_vis_items
+            || has_override_items
         {
             for item in scene_items {
                 // When instancing is active, skip items that will be rendered
                 // via the instanced path. They don't need per-object uniform
                 // writes; writing them anyway causes O(n) write_buffer calls
                 // for the whole scene whenever any single item is two-sided.
+                //
+                // Items whose mesh has a GPU position or normal override bound
+                // (`set_position_override_buffer` / `set_normal_override_buffer`)
+                // MUST go through this per-item write path. The override
+                // binding at group 1 binding 13/14 is selected by the shader's
+                // `has_position_override` / `has_normal_override` flag, which
+                // lives in the per-item `ObjectUniform`. Skipping the write
+                // leaves the flag at the default 0, the shader ignores the
+                // override binding, and the consumer's compute output silently
+                // does nothing.
+                let mesh_has_override = resources
+                    .mesh_store
+                    .get(item.mesh_id)
+                    .map_or(false, |m| {
+                        m.position_override_buffer.is_some()
+                            || m.normal_override_buffer.is_some()
+                    });
                 if self.use_instancing
                     && !frame.viewport.wireframe_mode
                     && item.active_attribute.is_none()
@@ -600,6 +631,7 @@ impl ViewportRenderer {
                     && !item.settings.wireframe
                     && item.warp_attribute.is_none()
                     && !item.show_normals
+                    && !mesh_has_override
                 {
                     continue;
                 }
@@ -693,7 +725,14 @@ impl ViewportRenderer {
                     },
                     has_warp: if item.warp_attribute.is_some() { 1 } else { 0 },
                     warp_scale: item.warp_scale,
-                    _pad_warp: [0; 2],
+                    has_position_override: {
+                        let mesh = resources.mesh_store.get(item.mesh_id);
+                        if mesh.map_or(false, |m| m.position_override_buffer.is_some()) { 1 } else { 0 }
+                    },
+                    has_normal_override: {
+                        let mesh = resources.mesh_store.get(item.mesh_id);
+                        if mesh.map_or(false, |m| m.normal_override_buffer.is_some()) { 1 } else { 0 }
+                    },
                     emissive: m.emissive,
                     _pad_emissive: 0,
                     alpha_mode: match m.alpha_mode {
@@ -740,7 +779,8 @@ impl ViewportRenderer {
                     backface_colour: [0.0; 4],
                     has_warp: 0,
                     warp_scale: 1.0,
-                    _pad_warp: [0; 2],
+                    has_position_override: 0,
+                    has_normal_override: 0,
                     emissive: [0.0; 3],
                     _pad_emissive: 0,
                     alpha_mode: 0,
@@ -873,6 +913,14 @@ impl ViewportRenderer {
                                 &resources.fallback_emissive_texture_view,
                             ),
                         },
+                        wgpu::BindGroupEntry {
+                            binding: 13,
+                            resource: resources.fallback_position_override_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 14,
+                            resource: resources.fallback_normal_override_buf.as_entire_binding(),
+                        },
                     ],
                 });
                 self.wireframe_uniform_bufs.push(buf);
@@ -919,6 +967,18 @@ impl ViewportRenderer {
                         && item.material.param_vis.is_none()
                         && resources.mesh_store.get(item.mesh_id).is_some()
                         && !compute_filter_results.iter().any(|r| r.mesh_id == item.mesh_id)
+                        // Items whose mesh has a GPU position/normal override
+                        // bound must use the per-object pipeline. `mesh_instanced.wgsl`
+                        // has no awareness of the override binding, so an
+                        // instanced draw silently ignores the consumer's
+                        // compute output.
+                        && resources
+                            .mesh_store
+                            .get(item.mesh_id)
+                            .map_or(true, |m| {
+                                m.position_override_buffer.is_none()
+                                    && m.normal_override_buffer.is_none()
+                            })
                 })
                 .count();
             let cache_valid = instancable_count == self.last_instancable_count
@@ -944,6 +1004,16 @@ impl ViewportRenderer {
                             // docs/plans/skeletal-animation-plan.md.
                             && !(item.skin_instance.is_some()
                                 && resources.is_skinned_mesh(item.mesh_id))
+                            // Items with a position/normal override must use
+                            // the per-object pipeline; see the matching check
+                            // in `instancable_count` above.
+                            && resources
+                                .mesh_store
+                                .get(item.mesh_id)
+                                .map_or(true, |m| {
+                                    m.position_override_buffer.is_none()
+                                        && m.normal_override_buffer.is_none()
+                                })
                     })
                     .collect();
 
@@ -1931,6 +2001,14 @@ impl ViewportRenderer {
                         resource: wgpu::BindingResource::TextureView(
                             &resources.fallback_emissive_texture_view,
                         ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 13,
+                        resource: resources.fallback_position_override_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 14,
+                        resource: resources.fallback_normal_override_buf.as_entire_binding(),
                     },
                 ],
             });
