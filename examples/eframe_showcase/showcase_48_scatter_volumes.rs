@@ -1,4 +1,4 @@
-//! Showcase 50: Scatter Volumes (participating media).
+//! Showcase 48: Scatter Volumes (participating media).
 //!
 //! Demonstrates the `ScatterVolume` item type with a Box ("global fog"), a
 //! Sphere ("localized haze"), and an optional fire sphere (colour ramp +

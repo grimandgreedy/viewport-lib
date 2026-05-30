@@ -1,4 +1,4 @@
-//! Showcase 51: Scene-graph lights.
+//! Showcase 49: Scene-graph lights.
 //!
 //! Lights placed via `Scene::add_light` and collected into `SceneFrame::lights`
 //! each frame. The renderer unions them with `EffectsFrame::lighting.lights`.

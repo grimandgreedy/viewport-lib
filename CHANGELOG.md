@@ -18,7 +18,7 @@ A new scene item, the scatter volume, renders ray-marched participating media: a
 - Temporal accumulation: each frame's scatter result is blended with the previous frame's reprojected result, with an adjustable history weight. Smooths out the blue-noise jitter and any residual banding; produces a short trail when the camera moves quickly, which is the standard temporal-accumulation tradeoff.
 - Defaults: Low quality (8 steps), half-resolution, and temporal accumulation all on, so ten overlapping volumes stay performant without extra setup. Consumers that prioritise crisp motion can switch to Medium / High and turn temporal off.
 - Tile-based culling: each visible volume is rasterised through its own screen-space bounding rectangle rather than as part of a fullscreen pass. Pixels outside a volume's projection cost zero on that volume, so scenes with many small volumes (cloud here, fog patch there, fire over there) only pay for the pixels each volume actually touches. Volumes that fall fully off-screen contribute nothing.
-- Showcase: `showcase-50: Scatter Volumes` walks through everything above with sliders.
+- Showcase: `showcase-48: Scatter Volumes` walks through everything above with sliders.
 
 ### Scene-graph lights
 
@@ -31,7 +31,7 @@ Lights are now scene-graph nodes rather than per-frame configuration data.
 - Point and spot lights now affect every lit pipeline, not just surface meshes. The shared `apply_scene_lighting` helper in `scene_lighting.wgsl` previously evaluated directional lights only and silently skipped point and spot kinds on glyphs, tensor glyphs, streamtubes, ribbons, implicit surfaces, and marching-cubes surfaces. All of those pipelines now evaluate full distance falloff for point lights and inner/outer cone attenuation for spot lights, matching what `mesh.wgsl` already did.
 - `LightSource` and `LightKind` carry `serde` derives behind the `serde` feature gate.
 - Fixed a latent panic in `prepare.rs` where the shadow-map direction was read from `lighting.lights[0]` rather than from the combined light list, which would crash any frame where all lights entered through `SceneFrame::lights` and `LightingSettings::lights` was left empty.
-- Showcase 51 demonstrates scene-graph lights: a ground plane and a 3x3 sphere grid lit by a warm orbiting point light, a cool orbiting spotlight, and a soft directional fill. Lights orbit live with animate on; colour, intensity, and range are editable per light from the controls panel.
+- Showcase 49 demonstrates scene-graph lights: a ground plane and a 3x3 sphere grid lit by a warm orbiting point light, a cool orbiting spotlight, and a soft directional fill. Lights orbit live with animate on; colour, intensity, and range are editable per light from the controls panel.
 
 ### ShadingModel enum (breaking)
 
@@ -127,7 +127,7 @@ The hardcoded no-scene-lights fallback in glyph, streamtube, ribbon, and tensor 
 
 ### Examples
 
-#### Showcase 49: Lighting and Shading Consistency
+#### Showcase 47: Lighting and Shading Consistency
 
 New grid of 13 item types (surface mesh, point cloud, glyph, tensor glyph, polyline, streamtube, tube, ribbon, GPU implicit, Gaussian splat, volume, volume surface slice, transparent volume mesh) sharing one `LightingSettings` and one set of broadcast `ItemSettings` flags. Toggling `hidden`, `unlit`, `opacity`, or `wireframe` applies the change to every item simultaneously, showing how the same per-item flag behaves across mesh, volumetric, scivis, and procedural types. Scene-light controls (yaw / pitch / intensity, optional second directional light, hemisphere ambient + sky / ground colours) make the cross-type lighting response observable side-by-side.
 

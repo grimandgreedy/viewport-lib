@@ -1,4 +1,4 @@
-//! Showcase 49: Lighting and Shading Consistency.
+//! Showcase 47: Lighting and Shading Consistency.
 //!
 //! A side-by-side grid of item types sharing one `LightingSettings` and one set
 //! of `ItemSettings` broadcast values. Toggling a flag in the controls panel

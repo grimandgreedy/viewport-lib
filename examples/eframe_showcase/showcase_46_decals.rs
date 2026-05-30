@@ -1,20 +1,10 @@
-//! Showcase 48: Screen-Space Decals
+//! Showcase 46: Screen-Space Decals
 //!
 //! Demonstrates the full decal pipeline (D1 through D5).
 //!
 //! Scene: a vertical wall (XZ plane, +Y normal) meets a ground floor (XY
 //! plane, +Z normal). Click any visible surface to stamp a gunshot decal.
 //! Static footprints and blood splatters are pre-placed on the ground.
-//!
-//! D1: screen-space projection from the opaque-pass depth buffer.
-//! D2: optional crater normal map that perturbs surface shading.
-//! D3: roughness and metallic controls; wet-patch sort_key demo.
-//! D4: lifetime-managed fading decals and a UV-scroll animation demo.
-//! D5: receiver masking -- orange box on the floor blocks decal projection.
-//! D6: emissive channel -- glowing rune and spark-impact decals.
-//! D7: soft projection-box edges -- edge_fade slider on/off comparison.
-//! D8: tri-planar projection -- corner-spanning checkerboard decal.
-//! D9: cylindrical projection -- label wrapped around a column.
 
 use eframe::egui;
 use viewport_lib::{
@@ -400,7 +390,7 @@ pub(crate) struct PlacedDecal {
 // State
 // ---------------------------------------------------------------------------
 
-pub(crate) struct Decal48State {
+pub(crate) struct Decal46State {
     pub built: bool,
     pub scene: Scene,
     pub selection: Selection,
@@ -473,7 +463,7 @@ pub(crate) struct Decal48State {
     pub fire_alpha:     f32,
 }
 
-impl Default for Decal48State {
+impl Default for Decal46State {
     fn default() -> Self {
         Self {
             built: false,
@@ -534,8 +524,8 @@ impl Default for Decal48State {
 // Scene construction
 // ---------------------------------------------------------------------------
 
-pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::ViewportRenderer) {
-    app.decal48_state.scene = Scene::new();
+pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut viewport_lib::ViewportRenderer) {
+    app.decal46_state.scene = Scene::new();
 
     let res = renderer.resources_mut();
 
@@ -564,55 +554,55 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
         .upload_texture(&app.device, &app.queue, 128, 128, &make_spark_texture(128))
         .expect("spark texture upload");
 
-    app.decal48_state.albedo_tex    = Some(albedo_id);
-    app.decal48_state.normal_tex    = Some(normal_id);
-    app.decal48_state.wet_tex       = Some(wet_id);
-    app.decal48_state.stripe_tex    = Some(stripe_id);
-    app.decal48_state.footprint_tex = Some(footprint_id);
-    app.decal48_state.blood_tex     = Some(blood_id);
-    app.decal48_state.rune_tex      = Some(rune_id);
-    app.decal48_state.spark_tex     = Some(spark_id);
+    app.decal46_state.albedo_tex    = Some(albedo_id);
+    app.decal46_state.normal_tex    = Some(normal_id);
+    app.decal46_state.wet_tex       = Some(wet_id);
+    app.decal46_state.stripe_tex    = Some(stripe_id);
+    app.decal46_state.footprint_tex = Some(footprint_id);
+    app.decal46_state.blood_tex     = Some(blood_id);
+    app.decal46_state.rune_tex      = Some(rune_id);
+    app.decal46_state.spark_tex     = Some(spark_id);
 
     let checker_id = res
         .upload_texture(&app.device, &app.queue, 128, 128, &make_checker_texture(128))
         .expect("checker texture upload");
-    app.decal48_state.checker_tex = Some(checker_id);
+    app.decal46_state.checker_tex = Some(checker_id);
 
     let label_id = res
         .upload_texture(&app.device, &app.queue, 128, 128, &make_label_texture(128))
         .expect("label texture upload");
-    app.decal48_state.label_tex = Some(label_id);
+    app.decal46_state.label_tex = Some(label_id);
 
     let fire_id = res
         .upload_texture(&app.device, &app.queue, 128, 128, &make_fire_texture(128))
         .expect("fire texture upload");
-    app.decal48_state.fire_tex = Some(fire_id);
+    app.decal46_state.fire_tex = Some(fire_id);
 
     // Vertical wall: 6 wide (X), 0.2 thick (Y), 4 tall (Z).
     let wall_data = viewport_lib::primitives::cuboid(6.0, 0.2, 4.0);
-    app.decal48_state.wall_cpu_mesh = Some((wall_data.positions.clone(), wall_data.indices.clone()));
+    app.decal46_state.wall_cpu_mesh = Some((wall_data.positions.clone(), wall_data.indices.clone()));
     let wall_id = res
         .upload_mesh_data(&app.device, &wall_data)
         .expect("wall mesh upload");
-    app.decal48_state.wall_mesh = Some(wall_id);
+    app.decal46_state.wall_mesh = Some(wall_id);
 
     // Ground floor: 8 wide (X), 6 deep (Y), 0.2 thick (Z).
     let ground_data = viewport_lib::primitives::cuboid(8.0, 6.0, 0.2);
-    app.decal48_state.ground_cpu_mesh = Some((ground_data.positions.clone(), ground_data.indices.clone()));
+    app.decal46_state.ground_cpu_mesh = Some((ground_data.positions.clone(), ground_data.indices.clone()));
     let ground_id = res
         .upload_mesh_data(&app.device, &ground_data)
         .expect("ground mesh upload");
-    app.decal48_state.ground_mesh = Some(ground_id);
+    app.decal46_state.ground_mesh = Some(ground_id);
 
     // D9: column (cylinder) standing on the ground, right side.
     // radius=0.3, height=3.0, center at (2.5, 0.5, 1.5).
     res.ensure_matcaps_initialized(&app.device, &app.queue);
     let column_data = viewport_lib::primitives::cylinder(0.3, 3.0, 24);
-    app.decal48_state.column_cpu_mesh = Some((column_data.positions.clone(), column_data.indices.clone()));
+    app.decal46_state.column_cpu_mesh = Some((column_data.positions.clone(), column_data.indices.clone()));
     let column_id = res
         .upload_mesh_data(&app.device, &column_data)
         .expect("column mesh upload");
-    app.decal48_state.column_mesh = Some(column_id);
+    app.decal46_state.column_mesh = Some(column_id);
 
     // D5: non-receiver box mounted on the wall face.
     // cuboid(0.6, 0.25, 0.6): sticks 0.25 out from the wall, center y = 0.125.
@@ -621,7 +611,7 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
         .upload_mesh_data(&app.device, &wall_obstacle_data)
         .expect("wall obstacle mesh upload");
 
-    let scene = &mut app.decal48_state.scene;
+    let scene = &mut app.decal46_state.scene;
 
     let wall_mat = Material::from_colour([0.92, 0.92, 0.92]);
     scene.add(
@@ -648,7 +638,7 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
         glam::Mat4::from_translation(glam::Vec3::new(2.5, 0.5, 1.5)),
         column_mat,
     );
-    app.decal48_state.column_node = Some(column_node);
+    app.decal46_state.column_node = Some(column_node);
 
     // Wall obstacle: mounted on the wall face at left-center.
     // center y = 0.125 puts its back face flush against y = 0.
@@ -658,9 +648,9 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
         Material::from_colour([1.0, 0.45, 0.1]),
     );
     scene.set_receives_decals(wall_obstacle_node, false);
-    app.decal48_state.wall_obstacle_node = Some(wall_obstacle_node);
+    app.decal46_state.wall_obstacle_node = Some(wall_obstacle_node);
 
-    app.decal48_state.built = true;
+    app.decal46_state.built = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -668,8 +658,8 @@ pub(crate) fn build_decal48_scene(app: &mut App, renderer: &mut viewport_lib::Vi
 // ---------------------------------------------------------------------------
 
 /// Build the mesh lookup table for CPU picking from stored mesh data.
-fn decal48_mesh_lookup(
-    st: &Decal48State,
+fn decal46_mesh_lookup(
+    st: &Decal46State,
 ) -> std::collections::HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)> {
     let mut map = std::collections::HashMap::new();
     if let (Some(id), Some(data)) = (st.wall_mesh,   &st.wall_cpu_mesh)   { map.insert(id.index() as u64, data.clone()); }
@@ -679,24 +669,24 @@ fn decal48_mesh_lookup(
 }
 
 /// Place a gunshot decal at the clicked viewport position using CPU ray-casting.
-pub(crate) fn decal48_place(app: &mut App, cursor: glam::Vec2, vp_size: glam::Vec2) {
-    if !app.decal48_state.built { return; }
+pub(crate) fn decal46_place(app: &mut App, cursor: glam::Vec2, vp_size: glam::Vec2) {
+    if !app.decal46_state.built { return; }
     let vp_inv = app.camera.view_proj_matrix().inverse();
     let (ro, rd) = viewport_lib::picking::screen_to_ray(cursor, vp_size, vp_inv);
 
-    let mesh_lookup = decal48_mesh_lookup(&app.decal48_state);
+    let mesh_lookup = decal46_mesh_lookup(&app.decal46_state);
     let Some(pick) = viewport_lib::picking::pick_scene_nodes_cpu(
-        ro, rd, &app.decal48_state.scene, &mesh_lookup,
+        ro, rd, &app.decal46_state.scene, &mesh_lookup,
     ) else { return };
 
     let hit    = pick.world_pos;
     let normal = pick.normal;
 
     // Detect whether the hit was on the column by comparing the picked node ID.
-    let column_node_id = app.decal48_state.column_node.unwrap_or(u64::MAX);
+    let column_node_id = app.decal46_state.column_node.unwrap_or(u64::MAX);
     let on_column = pick.id == column_node_id;
 
-    let st = &mut app.decal48_state;
+    let st = &mut app.decal46_state;
     let Some(tex) = st.albedo_tex else { return };
 
     // Build the decal transform. For column hits, local Z = world Z (cylinder axis)
@@ -743,18 +733,18 @@ pub(crate) fn decal48_place(app: &mut App, cursor: glam::Vec2, vp_size: glam::Ve
 // Per-frame update (D4)
 // ---------------------------------------------------------------------------
 
-pub(crate) fn update_decal48(app: &mut App, dt: f32) {
-    if !app.decal48_state.built { return; }
+pub(crate) fn update_decal46(app: &mut App, dt: f32) {
+    if !app.decal46_state.built { return; }
 
-    app.decal48_state.scene.update_decals(dt);
+    app.decal46_state.scene.update_decals(dt);
 
     // D5: sync obstacle visibility.
-    let show = app.decal48_state.show_obstacle;
-    if let Some(node) = app.decal48_state.wall_obstacle_node {
-        app.decal48_state.scene.set_visible(node, show);
+    let show = app.decal46_state.show_obstacle;
+    if let Some(node) = app.decal46_state.wall_obstacle_node {
+        app.decal46_state.scene.set_visible(node, show);
     }
 
-    let st = &mut app.decal48_state;
+    let st = &mut app.decal46_state;
 
     // Scroll animation: always-on black/white stripe across the full width of the wall top.
     // Wall: 6 wide (X), 4 tall (Z), face at y=0, normal +Y.
@@ -787,15 +777,15 @@ pub(crate) fn update_decal48(app: &mut App, dt: f32) {
 // Scene items
 // ---------------------------------------------------------------------------
 
-pub(crate) fn decal48_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
-    app.decal48_state
+pub(crate) fn decal46_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
+    app.decal46_state
         .scene
-        .collect_render_items(&app.decal48_state.selection)
+        .collect_render_items(&app.decal46_state.selection)
 }
 
 /// Push all active decals into `fd.scene.decals`.
-pub(crate) fn submit_decal48_items(app: &App, fd: &mut viewport_lib::FrameData) {
-    let st = &app.decal48_state;
+pub(crate) fn submit_decal46_items(app: &App, fd: &mut viewport_lib::FrameData) {
+    let st = &app.decal46_state;
 
     // D3: wet patch on the left side of the ground floor.
     if st.show_wet_patch {
@@ -1011,9 +1001,9 @@ pub(crate) fn submit_decal48_items(app: &App, fd: &mut viewport_lib::FrameData) 
 // Controls panel
 // ---------------------------------------------------------------------------
 
-pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
+pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical().show(ui, |ui| {
-        if app.decal48_state.fading_mode {
+        if app.decal46_state.fading_mode {
             ui.label("Click the wall or ground to stamp a gunshot decal (auto-fade).");
         } else {
             ui.label("Click the wall or ground to stamp a permanent gunshot decal.");
@@ -1022,34 +1012,34 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
 
         ui.separator();
         ui.label("Decal settings:");
-        ui.add(egui::Slider::new(&mut app.decal48_state.decal_size, 0.05..=2.0).text("Size"));
+        ui.add(egui::Slider::new(&mut app.decal46_state.decal_size, 0.05..=2.0).text("Size"));
         ui.add(
-            egui::Slider::new(&mut app.decal48_state.decal_depth, 0.3..=4.0)
+            egui::Slider::new(&mut app.decal46_state.decal_depth, 0.3..=4.0)
                 .text("Proj. depth"),
         );
-        ui.add(egui::Slider::new(&mut app.decal48_state.alpha, 0.1..=1.0).text("Alpha"));
+        ui.add(egui::Slider::new(&mut app.decal46_state.alpha, 0.1..=1.0).text("Alpha"));
 
         ui.add_space(4.0);
         ui.label("Blend mode:");
         ui.horizontal(|ui| {
-            let cur = app.decal48_state.blend_mode;
+            let cur = app.decal46_state.blend_mode;
             if ui.selectable_label(cur == DecalBlendMode::Replace,  "Replace").clicked()  {
-                app.decal48_state.blend_mode = DecalBlendMode::Replace;
+                app.decal46_state.blend_mode = DecalBlendMode::Replace;
             }
             if ui.selectable_label(cur == DecalBlendMode::Multiply, "Multiply").clicked() {
-                app.decal48_state.blend_mode = DecalBlendMode::Multiply;
+                app.decal46_state.blend_mode = DecalBlendMode::Multiply;
             }
             if ui.selectable_label(cur == DecalBlendMode::Additive, "Additive").clicked() {
-                app.decal48_state.blend_mode = DecalBlendMode::Additive;
+                app.decal46_state.blend_mode = DecalBlendMode::Additive;
             }
         });
 
         ui.add_space(6.0);
         ui.separator();
         ui.label("Normal map:");
-        ui.checkbox(&mut app.decal48_state.use_normal_map, "Crater normal map");
+        ui.checkbox(&mut app.decal46_state.use_normal_map, "Crater normal map");
         ui.add(
-            egui::Slider::new(&mut app.decal48_state.normal_blend, 0.0..=1.0)
+            egui::Slider::new(&mut app.decal46_state.normal_blend, 0.0..=1.0)
                 .text("Normal blend"),
         );
 
@@ -1057,29 +1047,29 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
         ui.separator();
         ui.label("Roughness / metallic:");
         ui.add(
-            egui::Slider::new(&mut app.decal48_state.decal_roughness, 0.0..=1.0)
+            egui::Slider::new(&mut app.decal46_state.decal_roughness, 0.0..=1.0)
                 .text("Roughness"),
         );
         ui.add(
-            egui::Slider::new(&mut app.decal48_state.decal_metallic, 0.0..=1.0)
+            egui::Slider::new(&mut app.decal46_state.decal_metallic, 0.0..=1.0)
                 .text("Metallic"),
         );
         ui.add_space(4.0);
-        ui.checkbox(&mut app.decal48_state.show_wet_patch, "Show wet patch (ground left)");
+        ui.checkbox(&mut app.decal46_state.show_wet_patch, "Show wet patch (ground left)");
         ui.small("Wet patch: roughness 0.05, sort above footprints.");
 
         ui.add_space(6.0);
         ui.separator();
         ui.label("Lifetime / animation:");
-        ui.checkbox(&mut app.decal48_state.fading_mode, "Fading mode (auto-remove)");
-        if app.decal48_state.fading_mode {
+        ui.checkbox(&mut app.decal46_state.fading_mode, "Fading mode (auto-remove)");
+        if app.decal46_state.fading_mode {
             ui.add(
-                egui::Slider::new(&mut app.decal48_state.fade_lifetime, 2.0..=20.0)
+                egui::Slider::new(&mut app.decal46_state.fade_lifetime, 2.0..=20.0)
                     .text("Lifetime (s)"),
             );
-            let max_fade = app.decal48_state.fade_lifetime;
+            let max_fade = app.decal46_state.fade_lifetime;
             ui.add(
-                egui::Slider::new(&mut app.decal48_state.fade_out, 0.1..=max_fade)
+                egui::Slider::new(&mut app.decal46_state.fade_out, 0.1..=max_fade)
                     .text("Fade-out (s)"),
             );
         }
@@ -1089,7 +1079,7 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
         ui.separator();
         ui.label("Placed gunshots:");
         let mut remove_id: Option<u64> = None;
-        for placed in &app.decal48_state.decals {
+        for placed in &app.decal46_state.decals {
             ui.horizontal(|ui| {
                 ui.label(&placed.label);
                 if ui.small_button("x").clicked() {
@@ -1098,25 +1088,25 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
             });
         }
         if let Some(id) = remove_id {
-            app.decal48_state.decals.retain(|d| d.id != id);
+            app.decal46_state.decals.retain(|d| d.id != id);
         }
-        if app.decal48_state.decals.is_empty() && !app.decal48_state.fading_mode {
+        if app.decal46_state.decals.is_empty() && !app.decal46_state.fading_mode {
             ui.small("(none)");
         }
-        let live_count = app.decal48_state.scene.collect_decal_items().len();
+        let live_count = app.decal46_state.scene.collect_decal_items().len();
         if live_count > 0 {
             ui.small(format!("{live_count} live (fading/animated) decals active."));
         }
 
         ui.add_space(4.0);
         if ui.button("Clear all permanent").clicked() {
-            app.decal48_state.decals.clear();
+            app.decal46_state.decals.clear();
         }
 
         ui.add_space(6.0);
         ui.separator();
         ui.label("Receiver masking:");
-        ui.checkbox(&mut app.decal48_state.show_obstacle, "Show non-receiver obstacles");
+        ui.checkbox(&mut app.decal46_state.show_obstacle, "Show non-receiver obstacles");
         ui.small("Orange boxes (wall + ground): receives_decals = false.");
 
         ui.add_space(6.0);
@@ -1125,17 +1115,17 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
         ui.small("Emissive adds self-illumination on top of the blend result.");
         ui.small("Values above 1.0 bloom under tone-mapping (post_process required).");
         ui.add_space(2.0);
-        ui.checkbox(&mut app.decal48_state.show_rune, "Glowing rune (wall right)");
-        if app.decal48_state.show_rune {
+        ui.checkbox(&mut app.decal46_state.show_rune, "Glowing rune (wall right)");
+        if app.decal46_state.show_rune {
             ui.add(
-                egui::Slider::new(&mut app.decal48_state.rune_emissive, 0.0..=8.0)
+                egui::Slider::new(&mut app.decal46_state.rune_emissive, 0.0..=8.0)
                     .text("Rune emissive"),
             );
         }
-        ui.checkbox(&mut app.decal48_state.show_spark, "Spark impact (ground right)");
-        if app.decal48_state.show_spark {
+        ui.checkbox(&mut app.decal46_state.show_spark, "Spark impact (ground right)");
+        if app.decal46_state.show_spark {
             ui.add(
-                egui::Slider::new(&mut app.decal48_state.spark_emissive, 0.0..=8.0)
+                egui::Slider::new(&mut app.decal46_state.spark_emissive, 0.0..=8.0)
                     .text("Spark emissive"),
             );
         }
@@ -1146,10 +1136,10 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
         ui.small("Edge fade smooths the rectangular boundary of the projection box.");
         ui.small("Toggle on placed gunshots to compare hard vs. soft edges.");
         ui.add_space(2.0);
-        ui.checkbox(&mut app.decal48_state.apply_edge_fade, "Apply edge fade to gunshots");
-        if app.decal48_state.apply_edge_fade {
+        ui.checkbox(&mut app.decal46_state.apply_edge_fade, "Apply edge fade to gunshots");
+        if app.decal46_state.apply_edge_fade {
             ui.add(
-                egui::Slider::new(&mut app.decal48_state.edge_fade, 0.0..=0.5)
+                egui::Slider::new(&mut app.decal46_state.edge_fade, 0.0..=0.5)
                     .text("Edge fade"),
             );
         }
@@ -1159,12 +1149,12 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
         ui.label("Tri-planar projection:");
         ui.small("Planar stretches across the wall/floor corner; tri-planar wraps cleanly.");
         ui.add_space(2.0);
-        ui.checkbox(&mut app.decal48_state.show_corner_decal, "Show corner decal (checkerboard)");
-        if app.decal48_state.show_corner_decal {
-            ui.checkbox(&mut app.decal48_state.use_tri_planar, "Tri-planar (off = planar)");
-            if app.decal48_state.use_tri_planar {
+        ui.checkbox(&mut app.decal46_state.show_corner_decal, "Show corner decal (checkerboard)");
+        if app.decal46_state.show_corner_decal {
+            ui.checkbox(&mut app.decal46_state.use_tri_planar, "Tri-planar (off = planar)");
+            if app.decal46_state.use_tri_planar {
                 ui.add(
-                    egui::Slider::new(&mut app.decal48_state.tri_blend_sharpness, 1.0..=16.0)
+                    egui::Slider::new(&mut app.decal46_state.tri_blend_sharpness, 1.0..=16.0)
                         .text("Blend sharpness"),
                 );
                 ui.small("Higher = sharper face transitions.");
@@ -1178,12 +1168,12 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
         ui.small("The facing check rejects surfaces that point the wrong way.");
         ui.add_space(2.0);
         ui.horizontal(|ui| {
-            let cur = app.decal48_state.cyl_facing;
+            let cur = app.decal46_state.cyl_facing;
             if ui.selectable_label(cur == CylindricalFacing::Outward, "Outward (column exterior)").clicked() {
-                app.decal48_state.cyl_facing = CylindricalFacing::Outward;
+                app.decal46_state.cyl_facing = CylindricalFacing::Outward;
             }
             if ui.selectable_label(cur == CylindricalFacing::Inward, "Inward (tube interior)").clicked() {
-                app.decal48_state.cyl_facing = CylindricalFacing::Inward;
+                app.decal46_state.cyl_facing = CylindricalFacing::Inward;
             }
         });
 
@@ -1193,10 +1183,10 @@ pub(crate) fn controls_decal48(app: &mut App, ui: &mut egui::Ui) {
         ui.small("Additive decals brighten the receiver instead of replacing its colour.");
         ui.small("Stack multiple additive decals to accumulate brightness.");
         ui.add_space(2.0);
-        ui.checkbox(&mut app.decal48_state.show_fire, "Fire overlay (wall left, additive)");
-        if app.decal48_state.show_fire {
+        ui.checkbox(&mut app.decal46_state.show_fire, "Fire overlay (wall left, additive)");
+        if app.decal46_state.show_fire {
             ui.add(
-                egui::Slider::new(&mut app.decal48_state.fire_alpha, 0.0..=1.0)
+                egui::Slider::new(&mut app.decal46_state.fire_alpha, 0.0..=1.0)
                     .text("Fire alpha"),
             );
         }

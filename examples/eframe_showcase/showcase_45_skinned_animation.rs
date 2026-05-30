@@ -381,7 +381,7 @@ impl Default for Skin47State {
             gltf_nodes: Vec::new(),
             crowd_nodes: Vec::new(),
             crowd_actor_meshes: Vec::new(),
-            crowd_count: 64,
+            crowd_count: 16,
             crowd_count_active: 0,
             crowd_max_uploaded: 0,
             opacity: 1.0,

@@ -63,10 +63,10 @@ mod showcase_42_gaussian_splats;
 mod showcase_43_scene_runtime;
 mod showcase_44_debug_draw;
 mod showcase_45_skinned_animation;
-mod showcase_48_decals;
-mod showcase_49_lighting_consistency;
-mod showcase_50_scatter_volumes;
-mod showcase_51_scene_lights;
+mod showcase_46_decals;
+mod showcase_47_lighting_consistency;
+mod showcase_48_scatter_volumes;
+mod showcase_49_scene_lights;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -213,10 +213,10 @@ fn main() -> eframe::Result {
                 rt_state: showcase_43_scene_runtime::RtDemoState::default(),
                 dbg_draw_state: showcase_44_debug_draw::DbgDrawState::default(),
                 skin_state: showcase_45_skinned_animation::Skin47State::default(),
-                decal48_state: showcase_48_decals::Decal48State::default(),
-                lc_state: showcase_49_lighting_consistency::LcState::default(),
-                svol_state: showcase_50_scatter_volumes::SvolState::default(),
-                sl_state: showcase_51_scene_lights::SlState::default(),
+                decal46_state: showcase_46_decals::Decal46State::default(),
+                lc_state: showcase_47_lighting_consistency::LcState::default(),
+                svol_state: showcase_48_scatter_volumes::SvolState::default(),
+                sl_state: showcase_49_scene_lights::SlState::default(),
             }))
         }),
     )
@@ -329,10 +329,10 @@ impl ShowcaseMode {
             Self::SceneRuntime => "43: Scene Runtime",
             Self::DebugDraw => "44: Debug Draw",
             Self::SkinnedAnimation => "45: Skeletal Animation",
-            Self::Decals => "48: Decals",
-            Self::LightingConsistency => "49: Lighting Consistency",
-            Self::ScatterVolumes => "50: Scatter Volumes",
-            Self::SceneLights => "51: Scene Lights",
+            Self::Decals => "46: Decals",
+            Self::LightingConsistency => "47: Lighting Consistency",
+            Self::ScatterVolumes => "48: Scatter Volumes",
+            Self::SceneLights => "49: Scene Lights",
         }
     }
 }
@@ -496,14 +496,14 @@ pub(crate) struct App {
     pub(crate) skin_state: showcase_45_skinned_animation::Skin47State,
 
     // --- Showcase 48 ---
-    pub(crate) decal48_state: showcase_48_decals::Decal48State,
+    pub(crate) decal46_state: showcase_46_decals::Decal46State,
 
     // --- Showcase 49 ---
-    pub(crate) lc_state: showcase_49_lighting_consistency::LcState,
-    pub(crate) svol_state: showcase_50_scatter_volumes::SvolState,
+    pub(crate) lc_state: showcase_47_lighting_consistency::LcState,
+    pub(crate) svol_state: showcase_48_scatter_volumes::SvolState,
 
     // --- Showcase 51 ---
-    pub(crate) sl_state: showcase_51_scene_lights::SlState,
+    pub(crate) sl_state: showcase_49_scene_lights::SlState,
 }
 
 // ---------------------------------------------------------------------------
@@ -1166,7 +1166,7 @@ impl eframe::App for App {
                         }
                     } else if self.mode == ShowcaseMode::Decals {
                         let vp_size = glam::Vec2::new(rect.width(), rect.height());
-                        showcase_48_decals::decal48_place(self, pick_pos, vp_size);
+                        showcase_46_decals::decal46_place(self, pick_pos, vp_size);
                     } else {
                         self.handle_click_select(pick_pos, rect.width(), rect.height());
                     }
@@ -1388,10 +1388,10 @@ impl eframe::App for App {
                     }
                 }
                 // ----- Decals: advance live decal ages (D4) -----
-                if self.mode == ShowcaseMode::Decals && self.decal48_state.built {
+                if self.mode == ShowcaseMode::Decals && self.decal46_state.built {
                     let dt = ctx.input(|i| i.stable_dt.min(1.0 / 30.0));
-                    showcase_48_decals::update_decal48(self, dt);
-                    if !self.decal48_state.scene.collect_decal_items().is_empty() {
+                    showcase_46_decals::update_decal46(self, dt);
+                    if !self.decal46_state.scene.collect_decal_items().is_empty() {
                         ctx.request_repaint();
                     }
                 }
@@ -1595,7 +1595,7 @@ impl App {
             ShowcaseMode::SceneRuntime => !self.rt_state.built,
             ShowcaseMode::DebugDraw => !self.dbg_draw_state.built,
             ShowcaseMode::SkinnedAnimation => !self.skin_state.built,
-            ShowcaseMode::Decals => !self.decal48_state.built,
+            ShowcaseMode::Decals => !self.decal46_state.built,
             ShowcaseMode::LightingConsistency => !self.lc_state.built,
             ShowcaseMode::ScatterVolumes => !self.svol_state.built,
             ShowcaseMode::SceneLights => !self.sl_state.built,
@@ -2038,7 +2038,7 @@ impl App {
                 };
             }
             ShowcaseMode::Decals => {
-                showcase_48_decals::build_decal48_scene(self, renderer);
+                showcase_46_decals::build_decal46_scene(self, renderer);
             }
             ShowcaseMode::LightingConsistency => {
                 self.build_lc_scene(renderer);
@@ -2156,16 +2156,16 @@ impl App {
                 showcase_45_skinned_animation::controls_skin47(self, ui)
             }
             ShowcaseMode::Decals => {
-                showcase_48_decals::controls_decal48(self, ui)
+                showcase_46_decals::controls_decal46(self, ui)
             }
             ShowcaseMode::LightingConsistency => {
-                showcase_49_lighting_consistency::controls_lc(self, ui)
+                showcase_47_lighting_consistency::controls_lc(self, ui)
             }
             ShowcaseMode::ScatterVolumes => {
-                showcase_50_scatter_volumes::controls_svol(self, ui)
+                showcase_48_scatter_volumes::controls_svol(self, ui)
             }
             ShowcaseMode::SceneLights => {
-                showcase_51_scene_lights::controls_sl(self, ui)
+                showcase_49_scene_lights::controls_sl(self, ui)
             }
         }
     }
@@ -2942,8 +2942,8 @@ impl App {
             }
 
             ShowcaseMode::Decals => {
-                let items = if self.decal48_state.built {
-                    showcase_48_decals::decal48_scene_items(self)
+                let items = if self.decal46_state.built {
+                    showcase_46_decals::decal46_scene_items(self)
                 } else {
                     Vec::new()
                 };
@@ -2954,13 +2954,13 @@ impl App {
                     _t.ground_colour = [0.6, 0.6, 0.6];
                     _t
                 };
-                let sg = self.decal48_state.scene.version();
+                let sg = self.decal46_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
 
             ShowcaseMode::LightingConsistency => {
                 let (items, lighting, sg, ss) =
-                    showcase_49_lighting_consistency::lc_collect_scene_items(self);
+                    showcase_47_lighting_consistency::lc_collect_scene_items(self);
                 (items, Some(BG_COLOUR), lighting, sg, ss)
             }
 
@@ -2985,7 +2985,7 @@ impl App {
             }
 
             ShowcaseMode::SceneLights => {
-                let (items, lighting, sg) = showcase_51_scene_lights::sl_collect(self);
+                let (items, lighting, sg) = showcase_49_scene_lights::sl_collect(self);
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
         };
@@ -3162,8 +3162,8 @@ impl App {
         }
 
         // Decals (Showcase 48): push placed decals into fd.scene.decals.
-        if self.mode == ShowcaseMode::Decals && self.decal48_state.built {
-            showcase_48_decals::submit_decal48_items(self, &mut fd);
+        if self.mode == ShowcaseMode::Decals && self.decal46_state.built {
+            showcase_46_decals::submit_decal46_items(self, &mut fd);
         }
 
         // Lighting consistency (Showcase 49): push all non-mesh items.
@@ -3177,11 +3177,11 @@ impl App {
         }
 
         if self.mode == ShowcaseMode::LightingConsistency && self.lc_state.built {
-            showcase_49_lighting_consistency::submit_lc_items(self, &mut fd);
+            showcase_47_lighting_consistency::submit_lc_items(self, &mut fd);
         }
 
         if self.mode == ShowcaseMode::SceneLights && self.sl_state.built {
-            showcase_51_scene_lights::submit_sl_items(self, &mut fd);
+            showcase_49_scene_lights::submit_sl_items(self, &mut fd);
         }
 
 
