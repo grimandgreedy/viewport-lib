@@ -382,6 +382,7 @@ fn run_gpu_path(app: &mut App, dt: f32) {
         viewport_size: app.wave_state.viewport_size,
         dt,
         frame_index: app.wave_state.frame_index,
+        viewport_id: None,
     };
     let mut bufs: Vec<wgpu::CommandBuffer> = Vec::new();
     if let Some(plugin) = app.wave_state.plugin.as_deref_mut() {

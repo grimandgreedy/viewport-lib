@@ -24,6 +24,7 @@
 //! the standard render passes in the same frame.
 
 use crate::camera::Camera;
+use crate::renderer::ViewportId;
 
 /// Priority bands for GPU plugin lifecycle points.
 ///
@@ -80,6 +81,15 @@ pub struct GpuFrameContext<'a> {
     pub dt: f32,
     /// Monotonically increasing frame counter, supplied by the host.
     pub frame_index: u64,
+    /// Viewport this invocation is associated with, if the host renders
+    /// multiple viewports per frame and calls `pre_prepare` / `post_paint`
+    /// once per viewport. `None` for single-viewport hosts.
+    ///
+    /// Plugins registered via
+    /// [`ViewportRuntime::with_gpu_plugin_for_viewport`](super::ViewportRuntime::with_gpu_plugin_for_viewport)
+    /// only execute when this field matches the viewport they were scoped
+    /// to. Unscoped plugins run on every call regardless of this field.
+    pub viewport_id: Option<ViewportId>,
 }
 
 /// A plugin that encodes GPU work into the per-frame command stream.
@@ -140,6 +150,20 @@ pub trait GpuPlugin: Send + 'static {
     /// either be idempotent or guard their own one-time setup.
     fn init_gpu(&mut self, _device: &wgpu::Device) {}
 
+    /// Called when the wgpu device is recreated, e.g. after device loss or a
+    /// host-driven reset. Every cached buffer, texture, bind group, or
+    /// pipeline the plugin built against the old device is now invalid and
+    /// must be rebuilt against `device` / `queue`.
+    ///
+    /// The host invokes this via
+    /// [`ViewportRuntime::notify_device_recreated`](super::ViewportRuntime::notify_device_recreated);
+    /// the runtime does not detect device loss on its own. After this call
+    /// returns, [`init_gpu`](Self::init_gpu) is also re-invoked on every
+    /// plugin before the next `pre_prepare`, so a typical implementation
+    /// can simply drop its cached resources here and let `init_gpu` rebuild
+    /// them.
+    fn on_device_recreated(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue) {}
+
     /// Encode work that runs before `renderer.prepare()`.
     ///
     /// CPU plugins have already stepped this frame; their outputs are visible
@@ -173,6 +197,59 @@ pub trait GpuPlugin: Send + 'static {
         _ctx: &GpuFrameContext<'_>,
     ) -> Vec<wgpu::CommandBuffer> {
         Vec::new()
+    }
+}
+
+/// Internal adapter that filters a [`GpuPlugin`] to a single viewport.
+///
+/// Constructed by
+/// [`ViewportRuntime::with_gpu_plugin_for_viewport`](super::ViewportRuntime::with_gpu_plugin_for_viewport).
+/// The wrapper forwards `priority`, `init_gpu`, and `on_device_recreated`
+/// unconditionally, but only forwards `pre_prepare` / `post_paint` when
+/// `ctx.viewport_id == Some(scoped_viewport)`.
+pub(super) struct ViewportScopedPlugin<P: GpuPlugin> {
+    pub(super) viewport: ViewportId,
+    pub(super) inner: P,
+}
+
+impl<P: GpuPlugin> GpuPlugin for ViewportScopedPlugin<P> {
+    fn priority(&self) -> i32 {
+        self.inner.priority()
+    }
+
+    fn init_gpu(&mut self, device: &wgpu::Device) {
+        self.inner.init_gpu(device);
+    }
+
+    fn on_device_recreated(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        self.inner.on_device_recreated(device, queue);
+    }
+
+    fn pre_prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        ctx: &GpuFrameContext<'_>,
+    ) -> Vec<wgpu::CommandBuffer> {
+        if ctx.viewport_id == Some(self.viewport) {
+            self.inner.pre_prepare(device, queue, ctx)
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn post_paint(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        targets: &PostPaintTargets<'_>,
+        ctx: &GpuFrameContext<'_>,
+    ) -> Vec<wgpu::CommandBuffer> {
+        if ctx.viewport_id == Some(self.viewport) {
+            self.inner.post_paint(device, queue, targets, ctx)
+        } else {
+            Vec::new()
+        }
     }
 }
 
@@ -281,6 +358,7 @@ mod tests {
             viewport_size: glam::Vec2::new(800.0, 600.0),
             dt: 1.0 / 60.0,
             frame_index: 0,
+            viewport_id: None,
         };
 
         let bufs = runtime.pre_prepare(&device, &queue, &ctx);
@@ -316,5 +394,107 @@ mod tests {
         let bufs = runtime.post_paint(&device, &queue, &targets, &ctx);
         assert!(bufs.is_empty());
         assert_eq!(*post_log.lock().unwrap(), vec![100, 200]);
+    }
+
+    struct DeviceLossRecorder {
+        recreated: Arc<Mutex<u32>>,
+        init_count: Arc<Mutex<u32>>,
+    }
+
+    impl GpuPlugin for DeviceLossRecorder {
+        fn init_gpu(&mut self, _device: &wgpu::Device) {
+            *self.init_count.lock().unwrap() += 1;
+        }
+        fn on_device_recreated(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue) {
+            *self.recreated.lock().unwrap() += 1;
+        }
+    }
+
+    #[test]
+    fn notify_device_recreated_invokes_hook_and_reinits() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+
+        let recreated = Arc::new(Mutex::new(0));
+        let init_count = Arc::new(Mutex::new(0));
+
+        let mut runtime = crate::runtime::ViewportRuntime::new().with_gpu_plugin(DeviceLossRecorder {
+            recreated: recreated.clone(),
+            init_count: init_count.clone(),
+        });
+
+        let camera = Camera::default();
+        let ctx = GpuFrameContext {
+            camera: &camera,
+            viewport_size: glam::Vec2::new(1.0, 1.0),
+            dt: 0.0,
+            frame_index: 0,
+            viewport_id: None,
+        };
+
+        let _ = runtime.pre_prepare(&device, &queue, &ctx);
+        assert_eq!(*init_count.lock().unwrap(), 1);
+        assert_eq!(*recreated.lock().unwrap(), 0);
+
+        runtime.notify_device_recreated(&device, &queue);
+        assert_eq!(*recreated.lock().unwrap(), 1);
+
+        // Next pre_prepare re-runs init_gpu.
+        let _ = runtime.pre_prepare(&device, &queue, &ctx);
+        assert_eq!(*init_count.lock().unwrap(), 2);
+    }
+
+    #[test]
+    fn viewport_scoped_plugin_only_runs_for_matching_viewport() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let post_log = Arc::new(Mutex::new(Vec::new()));
+        let init_count = Arc::new(Mutex::new(0));
+
+        // The scoped viewport is constructed directly: ViewportId is opaque,
+        // so we use `unsafe { std::mem::transmute }` would be wrong. Instead
+        // rely on the `pub(crate)` constructor by going through the renderer's
+        // `create_viewport` would need a renderer; for this test we synthesize
+        // a ViewportId via the `Default` representation: it's a newtype around
+        // `usize`, so `ViewportId(0)` is what `create_viewport` returns first.
+        // ViewportId's inner field is pub(crate); in-crate test code can
+        // construct synthetic ids without spinning up a full renderer.
+        let vp_a = crate::renderer::ViewportId(0);
+        let vp_b = crate::renderer::ViewportId(1);
+
+        let mut runtime = crate::runtime::ViewportRuntime::new().with_gpu_plugin_for_viewport(
+            vp_a,
+            RecordingPlugin {
+                prio: 100,
+                log: log.clone(),
+                post_log: post_log.clone(),
+                init_count: init_count.clone(),
+            },
+        );
+
+        let camera = Camera::default();
+        let ctx_a = GpuFrameContext {
+            camera: &camera,
+            viewport_size: glam::Vec2::new(1.0, 1.0),
+            dt: 0.0,
+            frame_index: 0,
+            viewport_id: Some(vp_a),
+        };
+        let ctx_b = GpuFrameContext { viewport_id: Some(vp_b), ..ctx_a };
+        let ctx_none = GpuFrameContext { viewport_id: None, ..ctx_a };
+
+        let _ = runtime.pre_prepare(&device, &queue, &ctx_a);
+        let _ = runtime.pre_prepare(&device, &queue, &ctx_b);
+        let _ = runtime.pre_prepare(&device, &queue, &ctx_none);
+
+        assert_eq!(*log.lock().unwrap(), vec![100], "only ran for vp_a");
+        // init_gpu still runs unconditionally on first frame.
+        assert_eq!(*init_count.lock().unwrap(), 1);
     }
 }

@@ -1387,6 +1387,46 @@ impl ViewportRuntime {
         self
     }
 
+    /// Register a GPU plugin scoped to a single viewport.
+    ///
+    /// The plugin's `pre_prepare` and `post_paint` only execute when the
+    /// host's [`GpuFrameContext::viewport_id`] equals `viewport`. `init_gpu`
+    /// and `on_device_recreated` still run unconditionally.
+    ///
+    /// Use this in multi-viewport hosts (CAD quad-view, split-screen) that
+    /// call `pre_prepare` / `post_paint` once per viewport with a populated
+    /// `viewport_id`. Single-viewport hosts that never set `viewport_id`
+    /// effectively disable scoped plugins; use [`with_gpu_plugin`](Self::with_gpu_plugin)
+    /// instead.
+    pub fn with_gpu_plugin_for_viewport(
+        mut self,
+        viewport: crate::renderer::ViewportId,
+        plugin: impl GpuPlugin,
+    ) -> Self {
+        let scoped = gpu_plugin::ViewportScopedPlugin {
+            viewport,
+            inner: plugin,
+        };
+        self.gpu_plugins.push(Box::new(scoped));
+        self.gpu_initialized = false;
+        self
+    }
+
+    /// Notify every registered GPU plugin that the wgpu device has been
+    /// recreated (device loss, surface re-init, host-driven reset).
+    ///
+    /// Calls [`GpuPlugin::on_device_recreated`] on each plugin, then clears
+    /// the init flag so `init_gpu` runs again with the new device on the
+    /// next [`pre_prepare`](Self::pre_prepare). The runtime does not detect
+    /// device loss on its own; the host is responsible for invoking this
+    /// when it recreates the device.
+    pub fn notify_device_recreated(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        for p in self.gpu_plugins.iter_mut() {
+            p.on_device_recreated(device, queue);
+        }
+        self.gpu_initialized = false;
+    }
+
     /// Run every registered GPU plugin's `pre_prepare` in ascending priority
     /// order and return the concatenated command buffers.
     ///
