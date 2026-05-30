@@ -369,6 +369,12 @@ pub struct SceneFrame {
     pub decals: Vec<DecalItem>,
     /// Participating-media volumes (fog, smoke, clouds) to render this frame.
     pub scatter_volumes: Vec<ScatterVolumeItem>,
+    /// Scene-graph light sources to union with `EffectsFrame::lighting.lights`.
+    ///
+    /// Populate via [`crate::scene::scene::Scene::collect_lights`]. The renderer
+    /// chains these with the frame-data lights before building the GPU uniform;
+    /// consumers that use only `EffectsFrame::lighting` leave this empty.
+    pub lights: Vec<LightSource>,
 }
 
 /// A participating-media volume submitted for one frame.
@@ -419,6 +425,7 @@ impl Default for SceneFrame {
             gaussian_splats: Vec::new(),
             decals: Vec::new(),
             scatter_volumes: Vec::new(),
+            lights: Vec::new(),
         }
     }
 }

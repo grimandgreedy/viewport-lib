@@ -20,6 +20,19 @@ A new scene item, the scatter volume, renders ray-marched participating media: a
 - Tile-based culling: each visible volume is rasterised through its own screen-space bounding rectangle rather than as part of a fullscreen pass. Pixels outside a volume's projection cost zero on that volume, so scenes with many small volumes (cloud here, fog patch there, fire over there) only pay for the pixels each volume actually touches. Volumes that fall fully off-screen contribute nothing.
 - Showcase: `showcase-50: Scatter Volumes` walks through everything above with sliders.
 
+### Scene-graph lights
+
+Lights are now scene-graph nodes rather than per-frame configuration data.
+
+- `Scene::add_light(LightSource) -> NodeId` places a light in the scene. It gets the same transform, layer, and hierarchy treatment as any mesh node: parent transforms apply automatically, toggling a layer turns its lights on and off, and lights survive scene round-trips through serialisation.
+- `Scene::collect_lights()` walks visible nodes, resolves each light to world space (world translation drives point and spot position; world rotation drives directional and spot direction), and returns a `Vec<LightSource>` ready to hand to the renderer.
+- `Scene::set_light(id, light)` replaces the light on an existing node, so runtime edits (colour slider, intensity knob) are a single call per frame.
+- `SceneFrame::lights` is the per-frame carrier for scene-graph lights. The renderer unions it with `EffectsFrame::lighting.lights` at prepare time, so existing code that builds `LightingSettings` directly keeps working without any changes.
+- Point and spot lights now affect every lit pipeline, not just surface meshes. The shared `apply_scene_lighting` helper in `scene_lighting.wgsl` previously evaluated directional lights only and silently skipped point and spot kinds on glyphs, tensor glyphs, streamtubes, ribbons, implicit surfaces, and marching-cubes surfaces. All of those pipelines now evaluate full distance falloff for point lights and inner/outer cone attenuation for spot lights, matching what `mesh.wgsl` already did.
+- `LightSource` and `LightKind` carry `serde` derives behind the `serde` feature gate.
+- Fixed a latent panic in `prepare.rs` where the shadow-map direction was read from `lighting.lights[0]` rather than from the combined light list, which would crash any frame where all lights entered through `SceneFrame::lights` and `LightingSettings::lights` was left empty.
+- Showcase 51 demonstrates scene-graph lights: a ground plane and a 3x3 sphere grid lit by a warm orbiting point light, a cool orbiting spotlight, and a soft directional fill. Lights orbit live with animate on; colour, intensity, and range are editable per light from the controls panel.
+
 ### ShadingModel enum (breaking)
 
 Replaced `Material::use_pbr: bool` and `Material::matcap_id: Option<MatcapId>` with a single `Material::shading_model: ShadingModel` field. Variants: `Phong` (default), `Pbr`, `Matcap(MatcapId)`. The `Material::pbr()` and `Material::pbr_with_ao()` constructors are unchanged. Query helpers `Material::is_pbr()` and `Material::matcap_id() -> Option<MatcapId>` cover read sites. Existing assignments migrate as:

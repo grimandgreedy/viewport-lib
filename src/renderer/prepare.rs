@@ -290,6 +290,7 @@ impl ViewportRenderer {
         let combined_lights: Vec<&LightSource> = lighting
             .lights
             .iter()
+            .chain(frame.scene.lights.iter())
             .chain(virtual_scatter_lights.iter())
             .collect();
 
@@ -332,7 +333,7 @@ impl ViewportRenderer {
         );
 
         let light_dir_for_csm = if light_count > 0 {
-            match &lighting.lights[0].kind {
+            match &combined_lights[0].kind {
                 LightKind::Directional { direction } => glam::Vec3::from(*direction).normalize(),
                 LightKind::Point { position, .. } => {
                     (glam::Vec3::from(*position) - shadow_center).normalize()
@@ -356,7 +357,7 @@ impl ViewportRenderer {
 
         // Determine if we should use CSM (directional light + valid camera data).
         let use_csm = light_count > 0
-            && matches!(lighting.lights[0].kind, LightKind::Directional { .. })
+            && matches!(combined_lights[0].kind, LightKind::Directional { .. })
             && frame.camera.render_camera.view != glam::Mat4::IDENTITY;
 
         if use_csm {
@@ -381,7 +382,7 @@ impl ViewportRenderer {
         } else {
             // Fallback: single shadow map covering the whole scene (legacy behavior).
             let primary_shadow_mat = if light_count > 0 {
-                compute_shadow_matrix(&lighting.lights[0].kind, shadow_center, shadow_extent)
+                compute_shadow_matrix(&combined_lights[0].kind, shadow_center, shadow_extent)
             } else {
                 glam::Mat4::IDENTITY
             };

@@ -147,7 +147,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     // Hemisphere ambient + directional lights via the shared helper. Ribbon is
     // already flipped per-face above, so the helper sees a forward-facing normal
     // and one-sided weighting is enough.
-    let shaded = apply_scene_lighting(n, base_colour.rgb, false, lights);
+    let shaded = apply_scene_lighting(n, base_colour.rgb, false, in.world_pos, lights);
 
     return vec4<f32>(shaded, alpha);
 }

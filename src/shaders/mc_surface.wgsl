@@ -97,18 +97,43 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         up_dot,
     );
 
-    // Accumulate directional lights.
+    // Accumulate all light types.
     var diffuse  = vec3<f32>(0.0);
     var specular = vec3<f32>(0.0);
     for (var i: u32 = 0u; i < min(lights.count, 8u); i++) {
         let light = lights.lights[i];
-        if light.light_type != 0u { continue; } // directional only
+        var L: vec3<f32>;
+        var light_rgb: vec3<f32>;
 
-        // `pos_or_dir` is the surface-to-light direction (matches mesh.wgsl).
-        let L     = normalize(light.pos_or_dir);
-        let H     = normalize(L + V);
-        let light_rgb = light.colour * light.intensity;
+        if light.light_type == 0u {
+            // Directional: pos_or_dir is the surface-to-light direction.
+            L = normalize(light.pos_or_dir);
+            light_rgb = light.colour * light.intensity;
+        } else if light.light_type == 1u {
+            // Point: distance falloff.
+            let to_light = light.pos_or_dir - in.world_pos;
+            let dist = length(to_light);
+            L = to_light / max(dist, 0.0001);
+            let falloff = clamp(1.0 - dist / light.range, 0.0, 1.0);
+            light_rgb = light.colour * light.intensity * falloff * falloff;
+        } else {
+            // Spot: distance falloff * cone attenuation.
+            let to_light = light.pos_or_dir - in.world_pos;
+            let dist = length(to_light);
+            L = to_light / max(dist, 0.0001);
+            let dist_falloff = clamp(1.0 - dist / light.range, 0.0, 1.0);
+            let spot_dir = normalize(light.spot_direction);
+            let cos_angle = dot(-L, spot_dir);
+            let cos_outer = cos(light.outer_angle);
+            let cos_inner = cos(light.inner_angle);
+            let cone_att = clamp(
+                (cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001),
+                0.0, 1.0,
+            );
+            light_rgb = light.colour * light.intensity * dist_falloff * dist_falloff * cone_att;
+        }
 
+        let H = normalize(L + V);
         let diff  = max(dot(N, L), 0.0);
         // Blinn-Phong specular; map roughness [0,1] -> shininess [2, 128].
         let shine = mix(128.0, 2.0, material.roughness);

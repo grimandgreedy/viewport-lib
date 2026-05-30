@@ -148,7 +148,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 
     // Hemisphere ambient + directional lights via the shared helper. One-sided
     // surface (outward-facing tube normals).
-    let shaded = apply_scene_lighting(n, base_colour.rgb, false, lights);
+    let shaded = apply_scene_lighting(n, base_colour.rgb, false, in.world_pos, lights);
 
     return vec4<f32>(shaded, alpha);
 }

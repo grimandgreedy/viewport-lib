@@ -198,7 +198,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // Hemisphere ambient + directional lights via the shared helper. Ellipsoids
     // are viewed from any direction so two-sided weighting keeps back-facing
     // fragments lit.
-    let shaded = apply_scene_lighting(in.world_nrm, in.colour.rgb, true, lights);
+    let shaded = apply_scene_lighting(in.world_nrm, in.colour.rgb, true, in.world_pos, lights);
 
     return vec4<f32>(shaded, alpha);
 }

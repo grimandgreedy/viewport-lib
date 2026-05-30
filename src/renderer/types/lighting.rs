@@ -8,6 +8,7 @@
 /// `Point` emits rays from a position with distance-based falloff.
 /// `Spot` emits a cone of light with inner (full-intensity) and outer (cutoff) angles.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum LightKind {
     /// Infinitely distant light with parallel rays (e.g. the sun).
@@ -40,6 +41,7 @@ pub enum LightKind {
 /// A single light source with colour and intensity.
 #[non_exhaustive]
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LightSource {
     /// The type and geometric parameters of this light.
     pub kind: LightKind,

@@ -250,7 +250,7 @@ fn fs_main(in: VertexOutput) -> FragOutput {
     // Normal and shading via the shared helper. Implicit surfaces have a
     // well-defined outward normal so one-sided weighting is appropriate.
     let normal = estimate_normal(hit_pos);
-    let shaded_rgb = apply_scene_lighting(normal, base_colour.rgb, false, lights);
+    let shaded_rgb = apply_scene_lighting(normal, base_colour.rgb, false, hit_pos, lights);
     let shaded    = vec4<f32>(shaded_rgb, alpha);
 
     // Compute NDC depth of the hit point so the hardware depth test fires correctly.

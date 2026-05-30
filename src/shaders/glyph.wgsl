@@ -253,7 +253,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // small instanced objects viewed from any direction, so two-sided weighting
     // (`|dot(N, L)|`) keeps back faces of the shaft lit instead of going dark.
     let n = normalize(in.world_nrm);
-    let shaded_rgb = apply_scene_lighting(n, in.colour.rgb, true, lights);
+    let shaded_rgb = apply_scene_lighting(n, in.colour.rgb, true, in.world_pos, lights);
 
     return vec4<f32>(shaded_rgb, alpha);
 }

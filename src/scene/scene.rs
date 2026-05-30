@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::interaction::selection::{NodeId, Selection};
+use crate::{LightKind, LightSource};
 use crate::renderer::{PickId, SceneRenderItem};
 use crate::resources::mesh_store::MeshId;
 use crate::scene::aabb::Aabb;
@@ -88,6 +89,10 @@ pub struct SceneNode {
     skin_instance: Option<u32>,
     /// Whether projected decals land on this surface. Default: `true`.
     receives_decals: bool,
+    /// Light source carried by this node. Position and direction are resolved
+    /// from `world_transform` at collect time; the values stored here serve
+    /// as the local-space template.
+    pub light: Option<LightSource>,
 }
 
 impl SceneNode {
@@ -224,6 +229,35 @@ pub struct SceneStats {
 // Scene
 // ---------------------------------------------------------------------------
 
+/// Resolve a light source's geometric parameters into world space.
+///
+/// - Directional: the stored direction is rotated by the node's world rotation.
+/// - Point: position comes from the world translation; stored position is ignored.
+/// - Spot: position from world translation, direction rotated by world rotation.
+fn resolve_light_to_world(src: &LightSource, world: glam::Mat4) -> LightSource {
+    let translation = world.col(3).truncate();
+    let kind = match &src.kind {
+        LightKind::Directional { direction } => {
+            let rotated = world.transform_vector3(glam::Vec3::from(*direction)).normalize();
+            LightKind::Directional { direction: rotated.into() }
+        }
+        LightKind::Point { range, .. } => {
+            LightKind::Point { position: translation.into(), range: *range }
+        }
+        LightKind::Spot { direction, range, inner_angle, outer_angle, .. } => {
+            let rotated = world.transform_vector3(glam::Vec3::from(*direction)).normalize();
+            LightKind::Spot {
+                position: translation.into(),
+                direction: rotated.into(),
+                range: *range,
+                inner_angle: *inner_angle,
+                outer_angle: *outer_angle,
+            }
+        }
+    };
+    LightSource { kind, colour: src.colour, intensity: src.intensity }
+}
+
 /// Default layer ID (always exists, cannot be removed).
 const DEFAULT_LAYER: LayerId = LayerId(0);
 
@@ -332,6 +366,7 @@ impl Scene {
             dirty: true,
             skin_instance: None,
             receives_decals: true,
+            light: None,
         };
         self.nodes.insert(id, node);
         self.roots.push(id);
@@ -1000,6 +1035,82 @@ impl Scene {
         }
 
         (items, stats)
+    }
+
+    // -- Lights --
+
+    /// Add a light source to the scene graph. Returns the new node's ID.
+    ///
+    /// The node has no mesh. Set its transform with [`Scene::set_local_transform`]
+    /// to position and orient the light. For directional lights, rotation drives
+    /// the shading direction; for point and spot lights, translation drives position.
+    ///
+    /// Pass the result of [`Scene::collect_lights`] into `SceneFrame::lights` each
+    /// frame so the renderer unions these lights with `EffectsFrame::lighting.lights`.
+    pub fn add_light(&mut self, light: LightSource) -> NodeId {
+        let id = self.next_id;
+        self.next_id += 1;
+        let node = SceneNode {
+            id,
+            name: String::new(),
+            mesh_id: None,
+            material: crate::scene::material::Material::default(),
+            appearance: crate::scene::material::ItemSettings::default(),
+            visible: true,
+            show_normals: false,
+            local_transform: glam::Mat4::IDENTITY,
+            world_transform: glam::Mat4::IDENTITY,
+            parent: None,
+            children: Vec::new(),
+            layer: DEFAULT_LAYER,
+            dirty: true,
+            skin_instance: None,
+            receives_decals: false,
+            light: Some(light),
+        };
+        self.nodes.insert(id, node);
+        self.roots.push(id);
+        self.version = self.version.wrapping_add(1);
+        id
+    }
+
+    /// Collect world-space light sources from all visible nodes on visible layers.
+    ///
+    /// Position and direction values are resolved from each node's world transform:
+    /// directional lights rotate their direction, point lights take their position
+    /// from the world translation, and spot lights take both.
+    ///
+    /// Push the returned vec into `SceneFrame::lights` each frame. The renderer
+    /// unions it with `EffectsFrame::lighting.lights` before building the GPU
+    /// light uniform.
+    pub fn collect_lights(&mut self) -> Vec<LightSource> {
+        self.update_transforms();
+
+        let layer_visible: HashMap<LayerId, bool> =
+            self.layers.iter().map(|l| (l.id, l.visible)).collect();
+
+        let mut out = Vec::new();
+        for node in self.nodes.values() {
+            if !node.visible {
+                continue;
+            }
+            if !layer_visible.get(&node.layer).copied().unwrap_or(true) {
+                continue;
+            }
+            let Some(src) = &node.light else {
+                continue;
+            };
+            out.push(resolve_light_to_world(src, node.world_transform));
+        }
+        out
+    }
+
+    /// Replace the light source on a node. Pass `None` to remove the light.
+    pub fn set_light(&mut self, id: NodeId, light: Option<LightSource>) {
+        if let Some(node) = self.nodes.get_mut(&id) {
+            node.light = light;
+        }
+        self.version = self.version.wrapping_add(1);
     }
 
     // -- Tree walking --

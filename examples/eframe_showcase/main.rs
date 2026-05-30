@@ -66,6 +66,7 @@ mod showcase_45_skinned_animation;
 mod showcase_48_decals;
 mod showcase_49_lighting_consistency;
 mod showcase_50_scatter_volumes;
+mod showcase_51_scene_lights;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -215,6 +216,7 @@ fn main() -> eframe::Result {
                 decal48_state: showcase_48_decals::Decal48State::default(),
                 lc_state: showcase_49_lighting_consistency::LcState::default(),
                 svol_state: showcase_50_scatter_volumes::SvolState::default(),
+                sl_state: showcase_51_scene_lights::SlState::default(),
             }))
         }),
     )
@@ -276,6 +278,7 @@ enum ShowcaseMode {
     Decals,
     LightingConsistency,
     ScatterVolumes,
+    SceneLights,
 }
 
 impl ShowcaseMode {
@@ -329,6 +332,7 @@ impl ShowcaseMode {
             Self::Decals => "48: Decals",
             Self::LightingConsistency => "49: Lighting Consistency",
             Self::ScatterVolumes => "50: Scatter Volumes",
+            Self::SceneLights => "51: Scene Lights",
         }
     }
 }
@@ -497,6 +501,9 @@ pub(crate) struct App {
     // --- Showcase 49 ---
     pub(crate) lc_state: showcase_49_lighting_consistency::LcState,
     pub(crate) svol_state: showcase_50_scatter_volumes::SvolState,
+
+    // --- Showcase 51 ---
+    pub(crate) sl_state: showcase_51_scene_lights::SlState,
 }
 
 // ---------------------------------------------------------------------------
@@ -678,6 +685,7 @@ impl eframe::App for App {
                     ShowcaseMode::Decals,
                     ShowcaseMode::LightingConsistency,
                     ShowcaseMode::ScatterVolumes,
+                    ShowcaseMode::SceneLights,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1396,6 +1404,10 @@ impl eframe::App for App {
                 {
                     ctx.request_repaint();
                 }
+                // ----- Scene lights (51): request repaint while orbit animation is on.
+                if self.mode == ShowcaseMode::SceneLights && self.sl_state.animate {
+                    ctx.request_repaint();
+                }
             });
     }
 }
@@ -1406,7 +1418,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 48] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 49] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1455,6 +1467,7 @@ impl App {
             ShowcaseMode::Decals,
             ShowcaseMode::LightingConsistency,
             ShowcaseMode::ScatterVolumes,
+            ShowcaseMode::SceneLights,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1585,6 +1598,7 @@ impl App {
             ShowcaseMode::Decals => !self.decal48_state.built,
             ShowcaseMode::LightingConsistency => !self.lc_state.built,
             ShowcaseMode::ScatterVolumes => !self.svol_state.built,
+            ShowcaseMode::SceneLights => !self.sl_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -2032,6 +2046,16 @@ impl App {
             ShowcaseMode::ScatterVolumes => {
                 self.build_svol_scene(renderer);
             }
+            ShowcaseMode::SceneLights => {
+                self.build_sl_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::new(0.0, 0.0, 1.0),
+                    distance: 20.0,
+                    orientation: glam::Quat::from_rotation_z(0.5)
+                        * glam::Quat::from_rotation_x(1.1),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2139,6 +2163,9 @@ impl App {
             }
             ShowcaseMode::ScatterVolumes => {
                 showcase_50_scatter_volumes::controls_svol(self, ui)
+            }
+            ShowcaseMode::SceneLights => {
+                showcase_51_scene_lights::controls_sl(self, ui)
             }
         }
     }
@@ -2956,6 +2983,11 @@ impl App {
                 };
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
+
+            ShowcaseMode::SceneLights => {
+                let (items, lighting, sg) = showcase_51_scene_lights::sl_collect(self);
+                (items, Some(BG_COLOUR), lighting, sg, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -3146,6 +3178,10 @@ impl App {
 
         if self.mode == ShowcaseMode::LightingConsistency && self.lc_state.built {
             showcase_49_lighting_consistency::submit_lc_items(self, &mut fd);
+        }
+
+        if self.mode == ShowcaseMode::SceneLights && self.sl_state.built {
+            showcase_51_scene_lights::submit_sl_items(self, &mut fd);
         }
 
 
