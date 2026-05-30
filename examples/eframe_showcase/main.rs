@@ -630,7 +630,7 @@ impl eframe::App for App {
                 self.perf_state.scene.version(),
                 self.perf_state.selection.version(),
             );
-            self.perf_state.total_objects = 1_000_000;
+            self.perf_state.total_objects = 125_000;
             self.perf_state.build_rx = None;
             self.perf_state.build_progress = None;
             self.perf_state.built = true;
@@ -2231,7 +2231,7 @@ impl App {
         let mut scene_graph_outline_width = 4.0_f32;
 
         // Performance showcase uses a cached Arc<[SceneRenderItem]> to avoid a per-frame
-        // deep clone of the 1M-item Vec. Set by the Performance arm below; None for all others.
+        // deep clone of the 125K-item Vec. Set by the Performance arm below; None for all others.
         let mut perf_arc: Option<std::sync::Arc<[SceneRenderItem]>> = None;
 
         let (scene_items, bg_colour, lighting, scene_gen, sel_gen) = match self.mode {
@@ -3412,11 +3412,11 @@ impl App {
             if let Some(ref progress) = self.perf_state.build_progress {
                 let n = progress.load(std::sync::atomic::Ordering::Relaxed);
                 let label = format!(
-                    "Building scene\u{2026} {} / 1 000 000",
+                    "Building scene\u{2026} {} / 125 000",
                     showcase_23_performance::format_count(n),
                 );
                 fd.overlays.loading_bars.push(LoadingBarItem {
-                    progress: n as f32 / 1_000_000.0,
+                    progress: n as f32 / 125_000.0,
                     label: Some(label),
                     anchor: LoadingBarAnchor::BottomCenter,
                     ..LoadingBarItem::default()

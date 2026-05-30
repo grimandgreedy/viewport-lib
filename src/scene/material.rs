@@ -79,6 +79,17 @@ pub enum ShadingModel {
     /// Matcap lookup. Replaces the lit path with a captured-lighting texture.
     /// Blendable matcaps tint with `base_colour`; static matcaps override colour entirely.
     Matcap(crate::resources::MatcapId),
+    /// Flat (faceted) shading: the per-vertex normal is discarded and a
+    /// geometric normal is recomputed per-fragment from screen-space
+    /// derivatives of world position. Produces visible polygon edges on
+    /// triangulated meshes without changing the lighting block; everything
+    /// else (hemisphere ambient, scene lights, shadows, AO, alpha mode)
+    /// runs as it does for [`Phong`].
+    ///
+    /// Edges appear at the triangulation level, not at logical-face
+    /// boundaries. A quad authored as two triangles shows both; a CAD
+    /// surface tessellated finely shows the tessellation.
+    Flat,
 }
 
 impl Default for ShadingModel {
@@ -388,6 +399,24 @@ impl Material {
         matches!(self.shading_model, ShadingModel::Pbr)
     }
 
+    /// Returns `true` when the material's shading model is flat / faceted.
+    pub fn is_flat(&self) -> bool {
+        matches!(self.shading_model, ShadingModel::Flat)
+    }
+
+    /// Construct a flat (faceted) material with the given base colour. The
+    /// per-vertex normal is replaced at the fragment stage by a geometric
+    /// normal recovered from screen-space derivatives, so polygon edges
+    /// remain visible on otherwise smooth meshes. Everything else takes
+    /// material defaults.
+    pub fn flat(base_colour: [f32; 3]) -> Self {
+        Self {
+            base_colour,
+            shading_model: ShadingModel::Flat,
+            ..Default::default()
+        }
+    }
+
     /// Returns the matcap id when the material uses a matcap shading model.
     pub fn matcap_id(&self) -> Option<crate::resources::MatcapId> {
         match self.shading_model {
@@ -466,6 +495,19 @@ mod tests {
         assert!(a.unlit);
         assert!(!a.hidden);
         assert!((a.opacity - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn flat_constructor_and_helpers() {
+        let m = Material::flat([0.4, 0.5, 0.6]);
+        assert!(m.is_flat());
+        assert!(!m.is_pbr());
+        assert!(m.matcap_id().is_none());
+        assert!(matches!(m.shading_model, ShadingModel::Flat));
+        assert_eq!(m.base_colour, [0.4, 0.5, 0.6]);
+
+        let p = Material::default();
+        assert!(!p.is_flat());
     }
 
     #[test]

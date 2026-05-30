@@ -497,10 +497,10 @@ impl App {
         ];
 
         let mut unlit = ItemSettings::default();
-        unlit.unlit = true;
+        unlit.unlit = false;
         for (name, mesh_id, pos, colour) in configs {
             let transform = glam::Mat4::from_translation(*pos);
-            let mat = Material::from_colour(*colour);
+            let mat = Material::flat(*colour);
             let node_id = self
                 .pl_state
                 .scene
@@ -1679,8 +1679,8 @@ pub(crate) fn pl_collect_scene_items(
         tvm_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
         tvm_item.settings.pick_id = PickId(11);
         tvm_item.settings.selected = app.pl_state.selection.contains(11);
-        tvm_item.material = Material::from_colour([0.8, 0.45, 0.2]);
-        tvm_item.settings.unlit = true;
+        tvm_item.material = Material::flat([0.8, 0.45, 0.2]);
+        tvm_item.settings.unlit = false;
         items.push(tvm_item);
     }
     let scene_gen = app.pl_state.scene.version();
@@ -1729,7 +1729,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         pc.default_colour = [0.5, 0.8, 1.0, 1.0];
         pc.settings.pick_id = PickId(100);
         pc.settings.selected = app.pl_state.selection.contains(100);
-        pc.settings.unlit = true;
+        pc.settings.unlit = false;
         fd.scene.point_clouds.push(pc);
     }
     // Gaussian splat grid (pick_id=10).
@@ -1739,7 +1739,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         item.model = pl_splat_model().to_cols_array_2d();
         item.settings.pick_id = PickId(10);
         item.settings.selected = app.pl_state.selection.contains(10);
-        item.settings.unlit = true;
+        item.settings.unlit = false;
         fd.scene.gaussian_splats.push(item);
     }
     // Hex cylinder: transparent volume mesh (pick_id=12).
@@ -1753,7 +1753,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         tvm.settings.selected = app.pl_state.selection.contains(12);
         tvm.boundary_mesh_id = app.pl_state.tvm_tet_mesh_id;
         tvm.density = 2.0;
-        tvm.settings.unlit = true;
+        tvm.settings.unlit = false;
         fd.scene.transparent_volume_meshes.push(tvm);
     }
     // TVM capsule (pick_id=11): VolumeMeshItem so renderer.pick() with PointLike
@@ -1763,7 +1763,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             let mut item =
                 VolumeMeshItem::new(mesh_id, app.pl_state.tvm_face_to_cell.clone());
             item.settings.pick_id = PickId(11);
-            item.settings.unlit = true;
+            item.settings.unlit = false;
             fd.scene.volume_mesh_items.push(item);
         }
     }
@@ -1893,7 +1893,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         vol.threshold_max = 1.0;
         vol.opacity_scale = 0.6;
         vol.enable_shading = false;
-        vol.settings.unlit = true;
+        vol.settings.unlit = false;
         vol.settings.selected = app.pl_state.selection.contains(20);
         vol.settings.pick_id = PickId(20);
         vol.volume_data = app
@@ -1912,7 +1912,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         pl.line_width = 3.0;
         pl.settings.pick_id = PickId(30);
         pl.settings.selected = app.pl_state.selection.contains(30);
-        pl.settings.unlit = true;
+        pl.settings.unlit = false;
         fd.scene.polylines.push(pl);
     }
     // Arrow glyphs (pick_id=31).
@@ -1928,7 +1928,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         g.glyph_type = GlyphType::Arrow;
         g.settings.pick_id = PickId(31);
         g.settings.selected = app.pl_state.selection.contains(31);
-        g.settings.unlit = true;
+        g.settings.unlit = false;
         fd.scene.glyphs.push(g);
     }
     // Tensor glyphs (pick_id=32).
@@ -1941,7 +1941,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         tg.colourmap_id = Some(ColourmapId(BuiltinColourmap::Coolwarm as usize));
         tg.settings.pick_id = PickId(32);
         tg.settings.selected = app.pl_state.selection.contains(32);
-        tg.settings.unlit = true;
+        tg.settings.unlit = false;
         fd.scene.tensor_glyphs.push(tg);
     }
     // Sprites: arc of 8 (pick_id=33).
@@ -1955,7 +1955,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         s.depth_write = true;
         s.settings.pick_id = PickId(33);
         s.settings.selected = app.pl_state.selection.contains(33);
-        s.settings.unlit = true;
+        s.settings.unlit = false;
         fd.scene.sprite_items.push(s);
     }
     // XO sprites (pick_id=34).
@@ -1969,7 +1969,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         s.depth_write = true;
         s.settings.pick_id = PickId(34);
         s.settings.selected = app.pl_state.selection.contains(34);
-        s.settings.unlit = true;
+        s.settings.unlit = false;
         fd.scene.sprite_items.push(s);
     }
     // Streamtube (pick_id=40).
@@ -1981,7 +1981,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         st.colour = [0.3, 0.8, 0.55, 1.0];
         st.settings.pick_id = PickId(40);
         st.settings.selected = app.pl_state.selection.contains(40);
-        st.settings.unlit = true;
+        st.settings.unlit = false;
         fd.scene.streamtube_items.push(st);
     }
     // Tube (pick_id=41).
@@ -1993,7 +1993,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         tb.colour = [0.85, 0.4, 0.2, 1.0];
         tb.settings.pick_id = PickId(41);
         tb.settings.selected = app.pl_state.selection.contains(41);
-        tb.settings.unlit = true;
+        tb.settings.unlit = false;
         fd.scene.tube_items.push(tb);
     }
     // Ribbon (pick_id=42).
@@ -2005,7 +2005,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         rb.colour = [0.6, 0.3, 0.9, 1.0];
         rb.settings.pick_id = PickId(42);
         rb.settings.selected = app.pl_state.selection.contains(42);
-        rb.settings.unlit = true;
+        rb.settings.unlit = false;
         fd.scene.ribbon_items.push(rb);
     }
     // Volume surface slice (pick_id=51): plane tilted 60 degrees inside the volume bbox.
@@ -2023,7 +2023,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         .to_cols_array_2d();
         item.settings.pick_id = PickId(51);
         item.settings.selected = app.pl_state.selection.contains(51);
-        item.settings.unlit = true;
+        item.settings.unlit = false;
         fd.scene.volume_surface_slices.push(item);
     }
     // Screen image (pick_id=52): checkerboard pinned to the top-right corner.
@@ -2049,7 +2049,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         img.scale = 2.0;
         img.settings.pick_id = PickId(52);
         img.settings.selected = app.pl_state.selection.contains(52);
-        img.settings.unlit = true;
+        img.settings.unlit = false;
         fd.scene.screen_images.push(img);
     }
     // GPU implicit (pick_id=53): two smooth-blended spheres.
@@ -2077,15 +2077,15 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         };
         item.settings.pick_id = PickId(53);
         item.settings.selected = app.pl_state.selection.contains(53);
-        item.settings.unlit = true;
+        item.settings.unlit = false;
         fd.scene.gpu_implicit.push(item);
     }
     // GPU marching cubes (pick_id=54): gyroid surface.
     if let Some(mc_vol_id) = app.pl_state.mc_volume_id {
-        let mut mat = Material::from_colour([0.5, 0.8, 0.55]);
+        let mut mat = Material::flat([0.5, 0.8, 0.55]);
         mat.roughness = 0.4;
         let mut mc_settings = ItemSettings::default();
-        mc_settings.unlit = true;
+        mc_settings.unlit = false;
         mc_settings.pick_id = PickId(54);
         mc_settings.selected = app.pl_state.selection.contains(54);
         fd.scene.gpu_mc_jobs.push(GpuMarchingCubesJob {

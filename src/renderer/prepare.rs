@@ -734,7 +734,7 @@ impl ViewportRenderer {
                         if mesh.map_or(false, |m| m.normal_override_buffer.is_some()) { 1 } else { 0 }
                     },
                     emissive: m.emissive,
-                    _pad_emissive: 0,
+                    use_flat: if m.is_flat() { 1 } else { 0 },
                     alpha_mode: match m.alpha_mode {
                         crate::scene::material::AlphaMode::Opaque => 0,
                         crate::scene::material::AlphaMode::Mask(_) => 1,
@@ -782,7 +782,7 @@ impl ViewportRenderer {
                     has_position_override: 0,
                     has_normal_override: 0,
                     emissive: [0.0; 3],
-                    _pad_emissive: 0,
+                    use_flat: 0,
                     alpha_mode: 0,
                     alpha_cutoff: 0.5,
                     has_metallic_roughness_tex: 0,
@@ -1119,7 +1119,8 @@ impl ViewportRenderer {
                                     } else {
                                         0
                                     },
-                                    _pad_inst: [0; 2],
+                                    use_flat: if m.is_flat() { 1 } else { 0 },
+                                    _pad_inst: 0,
                                 });
                                 if let Some(mesh) = batch_mesh {
                                     let model = glam::Mat4::from_cols_array_2d(&item.model);

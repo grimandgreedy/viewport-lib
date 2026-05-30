@@ -1,7 +1,7 @@
 //! Showcase 23: Performance at Scale : build + controls.
 //!
 //! Demonstrates GPU-driven instanced rendering and culling:
-//! - 1 000 000 boxes (100x100x100 grid) sharing a single mesh
+//! - 125 000 boxes (50x50x50 grid) sharing a single mesh
 //! - GPU-driven culling via compute cull pass + indirect draw
 //! - Toggle GPU culling on/off to compare paths live
 //! - Full FrameStats readout: CPU/GPU timings, culling state, draw counts
@@ -61,7 +61,7 @@ impl Default for PerfState {
 // Background scene build
 // ---------------------------------------------------------------------------
 
-/// Build the 1M-box scene on a background thread.
+/// Build the 125K-box scene on a background thread.
 ///
 /// The mesh is already uploaded on the main thread before this is called.
 /// `mesh_aabb` is passed in so the BVH closure doesn't need GPU access.
@@ -83,7 +83,7 @@ pub(crate) fn build_perf_scene_threaded(
     ];
 
     let mut scene = Scene::new();
-    let (nx, ny, nz) = (100u32, 100u32, 100u32);
+    let (nx, ny, nz) = (50u32, 50u32, 50u32);
     let mut count = 0u32;
     for y in 0..ny {
         for z in 0..nz {
@@ -95,10 +95,10 @@ pub(crate) fn build_perf_scene_threaded(
                 );
                 let transform = glam::Mat4::from_translation(pos);
                 let colour = colours[count as usize % colours.len()];
-                let mat = Material::from_colour(colour);
+                let mat = Material::flat(colour);
                 let id = scene.add(Some(mesh), transform, mat);
                 let mut appearance = ItemSettings::default();
-                appearance.unlit = true;
+                appearance.unlit = false;
                 scene.set_appearance(id, appearance);
                 count += 1;
                 if count % 10_000 == 0 {

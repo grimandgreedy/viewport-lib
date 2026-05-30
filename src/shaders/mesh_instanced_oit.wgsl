@@ -85,7 +85,7 @@ struct InstanceData {
     has_ao_map: u32,
     unlit: u32,
     receive_shadows: u32,
-    _pad_inst0: u32,
+    use_flat: u32,
     _pad_inst1: u32,
 };
 
@@ -348,7 +348,13 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
     }
 
     var N: vec3<f32>;
-    if inst.has_normal_map != 0u {
+    if inst.use_flat != 0u {
+        let dpx = dpdx(in.world_pos);
+        let dpy = dpdy(in.world_pos);
+        var Nf = normalize(cross(dpx, dpy));
+        if dot(Nf, in.world_normal) < 0.0 { Nf = -Nf; }
+        N = Nf;
+    } else if inst.has_normal_map != 0u {
         let nm_sample = textureSample(normal_map, obj_sampler, in.uv).rgb;
         let ts_normal = normalize(nm_sample * 2.0 - vec3<f32>(1.0));
         let T = normalize(in.world_tangent.xyz);

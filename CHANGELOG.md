@@ -55,6 +55,10 @@ Replaced `Material::use_pbr: bool` and `Material::matcap_id: Option<MatcapId>` w
 
 GPU layout and shaders are unchanged: `prepare.rs` still flattens to the `use_pbr` / `use_matcap` flags inside `ObjectUniform`. Unlit remains on `ItemSettings.unlit` and is intentionally not a `ShadingModel` variant.
 
+### Flat shading
+
+A new `ShadingModel::Flat` variant for surface and volume meshes. Runs the normal lighting block but replaces the per-vertex normal with a per-fragment geometric normal, so the polygon facets of the underlying triangulation are visible. Fills the gap between fully lit and fully unlit, where unlit alone tends to flatten geometry into a featureless blob.
+
 
 ### Decals
 

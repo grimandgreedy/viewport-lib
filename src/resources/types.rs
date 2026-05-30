@@ -463,7 +463,7 @@ pub type LightUniform = LightsUniform;
 /// - has_position_override:      u32      =  4 bytes  offset 216
 /// - has_normal_override:        u32      =  4 bytes  offset 220
 /// - emissive:                   [f32;3]  = 12 bytes  offset 224
-/// - _pad_emissive:              u32      =  4 bytes  offset 236
+/// - use_flat:                   u32      =  4 bytes  offset 236  (1=flat shading, recover N from world_pos derivatives)
 /// - alpha_mode:                 u32      =  4 bytes  offset 240  (0=Opaque, 1=Mask, 2=Blend)
 /// - alpha_cutoff:               f32      =  4 bytes  offset 244
 /// - has_metallic_roughness_tex: u32      =  4 bytes  offset 248
@@ -510,7 +510,10 @@ pub(crate) struct ObjectUniform {
     /// 1 when a per-vertex normal storage buffer is bound at group 1 binding 14.
     pub(crate) has_normal_override: u32,         //   4 bytes, offset 220
     pub(crate) emissive: [f32; 3],               //  12 bytes, offset 224
-    pub(crate) _pad_emissive: u32,               //   4 bytes, offset 236
+    /// 1 = recover the shading normal from screen-space derivatives of
+    /// `world_pos` (`ShadingModel::Flat`); 0 = use the interpolated vertex
+    /// normal (or TBN normal map when bound).
+    pub(crate) use_flat: u32,                    //   4 bytes, offset 236
     pub(crate) alpha_mode: u32,                  //   4 bytes, offset 240  (0=Opaque, 1=Mask, 2=Blend)
     pub(crate) alpha_cutoff: f32,                //   4 bytes, offset 244
     pub(crate) has_metallic_roughness_tex: u32,  //   4 bytes, offset 248
@@ -542,7 +545,10 @@ pub(crate) struct InstanceData {
     pub(crate) unlit: u32,           //   4 bytes, offset 128
     /// 1 = sample the shadow atlas, 0 = treat the fragment as unshadowed.
     pub(crate) receive_shadows: u32, //   4 bytes, offset 132
-    pub(crate) _pad_inst: [u32; 2],  //   8 bytes, offset 136
+    /// 1 = recover the shading normal from screen-space derivatives of
+    /// `world_pos` (`ShadingModel::Flat`).
+    pub(crate) use_flat: u32,        //   4 bytes, offset 136
+    pub(crate) _pad_inst: u32,       //   4 bytes, offset 140
 }
 
 /// Per-instance GPU data for the object-ID pick pass.

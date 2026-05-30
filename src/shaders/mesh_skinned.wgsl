@@ -61,7 +61,7 @@ struct Object {
     has_position_override: u32,
     has_normal_override: u32,
     emissive: vec3<f32>,
-    _pad_emissive: u32,
+    use_flat: u32,
     alpha_mode: u32,
     alpha_cutoff: f32,
     has_metallic_roughness_tex: u32,

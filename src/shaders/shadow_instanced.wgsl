@@ -25,7 +25,7 @@ struct InstanceData {
     has_ao_map: u32,
     unlit: u32,
     receive_shadows: u32,
-    _pad_inst0: u32,
+    use_flat: u32,
     _pad_inst1: u32,
 };
 

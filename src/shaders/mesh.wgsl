@@ -120,7 +120,7 @@ struct Object {
     has_position_override: u32,            // offset 216 : 1 when a per-vertex position storage buffer is bound at binding 13
     has_normal_override: u32,              // offset 220 : 1 when a per-vertex normal storage buffer is bound at binding 14
     emissive: vec3<f32>,                   // offset 224
-    _pad_emissive: u32,                    // offset 236
+    use_flat: u32,                         // offset 236 : 1 = recover N from screen-space derivatives of world_pos
     alpha_mode: u32,                       // offset 240 : 0=Opaque 1=Mask 2=Blend
     alpha_cutoff: f32,                     // offset 244
     has_metallic_roughness_tex: u32,       // offset 248
@@ -662,9 +662,21 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         return vec4<f32>(base_colour, obj_colour.a);
     }
 
-    // Resolve shading normal: TBN normal mapping or geometric normal.
+    // Resolve shading normal: TBN normal mapping, flat (screen-space
+    // derivatives), or the interpolated geometric normal. `use_flat` takes
+    // precedence over normal mapping: the per-face geometric normal is the
+    // entire point of the flat shading model.
     var N: vec3<f32>;
-    if object.has_normal_map != 0u {
+    if object.use_flat != 0u {
+        let dpx = dpdx(in.world_pos);
+        let dpy = dpdy(in.world_pos);
+        var Nf = normalize(cross(dpx, dpy));
+        // Align with the authored winding so flat shading matches the
+        // mesh's intended outward direction even when the cross product
+        // resolves to the opposite hemisphere.
+        if dot(Nf, in.world_normal) < 0.0 { Nf = -Nf; }
+        N = Nf;
+    } else if object.has_normal_map != 0u {
         let nm_sample = textureSample(normal_map, obj_sampler, in.uv).rgb;
         let ts_normal = normalize(nm_sample * 2.0 - vec3<f32>(1.0));
         let T = normalize(in.world_tangent.xyz);
