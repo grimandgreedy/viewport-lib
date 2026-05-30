@@ -443,29 +443,31 @@ fn run_cpu_path(app: &mut App, renderer: &mut ViewportRenderer) {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn controls_wave(app: &mut App, ui: &mut egui::Ui) {
-    ui.label("GPU Wave (compute-plugin override)");
+    ui.label("GPU compute plugins, stacked");
     ui.separator();
     ui.label(
-        "Same wave math, two different deformation paths. Toggle the mode to\n\
-         compare per-frame cost on a 40,401-vertex plane.",
+        "Two plugins running compute shaders each frame. The first deforms a\n\
+         water plane. The second reads the first plugin's output and uses it\n\
+         to float a grid of buoys on the wave. Everything stays on the GPU:\n\
+         the buoys never touch the CPU to know where the water is.",
     );
     ui.separator();
 
-    ui.label("Deform path");
+    ui.label("Wave deformation");
     ui.horizontal(|ui| {
-        ui.radio_value(&mut app.wave_state.mode, DeformMode::Gpu, "GPU compute");
+        ui.radio_value(&mut app.wave_state.mode, DeformMode::Gpu, "GPU plugin");
         ui.radio_value(&mut app.wave_state.mode, DeformMode::Cpu, "CPU writeback");
     });
     match app.wave_state.mode {
         DeformMode::Gpu => ui.label(
-            "GpuPlugin::pre_prepare runs a compute shader; output buffer is\n\
-             bound via set_position_override_buffer. PCIe traffic per frame:\n\
-             one ~16-byte uniform.",
+            "A compute shader displaces the plane's vertices on the GPU.\n\
+             The renderer reads the displaced positions straight from the\n\
+             plugin's output buffer.",
         ),
         DeformMode::Cpu => ui.label(
-            "CPU computes positions + normals each frame and uploads via\n\
-             write_mesh_positions_normals. PCIe traffic per frame:\n\
-             ~944 KB (40,401 verts x 24 bytes).",
+            "The CPU does the same math and re-uploads the deformed plane\n\
+             every frame. Same look on screen, but the per-frame cost is\n\
+             very different at this vertex count.",
         ),
     };
 
@@ -476,10 +478,7 @@ pub(crate) fn controls_wave(app: &mut App, ui: &mut egui::Ui) {
         app.wave_state.update_ms_smoothed,
     ));
     ui.label(format!("active mesh: {} verts", verts));
-    ui.label(
-        "Just the deformation work, not the rest of the frame. The render\n\
-         pass is the same on both paths.",
-    );
+    ui.label("Time spent on the deformation itself, not the rest of the frame.");
 
     ui.separator();
     ui.label("Mesh resolution");
@@ -501,26 +500,16 @@ pub(crate) fn controls_wave(app: &mut App, ui: &mut egui::Ui) {
     }
 
     ui.separator();
-    ui.label("Chained compute");
+    ui.label("Stacked plugin");
     ui.checkbox(&mut app.wave_state.show_buoys, "Show floating buoys");
     ui.label(format!(
-        "{} buoys: a 2nd GpuPlugin reads the wave plugin's GPU output buffer\n\
-         and writes per-vertex positions for a separate buoys mesh. No CPU\n\
-         intermediate. Hidden when the wave is in CPU mode because the wave's\n\
-         GPU buffer is stale in that case.",
+        "{} buoys driven by a second compute plugin that samples the wave\n\
+         plugin's output buffer. Plugin ordering decides who runs first;\n\
+         the renderer sees the final positions of both meshes ready to draw.\n\
+         Hidden in CPU mode because the wave's GPU buffer is no longer live.",
         BUOY_GRID * BUOY_GRID,
     ));
 
     ui.separator();
     ui.checkbox(&mut app.wave_state.paused, "Pause animation");
-    ui.add(
-        egui::Slider::new(&mut app.wave_state.amplitude, 0.0..=1.5)
-            .text("Amplitude")
-            .step_by(0.01),
-    );
-    ui.add(
-        egui::Slider::new(&mut app.wave_state.frequency, 0.2..=6.0)
-            .text("Frequency")
-            .step_by(0.01),
-    );
 }

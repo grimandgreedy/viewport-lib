@@ -118,7 +118,7 @@ impl Default for RtDemoState {
             runtime: ViewportRuntime::new()
                 .with_fixed_timestep(FixedTimestep::new(60.0)),
             mesh_id: None,
-            sim_fps: 15.0,
+            sim_fps: 45.0,
             interpolate: true,
             demo: RuntimeDemo::Orbit,
             active_demo: RuntimeDemo::Orbit,

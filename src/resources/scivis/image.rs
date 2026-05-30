@@ -518,25 +518,43 @@ impl ViewportGpuResources {
 
         if !item.pixels.is_empty() && item.width > 0 && item.height > 0 {
             let raw: Vec<u8> = item.pixels.iter().flat_map(|p| p.iter().copied()).collect();
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &raw,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(tex_w * 4),
-                    rows_per_image: Some(tex_h),
-                },
-                wgpu::Extent3d {
-                    width: tex_w,
-                    height: tex_h,
-                    depth_or_array_layers: 1,
-                },
-            );
+            let needed = (tex_w as usize) * (tex_h as usize) * 4;
+            if raw.len() < needed {
+                tracing::warn!(
+                    target: "viewport_lib::screen_image",
+                    width = item.width,
+                    height = item.height,
+                    pixels_len = item.pixels.len(),
+                    inferred_tex_w = tex_w,
+                    inferred_tex_h = tex_h,
+                    expected_bytes = needed,
+                    actual_bytes = raw.len(),
+                    "ScreenImageItem pixel buffer is smaller than the inferred texture size \
+                     (item.width * item.height does not divide pixels.len() into a square scale \
+                     factor). Skipping upload; the image will render blank. Resize the buffer or \
+                     set item.width / item.height to match the buffer's actual physical resolution."
+                );
+            } else {
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &raw,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(tex_w * 4),
+                        rows_per_image: Some(tex_h),
+                    },
+                    wgpu::Extent3d {
+                        width: tex_w,
+                        height: tex_h,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
         }
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -754,25 +772,43 @@ impl ViewportGpuResources {
 
         if !item.pixels.is_empty() && item.width > 0 && item.height > 0 {
             let raw: Vec<u8> = item.pixels.iter().flat_map(|p| p.iter().copied()).collect();
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &raw,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(tex_w * 4),
-                    rows_per_image: Some(tex_h),
-                },
-                wgpu::Extent3d {
-                    width: tex_w,
-                    height: tex_h,
-                    depth_or_array_layers: 1,
-                },
-            );
+            let needed = (tex_w as usize) * (tex_h as usize) * 4;
+            if raw.len() < needed {
+                tracing::warn!(
+                    target: "viewport_lib::overlay_image",
+                    width = item.width,
+                    height = item.height,
+                    pixels_len = item.pixels.len(),
+                    inferred_tex_w = tex_w,
+                    inferred_tex_h = tex_h,
+                    expected_bytes = needed,
+                    actual_bytes = raw.len(),
+                    "OverlayImageItem pixel buffer is smaller than the inferred texture size \
+                     (item.width * item.height does not divide pixels.len() into a square scale \
+                     factor). Skipping upload; the image will render blank. Resize the buffer or \
+                     set item.width / item.height to match the buffer's actual physical resolution."
+                );
+            } else {
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &raw,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(tex_w * 4),
+                        rows_per_image: Some(tex_h),
+                    },
+                    wgpu::Extent3d {
+                        width: tex_w,
+                        height: tex_h,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
         }
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
