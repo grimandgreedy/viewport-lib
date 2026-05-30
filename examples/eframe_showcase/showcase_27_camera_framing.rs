@@ -320,7 +320,7 @@ impl App {
                     direction: [0.3, -0.5, 0.8],
                 };
                 _t.colour = [0.8, 0.77, 0.90];
-                _t.intensity = 0.8;
+                _t.intensity = 0.3;
                 _t
             }];
             _t.shadows_enabled = true;

@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased changes]
+## [0.16.0]
 
 ### GPU compute plugin hook
 
@@ -10,52 +10,26 @@ Plugins can now run their own GPU work each frame and feed the result straight i
 - Position and normal override buffers: a plugin can hand the renderer a GPU buffer of per-vertex positions or normals, and the standard mesh pipeline reads from it instead of the vertex buffer. No CPU round-trip and no re-upload each frame.
 - Override and skinning compose: a skinned mesh can be driven from a GPU simulation at the bind-pose stage, with skinning still applied on top.
 - A post-paint hook is available for screen-space effects that need to sample the rendered color, depth, or pick-id targets.
-- Showcase 50 (GPU Wave) demonstrates the path end-to-end: an animated wave surface produced by a compute shader, a flotilla of buoys driven by a second plugin that reads the wave's output buffer, and a CPU vs GPU toggle that shows the per-frame cost gap.
 
-### Fixed: GPU position and normal overrides were silently ignored on most scenes
 
-`set_position_override_buffer` and `set_normal_override_buffer` would accept the binding but the renderer would draw the mesh at its rest position anyway, because the override-bound item was being routed through a code path that did not know about the override. Items with an override now go through the per-object pipeline and the override actually takes effect. A regression test renders an override that pushes every vertex off-screen and fails if the mesh stays visible.
-
-### Volumetric effects (fog, smoke, clouds, fire)
+### Volumetric effects. `ScatterVolume` (fog, smoke, clouds, fire)
 
 A new scene item, the scatter volume, renders ray-marched participating media: atmospheric fog, smoke columns, cloud layers, fire, magic effects. Each volume is a box or a sphere placed in the scene with a density, a colour, and a handful of look knobs; the renderer composites visible volumes onto the scene every frame with no upload step. Up to 16 volumes can overlap a single pixel.
-
-- Lighting: scene lights shine through volumes the same way they shine through air. The directional sun produces visible shafts where shadow casters block its rays, and dense volumes self-shadow. A backscattering knob (Henyey-Greenstein anisotropy) controls the look from isotropic fog (zero) through forward-scattering clouds with bright silver linings (positive) to back-scattering volumes lit from behind.
-- Emission: volumes can glow on their own. A glowing volume reads as light leaking out of the medium and, separately, casts a soft warm light on nearby surfaces — drop a fire next to a wall and the wall gets warmer, with no extra lighting setup.
-- Colour ramps: any built-in colourmap can drive a volume's colour as a gradient from edges to centre, which is what turns a sphere into a fire (Inferno: red base, yellow heart, near-white core).
-- Density shaping: soft-edge fall-off (smoothstep around the volume centre) and exponential fall-off from a point. Soft edges fix the otherwise-hard silhouette that bounded fog naturally produces.
-- Animation: procedural 3D noise can drive the density so it drifts (smoke columns rising, cloud layers sliding) or flickers in place (fire). Each volume gets its own scale, octaves, scroll velocity, and time rate.
-- External 3D textures: any uploaded scalar field can stand in for the procedural noise — drop in baked simulation output, render it as fog.
-- Per-item flags work the same way they do on every other scene item: hidden, opacity as a density multiplier, picking with a click, selection outline of the shape, "unlit" to skip lighting calculations, "receive_shadows" to opt out of the shaft effect. Camera inside a volume renders correctly.
-- Quality presets: Low, Medium, High control the ray-march step count globally; individual volumes can override their own budget. A blue-noise jitter on the start offset hides the banding low step counts produce.
-- Half-resolution rendering: the scatter pass renders into a half-res offscreen and bilinearly upsamples back into the main image. Roughly quarters the ray-march cost; the upsample is a straight blit, so volume edges may soften slightly against high-contrast geometry.
-- Temporal accumulation: each frame's scatter result is blended with the previous frame's reprojected result, with an adjustable history weight. Smooths out the blue-noise jitter and any residual banding; produces a short trail when the camera moves quickly, which is the standard temporal-accumulation tradeoff.
-- Defaults: Low quality (8 steps), half-resolution, and temporal accumulation all on, so ten overlapping volumes stay performant without extra setup. Consumers that prioritise crisp motion can switch to Medium / High and turn temporal off.
-- Tile-based culling: each visible volume is rasterised through its own screen-space bounding rectangle rather than as part of a fullscreen pass. Pixels outside a volume's projection cost zero on that volume, so scenes with many small volumes (cloud here, fog patch there, fire over there) only pay for the pixels each volume actually touches. Volumes that fall fully off-screen contribute nothing.
-- Showcase: `showcase-48: Scatter Volumes` walks through everything above with sliders.
 
 ### Scene-graph lights
 
 Lights are now scene-graph nodes rather than per-frame configuration data.
 
-- `Scene::add_light(LightSource) -> NodeId` places a light in the scene. It gets the same transform, layer, and hierarchy treatment as any mesh node: parent transforms apply automatically, toggling a layer turns its lights on and off, and lights survive scene round-trips through serialisation.
-- `Scene::collect_lights()` walks visible nodes, resolves each light to world space (world translation drives point and spot position; world rotation drives directional and spot direction), and returns a `Vec<LightSource>` ready to hand to the renderer.
-- `Scene::set_light(id, light)` replaces the light on an existing node, so runtime edits (colour slider, intensity knob) are a single call per frame.
-- `SceneFrame::lights` is the per-frame carrier for scene-graph lights. The renderer unions it with `EffectsFrame::lighting.lights` at prepare time, so existing code that builds `LightingSettings` directly keeps working without any changes.
-- Point and spot lights now affect every lit pipeline, not just surface meshes. The shared `apply_scene_lighting` helper in `scene_lighting.wgsl` previously evaluated directional lights only and silently skipped point and spot kinds on glyphs, tensor glyphs, streamtubes, ribbons, implicit surfaces, and marching-cubes surfaces. All of those pipelines now evaluate full distance falloff for point lights and inner/outer cone attenuation for spot lights, matching what `mesh.wgsl` already did.
-- `LightSource` and `LightKind` carry `serde` derives behind the `serde` feature gate.
-- Fixed a latent panic in `prepare.rs` where the shadow-map direction was read from `lighting.lights[0]` rather than from the combined light list, which would crash any frame where all lights entered through `SceneFrame::lights` and `LightingSettings::lights` was left empty.
-- Showcase 49 demonstrates scene-graph lights: a ground plane and a 3x3 sphere grid lit by a warm orbiting point light, a cool orbiting spotlight, and a soft directional fill. Lights orbit live with animate on; colour, intensity, and range are editable per light from the controls panel.
+### Materials and shading
 
-### ShadingModel enum (breaking)
+ShadingModel enum
+- Replaced `Material::use_pbr: bool` and `Material::matcap_id: Option<MatcapId>`, etc. with a single `Material::shading_model: ShadingModel` field.Matcap(id);`
 
-Replaced `Material::use_pbr: bool` and `Material::matcap_id: Option<MatcapId>` with a single `Material::shading_model: ShadingModel` field. Variants: `Phong` (default), `Pbr`, `Matcap(MatcapId)`. The `Material::pbr()` and `Material::pbr_with_ao()` constructors are unchanged. Query helpers `Material::is_pbr()` and `Material::matcap_id() -> Option<MatcapId>` cover read sites. Existing assignments migrate as:
-- `m.use_pbr = true;` -> `m.shading_model = ShadingModel::Pbr;`
-- `m.matcap_id = Some(id);` -> `m.shading_model = ShadingModel::Matcap(id);`
+#### Toon shading
 
-GPU layout and shaders are unchanged: `prepare.rs` still flattens to the `use_pbr` / `use_matcap` flags inside `ObjectUniform`. Unlit remains on `ItemSettings.unlit` and is intentionally not a `ShadingModel` variant.
+A new `ShadingModel::Toon` variant that quantises the lighting into hard bands, with optional banded specular highlights and parameter knobs for band count, ramp smoothness, and specular sharpness. Runs through the standard opaque and OIT mesh pipelines, so skinned meshes and transparent surfaces both pick it up without extra wiring. The variant carries silhouette outline parameters (thickness and colour) but the silhouette pass that consumes them is a separate follow-up — at the moment a toon material renders the cel-shaded interior without the dark outline around the silhouette.
 
-### Flat shading
+#### Flat shading
 
 A new `ShadingModel::Flat` variant for surface and volume meshes. Runs the normal lighting block but replaces the per-vertex normal with a per-fragment geometric normal, so the polygon facets of the underlying triangulation are visible. Fills the gap between fully lit and fully unlit, where unlit alone tends to flatten geometry into a featureless blob.
 
@@ -74,97 +48,11 @@ Screen-space decal projection: place a texture onto any opaque surface without m
 - Tri-planar projection: samples the texture from all three local axes and blends by surface normal, avoiding UV stretching on corners and non-planar surfaces.
 - Cylindrical projection: wraps a decal around a cylindrical surface using angle and axial position as UV coordinates. Works on both the outside of a column and the inside of a tube.
 
-### Material constructors
-
-Added `Material::solid`, `Material::textured`, and `Material::pbr_with_ao` for the three most common material setup cases. Existing `from_colour` and `pbr` are unchanged.
-
 ### Improvements
-
-#### `ItemSettings` flags now behave consistently on every item type
-
-Per-item `hidden`, `unlit`, and `opacity` previously honoured by some types and silently ignored by others. All three now follow the same contract everywhere: if the type has the underlying mechanism (lighting, alpha output, draw enumeration) the flag drives it; if it doesn't, the flag is a documented no-op.
-
-- `settings.hidden = true` now short-circuits the upload path for every item type. Previously point clouds, glyphs, tensor glyphs, polylines, streamtubes, tubes, ribbons, image slices, volume surface slices, GPU implicit, screen image, and volume items uploaded GPU data and emitted draws regardless of the flag. The draw-call macro that iterates the prepared GPU data does no per-item filtering, so the filter had to live at the upload site; it now does.
-- `VolumeItem` now honours `settings.unlit`: the prepare-side write ORs it into the existing `enable_shading` gate, so a single per-item flag disables gradient Phong without touching the volume's own field. The volume ray-marcher's only lighting path is gated by `VolumeUniform.enable_shading`; this routes the standard per-item bypass into that gate.
-- `TransparentVolumeMeshItem` now honours `settings.unlit` by disabling the per-fragment Beer-Lambert thickness integration and emitting a flat density-scaled alpha. The projected-tet pipeline has no per-fragment lighting calculation to skip; this is the most useful interpretation of "unlit" for a volumetric pipeline that already has no lighting.
-- `GaussianSplatItem` draw-data upload now short-circuits on `settings.hidden`. Hidden splats no longer render.
-- `VolumeSurfaceSliceItem.settings.opacity` now multiplies into the type's own `opacity` field at upload time, so consumers can drive transparency through the standard per-item path. The two fields compose multiplicatively; the type field is retained for back-compat with a doc note recommending `settings.opacity` for new code. `unlit` and `wireframe` are documented as accepted-but-no-op on this type (no lighting calculation, no edge-pass pipeline variant).
-
-#### `ItemSettings` extends and replaces `AppearanceSettings` on all scene item types
-All renderable item types now express pick identity and selection state through a single `settings: ItemSettings` field. The former `id: u64`, `pick_id: u64`, `selected: bool`, and `appearance: AppearanceSettings` top-level fields are removed.
-- Renamed `AppearanceSettings` -> `ItemSettings` and standardised the settings across all first-class scene item types.
-- Standardised `pick_id: PickId` across all item types. No more `id` or `pickID`.
-- Added `pick_id` and `selected` to `ItemSettings` so that both are standard and universal across all vp-lib item types.
-
-```rust
-pub struct ItemSettings {
-    /// Hide the object entirely. Default `false`.
-    pub hidden: bool,
-    /// Skip all lighting calculations and output raw colour. Default `false`.
-    pub unlit: bool,
-    /// Global opacity multiplier. 1.0 = fully opaque, 0.0 = fully transparent. Default 1.0.
-    pub opacity: f32,
-    /// Render as wireframe regardless of the global wireframe flag. Default `false`. Extended conceptually to non-mesh
-    /// objects to render their sub-objects as meshes, e.g., a VolumeItem has its voxels as wireframe boxes.
-    pub wireframe: bool,
-    /// GPU pick identifier. `PickId::NONE` = not pickable. Default `PickId::NONE`.
-    pub pick_id: crate::renderer::PickId,
-    /// Whether the item is currently selected. Default `false`.
-    pub selected: bool,
-}
-```
-
-#### Tensor glyph joins the scene-lighting family
-
-`tensor_glyph.wgsl` now binds the scene `Lights` uniform and computes diffuse shading through the shared `apply_scene_lighting` helper rather than a hardcoded directional light. Tensor glyphs respond to `LightingSettings` direction, intensity, second-light contribution, and hemisphere ambient in the same way every other lit non-mesh type does, and honour `ItemSettings.unlit` for the per-item lighting bypass.
-
-#### Per-receiver shadow opt-out on `ItemSettings`
-
-`ItemSettings` gains two new fields, both defaulting to `true`:
-
-- `cast_shadows`: when `false`, the item is skipped in the shadow pass. Wired in both the direct shadow loops and the GPU-driven indirect path (via a new `cast_shadows` slot on the per-instance AABB plus a `shadow_pass` flag on `FrustumUniform`).
-- `receive_shadows`: when `false`, the lit mesh fragment shader treats the fragment as unshadowed regardless of whether the scene's directional light has a shadow map. Read in `mesh.wgsl`, `mesh_instanced.wgsl`, and the skinned variants.
-
-Both flags are documented as no-ops on non-mesh item types (point clouds, splats, glyphs, slices) because those pipelines do not participate in the shadow pass today.
-
-#### Selection-outline mask honours `hidden`
-
-Selection-outline mask loops for glyph, tensor glyph, image slice, screen image, volume, GPU implicit, transparent volume mesh, volume surface slice, GPU marching cubes, point cloud, and sprite now gate on `settings.hidden` before the existing `settings.selected` check. A `hidden + selected` item used to emit a thin outline mask around empty space; it now emits zero draws.
-
-#### Glyph `unlit` decoupled from `use_default_colour`
-
-`glyph.wgsl` previously OR'd the per-item `unlit` flag with the constant-colour `use_default_colour` flag, so an item with `use_default_colour = true` was always treated as unlit regardless of `ItemSettings.unlit`. The two flags are now orthogonal: `use_default_colour` only picks the colour source, and `unlit` is the single source of truth for the lighting bypass. Consumers that previously relied on the implicit coupling should set both flags explicitly.
-
-### Fixes
-
-#### Light direction convention unified across non-mesh shaders
-
-`mesh.wgsl` treats `LightSource.pos_or_dir` as the surface-to-light direction (matching the doc on `LightSource::default()`), but five other shaders -- glyph, streamtube, ribbon, GPU implicit, and GPU marching cubes -- were negating it and treating it as a light-travel direction. The two conventions are opposite. With a directional light pointing upward (light source above the scene), meshes lit from above as intended, but glyphs, streamtubes, ribbons, implicit surfaces, and marching-cubes surfaces lit from below. All five shaders now match the mesh convention, so a single `LightSource.direction` produces a coherent response across every lit type in the same scene.
-
-The hardcoded no-scene-lights fallback in glyph, streamtube, ribbon, and tensor glyph shaders also moved from a Y-up biased `(0.3, 1.0, 0.5)` to a Z-up `(0.4, 0.3, 1.5)` matching `LightSource::default()`, so untextured demos without an explicit `LightingSettings` light from above in Z-up scenes.
-
-### Examples
-
-#### Showcase 47: Lighting and Shading Consistency
-
-New grid of 13 item types (surface mesh, point cloud, glyph, tensor glyph, polyline, streamtube, tube, ribbon, GPU implicit, Gaussian splat, volume, volume surface slice, transparent volume mesh) sharing one `LightingSettings` and one set of broadcast `ItemSettings` flags. Toggling `hidden`, `unlit`, `opacity`, or `wireframe` applies the change to every item simultaneously, showing how the same per-item flag behaves across mesh, volumetric, scivis, and procedural types. Scene-light controls (yaw / pitch / intensity, optional second directional light, hemisphere ambient + sky / ground colours) make the cross-type lighting response observable side-by-side.
-
-### Breaking changes
-
-- `CameraFrustumItem` removed from the public API. Build frustum wireframes directly using `PolylineItem` with explicit quad strips for near/far planes and lateral edges. `SceneFrame::camera_frustums` is removed; push `PolylineItem` values to `SceneFrame::polylines` instead. Build your own frustum!
-- `SurfaceLICItem` removed from the public API. SurfaceLIC 'objects' belong to surface meshes and so that is where they have to be defined. Set `SceneRenderItem::lic = Some(LicOverlay { vector_attribute, config })`.
-- `ViewportId` inner field is now `pub(crate)`. External code that read `id.0` must switch to `CameraFrame::with_viewport_id(id)`. Direct construction of `ViewportId` values is no longer possible outside the crate.
-- `ClipVolumeUniform` (deprecated since 0.9.0) removed. Use `ClipVolumesUniform` and `ClipVolumeEntry`.
-- `TET_SENTINEL` (deprecated since 0.13.0) removed. Use `CELL_SENTINEL`.
-- `ViewportEvent`, `ActionFrame`, `ManipResult`, `WidgetResult`, `PostProcessSettings`, `LightingSettings`, `LightSource`, and `VolumeMeshItem` are now `#[non_exhaustive]`. Match arms on `ViewportEvent`, `ManipResult`, and `WidgetResult` must add a wildcard arm (`_ => {}`). Struct literals for the struct types must use `..Default::default()` or a constructor.
 
 #### Improved item data upload responses
 
 `upload_mesh`, `upload_gaussian_splats`, and `upload_environment_map` now return `ViewportResult`
-
-These three upload functions previously returned `MeshId`, `GaussianSplatId`, and `()` respectively.  They now return `ViewportResult<MeshId>`, `ViewportResult<GaussianSplatId>`, and `ViewportResult<()>`.
-
-Call sites must handle or propagate the error. Callers that previously discarded the result should append `.expect("reason")` if the input is known-valid, or propagate with `?` if the caller already returns `ViewportResult`.
 
 Error variants returned:
 - `upload_mesh`: `ViewportError::EmptyMesh` when `vertices` or `indices` is empty.
@@ -183,6 +71,37 @@ renderer.pass().prepare_viewport(device, queue, vp_id, frame);
 let token = renderer.pass().prepare_scene(device, queue, frame, &scene_fx);
 renderer.pass().prepare_viewport(device, queue, &token, vp_id, frame);
 ```
+
+
+#### `ItemSettings` extends and replaces `AppearanceSettings` on all scene item types
+All renderable item types now express pick identity and selection state through a single `settings: ItemSettings` field. The former `id: u64`, `pick_id: u64`, `selected: bool`, and `appearance: AppearanceSettings` top-level fields are removed.
+- Renamed `AppearanceSettings` -> `ItemSettings` and standardised the settings across all first-class scene item types.
+- Standardised `pick_id: PickId` across all item types. No more `id` or `pickID`.
+- Added `pick_id` and `selected` to `ItemSettings` so that both are standard and universal across all vp-lib item types.
+
+#### `ItemSettings` flags now behave consistently on every item type
+
+Per-item `hidden`, `unlit`, and `opacity` previously honoured by some types and silently ignored by others. All three now follow the same contract everywhere: if the type has the underlying mechanism (lighting, alpha output, draw enumeration) the flag drives it; if it doesn't, the flag is a documented no-op. `ItemSettings` flags now behave consistently on every item type.
+
+#### Shadow opt-out on `ItemSettings`
+
+`ItemSettings` gains two new fields, both defaulting to `true`:
+
+- `cast_shadows`: when `false`, the item is skipped in the shadow pass. Wired in both the direct shadow loops and the GPU-driven indirect path (via a new `cast_shadows` slot on the per-instance AABB plus a `shadow_pass` flag on `FrustumUniform`).
+- `receive_shadows`: when `false`, the lit mesh fragment shader treats the fragment as unshadowed regardless of whether the scene's directional light has a shadow map. Read in `mesh.wgsl`, `mesh_instanced.wgsl`, and the skinned variants.
+
+### Fixes
+
+#### Light direction convention unified across non-mesh shaders
+
+`mesh.wgsl` treats `LightSource.pos_or_dir` as the surface-to-light direction (matching the doc on `LightSource::default()`), but some of the item newer outline shaders -- glyph, streamtube, ribbon, GPU implicit, and GPU marching cubes -- were negating it and treating it as a light-travel direction. The two conventions are opposite. With a directional light pointing upward (light source above the scene), meshes lit from above as intended, but glyphs, streamtubes, ribbons, implicit surfaces, and marching-cubes surfaces lit from below. All five shaders now match the mesh convention, so a single `LightSource.direction` produces a coherent response across every lit type in the same scene.
+
+Fixed: GPU position and normal overrides were silently ignored on most scenes `set_position_override_buffer` and `set_normal_override_buffer` would accept the binding but the renderer would draw the mesh at its rest position anyway, because the override-bound item was being routed through a code path that did not know about the override. Items with an override now go through the per-object pipeline and the override actually takes effect. A regression test renders an override that pushes every vertex off-screen and fails if the mesh stays visible.
+
+### Breaking changes
+
+- `CameraFrustumItem` removed from the public API. Build frustum wireframes directly using `PolylineItem` with explicit quad strips for near/far planes and lateral edges. `SceneFrame::camera_frustums` is removed; push `PolylineItem` values to `SceneFrame::polylines` instead. Build your own frustum!
+- `SurfaceLICItem` removed from the public API. SurfaceLIC 'objects' belong to surface meshes and so that is where they have to be defined. Set `SceneRenderItem::lic = Some(LicOverlay { vector_attribute, config })`.
 
 
 

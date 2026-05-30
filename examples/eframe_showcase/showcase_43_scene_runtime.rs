@@ -138,7 +138,7 @@ impl Default for RtDemoState {
 
 fn populate_orbit(app: &mut App) {
     app.rt_state.scene = Scene::new();
-    app.rt_state.sim_fps = 15.0;
+    app.rt_state.sim_fps = 45.0;
     let Some(mesh_id) = app.rt_state.mesh_id else { return };
     let colours: [[f32; 3]; 5] = [
         [0.9, 0.35, 0.3],
