@@ -20,8 +20,10 @@
 `viewport-lib` covers rendering, cameras, and post-processing. Your application owns the window, event loop, and tool state.
 
 
+## STATUS
 **WARNING** (Feb 2026): The viewport has only recently been extracted as a stand-alone library from a separate project and the API is still unstable. Several key things are still a work in progress. When things become more solid I will release v1.0.0.
-**UPDATE** (May 2026): Things are looking better and better. If all goes well, v1.0.0 will be ready some time in July of 2026.
+
+**UPDATE** (May 2026): A ton of work has been put in and things are looking better and better. There are still some decisions to be made and problems to solved but on every front things are looking really good. If all goes well, v1.0.0 will be ready some time in July of 2026.
 
 ## Core features
 
