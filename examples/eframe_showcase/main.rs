@@ -1164,6 +1164,16 @@ impl eframe::App for App {
                                 pick_pos, vp_size, view_proj, shift, renderer,
                             );
                         }
+                    } else if self.mode == ShowcaseMode::TensorGlyphs && self.tg_state.built {
+                        let vp_size = glam::Vec2::new(rect.width(), rect.height());
+                        let view_proj = self.camera.view_proj_matrix();
+                        let rs = frame.wgpu_render_state().expect("wgpu required");
+                        let guard = rs.renderer.read();
+                        if let Some(renderer) = guard.callback_resources.get::<ViewportRenderer>() {
+                            showcase_39_tensor_glyphs::tg_handle_click(
+                                self, pick_pos, vp_size, view_proj, renderer,
+                            );
+                        }
                     } else if self.mode == ShowcaseMode::Decals {
                         let vp_size = glam::Vec2::new(rect.width(), rect.height());
                         showcase_46_decals::decal46_place(self, pick_pos, vp_size);
@@ -3407,6 +3417,8 @@ impl App {
         // Tensor glyph items (Showcase 39) : submitted every frame when built.
         if self.mode == ShowcaseMode::TensorGlyphs && self.tg_state.built {
             showcase_39_tensor_glyphs::submit_tensor_glyphs(self, &mut fd);
+            showcase_39_tensor_glyphs::submit_beam_item(self, &mut fd);
+            showcase_39_tensor_glyphs::submit_tg_sub_selection(self, &mut fd);
         }
 
         // Sprite items and ring polylines (Showcase 41) : submitted every frame when built.
