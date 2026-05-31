@@ -1,22 +1,25 @@
-// Shared scene-lighting evaluation for non-mesh pipelines.
+// Shared scene-lighting evaluation for every lit pipeline.
 //
-// Defines the canonical `SingleLight` and `Lights` struct layouts (matching
-// `src/resources/types.rs::LightsUniform`) and one helper:
+// Defines the canonical `SingleLight` struct, the `Lights` header struct
+// (binding 3 of group 0), the dynamically-sized storage buffer of lights
+// (binding 13 of group 0), and the per-fragment helper:
 //
 //   apply_scene_lighting(N, base_colour, two_sided, world_pos, lights) -> vec3<f32>
 //
 // The helper returns `base_colour * (hemisphere_ambient + light_sum)` where
 // hemisphere_ambient is mix(ground_colour, sky_colour, N.z*0.5+0.5) * intensity,
-// and light_sum accumulates all active light types:
-//   - Directional: Lambert weight on N·L (or abs(N·L) when two_sided)
-//   - Point: distance falloff, no angular term
-//   - Spot: distance falloff * inner/outer cone interpolation
+// and light_sum accumulates all active light types from the storage buffer.
 //
 // Consumers must:
-//   - Bind a `Lights` uniform at `@group(0) @binding(3)` (every existing scivis
-//     pipeline already does).
+//   - Bind the `Lights` header uniform at `@group(0) @binding(3)` (every
+//     existing scivis pipeline already does).
+//   - Bind the per-light storage buffer at `@group(0) @binding(13)`.
 //   - Remove their local `SingleLight` and `Lights` struct definitions and
 //     `// #include "scene_lighting.wgsl"` near the top of the file instead.
+//
+// The 8-light cap is gone. The renderer truncates by importance once the
+// per-frame cap (currently 64) is exceeded; everything that fits is
+// shaded.
 
 struct SingleLight {
     light_view_proj: mat4x4<f32>,
@@ -40,7 +43,6 @@ struct Lights {
     hemisphere_intensity: f32,
     ground_colour:         vec3<f32>,
     debug_vis_scale:      f32,
-    lights:               array<SingleLight, 8>,
     ibl_enabled:          u32,
     ibl_intensity:        f32,
     ibl_rotation:         f32,
@@ -50,6 +52,8 @@ struct Lights {
     _pad_dbg_b:           u32,
     _pad_dbg_c:           u32,
 };
+
+@group(0) @binding(13) var<storage, read> lights_storage: array<SingleLight>;
 
 fn apply_scene_lighting(
     normal: vec3<f32>,
@@ -66,9 +70,9 @@ fn apply_scene_lighting(
                   * lights.hemisphere_intensity;
 
     var direct = vec3<f32>(0.0);
-    let n_lights = min(lights.count, 8u);
+    let n_lights = lights.count;
     for (var i: u32 = 0u; i < n_lights; i = i + 1u) {
-        let l = lights.lights[i];
+        let l = lights_storage[i];
         var L: vec3<f32>;
         var radiance: vec3<f32>;
 

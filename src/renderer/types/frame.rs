@@ -510,9 +510,15 @@ impl SceneFrame {
         selection: &crate::interaction::selection::Selection,
     ) -> Self {
         let items = scene.collect_render_items(selection);
+        let lights = scene.collect_lights();
+        let (light_glyphs, light_polylines) =
+            crate::scene::build_light_glyphs(scene, selection);
         Self {
             generation: scene.version(),
             surfaces: SurfaceSubmission::Flat(items.into()),
+            lights,
+            glyphs: light_glyphs,
+            polylines: light_polylines,
             ..Self::default()
         }
     }

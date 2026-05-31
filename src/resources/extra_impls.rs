@@ -556,6 +556,10 @@ impl ViewportGpuResources {
                     binding: 12,
                     resource: debug_frag_buf.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: self.light_storage_buf.as_entire_binding(),
+                },
             ],
         })
     }

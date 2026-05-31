@@ -370,29 +370,34 @@ pub struct SingleLightUniform {
     pub _pad: [f32; 5], // 20 bytes, offset 124 : total 144
 }
 
-/// GPU-side lights uniform (binding 3 of group 0). Supports up to 8 light sources.
+/// GPU-side lights header uniform (binding 3 of group 0).
+///
+/// Per-light data lives in a separate storage buffer at binding 13
+/// (`light_storage_buf`); this header carries only the global parameters
+/// and the active light count. Sized so the structure cost stays well
+/// inside the uniform-buffer budget regardless of how many lights are
+/// active in a given frame.
 ///
 /// Layout:
 /// - count:                u32            =  4 bytes
 /// - shadow_bias:          f32            =  4 bytes
 /// - shadows_enabled:      u32            =  4 bytes
-/// - debug_vis_mode:       u32            =  4 bytes (packed debug channel selectors and active flag)
-/// - sky_colour:            `[f32; 3]`     = 12 bytes
+/// - debug_vis_mode:       u32            =  4 bytes
+/// - sky_colour:            `[f32; 3]`    = 12 bytes
 /// - hemisphere_intensity: f32            =  4 bytes
-/// - ground_colour:         `[f32; 3]`     = 12 bytes
-/// - debug_vis_scale:      f32            =  4 bytes (multiplier for debug quantity display)
-/// - lights:               [SingleLightUniform; 8] = 8 * 144 = 1152 bytes
+/// - ground_colour:         `[f32; 3]`    = 12 bytes
+/// - debug_vis_scale:      f32            =  4 bytes
 /// - ibl_enabled:          u32            =  4 bytes
 /// - ibl_intensity:        f32            =  4 bytes
 /// - ibl_rotation:         f32            =  4 bytes
 /// - show_skybox:          u32            =  4 bytes
 /// - debug_vis_split_x:    f32            =  4 bytes
 /// - _pad_dbg:             [u32; 3]       = 12 bytes
-/// Total: 16 + 16 + 16 + 1152 + 16 + 16 = 1216 bytes
+/// Total: 16 + 16 + 16 + 16 + 16 = 80 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct LightsUniform {
-    /// Number of active lights (0-8).
+    /// Number of active lights. Indexed against `light_storage_buf`.
     pub count: u32, //  4 bytes
     /// Shadow bias applied to depth comparisons to reduce acne.
     pub shadow_bias: f32, //  4 bytes
@@ -408,8 +413,6 @@ pub struct LightsUniform {
     pub ground_colour: [f32; 3], // 12 bytes
     /// Scale multiplier applied to debug quantity values before display.
     pub debug_vis_scale: f32, //  4 bytes
-    /// Per-light parameters (up to 8 lights).
-    pub lights: [SingleLightUniform; 8], // 8 * 144 = 1152 bytes
     /// 1 = IBL environment map is active, 0 = disabled.
     pub ibl_enabled: u32, // 4 bytes
     /// IBL intensity multiplier.
@@ -423,6 +426,15 @@ pub struct LightsUniform {
     /// Reserved for future debug uniform fields.
     pub _pad_dbg: [u32; 3], // 12 bytes
 }
+
+/// Maximum number of lights packed into `light_storage_buf` per frame.
+///
+/// When the union of `EffectsFrame::lighting.lights` and
+/// `SceneFrame::lights` exceeds this count, the renderer keeps the first
+/// directional (which carries the cascaded shadow map) and ranks the rest
+/// by `importance * proximity_weight`, dropping the tail. Bumping this
+/// only costs `MAX_SCENE_LIGHTS * 144` bytes of GPU storage.
+pub const MAX_SCENE_LIGHTS: usize = 512;
 
 /// Alias kept for backward compatibility : existing app code imports `LightUniform`.
 pub type LightUniform = LightsUniform;
@@ -1488,13 +1500,17 @@ pub(crate) struct OverlayShapeGpuData {
 /// textures for the separable blur passes, and pre-built bind groups.
 pub(crate) struct BackdropBlurState {
     /// Full-resolution intermediate render target. The scene is rendered here
-    /// instead of directly to the surface so the result can be sampled.
+    /// instead of directly to the surface so the result can be sampled. Kept
+    /// alive so the matching view remains valid.
+    #[allow(dead_code)]
     pub intermediate_texture: wgpu::Texture,
     pub intermediate_view: wgpu::TextureView,
-    /// Half-resolution blur ping-pong texture A.
+    /// Half-resolution blur ping-pong texture A. Kept alive for its view.
+    #[allow(dead_code)]
     pub blur_a_texture: wgpu::Texture,
     pub blur_a_view: wgpu::TextureView,
-    /// Half-resolution blur ping-pong texture B.
+    /// Half-resolution blur ping-pong texture B. Kept alive for its view.
+    #[allow(dead_code)]
     pub blur_b_texture: wgpu::Texture,
     pub blur_b_view: wgpu::TextureView,
     /// Viewport physical size the textures were created for.
@@ -2445,8 +2461,16 @@ pub struct ViewportGpuResources {
     pub wireframe_pipeline: wgpu::RenderPipeline,
     /// Uniform buffer holding the per-frame `CameraUniform` (view-proj + eye position).
     pub camera_uniform_buf: wgpu::Buffer,
-    /// Uniform buffer holding the per-frame `LightsUniform` (up to 8 lights + shadow info).
+    /// Uniform buffer holding the per-frame `LightsUniform` header (count +
+    /// hemisphere + IBL + debug params). The per-light array lives in
+    /// `light_storage_buf` (binding 13).
     pub light_uniform_buf: wgpu::Buffer,
+    /// Storage buffer of per-light `SingleLightUniform` entries (binding 13).
+    ///
+    /// Sized for `MAX_SCENE_LIGHTS`. The renderer truncates the consumer's
+    /// light list to this cap each frame, ranking surplus lights by
+    /// `LightSource::importance * proximity_weight`.
+    pub light_storage_buf: wgpu::Buffer,
     /// Bind group (group 0) binding camera, light, clip-plane, and shadow uniforms.
     pub camera_bind_group: wgpu::BindGroup,
     /// Bind group layout for group 0 (shared by all scene pipelines).

@@ -282,37 +282,68 @@ impl ViewportRenderer {
         // give nearby opaque surfaces warm illumination from "fire-like"
         // volumes without the consumer having to author a matching light by
         // hand. The lights are appended after the consumer's own lights and
-        // are dropped if the 8-slot cap is hit.
+        // are dropped if the per-frame cap is hit.
         let virtual_scatter_lights = derive_scatter_volume_virtual_lights(
             &frame.scene.scatter_volumes,
             &resources.colourmaps_cpu,
         );
-        let combined_lights: Vec<&LightSource> = lighting
+        let raw_lights: Vec<&LightSource> = lighting
             .lights
             .iter()
             .chain(frame.scene.lights.iter())
             .chain(virtual_scatter_lights.iter())
             .collect();
 
-        // Build the LightsUniform for all active lights (max 8).
-        let light_count = combined_lights.len().min(8) as u32;
-        let mut lights_arr = [SingleLightUniform {
-            light_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            pos_or_dir: [0.0; 3],
-            light_type: 0,
-            colour: [1.0; 3],
-            intensity: 1.0,
-            range: 0.0,
-            inner_angle: 0.0,
-            outer_angle: 0.0,
-            _pad_align: 0,
-            spot_direction: [0.0, -1.0, 0.0],
-            _pad: [0.0; 5],
-        }; 8];
+        // Apply the per-frame cap. When over the cap, keep the first directional
+        // light at slot 0 (the cascaded-shadow caster) and rank the rest by
+        // `importance * proximity_weight`, dropping the tail. Directional lights
+        // are treated as infinitely close (proximity_weight = 1).
+        let combined_lights: Vec<&LightSource> = if raw_lights.len()
+            <= crate::resources::MAX_SCENE_LIGHTS
+        {
+            raw_lights
+        } else {
+            let camera_pos = glam::Vec3::from(frame.camera.render_camera.eye_position);
+            let directional_first = raw_lights
+                .iter()
+                .position(|l| matches!(l.kind, LightKind::Directional { .. }));
+            let mut out: Vec<&LightSource> = Vec::with_capacity(
+                crate::resources::MAX_SCENE_LIGHTS,
+            );
+            if let Some(i) = directional_first {
+                out.push(raw_lights[i]);
+            }
+            let mut rest: Vec<(f32, &LightSource)> = raw_lights
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| Some(*i) != directional_first)
+                .map(|(_, l)| {
+                    let proximity = match l.kind {
+                        LightKind::Directional { .. } => 1.0,
+                        LightKind::Point { position, range }
+                        | LightKind::Spot { position, range, .. } => {
+                            let d = (glam::Vec3::from(position) - camera_pos).length();
+                            // Light is fully relevant within `range`; fades to ~0 beyond 4x range.
+                            (range / (range + d.max(0.0))).clamp(0.0, 1.0)
+                        }
+                    };
+                    (l.importance.max(0.0) * proximity, *l)
+                })
+                .collect();
+            rest.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            let take = crate::resources::MAX_SCENE_LIGHTS - out.len();
+            out.extend(rest.into_iter().take(take).map(|(_, l)| l));
+            out
+        };
 
-        for (i, src) in combined_lights.iter().take(8).enumerate() {
-            lights_arr[i] = build_single_light_uniform(src, shadow_center, shadow_extent, i == 0);
-        }
+        let light_count = combined_lights.len() as u32;
+
+        // Build the per-light entries that get uploaded to the storage buffer.
+        let lights_packed: Vec<SingleLightUniform> = combined_lights
+            .iter()
+            .enumerate()
+            .map(|(i, src)| build_single_light_uniform(src, shadow_center, shadow_extent, i == 0))
+            .collect();
 
         // -------------------------------------------------------------------
         // Compute CSM cascade matrices for lights[0] (directional).
@@ -506,7 +537,6 @@ impl ViewportRenderer {
             hemisphere_intensity: lighting.hemisphere_intensity,
             ground_colour: lighting.ground_colour,
             debug_vis_scale,
-            lights: lights_arr,
             ibl_enabled,
             ibl_intensity,
             ibl_rotation,
@@ -523,6 +553,16 @@ impl ViewportRenderer {
             0,
             bytemuck::cast_slice(&[lights_uniform]),
         );
+        // Upload the per-light array to the storage buffer at binding 13.
+        // Slots past `count` are left as-is; the shader bounds its loop on
+        // `lights_uniform.count` so stale tail entries are never sampled.
+        if !lights_packed.is_empty() {
+            queue.write_buffer(
+                &resources.light_storage_buf,
+                0,
+                bytemuck::cast_slice(&lights_packed),
+            );
+        }
 
         // Upload all cascade matrices to the shadow uniform buffer before the shadow pass.
         // wgpu batches write_buffer calls before the command buffer, so we must write ALL

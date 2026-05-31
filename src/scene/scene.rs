@@ -255,7 +255,12 @@ fn resolve_light_to_world(src: &LightSource, world: glam::Mat4) -> LightSource {
             }
         }
     };
-    LightSource { kind, colour: src.colour, intensity: src.intensity }
+    LightSource {
+        kind,
+        colour: src.colour,
+        intensity: src.intensity,
+        importance: src.importance,
+    }
 }
 
 /// Default layer ID (always exists, cannot be removed).

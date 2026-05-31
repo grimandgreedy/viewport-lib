@@ -159,6 +159,19 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
+                // Binding 13: read-only storage buffer of `SingleLightUniform`
+                // entries. Indexed against the `count` field of the lights
+                // header uniform (binding 3). Capacity = `MAX_SCENE_LIGHTS`.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 13,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -614,6 +627,14 @@ impl ViewportGpuResources {
             mapped_at_creation: false,
         });
 
+        let light_storage_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("light_storage_buf"),
+            size: (std::mem::size_of::<crate::resources::SingleLightUniform>()
+                * crate::resources::MAX_SCENE_LIGHTS) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         // Clip planes uniform buffer (binding 4 of camera bind group).
         // Initialized to count=0 (no active clip planes).
         let clip_planes_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -794,6 +815,10 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 12,
                     resource: debug_frag_sentinel_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: light_storage_buf.as_entire_binding(),
                 },
             ],
         });
@@ -2555,6 +2580,7 @@ impl ViewportGpuResources {
             wireframe_pipeline,
             camera_uniform_buf,
             light_uniform_buf,
+            light_storage_buf,
             camera_bind_group,
             camera_bind_group_layout: camera_bgl,
             object_bind_group_layout: object_bgl,

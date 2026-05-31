@@ -100,8 +100,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Accumulate all light types.
     var diffuse  = vec3<f32>(0.0);
     var specular = vec3<f32>(0.0);
-    for (var i: u32 = 0u; i < min(lights.count, 8u); i++) {
-        let light = lights.lights[i];
+    for (var i: u32 = 0u; i < lights.count; i++) {
+        let light = lights_storage[i];
         var L: vec3<f32>;
         var light_rgb: vec3<f32>;
 

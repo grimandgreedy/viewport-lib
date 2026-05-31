@@ -13,7 +13,7 @@ if lights_uniform.debug_vis_mode != 0u {
     // Recompute light direction for quantities not in ShadowSample (NdotL uses N).
     var dbg_L = vec3<f32>(0.0, 0.0, 1.0);
     if lights_uniform.count > 0u {
-        let l0 = lights_uniform.lights[0];
+        let l0 = lights_storage[0u];
         if l0.light_type == 0u {
             dbg_L = normalize(l0.pos_or_dir);
         } else {

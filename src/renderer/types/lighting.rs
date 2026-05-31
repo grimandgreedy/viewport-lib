@@ -49,6 +49,15 @@ pub struct LightSource {
     pub colour: [f32; 3],
     /// Intensity multiplier. Default 1.0.
     pub intensity: f32,
+    /// Importance hint used by the renderer when more lights are pushed
+    /// than fit under the per-frame cap. Higher values are kept; lower
+    /// values are dropped first. Default 1.0.
+    ///
+    /// The renderer ranks lights by `importance * proximity_weight` where
+    /// proximity_weight scales the contribution of points and spots by
+    /// distance to the active camera. Directional lights are treated as
+    /// infinitely close (proximity_weight = 1).
+    pub importance: f32,
 }
 
 impl Default for LightSource {
@@ -61,6 +70,7 @@ impl Default for LightSource {
             },
             colour: [1.0, 1.0, 1.0],
             intensity: 1.0,
+            importance: 1.0,
         }
     }
 }

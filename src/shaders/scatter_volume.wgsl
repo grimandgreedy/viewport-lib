@@ -23,38 +23,8 @@ struct Camera {
     view:          mat4x4<f32>,
 };
 
-struct SingleLight {
-    light_view_proj: mat4x4<f32>,
-    pos_or_dir:      vec3<f32>,
-    light_type:      u32,
-    colour:          vec3<f32>,
-    intensity:       f32,
-    range:           f32,
-    inner_angle:     f32,
-    outer_angle:     f32,
-    spot_direction:  vec3<f32>,
-    _pad:            vec2<f32>,
-};
-
-struct Lights {
-    count:                u32,
-    shadow_bias:          f32,
-    shadows_enabled:      u32,
-    debug_vis_mode:       u32,
-    sky_colour:           vec3<f32>,
-    hemisphere_intensity: f32,
-    ground_colour:        vec3<f32>,
-    debug_vis_scale:      f32,
-    lights:               array<SingleLight, 8>,
-    ibl_enabled:          u32,
-    ibl_intensity:        f32,
-    ibl_rotation:         f32,
-    show_skybox:          u32,
-    debug_vis_split_x:    f32,
-    _pad_dbg_a:           u32,
-    _pad_dbg_b:           u32,
-    _pad_dbg_c:           u32,
-};
+// Shared light struct definitions and `lights_storage` binding 13 of group 0.
+// #include "scene_lighting.wgsl"
 
 struct ClipPlanes {
     planes:          array<vec4<f32>, 6>,
@@ -451,9 +421,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Lighting setup.
     var sun_dir = vec3<f32>(0.0, 0.0, 1.0);
     var sun_colour = vec3<f32>(0.0);
-    if lights_uniform.count > 0u && lights_uniform.lights[0].light_type == 0u {
-        sun_dir = normalize(lights_uniform.lights[0].pos_or_dir);
-        sun_colour = lights_uniform.lights[0].colour * lights_uniform.lights[0].intensity;
+    if lights_uniform.count > 0u && lights_storage[0u].light_type == 0u {
+        sun_dir = normalize(lights_storage[0u].pos_or_dir);
+        sun_colour = lights_storage[0u].colour * lights_storage[0u].intensity;
     }
     let cos_theta = dot(ray_dir, sun_dir);
     let phase = phase_hg(cos_theta, aniso);

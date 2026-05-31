@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased Changes]
+
+### Scene-graph lights
+
+Built-in light glyphs and picking. `scene::build_light_glyphs(&scene, &selection)` returns a `GlyphItem` per scene-graph light (sphere for point, arrow for spot or directional) plus a `PolylineItem` influence-volume wireframe (range sphere or spot cone) for any selected light. 
+
+8-light cap gone. The fixed `array<Light, 8>` uniform is replaced by a per-frame storage buffer of `SingleLightUniform` entries sized to `MAX_SCENE_LIGHTS` (currently 512). When the union of `EffectsFrame::lighting.lights` and `SceneFrame::lights` exceeds the cap, the renderer keeps the first directional (the shadow caster) at index 0 and ranks the rest by `LightSource::importance * proximity_weight`, dropping the tail.
+
+
 ## [0.16.0]
 
 ### GPU compute plugin hook

@@ -17,38 +17,8 @@ struct Camera {
     inv_view_proj: mat4x4<f32>,
 };
 
-struct SingleLight {
-    light_view_proj: mat4x4<f32>,
-    pos_or_dir: vec3<f32>,
-    light_type: u32,
-    colour: vec3<f32>,
-    intensity: f32,
-    range: f32,
-    inner_angle: f32,
-    outer_angle: f32,
-    spot_direction: vec3<f32>,
-    _pad: vec2<f32>,
-};
-
-struct Lights {
-    count: u32,
-    shadow_bias: f32,
-    shadows_enabled: u32,
-    debug_vis_mode: u32,
-    sky_colour: vec3<f32>,
-    hemisphere_intensity: f32,
-    ground_colour: vec3<f32>,
-    debug_vis_scale: f32,
-    lights: array<SingleLight, 8>,
-    ibl_enabled: u32,
-    ibl_intensity: f32,
-    ibl_rotation: f32,
-    show_skybox: u32,
-    debug_vis_split_x: f32,
-    _pad_dbg_a: u32,
-    _pad_dbg_b: u32,
-    _pad_dbg_c: u32,
-};
+// Shared light struct definitions and `lights_storage` binding 13 of group 0.
+// #include "scene_lighting.wgsl"
 
 struct ClipPlanes {
     planes: array<vec4<f32>, 6>,
@@ -499,7 +469,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let F0 = mix(vec3<f32>(0.04), base_colour, metallic);
         var Lo = vec3<f32>(0.0);
         for (var i = 0u; i < lights_uniform.count; i++) {
-            let l = lights_uniform.lights[i];
+            let l = lights_storage[i];
             var L: vec3<f32>; var radiance: vec3<f32>;
             if l.light_type == 0u {
                 L = normalize(l.pos_or_dir); radiance = l.colour * l.intensity;
@@ -551,7 +521,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     } else {
         var total_colour_contrib = vec3<f32>(0.0);
         for (var i = 0u; i < lights_uniform.count; i++) {
-            let l = lights_uniform.lights[i];
+            let l = lights_storage[i];
             var light_dir: vec3<f32>; var attenuation = 1.0;
             if l.light_type == 0u {
                 light_dir = normalize(l.pos_or_dir);

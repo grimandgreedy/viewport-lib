@@ -244,8 +244,81 @@ pub fn pick_scene_nodes_cpu(
     scene: &crate::scene::scene::Scene,
     mesh_lookup: &std::collections::HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
 ) -> Option<PickHit> {
+    // Light glyphs render on top of meshes and are small, so test them first.
+    // Any hit short-circuits the underlying mesh raycast (matches what the GPU
+    // pick path produces naturally because the glyph rasterises on top).
+    if let Some(hit) = pick_light_glyphs_cpu(ray_origin, ray_dir, scene) {
+        return Some(hit);
+    }
+
     let nodes: Vec<&dyn ViewportObject> = scene.nodes().map(|n| n as &dyn ViewportObject).collect();
     pick_scene_cpu(ray_origin, ray_dir, &nodes, mesh_lookup)
+}
+
+/// Half-extent (world units) of the bounding sphere used for picking a
+/// light glyph. Slightly larger than the visual glyph so clicks near the
+/// edge still land. Matches the visual `GLYPH_SIZE` in `scene::light_glyphs`.
+const LIGHT_GLYPH_PICK_RADIUS: f32 = 0.35;
+
+/// Ray-test against the bounding sphere of each scene-graph light glyph.
+/// Returns the nearest hit (along the ray) if any.
+fn pick_light_glyphs_cpu(
+    ray_origin: glam::Vec3,
+    ray_dir: glam::Vec3,
+    scene: &crate::scene::scene::Scene,
+) -> Option<PickHit> {
+    let mut best: Option<(f32, PickHit)> = None;
+    for node in scene.nodes() {
+        if node.light.is_none() {
+            continue;
+        }
+        if !node.is_visible() {
+            continue;
+        }
+        let world = node.world_transform();
+        let center = world.col(3).truncate();
+        let Some(toi) = ray_sphere_intersect(ray_origin, ray_dir, center, LIGHT_GLYPH_PICK_RADIUS)
+        else {
+            continue;
+        };
+        if best.as_ref().map(|(t, _)| toi < *t).unwrap_or(true) {
+            let world_pos = ray_origin + ray_dir * toi;
+            let normal = (world_pos - center).normalize_or_zero();
+            best = Some((toi, PickHit::object_hit(node.id(), world_pos, normal)));
+        }
+    }
+    best.map(|(_, h)| h)
+}
+
+/// Ray vs sphere. Returns the nearest non-negative time-of-impact, or
+/// `None` when the ray misses or originates past the sphere.
+fn ray_sphere_intersect(
+    origin: glam::Vec3,
+    dir: glam::Vec3,
+    center: glam::Vec3,
+    radius: f32,
+) -> Option<f32> {
+    let oc = origin - center;
+    let a = dir.dot(dir);
+    if a <= 0.0 {
+        return None;
+    }
+    let b = 2.0 * oc.dot(dir);
+    let c = oc.dot(oc) - radius * radius;
+    let disc = b * b - 4.0 * a * c;
+    if disc < 0.0 {
+        return None;
+    }
+    let sqd = disc.sqrt();
+    let t0 = (-b - sqd) / (2.0 * a);
+    let t1 = (-b + sqd) / (2.0 * a);
+    if t0 > 1.0e-4 {
+        Some(t0)
+    } else if t1 > 1.0e-4 {
+        Some(t1)
+    } else {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
