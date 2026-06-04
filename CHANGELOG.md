@@ -2,11 +2,19 @@
 
 ## [Unreleased Changes]
 
+### Item-type plugins
+
+Plugins can ship a new kind of scene item without forking the lib. The set of renderable categories used to be fixed; new ones now register through an `ItemTypePlugin` trait and submit their per-frame data via `SceneFrame::submit_plugin_items`. The lib handles picking, selection outline, frustum cull, clip volumes, shadow casting, and OIT transparency for plugin items the same way it handles built-ins. Plugin shaders include published WGSL helpers for lighting, transparency, and clipping so they stay in sync with the rest of the renderer.
+
 ### Scene-graph lights
 
 Built-in light glyphs and picking. `scene::build_light_glyphs(&scene, &selection)` returns a `GlyphItem` per scene-graph light (sphere for point, arrow for spot or directional) plus a `PolylineItem` influence-volume wireframe (range sphere or spot cone) for any selected light. 
 
 8-light cap gone. The fixed `array<Light, 8>` uniform is replaced by a per-frame storage buffer of `SingleLightUniform` entries sized to `MAX_SCENE_LIGHTS` (currently 512). When the union of `EffectsFrame::lighting.lights` and `SceneFrame::lights` exceeds the cap, the renderer keeps the first directional (the shadow caster) at index 0 and ranks the rest by `LightSource::importance * proximity_weight`, dropping the tail.
+
+### Bug fixes
+
+- OIT instanced pipeline: fix init-order trap where the pipeline was never created when the first frame had an empty scene. Instanced transparent geometry added on later frames is now drawn correctly.
 
 
 ## [0.16.0]
