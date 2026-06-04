@@ -2525,6 +2525,9 @@ impl ViewportRenderer {
                         }
                     }
                 }
+
+                // Item-type plugin transparent draws.
+                self.dispatch_plugin_paint_transparent(&mut oit_pass, frame);
             }
         }
 

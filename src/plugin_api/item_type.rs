@@ -110,6 +110,26 @@ pub struct PaintContext<'a> {
     pub frame_index: u64,
 }
 
+/// Information forwarded to a plugin's `cast_shadow_pass`.
+///
+/// The lib's shadow render pass is already begun on entry. The plugin
+/// builds its pipeline against
+/// [`shadow_target_desc`](crate::resources::ViewportGpuResources::shadow_target_desc)
+/// and draws depth-only into the cascade tile selected by the lib's
+/// `set_viewport` / `set_scissor_rect` calls.
+pub struct ShadowCastContext<'a> {
+    /// Cascade index, in `0..cascade_count`.
+    pub cascade_idx: u32,
+    /// Light-space view-projection matrix for this cascade.
+    pub light_view_proj: glam::Mat4,
+    /// Active render-camera snapshot.
+    pub camera: &'a crate::RenderCamera,
+    /// Multi-viewport slot index.
+    pub viewport_index: usize,
+    /// Monotonically increasing frame counter.
+    pub frame_index: u64,
+}
+
 /// Information forwarded to a plugin's `outline_mask`.
 ///
 /// The lib's outline-mask render pass is already begun on entry and has
@@ -237,6 +257,44 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
         &'a self,
         _pass: &mut wgpu::RenderPass<'a>,
         _ctx: &OutlineMaskContext<'a>,
+        _items: &'a dyn PluginItemCollection,
+    ) {
+    }
+
+    /// Update internal culling state for the current camera frustum.
+    ///
+    /// Called once per frame before `paint`. The plugin records which
+    /// items are inside the frustum so subsequent `paint` /
+    /// `paint_transparent` / `cast_shadow_pass` calls can skip culled
+    /// entries. The lib does not pre-filter the collection; the plugin
+    /// owns the visibility decision.
+    ///
+    /// Default no-op: plugins that draw everything every frame leave
+    /// this empty.
+    fn cull(
+        &mut self,
+        _frustum: &crate::camera::frustum::Frustum,
+        _ctx: &ItemFrameContext<'_>,
+        _items: &dyn PluginItemCollection,
+    ) {
+    }
+
+    /// Issue depth-only draw calls into one cascade tile of the lib's
+    /// shadow atlas.
+    ///
+    /// Called once per active cascade inside the lib's `shadow_pass`
+    /// render pass. The lib has already set the viewport + scissor rect
+    /// for the cascade tile and bound the cascade-space camera at group
+    /// 0. The plugin draws depth-only with a pipeline built via
+    /// [`build_shadow_pipeline`](crate::resources::ViewportGpuResources::build_shadow_pipeline).
+    ///
+    /// Implementations skip items where `item_settings(i).cast_shadows`
+    /// is false. Default no-op: plugins that do not cast shadows leave
+    /// this empty.
+    fn cast_shadow_pass<'a>(
+        &'a self,
+        _pass: &mut wgpu::RenderPass<'a>,
+        _ctx: &ShadowCastContext<'a>,
         _items: &'a dyn PluginItemCollection,
     ) {
     }

@@ -884,6 +884,91 @@ impl ViewportRenderer {
         }
     }
 
+    /// Walk registered plugins and invoke `paint_transparent` for each
+    /// one whose collection is on `frame.scene`.
+    ///
+    /// Called from inside the lib's OIT render pass, after built-in
+    /// transparent draws.
+    pub(crate) fn dispatch_plugin_paint_transparent<'rp>(
+        &'rp self,
+        pass: &mut wgpu::RenderPass<'rp>,
+        frame: &'rp FrameData,
+    ) {
+        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+            return;
+        }
+        let ctx = crate::plugin_api::PaintContext {
+            camera: &frame.camera.render_camera,
+            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_index: frame.camera.viewport_index,
+            frame_index: self.plugin_frame_index,
+        };
+        for (name, plugin) in self.item_type_plugins.iter() {
+            if let Some(items) = frame.scene.plugin_items.get(*name) {
+                plugin.paint_transparent(pass, &ctx, items.as_ref());
+            }
+        }
+    }
+
+    /// Walk registered plugins and invoke `cast_shadow_pass` for the
+    /// given cascade.
+    ///
+    /// Currently unused: the shadow-pass call site inlines the plugin
+    /// dispatch because the surrounding scope holds a mutable borrow of
+    /// `self.resources` that blocks a normal `&self` method call. Kept
+    /// alongside the other dispatchers as the natural shape; a future
+    /// refactor that splits the resources borrow can switch back.
+    #[allow(dead_code)]
+    pub(crate) fn dispatch_plugin_shadow<'rp>(
+        &'rp self,
+        pass: &mut wgpu::RenderPass<'rp>,
+        frame: &'rp FrameData,
+        cascade_idx: u32,
+        light_view_proj: glam::Mat4,
+    ) {
+        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+            return;
+        }
+        let ctx = crate::plugin_api::ShadowCastContext {
+            cascade_idx,
+            light_view_proj,
+            camera: &frame.camera.render_camera,
+            viewport_index: frame.camera.viewport_index,
+            frame_index: self.plugin_frame_index,
+        };
+        for (name, plugin) in self.item_type_plugins.iter() {
+            if let Some(items) = frame.scene.plugin_items.get(*name) {
+                plugin.cast_shadow_pass(pass, &ctx, items.as_ref());
+            }
+        }
+    }
+
+    /// Walk registered plugins and invoke `cull` for each one whose
+    /// collection is on `frame.scene`.
+    ///
+    /// Called from the lib's prepare path once the camera frustum for
+    /// the frame is known.
+    pub(crate) fn dispatch_plugin_cull(
+        &mut self,
+        frustum: &crate::camera::frustum::Frustum,
+        frame: &FrameData,
+    ) {
+        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+            return;
+        }
+        let ctx = crate::plugin_api::ItemFrameContext {
+            camera: &frame.camera.render_camera,
+            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_index: frame.camera.viewport_index,
+            frame_index: self.plugin_frame_index,
+        };
+        for (name, plugin) in self.item_type_plugins.iter_mut() {
+            if let Some(items) = frame.scene.plugin_items.get(*name) {
+                plugin.cull(frustum, &ctx, items.as_ref());
+            }
+        }
+    }
+
     /// Walk registered item-type plugins and invoke `outline_mask` for
     /// each one whose collection is on `frame.scene`.
     ///

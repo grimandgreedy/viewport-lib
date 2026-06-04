@@ -47,6 +47,16 @@ impl ViewportRenderer {
         self.resources.ensure_colourmaps_initialized(device, queue);
         self.resources.ensure_matcaps_initialized(device, queue);
 
+        // Capture an immutable view of the plugin map before splitting
+        // off the mutable resources borrow. Used by per-cascade plugin
+        // shadow dispatch deep inside the shadow_pass scope.
+        let item_type_plugins_ptr = &self.item_type_plugins
+            as *const std::collections::HashMap<
+                &'static str,
+                Box<dyn crate::plugin_api::ItemTypePlugin>,
+            >;
+        let plugin_frame_index = self.plugin_frame_index;
+
         let resources = &mut self.resources;
         let lighting = scene_fx.lighting;
 
@@ -2521,6 +2531,54 @@ impl ViewportRenderer {
                         }
                     }
                 }
+
+                // Item-type plugin shadow casting: per-cascade dispatch
+                // with viewport + scissor + cascade bind group set up by
+                // the lib. The plugin map is read through a raw pointer
+                // captured before the mutable resources borrow split off.
+                let plugins = unsafe { &*item_type_plugins_ptr };
+                if !plugins.is_empty() && !frame.scene.plugin_items.is_empty() {
+                    for cascade in 0..effective_cascade_count {
+                        let tile_col = (cascade % 2) as f32;
+                        let tile_row = (cascade / 2) as f32;
+                        shadow_pass.set_viewport(
+                            tile_col * tile_px,
+                            tile_row * tile_px,
+                            tile_px,
+                            tile_px,
+                            0.0,
+                            1.0,
+                        );
+                        shadow_pass.set_scissor_rect(
+                            (tile_col * tile_px) as u32,
+                            (tile_row * tile_px) as u32,
+                            tile_size,
+                            tile_size,
+                        );
+                        shadow_pass.set_bind_group(
+                            0,
+                            &resources.shadow_bind_group,
+                            &[cascade as u32 * 256],
+                        );
+                        let ctx = crate::plugin_api::ShadowCastContext {
+                            cascade_idx: cascade as u32,
+                            light_view_proj: cascade_view_projs[cascade],
+                            camera: &frame.camera.render_camera,
+                            viewport_index: frame.camera.viewport_index,
+                            frame_index: plugin_frame_index,
+                        };
+                        for (name, plugin) in plugins.iter() {
+                            if let Some(items) = frame.scene.plugin_items.get(*name) {
+                                plugin.cast_shadow_pass(
+                                    &mut shadow_pass,
+                                    &ctx,
+                                    items.as_ref(),
+                                );
+                            }
+                        }
+                    }
+                }
+
                 drop(shadow_pass);
                 self.last_stats.shadow_draw_calls = shadow_draws;
             }
@@ -5919,6 +5977,14 @@ impl ViewportRenderer {
         let plugin_bufs = self.dispatch_plugin_prepare(device, queue, frame);
         if !plugin_bufs.is_empty() {
             queue.submit(plugin_bufs);
+        }
+
+        // Run plugin culling for the current camera frustum so subsequent
+        // plugin paint/shadow calls can skip culled items.
+        if !self.item_type_plugins.is_empty() && !frame.scene.plugin_items.is_empty() {
+            let vp = frame.camera.render_camera.view_proj();
+            let frustum = crate::camera::frustum::Frustum::from_view_proj(&vp);
+            self.dispatch_plugin_cull(&frustum, frame);
         }
 
         // Read back GPU timestamps from the previous frame, if available.
