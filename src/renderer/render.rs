@@ -594,11 +594,7 @@ impl ViewportRenderer {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("hdr_encoder"),
-        });
-        self.render_frame_internal(device, queue, &mut encoder, &output_view, vp_idx, frame);
-        encoder.finish()
+        self.render_frame_internal(device, queue, &output_view, vp_idx, frame)
     }
 
     /// HDR encode for a single viewport in the multi-viewport eframe callback model.
@@ -648,11 +644,7 @@ impl ViewportRenderer {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("hdr_encoder"),
-        });
-        self.render_frame_internal(device, queue, &mut encoder, &output_view, vp_idx, frame);
-        encoder.finish()
+        self.render_frame_internal(device, queue, &output_view, vp_idx, frame)
     }
 
     /// Blit the HDR intermediate texture into the egui render pass.
@@ -799,11 +791,7 @@ impl ViewportRenderer {
         id: ViewportId,
         frame: &FrameData,
     ) -> wgpu::CommandBuffer {
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("hdr_encoder"),
-        });
-        self.render_frame_internal(device, queue, &mut encoder, output_view, id.0, frame);
-        encoder.finish()
+        self.render_frame_internal(device, queue, output_view, id.0, frame)
     }
 
     /// High-level HDR render method. Handles the full post-processing pipeline:
@@ -822,58 +810,27 @@ impl ViewportRenderer {
     ) -> wgpu::CommandBuffer {
         // Always run prepare() to upload uniforms and run the shadow pass.
         self.prepare(device, queue, frame);
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("hdr_encoder"),
-        });
         self.render_frame_internal(
             device,
             queue,
-            &mut encoder,
             output_view,
             frame.camera.viewport_index,
             frame,
-        );
-        encoder.finish()
-    }
-
-    /// Encode a single-viewport frame into a caller-supplied encoder.
-    ///
-    /// Behaves like [`render`](Self::render) but records into `encoder`
-    /// without finishing or submitting it; the caller submits the resulting
-    /// command buffer when ready. Calls `prepare` internally.
-    pub(crate) fn render_into_encoder(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        output_view: &wgpu::TextureView,
-        frame: &FrameData,
-    ) {
-        self.prepare(device, queue, frame);
-        self.render_frame_internal(
-            device,
-            queue,
-            encoder,
-            output_view,
-            frame.camera.viewport_index,
-            frame,
-        );
+        )
     }
 
     /// Render-only path shared by `render()` and `render_viewport()`.
     ///
     /// `vp_idx` selects the per-viewport slot to use for camera/HDR state,
-    /// independent of `frame.camera.viewport_index`. Encodes all passes into
-    /// the caller-supplied `encoder`; does not submit.
+    /// independent of `frame.camera.viewport_index`.
     fn render_frame_internal(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
         output_view: &wgpu::TextureView,
         vp_idx: usize,
         frame: &FrameData,
-    ) {
+    ) -> wgpu::CommandBuffer {
         // Read scene items from the surface submission.
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
             SurfaceSubmission::Flat(items) => items.as_ref(),
@@ -928,7 +885,11 @@ impl ViewportRenderer {
         if !frame.effects.post_process.enabled {
             // LDR fallback. When dynamic resolution is active and render_scale < 1.0,
             // draw into a scaled intermediate texture and upscale-blit to output_view.
-            // Otherwise render directly to output_view. Uses the caller-supplied encoder.
+            // Otherwise render directly to output_view.
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("ldr_encoder"),
+            });
+
             let use_dyn_res = self.current_render_scale < 1.0 - 0.001;
             let needs_blur = self.has_backdrop_blur_shapes();
 
@@ -1190,7 +1151,7 @@ impl ViewportRenderer {
                     } else {
                         &self.backdrop_blur_state.as_ref().unwrap().intermediate_view
                     };
-                    self.run_backdrop_blur(&mut *encoder, device, queue, source, spread)
+                    self.run_backdrop_blur(&mut encoder, device, queue, source, spread)
                 };
 
                 // Second render pass for overlays (Load to preserve scene content).
@@ -1370,7 +1331,7 @@ impl ViewportRenderer {
                 }
             }
 
-            return;
+            return encoder.finish();
         }
 
         // HDR path.
@@ -1556,8 +1517,11 @@ impl ViewportRenderer {
         }
 
         // -----------------------------------------------------------------------
-        // Encoder is supplied by the caller; we just record passes into it.
+        // Build the command encoder.
         // -----------------------------------------------------------------------
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("hdr_encoder"),
+        });
 
         // Per-viewport camera bind group and HDR state for the HDR path.
         let slot = &self.viewport_slots[vp_idx];
@@ -2037,9 +2001,10 @@ impl ViewportRenderer {
             // Scivis layers (point cloud, glyph, polyline, volume, streamtube,
             // image slice, tensor glyph, ribbon, volume surface slice, sprites).
             //
-            // Sprites are always routed through the separate post-pass below so
-            // soft-particle fade can sample resolved scene depth. The post-pass
-            // selects ssaa_* views when SSAA is enabled, hdr_* views otherwise.
+            // Sprites are routed through a separate post-pass below when SSAA is
+            // depth. The post-pass targets the ssaa_* attachments and samples
+            // ssaa_depth_only_view when SSAA is active, the hdr_* attachments
+            // otherwise. Sprites are always skipped inline here.
             let sprite_slice_for_inline: &[crate::resources::SpriteGpuData] = &[];
             emit_scivis_draw_calls!(
                 &self.resources,
@@ -2157,9 +2122,9 @@ impl ViewportRenderer {
         // read-only mode and the per-viewport bind group, which lets the
         // sprite shader sample the live scene depth and apply the soft fade.
         //
-        // When SSAA is active, the post-pass targets the ssaa_* attachments
-        // and samples ssaa_depth_only_view so sprites participate in the
-        // supersampled resolve. Otherwise it targets the hdr_* attachments.
+        // Selects the ssaa_* colour/depth/sample views when SSAA is active so
+        // sprites draw at supersampled resolution and resolve with the rest of
+        // the scene; otherwise targets the hdr_* views directly.
         // -----------------------------------------------------------------------
         if !self.sprite_gpu_data.is_empty() {
             let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
@@ -3874,7 +3839,7 @@ impl ViewportRenderer {
                 .as_ref()
                 .map(|d| d.max_blur_radius)
                 .unwrap_or(8.0);
-            Some(self.run_backdrop_blur(&mut *encoder, device, queue, source, spread))
+            Some(self.run_backdrop_blur(&mut encoder, device, queue, source, spread))
         } else {
             None
         };
@@ -3983,6 +3948,8 @@ impl ViewportRenderer {
             encoder.copy_buffer_to_buffer(res_buf, 0, stg_buf, 0, 16);
             self.ts_needs_readback = true;
         }
+
+        encoder.finish()
     }
 
     /// Render a frame to an offscreen texture and return raw RGBA bytes.

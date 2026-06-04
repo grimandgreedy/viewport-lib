@@ -985,9 +985,7 @@ impl ViewportGpuResources {
         // Tone map pipeline
         let tone_map_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("tone_map_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/tone_map.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/tone_map.wgsl")).into()),
         });
         let tone_map_pipeline = make_fs_pipeline(
             "tone_map_pipeline",
@@ -1017,9 +1015,7 @@ impl ViewportGpuResources {
         );
         let bloom_blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("bloom_blur_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/bloom_blur.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/bloom_blur.wgsl")).into()),
         });
         let bloom_blur_pipeline = make_fs_pipeline(
             "bloom_blur_pipeline",
@@ -1034,9 +1030,7 @@ impl ViewportGpuResources {
         // SSAO pipelines
         let ssao_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ssao_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/ssao.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/ssao.wgsl")).into()),
         });
         let ssao_pipeline = make_fs_pipeline(
             "ssao_pipeline",
@@ -1049,9 +1043,7 @@ impl ViewportGpuResources {
         );
         let ssao_blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ssao_blur_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/ssao_blur.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/ssao_blur.wgsl")).into()),
         });
         let ssao_blur_pipeline = make_fs_pipeline(
             "ssao_blur_pipeline",
@@ -1066,9 +1058,7 @@ impl ViewportGpuResources {
         // Contact shadow pipeline
         let cs_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("contact_shadow_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/contact_shadow.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/contact_shadow.wgsl")).into()),
         });
         let cs_pipeline = make_fs_pipeline(
             "contact_shadow_pipeline",
@@ -1083,9 +1073,7 @@ impl ViewportGpuResources {
         // FXAA pipeline
         let fxaa_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("fxaa_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/fxaa.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/fxaa.wgsl")).into()),
         });
         let fxaa_pipeline = make_fs_pipeline(
             "fxaa_pipeline",
@@ -1100,9 +1088,7 @@ impl ViewportGpuResources {
         // OIT composite pipeline
         let oit_comp_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("oit_composite_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/oit_composite.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/oit_composite.wgsl")).into()),
         });
         let premul_blend = wgpu::BlendState {
             color: wgpu::BlendComponent {
@@ -1188,9 +1174,7 @@ impl ViewportGpuResources {
         };
         let oit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh_oit_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/mesh_oit.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/mesh_oit.wgsl")).into()),
         });
         let oit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("oit_pipeline_layout"),
@@ -1308,9 +1292,7 @@ impl ViewportGpuResources {
         // HDR scene pipelines
         let hdr_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh_shader_hdr"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl")).into()),
         });
         let hdr_depth_stencil = wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth24PlusStencil8,
@@ -1402,9 +1384,7 @@ impl ViewportGpuResources {
 
         let hdr_overlay_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("overlay_shader_hdr"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/overlay.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/overlay.wgsl")).into()),
         });
         let hdr_overlay_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("hdr_overlay_pipeline_layout"),
@@ -1590,9 +1570,7 @@ impl ViewportGpuResources {
         });
         let ssaa_resolve_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ssaa_resolve_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/ssaa_resolve.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/ssaa_resolve.wgsl")).into()),
         });
         let ssaa_resolve_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ssaa_resolve_layout"),
@@ -1675,9 +1653,7 @@ impl ViewportGpuResources {
         });
         let dof_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("dof_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/dof.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/dof.wgsl")).into()),
         });
         let dof_pipeline = make_fs_pipeline(
             "dof_pipeline",
@@ -1699,161 +1675,161 @@ impl ViewportGpuResources {
         // standard HDR mesh shader.
         // Skipped on devices with max_bind_groups < 3 (e.g. iced_wgpu which caps at 2).
         if device.limits().max_bind_groups >= 3 {
-            let hdr_skinned_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let hdr_skinned_shader =
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("mesh_skinned_shader_hdr"),
                 source: wgpu::ShaderSource::Wgsl(
                     include_str!(concat!(env!("OUT_DIR"), "/mesh_skinned.wgsl")).into(),
                 ),
             });
-            let hdr_skinned_layout =
-                device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("hdr_skinned_solid_pipeline_layout"),
-                    bind_group_layouts: &[
-                        &self.camera_bind_group_layout,
-                        &self.object_bind_group_layout,
-                        &self.skinning.bind_group_layout,
-                    ],
-                    push_constant_ranges: &[],
-                });
-            let hdr_skinned_solid_pipeline =
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("hdr_skinned_solid_pipeline"),
-                    layout: Some(&hdr_skinned_layout),
-                    vertex: wgpu::VertexState {
-                        module: &hdr_skinned_shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[Vertex::buffer_layout()],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &hdr_shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba16Float,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        cull_mode: Some(wgpu::Face::Back),
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(hdr_depth_stencil.clone()),
-                    multisample: wgpu::MultisampleState {
-                        count: 1,
-                        ..Default::default()
-                    },
-                    multiview: None,
-                    cache: None,
-                });
-            let hdr_skinned_solid_two_sided_pipeline =
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("hdr_skinned_solid_two_sided_pipeline"),
-                    layout: Some(&hdr_skinned_layout),
-                    vertex: wgpu::VertexState {
-                        module: &hdr_skinned_shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[Vertex::buffer_layout()],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &hdr_shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba16Float,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        cull_mode: None,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(hdr_depth_stencil.clone()),
-                    multisample: wgpu::MultisampleState {
-                        count: 1,
-                        ..Default::default()
-                    },
-                    multiview: None,
-                    cache: None,
-                });
-            let hdr_skinned_transparent_pipeline =
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("hdr_skinned_transparent_pipeline"),
-                    layout: Some(&hdr_skinned_layout),
-                    vertex: wgpu::VertexState {
-                        module: &hdr_skinned_shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[Vertex::buffer_layout()],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &hdr_shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba16Float,
-                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        cull_mode: None,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: wgpu::TextureFormat::Depth24PlusStencil8,
-                        depth_write_enabled: false,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
-                    }),
-                    multisample: wgpu::MultisampleState {
-                        count: 1,
-                        ..Default::default()
-                    },
-                    multiview: None,
-                    cache: None,
-                });
+        let hdr_skinned_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("hdr_skinned_solid_pipeline_layout"),
+            bind_group_layouts: &[
+                &self.camera_bind_group_layout,
+                &self.object_bind_group_layout,
+                &self.skinning.bind_group_layout,
+            ],
+            push_constant_ranges: &[],
+        });
+        let hdr_skinned_solid_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("hdr_skinned_solid_pipeline"),
+                layout: Some(&hdr_skinned_layout),
+                vertex: wgpu::VertexState {
+                    module: &hdr_skinned_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &hdr_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(hdr_depth_stencil.clone()),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                multiview: None,
+                cache: None,
+            });
+        let hdr_skinned_solid_two_sided_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("hdr_skinned_solid_two_sided_pipeline"),
+                layout: Some(&hdr_skinned_layout),
+                vertex: wgpu::VertexState {
+                    module: &hdr_skinned_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &hdr_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(hdr_depth_stencil.clone()),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                multiview: None,
+                cache: None,
+            });
+        let hdr_skinned_transparent_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("hdr_skinned_transparent_pipeline"),
+                layout: Some(&hdr_skinned_layout),
+                vertex: wgpu::VertexState {
+                    module: &hdr_skinned_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &hdr_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                multiview: None,
+                cache: None,
+            });
 
-            let hdr_skinned_wireframe_pipeline =
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("hdr_skinned_wireframe_pipeline"),
-                    layout: Some(&hdr_skinned_layout),
-                    vertex: wgpu::VertexState {
-                        module: &hdr_skinned_shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[Vertex::buffer_layout()],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &hdr_shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba16Float,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::LineList,
-                        cull_mode: None,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(hdr_depth_stencil.clone()),
-                    multisample: wgpu::MultisampleState {
-                        count: 1,
-                        ..Default::default()
-                    },
-                    multiview: None,
-                    cache: None,
-                });
+        let hdr_skinned_wireframe_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("hdr_skinned_wireframe_pipeline"),
+                layout: Some(&hdr_skinned_layout),
+                vertex: wgpu::VertexState {
+                    module: &hdr_skinned_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &hdr_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::LineList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(hdr_depth_stencil.clone()),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                multiview: None,
+                cache: None,
+            });
 
             self.hdr_skinned_solid_pipeline = Some(hdr_skinned_solid_pipeline);
             self.hdr_skinned_solid_two_sided_pipeline = Some(hdr_skinned_solid_two_sided_pipeline);
@@ -3073,46 +3049,46 @@ impl ViewportGpuResources {
         // HDR upscale target: when scene_size != output_size, tone-map and FXAA
         // run at scene resolution and write to this texture. An upscale-blit pass
         // then copies the result to output_view at native resolution.
-        let (upscale_texture, upscale_view, upscale_bind_group) = if scene_w != w || scene_h != h {
-            let tex = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("hdr_upscale_texture"),
-                size: wgpu::Extent3d {
-                    width: scene_w,
-                    height: scene_h,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: output_format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            });
-            let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-            let bgl = self.dyn_res_upscale_bgl.as_ref().unwrap();
-            let sampler = self.dyn_res_linear_sampler.as_ref().unwrap();
-            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("hdr_upscale_bg"),
-                layout: bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&view),
+        let (upscale_texture, upscale_view, upscale_bind_group) =
+            if scene_w != w || scene_h != h {
+                let tex = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("hdr_upscale_texture"),
+                    size: wgpu::Extent3d {
+                        width: scene_w,
+                        height: scene_h,
+                        depth_or_array_layers: 1,
                     },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    },
-                ],
-            });
-            (Some(tex), Some(view), Some(bg))
-        } else {
-            (None, None, None)
-        };
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: output_format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                });
+                let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                let bgl = self.dyn_res_upscale_bgl.as_ref().unwrap();
+                let sampler = self.dyn_res_linear_sampler.as_ref().unwrap();
+                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("hdr_upscale_bg"),
+                    layout: bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(sampler),
+                        },
+                    ],
+                });
+                (Some(tex), Some(view), Some(bg))
+            } else {
+                (None, None, None)
+            };
 
-        let decal_depth_bg =
-            self.create_decal_depth_bg(device, &hdr_depth_only_view, &hdr_stencil_only_view);
+        let decal_depth_bg = self.create_decal_depth_bg(device, &hdr_depth_only_view, &hdr_stencil_only_view);
 
         ViewportHdrState {
             hdr_texture: hdr_tex,
