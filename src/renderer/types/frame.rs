@@ -363,6 +363,8 @@ pub struct SceneFrame {
     pub volume_surface_slices: Vec<VolumeSurfaceSliceItem>,
     /// Billboard sprite items to render this frame.
     pub sprite_items: Vec<SpriteItem>,
+    /// Mesh-instance batches to render this frame (mesh-based particles).
+    pub mesh_instances: Vec<MeshInstanceItem>,
     /// Gaussian splat items to render this frame.
     pub gaussian_splats: Vec<GaussianSplatItem>,
     /// Screen-space decal items to render this frame (D1).
@@ -382,10 +384,8 @@ pub struct SceneFrame {
     /// renderer iterates this map during `prepare` / `paint` and dispatches
     /// to the matching registered plugin. Entries whose `type_name` is not
     /// registered on the renderer are silently ignored.
-    pub plugin_items: std::collections::HashMap<
-        &'static str,
-        Box<dyn crate::plugin_api::PluginItemCollection>,
-    >,
+    pub plugin_items:
+        std::collections::HashMap<&'static str, Box<dyn crate::plugin_api::PluginItemCollection>>,
 }
 
 /// A participating-media volume submitted for one frame.
@@ -433,6 +433,7 @@ impl Default for SceneFrame {
             ribbon_items: Vec::new(),
             volume_surface_slices: Vec::new(),
             sprite_items: Vec::new(),
+            mesh_instances: Vec::new(),
             gaussian_splats: Vec::new(),
             decals: Vec::new(),
             scatter_volumes: Vec::new(),
@@ -540,8 +541,7 @@ impl SceneFrame {
     ) -> Self {
         let items = scene.collect_render_items(selection);
         let lights = scene.collect_lights();
-        let (light_glyphs, light_polylines) =
-            crate::scene::build_light_glyphs(scene, selection);
+        let (light_glyphs, light_polylines) = crate::scene::build_light_glyphs(scene, selection);
         Self {
             generation: scene.version(),
             surfaces: SurfaceSubmission::Flat(items.into()),

@@ -1860,6 +1860,24 @@ pub struct PointCloudGpuData {
     pub(crate) _transparency_buf: wgpu::Buffer,
 }
 
+/// Per-frame GPU data for one mesh-instance batch, created in `prepare()`.
+///
+/// Mesh instances reuse the scene-graph `mesh_instanced` pipeline family but
+/// run through a host-built per-batch instance buffer rather than the global
+/// scene instance array. Each batch is one draw call.
+pub struct MeshInstanceGpuData {
+    /// Mesh handle used to look up the vertex / index buffers at draw time.
+    pub(crate) mesh_id: crate::resources::mesh_store::MeshId,
+    /// Number of instances in this batch (= draw instance count).
+    pub(crate) instance_count: u32,
+    /// Bind group (group 1): instance storage buf + albedo / sampler / normal / AO.
+    pub(crate) bind_group: wgpu::BindGroup,
+    /// Blend mode selected by the host. Drives pipeline selection at draw time.
+    pub(crate) blend: crate::renderer::SpriteBlend,
+    // Keep buffers alive for the lifetime of this struct.
+    pub(crate) _instance_buf: wgpu::Buffer,
+}
+
 /// Per-frame GPU data for one sprite batch item, created in `prepare()`.
 pub struct SpriteGpuData {
     /// Position vertex buffer: one `vec3` per sprite, instance-stepped.
@@ -2903,6 +2921,12 @@ pub struct ViewportGpuResources {
     pub(crate) hdr_wireframe_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) hdr_solid_instanced_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) hdr_transparent_instanced_pipeline: Option<wgpu::RenderPipeline>,
+    /// Instanced HDR pipeline with additive blend, no depth write. Used by
+    /// `MeshInstanceItem` batches that opt into [`SpriteBlend::Additive`].
+    pub(crate) hdr_instanced_additive_pipeline: Option<wgpu::RenderPipeline>,
+    /// Instanced HDR pipeline with premultiplied-alpha blend, no depth write.
+    /// Used by `MeshInstanceItem` batches with [`SpriteBlend::Premultiplied`].
+    pub(crate) hdr_instanced_premultiplied_pipeline: Option<wgpu::RenderPipeline>,
     /// HDR overlay pipeline (TriangleList, Rgba16Float, alpha blending) for cap fill in HDR path.
     pub(crate) hdr_overlay_pipeline: Option<wgpu::RenderPipeline>,
 

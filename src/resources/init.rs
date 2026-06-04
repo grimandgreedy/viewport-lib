@@ -2820,6 +2820,8 @@ impl ViewportGpuResources {
             hdr_wireframe_pipeline: None,
             hdr_solid_instanced_pipeline: None,
             hdr_transparent_instanced_pipeline: None,
+            hdr_instanced_additive_pipeline: None,
+            hdr_instanced_premultiplied_pipeline: None,
             hdr_overlay_pipeline: None,
             colourmap_textures: Vec::new(),
             colourmap_views: Vec::new(),

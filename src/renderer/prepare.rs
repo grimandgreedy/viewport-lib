@@ -30,8 +30,7 @@ impl ViewportRenderer {
     ) {
         // Submit copy commands for async texture uploads queued since last frame,
         // and advance ready state for uploads submitted on the previous frame.
-        self.resources
-            .submit_pending_texture_uploads(device, queue);
+        self.resources.submit_pending_texture_uploads(device, queue);
 
         // GPU compute filtering.
         // Dispatch before the render pass. Completely skipped when list is empty (zero overhead).
@@ -317,9 +316,7 @@ impl ViewportRenderer {
             let directional_first = raw_lights
                 .iter()
                 .position(|l| matches!(l.kind, LightKind::Directional { .. }));
-            let mut out: Vec<&LightSource> = Vec::with_capacity(
-                crate::resources::MAX_SCENE_LIGHTS,
-            );
+            let mut out: Vec<&LightSource> = Vec::with_capacity(crate::resources::MAX_SCENE_LIGHTS);
             if let Some(i) = directional_first {
                 out.push(raw_lights[i]);
             }
@@ -331,7 +328,9 @@ impl ViewportRenderer {
                     let proximity = match l.kind {
                         LightKind::Directional { .. } => 1.0,
                         LightKind::Point { position, range }
-                        | LightKind::Spot { position, range, .. } => {
+                        | LightKind::Spot {
+                            position, range, ..
+                        } => {
                             let d = (glam::Vec3::from(position) - camera_pos).length();
                             // Light is fully relevant within `range`; fades to ~0 beyond 4x range.
                             (range / (range + d.max(0.0))).clamp(0.0, 1.0)
@@ -365,13 +364,11 @@ impl ViewportRenderer {
 
         let dist = frame.camera.render_camera.distance;
         let shadow_near = (dist * 0.1).max(frame.camera.render_camera.near);
-        let shadow_far = (dist * 1.5).max(shadow_extent).min(frame.camera.render_camera.far);
-        let cascade_splits = compute_cascade_splits(
-            shadow_near,
-            shadow_far,
-            cascade_count as u32,
-            0.75,
-        );
+        let shadow_far = (dist * 1.5)
+            .max(shadow_extent)
+            .min(frame.camera.render_camera.far);
+        let cascade_splits =
+            compute_cascade_splits(shadow_near, shadow_far, cascade_count as u32, 0.75);
 
         let light_dir_for_csm = if light_count > 0 {
             match &combined_lights[0].kind {
@@ -460,10 +457,10 @@ impl ViewportRenderer {
         // footprint rather than always covering 0.0..0.5.
         let tile_uv = tile_size as f32 / crate::resources::SHADOW_ATLAS_SIZE as f32;
         let atlas_rects: [[f32; 4]; 8] = [
-            [0.0,      0.0,      tile_uv,       tile_uv      ], // cascade 0
-            [tile_uv,  0.0,      tile_uv * 2.0, tile_uv      ], // cascade 1
-            [0.0,      tile_uv,  tile_uv,       tile_uv * 2.0], // cascade 2
-            [tile_uv,  tile_uv,  tile_uv * 2.0, tile_uv * 2.0], // cascade 3
+            [0.0, 0.0, tile_uv, tile_uv],                     // cascade 0
+            [tile_uv, 0.0, tile_uv * 2.0, tile_uv],           // cascade 1
+            [0.0, tile_uv, tile_uv, tile_uv * 2.0],           // cascade 2
+            [tile_uv, tile_uv, tile_uv * 2.0, tile_uv * 2.0], // cascade 3
             [0.0; 4],
             [0.0; 4],
             [0.0; 4],
@@ -627,13 +624,9 @@ impl ViewportRenderer {
         // ObjectUniform, so we must enter the write loop for those items even
         // if no other "special" flag is set anywhere in the scene.
         let has_override_items = scene_items.iter().any(|i| {
-            resources
-                .mesh_store
-                .get(i.mesh_id)
-                .map_or(false, |m| {
-                    m.position_override_buffer.is_some()
-                        || m.normal_override_buffer.is_some()
-                })
+            resources.mesh_store.get(i.mesh_id).map_or(false, |m| {
+                m.position_override_buffer.is_some() || m.normal_override_buffer.is_some()
+            })
         });
         // Collect per-item uniforms when wireframe mode is on so we can give each
         // visible item its own bind group (the mesh's shared object_uniform_buf gets
@@ -665,13 +658,9 @@ impl ViewportRenderer {
                 // leaves the flag at the default 0, the shader ignores the
                 // override binding, and the consumer's compute output silently
                 // does nothing.
-                let mesh_has_override = resources
-                    .mesh_store
-                    .get(item.mesh_id)
-                    .map_or(false, |m| {
-                        m.position_override_buffer.is_some()
-                            || m.normal_override_buffer.is_some()
-                    });
+                let mesh_has_override = resources.mesh_store.get(item.mesh_id).map_or(false, |m| {
+                    m.position_override_buffer.is_some() || m.normal_override_buffer.is_some()
+                });
                 if self.use_instancing
                     && !frame.viewport.wireframe_mode
                     && item.active_attribute.is_none()
@@ -710,7 +699,12 @@ impl ViewportRenderer {
                 };
                 let obj_uniform = ObjectUniform {
                     model: item.model,
-                    colour: [m.base_colour[0], m.base_colour[1], m.base_colour[2], item.settings.opacity],
+                    colour: [
+                        m.base_colour[0],
+                        m.base_colour[1],
+                        m.base_colour[2],
+                        item.settings.opacity,
+                    ],
                     selected: if item.settings.selected { 1 } else { 0 },
                     wireframe: if frame.viewport.wireframe_mode || item.settings.wireframe {
                         1
@@ -734,7 +728,9 @@ impl ViewportRenderer {
                     nan_colour: item.nan_colour.unwrap_or([0.0; 4]),
                     use_nan_colour: if item.nan_colour.is_some() { 1 } else { 0 },
                     use_matcap: if m.matcap_id().is_some() { 1 } else { 0 },
-                    matcap_blendable: m.matcap_id().map_or(0, |id| if id.blendable { 1 } else { 0 }),
+                    matcap_blendable: m
+                        .matcap_id()
+                        .map_or(0, |id| if id.blendable { 1 } else { 0 }),
                     unlit: if item.settings.unlit { 1 } else { 0 },
                     use_face_colour: u32::from(item.active_attribute.as_ref().map_or(false, |a| {
                         a.kind == crate::resources::AttributeKind::FaceColour
@@ -777,11 +773,19 @@ impl ViewportRenderer {
                     warp_scale: item.warp_scale,
                     has_position_override: {
                         let mesh = resources.mesh_store.get(item.mesh_id);
-                        if mesh.map_or(false, |m| m.position_override_buffer.is_some()) { 1 } else { 0 }
+                        if mesh.map_or(false, |m| m.position_override_buffer.is_some()) {
+                            1
+                        } else {
+                            0
+                        }
                     },
                     has_normal_override: {
                         let mesh = resources.mesh_store.get(item.mesh_id);
-                        if mesh.map_or(false, |m| m.normal_override_buffer.is_some()) { 1 } else { 0 }
+                        if mesh.map_or(false, |m| m.normal_override_buffer.is_some()) {
+                            1
+                        } else {
+                            0
+                        }
                     },
                     emissive: m.emissive,
                     use_flat: if m.is_flat() { 1 } else { 0 },
@@ -794,8 +798,16 @@ impl ViewportRenderer {
                         crate::scene::material::AlphaMode::Mask(c) => c,
                         _ => 0.5,
                     },
-                    has_metallic_roughness_tex: if m.metallic_roughness_texture_id.is_some() { 1 } else { 0 },
-                    has_emissive_tex: if m.emissive_texture_id.is_some() { 1 } else { 0 },
+                    has_metallic_roughness_tex: if m.metallic_roughness_texture_id.is_some() {
+                        1
+                    } else {
+                        0
+                    },
+                    has_emissive_tex: if m.emissive_texture_id.is_some() {
+                        1
+                    } else {
+                        0
+                    },
                 };
 
                 let normal_obj_uniform = ObjectUniform {
@@ -1076,12 +1088,12 @@ impl ViewportRenderer {
                         a.material.normal_map_id,
                         a.material.ao_map_id,
                     )
-                    .cmp(&(
-                        b.mesh_id.index(),
-                        b.material.texture_id,
-                        b.material.normal_map_id,
-                        b.material.ao_map_id,
-                    ));
+                        .cmp(&(
+                            b.mesh_id.index(),
+                            b.material.texture_id,
+                            b.material.normal_map_id,
+                            b.material.ao_map_id,
+                        ));
                     if batch_ord != std::cmp::Ordering::Equal {
                         return batch_ord;
                     }
@@ -1139,8 +1151,7 @@ impl ViewportRenderer {
                             // lookups inside the inner loop.
                             let batch_idx = instanced_batches.len() as u32;
                             let batch_mesh = resources.mesh_store.get(rep.mesh_id);
-                            let mesh_index_count =
-                                batch_mesh.map(|m| m.index_count).unwrap_or(0);
+                            let mesh_index_count = batch_mesh.map(|m| m.index_count).unwrap_or(0);
 
                             for item in batch_items {
                                 let m = &item.material;
@@ -1247,14 +1258,14 @@ impl ViewportRenderer {
                     // Ensure the hash vec is the right length (it should already be,
                     // but guard against a first-run edge case).
                     if self.cached_instance_hashes.len() != instanced_batches.len() {
-                        self.cached_instance_hashes.resize(instanced_batches.len(), 0);
+                        self.cached_instance_hashes
+                            .resize(instanced_batches.len(), 0);
                     }
                     for (bi, batch) in instanced_batches.iter().enumerate() {
                         let start = batch.instance_offset as usize;
                         let end = start + batch.instance_count as usize;
-                        let new_bytes = bytemuck::cast_slice::<InstanceData, u8>(
-                            &all_instances[start..end],
-                        );
+                        let new_bytes =
+                            bytemuck::cast_slice::<InstanceData, u8>(&all_instances[start..end]);
                         let new_hash = hash_instance_bytes(new_bytes);
                         if new_hash != self.cached_instance_hashes[bi] {
                             if let Some(buf) = resources.instance_storage_buf.as_ref() {
@@ -1289,7 +1300,8 @@ impl ViewportRenderer {
                     for batch in &instanced_batches {
                         let start = batch.instance_offset as usize;
                         let end = start + batch.instance_count as usize;
-                        let bytes = bytemuck::cast_slice::<InstanceData, u8>(&all_instances[start..end]);
+                        let bytes =
+                            bytemuck::cast_slice::<InstanceData, u8>(&all_instances[start..end]);
                         self.cached_instance_hashes.push(hash_instance_bytes(bytes));
                     }
                 }
@@ -1465,6 +1477,23 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
+        // Mesh-instance batches (mesh-based particles).
+        // ------------------------------------------------------------------
+        self.mesh_instance_gpu_data.clear();
+        if !frame.scene.mesh_instances.is_empty() {
+            resources.ensure_instanced_pipelines(device);
+            resources.ensure_hdr_instanced_pipelines(device);
+            for item in &frame.scene.mesh_instances {
+                if item.settings.hidden || item.transforms.is_empty() {
+                    continue;
+                }
+                if let Some(gd) = resources.upload_mesh_instance(device, queue, item) {
+                    self.mesh_instance_gpu_data.push(gd);
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
         // Tensor glyph GPU data upload.
         // ------------------------------------------------------------------
         self.tensor_glyph_gpu_data.clear();
@@ -1495,7 +1524,8 @@ impl ViewportRenderer {
                 let mut gpu_data = resources.upload_polyline(device, queue, item, vp_size);
                 gpu_data.wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
                 if frame.interaction.outline_selected && item.settings.selected {
-                    self.polyline_selected_gpu_indices.push(self.polyline_gpu_data.len());
+                    self.polyline_selected_gpu_indices
+                        .push(self.polyline_gpu_data.len());
                 }
                 self.polyline_gpu_data.push(gpu_data);
 
@@ -1621,12 +1651,15 @@ impl ViewportRenderer {
         if !frame.scene.decals.is_empty() {
             resources.ensure_decal_pipeline(device);
             // Stable sort so equal-key decals stay in submission order.
-            let mut sorted: Vec<&crate::renderer::DecalItem> =
-                frame.scene.decals.iter().collect();
+            let mut sorted: Vec<&crate::renderer::DecalItem> = frame.scene.decals.iter().collect();
             sorted.sort_by_key(|d| d.sort_key);
             for item in sorted {
-                if item.settings.hidden { continue; }
-                if item.settings.opacity <= 0.0 { continue; }
+                if item.settings.hidden {
+                    continue;
+                }
+                if item.settings.opacity <= 0.0 {
+                    continue;
+                }
                 // Apply appearance.opacity on top of the item's own alpha.
                 let mut effective = item.clone();
                 effective.alpha *= item.settings.opacity;
@@ -1640,8 +1673,7 @@ impl ViewportRenderer {
         // ------------------------------------------------------------------
         self.decal_exclude_items.clear();
         {
-            let crate::SurfaceSubmission::Flat(ref surfaces) =
-                frame.scene.surfaces;
+            let crate::SurfaceSubmission::Flat(ref surfaces) = frame.scene.surfaces;
             let has_exclude = surfaces
                 .iter()
                 .any(|item| !item.receives_decals && !item.settings.hidden);
@@ -1649,11 +1681,8 @@ impl ViewportRenderer {
                 resources.ensure_decal_exclude_pipeline(device);
                 for item in surfaces.iter() {
                     if !item.receives_decals && !item.settings.hidden {
-                        let gpu = resources.upload_decal_exclude_item(
-                            device,
-                            item.mesh_id,
-                            item.model,
-                        );
+                        let gpu =
+                            resources.upload_decal_exclude_item(device, item.mesh_id, item.model);
                         self.decal_exclude_items.push(gpu);
                     }
                 }
@@ -1741,7 +1770,8 @@ impl ViewportRenderer {
                 let gpu_data = resources.upload_streamtube(device, queue, item, wireframe);
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && item.settings.selected {
-                        self.streamtube_selected_gpu_indices.push(self.streamtube_gpu_data.len());
+                        self.streamtube_selected_gpu_indices
+                            .push(self.streamtube_gpu_data.len());
                     }
                     self.streamtube_gpu_data.push(gpu_data);
                 }
@@ -1766,7 +1796,8 @@ impl ViewportRenderer {
                 let gpu_data = resources.upload_tube(device, queue, item, wireframe);
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && item.settings.selected {
-                        self.tube_selected_gpu_indices.push(self.tube_gpu_data.len());
+                        self.tube_selected_gpu_indices
+                            .push(self.tube_gpu_data.len());
                     }
                     self.tube_gpu_data.push(gpu_data);
                 }
@@ -1791,7 +1822,8 @@ impl ViewportRenderer {
                 let gpu_data = resources.upload_ribbon(device, queue, item, wireframe);
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && item.settings.selected {
-                        self.ribbon_selected_gpu_indices.push(self.ribbon_gpu_data.len());
+                        self.ribbon_selected_gpu_indices
+                            .push(self.ribbon_gpu_data.len());
                     }
                     self.ribbon_gpu_data.push(gpu_data);
                 }
@@ -1860,7 +1892,8 @@ impl ViewportRenderer {
                                 let obj_buf = device.create_buffer(&wgpu::BufferDescriptor {
                                     label: Some("lic_object_uniform"),
                                     size: std::mem::size_of::<LicObjectUniform>() as u64,
-                                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                                    usage: wgpu::BufferUsages::UNIFORM
+                                        | wgpu::BufferUsages::COPY_DST,
                                     mapped_at_creation: false,
                                 });
                                 queue.write_buffer(&obj_buf, 0, bytemuck::cast_slice(&[obj_data]));
@@ -1936,7 +1969,11 @@ impl ViewportRenderer {
 
         // Volume wireframe overlay: OBB from bbox + model matrix.
         let need_vol_wf = frame.viewport.wireframe_mode
-            || frame.scene.volumes.iter().any(|v| !v.settings.hidden && v.settings.wireframe);
+            || frame
+                .scene
+                .volumes
+                .iter()
+                .any(|v| !v.settings.hidden && v.settings.wireframe);
         if need_vol_wf {
             resources.ensure_polyline_pipeline(device);
             for item in &frame.scene.volumes {
@@ -1971,8 +2008,7 @@ impl ViewportRenderer {
         }
         if !self.tvm_wireframe_draws.is_empty() && self.tvm_wireframe_bg.is_none() {
             use wgpu::util::DeviceExt;
-            let mut tvm_wf_uniform: crate::resources::ObjectUniform =
-                bytemuck::Zeroable::zeroed();
+            let mut tvm_wf_uniform: crate::resources::ObjectUniform = bytemuck::Zeroable::zeroed();
             tvm_wf_uniform.model = glam::Mat4::IDENTITY.to_cols_array_2d();
             tvm_wf_uniform.colour = [0.75, 0.75, 0.75, 1.0];
             tvm_wf_uniform.wireframe = 1;
@@ -2013,9 +2049,7 @@ impl ViewportRenderer {
                     },
                     wgpu::BindGroupEntry {
                         binding: 5,
-                        resource: wgpu::BindingResource::TextureView(
-                            &resources.fallback_lut_view,
-                        ),
+                        resource: wgpu::BindingResource::TextureView(&resources.fallback_lut_view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 6,
@@ -2410,8 +2444,7 @@ impl ViewportRenderer {
                                     continue;
                                 }
                                 let Some(skin_bg) = item.skin_instance.and_then(|inst| {
-                                    resources
-                                        .skin_instance_bind_group(item.mesh_id, inst)
+                                    resources.skin_instance_bind_group(item.mesh_id, inst)
                                 }) else {
                                     continue;
                                 };
@@ -2419,11 +2452,12 @@ impl ViewportRenderer {
                                     continue;
                                 };
                                 if !drew_skinned {
-                                    let Some(skinned_pl) = resources.skinned_shadow_pipeline.as_ref() else {
+                                    let Some(skinned_pl) =
+                                        resources.skinned_shadow_pipeline.as_ref()
+                                    else {
                                         continue;
                                     };
-                                    shadow_pass
-                                        .set_pipeline(skinned_pl);
+                                    shadow_pass.set_pipeline(skinned_pl);
                                     shadow_pass.set_bind_group(
                                         0,
                                         &resources.shadow_bind_group,
@@ -2510,7 +2544,9 @@ impl ViewportRenderer {
                             let want_skinned = skin_bg.is_some();
                             if last_skinned != Some(want_skinned) {
                                 shadow_pass.set_pipeline(if want_skinned {
-                                    resources.skinned_shadow_pipeline.as_ref()
+                                    resources
+                                        .skinned_shadow_pipeline
+                                        .as_ref()
                                         .unwrap_or(&resources.shadow_pipeline)
                                 } else {
                                     &resources.shadow_pipeline
@@ -2569,11 +2605,7 @@ impl ViewportRenderer {
                         };
                         for (name, plugin) in plugins.iter() {
                             if let Some(items) = frame.scene.plugin_items.get(*name) {
-                                plugin.cast_shadow_pass(
-                                    &mut shadow_pass,
-                                    &ctx,
-                                    items.as_ref(),
-                                );
+                                plugin.cast_shadow_pass(&mut shadow_pass, &ctx, items.as_ref());
                             }
                         }
                     }
@@ -2798,11 +2830,13 @@ impl ViewportRenderer {
                         spacing_major,
                         snap_origin: [snap_x, snap_y],
                         colour_minor: {
-                            let [r, g, b] = frame.viewport.grid_colour.unwrap_or([0.55, 0.55, 0.55]);
+                            let [r, g, b] =
+                                frame.viewport.grid_colour.unwrap_or([0.55, 0.55, 0.55]);
                             [r, g, b, 0.4 * minor_fade]
                         },
                         colour_major: {
-                            let [r, g, b] = frame.viewport.grid_colour.unwrap_or([0.60, 0.60, 0.60]);
+                            let [r, g, b] =
+                                frame.viewport.grid_colour.unwrap_or([0.60, 0.60, 0.60]);
                             [r, g, b, 0.4 + 0.2 * minor_fade]
                         },
                     };
@@ -3313,9 +3347,7 @@ impl ViewportRenderer {
                 let sub_sel = frame.interaction.sub_selection.as_ref();
                 let mut gpu_idx = 0usize;
                 for item in &frame.scene.glyphs {
-                    if item.settings.hidden
-                        || item.positions.is_empty()
-                        || item.vectors.is_empty()
+                    if item.settings.hidden || item.positions.is_empty() || item.vectors.is_empty()
                     {
                         continue;
                     }
@@ -3429,7 +3461,6 @@ impl ViewportRenderer {
             for &idx in &self.ribbon_selected_gpu_indices {
                 ribbon_outline_items.push(make_curve_item(idx, true));
             }
-
 
             // Tensor glyph outline indices: same approach as arrow glyphs.
             {
@@ -3573,7 +3604,11 @@ impl ViewportRenderer {
         let mut screen_rect_outline_buffers: Vec<crate::resources::ScreenRectOutlineBuffers> =
             Vec::new();
         if frame.interaction.outline_selected
-            && frame.scene.screen_images.iter().any(|i| i.settings.selected)
+            && frame
+                .scene
+                .screen_images
+                .iter()
+                .any(|i| i.settings.selected)
         {
             self.resources
                 .ensure_screen_rect_outline_mask_pipeline(device);
@@ -3788,7 +3823,10 @@ impl ViewportRenderer {
                 };
 
                 // Border edge: use `edge_colour` when set, otherwise derive from `colour`.
-                let border_base = obj.edge_colour.or(obj.colour).unwrap_or([1.0, 1.0, 1.0, 1.0]);
+                let border_base = obj
+                    .edge_colour
+                    .or(obj.colour)
+                    .unwrap_or([1.0, 1.0, 1.0, 1.0]);
                 let border_colour = if active {
                     [border_base[0], border_base[1], border_base[2], 0.9]
                 } else if hovered {
@@ -4090,14 +4128,13 @@ impl ViewportRenderer {
             let outlines_ptr = &slot_ref.outline_object_buffers as *const Vec<OutlineObjectBuffers>;
             let splat_outlines_ptr = &slot_ref.splat_outline_buffers
                 as *const Vec<crate::resources::SplatOutlineBuffers>;
-            let streamtube_outline_items_ptr = &slot_ref.streamtube_outline_items
-                as *const Vec<CurveMeshOutlineItem>;
-            let tube_outline_items_ptr = &slot_ref.tube_outline_items
-                as *const Vec<CurveMeshOutlineItem>;
-            let ribbon_outline_items_ptr = &slot_ref.ribbon_outline_items
-                as *const Vec<CurveMeshOutlineItem>;
-            let polyline_outline_idx_ptr =
-                &slot_ref.polyline_outline_indices as *const Vec<usize>;
+            let streamtube_outline_items_ptr =
+                &slot_ref.streamtube_outline_items as *const Vec<CurveMeshOutlineItem>;
+            let tube_outline_items_ptr =
+                &slot_ref.tube_outline_items as *const Vec<CurveMeshOutlineItem>;
+            let ribbon_outline_items_ptr =
+                &slot_ref.ribbon_outline_items as *const Vec<CurveMeshOutlineItem>;
+            let polyline_outline_idx_ptr = &slot_ref.polyline_outline_indices as *const Vec<usize>;
             let vol_outline_idx_ptr = &slot_ref.volume_outline_indices as *const Vec<usize>;
             let glyph_outline_idx_ptr =
                 &slot_ref.glyph_outline_indices as *const Vec<(usize, Option<Vec<u32>>)>;
@@ -4241,16 +4278,24 @@ impl ViewportRenderer {
                         if !self.resources.is_skinned_mesh(outlined.mesh_id) {
                             return None;
                         }
-                        self.resources.skin_instance_bind_group(outlined.mesh_id, inst)
+                        self.resources
+                            .skin_instance_bind_group(outlined.mesh_id, inst)
                     });
-                    let pipeline: &wgpu::RenderPipeline = match (skin_bg.is_some(), outlined.two_sided) {
-                        (true, true) => self.resources.outline_mask_skinned_two_sided_pipeline.as_ref()
-                            .unwrap_or(&self.resources.outline_mask_two_sided_pipeline),
-                        (true, false) => self.resources.outline_mask_skinned_pipeline.as_ref()
-                            .unwrap_or(&self.resources.outline_mask_pipeline),
-                        (false, true) => &self.resources.outline_mask_two_sided_pipeline,
-                        (false, false) => &self.resources.outline_mask_pipeline,
-                    };
+                    let pipeline: &wgpu::RenderPipeline =
+                        match (skin_bg.is_some(), outlined.two_sided) {
+                            (true, true) => self
+                                .resources
+                                .outline_mask_skinned_two_sided_pipeline
+                                .as_ref()
+                                .unwrap_or(&self.resources.outline_mask_two_sided_pipeline),
+                            (true, false) => self
+                                .resources
+                                .outline_mask_skinned_pipeline
+                                .as_ref()
+                                .unwrap_or(&self.resources.outline_mask_pipeline),
+                            (false, true) => &self.resources.outline_mask_two_sided_pipeline,
+                            (false, false) => &self.resources.outline_mask_pipeline,
+                        };
                     pass.set_pipeline(pipeline);
                     pass.set_bind_group(1, &outlined.mask_bind_group, &[]);
                     if let Some(bg) = skin_bg {
@@ -4456,7 +4501,10 @@ impl ViewportRenderer {
                 // pipeline because they are flat surfaces with no clear front face.
                 pass.set_bind_group(0, camera_bg, &[]);
                 let curve_draw_groups = [
-                    (streamtube_outline_items as &[CurveMeshOutlineItem], streamtube_gpu_data as &[crate::resources::StreamtubeGpuData]),
+                    (
+                        streamtube_outline_items as &[CurveMeshOutlineItem],
+                        streamtube_gpu_data as &[crate::resources::StreamtubeGpuData],
+                    ),
                     (tube_outline_items, tube_gpu_data),
                     (ribbon_outline_items, ribbon_gpu_data),
                 ];
@@ -4483,9 +4531,7 @@ impl ViewportRenderer {
                 // Draw polyline segment quads into the mask using the dedicated
                 // polyline_outline_mask_pipeline (instance-expanded quads).
                 if !polyline_outline_idxs.is_empty() {
-                    if let Some(pipeline) =
-                        self.resources.polyline_outline_mask_pipeline.as_ref()
-                    {
+                    if let Some(pipeline) = self.resources.polyline_outline_mask_pipeline.as_ref() {
                         pass.set_pipeline(pipeline);
                         pass.set_bind_group(0, camera_bg, &[]);
                         for &idx in polyline_outline_idxs {
@@ -4591,8 +4637,7 @@ impl ViewportRenderer {
         // but above HUD labels at 0).
         self.label_gpu_data = None;
         self.overlay_rect_gpu_data = None;
-        let has_overlay =
-            !frame.overlays.labels.is_empty() || !frame.overlays.rects.is_empty();
+        let has_overlay = !frame.overlays.labels.is_empty() || !frame.overlays.rects.is_empty();
         if has_overlay {
             self.resources.ensure_overlay_text_pipeline(device);
             let vp_w = frame.camera.viewport_size[0];
@@ -4604,8 +4649,7 @@ impl ViewportRenderer {
                 // Each item (label or rect) contributes a (z_order, verts) batch.
                 // Rects are pushed before labels so that after a stable sort, items at
                 // equal z_order always draw rect (background) before label (text).
-                let mut batches: Vec<(i32, Vec<crate::resources::OverlayTextVertex>)> =
-                    Vec::new();
+                let mut batches: Vec<(i32, Vec<crate::resources::OverlayTextVertex>)> = Vec::new();
 
                 // --- Rects (processed first so equal-z_order rects draw before labels) ---
                 for rect in &frame.overlays.rects {
@@ -4639,7 +4683,15 @@ impl ViewportRenderer {
                     let mut fc = rect.colour;
                     fc[3] *= rect.opacity;
                     emit_rounded_quad(
-                        &mut batch, x0, y0, x1, y1, rect.corner_radius, fc, vp_w, vp_h,
+                        &mut batch,
+                        x0,
+                        y0,
+                        x1,
+                        y1,
+                        rect.corner_radius,
+                        fc,
+                        vp_w,
+                        vp_h,
                     );
 
                     batches.push((rect.z_order, batch));
@@ -4690,9 +4742,7 @@ impl ViewportRenderer {
                     let align_offset = match label.anchor_align {
                         crate::renderer::types::LabelAnchor::Leading => 6.0,
                         crate::renderer::types::LabelAnchor::Center => -layout.total_width * 0.5,
-                        crate::renderer::types::LabelAnchor::Trailing => {
-                            -layout.total_width - 6.0
-                        }
+                        crate::renderer::types::LabelAnchor::Trailing => -layout.total_width - 6.0,
                     };
 
                     let text_x = anchor_px[0] + align_offset + label.offset[0];
@@ -4720,9 +4770,7 @@ impl ViewportRenderer {
                                 vp_h,
                             );
                         } else {
-                            emit_solid_quad(
-                                &mut batch, bx0, by0, bx1, by1, bg_colour, vp_w, vp_h,
-                            );
+                            emit_solid_quad(&mut batch, bx0, by0, bx1, by1, bg_colour, vp_w, vp_h);
                         }
                     }
 
@@ -4775,12 +4823,11 @@ impl ViewportRenderer {
                     batches.into_iter().flat_map(|(_, v)| v).collect();
 
                 if !verts.is_empty() {
-                    let vertex_buf =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("overlay_label_vbuf"),
-                            contents: bytemuck::cast_slice(&verts),
-                            usage: wgpu::BufferUsages::VERTEX,
-                        });
+                    let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("overlay_label_vbuf"),
+                        contents: bytemuck::cast_slice(&verts),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
                     let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -5331,8 +5378,10 @@ impl ViewportRenderer {
                             device,
                         );
                         let font_index = bar.font.map_or(0, |h| h.0);
-                        let ascent =
-                            self.resources.glyph_atlas.font_ascent(font_index, bar.font_size);
+                        let ascent = self
+                            .resources
+                            .glyph_atlas
+                            .font_ascent(font_index, bar.font_size);
                         let label_gap = 5.0;
                         let lx = bar_x + bar.width_px * 0.5 - layout.total_width * 0.5;
                         let ly = match bar.anchor {
@@ -5436,9 +5485,13 @@ impl ViewportRenderer {
                     frame.overlays.shapes.iter().collect();
                 sorted.sort_by_key(|s| s.z_order);
 
-                let has_solid = sorted.iter().any(|s| s.texture.is_none() && s.backdrop_blur <= 0.0);
+                let has_solid = sorted
+                    .iter()
+                    .any(|s| s.texture.is_none() && s.backdrop_blur <= 0.0);
                 let has_tex = sorted.iter().any(|s| s.texture.is_some());
-                let has_blur = sorted.iter().any(|s| s.backdrop_blur > 0.0 && s.texture.is_none());
+                let has_blur = sorted
+                    .iter()
+                    .any(|s| s.backdrop_blur > 0.0 && s.texture.is_none());
                 if has_solid {
                     self.resources.ensure_overlay_shape_pipeline(device);
                 }
@@ -5464,12 +5517,20 @@ impl ViewportRenderer {
                     // Resolve animation to final opacity.
                     let resolved_opacity = match shape.animation {
                         crate::renderer::types::OverlayAnimation::None => shape.opacity,
-                        crate::renderer::types::OverlayAnimation::FadeIn { start_time, duration } => {
-                            let t = ((overlay_time - start_time) as f32 / duration.max(1e-6)).clamp(0.0, 1.0);
+                        crate::renderer::types::OverlayAnimation::FadeIn {
+                            start_time,
+                            duration,
+                        } => {
+                            let t = ((overlay_time - start_time) as f32 / duration.max(1e-6))
+                                .clamp(0.0, 1.0);
                             shape.opacity * t
                         }
-                        crate::renderer::types::OverlayAnimation::FadeOut { start_time, duration } => {
-                            let t = ((overlay_time - start_time) as f32 / duration.max(1e-6)).clamp(0.0, 1.0);
+                        crate::renderer::types::OverlayAnimation::FadeOut {
+                            start_time,
+                            duration,
+                        } => {
+                            let t = ((overlay_time - start_time) as f32 / duration.max(1e-6))
+                                .clamp(0.0, 1.0);
                             shape.opacity * (1.0 - t)
                         }
                         crate::renderer::types::OverlayAnimation::Pulse { start_time, period } => {
@@ -5491,7 +5552,10 @@ impl ViewportRenderer {
                     // Expand the bounding quad by border width, shadow extent,
                     // and AA so nothing gets clipped at the edges.
                     let shadow_pad = if shape.shadow_radius > 0.0 {
-                        shape.shadow_radius + shape.shadow_offset[0].abs().max(shape.shadow_offset[1].abs())
+                        shape.shadow_radius
+                            + shape.shadow_offset[0]
+                                .abs()
+                                .max(shape.shadow_offset[1].abs())
                     } else {
                         0.0
                     };
@@ -5535,7 +5599,15 @@ impl ViewportRenderer {
                             inner_radius_frac,
                             start_angle,
                             end_angle,
-                        } => (5.0, [inner_radius_frac.clamp(0.0, 1.0), start_angle, end_angle, 0.0]),
+                        } => (
+                            5.0,
+                            [
+                                inner_radius_frac.clamp(0.0, 1.0),
+                                start_angle,
+                                end_angle,
+                                0.0,
+                            ],
+                        ),
                         crate::renderer::types::OverlayShape::Triangle { direction } => {
                             let dir_f = match direction {
                                 crate::renderer::types::TriangleDirection::Up => 0.0,
@@ -5552,7 +5624,10 @@ impl ViewportRenderer {
                             };
                             (7.0, [thickness * 0.5, cap_f, 0.0, 0.0])
                         }
-                        crate::renderer::types::OverlayShape::Star { points, inner_radius_frac } => {
+                        crate::renderer::types::OverlayShape::Star {
+                            points,
+                            inner_radius_frac,
+                        } => {
                             let n = points.max(3) as f32;
                             (8.0, [n, inner_radius_frac.clamp(0.0, 1.0), 0.0, 0.0])
                         }
@@ -5565,17 +5640,14 @@ impl ViewportRenderer {
                         }
                     };
 
-                    let (start_colour, end_colour, gradient_params) =
-                        match shape.fill {
-                            crate::renderer::types::OverlayFill::Solid(c) => {
-                                (c, c, [0.0f32, 0.0])
-                            }
-                            crate::renderer::types::OverlayFill::LinearGradient {
-                                start_colour,
-                                end_colour,
-                                angle,
-                            } => (start_colour, end_colour, [1.0f32, angle]),
-                        };
+                    let (start_colour, end_colour, gradient_params) = match shape.fill {
+                        crate::renderer::types::OverlayFill::Solid(c) => (c, c, [0.0f32, 0.0]),
+                        crate::renderer::types::OverlayFill::LinearGradient {
+                            start_colour,
+                            end_colour,
+                            angle,
+                        } => (start_colour, end_colour, [1.0f32, angle]),
+                    };
                     let mut fc = start_colour;
                     fc[3] *= resolved_opacity;
                     let mut fc2 = end_colour;
@@ -5592,7 +5664,12 @@ impl ViewportRenderer {
                         crate::renderer::types::BorderMode::Outer => 1.0,
                         crate::renderer::types::BorderMode::Center => 2.0,
                     };
-                    let shadow_params = [shape.shadow_radius, shape.shadow_offset[0], shape.shadow_offset[1], border_mode_f];
+                    let shadow_params = [
+                        shape.shadow_radius,
+                        shape.shadow_offset[0],
+                        shape.shadow_offset[1],
+                        border_mode_f,
+                    ];
 
                     // Emit 6 vertices (two triangles) for the bounding quad.
                     let corners_px = [
@@ -5630,10 +5707,7 @@ impl ViewportRenderer {
                                 radii,
                                 border_width: shape.border_width,
                                 shape_type,
-                                uv: [
-                                    (lx + hw_s) / (2.0 * hw_s),
-                                    (ly + hh_s) / (2.0 * hh_s),
-                                ],
+                                uv: [(lx + hw_s) / (2.0 * hw_s), (ly + hh_s) / (2.0 * hh_s)],
                                 shadow_colour: sc,
                                 shadow_params,
                             });
@@ -5677,11 +5751,13 @@ impl ViewportRenderer {
                 }
 
                 let solid_vbuf = if !solid_verts.is_empty() {
-                    Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("overlay_shape_vbuf"),
-                        contents: bytemuck::cast_slice(&solid_verts),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    }))
+                    Some(
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("overlay_shape_vbuf"),
+                            contents: bytemuck::cast_slice(&solid_verts),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        }),
+                    )
                 } else {
                     None
                 };
@@ -5701,28 +5777,26 @@ impl ViewportRenderer {
                                 continue;
                             }
                             let view = &self.resources.overlay_textures[tidx].view;
-                            let bind_group =
-                                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                                    label: Some("overlay_shape_tex_bg"),
-                                    layout: bgl,
-                                    entries: &[
-                                        wgpu::BindGroupEntry {
-                                            binding: 0,
-                                            resource: wgpu::BindingResource::TextureView(view),
-                                        },
-                                        wgpu::BindGroupEntry {
-                                            binding: 1,
-                                            resource: wgpu::BindingResource::Sampler(sampler),
-                                        },
-                                    ],
-                                });
-                            let vertex_buf = device.create_buffer_init(
-                                &wgpu::util::BufferInitDescriptor {
+                            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                label: Some("overlay_shape_tex_bg"),
+                                layout: bgl,
+                                entries: &[
+                                    wgpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: wgpu::BindingResource::TextureView(view),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 1,
+                                        resource: wgpu::BindingResource::Sampler(sampler),
+                                    },
+                                ],
+                            });
+                            let vertex_buf =
+                                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                                     label: Some("overlay_shape_tex_vbuf"),
                                     contents: bytemuck::cast_slice(verts),
                                     usage: wgpu::BufferUsages::VERTEX,
-                                },
-                            );
+                                });
                             tex_batches.push(crate::resources::OverlayShapeTexBatch {
                                 vertex_buf,
                                 vertex_count: verts.len() as u32,
@@ -5733,25 +5807,26 @@ impl ViewportRenderer {
                 }
 
                 let blur_vbuf = if !blur_verts.is_empty() {
-                    Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("overlay_shape_blur_vbuf"),
-                        contents: bytemuck::cast_slice(&blur_verts),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    }))
+                    Some(
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("overlay_shape_blur_vbuf"),
+                            contents: bytemuck::cast_slice(&blur_verts),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        }),
+                    )
                 } else {
                     None
                 };
 
                 if solid_vbuf.is_some() || !tex_batches.is_empty() || blur_vbuf.is_some() {
-                    self.overlay_shape_gpu_data =
-                        Some(crate::resources::OverlayShapeGpuData {
-                            vertex_buf: solid_vbuf,
-                            vertex_count: solid_verts.len() as u32,
-                            tex_batches,
-                            blur_vertex_buf: blur_vbuf,
-                            blur_vertex_count: blur_verts.len() as u32,
-                            max_blur_radius,
-                        });
+                    self.overlay_shape_gpu_data = Some(crate::resources::OverlayShapeGpuData {
+                        vertex_buf: solid_vbuf,
+                        vertex_count: solid_verts.len() as u32,
+                        tex_batches,
+                        blur_vertex_buf: blur_vbuf,
+                        blur_vertex_count: blur_verts.len() as u32,
+                        max_blur_radius,
+                    });
                 }
             }
         }
@@ -5819,7 +5894,11 @@ impl ViewportRenderer {
 
         // Gaussian splat wireframe overlay.
         let need_splat_wf = frame.viewport.wireframe_mode
-            || frame.scene.gaussian_splats.iter().any(|g| !g.settings.hidden && g.settings.wireframe);
+            || frame
+                .scene
+                .gaussian_splats
+                .iter()
+                .any(|g| !g.settings.hidden && g.settings.wireframe);
         if need_splat_wf {
             self.resources.ensure_polyline_pipeline(device);
             let vp_size = frame.camera.viewport_size;
@@ -5840,7 +5919,9 @@ impl ViewportRenderer {
                 let _ = gpu_set;
                 let polyline = splat_wireframe_polyline(&positions, &scales, item.model, count);
                 if !polyline.positions.is_empty() {
-                    let gpu = self.resources.upload_polyline(device, queue, &polyline, vp_size);
+                    let gpu = self
+                        .resources
+                        .upload_polyline(device, queue, &polyline, vp_size);
                     self.polyline_gpu_data.push(gpu);
                 }
             }
@@ -5848,7 +5929,11 @@ impl ViewportRenderer {
 
         // Sprite wireframe overlay: quad outline per sprite (<=100) or AABB box (>100).
         let need_sprite_wf = frame.viewport.wireframe_mode
-            || frame.scene.sprite_items.iter().any(|s| !s.settings.hidden && s.settings.wireframe);
+            || frame
+                .scene
+                .sprite_items
+                .iter()
+                .any(|s| !s.settings.hidden && s.settings.wireframe);
         if need_sprite_wf {
             self.resources.ensure_polyline_pipeline(device);
             let vp_size = frame.camera.viewport_size;
@@ -5864,7 +5949,9 @@ impl ViewportRenderer {
                 }
                 let polyline = sprite_wireframe_polyline(item, &frame.camera);
                 if !polyline.positions.is_empty() {
-                    let gpu = self.resources.upload_polyline(device, queue, &polyline, vp_size);
+                    let gpu = self
+                        .resources
+                        .upload_polyline(device, queue, &polyline, vp_size);
                     self.polyline_gpu_data.push(gpu);
                 }
             }
@@ -6173,8 +6260,11 @@ impl ViewportRenderer {
                 if item.settings.receive_shadows {
                     flags |= crate::scene::scatter_volume::SCATTER_FLAG_RECEIVE_SHADOWS;
                 }
-                self.prepared_scatter_volumes
-                    .push((item.volume.clone(), item.settings.opacity, flags));
+                self.prepared_scatter_volumes.push((
+                    item.volume.clone(),
+                    item.settings.opacity,
+                    flags,
+                ));
             }
             // Sort back-to-front for the per-volume scatter draws. The
             // metric is the maximum corner distance of the volume's world
@@ -6204,9 +6294,7 @@ impl ViewportRenderer {
                     } else {
                         aabb.max.z
                     };
-                    (cx - eye[0]).powi(2)
-                        + (cy - eye[1]).powi(2)
-                        + (cz - eye[2]).powi(2)
+                    (cx - eye[0]).powi(2) + (cy - eye[1]).powi(2) + (cz - eye[2]).powi(2)
                 };
                 let da = far_corner(&aabb_a);
                 let db = far_corner(&aabb_b);
@@ -6713,7 +6801,9 @@ fn emit_rounded_quad(
 
 /// Generate an OBB wireframe polyline for a VolumeItem by transforming its
 /// bbox corners through the model matrix.
-fn volume_obb_polyline(item: &crate::renderer::types::VolumeItem) -> crate::renderer::types::PolylineItem {
+fn volume_obb_polyline(
+    item: &crate::renderer::types::VolumeItem,
+) -> crate::renderer::types::PolylineItem {
     let model = glam::Mat4::from_cols_array_2d(&item.model);
     let mn = glam::Vec3::from(item.bbox_min);
     let mx = glam::Vec3::from(item.bbox_max);
@@ -6879,13 +6969,13 @@ fn splat_obb_polyline(
     ];
     let signs: [[f32; 3]; 8] = [
         [-1.0, -1.0, -1.0],
-        [ 1.0, -1.0, -1.0],
-        [-1.0,  1.0, -1.0],
-        [ 1.0,  1.0, -1.0],
-        [-1.0, -1.0,  1.0],
-        [ 1.0, -1.0,  1.0],
-        [-1.0,  1.0,  1.0],
-        [ 1.0,  1.0,  1.0],
+        [1.0, -1.0, -1.0],
+        [-1.0, 1.0, -1.0],
+        [1.0, 1.0, -1.0],
+        [-1.0, -1.0, 1.0],
+        [1.0, -1.0, 1.0],
+        [-1.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0],
     ];
     let corners: Vec<[f32; 3]> = signs
         .iter()
@@ -6959,20 +7049,35 @@ fn sprite_quad_outlines_polyline(
     let view_proj = camera.render_camera.view_proj();
     let inv_view_proj = view_proj.inverse();
     let [vw, vh] = camera.viewport_size;
-    let is_world_space =
-        matches!(item.size_mode, crate::renderer::types::SpriteSizeMode::WorldSpace);
+    let is_world_space = matches!(
+        item.size_mode,
+        crate::renderer::types::SpriteSizeMode::WorldSpace
+    );
 
     // BL -> BR -> TR -> TL -> BL: a closed rectangle (4 edges, 5 positions per strip).
-    const CORNERS: [(f32, f32); 5] =
-        [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0)];
+    const CORNERS: [(f32, f32); 5] = [
+        (-1.0, -1.0),
+        (1.0, -1.0),
+        (1.0, 1.0),
+        (-1.0, 1.0),
+        (-1.0, -1.0),
+    ];
 
     let mut all_positions: Vec<[f32; 3]> = Vec::new();
     let mut strip_lengths: Vec<u32> = Vec::new();
 
     for i in 0..item.positions.len() {
         let world_pos = model.transform_point3(glam::Vec3::from(item.positions[i]));
-        let size = if i < item.sizes.len() { item.sizes[i] } else { item.default_size };
-        let rotation = if i < item.rotations.len() { item.rotations[i] } else { 0.0 };
+        let size = if i < item.sizes.len() {
+            item.sizes[i]
+        } else {
+            item.default_size
+        };
+        let rotation = if i < item.rotations.len() {
+            item.rotations[i]
+        } else {
+            0.0
+        };
         let cos_r = rotation.cos();
         let sin_r = rotation.sin();
         let half = size * 0.5;
@@ -6993,7 +7098,8 @@ fn sprite_quad_outlines_polyline(
                 // Behind camera -- skip this sprite.
                 ok = false;
             } else {
-                let ndc_center = glam::Vec3::new(clip_center.x, clip_center.y, clip_center.z) / clip_center.w;
+                let ndc_center =
+                    glam::Vec3::new(clip_center.x, clip_center.y, clip_center.z) / clip_center.w;
                 for (cx, cy) in CORNERS {
                     let rx = cos_r * cx - sin_r * cy;
                     let ry = sin_r * cx + cos_r * cy;
@@ -7007,7 +7113,9 @@ fn sprite_quad_outlines_polyline(
                         ok = false;
                         break;
                     }
-                    pts.push((glam::Vec3::new(world_h.x, world_h.y, world_h.z) / world_h.w).to_array());
+                    pts.push(
+                        (glam::Vec3::new(world_h.x, world_h.y, world_h.z) / world_h.w).to_array(),
+                    );
                 }
             }
         }

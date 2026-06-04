@@ -72,7 +72,9 @@ impl ViewportGpuResources {
         // Instanced mesh shader.
         let instanced_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh_instanced_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl")).into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl")).into(),
+            ),
         });
 
         let instanced_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -353,8 +355,78 @@ impl ViewportGpuResources {
             cache: None,
         });
 
+        let additive_blend = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        let premultiplied_blend = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        let make_blended = |blend: wgpu::BlendState, label: &str| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&inst_layout),
+                vertex: wgpu::VertexState {
+                    module: &inst_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &inst_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: Some(blend),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                multiview: None,
+                cache: None,
+            })
+        };
+        let additive = make_blended(additive_blend, "hdr_instanced_additive_pipeline");
+        let premultiplied =
+            make_blended(premultiplied_blend, "hdr_instanced_premultiplied_pipeline");
+
         self.hdr_solid_instanced_pipeline = Some(solid);
         self.hdr_transparent_instanced_pipeline = Some(trans);
+        self.hdr_instanced_additive_pipeline = Some(additive);
+        self.hdr_instanced_premultiplied_pipeline = Some(premultiplied);
     }
 
     /// Ensure the OIT instanced pipeline exists. Called after
@@ -706,7 +778,9 @@ impl ViewportGpuResources {
         // HDR solid cull pipeline: Rgba16Float target, vs_main_cull, back-face cull.
         let instanced_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh_instanced_shader_cull"),
-            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl")).into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl")).into(),
+            ),
         });
         let inst_cull_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("hdr_instanced_cull_pipeline_layout"),
@@ -1092,5 +1166,135 @@ impl ViewportGpuResources {
         }
 
         self.instance_bind_groups.get(&key)
+    }
+
+    /// Upload one [`MeshInstanceItem`] batch and return draw data.
+    ///
+    /// Builds a per-batch instance storage buffer in the layout expected by
+    /// `mesh_instanced.wgsl`'s `InstanceData` struct, allocates a one-shot
+    /// bind group against `instance_bind_group_layout`, and packages it into
+    /// a [`MeshInstanceGpuData`]. The host is expected to rebuild this once
+    /// per frame for moving particle systems.
+    ///
+    /// Lighting flags are filled with unlit defaults: the shader receives the
+    /// per-instance colour with the optional albedo sampled on top, without
+    /// going through shadow or lighting math.
+    pub(crate) fn upload_mesh_instance(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: &crate::renderer::MeshInstanceItem,
+    ) -> Option<crate::resources::types::MeshInstanceGpuData> {
+        let instance_count = item.transforms.len() as u32;
+        if instance_count == 0 {
+            return None;
+        }
+
+        // Per-instance struct must match `InstanceData` in `mesh_instanced.wgsl`.
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct GpuInstanceData {
+            model: [[f32; 4]; 4],
+            colour: [f32; 4],
+            selected: u32,
+            wireframe: u32,
+            ambient: f32,
+            diffuse: f32,
+            specular: f32,
+            shininess: f32,
+            has_texture: u32,
+            use_pbr: u32,
+            metallic: f32,
+            roughness: f32,
+            has_normal_map: u32,
+            has_ao_map: u32,
+            unlit: u32,
+            receive_shadows: u32,
+            use_flat: u32,
+            _pad_inst1: u32,
+        }
+
+        let has_texture = if item
+            .texture_id
+            .is_some_and(|id| (id as usize) < self.textures.len())
+        {
+            1u32
+        } else {
+            0u32
+        };
+
+        let instances: Vec<GpuInstanceData> = (0..item.transforms.len())
+            .map(|i| GpuInstanceData {
+                model: item.transforms[i],
+                colour: item.colours.get(i).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]),
+                selected: 0,
+                wireframe: 0,
+                ambient: 1.0,
+                diffuse: 0.0,
+                specular: 0.0,
+                shininess: 0.0,
+                has_texture,
+                use_pbr: 0,
+                metallic: 0.0,
+                roughness: 0.0,
+                has_normal_map: 0,
+                has_ao_map: 0,
+                unlit: 1,
+                receive_shadows: 0,
+                use_flat: 1,
+                _pad_inst1: 0,
+            })
+            .collect();
+
+        let instance_bytes = bytemuck::cast_slice(&instances);
+        let instance_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("mesh_instance_buf"),
+            size: instance_bytes.len().max(144) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&instance_buf, 0, instance_bytes);
+
+        let bgl = self.instance_bind_group_layout.as_ref()?;
+        let albedo_view = match item.texture_id {
+            Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+            _ => &self.fallback_texture.view,
+        };
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("mesh_instance_bg"),
+            layout: bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: instance_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(albedo_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&self.fallback_normal_map_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&self.fallback_ao_map_view),
+                },
+            ],
+        });
+
+        let mesh_id = crate::resources::mesh_store::MeshId(item.mesh_id as usize);
+
+        Some(crate::resources::types::MeshInstanceGpuData {
+            mesh_id,
+            instance_count,
+            bind_group,
+            blend: item.blend,
+            _instance_buf: instance_buf,
+        })
     }
 }

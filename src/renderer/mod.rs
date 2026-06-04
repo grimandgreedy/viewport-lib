@@ -29,7 +29,7 @@ pub use self::types::{
     FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType,
     GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem, InteractionFrame, LabelAnchor,
     LabelItem, LicOverlay, LightKind, LightSource, LightingSettings, LineCap, LoadingBarAnchor,
-    LoadingBarItem, OverlayAnimation, OverlayFill, OverlayFrame, OverlayImageItem, OverlayRectItem,
+    LoadingBarItem, MeshInstanceItem, OverlayAnimation, OverlayFill, OverlayFrame, OverlayImageItem, OverlayRectItem,
     OverlayShape, OverlayShapeItem, OverlayTextureId, PickId, PointCloudItem, PointRenderMode,
     PolylineItem, PostProcessSettings, RenderCamera, RibbonItem, RulerItem, ScalarBarAnchor,
     ScalarBarItem, ScalarBarOrientation, ScatterQuality, ScatterSettings, ScatterVolumeItem,
@@ -294,6 +294,8 @@ pub struct ViewportRenderer {
     mc_gpu_data: Vec<crate::resources::gpu_marching_cubes::McFrameData>,
     /// Per-frame sprite GPU data, rebuilt in prepare(), consumed in paint().
     sprite_gpu_data: Vec<crate::resources::SpriteGpuData>,
+    /// Per-frame mesh-instance batches, rebuilt in prepare(), consumed in paint().
+    mesh_instance_gpu_data: Vec<crate::resources::MeshInstanceGpuData>,
     /// Per-frame Gaussian splat draw data, rebuilt in prepare_viewport_internal(), consumed in paint().
     gaussian_splat_draw_data: Vec<crate::resources::GaussianSplatDrawData>,
     /// Per-frame screen-image GPU data, rebuilt in prepare(), consumed in paint().
@@ -523,6 +525,7 @@ impl ViewportRenderer {
             image_slice_gpu_data: Vec::new(),
             volume_surface_slice_gpu_data: Vec::new(),
             sprite_gpu_data: Vec::new(),
+            mesh_instance_gpu_data: Vec::new(),
             gaussian_splat_draw_data: Vec::new(),
             lic_gpu_data: Vec::new(),
             implicit_gpu_data: Vec::new(),
@@ -1488,6 +1491,7 @@ impl ViewportRenderer {
             &self.ribbon_gpu_data,
             &self.volume_surface_slice_gpu_data,
             &self.sprite_gpu_data,
+            &self.mesh_instance_gpu_data,
             false
         );
         // Gaussian splats (alpha-blended, back-to-front sorted, no depth write).

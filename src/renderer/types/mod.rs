@@ -634,7 +634,7 @@ macro_rules! emit_outline_composite {
 ///
 /// Called by both `paint` and `paint_to` after `emit_draw_calls!` to render scivis layers.
 macro_rules! emit_scivis_draw_calls {
-    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $volume_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $image_slice_gpu_data:expr, $tensor_glyph_gpu_data:expr, $ribbon_gpu_data:expr, $volume_surface_slice_gpu_data:expr, $sprite_gpu_data:expr, $is_hdr:expr) => {{
+    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $volume_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $image_slice_gpu_data:expr, $tensor_glyph_gpu_data:expr, $ribbon_gpu_data:expr, $volume_surface_slice_gpu_data:expr, $sprite_gpu_data:expr, $mesh_instance_gpu_data:expr, $is_hdr:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let camera_bg: &wgpu::BindGroup = $camera_bg;
@@ -948,6 +948,55 @@ macro_rules! emit_scivis_draw_calls {
                         );
                         render_pass.draw_indexed(0..ribbon.index_count, 0, 0..1);
                     }
+                }
+            }
+        }
+
+        // Mesh-instance pass: one draw call per host-built batch, routed by
+        // blend mode. Reuses the scene-graph instanced mesh pipeline family.
+        if !$mesh_instance_gpu_data.is_empty() {
+            let mesh_buckets: [(
+                crate::renderer::SpriteBlend,
+                Option<&wgpu::RenderPipeline>,
+            ); 3] = [
+                (
+                    crate::renderer::SpriteBlend::AlphaBlend,
+                    resources.hdr_transparent_instanced_pipeline.as_ref(),
+                ),
+                (
+                    crate::renderer::SpriteBlend::Additive,
+                    resources.hdr_instanced_additive_pipeline.as_ref(),
+                ),
+                (
+                    crate::renderer::SpriteBlend::Premultiplied,
+                    resources.hdr_instanced_premultiplied_pipeline.as_ref(),
+                ),
+            ];
+            for (blend, pipeline) in mesh_buckets {
+                let Some(pipeline) = pipeline else { continue };
+                let mut set = false;
+                for batch in $mesh_instance_gpu_data.iter() {
+                    if batch.blend != blend {
+                        continue;
+                    }
+                    let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+                        continue;
+                    };
+                    if mesh.index_count == 0 {
+                        continue;
+                    }
+                    if !set {
+                        render_pass.set_pipeline(pipeline);
+                        render_pass.set_bind_group(0, camera_bg, &[]);
+                        set = true;
+                    }
+                    render_pass.set_bind_group(1, &batch.bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                    render_pass.set_index_buffer(
+                        mesh.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    render_pass.draw_indexed(0..mesh.index_count, 0, 0..batch.instance_count);
                 }
             }
         }

@@ -205,7 +205,7 @@ pub use renderer::{
     FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType,
     GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem, InteractionFrame, LabelAnchor,
     LabelItem, LicOverlay, LightKind, LightSource, LightingSettings, LineCap, LoadingBarAnchor,
-    LoadingBarItem, OverlayAnimation, OverlayFill, OverlayFrame, OverlayImageItem, OverlayRectItem,
+    LoadingBarItem, MeshInstanceItem, OverlayAnimation, OverlayFill, OverlayFrame, OverlayImageItem, OverlayRectItem,
     OverlayShape, OverlayShapeItem, OverlayTextureId, OwnedPath, PassPath, PassView, PickId,
     PickRectResult, PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings,
     RenderCamera, RibbonItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,

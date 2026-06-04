@@ -22,9 +22,9 @@ pub mod matcap_data;
 pub mod mesh_store;
 mod meshes;
 mod overlay_shape;
-mod plugin_builders;
 mod overlay_text;
 mod overlays;
+mod plugin_builders;
 mod postprocess;
 /// Scatter-volume participating-media pipeline state and uploads.
 pub mod scatter_volume;
@@ -39,10 +39,6 @@ pub mod volume_mesh;
 mod volumes;
 
 pub use self::extra_impls::{ComputeFilterResult, lerp_attributes};
-pub use self::plugin_builders::{
-    HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, PICK_COLOR_FORMAT, PluginPipelineOpts,
-    SCENE_DEPTH_FORMAT, SHADOW_DEPTH_FORMAT,
-};
 use self::extra_impls::{
     build_glyph_arrow, build_glyph_sphere, build_unit_cube, generate_edge_indices,
 };
@@ -51,34 +47,36 @@ pub use self::gpu_marching_cubes::{GpuMarchingCubesJob, VolumeGpuId};
 pub use self::implicit::{
     GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
 };
+pub use self::plugin_builders::{
+    HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, PICK_COLOR_FORMAT, PluginPipelineOpts, SCENE_DEPTH_FORMAT,
+    SHADOW_DEPTH_FORMAT,
+};
 pub use self::sparse_volume::SparseVolumeGridData;
 #[allow(deprecated)]
 pub use self::types::ClipVolumeUniform;
+pub(crate) use self::types::PendingUploadEntry;
+pub(crate) use self::types::ScatterViewportState;
+pub(crate) use self::types::{
+    AtlasBlitUniform, BackdropBlurState, BatchMeta, BloomUniform, ClipPlanesUniform,
+    ContactShadowUniform, CurveMeshOutlineItem, DofUniform, DualPipeline, FrustumPlane,
+    FrustumUniform, GaussianSplatDrawData, GlyphBaseMesh, GlyphGpuData, GpuProjectedTetMesh,
+    GridUniform, GroundPlaneUniform, ImageSliceGpuData, InstanceAabb, InstanceData, LabelGpuData,
+    LicAdvectUniform, LicObjectUniform, LicSurfaceGpuData, ObjectUniform, OutlineEdgeUniform,
+    OutlineObjectBuffers, OutlineUniform, OverlayShapeGpuData, OverlayShapeTexBatch,
+    OverlayShapeTexVertex, OverlayShapeVertex, OverlayTextVertex, OverlayUniform, PickInstance,
+    ProjectedTetUniform, RawGeomOutlineBuffers, SHADOW_ATLAS_SIZE, ScreenRectOutlineBuffers,
+    MeshInstanceGpuData, ShadowAtlasUniform, SplatOutlineBuffers, SplatOutlineMaskUniform,
+    SpriteGpuData, SsaoUniform,
+    StreamtubeGpuData, SubHighlightGpuData, TensorGlyphGpuData, ToneMapUniform, ViewportHdrState,
+    VolumeSurfaceSliceGpuData,
+};
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
     CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, GpuMesh, GpuTexture,
     LightUniform, LightsUniform, MAX_SCENE_LIGHTS, MatcapId, MeshData, OverlayVertex,
     PendingTextureId, PointCloudGpuData, PolylineGpuData, ProjectedTetId, ScreenImageGpuData,
-    SingleLightUniform,
-    SkinWeights, TextureMemoryStats, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
-};
-pub(crate) use self::types::PendingUploadEntry;
-pub(crate) use self::types::ScatterViewportState;
-pub(crate) use self::types::{
-    AtlasBlitUniform,
-    BatchMeta, BloomUniform, ClipPlanesUniform, ContactShadowUniform, CurveMeshOutlineItem,
-    DofUniform, DualPipeline,
-    FrustumPlane, FrustumUniform, GaussianSplatDrawData, GlyphBaseMesh, GlyphGpuData,
-    GpuProjectedTetMesh, GridUniform, GroundPlaneUniform, ImageSliceGpuData, InstanceAabb,
-    InstanceData, LabelGpuData, LicAdvectUniform, LicObjectUniform, LicSurfaceGpuData,
-    ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform,
-    BackdropBlurState,
-    OverlayShapeGpuData, OverlayShapeTexBatch, OverlayShapeTexVertex,
-    OverlayShapeVertex, OverlayTextVertex,
-    OverlayUniform, PickInstance, ProjectedTetUniform, RawGeomOutlineBuffers, SHADOW_ATLAS_SIZE,
-    ScreenRectOutlineBuffers, ShadowAtlasUniform, SplatOutlineBuffers, SplatOutlineMaskUniform,
-    SpriteGpuData, SsaoUniform, StreamtubeGpuData, SubHighlightGpuData, TensorGlyphGpuData,
-    ToneMapUniform, ViewportHdrState, VolumeSurfaceSliceGpuData,
+    SingleLightUniform, SkinWeights, TextureMemoryStats, Vertex, ViewportGpuResources,
+    VolumeGpuData, VolumeId,
 };
 #[allow(deprecated)]
 pub use self::volume_mesh::{

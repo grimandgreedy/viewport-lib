@@ -34,6 +34,7 @@ impl ViewportRenderer {
             &self.ribbon_gpu_data,
             &self.volume_surface_slice_gpu_data,
             &self.sprite_gpu_data,
+            &self.mesh_instance_gpu_data,
             false
         );
         // Gaussian splats (alpha-blended, back-to-front sorted, no depth write).
@@ -339,6 +340,7 @@ impl ViewportRenderer {
                 &self.ribbon_gpu_data,
                 &self.volume_surface_slice_gpu_data,
                 &self.sprite_gpu_data,
+                &self.mesh_instance_gpu_data,
                 false
             );
             // TransparentVolumeMesh boundary wireframe overlay.
@@ -986,6 +988,7 @@ impl ViewportRenderer {
                     &self.ribbon_gpu_data,
                     &self.volume_surface_slice_gpu_data,
                     &self.sprite_gpu_data,
+                    &self.mesh_instance_gpu_data,
                     false
                 );
                 // TransparentVolumeMesh boundary wireframe overlay.
@@ -2023,6 +2026,7 @@ impl ViewportRenderer {
                 &self.ribbon_gpu_data,
                 &self.volume_surface_slice_gpu_data,
                 sprite_slice_for_inline,
+                &self.mesh_instance_gpu_data,
                 true
             );
 
