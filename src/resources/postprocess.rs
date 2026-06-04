@@ -1284,64 +1284,10 @@ impl ViewportGpuResources {
             self.skinned_oit_pipeline = Some(skinned_oit_pipeline);
         }
 
-        let oit_instanced_pipeline = if let Some(ref instance_bgl) = self.instance_bind_group_layout
-        {
-            let instanced_oit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("mesh_instanced_oit_shader"),
-                source: wgpu::ShaderSource::Wgsl(
-                    include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit.wgsl")).into(),
-                ),
-            });
-            let instanced_oit_layout =
-                device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("oit_instanced_pipeline_layout"),
-                    bind_group_layouts: &[&self.camera_bind_group_layout, instance_bgl],
-                    push_constant_ranges: &[],
-                });
-            Some(
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("oit_instanced_pipeline"),
-                    layout: Some(&instanced_oit_layout),
-                    vertex: wgpu::VertexState {
-                        module: &instanced_oit_shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[Vertex::buffer_layout()],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &instanced_oit_shader,
-                        entry_point: Some("fs_oit_main"),
-                        targets: &[
-                            Some(wgpu::ColorTargetState {
-                                format: wgpu::TextureFormat::Rgba16Float,
-                                blend: Some(accum_blend),
-                                write_mask: wgpu::ColorWrites::ALL,
-                            }),
-                            Some(wgpu::ColorTargetState {
-                                format: wgpu::TextureFormat::R8Unorm,
-                                blend: Some(reveal_blend),
-                                write_mask: wgpu::ColorWrites::RED,
-                            }),
-                        ],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        cull_mode: Some(wgpu::Face::Back),
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(oit_depth_stencil),
-                    multisample: wgpu::MultisampleState {
-                        count: 1,
-                        ..Default::default()
-                    },
-                    multiview: None,
-                    cache: None,
-                }),
-            )
-        } else {
-            None
-        };
+        // oit_instanced_pipeline is created lazily by ensure_oit_instanced_pipeline()
+        // once instance_bind_group_layout becomes available. Splitting it out avoids the
+        // empty-scene-on-frame-1 trap where this ensure_hdr_shared early-returns before
+        // the BGL exists and never re-runs.
 
         // HDR scene pipelines
         let hdr_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1722,9 +1668,6 @@ impl ViewportGpuResources {
         self.dof_pipeline = Some(dof_pipeline);
 
         self.oit_pipeline = Some(oit_pipeline);
-        if let Some(p) = oit_instanced_pipeline {
-            self.oit_instanced_pipeline = Some(p);
-        }
         self.oit_composite_pipeline = Some(oit_composite_pipeline);
         // HDR skinned variant: same shape as hdr_solid_pipeline but with the
         // skinned vertex stage from `mesh_skinned.wgsl` and a 3-group layout

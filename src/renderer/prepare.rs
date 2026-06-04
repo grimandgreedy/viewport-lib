@@ -980,6 +980,7 @@ impl ViewportRenderer {
         if self.use_instancing {
             resources.ensure_instanced_pipelines(device);
             resources.ensure_hdr_instanced_pipelines(device);
+            resources.ensure_oit_instanced_pipeline(device);
 
             // Generation-based cache: skip batch rebuild and GPU upload when nothing changed.
             // wireframe_mode removed from cache key : wireframe rendering

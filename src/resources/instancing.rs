@@ -357,6 +357,104 @@ impl ViewportGpuResources {
         self.hdr_transparent_instanced_pipeline = Some(trans);
     }
 
+    /// Ensure the OIT instanced pipeline exists. Called after
+    /// `ensure_instanced_pipelines` so that `instance_bind_group_layout` is
+    /// available. Idempotent: returns immediately if the pipeline already
+    /// exists or if the BGL hasn't been created yet.
+    pub(crate) fn ensure_oit_instanced_pipeline(&mut self, device: &wgpu::Device) {
+        if self.oit_instanced_pipeline.is_some() {
+            return;
+        }
+        let Some(ref instance_bgl) = self.instance_bind_group_layout else {
+            return;
+        };
+
+        let accum_blend = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        let reveal_blend = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::OneMinusSrc,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::OneMinusSrc,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        let oit_depth_stencil = wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth24PlusStencil8,
+            depth_write_enabled: false,
+            depth_compare: wgpu::CompareFunction::LessEqual,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        };
+
+        let instanced_oit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("mesh_instanced_oit_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit.wgsl")).into(),
+            ),
+        });
+        let instanced_oit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("oit_instanced_pipeline_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, instance_bgl],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("oit_instanced_pipeline"),
+            layout: Some(&instanced_oit_layout),
+            vertex: wgpu::VertexState {
+                module: &instanced_oit_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &instanced_oit_shader,
+                entry_point: Some("fs_oit_main"),
+                targets: &[
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: Some(accum_blend),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R8Unorm,
+                        blend: Some(reveal_blend),
+                        write_mask: wgpu::ColorWrites::RED,
+                    }),
+                ],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(oit_depth_stencil),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        self.oit_instanced_pipeline = Some(pipeline);
+    }
+
     /// Upload instance data to the storage buffer, resizing if needed.
     /// Returns the bind group for the instance storage buffer.
     pub(crate) fn upload_instance_data(
