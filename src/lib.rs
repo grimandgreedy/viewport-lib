@@ -78,21 +78,21 @@ pub mod camera;
 pub mod geometry;
 /// Gizmo, snap, selection, picking, and input.
 pub mod interaction;
+/// Plugin substrate: target descriptors, shared bind layouts, WGSL helpers,
+/// pipeline builders. See [`plugin_api`] for the published extension surface.
+pub mod plugin_api;
 /// On-surface vector quantities (intrinsic vectors, Whitney one-forms).
 pub mod quantities;
 /// Main viewport renderer wrapping all GPU resources.
 pub mod renderer;
-/// Scene runtime: per-frame orchestration, plugin system, and physics hooks.
-pub mod runtime;
 /// GPU resource container (pipelines, buffers, bind groups).
 pub mod resources;
+/// Scene runtime: per-frame orchestration, plugin system, and physics hooks.
+pub mod runtime;
 /// Scene graph, material, traits, and AABB.
 pub mod scene;
 /// Axes orientation indicator.
 pub mod widgets;
-/// Plugin substrate: target descriptors, shared bind layouts, WGSL helpers,
-/// pipeline builders. See [`plugin_api`] for the published extension surface.
-pub mod plugin_api;
 
 // ---------------------------------------------------------------------------
 // Module re-exports : preserve old `viewport_lib::foo::Bar` paths.
@@ -110,10 +110,10 @@ pub use interaction::snap;
 pub use scene::aabb;
 pub use scene::material;
 pub use scene::scatter_volume;
-pub use scene::traits;
 pub use scene::scatter_volume::{
     ColourSource, DensityRemap, Emission, EmissionCurve, NoiseDriver, ScatterShape, ScatterVolume,
 };
+pub use scene::traits;
 pub use widgets::axes_indicator;
 
 // ---------------------------------------------------------------------------
@@ -131,10 +131,12 @@ pub use camera::view_preset::ViewPreset;
 
 pub use scene::aabb::Aabb;
 pub use scene::material::{
-    ItemSettings, BackfacePattern, BackfacePolicy, Material, ParamVis, ParamVisMode,
-    PatternConfig, ShadingModel,
+    BackfacePattern, BackfacePolicy, ItemSettings, Material, ParamVis, ParamVisMode, PatternConfig,
+    ShadingModel,
 };
-pub use scene::scene::{DecalHandle, Group, GroupId, Layer, LayerId, LiveDecal, Scene, SceneNode, SceneStats};
+pub use scene::scene::{
+    DecalHandle, Group, GroupId, Layer, LayerId, LiveDecal, Scene, SceneNode, SceneStats,
+};
 pub use scene::traits::{RenderMode, ViewportObject};
 
 pub use geometry::bvh::PickAccelerator;
@@ -193,28 +195,26 @@ pub use interaction::sub_object::{
 
 pub use widgets::axes_indicator::AxisView;
 
+pub use renderer::ShadowDebugStats;
 pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::{FrameStats, PerformancePolicy, QualityPreset, RuntimeMode};
-pub use renderer::ShadowDebugStats;
 pub use renderer::{
-    AtlasViewerCorner,
-    CameraFrame, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
-    CylindricalFacing, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection,
-    DebugOutputMode, DebugQuantity, DebugVis,
-    EffectsFrame, EnvironmentMap, FilterMode, FrameData, GaussianSplatData, GaussianSplatId,
-    GaussianSplatItem, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode, ImageAnchor,
-    ImageSliceItem, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
-    LightingSettings, LoadingBarAnchor, LoadingBarItem, OwnedPath, PassPath, PassView, OverlayFrame, OverlayImageItem,
-    OverlayAnimation, OverlayFill, OverlayRectItem, OverlayShape, OverlayShapeItem,
-    OverlayTextureId, BorderMode, LineCap, PickId, TriangleDirection,
+    AtlasViewerCorner, BorderMode, CameraFrame, ClipObject, ClipShape, ComputeFilterItem,
+    ComputeFilterKind, CylindricalFacing, DebugOutputMode, DebugQuantity, DebugVis, DecalAnimation,
+    DecalBlendMode, DecalItem, DecalProjection, EffectsFrame, EnvironmentMap, FilterMode,
+    FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType,
+    GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem, InteractionFrame, LabelAnchor,
+    LabelItem, LicOverlay, LightKind, LightSource, LightingSettings, LineCap, LoadingBarAnchor,
+    LoadingBarItem, OverlayAnimation, OverlayFill, OverlayFrame, OverlayImageItem, OverlayRectItem,
+    OverlayShape, OverlayShapeItem, OverlayTextureId, OwnedPath, PassPath, PassView, PickId,
     PickRectResult, PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings,
     RenderCamera, RibbonItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
-    LicOverlay, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter,
-    SliceAxis, SpriteItem, SpriteSizeMode, StreamtubeItem, SurfaceLICConfig,
-    ScatterQuality, ScatterSettings, ScatterVolumeItem,
-    SurfaceSubmission, TensorGlyphItem, ToneMapping, TransparentVolumeMeshItem, TubeItem,
-    ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer, VolumeItem, VolumeMeshItem,
-    VolumeSurfaceSliceItem, aabb_wireframe_polyline, sphere_wireframe_polyline,
+    ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
+    ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpriteBlend, SpriteItem, SpriteSizeMode,
+    StreamtubeItem, SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, ToneMapping,
+    TransparentVolumeMeshItem, TriangleDirection, TubeItem, ViewportEffects, ViewportFrame,
+    ViewportId, ViewportRenderer, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
+    aabb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 pub use quantities::{
@@ -228,16 +228,14 @@ pub use resources::colourmap_data::{
 };
 pub use resources::mesh_store::MeshId;
 pub use resources::sparse_volume::SparseVolumeGridData;
-pub use resources::volume_mesh::{
-    CELL_SENTINEL, VolumeMeshData, extract_clipped_volume_faces,
-};
+pub use resources::volume_mesh::{CELL_SENTINEL, VolumeMeshData, extract_clipped_volume_faces};
 pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
-    CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, ComputeFilterResult, FontError,
-    FontHandle, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode,
-    ImplicitPrimitive, LightUniform, LightsUniform, MatcapId, MeshData, PendingTextureId,
-    ProjectedTetId, SingleLightUniform, SkinWeights, TextureMemoryStats, ViewportGpuResources,
-    VolumeGpuId, VolumeId, lerp_attributes,
+    CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, ComputeFilterResult,
+    FontError, FontHandle, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob,
+    ImplicitBlendMode, ImplicitPrimitive, LightUniform, LightsUniform, MatcapId, MeshData,
+    PendingTextureId, ProjectedTetId, SingleLightUniform, SkinWeights, TextureMemoryStats,
+    ViewportGpuResources, VolumeGpuId, VolumeId, lerp_attributes,
 };
 
 pub use runtime::{
@@ -247,6 +245,7 @@ pub use runtime::{
     NodeTransformOp, PhysicsBody, PhysicsLitePlugin, Pose, RuntimeFrameContext, RuntimeOutput,
     RuntimePhase, RuntimePlugin, RuntimeStepContext, Sampler, SceneRuntimeMode, SelectionOp,
     SelectionSystem, SimulationStepContext, Skeleton, SkeletonPlugin, SkinnedActor,
-    SkinnedActorPart, SkinnedActorPlugin, SkinnedMeshUpdate, SkinnedPoseUpdate, SkinningPath, Track, TrackValue, TrackValues,
-    TransformSnapshot, TransformSnapshotTable, TransformWriteback, ViewportRuntime, apply_skin,
+    SkinnedActorPart, SkinnedActorPlugin, SkinnedMeshUpdate, SkinnedPoseUpdate, SkinningPath,
+    Track, TrackValue, TrackValues, TransformSnapshot, TransformSnapshotTable, TransformWriteback,
+    ViewportRuntime, apply_skin,
 };

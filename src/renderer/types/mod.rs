@@ -659,9 +659,15 @@ macro_rules! emit_scivis_draw_calls {
             render_pass.set_bind_group(0, camera_bg, &[]);
             for glyph in $glyph_gpu_data.iter() {
                 let pipeline = if glyph.wireframe {
-                    resources.glyph_wireframe_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                    resources
+                        .glyph_wireframe_pipeline
+                        .as_ref()
+                        .map(|d| d.for_format(_is_hdr))
                 } else {
-                    resources.glyph_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                    resources
+                        .glyph_pipeline
+                        .as_ref()
+                        .map(|d| d.for_format(_is_hdr))
                 };
                 if let Some(pipeline) = pipeline {
                     render_pass.set_pipeline(pipeline);
@@ -673,13 +679,21 @@ macro_rules! emit_scivis_draw_calls {
                             glyph.mesh_edge_index_buffer.slice(..),
                             wgpu::IndexFormat::Uint32,
                         );
-                        render_pass.draw_indexed(0..glyph.mesh_edge_index_count, 0, 0..glyph.instance_count);
+                        render_pass.draw_indexed(
+                            0..glyph.mesh_edge_index_count,
+                            0,
+                            0..glyph.instance_count,
+                        );
                     } else {
                         render_pass.set_index_buffer(
                             glyph.mesh_index_buffer.slice(..),
                             wgpu::IndexFormat::Uint32,
                         );
-                        render_pass.draw_indexed(0..glyph.mesh_index_count, 0, 0..glyph.instance_count);
+                        render_pass.draw_indexed(
+                            0..glyph.mesh_index_count,
+                            0,
+                            0..glyph.instance_count,
+                        );
                     }
                 }
             }
@@ -697,7 +711,10 @@ macro_rules! emit_scivis_draw_calls {
                 }
                 if pl.wireframe {
                     if let (Some(wf_pipeline), Some(wf_bg)) = (
-                        resources.polyline_wireframe_pipeline.as_ref().map(|d| d.for_format(_is_hdr)),
+                        resources
+                            .polyline_wireframe_pipeline
+                            .as_ref()
+                            .map(|d| d.for_format(_is_hdr)),
                         pl.wireframe_bind_group.as_ref(),
                     ) {
                         render_pass.set_pipeline(wf_pipeline);
@@ -754,9 +771,15 @@ macro_rules! emit_scivis_draw_calls {
                     continue;
                 }
                 let pipeline = if tube.wireframe {
-                    resources.streamtube_wireframe_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                    resources
+                        .streamtube_wireframe_pipeline
+                        .as_ref()
+                        .map(|d| d.for_format(_is_hdr))
                 } else {
-                    resources.streamtube_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                    resources
+                        .streamtube_pipeline
+                        .as_ref()
+                        .map(|d| d.for_format(_is_hdr))
                 };
                 if let Some(pipeline) = pipeline {
                     render_pass.set_pipeline(pipeline);
@@ -787,9 +810,15 @@ macro_rules! emit_scivis_draw_calls {
                     continue;
                 }
                 let pipeline = if tube.wireframe {
-                    resources.streamtube_wireframe_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                    resources
+                        .streamtube_wireframe_pipeline
+                        .as_ref()
+                        .map(|d| d.for_format(_is_hdr))
                 } else {
-                    resources.streamtube_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                    resources
+                        .streamtube_pipeline
+                        .as_ref()
+                        .map(|d| d.for_format(_is_hdr))
                 };
                 if let Some(pipeline) = pipeline {
                     render_pass.set_pipeline(pipeline);
@@ -829,9 +858,15 @@ macro_rules! emit_scivis_draw_calls {
             render_pass.set_bind_group(0, camera_bg, &[]);
             for tg in $tensor_glyph_gpu_data.iter() {
                 let pipeline = if tg.wireframe {
-                    resources.tensor_glyph_wireframe_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                    resources
+                        .tensor_glyph_wireframe_pipeline
+                        .as_ref()
+                        .map(|d| d.for_format(_is_hdr))
                 } else {
-                    resources.tensor_glyph_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                    resources
+                        .tensor_glyph_pipeline
+                        .as_ref()
+                        .map(|d| d.for_format(_is_hdr))
                 };
                 if let Some(pipeline) = pipeline {
                     render_pass.set_pipeline(pipeline);
@@ -843,7 +878,11 @@ macro_rules! emit_scivis_draw_calls {
                             tg.mesh_edge_index_buffer.slice(..),
                             wgpu::IndexFormat::Uint32,
                         );
-                        render_pass.draw_indexed(0..tg.mesh_edge_index_count, 0, 0..tg.instance_count);
+                        render_pass.draw_indexed(
+                            0..tg.mesh_edge_index_count,
+                            0,
+                            0..tg.instance_count,
+                        );
                     } else {
                         render_pass.set_index_buffer(
                             tg.mesh_index_buffer.slice(..),
@@ -882,9 +921,15 @@ macro_rules! emit_scivis_draw_calls {
                     continue;
                 }
                 let pipeline = if ribbon.wireframe {
-                    resources.ribbon_wireframe_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                    resources
+                        .ribbon_wireframe_pipeline
+                        .as_ref()
+                        .map(|d| d.for_format(_is_hdr))
                 } else {
-                    resources.ribbon_pipeline.as_ref().map(|d| d.for_format(_is_hdr))
+                    resources
+                        .ribbon_pipeline
+                        .as_ref()
+                        .map(|d| d.for_format(_is_hdr))
                 };
                 if let Some(pipeline) = pipeline {
                     render_pass.set_pipeline(pipeline);
@@ -907,30 +952,54 @@ macro_rules! emit_scivis_draw_calls {
             }
         }
 
-        // Sprite billboard pass: depth-write items first, then transparent items.
+        // Sprite billboard pass: route by (depth_write, blend mode).
+        // Depth-write items first (opaque-style markers), then the no-depth-write
+        // batches (transparent / additive / premultiplied particle effects).
         if !$sprite_gpu_data.is_empty() {
-            // Depth-write batch (opaque-style markers).
-            if let Some(ref dual) = resources.sprite_pipeline_depth_write {
+            let buckets: [(
+                bool,
+                crate::renderer::SpriteBlend,
+                Option<&crate::resources::DualPipeline>,
+            ); 6] = [
+                (
+                    true,
+                    crate::renderer::SpriteBlend::AlphaBlend,
+                    resources.sprite_pipeline_depth_write.as_ref(),
+                ),
+                (
+                    true,
+                    crate::renderer::SpriteBlend::Additive,
+                    resources.sprite_pipeline_additive_depth_write.as_ref(),
+                ),
+                (
+                    true,
+                    crate::renderer::SpriteBlend::Premultiplied,
+                    resources.sprite_pipeline_premultiplied_depth_write.as_ref(),
+                ),
+                (
+                    false,
+                    crate::renderer::SpriteBlend::AlphaBlend,
+                    resources.sprite_pipeline.as_ref(),
+                ),
+                (
+                    false,
+                    crate::renderer::SpriteBlend::Additive,
+                    resources.sprite_pipeline_additive.as_ref(),
+                ),
+                (
+                    false,
+                    crate::renderer::SpriteBlend::Premultiplied,
+                    resources.sprite_pipeline_premultiplied.as_ref(),
+                ),
+            ];
+            for (depth_write, blend, pipeline) in buckets {
+                let Some(dual) = pipeline else { continue };
                 let mut set = false;
                 for sprite in $sprite_gpu_data.iter() {
-                    if !sprite.depth_write || sprite.wireframe {
-                        continue;
-                    }
-                    if !set {
-                        render_pass.set_pipeline(dual.for_format(_is_hdr));
-                        render_pass.set_bind_group(0, camera_bg, &[]);
-                        set = true;
-                    }
-                    render_pass.set_bind_group(1, &sprite.bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
-                    render_pass.draw(0..6, 0..sprite.sprite_count);
-                }
-            }
-            // No-depth-write batch (transparent effects, default).
-            if let Some(ref dual) = resources.sprite_pipeline {
-                let mut set = false;
-                for sprite in $sprite_gpu_data.iter() {
-                    if sprite.depth_write || sprite.wireframe {
+                    if sprite.wireframe
+                        || sprite.depth_write != depth_write
+                        || sprite.blend != blend
+                    {
                         continue;
                     }
                     if !set {

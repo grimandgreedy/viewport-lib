@@ -1117,6 +1117,24 @@ pub enum SpriteSizeMode {
     WorldSpace,
 }
 
+/// GPU blend state used when drawing a sprite batch.
+///
+/// `AlphaBlend` is the default and matches normal transparent sprites.
+/// `Additive` accumulates colour into the framebuffer without subtracting
+/// background, which is the usual choice for sparks, fire, and other
+/// emissive particles. `Premultiplied` is for sources whose RGB has already
+/// been multiplied by alpha, typically when sampling a premultiplied texture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpriteBlend {
+    /// Standard transparency: `src.rgb * src.a + dst.rgb * (1 - src.a)`.
+    #[default]
+    AlphaBlend,
+    /// Additive: `src.rgb + dst.rgb`. Alpha is unused for the colour result.
+    Additive,
+    /// Premultiplied alpha: `src.rgb + dst.rgb * (1 - src.a)`.
+    Premultiplied,
+}
+
 /// A batch of instanced billboard sprites rendered as camera-facing textured quads.
 ///
 /// Each instance is one billboard at a world-space position. All instances in the batch share
@@ -1168,6 +1186,15 @@ pub struct SpriteItem {
     /// each other based on submission order. Set `true` for opaque world-space markers
     /// that should participate in depth testing normally.
     pub depth_write: bool,
+    /// GPU blend state for this batch. Default: [`SpriteBlend::AlphaBlend`].
+    pub blend: SpriteBlend,
+    /// If `Some(d)`, fades the sprite's alpha as it approaches opaque scene geometry
+    /// behind it, over a distance of `d` world-space units. `None` disables soft fade.
+    ///
+    /// Useful for transparent particles like smoke or fog to avoid hard intersection
+    /// lines against walls and ground. Requires a sampleable scene depth resolve;
+    /// see crate docs for current support status.
+    pub soft_particle_distance: Option<f32>,
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
 }
@@ -1186,6 +1213,8 @@ impl Default for SpriteItem {
             size_mode: SpriteSizeMode::ScreenSpace,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             depth_write: false,
+            blend: SpriteBlend::AlphaBlend,
+            soft_particle_distance: None,
             settings: ItemSettings::default(),
         }
     }

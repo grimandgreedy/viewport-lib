@@ -62,7 +62,9 @@ impl ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sprite_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/sprite.wgsl")).into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/sprite.wgsl")).into(),
+            ),
         });
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -85,61 +87,129 @@ impl ViewportGpuResources {
         }];
 
         let sample_count = self.sample_count;
-        let make_sprite = |fmt: wgpu::TextureFormat, depth_write: bool| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(if depth_write {
-                    "sprite_pipeline_depth_write"
-                } else {
-                    "sprite_pipeline"
-                }),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &vertex_buffers,
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: depth_write,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            })
+        let additive_blend = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
         };
+        let premultiplied_blend = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        let make_sprite =
+            |fmt: wgpu::TextureFormat, depth_write: bool, blend: wgpu::BlendState, label: &str| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &vertex_buffers,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: fmt,
+                            blend: Some(blend),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: wgpu::TextureFormat::Depth24PlusStencil8,
+                        depth_write_enabled: depth_write,
+                        depth_compare: wgpu::CompareFunction::Less,
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
+                    multisample: wgpu::MultisampleState {
+                        count: sample_count,
+                        ..Default::default()
+                    },
+                    multiview: None,
+                    cache: None,
+                })
+            };
 
         let ldr = self.target_format;
         let hdr = wgpu::TextureFormat::Rgba16Float;
+        let alpha = wgpu::BlendState::ALPHA_BLENDING;
         self.sprite_bgl = Some(bgl);
         self.sprite_pipeline = Some(DualPipeline {
-            ldr: make_sprite(ldr, false),
-            hdr: make_sprite(hdr, false),
+            ldr: make_sprite(ldr, false, alpha, "sprite_pipeline"),
+            hdr: make_sprite(hdr, false, alpha, "sprite_pipeline"),
         });
         self.sprite_pipeline_depth_write = Some(DualPipeline {
-            ldr: make_sprite(ldr, true),
-            hdr: make_sprite(hdr, true),
+            ldr: make_sprite(ldr, true, alpha, "sprite_pipeline_depth_write"),
+            hdr: make_sprite(hdr, true, alpha, "sprite_pipeline_depth_write"),
+        });
+        self.sprite_pipeline_additive = Some(DualPipeline {
+            ldr: make_sprite(ldr, false, additive_blend, "sprite_pipeline_additive"),
+            hdr: make_sprite(hdr, false, additive_blend, "sprite_pipeline_additive"),
+        });
+        self.sprite_pipeline_additive_depth_write = Some(DualPipeline {
+            ldr: make_sprite(
+                ldr,
+                true,
+                additive_blend,
+                "sprite_pipeline_additive_depth_write",
+            ),
+            hdr: make_sprite(
+                hdr,
+                true,
+                additive_blend,
+                "sprite_pipeline_additive_depth_write",
+            ),
+        });
+        self.sprite_pipeline_premultiplied = Some(DualPipeline {
+            ldr: make_sprite(
+                ldr,
+                false,
+                premultiplied_blend,
+                "sprite_pipeline_premultiplied",
+            ),
+            hdr: make_sprite(
+                hdr,
+                false,
+                premultiplied_blend,
+                "sprite_pipeline_premultiplied",
+            ),
+        });
+        self.sprite_pipeline_premultiplied_depth_write = Some(DualPipeline {
+            ldr: make_sprite(
+                ldr,
+                true,
+                premultiplied_blend,
+                "sprite_pipeline_premultiplied_depth_write",
+            ),
+            hdr: make_sprite(
+                hdr,
+                true,
+                premultiplied_blend,
+                "sprite_pipeline_premultiplied_depth_write",
+            ),
         });
     }
 
@@ -290,6 +360,7 @@ impl ViewportGpuResources {
             sprite_count: count,
             bind_group,
             depth_write: item.depth_write,
+            blend: item.blend,
             wireframe: false,
             _uniform_buf: uniform_buf,
             _instance_buf: instance_buf,

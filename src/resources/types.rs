@@ -484,52 +484,52 @@ pub type LightUniform = LightsUniform;
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ObjectUniform {
-    pub(crate) model: [[f32; 4]; 4],     //  64 bytes, offset   0
-    pub(crate) colour: [f32; 4],          //  16 bytes, offset  64
-    pub(crate) selected: u32,            //   4 bytes, offset  80
-    pub(crate) wireframe: u32,           //   4 bytes, offset  84
-    pub(crate) ambient: f32,             //   4 bytes, offset  88
-    pub(crate) diffuse: f32,             //   4 bytes, offset  92
-    pub(crate) specular: f32,            //   4 bytes, offset  96
-    pub(crate) shininess: f32,           //   4 bytes, offset 100
-    pub(crate) has_texture: u32,         //   4 bytes, offset 104
-    pub(crate) use_pbr: u32,             //   4 bytes, offset 108
-    pub(crate) metallic: f32,            //   4 bytes, offset 112
-    pub(crate) roughness: f32,           //   4 bytes, offset 116
-    pub(crate) has_normal_map: u32,      //   4 bytes, offset 120
-    pub(crate) has_ao_map: u32,          //   4 bytes, offset 124
-    pub(crate) has_attribute: u32,       //   4 bytes, offset 128
-    pub(crate) scalar_min: f32,          //   4 bytes, offset 132
-    pub(crate) scalar_max: f32,          //   4 bytes, offset 136
+    pub(crate) model: [[f32; 4]; 4], //  64 bytes, offset   0
+    pub(crate) colour: [f32; 4],     //  16 bytes, offset  64
+    pub(crate) selected: u32,        //   4 bytes, offset  80
+    pub(crate) wireframe: u32,       //   4 bytes, offset  84
+    pub(crate) ambient: f32,         //   4 bytes, offset  88
+    pub(crate) diffuse: f32,         //   4 bytes, offset  92
+    pub(crate) specular: f32,        //   4 bytes, offset  96
+    pub(crate) shininess: f32,       //   4 bytes, offset 100
+    pub(crate) has_texture: u32,     //   4 bytes, offset 104
+    pub(crate) use_pbr: u32,         //   4 bytes, offset 108
+    pub(crate) metallic: f32,        //   4 bytes, offset 112
+    pub(crate) roughness: f32,       //   4 bytes, offset 116
+    pub(crate) has_normal_map: u32,  //   4 bytes, offset 120
+    pub(crate) has_ao_map: u32,      //   4 bytes, offset 124
+    pub(crate) has_attribute: u32,   //   4 bytes, offset 128
+    pub(crate) scalar_min: f32,      //   4 bytes, offset 132
+    pub(crate) scalar_max: f32,      //   4 bytes, offset 136
     /// 1 = sample the shadow atlas, 0 = treat the fragment as unshadowed.
     /// Wired from `ItemSettings.receive_shadows`.
-    pub(crate) receive_shadows: u32,     //   4 bytes, offset 140
-    pub(crate) nan_colour: [f32; 4],      //  16 bytes, offset 144
-    pub(crate) use_nan_colour: u32,       //   4 bytes, offset 160
-    pub(crate) use_matcap: u32,          //   4 bytes, offset 164
-    pub(crate) matcap_blendable: u32,    //   4 bytes, offset 168
-    pub(crate) unlit: u32,               //   4 bytes, offset 172
-    pub(crate) use_face_colour: u32,      //   4 bytes, offset 176
-    pub(crate) uv_vis_mode: u32,         //   4 bytes, offset 180
-    pub(crate) uv_vis_scale: f32,        //   4 bytes, offset 184
+    pub(crate) receive_shadows: u32, //   4 bytes, offset 140
+    pub(crate) nan_colour: [f32; 4], //  16 bytes, offset 144
+    pub(crate) use_nan_colour: u32,  //   4 bytes, offset 160
+    pub(crate) use_matcap: u32,      //   4 bytes, offset 164
+    pub(crate) matcap_blendable: u32, //   4 bytes, offset 168
+    pub(crate) unlit: u32,           //   4 bytes, offset 172
+    pub(crate) use_face_colour: u32, //   4 bytes, offset 176
+    pub(crate) uv_vis_mode: u32,     //   4 bytes, offset 180
+    pub(crate) uv_vis_scale: f32,    //   4 bytes, offset 184
     pub(crate) backface_policy: u32, //   4 bytes, offset 188  (0=Cull 1=Identical 2=DifferentColour)
     pub(crate) backface_colour: [f32; 4], //  16 bytes, offset 192
-    pub(crate) has_warp: u32,                    //   4 bytes, offset 208
-    pub(crate) warp_scale: f32,                  //   4 bytes, offset 212
+    pub(crate) has_warp: u32,        //   4 bytes, offset 208
+    pub(crate) warp_scale: f32,      //   4 bytes, offset 212
     /// 1 when a per-vertex position storage buffer is bound at group 1 binding 13.
     /// Wired from `GpuMesh::position_override_buffer.is_some()`.
-    pub(crate) has_position_override: u32,       //   4 bytes, offset 216
+    pub(crate) has_position_override: u32, //   4 bytes, offset 216
     /// 1 when a per-vertex normal storage buffer is bound at group 1 binding 14.
-    pub(crate) has_normal_override: u32,         //   4 bytes, offset 220
-    pub(crate) emissive: [f32; 3],               //  12 bytes, offset 224
+    pub(crate) has_normal_override: u32, //   4 bytes, offset 220
+    pub(crate) emissive: [f32; 3],   //  12 bytes, offset 224
     /// 1 = recover the shading normal from screen-space derivatives of
     /// `world_pos` (`ShadingModel::Flat`); 0 = use the interpolated vertex
     /// normal (or TBN normal map when bound).
-    pub(crate) use_flat: u32,                    //   4 bytes, offset 236
-    pub(crate) alpha_mode: u32,                  //   4 bytes, offset 240  (0=Opaque, 1=Mask, 2=Blend)
-    pub(crate) alpha_cutoff: f32,                //   4 bytes, offset 244
-    pub(crate) has_metallic_roughness_tex: u32,  //   4 bytes, offset 248
-    pub(crate) has_emissive_tex: u32,            //   4 bytes, offset 252
+    pub(crate) use_flat: u32, //   4 bytes, offset 236
+    pub(crate) alpha_mode: u32,      //   4 bytes, offset 240  (0=Opaque, 1=Mask, 2=Blend)
+    pub(crate) alpha_cutoff: f32,    //   4 bytes, offset 244
+    pub(crate) has_metallic_roughness_tex: u32, //   4 bytes, offset 248
+    pub(crate) has_emissive_tex: u32, //   4 bytes, offset 252
 }
 
 const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 256);
@@ -541,7 +541,7 @@ const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 256);
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct InstanceData {
     pub(crate) model: [[f32; 4]; 4], //  64 bytes, offset   0
-    pub(crate) colour: [f32; 4],      //  16 bytes, offset  64
+    pub(crate) colour: [f32; 4],     //  16 bytes, offset  64
     pub(crate) selected: u32,        //   4 bytes, offset  80
     pub(crate) wireframe: u32,       //   4 bytes, offset  84
     pub(crate) ambient: f32,         //   4 bytes, offset  88
@@ -559,7 +559,7 @@ pub(crate) struct InstanceData {
     pub(crate) receive_shadows: u32, //   4 bytes, offset 132
     /// 1 = recover the shading normal from screen-space derivatives of
     /// `world_pos` (`ShadingModel::Flat`).
-    pub(crate) use_flat: u32,        //   4 bytes, offset 136
+    pub(crate) use_flat: u32, //   4 bytes, offset 136
     pub(crate) _pad_inst: u32,       //   4 bytes, offset 140
 }
 
@@ -904,7 +904,7 @@ unsafe impl bytemuck::Pod for ClipVolumeUniform {}
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct OutlineUniform {
     pub(crate) model: [[f32; 4]; 4], //  64 bytes
-    pub(crate) colour: [f32; 4],      //  16 bytes
+    pub(crate) colour: [f32; 4],     //  16 bytes
     pub(crate) pixel_offset: f32,    //   4 bytes
     pub(crate) _pad: [f32; 3],       //  12 bytes
 }
@@ -986,10 +986,10 @@ pub(crate) struct ScreenRectOutlineBuffers {
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct OutlineEdgeUniform {
     pub(crate) colour: [f32; 4], // 16 bytes
-    pub(crate) radius: f32,     //  4 bytes
-    pub(crate) viewport_w: f32, //  4 bytes
-    pub(crate) viewport_h: f32, //  4 bytes
-    pub(crate) _pad: f32,       //  4 bytes
+    pub(crate) radius: f32,      //  4 bytes
+    pub(crate) viewport_w: f32,  //  4 bytes
+    pub(crate) viewport_h: f32,  //  4 bytes
+    pub(crate) _pad: f32,        //  4 bytes
 }
 
 /// Per-frame uniform for the sub-object highlight pass (48 bytes).
@@ -1000,11 +1000,11 @@ pub(crate) struct OutlineEdgeUniform {
 pub(crate) struct SubHighlightUniform {
     pub(crate) fill_colour: [f32; 4], // 16 bytes
     pub(crate) edge_colour: [f32; 4], // 16 bytes
-    pub(crate) edge_width: f32,      //  4 bytes (pixels)
-    pub(crate) vertex_size: f32,     //  4 bytes (pixels)
-    pub(crate) viewport_width: f32,  //  4 bytes
-    pub(crate) viewport_height: f32, //  4 bytes
-                                     // total 48 bytes — no padding required
+    pub(crate) edge_width: f32,       //  4 bytes (pixels)
+    pub(crate) vertex_size: f32,      //  4 bytes (pixels)
+    pub(crate) viewport_width: f32,   //  4 bytes
+    pub(crate) viewport_height: f32,  //  4 bytes
+                                      // total 48 bytes — no padding required
 }
 
 /// GPU buffers for one frame of sub-object highlight rendering.
@@ -1531,8 +1531,8 @@ pub(crate) struct GroundPlaneUniform {
     pub cam_back: [f32; 4],       // offset  96, 16 bytes
     pub eye_pos: [f32; 3],        // offset 112, 12 bytes
     pub height: f32,              // offset 124,  4 bytes
-    pub colour: [f32; 4],          // offset 128, 16 bytes
-    pub shadow_colour: [f32; 4],   // offset 144, 16 bytes
+    pub colour: [f32; 4],         // offset 128, 16 bytes
+    pub shadow_colour: [f32; 4],  // offset 144, 16 bytes
     pub light_vp: [[f32; 4]; 4],  // offset 160, 64 bytes
     pub tan_half_fov: f32,        // offset 224,  4 bytes
     pub aspect: f32,              // offset 228,  4 bytes
@@ -1580,7 +1580,7 @@ pub(crate) struct GridUniform {
     pub colour_minor: [f32; 4], // offset 160, 16 bytes
     /// RGBA colour for major grid lines.
     pub colour_major: [f32; 4], // offset 176, 16 bytes
-                               // Total: 192 bytes
+                                // Total: 192 bytes
 }
 
 // ---------------------------------------------------------------------------
@@ -1655,7 +1655,9 @@ impl StagingBufferPool {
     }
 
     fn band_for(staging_size: u64) -> Option<usize> {
-        STAGING_BAND_SIZES.iter().position(|&cap| staging_size <= cap)
+        STAGING_BAND_SIZES
+            .iter()
+            .position(|&cap| staging_size <= cap)
     }
 
     /// Return a mapped, writable staging buffer large enough for `staging_size` bytes.
@@ -1868,6 +1870,8 @@ pub struct SpriteGpuData {
     pub(crate) bind_group: wgpu::BindGroup,
     /// Whether this batch was submitted with `depth_write: true`.
     pub(crate) depth_write: bool,
+    /// Blend mode requested by the host for this batch.
+    pub(crate) blend: crate::renderer::SpriteBlend,
     /// When true, skip the billboard draw; the wireframe overlay polyline is rendered instead.
     pub(crate) wireframe: bool,
     // Keep buffers alive for the lifetime of this struct.
@@ -2958,10 +2962,18 @@ pub struct ViewportGpuResources {
     pub(crate) gaussian_splat_store: GaussianSplatStore,
 
     // --- Sprite billboard pipelines (lazily created) ---
-    /// Sprite pipeline (depth_write_enabled: false). None until first sprite batch is submitted.
+    /// Sprite pipeline, alpha-blend, depth_write_enabled: false.
     pub(crate) sprite_pipeline: Option<DualPipeline>,
-    /// Sprite pipeline (depth_write_enabled: true). None until first sprite batch is submitted.
+    /// Sprite pipeline, alpha-blend, depth_write_enabled: true.
     pub(crate) sprite_pipeline_depth_write: Option<DualPipeline>,
+    /// Sprite pipeline, additive, depth_write_enabled: false.
+    pub(crate) sprite_pipeline_additive: Option<DualPipeline>,
+    /// Sprite pipeline, additive, depth_write_enabled: true.
+    pub(crate) sprite_pipeline_additive_depth_write: Option<DualPipeline>,
+    /// Sprite pipeline, premultiplied, depth_write_enabled: false.
+    pub(crate) sprite_pipeline_premultiplied: Option<DualPipeline>,
+    /// Sprite pipeline, premultiplied, depth_write_enabled: true.
+    pub(crate) sprite_pipeline_premultiplied_depth_write: Option<DualPipeline>,
     /// Bind group layout for sprite uniforms + texture + instance buffer (group 1).
     pub(crate) sprite_bgl: Option<wgpu::BindGroupLayout>,
     /// Sprite outline mask pipeline (R8Unorm, no texture sampling). None until first selected sprite.
@@ -3120,8 +3132,7 @@ pub struct ViewportGpuResources {
     pub(crate) scatter_frame_uniform_buffer: Option<wgpu::Buffer>,
     /// Cache of group 2 bind groups, keyed by `(lut_id, density_id)`. Built
     /// on demand each frame; invalidated when the source texture vec grows.
-    pub(crate) scatter_per_volume_tex_cache:
-        Vec<((usize, usize), wgpu::BindGroup)>,
+    pub(crate) scatter_per_volume_tex_cache: Vec<((usize, usize), wgpu::BindGroup)>,
     /// Bind group for group 3, rebuilt when opaque depth view changes.
     pub(crate) scatter_frame_bg: Option<wgpu::BindGroup>,
     /// Linear sampler used to read opaque depth in the scatter pass.

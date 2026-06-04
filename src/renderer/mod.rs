@@ -14,33 +14,30 @@ pub use picking::PickRectResult;
 mod prepare;
 mod render;
 pub mod shader_hashes;
+mod shadow_debug_stats;
 mod shadows;
 pub mod stats;
-mod shadow_debug_stats;
 pub use shadow_debug_stats::ShadowDebugStats;
 
 #[cfg(test)]
 mod hidden_tests;
 
 pub use self::types::{
-    AtlasViewerCorner,
-    CameraFrame, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
-    CylindricalFacing, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection,
-    DebugOutputMode, DebugQuantity, DebugVis,
-    EffectsFrame, EnvironmentMap, FilterMode, FrameData, GaussianSplatData, GaussianSplatId,
-    GaussianSplatItem, GlyphItem, GlyphType, GroundPlane, GroundPlaneMode, ImageAnchor,
-    ImageSliceItem, InteractionFrame, LabelAnchor, LabelItem, LightKind, LightSource,
-    LicOverlay, LightingSettings, LoadingBarAnchor, LoadingBarItem, OverlayFrame, OverlayImageItem,
-    OverlayAnimation, OverlayFill, OverlayRectItem, OverlayShape, OverlayShapeItem,
-    OverlayTextureId, BorderMode, LineCap, PickId, TriangleDirection,
-    PointCloudItem, PointRenderMode, PolylineItem, PostProcessSettings, RenderCamera, RibbonItem,
-    RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, SceneEffects, SceneFrame,
-    SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpriteItem,
-    SpriteSizeMode, StreamtubeItem, SurfaceLICConfig, SurfaceSubmission,
-    ScatterQuality, ScatterSettings, ScatterVolumeItem,
-    TensorGlyphItem, ToneMapping, TransparentVolumeMeshItem, TubeItem, ViewportEffects,
-    ViewportFrame, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, aabb_wireframe_polyline,
-    sphere_wireframe_polyline,
+    AtlasViewerCorner, BorderMode, CameraFrame, ClipObject, ClipShape, ComputeFilterItem,
+    ComputeFilterKind, CylindricalFacing, DebugOutputMode, DebugQuantity, DebugVis, DecalAnimation,
+    DecalBlendMode, DecalItem, DecalProjection, EffectsFrame, EnvironmentMap, FilterMode,
+    FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType,
+    GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem, InteractionFrame, LabelAnchor,
+    LabelItem, LicOverlay, LightKind, LightSource, LightingSettings, LineCap, LoadingBarAnchor,
+    LoadingBarItem, OverlayAnimation, OverlayFill, OverlayFrame, OverlayImageItem, OverlayRectItem,
+    OverlayShape, OverlayShapeItem, OverlayTextureId, PickId, PointCloudItem, PointRenderMode,
+    PolylineItem, PostProcessSettings, RenderCamera, RibbonItem, RulerItem, ScalarBarAnchor,
+    ScalarBarItem, ScalarBarOrientation, ScatterQuality, ScatterSettings, ScatterVolumeItem,
+    SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, SliceAxis,
+    SpriteBlend, SpriteItem, SpriteSizeMode, StreamtubeItem, SurfaceLICConfig, SurfaceSubmission,
+    TensorGlyphItem, ToneMapping, TransparentVolumeMeshItem, TriangleDirection, TubeItem,
+    ViewportEffects, ViewportFrame, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
+    aabb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -227,10 +224,8 @@ pub struct ViewportRenderer {
     /// [`ItemTypePlugin::type_name`](crate::plugin_api::ItemTypePlugin::type_name).
     /// `init_gpu` is invoked once on registration; per-frame `prepare` and
     /// `paint` fire when a matching collection is on `SceneFrame`.
-    item_type_plugins: std::collections::HashMap<
-        &'static str,
-        Box<dyn crate::plugin_api::ItemTypePlugin>,
-    >,
+    item_type_plugins:
+        std::collections::HashMap<&'static str, Box<dyn crate::plugin_api::ItemTypePlugin>>,
     /// Monotonic frame counter passed to plugin contexts.
     plugin_frame_index: u64,
     /// Performance counters from the last frame.
@@ -1050,8 +1045,8 @@ impl ViewportRenderer {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let mut encoder = device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let mut encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         encoder.copy_buffer_to_buffer(buf, byte_offset, &staging, 0, 16);
         queue.submit(Some(encoder.finish()));
         let slice = staging.slice(..);
