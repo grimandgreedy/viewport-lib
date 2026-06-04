@@ -1,9 +1,9 @@
 //! Runtime output types: transform ops, selection ops, contact events, and generic events.
 
+use super::events::RuntimeEventBus;
 use crate::camera::camera::{Camera, CameraTarget};
 use crate::interaction::selection::{NodeId, Selection};
 use crate::resources::mesh_store::MeshId;
-use super::events::RuntimeEventBus;
 
 /// Write buffer for transform changes produced by plugins.
 ///
@@ -20,9 +20,31 @@ impl TransformWriteback {
     ///
     /// For physics-driven nodes with no parent, local space equals world space.
     /// If the same node is written more than once, all ops are kept and applied
-    /// in order (last write wins after scene propagation).
+    /// in order (last write wins after scene propagation). The full transform —
+    /// including scale embedded in the `Affine3A` — replaces the node's current
+    /// local transform.
     pub fn set(&mut self, id: NodeId, transform: glam::Affine3A) {
-        self.ops.push(NodeTransformOp { id, transform });
+        self.ops.push(NodeTransformOp {
+            id,
+            transform,
+            preserve_scale: false,
+        });
+    }
+
+    /// Record a transform that should preserve the node's existing scale.
+    ///
+    /// The rotation and translation from `transform` are applied; the scale
+    /// component (if any) is ignored and the scene node's current scale is
+    /// kept. Use this for physics or animation writebacks: those systems don't
+    /// model scale, so they shouldn't clobber a scale the user set
+    /// independently (e.g. for visual stretching, ellipsoid bones, or
+    /// art-time unit conversion).
+    pub fn set_preserve_scale(&mut self, id: NodeId, transform: glam::Affine3A) {
+        self.ops.push(NodeTransformOp {
+            id,
+            transform,
+            preserve_scale: true,
+        });
     }
 
     /// Consume the buffer and return all recorded ops.
@@ -40,6 +62,11 @@ pub struct NodeTransformOp {
     /// New local-space transform for the node. For physics-driven root nodes,
     /// this is the world-space transform.
     pub transform: glam::Affine3A,
+    /// When `true`, the runtime flush replaces only the rotation and
+    /// translation, keeping the node's existing scale. Set via
+    /// [`TransformWriteback::set_preserve_scale`].
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub preserve_scale: bool,
 }
 
 /// A change to the selection state.
@@ -254,7 +281,8 @@ impl RuntimeOutput {
                     camera.center = camera.center.lerp(target.center, w);
                     camera.distance = camera.distance + (target.distance - camera.distance) * w;
                     camera.distance = camera.distance.max(0.001);
-                    camera.orientation = camera.orientation
+                    camera.orientation = camera
+                        .orientation
                         .slerp(target.orientation.normalize(), w)
                         .normalize();
                 }

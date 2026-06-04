@@ -48,8 +48,8 @@ impl Modifiers {
     };
 }
 
-/// Keyboard key codes : subset covering keys used in the default bindings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Keyboard key codes
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum KeyCode {
     /// Letter key A.

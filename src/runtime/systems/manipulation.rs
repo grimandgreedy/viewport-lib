@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::interaction::gizmo::{self, Gizmo, GizmoAxis, GizmoMode};
 use crate::interaction::manipulation::GizmoInfo;
 use crate::interaction::manipulation::{
-    ManipulationContext, ManipulationController, ManipResult, TransformDelta,
+    ManipResult, ManipulationContext, ManipulationController, TransformDelta,
 };
 use crate::interaction::selection::{NodeId, Selection};
 use crate::runtime::context::RuntimeFrameContext;
@@ -162,7 +162,7 @@ impl ManipulationSystem {
                 self.save_snapshots(scene, selection);
             }
             ManipResult::Cancel | ManipResult::ConstraintChanged => {
-                self.restore_snapshots(writeback);
+                self.restore_snapshots(scene, writeback);
             }
             ManipResult::None => {
                 if !self.controller.is_active() {
@@ -176,14 +176,21 @@ impl ManipulationSystem {
         self.transforms_snapshot.clear();
         for &id in selection.iter() {
             if let Some(node) = scene.node(id) {
-                self.transforms_snapshot.insert(id, node.local_transform());
+                // Snapshot the WORLD transform: apply_delta operates in
+                // world space (the gizmo pivot is a world point) and
+                // converts the result back to local for writeback. Storing
+                // world here keeps that math consistent across drag and
+                // cancel.
+                self.transforms_snapshot.insert(id, node.world_transform());
             }
         }
     }
 
-    fn restore_snapshots(&self, writeback: &mut TransformWriteback) {
-        for (&id, &snap) in &self.transforms_snapshot {
-            writeback.set(id, glam::Affine3A::from_mat4(snap));
+    fn restore_snapshots(&self, scene: &Scene, writeback: &mut TransformWriteback) {
+        for (&id, &world_snap) in &self.transforms_snapshot {
+            let parent_world = parent_world_of(scene, id);
+            let local = parent_world.inverse() * world_snap;
+            writeback.set(id, glam::Affine3A::from_mat4(local));
         }
     }
 
@@ -208,28 +215,55 @@ impl ManipulationSystem {
         let from_pivot = glam::Mat4::from_translation(center);
 
         for &id in selection.iter() {
-            let base = if has_pos_override || has_scale_override {
+            // Operate in WORLD space so the pivot-centred rotation lands
+            // on the right point regardless of how deep in the scene
+            // hierarchy this node sits. Snapshots already hold the
+            // world transform for numeric-override sessions.
+            let world_base = if has_pos_override || has_scale_override {
                 match self.transforms_snapshot.get(&id) {
                     Some(&snap) => snap,
                     None => continue,
                 }
             } else {
                 match scene.node(id) {
-                    Some(n) => n.local_transform(),
+                    Some(n) => n.world_transform(),
                     None => continue,
                 }
             };
 
-            let mut new_t = translate_mat * from_pivot * rot_mat * scale_mat * to_pivot * base;
+            let mut new_world =
+                translate_mat * from_pivot * rot_mat * scale_mat * to_pivot * world_base;
 
             // Apply per-axis position overrides (numeric input, e.g. G X 2).
             for (i, &ov) in delta.position_override.iter().enumerate() {
                 if let Some(v) = ov {
-                    new_t.col_mut(3)[i] = v;
+                    new_world.col_mut(3)[i] = v;
                 }
             }
 
-            writeback.set(id, glam::Affine3A::from_mat4(new_t));
+            // Convert back to parent-local for the scene writeback. Scene
+            // graph propagation re-applies the parent's world transform
+            // on the next frame so the visible world result matches
+            // `new_world` exactly. For root-parented nodes this is
+            // identity * new_world == new_world, so the prior behaviour
+            // is preserved.
+            let parent_world = parent_world_of(scene, id);
+            let new_local = parent_world.inverse() * new_world;
+
+            writeback.set(id, glam::Affine3A::from_mat4(new_local));
         }
     }
+}
+
+/// World transform of a node's parent, or identity for root-parented nodes
+/// and missing parents (defensive: a broken parent ref shouldn't crash
+/// manipulation, just collapse to the historical "treat-as-world" branch).
+fn parent_world_of(scene: &Scene, id: NodeId) -> glam::Mat4 {
+    let Some(parent_id) = scene.node(id).and_then(|n| n.parent()) else {
+        return glam::Mat4::IDENTITY;
+    };
+    scene
+        .node(parent_id)
+        .map(|n| n.world_transform())
+        .unwrap_or(glam::Mat4::IDENTITY)
 }

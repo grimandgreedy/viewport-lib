@@ -15,18 +15,19 @@ struct Lights {
     count: u32,
     shadow_bias: f32,
     shadows_enabled: u32,
-    _pad: u32,
+    debug_vis_mode: u32,
     sky_colour: vec3<f32>,
     hemisphere_intensity: f32,
     ground_colour: vec3<f32>,
-    _pad2: f32,
-    // We only need the IBL fields at the end, but must declare the full
-    // struct so offsets are correct. Use a flat array for the lights block.
-    _lights_block: array<vec4<f32>, 72>,  // 8 lights * 144 bytes / 16 = 72 vec4s
+    debug_vis_scale: f32,
     ibl_enabled: u32,
     ibl_intensity: f32,
     ibl_rotation: f32,
     show_skybox: u32,
+    debug_vis_split_x: f32,
+    _pad_dbg_a: u32,
+    _pad_dbg_b: u32,
+    _pad_dbg_c: u32,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;

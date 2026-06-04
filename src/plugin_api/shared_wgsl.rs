@@ -29,7 +29,7 @@
 /// ```ignore
 /// const _: () = assert!(viewport_lib::plugin_api::shared_wgsl::WGSL_VERSION == 1);
 /// ```
-pub const WGSL_VERSION: u32 = 2;
+pub const WGSL_VERSION: u32 = 3;
 
 /// Group-0 bind declarations and shared scene-data structs.
 ///
@@ -62,15 +62,13 @@ pub const SHARED_BINDINGS_WGSL: &str = r#"
 // shaders.
 
 struct Camera {
-    view_proj:        mat4x4<f32>,
-    view:             mat4x4<f32>,
-    proj:             mat4x4<f32>,
-    inv_view:         mat4x4<f32>,
-    inv_proj:         mat4x4<f32>,
-    eye_pos:          vec3<f32>,
-    _pad0:            f32,
-    viewport_size:    vec2<f32>,
-    _pad1:            vec2<f32>,
+    view_proj:     mat4x4<f32>,
+    eye_pos:       vec3<f32>,
+    _pad0:         f32,
+    forward:       vec3<f32>,
+    _pad1:         f32,
+    inv_view_proj: mat4x4<f32>,
+    view:          mat4x4<f32>,
 };
 
 struct SingleLight {

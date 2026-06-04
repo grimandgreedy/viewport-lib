@@ -65,11 +65,14 @@ pub use camera_follow::CameraFollow;
 pub use context::{RuntimeFrameContext, RuntimeStepContext, SimulationStepContext};
 pub use debug_draw::{DebugDraw, DebugLayer, DebugPrim};
 pub use events::RuntimeEventBus;
-pub use gpu_plugin::{gpu_phase, GpuFrameContext, GpuPlugin, PostPaintTargets};
+pub use gpu_plugin::{GpuFrameContext, GpuPlugin, PostPaintTargets, gpu_phase};
 pub use jobs::{JobPoll, JobSender, JobSlot};
 pub use mode::SceneRuntimeMode;
-pub use output::{CameraCommand, ContactEvent, NodeTransformOp, RuntimeOutput, SelectionOp, SkinnedMeshUpdate, SkinnedPoseUpdate, TransformWriteback};
-pub use plugin::{phase, RuntimeEvent, RuntimePhase, RuntimePlugin};
+pub use output::{
+    CameraCommand, ContactEvent, NodeTransformOp, RuntimeOutput, SelectionOp, SkinnedMeshUpdate,
+    SkinnedPoseUpdate, TransformWriteback,
+};
+pub use plugin::{RuntimeEvent, RuntimePhase, RuntimePlugin, phase};
 pub use plugins::{
     AnimationClip, AnimationPlugin, AnimationTrack, Channel, ClipPlayerPlugin, Constraint,
     ConstraintPlugin, Interpolation, Joint, JointMatrices, Keyframe, PhysicsBody,
@@ -209,22 +212,46 @@ mod tests {
         // Register plugins in a scrambled order; verify they execute in priority order.
         let log = Arc::new(Mutex::new(Vec::<(i32, u32)>::new()));
         let mut runtime = ViewportRuntime::new()
-            .with_plugin(OrderTracker { priority: phase::WRITEBACK, id: 3, log: log.clone() })
-            .with_plugin(OrderTracker { priority: phase::SIMULATE,  id: 2, log: log.clone() })
-            .with_plugin(OrderTracker { priority: phase::ANIMATE,   id: 1, log: log.clone() })
-            .with_plugin(OrderTracker { priority: phase::PREPARE,   id: 0, log: log.clone() });
+            .with_plugin(OrderTracker {
+                priority: phase::WRITEBACK,
+                id: 3,
+                log: log.clone(),
+            })
+            .with_plugin(OrderTracker {
+                priority: phase::SIMULATE,
+                id: 2,
+                log: log.clone(),
+            })
+            .with_plugin(OrderTracker {
+                priority: phase::ANIMATE,
+                id: 1,
+                log: log.clone(),
+            })
+            .with_plugin(OrderTracker {
+                priority: phase::PREPARE,
+                id: 0,
+                log: log.clone(),
+            });
 
         let camera = Camera::default();
         let input = ActionFrame::default();
         let mut scene = Scene::new();
         let mut sel = Selection::new();
-        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
 
         let calls = log.lock().unwrap();
         let priorities: Vec<i32> = calls.iter().map(|(p, _)| *p).collect();
         // Verify priorities are in ascending order.
         for w in priorities.windows(2) {
-            assert!(w[0] <= w[1], "expected ascending order, got {:?}", priorities);
+            assert!(
+                w[0] <= w[1],
+                "expected ascending order, got {:?}",
+                priorities
+            );
         }
         assert_eq!(priorities.len(), 4);
     }
@@ -234,14 +261,26 @@ mod tests {
         // Two plugins at the same priority must execute in registration order.
         let log = Arc::new(Mutex::new(Vec::<(i32, u32)>::new()));
         let mut runtime = ViewportRuntime::new()
-            .with_plugin(OrderTracker { priority: phase::SIMULATE, id: 0, log: log.clone() })
-            .with_plugin(OrderTracker { priority: phase::SIMULATE, id: 1, log: log.clone() });
+            .with_plugin(OrderTracker {
+                priority: phase::SIMULATE,
+                id: 0,
+                log: log.clone(),
+            })
+            .with_plugin(OrderTracker {
+                priority: phase::SIMULATE,
+                id: 1,
+                log: log.clone(),
+            });
 
         let camera = Camera::default();
         let input = ActionFrame::default();
         let mut scene = Scene::new();
         let mut sel = Selection::new();
-        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
 
         let calls = log.lock().unwrap();
         let ids: Vec<u32> = calls.iter().map(|(_, id)| *id).collect();
@@ -251,14 +290,20 @@ mod tests {
     #[test]
     fn test_simulate_runs_once_without_fixed_timestep() {
         let count = Arc::new(Mutex::new(0u32));
-        let mut runtime = ViewportRuntime::new()
-            .with_plugin(CallCounter { priority: phase::SIMULATE, count: count.clone() });
+        let mut runtime = ViewportRuntime::new().with_plugin(CallCounter {
+            priority: phase::SIMULATE,
+            count: count.clone(),
+        });
 
         let camera = Camera::default();
         let input = ActionFrame::default();
         let mut scene = Scene::new();
         let mut sel = Selection::new();
-        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
 
         assert_eq!(*count.lock().unwrap(), 1);
     }
@@ -270,7 +315,10 @@ mod tests {
         let step_dt = 1.0 / hz;
         let mut runtime = ViewportRuntime::new()
             .with_fixed_timestep(FixedTimestep::new(hz))
-            .with_plugin(CallCounter { priority: phase::SIMULATE, count: count.clone() });
+            .with_plugin(CallCounter {
+                priority: phase::SIMULATE,
+                count: count.clone(),
+            });
 
         let camera = Camera::default();
         let input = ActionFrame::default();
@@ -315,17 +363,26 @@ mod tests {
         let mut scene = Scene::new();
         let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
 
-        let mut runtime = ViewportRuntime::new()
-            .with_plugin(WritebackPlugin { node_id, transform: target });
+        let mut runtime = ViewportRuntime::new().with_plugin(WritebackPlugin {
+            node_id,
+            transform: target,
+        });
 
         let camera = Camera::default();
         let input = ActionFrame::default();
         let mut sel = Selection::new();
-        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
 
         let node = scene.node(node_id).expect("node not found");
         let pos = node.world_transform().col(3).truncate();
-        assert!((pos - glam::Vec3::new(3.0, 4.0, 5.0)).length() < 1e-5, "pos was {pos:?}");
+        assert!(
+            (pos - glam::Vec3::new(3.0, 4.0, 5.0)).length() < 1e-5,
+            "pos was {pos:?}"
+        );
     }
 
     #[test]
@@ -334,13 +391,19 @@ mod tests {
         let mut scene = Scene::new();
         let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
 
-        let mut runtime = ViewportRuntime::new()
-            .with_plugin(WritebackPlugin { node_id, transform: target });
+        let mut runtime = ViewportRuntime::new().with_plugin(WritebackPlugin {
+            node_id,
+            transform: target,
+        });
 
         let camera = Camera::default();
         let input = ActionFrame::default();
         let mut sel = Selection::new();
-        let output = runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        let output = runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
 
         assert_eq!(output.node_transform_ops.len(), 1);
         assert_eq!(output.node_transform_ops[0].id, node_id);
@@ -355,9 +418,17 @@ mod tests {
         let mut sel = Selection::new();
 
         assert_eq!(runtime.step_index(), 0);
-        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
         assert_eq!(runtime.step_index(), 1);
-        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
         assert_eq!(runtime.step_index(), 2);
     }
 
@@ -365,8 +436,7 @@ mod tests {
     fn test_step_index_increments_n_times_with_fixed_timestep() {
         let hz = 60.0_f32;
         let step_dt = 1.0 / hz;
-        let mut runtime = ViewportRuntime::new()
-            .with_fixed_timestep(FixedTimestep::new(hz));
+        let mut runtime = ViewportRuntime::new().with_fixed_timestep(FixedTimestep::new(hz));
 
         let camera = Camera::default();
         let input = ActionFrame::default();
@@ -385,13 +455,19 @@ mod tests {
         let mut scene = Scene::new();
         let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
 
-        let mut runtime = ViewportRuntime::new()
-            .with_plugin(WritebackPlugin { node_id, transform: target });
+        let mut runtime = ViewportRuntime::new().with_plugin(WritebackPlugin {
+            node_id,
+            transform: target,
+        });
 
         let camera = Camera::default();
         let input = ActionFrame::default();
         let mut sel = Selection::new();
-        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
 
         let snap = runtime.snapshots().get(node_id).expect("snapshot missing");
         assert!((snap.curr.translation.x - 7.0).abs() < 1e-5);
@@ -403,14 +479,26 @@ mod tests {
     fn test_post_sim_runs_after_simulate() {
         let log = Arc::new(Mutex::new(Vec::<(i32, u32)>::new()));
         let mut runtime = ViewportRuntime::new()
-            .with_plugin(OrderTracker { priority: phase::POST_SIM,  id: 1, log: log.clone() })
-            .with_plugin(OrderTracker { priority: phase::SIMULATE,  id: 0, log: log.clone() });
+            .with_plugin(OrderTracker {
+                priority: phase::POST_SIM,
+                id: 1,
+                log: log.clone(),
+            })
+            .with_plugin(OrderTracker {
+                priority: phase::SIMULATE,
+                id: 0,
+                log: log.clone(),
+            });
 
         let camera = Camera::default();
         let input = ActionFrame::default();
         let mut scene = Scene::new();
         let mut sel = Selection::new();
-        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
 
         let calls = log.lock().unwrap();
         let ids: Vec<u32> = calls.iter().map(|(_, id)| *id).collect();
@@ -422,15 +510,31 @@ mod tests {
         let log = Arc::new(Mutex::new(Vec::<(i32, u32)>::new()));
         let mid = phase::ANIMATE + 50;
         let mut runtime = ViewportRuntime::new()
-            .with_plugin(OrderTracker { priority: phase::SIMULATE, id: 2, log: log.clone() })
-            .with_plugin(OrderTracker { priority: mid,             id: 1, log: log.clone() })
-            .with_plugin(OrderTracker { priority: phase::ANIMATE,  id: 0, log: log.clone() });
+            .with_plugin(OrderTracker {
+                priority: phase::SIMULATE,
+                id: 2,
+                log: log.clone(),
+            })
+            .with_plugin(OrderTracker {
+                priority: mid,
+                id: 1,
+                log: log.clone(),
+            })
+            .with_plugin(OrderTracker {
+                priority: phase::ANIMATE,
+                id: 0,
+                log: log.clone(),
+            });
 
         let camera = Camera::default();
         let input = ActionFrame::default();
         let mut scene = Scene::new();
         let mut sel = Selection::new();
-        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
 
         let calls = log.lock().unwrap();
         let ids: Vec<u32> = calls.iter().map(|(_, id)| *id).collect();
@@ -449,7 +553,7 @@ mod tests {
         }
         fn on_event(&mut self, event: &RuntimeEvent, _ctx: &mut RuntimeStepContext<'_>) {
             match event {
-                RuntimeEvent::NodeAdded(id)   => self.added.lock().unwrap().push(*id),
+                RuntimeEvent::NodeAdded(id) => self.added.lock().unwrap().push(*id),
                 RuntimeEvent::NodeRemoved(id) => self.removed.lock().unwrap().push(*id),
             }
         }
@@ -460,8 +564,10 @@ mod tests {
     fn test_lifecycle_events_node_added() {
         let added = Arc::new(Mutex::new(Vec::<NodeId>::new()));
         let removed = Arc::new(Mutex::new(Vec::<NodeId>::new()));
-        let mut runtime = ViewportRuntime::new()
-            .with_plugin(EventRecorder { added: added.clone(), removed: removed.clone() });
+        let mut runtime = ViewportRuntime::new().with_plugin(EventRecorder {
+            added: added.clone(),
+            removed: removed.clone(),
+        });
 
         let camera = Camera::default();
         let input = ActionFrame::default();
@@ -469,15 +575,27 @@ mod tests {
         let mut sel = Selection::new();
 
         // First step: initializes snapshot, no events.
-        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
         assert!(added.lock().unwrap().is_empty(), "no events on first step");
 
         // Add a node, then step.
         let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
-        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
 
         let a = added.lock().unwrap();
-        assert!(a.contains(&node_id), "expected NodeAdded event for {:?}", node_id);
+        assert!(
+            a.contains(&node_id),
+            "expected NodeAdded event for {:?}",
+            node_id
+        );
         assert!(removed.lock().unwrap().is_empty());
     }
 
@@ -485,8 +603,10 @@ mod tests {
     fn test_lifecycle_events_node_removed() {
         let added = Arc::new(Mutex::new(Vec::<NodeId>::new()));
         let removed = Arc::new(Mutex::new(Vec::<NodeId>::new()));
-        let mut runtime = ViewportRuntime::new()
-            .with_plugin(EventRecorder { added: added.clone(), removed: removed.clone() });
+        let mut runtime = ViewportRuntime::new().with_plugin(EventRecorder {
+            added: added.clone(),
+            removed: removed.clone(),
+        });
 
         let camera = Camera::default();
         let input = ActionFrame::default();
@@ -496,15 +616,27 @@ mod tests {
         let node_id = scene.add(None, glam::Mat4::IDENTITY, Material::default());
 
         // First step with the node present.
-        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
         added.lock().unwrap().clear();
 
         // Remove the node, then step.
         scene.remove(node_id);
-        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
 
         let r = removed.lock().unwrap();
-        assert!(r.contains(&node_id), "expected NodeRemoved event for {:?}", node_id);
+        assert!(
+            r.contains(&node_id),
+            "expected NodeRemoved event for {:?}",
+            node_id
+        );
     }
 
     // Plugin that records which of submit, step, collect were called each frame.
@@ -531,19 +663,23 @@ mod tests {
     #[test]
     fn test_submit_collect_called() {
         let log = Arc::new(Mutex::new(Vec::<&'static str>::new()));
-        let mut runtime = ViewportRuntime::new()
-            .with_plugin(LifecycleRecorder { log: log.clone() });
+        let mut runtime =
+            ViewportRuntime::new().with_plugin(LifecycleRecorder { log: log.clone() });
 
         let camera = Camera::default();
         let input = ActionFrame::default();
         let mut scene = Scene::new();
         let mut sel = Selection::new();
 
-        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
 
         let calls = log.lock().unwrap();
-        assert!(calls.contains(&"submit"),  "submit must be called");
-        assert!(calls.contains(&"step"),    "step must be called");
+        assert!(calls.contains(&"submit"), "submit must be called");
+        assert!(calls.contains(&"step"), "step must be called");
         assert!(calls.contains(&"collect"), "collect must be called");
         // submit before step before collect.
         let si = calls.iter().position(|&s| s == "submit").unwrap();
@@ -604,7 +740,9 @@ mod tests {
     }
 
     impl RuntimePlugin for CounterWriter {
-        fn priority(&self) -> i32 { phase::ANIMATE }
+        fn priority(&self) -> i32 {
+            phase::ANIMATE
+        }
         fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
             ctx.resources.insert(self.value);
         }
@@ -616,7 +754,9 @@ mod tests {
     }
 
     impl RuntimePlugin for CounterReader {
-        fn priority(&self) -> i32 { phase::POST_SIM }
+        fn priority(&self) -> i32 {
+            phase::POST_SIM
+        }
         fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
             if let Some(&v) = ctx.resources.get::<u32>() {
                 self.recorded.lock().unwrap().push(v);
@@ -631,31 +771,47 @@ mod tests {
         let recorded = Arc::new(Mutex::new(Vec::<u32>::new()));
         let mut runtime = ViewportRuntime::new()
             .with_plugin(CounterWriter { value: 42 })
-            .with_plugin(CounterReader { recorded: recorded.clone() });
+            .with_plugin(CounterReader {
+                recorded: recorded.clone(),
+            });
 
         let camera = Camera::default();
         let input = ActionFrame::default();
         let mut scene = Scene::new();
         let mut sel = Selection::new();
-        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
 
         let vals = recorded.lock().unwrap();
-        assert_eq!(vals.as_slice(), &[42], "reader must see value written by writer in the same frame");
+        assert_eq!(
+            vals.as_slice(),
+            &[42],
+            "reader must see value written by writer in the same frame"
+        );
     }
 
     #[test]
     fn test_resource_persists_across_frames() {
         // A resource inserted in frame 1 must still be present in frame 2 if not removed.
-        let mut runtime = ViewportRuntime::new()
-            .with_plugin(CounterWriter { value: 10 });
+        let mut runtime = ViewportRuntime::new().with_plugin(CounterWriter { value: 10 });
 
         let camera = Camera::default();
         let input = ActionFrame::default();
         let mut scene = Scene::new();
         let mut sel = Selection::new();
 
-        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
-        assert!(runtime.resources().contains::<u32>(), "resource must persist after step");
+        runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
+        assert!(
+            runtime.resources().contains::<u32>(),
+            "resource must persist after step"
+        );
     }
 
     #[test]
@@ -666,7 +822,11 @@ mod tests {
         let input = ActionFrame::default();
         let mut scene = Scene::new();
         let mut sel = Selection::new();
-        let output = runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0));
+        let output = runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        );
         assert!(output.contact_events.is_empty());
         assert!(output.node_transform_ops.is_empty());
     }
@@ -675,16 +835,24 @@ mod tests {
 
     // Two distinct event types to verify typed routing.
     #[derive(Debug, PartialEq)]
-    struct GameplayEvent { id: u32 }
+    struct GameplayEvent {
+        id: u32,
+    }
 
     #[derive(Debug, PartialEq)]
-    struct DiagnosticsEvent { frame_ms: f32 }
+    struct DiagnosticsEvent {
+        frame_ms: f32,
+    }
 
     // Plugin that emits GameplayEvents.
-    struct GameplayEmitter { count: u32 }
+    struct GameplayEmitter {
+        count: u32,
+    }
 
     impl RuntimePlugin for GameplayEmitter {
-        fn priority(&self) -> i32 { phase::SIMULATE }
+        fn priority(&self) -> i32 {
+            phase::SIMULATE
+        }
         fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
             for i in 0..self.count {
                 ctx.output.events.emit(GameplayEvent { id: i });
@@ -696,9 +864,13 @@ mod tests {
     struct DiagnosticsEmitter;
 
     impl RuntimePlugin for DiagnosticsEmitter {
-        fn priority(&self) -> i32 { phase::POST_SIM }
+        fn priority(&self) -> i32 {
+            phase::POST_SIM
+        }
         fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
-            ctx.output.events.emit(DiagnosticsEvent { frame_ms: ctx.dt * 1000.0 });
+            ctx.output.events.emit(DiagnosticsEvent {
+                frame_ms: ctx.dt * 1000.0,
+            });
         }
     }
 
@@ -708,7 +880,9 @@ mod tests {
     }
 
     impl RuntimePlugin for GameplayReader {
-        fn priority(&self) -> i32 { phase::WRITEBACK }
+        fn priority(&self) -> i32 {
+            phase::WRITEBACK
+        }
         fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
             for ev in ctx.output.events.read::<GameplayEvent>() {
                 self.seen.lock().unwrap().push(ev.id);
@@ -721,7 +895,11 @@ mod tests {
         let input = ActionFrame::default();
         let mut scene = Scene::new();
         let mut sel = Selection::new();
-        runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input, 1.0 / 60.0))
+        runtime.step(
+            &mut scene,
+            &mut sel,
+            &make_frame(&camera, &input, 1.0 / 60.0),
+        )
     }
 
     #[test]
@@ -750,7 +928,10 @@ mod tests {
         bus.emit(GameplayEvent { id: 7 });
         bus.emit(GameplayEvent { id: 8 });
         let drained = bus.drain::<GameplayEvent>();
-        assert_eq!(drained, vec![GameplayEvent { id: 7 }, GameplayEvent { id: 8 }]);
+        assert_eq!(
+            drained,
+            vec![GameplayEvent { id: 7 }, GameplayEvent { id: 8 }]
+        );
         // Second drain returns empty.
         assert!(bus.drain::<GameplayEvent>().is_empty());
         assert!(!bus.has::<GameplayEvent>());
@@ -777,11 +958,14 @@ mod tests {
 
     #[test]
     fn test_events_emitted_by_plugin_visible_in_output() {
-        let mut runtime = ViewportRuntime::new()
-            .with_plugin(GameplayEmitter { count: 3 });
+        let mut runtime = ViewportRuntime::new().with_plugin(GameplayEmitter { count: 3 });
         let output = run_one_frame(&mut runtime);
         assert_eq!(output.events.count::<GameplayEvent>(), 3);
-        let ids: Vec<u32> = output.events.read::<GameplayEvent>().map(|e| e.id).collect();
+        let ids: Vec<u32> = output
+            .events
+            .read::<GameplayEvent>()
+            .map(|e| e.id)
+            .collect();
         assert_eq!(ids, vec![0, 1, 2]);
     }
 
@@ -812,8 +996,7 @@ mod tests {
     #[test]
     fn test_events_cleared_each_frame() {
         // Events from frame N must not appear in frame N+1.
-        let mut runtime = ViewportRuntime::new()
-            .with_plugin(GameplayEmitter { count: 1 });
+        let mut runtime = ViewportRuntime::new().with_plugin(GameplayEmitter { count: 1 });
         run_one_frame(&mut runtime);
         let output2 = run_one_frame(&mut runtime);
         // The second frame also emits 1 event, but it must be exactly 1, not 2.
@@ -929,7 +1112,9 @@ mod tests {
         }
 
         impl RuntimePlugin for LoaderPlugin {
-            fn priority(&self) -> i32 { phase::PREPARE }
+            fn priority(&self) -> i32 {
+                phase::PREPARE
+            }
 
             fn submit(&mut self, _ctx: &RuntimeStepContext<'_>) {
                 if self.slot.is_empty() {
@@ -950,8 +1135,10 @@ mod tests {
         }
 
         let result = Arc::new(Mutex::new(None::<u32>));
-        let mut runtime = ViewportRuntime::new()
-            .with_plugin(LoaderPlugin { slot: JobSlot::empty(), result: result.clone() });
+        let mut runtime = ViewportRuntime::new().with_plugin(LoaderPlugin {
+            slot: JobSlot::empty(),
+            result: result.clone(),
+        });
 
         run_one_frame(&mut runtime);
         assert_eq!(*result.lock().unwrap(), Some(99));
@@ -968,7 +1155,9 @@ mod tests {
         }
 
         impl RuntimePlugin for Integrator {
-            fn priority(&self) -> i32 { phase::PREPARE }  // low number = runs early in collect
+            fn priority(&self) -> i32 {
+                phase::PREPARE
+            } // low number = runs early in collect
 
             fn submit(&mut self, _ctx: &RuntimeStepContext<'_>) {
                 if self.slot.is_empty() {
@@ -992,7 +1181,9 @@ mod tests {
         }
 
         impl RuntimePlugin for Reader {
-            fn priority(&self) -> i32 { phase::POST_SIM }  // higher number = runs later in collect
+            fn priority(&self) -> i32 {
+                phase::POST_SIM
+            } // higher number = runs later in collect
 
             fn collect(&mut self, ctx: &mut RuntimeStepContext<'_>) {
                 *self.seen.lock().unwrap() = ctx.resources.get::<u32>().copied();
@@ -1003,7 +1194,9 @@ mod tests {
 
         let seen = Arc::new(Mutex::new(None::<u32>));
         let mut runtime = ViewportRuntime::new()
-            .with_plugin(Integrator { slot: JobSlot::empty() })
+            .with_plugin(Integrator {
+                slot: JobSlot::empty(),
+            })
             .with_plugin(Reader { seen: seen.clone() });
 
         run_one_frame(&mut runtime);
@@ -1159,11 +1352,20 @@ mod tests {
         // Two joints: joint 0 at (0,0,0), joint 1 at (10,0,0).
         // Vertex at origin, 50/50 blend -> output at (5,0,0).
         let sk = Skeleton::new(vec![
-            Joint { name: "a".into(), parent: None, inverse_bind: glam::Affine3A::IDENTITY },
-            Joint { name: "b".into(), parent: None, inverse_bind: glam::Affine3A::IDENTITY },
+            Joint {
+                name: "a".into(),
+                parent: None,
+                inverse_bind: glam::Affine3A::IDENTITY,
+            },
+            Joint {
+                name: "b".into(),
+                parent: None,
+                inverse_bind: glam::Affine3A::IDENTITY,
+            },
         ]);
         let mut pose = Pose::identity(2);
-        pose.local_transforms[1] = glam::Affine3A::from_translation(glam::Vec3::new(10.0, 0.0, 0.0));
+        pose.local_transforms[1] =
+            glam::Affine3A::from_translation(glam::Vec3::new(10.0, 0.0, 0.0));
         let mats = JointMatrices::compute(&sk, &pose);
 
         let positions = vec![[0.0f32, 0.0, 0.0]];
@@ -1173,7 +1375,11 @@ mod tests {
             joint_weights: vec![[0.5, 0.5, 0.0, 0.0]],
         };
         let (out_pos, _) = apply_skin(&positions, &normals, &weights, &mats);
-        assert!((out_pos[0][0] - 5.0).abs() < 1e-5, "expected 5.0, got {}", out_pos[0][0]);
+        assert!(
+            (out_pos[0][0] - 5.0).abs() < 1e-5,
+            "expected 5.0, got {}",
+            out_pos[0][0]
+        );
     }
 
     #[test]
@@ -1208,8 +1414,9 @@ mod tests {
         let weights = single_vertex_weights(0, 1.0);
         let mesh_id = crate::resources::mesh_store::MeshId(0);
 
-        let mut runtime = ViewportRuntime::new()
-            .with_plugin(SkeletonPlugin::new(sk, mesh_id, positions, normals, weights));
+        let mut runtime = ViewportRuntime::new().with_plugin(SkeletonPlugin::new(
+            sk, mesh_id, positions, normals, weights,
+        ));
 
         // Insert a pose so the plugin fires.
         runtime.resources_mut().insert(Pose::identity(1));
@@ -1227,14 +1434,13 @@ mod tests {
             inverse_bind: glam::Affine3A::IDENTITY,
         }]);
         let mesh_id = crate::resources::mesh_store::MeshId(0);
-        let mut runtime = ViewportRuntime::new()
-            .with_plugin(SkeletonPlugin::new(
-                sk,
-                mesh_id,
-                vec![[0.0f32; 3]],
-                vec![[0.0f32, 1.0, 0.0]],
-                single_vertex_weights(0, 1.0),
-            ));
+        let mut runtime = ViewportRuntime::new().with_plugin(SkeletonPlugin::new(
+            sk,
+            mesh_id,
+            vec![[0.0f32; 3]],
+            vec![[0.0f32, 1.0, 0.0]],
+            single_vertex_weights(0, 1.0),
+        ));
         // No Pose inserted -> no update.
         let output = run_one_frame(&mut runtime);
         assert!(output.skinned_mesh_updates.is_empty());
@@ -1248,14 +1454,13 @@ mod tests {
             inverse_bind: glam::Affine3A::IDENTITY,
         }]);
         let mesh_id = crate::resources::mesh_store::MeshId(0);
-        let mut runtime = ViewportRuntime::new()
-            .with_plugin(SkeletonPlugin::new(
-                sk,
-                mesh_id,
-                vec![[0.0f32; 3]],
-                vec![[0.0f32, 1.0, 0.0]],
-                single_vertex_weights(0, 1.0),
-            ));
+        let mut runtime = ViewportRuntime::new().with_plugin(SkeletonPlugin::new(
+            sk,
+            mesh_id,
+            vec![[0.0f32; 3]],
+            vec![[0.0f32, 1.0, 0.0]],
+            single_vertex_weights(0, 1.0),
+        ));
         runtime.resources_mut().insert(Pose::identity(1));
 
         run_one_frame(&mut runtime);
@@ -1787,7 +1992,22 @@ impl ViewportRuntime {
         // --- Flush writeback -------------------------------------------------
         let ops = writeback.into_ops();
         for op in &ops {
-            scene.set_local_transform(op.id, glam::Mat4::from(op.transform));
+            let new_local = if op.preserve_scale {
+                // Decompose incoming transform to extract rotation +
+                // translation, then recompose with the node's existing scale.
+                // Physics and animation systems don't model scale, so they
+                // shouldn't clobber a scale the caller set on the node.
+                let incoming = glam::Mat4::from(op.transform);
+                let (_, rot, trans) = incoming.to_scale_rotation_translation();
+                let existing_scale = scene
+                    .node(op.id)
+                    .map(|n| n.local_transform().to_scale_rotation_translation().0)
+                    .unwrap_or(glam::Vec3::ONE);
+                glam::Mat4::from_scale_rotation_translation(existing_scale, rot, trans)
+            } else {
+                glam::Mat4::from(op.transform)
+            };
+            scene.set_local_transform(op.id, new_local);
             self.snapshots.update(op.id, op.transform);
         }
         if !ops.is_empty() {

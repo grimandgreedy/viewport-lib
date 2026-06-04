@@ -54,7 +54,6 @@ pub(crate) struct InstancePalette {
 /// palettes keyed by `instance_id`.
 pub(crate) struct MeshSkinning {
     pub weights_buffer: wgpu::Buffer,
-    pub vertex_count: u32,
     pub instances: HashMap<u32, InstancePalette>,
 }
 
@@ -171,7 +170,6 @@ impl ViewportGpuResources {
             mesh_id,
             MeshSkinning {
                 weights_buffer,
-                vertex_count: packed.len() as u32,
                 instances: HashMap::new(),
             },
         );
