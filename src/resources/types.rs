@@ -2306,6 +2306,9 @@ pub(crate) struct ViewportHdrState {
     /// Supersampled depth render target. `None` when ssaa_factor == 1.
     pub ssaa_depth_texture: Option<wgpu::Texture>,
     pub ssaa_depth_view: Option<wgpu::TextureView>,
+    /// Depth-aspect-only view of `ssaa_depth_texture`, used as the soft-particle
+    /// sample source during the SSAA sprite post-pass. `None` when SSAA is off.
+    pub ssaa_depth_only_view: Option<wgpu::TextureView>,
     /// Bind group for the SSAA resolve pass (reads ssaa_colour_texture). `None` when ssaa_factor == 1.
     pub ssaa_resolve_bind_group: Option<wgpu::BindGroup>,
     /// Uniform buffer holding the ssaa_factor value for the resolve shader.

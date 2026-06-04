@@ -54,6 +54,29 @@ impl<'r> OwnedPath<'r> {
         self.renderer.render(device, queue, output_view, frame)
     }
 
+    /// Render a single viewport into a caller-owned encoder.
+    ///
+    /// Equivalent to [`render`](Self::render), but records passes into
+    /// `encoder` instead of creating its own command buffer. The caller
+    /// remains responsible for submitting `encoder` after this returns.
+    ///
+    /// Use this when the host application needs to interleave the renderer's
+    /// passes with its own GPU work, or when it needs a multi-pass feature
+    /// such as soft-particle fade that requires the renderer to own its own
+    /// passes. Single-pass framework callbacks (eframe, iced) that pass a
+    /// `RenderPass` should use [`PassPath::paint`] instead.
+    pub fn render_into_encoder(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        output_view: &wgpu::TextureView,
+        frame: &FrameData,
+    ) {
+        self.renderer
+            .render_into_encoder(device, queue, encoder, output_view, frame);
+    }
+
     /// Multi-viewport: upload scene-level GPU data shared across all viewports.
     ///
     /// Call once per frame before any `prepare_viewport` or `render_viewport` calls.
@@ -66,7 +89,8 @@ impl<'r> OwnedPath<'r> {
         frame: &FrameData,
         scene_effects: &SceneEffects<'_>,
     ) -> ScenePreparedToken {
-        self.renderer.prepare_scene(device, queue, frame, scene_effects);
+        self.renderer
+            .prepare_scene(device, queue, frame, scene_effects);
         ScenePreparedToken { _private: () }
     }
 
@@ -96,7 +120,8 @@ impl<'r> OwnedPath<'r> {
         id: ViewportId,
         frame: &FrameData,
     ) -> wgpu::CommandBuffer {
-        self.renderer.render_viewport(device, queue, output_view, id, frame)
+        self.renderer
+            .render_viewport(device, queue, output_view, id, frame)
     }
 }
 
@@ -136,7 +161,8 @@ impl<'r> PassPath<'r> {
         frame: &FrameData,
         scene_effects: &SceneEffects<'_>,
     ) -> ScenePreparedToken {
-        self.renderer.prepare_scene(device, queue, frame, scene_effects);
+        self.renderer
+            .prepare_scene(device, queue, frame, scene_effects);
         ScenePreparedToken { _private: () }
     }
 
@@ -183,7 +209,8 @@ impl<'r> PassPath<'r> {
         id: ViewportId,
         frame: &FrameData,
     ) -> wgpu::CommandBuffer {
-        self.renderer.prepare_hdr_callback_viewport(device, queue, id, frame)
+        self.renderer
+            .prepare_hdr_callback_viewport(device, queue, id, frame)
     }
 }
 
@@ -220,7 +247,11 @@ impl<'r> PassView<'r> {
     /// Use this when you create the blit render pass yourself (e.g. winit) and the pass
     /// has no depth attachment. The resulting blit is identical; only the pipeline variant
     /// differs to match the render pass format.
-    pub fn paint_hdr_blit_no_ds<'rp>(&self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
+    pub fn paint_hdr_blit_no_ds<'rp>(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'rp>,
+        frame: &FrameData,
+    ) {
         self.renderer.paint_hdr_blit_no_ds(render_pass, frame);
     }
 }
