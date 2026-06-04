@@ -22,6 +22,7 @@ pub mod matcap_data;
 pub mod mesh_store;
 mod meshes;
 mod overlay_shape;
+mod plugin_builders;
 mod overlay_text;
 mod overlays;
 mod postprocess;
@@ -38,6 +39,10 @@ pub mod volume_mesh;
 mod volumes;
 
 pub use self::extra_impls::{ComputeFilterResult, lerp_attributes};
+pub use self::plugin_builders::{
+    HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, PICK_COLOR_FORMAT, PluginPipelineOpts,
+    SCENE_DEPTH_FORMAT, SHADOW_DEPTH_FORMAT,
+};
 use self::extra_impls::{
     build_glyph_arrow, build_glyph_sphere, build_unit_cube, generate_edge_indices,
 };

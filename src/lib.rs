@@ -90,6 +90,9 @@ pub mod resources;
 pub mod scene;
 /// Axes orientation indicator.
 pub mod widgets;
+/// Plugin substrate: target descriptors, shared bind layouts, WGSL helpers,
+/// pipeline builders. See [`plugin_api`] for the published extension surface.
+pub mod plugin_api;
 
 // ---------------------------------------------------------------------------
 // Module re-exports : preserve old `viewport_lib::foo::Bar` paths.
