@@ -56,16 +56,17 @@ struct ClipVolumeUB {
 };
 
 // Per-batch uniform (80 bytes):
-//   model:       mat4x4<f32>  (64 bytes at offset  0)
-//   world_space: u32          ( 4 bytes at offset 64) -- 0 = screen pixels, 1 = world units
-//   has_texture: u32          ( 4 bytes at offset 68) -- 0 = solid colour, 1 = sample texture
-//   _pad0/1:     u32, u32     ( 8 bytes at offset 72)
+//   model:                  mat4x4<f32>  (64 bytes at offset  0)
+//   world_space:            u32          ( 4 bytes at offset 64) -- 0 = screen pixels, 1 = world units
+//   has_texture:            u32          ( 4 bytes at offset 68) -- 0 = solid colour, 1 = sample texture
+//   soft_particle_distance: f32          ( 4 bytes at offset 72) -- 0 disables soft fade
+//   _pad0:                  u32          ( 4 bytes at offset 76)
 struct SpriteUniform {
-    model:       mat4x4<f32>,
-    world_space: u32,
-    has_texture: u32,
-    _pad0:       u32,
-    _pad1:       u32,
+    model:                  mat4x4<f32>,
+    world_space:            u32,
+    has_texture:            u32,
+    soft_particle_distance: f32,
+    _pad0:                  u32,
 };
 
 // Per-sprite instance data (48 bytes):
@@ -91,6 +92,13 @@ struct SpriteInstance {
 @group(1) @binding(1) var               sprite_texture: texture_2d<f32>;
 @group(1) @binding(2) var               sprite_sampler: sampler;
 @group(1) @binding(3) var<storage, read> instance_buf:  array<SpriteInstance>;
+
+// Group 2: scene depth resolve used for soft-particle fade.
+// Bound to the scene's depth-aspect view when soft particles are active;
+// otherwise bound to a placeholder. The shader only samples this when
+// soft_particle_distance > 0, so the placeholder contents do not matter.
+@group(2) @binding(0) var scene_depth_tex: texture_depth_2d;
+@group(2) @binding(1) var scene_depth_samp: sampler;
 
 fn clip_volume_test(p: vec3<f32>) -> bool {
     for (var i = 0u; i < clip_volume.count; i = i + 1u) {
@@ -211,6 +219,28 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if sprite_ub.has_texture != 0u {
         colour = colour * textureSample(sprite_texture, sprite_sampler, in.uv);
     }
+
+    // Soft-particle fade: when the sprite fragment approaches opaque scene
+    // geometry behind it, ramp alpha to zero over a configurable world-space
+    // distance. Disabled when soft_particle_distance is non-positive.
+    if sprite_ub.soft_particle_distance > 0.0 {
+        let viewport_size = vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
+        let screen_uv     = in.clip_pos.xy / viewport_size;
+        let scene_ndc_z   = textureSample(scene_depth_tex, scene_depth_samp, screen_uv);
+        let ndc = vec4<f32>(
+            screen_uv.x * 2.0 - 1.0,
+            1.0 - screen_uv.y * 2.0,
+            scene_ndc_z,
+            1.0,
+        );
+        let world_h     = camera.inv_view_proj * ndc;
+        let scene_world = world_h.xyz / world_h.w;
+        let scene_view_z = -(camera.view * vec4<f32>(scene_world, 1.0)).z;
+        let part_view_z  = -(camera.view * vec4<f32>(in.world_pos, 1.0)).z;
+        let fade = smoothstep(0.0, sprite_ub.soft_particle_distance, scene_view_z - part_view_z);
+        colour.a = colour.a * fade;
+    }
+
     // Discard fully transparent fragments.
     if colour.a <= 0.001 { discard; }
     return colour;

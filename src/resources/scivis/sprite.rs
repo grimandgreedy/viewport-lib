@@ -60,6 +60,75 @@ impl ViewportGpuResources {
             ],
         });
 
+        // Group 2: scene depth + sampler for soft-particle fade. The shader
+        // skips sampling unless soft_particle_distance > 0, so callers may bind
+        // a placeholder when no resolved depth is available.
+        let soft_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("sprite_soft_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
+            ],
+        });
+
+        let soft_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("sprite_soft_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let fallback_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("sprite_soft_fallback_tex"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let fallback_view = fallback_tex.create_view(&wgpu::TextureViewDescriptor {
+            aspect: wgpu::TextureAspect::DepthOnly,
+            ..Default::default()
+        });
+        let fallback_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sprite_soft_fallback_bg"),
+            layout: &soft_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&fallback_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&soft_sampler),
+                },
+            ],
+        });
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sprite_shader"),
             source: wgpu::ShaderSource::Wgsl(
@@ -69,7 +138,7 @@ impl ViewportGpuResources {
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("sprite_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &bgl],
+            bind_group_layouts: &[&self.camera_bind_group_layout, &bgl, &soft_bgl],
             push_constant_ranges: &[],
         });
 
@@ -157,6 +226,10 @@ impl ViewportGpuResources {
         let hdr = wgpu::TextureFormat::Rgba16Float;
         let alpha = wgpu::BlendState::ALPHA_BLENDING;
         self.sprite_bgl = Some(bgl);
+        self.sprite_soft_bgl = Some(soft_bgl);
+        self.sprite_soft_sampler = Some(soft_sampler);
+        self.sprite_soft_fallback_tex = Some(fallback_tex);
+        self.sprite_soft_fallback_bg = Some(fallback_bg);
         self.sprite_pipeline = Some(DualPipeline {
             ldr: make_sprite(ldr, false, alpha, "sprite_pipeline"),
             hdr: make_sprite(hdr, false, alpha, "sprite_pipeline"),
@@ -286,15 +359,15 @@ impl ViewportGpuResources {
         });
         queue.write_buffer(&instance_buf, 0, instance_bytes);
 
-        // Uniform buffer: model matrix + flags.
+        // Uniform buffer: model matrix + flags + soft-particle distance.
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct SpriteUniformData {
             model: [[f32; 4]; 4],
             world_space: u32,
             has_texture: u32,
+            soft_particle_distance: f32,
             _pad0: u32,
-            _pad1: u32,
         }
 
         let (texture_view, has_texture): (&wgpu::TextureView, u32) =
@@ -316,8 +389,11 @@ impl ViewportGpuResources {
                 0
             },
             has_texture,
+            soft_particle_distance: item
+                .soft_particle_distance
+                .filter(|d| *d > 0.0)
+                .unwrap_or(0.0),
             _pad0: 0,
-            _pad1: 0,
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sprite_uniform_buf"),

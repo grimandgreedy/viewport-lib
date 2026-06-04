@@ -2976,6 +2976,21 @@ pub struct ViewportGpuResources {
     pub(crate) sprite_pipeline_premultiplied_depth_write: Option<DualPipeline>,
     /// Bind group layout for sprite uniforms + texture + instance buffer (group 1).
     pub(crate) sprite_bgl: Option<wgpu::BindGroupLayout>,
+    /// Bind group layout for the per-pass scene-depth resolve bound at group 2.
+    /// One sampleable depth texture plus a sampler. Bound during sprite draws so
+    /// the fragment shader can apply soft-particle fade against opaque geometry.
+    pub(crate) sprite_soft_bgl: Option<wgpu::BindGroupLayout>,
+    /// Fallback bind group for the group-2 soft-particle binding, used by paths
+    /// that do not have a resolved scene-depth texture available. Its contents
+    /// are only sampled when the per-batch `soft_particle_distance` is set, so
+    /// callers that never enable soft fade can rely on the fallback bind alone.
+    pub(crate) sprite_soft_fallback_bg: Option<wgpu::BindGroup>,
+    /// Sampler used for the group-2 scene-depth binding. Created alongside the
+    /// fallback bind group.
+    pub(crate) sprite_soft_sampler: Option<wgpu::Sampler>,
+    /// 1x1 Depth32Float texture backing the fallback bind group. Held to keep
+    /// the underlying texture alive for the lifetime of the bind group.
+    pub(crate) sprite_soft_fallback_tex: Option<wgpu::Texture>,
     /// Sprite outline mask pipeline (R8Unorm, no texture sampling). None until first selected sprite.
     pub(crate) sprite_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
     /// Polyline outline mask pipeline (R8Unorm, same instance layout as polyline). None until first selected polyline.

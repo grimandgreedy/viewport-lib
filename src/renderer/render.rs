@@ -91,9 +91,7 @@ impl ViewportRenderer {
                 if mc.wireframe || frame.viewport.wireframe_mode {
                     if let Some(ref dual) = self.resources.mc_wireframe_pipeline {
                         render_pass.set_pipeline(dual.for_format(false));
-                        for (slab, wire_bg) in
-                            vol.slabs.iter().zip(mc.wire_slab_bgs.iter())
-                        {
+                        for (slab, wire_bg) in vol.slabs.iter().zip(mc.wire_slab_bgs.iter()) {
                             render_pass.set_bind_group(1, wire_bg, &[]);
                             render_pass.draw_indirect(&slab.wire_indirect_buf, 0);
                         }
@@ -652,7 +650,11 @@ impl ViewportRenderer {
     /// Call from `CallbackTrait::paint` after
     /// [`prepare_hdr_callback`](Self::prepare_hdr_callback) has been called for the
     /// same frame and viewport. Emits a fullscreen triangle into `render_pass`.
-    pub(crate) fn paint_hdr_blit<'rp>(&self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
+    pub(crate) fn paint_hdr_blit<'rp>(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'rp>,
+        frame: &FrameData,
+    ) {
         let vp_idx = frame.camera.viewport_index;
         if let Some(hc) = self
             .viewport_slots
@@ -676,7 +678,11 @@ impl ViewportRenderer {
     /// Like [`paint_hdr_blit`](Self::paint_hdr_blit) but for render passes without a
     /// depth-stencil attachment. Use this when you create the blit render pass yourself
     /// (e.g. winit) and omit the depth attachment.
-    pub(crate) fn paint_hdr_blit_no_ds<'rp>(&self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
+    pub(crate) fn paint_hdr_blit_no_ds<'rp>(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'rp>,
+        frame: &FrameData,
+    ) {
         let vp_idx = frame.camera.viewport_index;
         if let Some(hc) = self
             .viewport_slots
@@ -732,7 +738,11 @@ impl ViewportRenderer {
     /// Call after [`prepare_callback`](Self::prepare_callback) for the same frame.
     /// Dispatches internally to `paint_hdr_blit`, `paint_dyn_res_blit`, or `paint`
     /// based on which path `prepare_callback` activated.
-    pub(crate) fn paint_callback<'rp>(&self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
+    pub(crate) fn paint_callback<'rp>(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'rp>,
+        frame: &FrameData,
+    ) {
         let vp_idx = frame.camera.viewport_index;
         if frame.effects.post_process.enabled {
             if self
@@ -836,7 +846,15 @@ impl ViewportRenderer {
 
         // Ensure per-viewport HDR targets. Provides a depth buffer for both LDR and HDR paths.
         let ssaa_factor = frame.effects.post_process.ssaa_factor.max(1);
-        self.ensure_viewport_hdr(device, queue, vp_idx, w.max(1), h.max(1), ssaa_factor, self.current_render_scale);
+        self.ensure_viewport_hdr(
+            device,
+            queue,
+            vp_idx,
+            w.max(1),
+            h.max(1),
+            ssaa_factor,
+            self.current_render_scale,
+        );
 
         // Lazy-initialize GPU timestamp resources on first render call when supported.
         if self.ts_query_set.is_none()
@@ -894,16 +912,18 @@ impl ViewportRenderer {
                 let camera_bg = &slot.camera_bind_group;
                 let grid_bg = &slot.grid_bind_group;
                 // Choose render target: dyn_res intermediate, backdrop intermediate, or output_view.
-                let (scene_colour_view, scene_depth_view): (&wgpu::TextureView, &wgpu::TextureView) =
-                    if use_dyn_res {
-                        let dr = slot.dyn_res.as_ref().unwrap();
-                        (&dr.colour_view, &dr.depth_view)
-                    } else if needs_blur {
-                        let bs = self.backdrop_blur_state.as_ref().unwrap();
-                        (&bs.intermediate_view, &slot_hdr.outline_depth_view)
-                    } else {
-                        (output_view, &slot_hdr.outline_depth_view)
-                    };
+                let (scene_colour_view, scene_depth_view): (
+                    &wgpu::TextureView,
+                    &wgpu::TextureView,
+                ) = if use_dyn_res {
+                    let dr = slot.dyn_res.as_ref().unwrap();
+                    (&dr.colour_view, &dr.depth_view)
+                } else if needs_blur {
+                    let bs = self.backdrop_blur_state.as_ref().unwrap();
+                    (&bs.intermediate_view, &slot_hdr.outline_depth_view)
+                } else {
+                    (output_view, &slot_hdr.outline_depth_view)
+                };
                 let ts_writes =
                     self.ts_query_set
                         .as_ref()
@@ -1113,12 +1133,18 @@ impl ViewportRenderer {
             // Backdrop blur: capture scene, run blur, then draw overlays in a
             // second render pass so blur shapes can sample the blurred result.
             if needs_blur {
-                let spread = self.overlay_shape_gpu_data.as_ref()
+                let spread = self
+                    .overlay_shape_gpu_data
+                    .as_ref()
                     .map(|d| d.max_blur_radius)
                     .unwrap_or(1.0);
                 let blur_bg = {
                     let source = if use_dyn_res {
-                        &self.viewport_slots[vp_idx].dyn_res.as_ref().unwrap().colour_view
+                        &self.viewport_slots[vp_idx]
+                            .dyn_res
+                            .as_ref()
+                            .unwrap()
+                            .colour_view
                     } else {
                         &self.backdrop_blur_state.as_ref().unwrap().intermediate_view
                     };
@@ -1144,12 +1170,18 @@ impl ViewportRenderer {
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                             view: overlay_colour_view,
                             resolve_target: None,
-                            ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
                             depth_slice: None,
                         })],
                         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                             view: overlay_depth_view,
-                            depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Discard }),
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Discard,
+                            }),
                             stencil_ops: None,
                         }),
                         timestamp_writes: None,
@@ -1264,8 +1296,14 @@ impl ViewportRenderer {
                     label: Some("backdrop_blit_bg"),
                     layout: blit_bgl,
                     entries: &[
-                        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&bs.intermediate_view) },
-                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(blit_sampler) },
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&bs.intermediate_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(blit_sampler),
+                        },
                     ],
                 });
                 let mut blit_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1273,7 +1311,10 @@ impl ViewportRenderer {
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: output_view,
                         resolve_target: None,
-                        ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
                         depth_slice: None,
                     })],
                     depth_stencil_attachment: None,
@@ -1317,7 +1358,10 @@ impl ViewportRenderer {
             background_colour: bg_colour,
             near_plane: frame.camera.render_camera.near,
             far_plane: frame.camera.render_camera.far,
-            lic_enabled: if scene_items.iter().any(|i| i.lic.is_some() && !i.settings.hidden) {
+            lic_enabled: if scene_items
+                .iter()
+                .any(|i| i.lic.is_some() && !i.settings.hidden)
+            {
                 1
             } else {
                 0
@@ -1439,7 +1483,9 @@ impl ViewportRenderer {
                 pp.bloom,
                 pp.ssao,
                 pp.contact_shadows,
-                scene_items.iter().any(|i| i.lic.is_some() && !i.settings.hidden),
+                scene_items
+                    .iter()
+                    .any(|i| i.lic.is_some() && !i.settings.hidden),
                 pp.dof_enabled,
             );
         }
@@ -1463,8 +1509,7 @@ impl ViewportRenderer {
             if needs_oit {
                 let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
                 let [sw, sh] = hdr.scene_size;
-                self.resources
-                    .ensure_viewport_oit(device, hdr, sw, sh);
+                self.resources.ensure_viewport_oit(device, hdr, sw, sh);
             }
         }
 
@@ -1704,10 +1749,9 @@ impl ViewportRenderer {
                         // items inline (including transparent ones) using the transparent
                         // pipeline -- an intentional divergence since HDR uses OIT for
                         // transparency throughout.
-                        for item in excluded_items
-                            .into_iter()
-                            .filter(|item| item.settings.opacity >= 1.0 && !item.material.is_blend())
-                        {
+                        for item in excluded_items.into_iter().filter(|item| {
+                            item.settings.opacity >= 1.0 && !item.material.is_blend()
+                        }) {
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                                 continue;
                             };
@@ -1757,7 +1801,10 @@ impl ViewportRenderer {
                     // Instanced batch draws skip per-item logic, so these are drawn
                     // here after all batches finish.
                     if let Some(hdr_wf) = &resources.hdr_wireframe_pipeline {
-                        for item in scene_items.iter().filter(|i| i.show_normals && !i.settings.hidden) {
+                        for item in scene_items
+                            .iter()
+                            .filter(|i| i.show_normals && !i.settings.hidden)
+                        {
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                                 continue;
                             };
@@ -1783,7 +1830,8 @@ impl ViewportRenderer {
                     let mut opaque: Vec<&SceneRenderItem> = Vec::new();
                     let mut transparent: Vec<&SceneRenderItem> = Vec::new();
                     for item in scene_items {
-                        if item.settings.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
+                        if item.settings.hidden || resources.mesh_store.get(item.mesh_id).is_none()
+                        {
                             continue;
                         }
                         if item.settings.opacity < 1.0 || item.material.is_blend() {
@@ -1865,8 +1913,8 @@ impl ViewportRenderer {
                                 } else {
                                     solid_pl
                                 };
-                                let is_blended = item.settings.opacity < 1.0
-                                    || item.material.is_blend();
+                                let is_blended =
+                                    item.settings.opacity < 1.0 || item.material.is_blend();
                                 let hdr_skinned_pl = if is_blended {
                                     resources.hdr_skinned_transparent_pipeline.as_ref()
                                 } else if item.material.is_two_sided() {
@@ -1874,8 +1922,7 @@ impl ViewportRenderer {
                                 } else {
                                     resources.hdr_skinned_solid_pipeline.as_ref()
                                 };
-                                if let (Some(bg), Some(hdr_skinned)) = (skin_bg, hdr_skinned_pl)
-                                {
+                                if let (Some(bg), Some(hdr_skinned)) = (skin_bg, hdr_skinned_pl) {
                                     render_pass.set_pipeline(hdr_skinned);
                                     render_pass.set_bind_group(2, bg, &[]);
                                 } else {
@@ -1900,11 +1947,7 @@ impl ViewportRenderer {
                                 if let Some(ref nl_buf) = mesh.normal_line_buffer {
                                     if mesh.normal_line_count > 0 {
                                         render_pass.set_pipeline(wf_pl);
-                                        render_pass.set_bind_group(
-                                            1,
-                                            &mesh.normal_bind_group,
-                                            &[],
-                                        );
+                                        render_pass.set_bind_group(1, &mesh.normal_bind_group, &[]);
                                         render_pass.set_vertex_buffer(0, nl_buf.slice(..));
                                         render_pass.draw(0..mesh.normal_line_count, 0..1);
                                     }
@@ -1952,7 +1995,19 @@ impl ViewportRenderer {
                 }
             }
 
-            // SciVis Phase B+D+M8+M: point cloud, glyph, polyline, volume, streamtube (HDR path).
+            // Scivis layers (point cloud, glyph, polyline, volume, streamtube,
+            // image slice, tensor glyph, ribbon, volume surface slice, sprites).
+            //
+            // Sprites are routed through a separate post-pass below when SSAA is
+            // disabled so that soft-particle fade can sample the resolved scene
+            // depth. With SSAA enabled the scene depth texture differs in shape
+            // and the inline path is kept; soft fade is a no-op in that case.
+            let sprite_slice_for_inline: &[crate::resources::SpriteGpuData] =
+                if ssaa_factor > 1 {
+                    self.sprite_gpu_data.as_slice()
+                } else {
+                    &[]
+                };
             emit_scivis_draw_calls!(
                 &self.resources,
                 &mut render_pass,
@@ -1967,7 +2022,7 @@ impl ViewportRenderer {
                 &self.tensor_glyph_gpu_data,
                 &self.ribbon_gpu_data,
                 &self.volume_surface_slice_gpu_data,
-                &self.sprite_gpu_data,
+                sprite_slice_for_inline,
                 true
             );
 
@@ -1990,9 +2045,7 @@ impl ViewportRenderer {
                     if mc.wireframe || frame.viewport.wireframe_mode {
                         if let Some(ref dual) = self.resources.mc_wireframe_pipeline {
                             render_pass.set_pipeline(dual.for_format(true));
-                            for (slab, wire_bg) in
-                                vol.slabs.iter().zip(mc.wire_slab_bgs.iter())
-                            {
+                            for (slab, wire_bg) in vol.slabs.iter().zip(mc.wire_slab_bgs.iter()) {
                                 render_pass.set_bind_group(1, wire_bg, &[]);
                                 render_pass.draw_indirect(&slab.wire_indirect_buf, 0);
                             }
@@ -2028,7 +2081,9 @@ impl ViewportRenderer {
             }
             // TransparentVolumeMesh boundary wireframe overlay (HDR path).
             if !self.tvm_wireframe_draws.is_empty() {
-                if let (Some(tvm_bg), Some(hdr_wf)) = (&self.tvm_wireframe_bg, &resources.hdr_wireframe_pipeline) {
+                if let (Some(tvm_bg), Some(hdr_wf)) =
+                    (&self.tvm_wireframe_bg, &resources.hdr_wireframe_pipeline)
+                {
                     for mesh_id in &self.tvm_wireframe_draws {
                         if let Some(mesh) = resources.mesh_store.get(*mesh_id) {
                             render_pass.set_pipeline(hdr_wf);
@@ -2053,6 +2108,196 @@ impl ViewportRenderer {
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 render_pass.set_pipeline(&resources.skybox_pipeline);
                 render_pass.draw(0..3, 0..1);
+            }
+        }
+
+        // -----------------------------------------------------------------------
+        // Sprite post-pass: redraws sprite batches in two passes so that the
+        // soft-particle shader path can sample resolved scene depth.
+        //
+        // The depth-write batch runs first with the depth attachment writable
+        // and the fallback group-2 bind group, since the live depth view is
+        // also the attachment and cannot be sampled at the same time.
+        //
+        // The transparent batch runs after with the depth attachment in
+        // read-only mode and the per-viewport bind group, which lets the
+        // sprite shader sample the live scene depth and apply the soft fade.
+        //
+        // Only runs when SSAA is disabled. With SSAA, sprites still draw
+        // inline in hdr_scene_pass and soft fade is unavailable.
+        // -----------------------------------------------------------------------
+        if ssaa_factor == 1 && !self.sprite_gpu_data.is_empty() {
+            let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+            let camera_bg = &self.viewport_slots[vp_idx].camera_bind_group;
+            let resources = &self.resources;
+
+            let any_depth_write = self.sprite_gpu_data.iter().any(|s| s.depth_write);
+            let any_transparent = self.sprite_gpu_data.iter().any(|s| !s.depth_write);
+
+            let buckets = [
+                (
+                    true,
+                    crate::renderer::SpriteBlend::AlphaBlend,
+                    resources.sprite_pipeline_depth_write.as_ref(),
+                ),
+                (
+                    true,
+                    crate::renderer::SpriteBlend::Additive,
+                    resources.sprite_pipeline_additive_depth_write.as_ref(),
+                ),
+                (
+                    true,
+                    crate::renderer::SpriteBlend::Premultiplied,
+                    resources.sprite_pipeline_premultiplied_depth_write.as_ref(),
+                ),
+                (
+                    false,
+                    crate::renderer::SpriteBlend::AlphaBlend,
+                    resources.sprite_pipeline.as_ref(),
+                ),
+                (
+                    false,
+                    crate::renderer::SpriteBlend::Additive,
+                    resources.sprite_pipeline_additive.as_ref(),
+                ),
+                (
+                    false,
+                    crate::renderer::SpriteBlend::Premultiplied,
+                    resources.sprite_pipeline_premultiplied.as_ref(),
+                ),
+            ];
+
+            let fallback_soft_bg = resources.sprite_soft_fallback_bg.as_ref();
+
+            // Pass 1: depth-write sprites, depth attachment writable, fallback
+            // bound at group 2 (the live depth view is aliased to the
+            // attachment in this pass and cannot also be sampled).
+            if any_depth_write {
+                if let Some(fallback_soft_bg) = fallback_soft_bg {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("sprite_depth_write_pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &slot_hdr.hdr_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        })],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: &slot_hdr.hdr_depth_view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            }),
+                        }),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    for (depth_write, blend, pipeline) in &buckets {
+                        if !*depth_write {
+                            continue;
+                        }
+                        let Some(dual) = pipeline else { continue };
+                        let mut bound = false;
+                        for sprite in self.sprite_gpu_data.iter() {
+                            if sprite.wireframe
+                                || !sprite.depth_write
+                                || sprite.blend != *blend
+                            {
+                                continue;
+                            }
+                            if !bound {
+                                pass.set_pipeline(dual.for_format(true));
+                                pass.set_bind_group(0, camera_bg, &[]);
+                                pass.set_bind_group(2, fallback_soft_bg, &[]);
+                                bound = true;
+                            }
+                            pass.set_bind_group(1, &sprite.bind_group, &[]);
+                            pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
+                            pass.draw(0..6, 0..sprite.sprite_count);
+                        }
+                    }
+                }
+            }
+
+            // Pass 2: transparent sprites, depth attachment read-only so the
+            // live depth view can be sampled by the sprite shader for fade.
+            if any_transparent {
+                let real_soft_bg = if let (Some(bgl), Some(sampler)) = (
+                    resources.sprite_soft_bgl.as_ref(),
+                    resources.sprite_soft_sampler.as_ref(),
+                ) {
+                    Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("sprite_soft_bg"),
+                        layout: bgl,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(
+                                    &slot_hdr.hdr_depth_only_view,
+                                ),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(sampler),
+                            },
+                        ],
+                    }))
+                } else {
+                    None
+                };
+
+                if let Some(real_soft_bg) = real_soft_bg.as_ref() {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("sprite_transparent_pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &slot_hdr.hdr_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        })],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: &slot_hdr.hdr_depth_view,
+                            depth_ops: None,
+                            stencil_ops: None,
+                        }),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    for (depth_write, blend, pipeline) in &buckets {
+                        if *depth_write {
+                            continue;
+                        }
+                        let Some(dual) = pipeline else { continue };
+                        let mut bound = false;
+                        for sprite in self.sprite_gpu_data.iter() {
+                            if sprite.wireframe
+                                || sprite.depth_write
+                                || sprite.blend != *blend
+                            {
+                                continue;
+                            }
+                            if !bound {
+                                pass.set_pipeline(dual.for_format(true));
+                                pass.set_bind_group(0, camera_bg, &[]);
+                                pass.set_bind_group(2, real_soft_bg, &[]);
+                                bound = true;
+                            }
+                            pass.set_bind_group(1, &sprite.bind_group, &[]);
+                            pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
+                            pass.draw(0..6, 0..sprite.sprite_count);
+                        }
+                    }
+                }
             }
         }
 
@@ -2140,10 +2385,13 @@ impl ViewportRenderer {
             let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
             let camera_bg = &self.viewport_slots[vp_idx].camera_bind_group;
             let depth_bg = &slot_hdr.decal_depth_bg;
-            let replace_pipeline  = self.resources.decal_replace_pipeline.as_ref();
+            let replace_pipeline = self.resources.decal_replace_pipeline.as_ref();
             let multiply_pipeline = self.resources.decal_multiply_pipeline.as_ref();
             let additive_pipeline = self.resources.decal_additive_pipeline.as_ref();
-            if replace_pipeline.is_some() || multiply_pipeline.is_some() || additive_pipeline.is_some() {
+            if replace_pipeline.is_some()
+                || multiply_pipeline.is_some()
+                || additive_pipeline.is_some()
+            {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("decal_pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2163,7 +2411,7 @@ impl ViewportRenderer {
                 pass.set_bind_group(1, depth_bg, &[]);
                 for gpu in &self.decal_gpu_data {
                     let pipeline = match gpu.blend_mode {
-                        crate::renderer::DecalBlendMode::Replace  => replace_pipeline,
+                        crate::renderer::DecalBlendMode::Replace => replace_pipeline,
                         crate::renderer::DecalBlendMode::Multiply => multiply_pipeline,
                         crate::renderer::DecalBlendMode::Additive => additive_pipeline,
                     };
@@ -2406,7 +2654,9 @@ impl ViewportRenderer {
                         oit_pass.set_pipeline(pipeline);
                         let mut last_skinned = false;
                         for item in scene_items {
-                            if item.settings.hidden || (item.settings.opacity >= 1.0 && !item.material.is_blend()) {
+                            if item.settings.hidden
+                                || (item.settings.opacity >= 1.0 && !item.material.is_blend())
+                            {
                                 continue;
                             }
                             let skin_bg = item.skin_instance.and_then(|inst| {
@@ -2422,8 +2672,8 @@ impl ViewportRenderer {
                             let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
                                 continue;
                             };
-                            let want_skinned = skin_bg.is_some()
-                                && self.resources.skinned_oit_pipeline.is_some();
+                            let want_skinned =
+                                skin_bg.is_some() && self.resources.skinned_oit_pipeline.is_some();
                             if want_skinned != last_skinned {
                                 if want_skinned {
                                     oit_pass.set_pipeline(
@@ -2459,8 +2709,8 @@ impl ViewportRenderer {
                         let skin_bg = item.skin_instance.and_then(|inst| {
                             self.resources.skin_instance_bind_group(item.mesh_id, inst)
                         });
-                        let want_skinned = skin_bg.is_some()
-                            && self.resources.skinned_oit_pipeline.is_some();
+                        let want_skinned =
+                            skin_bg.is_some() && self.resources.skinned_oit_pipeline.is_some();
                         if want_skinned != last_skinned {
                             if want_skinned {
                                 oit_pass.set_pipeline(
@@ -2621,31 +2871,27 @@ impl ViewportRenderer {
                 let raw_view = raw_tex.create_view(&wgpu::TextureViewDescriptor::default());
                 let hist_a_view = hist_a_tex.create_view(&wgpu::TextureViewDescriptor::default());
                 let hist_b_view = hist_b_tex.create_view(&wgpu::TextureViewDescriptor::default());
-                let composite_bg_raw = self
-                    .resources
-                    .make_scatter_composite_bg(device, &raw_view);
+                let composite_bg_raw = self.resources.make_scatter_composite_bg(device, &raw_view);
                 let composite_bg_history_a = self
                     .resources
                     .make_scatter_composite_bg(device, &hist_a_view);
                 let composite_bg_history_b = self
                     .resources
                     .make_scatter_composite_bg(device, &hist_b_view);
-                let temporal_resolve_bg_read_a =
-                    self.resources.make_scatter_temporal_resolve_bg(
-                        device,
-                        queue,
-                        &raw_view,
-                        &hist_a_view,
-                        &slot_hdr.hdr_depth_only_view,
-                    );
-                let temporal_resolve_bg_read_b =
-                    self.resources.make_scatter_temporal_resolve_bg(
-                        device,
-                        queue,
-                        &raw_view,
-                        &hist_b_view,
-                        &slot_hdr.hdr_depth_only_view,
-                    );
+                let temporal_resolve_bg_read_a = self.resources.make_scatter_temporal_resolve_bg(
+                    device,
+                    queue,
+                    &raw_view,
+                    &hist_a_view,
+                    &slot_hdr.hdr_depth_only_view,
+                );
+                let temporal_resolve_bg_read_b = self.resources.make_scatter_temporal_resolve_bg(
+                    device,
+                    queue,
+                    &raw_view,
+                    &hist_b_view,
+                    &slot_hdr.hdr_depth_only_view,
+                );
                 self.scatter_viewport_states[vp_idx] =
                     Some(crate::resources::ScatterViewportState {
                         raw_current_texture: raw_tex,
@@ -2674,9 +2920,11 @@ impl ViewportRenderer {
 
             // Per-volume uniform buffer.
             self.resources.clear_scatter_per_volume_tex_cache();
-            let n = self
-                .resources
-                .write_scatter_per_volume_buffer(device, queue, &self.prepared_scatter_volumes);
+            let n = self.resources.write_scatter_per_volume_buffer(
+                device,
+                queue,
+                &self.prepared_scatter_volumes,
+            );
             let stride = self.resources.scatter_per_volume_stride();
 
             // Per-frame uniform + frame bind group.
@@ -2708,14 +2956,13 @@ impl ViewportRenderer {
             }
 
             // Pre-build per-volume texture bind groups (cached by ids).
-            let mut per_vol_tex_bgs: Vec<wgpu::BindGroup> =
-                Vec::with_capacity(n as usize);
+            let mut per_vol_tex_bgs: Vec<wgpu::BindGroup> = Vec::with_capacity(n as usize);
             for (volume, _, _) in self.prepared_scatter_volumes.iter().take(n as usize) {
                 let (lut_id, density_id) =
                     crate::resources::ViewportGpuResources::scatter_volume_tex_ids(volume);
-                let bg = self.resources.ensure_scatter_per_volume_tex_bg(
-                    device, queue, lut_id, density_id,
-                );
+                let bg = self
+                    .resources
+                    .ensure_scatter_per_volume_tex_bg(device, queue, lut_id, density_id);
                 per_vol_tex_bgs.push(bg);
             }
 
@@ -2774,26 +3021,21 @@ impl ViewportRenderer {
                     if let Some(resolve_pipeline) =
                         self.resources.scatter_temporal_resolve_pipeline.as_ref()
                     {
-                        let mut pass =
-                            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                                label: Some("scatter_temporal_resolve_pass"),
-                                color_attachments: &[Some(
-                                    wgpu::RenderPassColorAttachment {
-                                        view: target_view,
-                                        resolve_target: None,
-                                        ops: wgpu::Operations {
-                                            load: wgpu::LoadOp::Clear(
-                                                wgpu::Color::TRANSPARENT,
-                                            ),
-                                            store: wgpu::StoreOp::Store,
-                                        },
-                                        depth_slice: None,
-                                    },
-                                )],
-                                depth_stencil_attachment: None,
-                                timestamp_writes: None,
-                                occlusion_query_set: None,
-                            });
+                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("scatter_temporal_resolve_pass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: target_view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                                depth_slice: None,
+                            })],
+                            depth_stencil_attachment: None,
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                        });
                         pass.set_pipeline(resolve_pipeline);
                         pass.set_bind_group(0, resolve_bg, &[]);
                         pass.draw(0..3, 0..1);
@@ -2804,8 +3046,7 @@ impl ViewportRenderer {
                 };
 
                 // Composite pass: source -> HDR with premultiplied alpha-over.
-                if let Some(composite_pipeline) =
-                    self.resources.scatter_composite_pipeline.as_ref()
+                if let Some(composite_pipeline) = self.resources.scatter_composite_pipeline.as_ref()
                 {
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("scatter_composite_pass"),
@@ -2829,8 +3070,7 @@ impl ViewportRenderer {
 
                 // Advance ping-pong + history for next frame.
                 let s = self.scatter_viewport_states[vp_idx].as_mut().unwrap();
-                s.prev_view_proj =
-                    frame.camera.render_camera.view_proj().to_cols_array_2d();
+                s.prev_view_proj = frame.camera.render_camera.view_proj().to_cols_array_2d();
                 s.parity = 1 - s.parity;
                 s.history_valid = scatter.temporal;
             } else if let Some(s) = self.scatter_viewport_states[vp_idx].as_mut() {
@@ -3245,22 +3485,21 @@ impl ViewportRenderer {
             let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
             if let Some(upscale_bg) = &slot_hdr.upscale_bind_group {
                 if let Some(pipeline) = &self.resources.dyn_res_upscale_pipeline {
-                    let mut upscale_pass =
-                        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("hdr_upscale_pass"),
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: output_view,
-                                resolve_target: None,
-                                ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                    store: wgpu::StoreOp::Store,
-                                },
-                                depth_slice: None,
-                            })],
-                            depth_stencil_attachment: None,
-                            timestamp_writes: None,
-                            occlusion_query_set: None,
-                        });
+                    let mut upscale_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("hdr_upscale_pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: output_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                store: wgpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
                     upscale_pass.set_pipeline(pipeline);
                     upscale_pass.set_bind_group(0, upscale_bg, &[]);
                     upscale_pass.draw(0..3, 0..1);
@@ -3277,23 +3516,20 @@ impl ViewportRenderer {
             let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
             if let Some(blit_bg) = &slot_hdr.depth_blit_bind_group {
                 if let Some(blit_pipeline) = &self.resources.depth_blit_pipeline {
-                    let mut blit_pass =
-                        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("depth_blit_pass"),
-                            color_attachments: &[],
-                            depth_stencil_attachment: Some(
-                                wgpu::RenderPassDepthStencilAttachment {
-                                    view: &slot_hdr.output_depth_view,
-                                    depth_ops: Some(wgpu::Operations {
-                                        load: wgpu::LoadOp::Clear(1.0),
-                                        store: wgpu::StoreOp::Store,
-                                    }),
-                                    stencil_ops: None,
-                                },
-                            ),
-                            timestamp_writes: None,
-                            occlusion_query_set: None,
-                        });
+                    let mut blit_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("depth_blit_pass"),
+                        color_attachments: &[],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: &slot_hdr.output_depth_view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(1.0),
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        }),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
                     blit_pass.set_pipeline(blit_pipeline);
                     blit_pass.set_bind_group(0, blit_bg, &[]);
                     blit_pass.draw(0..3, 0..1);
@@ -3580,7 +3816,9 @@ impl ViewportRenderer {
             // format of the blur textures. This looks acceptable in practice.
             let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
             let source = &slot_hdr.hdr_view;
-            let spread = self.overlay_shape_gpu_data.as_ref()
+            let spread = self
+                .overlay_shape_gpu_data
+                .as_ref()
                 .map(|d| d.max_blur_radius)
                 .unwrap_or(8.0);
             Some(self.run_backdrop_blur(&mut encoder, device, queue, source, spread))
@@ -3839,12 +4077,7 @@ impl ViewportRenderer {
     // ------------------------------------------------------------------
 
     /// Ensure the backdrop blur state textures exist at the right size.
-    fn ensure_backdrop_blur_state(
-        &mut self,
-        device: &wgpu::Device,
-        w: u32,
-        h: u32,
-    ) {
+    fn ensure_backdrop_blur_state(&mut self, device: &wgpu::Device, w: u32, h: u32) {
         let need_recreate = match &self.backdrop_blur_state {
             Some(s) => s.size != [w, h] || s.format != self.resources.target_format,
             None => true,
@@ -3859,7 +4092,11 @@ impl ViewportRenderer {
 
         let intermediate_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("backdrop_intermediate"),
-            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -3872,12 +4109,17 @@ impl ViewportRenderer {
         let make_blur_tex = |label: &str| {
             let t = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
-                size: wgpu::Extent3d { width: blur_w, height: blur_h, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width: blur_w,
+                    height: blur_h,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
             let v = t.create_view(&Default::default());
@@ -3923,8 +4165,14 @@ impl ViewportRenderer {
             label: Some("backdrop_downsample_bg"),
             layout: blit_bgl,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(source_view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(blit_sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(source_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(blit_sampler),
+                },
             ],
         });
         {
@@ -3933,7 +4181,10 @@ impl ViewportRenderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &bs.blur_a_view,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
@@ -3958,9 +4209,18 @@ impl ViewportRenderer {
             label: Some("blur_h_bg"),
             layout: blur_bgl,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&bs.blur_a_view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(blur_sampler) },
-                wgpu::BindGroupEntry { binding: 2, resource: h_uniform.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&bs.blur_a_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(blur_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: h_uniform.as_entire_binding(),
+                },
             ],
         });
         {
@@ -3969,7 +4229,10 @@ impl ViewportRenderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &bs.blur_b_view,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
@@ -3991,9 +4254,18 @@ impl ViewportRenderer {
             label: Some("blur_v_bg"),
             layout: blur_bgl,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&bs.blur_b_view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(blur_sampler) },
-                wgpu::BindGroupEntry { binding: 2, resource: v_uniform.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&bs.blur_b_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(blur_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: v_uniform.as_entire_binding(),
+                },
             ],
         });
         {
@@ -4002,7 +4274,10 @@ impl ViewportRenderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &bs.blur_a_view,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
@@ -4023,8 +4298,14 @@ impl ViewportRenderer {
             label: Some("backdrop_blur_overlay_bg"),
             layout: tex_bgl,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&bs.blur_a_view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(tex_sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&bs.blur_a_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(tex_sampler),
+                },
             ],
         })
     }

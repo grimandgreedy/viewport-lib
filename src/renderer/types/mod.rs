@@ -992,8 +992,17 @@ macro_rules! emit_scivis_draw_calls {
                     resources.sprite_pipeline_premultiplied.as_ref(),
                 ),
             ];
+            // Group 2 (sprite_soft_bgl) carries the scene-depth resolve consumed
+            // by soft-particle fade. Inline sprite draws inside the main HDR or
+            // LDR pass cannot bind the live scene depth (it is still being
+            // written), so they bind a placeholder. The shader gates the fade
+            // sample on a positive soft_particle_distance, so non-fade items
+            // ignore this binding's contents. Soft fade itself is applied in the
+            // separate transparent-sprite post-pass driven from `render.rs`.
+            let soft_bg = resources.sprite_soft_fallback_bg.as_ref();
             for (depth_write, blend, pipeline) in buckets {
                 let Some(dual) = pipeline else { continue };
+                let Some(soft_bg) = soft_bg else { continue };
                 let mut set = false;
                 for sprite in $sprite_gpu_data.iter() {
                     if sprite.wireframe
@@ -1005,6 +1014,7 @@ macro_rules! emit_scivis_draw_calls {
                     if !set {
                         render_pass.set_pipeline(dual.for_format(_is_hdr));
                         render_pass.set_bind_group(0, camera_bg, &[]);
+                        render_pass.set_bind_group(2, soft_bg, &[]);
                         set = true;
                     }
                     render_pass.set_bind_group(1, &sprite.bind_group, &[]);
