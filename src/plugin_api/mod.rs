@@ -4,29 +4,32 @@
 //! This module publishes the pieces a plugin needs to build pipelines that
 //! drop into the lib's existing render passes. A plugin reuses:
 //!
-//! - **Target descriptors** ([`OpaqueTargetDesc`], [`OitTargetDesc`],
+//! - Target descriptors ([`OpaqueTargetDesc`], [`OitTargetDesc`],
 //!   [`MaskTargetDesc`], [`PickTargetDesc`], [`ShadowTargetDesc`]) describe
 //!   the render-target formats, blend states, and depth-stencil state each
 //!   lib pass expects. Pipelines built against these are compatible with the
 //!   corresponding pass.
-//! - **SharedBindings** ([`SharedBindings`]) is the group-0 bind layout
-//!   (camera, lights, shadows, clip, IBL) shared by every scene pipeline.
-//!   Plugin pipeline layouts list it as group 0.
-//! - **WGSL helpers** ([`shared_wgsl`]) — string constants with the standard
-//!   bind declarations and shading helpers (`viewport_pbr_shade`,
+//! - [`SharedBindings`] is the group-0 bind layout (camera, lights, shadows,
+//!   clip, IBL) shared by every scene pipeline. Plugin pipeline layouts list
+//!   it as group 0.
+//! - [`shared_wgsl`] holds string constants with the standard bind
+//!   declarations and shading helpers (`viewport_pbr_shade`,
 //!   `viewport_oit_pack`, `viewport_sample_csm`, etc.) so plugin shaders stay
 //!   in lockstep with the lib's lighting and transparency contracts.
-//! - **Pipeline builders** ([`ViewportGpuResources::build_opaque_pipeline`]
-//!   etc.) — one-line construction of the common variants. Plugins ship one
-//!   shader and call a builder per variant.
+//! - Pipeline builders on [`crate::resources::ViewportGpuResources`]
+//!   (`build_opaque_pipeline`, `build_oit_pipeline`, ...) construct the
+//!   common variants in one call. Plugins ship one shader and call a
+//!   builder per variant.
 //!
 //! All accessors live on [`crate::resources::ViewportGpuResources`].
 
 pub mod cull;
+pub mod item_type;
 pub mod shared_wgsl;
 pub mod target_desc;
 
 pub use cull::{CullSubmission, InstanceAabb};
+pub use item_type::{ItemFrameContext, ItemTypePlugin, PaintContext, PluginItemCollection};
 pub use target_desc::{
     MaskTargetDesc, OIT_ACCUM_BLEND, OIT_REVEAL_BLEND, OitTargetDesc, OpaqueTargetDesc,
     PickTargetDesc, ShadowTargetDesc,
@@ -48,7 +51,7 @@ pub struct SharedBindings<'a> {
 }
 
 impl<'a> SharedBindings<'a> {
-    /// Binding indices inside group 0. Stable across releases — additive
+    /// Binding indices inside group 0. Stable across releases: additive
     /// changes only. See [`shared_wgsl::SHARED_BINDINGS_WGSL`] for the WGSL
     /// declarations.
     pub const CAMERA_BINDING: u32 = 0;

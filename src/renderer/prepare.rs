@@ -5910,6 +5910,13 @@ impl ViewportRenderer {
     ) -> crate::renderer::stats::FrameStats {
         let prepare_start = std::time::Instant::now();
 
+        // Dispatch item-type plugin prepare work first so any GPU outputs
+        // the plugin produces are visible to the rest of `prepare`.
+        let plugin_bufs = self.dispatch_plugin_prepare(device, queue, frame);
+        if !plugin_bufs.is_empty() {
+            queue.submit(plugin_bufs);
+        }
+
         // Read back GPU timestamps from the previous frame, if available.
         // By the time prepare() is called, the previous frame's queue.submit() has
         // already happened, so it is safe to initiate the map here.

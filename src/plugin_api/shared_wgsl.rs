@@ -4,14 +4,14 @@
 //! concatenates into its own shader source) to gain access to the lib's
 //! shared bindings, shading helpers, and target conventions.
 //!
-//! **Versioning.** Each helper carries a `// @viewport-wgsl-version: N`
+//! Versioning: each helper carries a `// @viewport-wgsl-version: N`
 //! comment. The version is bumped whenever a function signature, struct
 //! field, or binding number changes. Plugins compare against
 //! [`WGSL_VERSION`] at build time to detect breakage early. Function bodies
 //! and private fields are not part of the contract and may change between
 //! patch releases.
 //!
-//! **Composition.** Plugin shaders typically build their source as:
+//! Composition: plugin shaders typically build their source as:
 //!
 //! ```ignore
 //! let src = format!(

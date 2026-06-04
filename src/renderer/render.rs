@@ -2044,6 +2044,10 @@ impl ViewportRenderer {
                 }
             }
 
+            // Item-type plugin paint: after built-in opaques, before
+            // skybox. Standard group-0 bindings are already bound.
+            self.dispatch_plugin_paint(&mut render_pass, frame);
+
             // Draw skybox last among opaques : only uncovered sky pixels pass depth == 1.0.
             if show_skybox {
                 render_pass.set_bind_group(0, camera_bg, &[]);

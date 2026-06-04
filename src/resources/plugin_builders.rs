@@ -27,7 +27,7 @@ pub const PICK_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 
 impl ViewportGpuResources {
     // ------------------------------------------------------------------
-    // Phase 0.1 accessors
+    // Target descriptors and SharedBindings accessor
     // ------------------------------------------------------------------
 
     /// Group-0 bind layout shared by every scene pipeline. Use as group 0
@@ -86,7 +86,7 @@ impl ViewportGpuResources {
     }
 
     // ------------------------------------------------------------------
-    // Phase 0.4 texture-id namespace exposure
+    // Texture-id namespace accessors
     // ------------------------------------------------------------------
 
     /// Borrow the `TextureView` for a texture previously uploaded via
@@ -96,7 +96,7 @@ impl ViewportGpuResources {
     /// Returns `None` if `id` does not refer to a live texture (out of
     /// range, or the texture was unloaded).
     ///
-    /// **Lifetime contract.** The returned view is valid until the texture
+    /// Lifetime contract: the returned view is valid until the texture
     /// is removed (currently no public removal API exists, so views are
     /// effectively stable for the lifetime of `self`). Plugins that build a
     /// bind group from this view must rebuild it after any operation that
@@ -111,7 +111,7 @@ impl ViewportGpuResources {
     ///
     /// Most user textures are uploaded with a shared linear-repeat sampler;
     /// prefer [`material_sampler`](Self::material_sampler) when you need
-    /// the canonical lib sampler rather than the per-texture instance.
+    /// the shared lib sampler rather than the per-texture instance.
     pub fn texture_sampler(&self, id: u64) -> Option<&wgpu::Sampler> {
         self.textures.get(id as usize).map(|t| &t.sampler)
     }
@@ -165,7 +165,7 @@ impl ViewportGpuResources {
     }
 
     // ------------------------------------------------------------------
-    // Phase 0.3 pipeline builders
+    // Pipeline builders
     // ------------------------------------------------------------------
 
     /// Build an opaque scene pipeline that draws into the HDR scene pass.

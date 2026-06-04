@@ -223,6 +223,16 @@ pub struct ViewportRenderer {
     /// GPU culling compute pipelines and frustum buffer. Created lazily on the first
     /// frame where `gpu_culling_enabled` is true and instance buffers are present.
     cull_resources: Option<indirect::CullResources>,
+    /// Registered item-type plugins keyed by
+    /// [`ItemTypePlugin::type_name`](crate::plugin_api::ItemTypePlugin::type_name).
+    /// `init_gpu` is invoked once on registration; per-frame `prepare` and
+    /// `paint` fire when a matching collection is on `SceneFrame`.
+    item_type_plugins: std::collections::HashMap<
+        &'static str,
+        Box<dyn crate::plugin_api::ItemTypePlugin>,
+    >,
+    /// Monotonic frame counter passed to plugin contexts.
+    plugin_frame_index: u64,
     /// Performance counters from the last frame.
     last_stats: crate::renderer::stats::FrameStats,
     /// Last scene generation seen during prepare(). u64::MAX forces rebuild on first frame.
@@ -492,6 +502,8 @@ impl ViewportRenderer {
             gpu_culling_supported,
             gpu_culling_enabled: gpu_culling_supported,
             cull_resources: None,
+            item_type_plugins: std::collections::HashMap::new(),
+            plugin_frame_index: 0,
             last_stats: crate::renderer::stats::FrameStats::default(),
             last_scene_generation: u64::MAX,
             last_selection_generation: u64::MAX,
@@ -723,8 +735,8 @@ impl ViewportRenderer {
     /// `pass.draw_indexed_indirect(sub.indirect_out, 0)` using
     /// `sub.visible_out` as the per-instance lookup buffer.
     ///
-    /// **Single-batch only.** Plugins with multiple meshes call this once
-    /// per mesh; each submission consumes its own scratch counter so
+    /// Single-batch only: plugins with multiple meshes call this once
+    /// per mesh. Each submission consumes its own scratch counter so
     /// submissions are independent. Internal lib batches use a separate
     /// path and do not collide.
     ///
@@ -787,9 +799,94 @@ impl ViewportRenderer {
         cull.dispatch_plugin_shadow(encoder, device, queue, cascade_idx, cascade_frustum, sub);
     }
 
+    /// Register an [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin).
+    ///
+    /// Invokes the plugin's `init_gpu` against the current device and
+    /// shared bind layout, then stores it keyed by `type_name()` for the
+    /// remainder of the renderer's lifetime. Registering a second plugin
+    /// with the same `type_name` replaces the first.
+    ///
+    /// The renderer will dispatch `prepare` and `paint` to the plugin on
+    /// every frame where
+    /// [`SceneFrame::submit_plugin_items`](crate::renderer::SceneFrame::submit_plugin_items)
+    /// has populated a collection under the same name.
+    pub fn with_item_type_plugin(
+        &mut self,
+        device: &wgpu::Device,
+        mut plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
+    ) {
+        let shared = self.resources.shared_bindings();
+        plugin.init_gpu(device, &shared);
+        let name = plugin.type_name();
+        self.item_type_plugins.insert(name, plugin);
+    }
+
+    /// Returns true when an item-type plugin with `type_name` is
+    /// registered.
+    pub fn has_item_type_plugin(&self, type_name: &str) -> bool {
+        self.item_type_plugins.contains_key(type_name)
+    }
+
+    /// Walk registered item-type plugins, invoke `prepare` for each one
+    /// that has a matching collection submitted on `frame.scene`, and
+    /// return the concatenated command buffers.
+    ///
+    /// Called internally from the lib's prepare paths; not part of the
+    /// consumer-facing API.
+    pub(crate) fn dispatch_plugin_prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &FrameData,
+    ) -> Vec<wgpu::CommandBuffer> {
+        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+            return Vec::new();
+        }
+        self.plugin_frame_index = self.plugin_frame_index.wrapping_add(1);
+        let ctx = crate::plugin_api::ItemFrameContext {
+            camera: &frame.camera.render_camera,
+            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_index: frame.camera.viewport_index,
+            frame_index: self.plugin_frame_index,
+        };
+        let mut bufs: Vec<wgpu::CommandBuffer> = Vec::new();
+        for (name, plugin) in self.item_type_plugins.iter_mut() {
+            if let Some(items) = frame.scene.plugin_items.get(*name) {
+                bufs.extend(plugin.prepare(device, queue, &ctx, items.as_ref()));
+            }
+        }
+        bufs
+    }
+
+    /// Walk registered item-type plugins and invoke `paint` for each one
+    /// that has a matching collection submitted on `frame.scene`.
+    ///
+    /// Called from inside the lib's HDR scene pass between built-in
+    /// opaques and the skybox.
+    pub(crate) fn dispatch_plugin_paint<'rp>(
+        &'rp self,
+        pass: &mut wgpu::RenderPass<'rp>,
+        frame: &'rp FrameData,
+    ) {
+        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+            return;
+        }
+        let ctx = crate::plugin_api::PaintContext {
+            camera: &frame.camera.render_camera,
+            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_index: frame.camera.viewport_index,
+            frame_index: self.plugin_frame_index,
+        };
+        for (name, plugin) in self.item_type_plugins.iter() {
+            if let Some(items) = frame.scene.plugin_items.get(*name) {
+                plugin.paint(pass, &ctx, items.as_ref());
+            }
+        }
+    }
+
     /// True when the device supports the features GPU-driven culling needs.
     ///
-    /// Plugins should gate `submit_cull` calls on this — if false, the lib
+    /// Plugins should gate `submit_cull` calls on this. If false, the lib
     /// silently no-ops the submission and the plugin must fall back to
     /// direct draws.
     pub fn is_gpu_culling_supported(&self) -> bool {

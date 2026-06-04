@@ -375,6 +375,17 @@ pub struct SceneFrame {
     /// chains these with the frame-data lights before building the GPU uniform;
     /// consumers that use only `EffectsFrame::lighting` leave this empty.
     pub lights: Vec<LightSource>,
+    /// Plugin item collections, keyed by
+    /// [`ItemTypePlugin::type_name`](crate::plugin_api::ItemTypePlugin::type_name).
+    ///
+    /// Populated via [`Self::submit_plugin_items`]. Empty by default; the
+    /// renderer iterates this map during `prepare` / `paint` and dispatches
+    /// to the matching registered plugin. Entries whose `type_name` is not
+    /// registered on the renderer are silently ignored.
+    pub plugin_items: std::collections::HashMap<
+        &'static str,
+        Box<dyn crate::plugin_api::PluginItemCollection>,
+    >,
 }
 
 /// A participating-media volume submitted for one frame.
@@ -426,6 +437,7 @@ impl Default for SceneFrame {
             decals: Vec::new(),
             scatter_volumes: Vec::new(),
             lights: Vec::new(),
+            plugin_items: std::collections::HashMap::new(),
         }
     }
 }
@@ -476,6 +488,23 @@ impl SceneFrame {
     pub fn with_generation(mut self, generation: u64) -> Self {
         self.generation = generation;
         self
+    }
+
+    /// Submit a plugin item collection under `type_name`.
+    ///
+    /// The renderer dispatches per-frame work and draw calls to the
+    /// matching [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin)
+    /// registered with the same `type_name`. Submitting under a name
+    /// that has no registered plugin is a no-op.
+    ///
+    /// Calling this twice with the same name replaces the previous
+    /// submission.
+    pub fn submit_plugin_items<C: crate::plugin_api::PluginItemCollection>(
+        &mut self,
+        type_name: &'static str,
+        items: C,
+    ) {
+        self.plugin_items.insert(type_name, Box::new(items));
     }
 
     /// Build a scene frame from an already-allocated shared slice.
