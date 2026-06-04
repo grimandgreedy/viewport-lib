@@ -105,8 +105,7 @@ pub(super) fn compute_cascade_matrix(
     min_z -= 15.0;
     max_z += 5.0;
 
-    let light_proj =
-        glam::Mat4::orthographic_rh(min_x, max_x, min_y, max_y, -max_z, -min_z);
+    let light_proj = glam::Mat4::orthographic_rh(min_x, max_x, min_y, max_y, -max_z, -min_z);
 
     light_proj * light_view
 }

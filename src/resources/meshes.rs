@@ -249,8 +249,7 @@ impl ViewportGpuResources {
         let existing_vertex_count = {
             let mesh = self.mesh_store.get(mesh_id).unwrap();
             debug_assert!(
-                mesh.position_override_buffer.is_none()
-                    && mesh.normal_override_buffer.is_none(),
+                mesh.position_override_buffer.is_none() && mesh.normal_override_buffer.is_none(),
                 "write_mesh_positions_normals called on mesh {} that has a GPU position/normal override bound. The CPU write and the GPU override race; call clear_position_override / clear_normal_override first.",
                 mesh_id.index(),
             );

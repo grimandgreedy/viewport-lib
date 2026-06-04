@@ -219,7 +219,6 @@ impl eframe::App for App {
             frame_data.effects.lighting = {
                 let mut _t = LightingSettings::default();
                 _t.lights = vec![
-                    
                     {
                         let mut _t = LightSource::default();
                         _t.kind = LightKind::Directional {
@@ -229,7 +228,6 @@ impl eframe::App for App {
                         _t.intensity = 1.0;
                         _t
                     },
-                    
                     {
                         let mut _t = LightSource::default();
                         _t.kind = LightKind::Directional {

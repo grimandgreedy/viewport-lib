@@ -424,7 +424,9 @@ pub(crate) fn submit_stream_items(app: &mut App, fd: &mut FrameData) {
             fd.scene.streamtube_items.push(app.make_stream_tube_item());
         }
         StreamRenderMode::GeneralTube => {
-            fd.scene.tube_items.push(app.make_stream_general_tube_item());
+            fd.scene
+                .tube_items
+                .push(app.make_stream_general_tube_item());
         }
         StreamRenderMode::Ribbon => {
             fd.scene.ribbon_items.push(app.make_stream_ribbon_item());

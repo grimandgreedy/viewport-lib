@@ -277,7 +277,10 @@ impl shader::Primitive for ViewportPrimitive {
 
         // pass_view().paint() delegates to paint_callback, which blits the HDR result when
         // HDR was staged in prepare, or draws LDR directly otherwise.
-        pipeline.renderer.pass_view().paint(&mut render_pass, &frame_data);
+        pipeline
+            .renderer
+            .pass_view()
+            .paint(&mut render_pass, &frame_data);
     }
 }
 

@@ -18,9 +18,8 @@ use crate::App;
 use crate::geometry::make_box_with_uvs;
 use eframe::egui;
 use viewport_lib::{
-    CameraTarget, CameraTrack, ImageAnchor, LightKind, LightSource,
-    LightingSettings, Material, PolylineItem, ScreenImageItem, TurntableController,
-    ViewportRenderer, interpolate_camera,
+    CameraTarget, CameraTrack, ImageAnchor, LightKind, LightSource, LightingSettings, Material,
+    PolylineItem, ScreenImageItem, TurntableController, ViewportRenderer, interpolate_camera,
 };
 
 /// Sub-mode for Showcase 27 (camera framing).

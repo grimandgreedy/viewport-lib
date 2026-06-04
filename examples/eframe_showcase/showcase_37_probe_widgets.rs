@@ -483,7 +483,10 @@ fn selection_buttons(ui: &mut egui::Ui, state: &mut ProbeWidgetState, mode: PwSu
 pub(crate) fn pw_collect_scene_items(
     app: &mut App,
 ) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
-    let items = app.pw_state.scene.collect_render_items(&viewport_lib::selection::Selection::new());
+    let items = app
+        .pw_state
+        .scene
+        .collect_render_items(&viewport_lib::selection::Selection::new());
     let lighting = {
         let mut _t = LightingSettings::default();
         _t.hemisphere_intensity = 0.6;

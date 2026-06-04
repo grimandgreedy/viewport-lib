@@ -16,9 +16,13 @@ impl eframe::egui_wgpu::CallbackTrait for MultiViewportCallback {
     ) -> Vec<eframe::wgpu::CommandBuffer> {
         if let Some(renderer) = callback_resources.get_mut::<ViewportRenderer>() {
             let (scene_fx, _) = self.frames[0].effects.split();
-            let token = renderer.pass().prepare_scene(device, queue, &self.frames[0], &scene_fx);
+            let token = renderer
+                .pass()
+                .prepare_scene(device, queue, &self.frames[0], &scene_fx);
             for (i, frame) in self.frames.iter().enumerate() {
-                renderer.pass().prepare_viewport(device, queue, &token, self.viewports[i], frame);
+                renderer
+                    .pass()
+                    .prepare_viewport(device, queue, &token, self.viewports[i], frame);
             }
             return self
                 .frames
@@ -66,7 +70,9 @@ impl eframe::egui_wgpu::CallbackTrait for MultiViewportCallback {
                 }
                 render_pass.set_viewport(qx as f32, qy as f32, qw as f32, qh as f32, 0.0, 1.0);
                 render_pass.set_scissor_rect(qx, qy, qw, qh);
-                renderer.pass_view().paint_hdr_blit(render_pass, &self.frames[i]);
+                renderer
+                    .pass_view()
+                    .paint_hdr_blit(render_pass, &self.frames[i]);
             }
         }
     }

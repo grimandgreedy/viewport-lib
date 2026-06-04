@@ -4,9 +4,9 @@ use crate::App;
 use eframe::egui;
 use std::collections::HashMap;
 use viewport_lib::{
-    CameraAnimator, CameraFrame, Easing, FrameData, Gizmo, GizmoMode, GizmoSpace,
-    LightingSettings, ManipulationController, Material, NodeId, SceneRenderItem, ViewPreset,
-    ViewportRenderer, scene::Scene, selection::Selection,
+    CameraAnimator, CameraFrame, Easing, FrameData, Gizmo, GizmoMode, GizmoSpace, LightingSettings,
+    ManipulationController, Material, NodeId, SceneRenderItem, ViewPreset, ViewportRenderer,
+    scene::Scene, selection::Selection,
 };
 
 // ---------------------------------------------------------------------------

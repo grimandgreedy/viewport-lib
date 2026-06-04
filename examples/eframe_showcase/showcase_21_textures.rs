@@ -73,7 +73,7 @@ impl App {
             "Percy Plane",
             Some(plane_id),
             glam::Mat4::from_translation(glam::Vec3::new(-3.0, 0.0, 3.0))
-                * glam::Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2*3.0),
+                * glam::Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2 * 3.0),
             {
                 let mut m = Material::default();
                 m.texture_id = Some(percy_tex);
@@ -149,7 +149,7 @@ impl App {
             "Stripe Torus",
             Some(torus_id),
             glam::Mat4::from_translation(glam::Vec3::new(3.0, 0.0, -3.0))
-                * glam::Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2*3.0),
+                * glam::Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2 * 3.0),
             {
                 let mut m = Material::default();
                 m.texture_id = Some(stripes_tex);

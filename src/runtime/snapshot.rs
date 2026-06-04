@@ -141,7 +141,11 @@ mod tests {
         table.update(1, translation(0.0));
         table.update(1, translation(4.0));
         let t = table.interpolated(1, 1.0).unwrap();
-        assert!((t.translation.x - 4.0).abs() < 1e-5, "x was {}", t.translation.x);
+        assert!(
+            (t.translation.x - 4.0).abs() < 1e-5,
+            "x was {}",
+            t.translation.x
+        );
     }
 
     #[test]
@@ -150,7 +154,11 @@ mod tests {
         table.update(1, translation(0.0));
         table.update(1, translation(4.0));
         let t = table.interpolated(1, 0.5).unwrap();
-        assert!((t.translation.x - 2.0).abs() < 1e-5, "x was {}", t.translation.x);
+        assert!(
+            (t.translation.x - 2.0).abs() < 1e-5,
+            "x was {}",
+            t.translation.x
+        );
     }
 
     #[test]

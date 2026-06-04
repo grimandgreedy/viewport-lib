@@ -110,7 +110,10 @@ impl SplineWidget {
             default_colour: self.colour,
             line_width: self.line_width,
 
-            settings: crate::scene::material::ItemSettings { pick_id: crate::renderer::PickId(id), ..Default::default() },
+            settings: crate::scene::material::ItemSettings {
+                pick_id: crate::renderer::PickId(id),
+                ..Default::default()
+            },
             ..PolylineItem::default()
         }
     }
@@ -129,7 +132,10 @@ impl SplineWidget {
             use_default_colour: true,
             default_colour: self.handle_colour,
 
-            settings: crate::scene::material::ItemSettings { pick_id: crate::renderer::PickId(id_base), ..Default::default() },
+            settings: crate::scene::material::ItemSettings {
+                pick_id: crate::renderer::PickId(id_base),
+                ..Default::default()
+            },
             ..GlyphItem::default()
         }
     }

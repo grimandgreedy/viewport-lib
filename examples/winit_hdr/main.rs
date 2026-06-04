@@ -344,10 +344,11 @@ impl ApplicationHandler for App {
                 // render() owns the full HDR pipeline:
                 //   prepare -> shadow pass -> HDR scene -> post-process -> tone map -> output_view
                 // It returns a CommandBuffer ready to submit.
-                let cmd = state
-                    .renderer
-                    .owned()
-                    .render(&state.device, &state.queue, &view, &frame_data);
+                let cmd =
+                    state
+                        .renderer
+                        .owned()
+                        .render(&state.device, &state.queue, &view, &frame_data);
 
                 state.queue.submit(std::iter::once(cmd));
                 frame.present();

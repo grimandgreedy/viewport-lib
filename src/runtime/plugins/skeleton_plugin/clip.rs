@@ -91,7 +91,11 @@ impl Sampler {
     /// to the nearest endpoint.
     pub fn sample(&self, t: f32) -> TrackValue {
         debug_assert!(!self.times.is_empty(), "sampler has no keyframes");
-        debug_assert_eq!(self.times.len(), self.values.len(), "times/values length mismatch");
+        debug_assert_eq!(
+            self.times.len(),
+            self.values.len(),
+            "times/values length mismatch"
+        );
 
         let n = self.times.len();
         if t <= self.times[0] {
@@ -304,8 +308,7 @@ mod tests {
     fn sample_into_overwrites_only_animated_channels() {
         // Bind pose: joint 1 sits at (0, 0, 2) with no rotation.
         let mut pose = Pose::identity(2);
-        pose.local_transforms[1] =
-            glam::Affine3A::from_translation(Vec3::new(0.0, 0.0, 2.0));
+        pose.local_transforms[1] = glam::Affine3A::from_translation(Vec3::new(0.0, 0.0, 2.0));
 
         // Clip: rotate joint 1 only. Translation should be preserved from the
         // bind pose because the clip has no translation track.

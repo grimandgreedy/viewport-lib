@@ -354,8 +354,8 @@ pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
         let a1 = (j + 1) as f32 * step;
         let amid = (a0 + a1) * 0.5;
         uvs.push([amid / tau, 1.0]); // tip
-        uvs.push([a0 / tau, 0.0]);   // base left
-        uvs.push([a1 / tau, 0.0]);   // base right
+        uvs.push([a0 / tau, 0.0]); // base left
+        uvs.push([a1 / tau, 0.0]); // base right
     }
     uvs.push([0.5, 0.5]); // bottom center
     for j in 0..sectors {
@@ -464,7 +464,11 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
     for i in 0..=hemi_stacks {
         let phi = std::f32::consts::FRAC_PI_2 * (1.0 - i as f32 / hemi_stacks as f32);
         let z = half_body + radius * phi.sin();
-        let v = if total_h > 0.0 { (z - z_min) / total_h } else { 1.0 };
+        let v = if total_h > 0.0 {
+            (z - z_min) / total_h
+        } else {
+            1.0
+        };
         for j in 0..=sectors {
             uvs.push([j as f32 / sectors as f32, v]);
         }
@@ -472,7 +476,11 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
     for i in 0..=hemi_stacks {
         let phi = -std::f32::consts::FRAC_PI_2 * i as f32 / hemi_stacks as f32;
         let z = -half_body + radius * phi.sin();
-        let v = if total_h > 0.0 { (z - z_min) / total_h } else { 0.0 };
+        let v = if total_h > 0.0 {
+            (z - z_min) / total_h
+        } else {
+            0.0
+        };
         for j in 0..=sectors {
             uvs.push([j as f32 / sectors as f32, v]);
         }

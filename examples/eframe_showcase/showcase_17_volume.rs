@@ -18,9 +18,9 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BuiltinColourmap, ColourmapId, FrameData, ImageSliceItem, LightingSettings, Material,
-    MeshData, MeshId, SceneRenderItem, SliceAxis, VolumeData, VolumeId, VolumeItem,
-    VolumeSurfaceSliceItem, extract_isosurface,
+    BuiltinColourmap, ColourmapId, FrameData, ImageSliceItem, LightingSettings, Material, MeshData,
+    MeshId, SceneRenderItem, SliceAxis, VolumeData, VolumeId, VolumeItem, VolumeSurfaceSliceItem,
+    extract_isosurface,
 };
 
 // ---------------------------------------------------------------------------
