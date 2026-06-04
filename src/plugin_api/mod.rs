@@ -29,7 +29,10 @@ pub mod shared_wgsl;
 pub mod target_desc;
 
 pub use cull::{CullSubmission, InstanceAabb};
-pub use item_type::{ItemFrameContext, ItemTypePlugin, PaintContext, PluginItemCollection};
+pub use item_type::{
+    ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickRay,
+    PluginItemCollection,
+};
 pub use target_desc::{
     MaskTargetDesc, OIT_ACCUM_BLEND, OIT_REVEAL_BLEND, OitTargetDesc, OpaqueTargetDesc,
     PickTargetDesc, ShadowTargetDesc,

@@ -1696,6 +1696,21 @@ impl ViewportRenderer {
             }
         }
 
+        // Consult registered item-type plugins after the built-in pickers.
+        // Each plugin returns its own closest hit; the router compares
+        // by world-space ray t against the running best.
+        if !self.item_type_plugins.is_empty() {
+            let plugin_ray = crate::plugin_api::PickRay {
+                origin: ray_origin,
+                direction: ray_dir,
+            };
+            for plugin in self.item_type_plugins.values() {
+                if let Some((t, hit)) = plugin.pick(&plugin_ray) {
+                    consider(t, hit);
+                }
+            }
+        }
+
         best.map(|(_, hit)| hit)
     }
 

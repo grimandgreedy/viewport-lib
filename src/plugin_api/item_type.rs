@@ -13,9 +13,24 @@
 
 use std::any::Any;
 
+use crate::interaction::picking::PickHit;
 use crate::plugin_api::SharedBindings;
 use crate::renderer::PickId;
 use crate::scene::material::ItemSettings;
+
+/// World-space ray used for picking queries against plugin items.
+///
+/// The lib computes the ray once from the click position + viewport
+/// + view-projection matrix and forwards the same ray to every plugin's
+/// [`ItemTypePlugin::pick`] method.
+#[derive(Clone, Copy, Debug)]
+pub struct PickRay {
+    /// World-space origin (camera eye in perspective; near-plane point in ortho).
+    pub origin: glam::Vec3,
+    /// World-space direction. Not required to be unit-length; plugins
+    /// should normalize if their hit test depends on it.
+    pub direction: glam::Vec3,
+}
 
 /// Per-frame item collection owned by the consumer and read by the lib.
 ///
@@ -95,6 +110,25 @@ pub struct PaintContext<'a> {
     pub frame_index: u64,
 }
 
+/// Information forwarded to a plugin's `outline_mask`.
+///
+/// The lib's outline-mask render pass is already begun on entry and has
+/// the shared group-0 camera bind group bound. The pass targets a single
+/// `R8Unorm` colour attachment and the scene depth buffer; the plugin
+/// builds its mask pipeline against
+/// [`mask_target_desc`](crate::resources::ViewportGpuResources::mask_target_desc)
+/// and draws into it with any value `> 0` for covered pixels.
+pub struct OutlineMaskContext<'a> {
+    /// Active render-camera snapshot.
+    pub camera: &'a crate::RenderCamera,
+    /// Viewport extent in logical pixels.
+    pub viewport_size: glam::Vec2,
+    /// Multi-viewport slot index.
+    pub viewport_index: usize,
+    /// Monotonically increasing frame counter.
+    pub frame_index: u64,
+}
+
 /// A new scene item category supplied by a plugin.
 ///
 /// Implementations are stored on the renderer via
@@ -165,5 +199,66 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
         _ctx: &PaintContext<'a>,
         _items: &'a dyn PluginItemCollection,
     ) {
+    }
+
+    /// Issue draw calls for transparent items in the OIT pass.
+    ///
+    /// Called inside the lib's `oit_pass` render pass with the standard
+    /// group-0 bindings already bound. Implementations build their
+    /// pipeline via
+    /// [`build_oit_pipeline`](crate::resources::ViewportGpuResources::build_oit_pipeline);
+    /// the fragment shader must return
+    /// [`OitOutput`](crate::plugin_api::shared_wgsl::SHARED_OIT_WGSL),
+    /// writing both `@location(0)` (accum) and `@location(1)` (reveal).
+    ///
+    /// Plugins that ship only opaque items leave this empty.
+    fn paint_transparent<'a>(
+        &'a self,
+        _pass: &mut wgpu::RenderPass<'a>,
+        _ctx: &PaintContext<'a>,
+        _items: &'a dyn PluginItemCollection,
+    ) {
+    }
+
+    /// Issue draw calls into the lib's outline-mask render pass.
+    ///
+    /// Called once per frame inside the mask pass with the standard
+    /// group-0 bind group bound. Implementations iterate `items`, draw
+    /// only those whose `item_settings(i).selected` is `true`, and write
+    /// any non-zero R8 value at covered fragments. Use
+    /// [`build_mask_pipeline`](crate::resources::ViewportGpuResources::build_mask_pipeline)
+    /// to construct a compatible pipeline; the fragment helper
+    /// [`SHARED_MASK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_MASK_WGSL)
+    /// provides the trivial `fs_mask` body.
+    ///
+    /// Plugins that do not participate in the outline highlight leave
+    /// this empty.
+    fn outline_mask<'a>(
+        &'a self,
+        _pass: &mut wgpu::RenderPass<'a>,
+        _ctx: &OutlineMaskContext<'a>,
+        _items: &'a dyn PluginItemCollection,
+    ) {
+    }
+
+    /// Hit-test this plugin's items against `ray` and return the closest
+    /// hit, paired with its world-space time-of-impact.
+    ///
+    /// Called from the renderer's pick router after the built-in CPU and
+    /// GPU pick paths. The router compares the returned `t` against every
+    /// other candidate and chooses the closest.
+    ///
+    /// Implementations typically cache the world-space AABBs (or per-item
+    /// geometry) on their own state during [`prepare`](Self::prepare); the
+    /// trait method does not receive the per-frame collection because
+    /// pick happens out-of-band with prepare and the plugin already has
+    /// the data it needs.
+    ///
+    /// Plugins that prefer GPU picking can skip this method and instead
+    /// render their pick-ids into the standard pick-id pass (a future
+    /// hook), at which point the lib's GPU pick path returns plugin
+    /// items transparently.
+    fn pick(&self, _ray: &PickRay) -> Option<(f32, PickHit)> {
+        None
     }
 }

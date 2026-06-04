@@ -884,6 +884,31 @@ impl ViewportRenderer {
         }
     }
 
+    /// Walk registered item-type plugins and invoke `outline_mask` for
+    /// each one whose collection is on `frame.scene`.
+    ///
+    /// Called from inside the lib's outline-mask render pass.
+    pub(crate) fn dispatch_plugin_outline_mask<'rp>(
+        &'rp self,
+        pass: &mut wgpu::RenderPass<'rp>,
+        frame: &'rp FrameData,
+    ) {
+        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+            return;
+        }
+        let ctx = crate::plugin_api::OutlineMaskContext {
+            camera: &frame.camera.render_camera,
+            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_index: frame.camera.viewport_index,
+            frame_index: self.plugin_frame_index,
+        };
+        for (name, plugin) in self.item_type_plugins.iter() {
+            if let Some(items) = frame.scene.plugin_items.get(*name) {
+                plugin.outline_mask(pass, &ctx, items.as_ref());
+            }
+        }
+    }
+
     /// True when the device supports the features GPU-driven culling needs.
     ///
     /// Plugins should gate `submit_cull` calls on this. If false, the lib

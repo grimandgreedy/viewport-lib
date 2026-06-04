@@ -4439,6 +4439,10 @@ impl ViewportRenderer {
                         }
                     }
                 }
+
+                // Item-type plugin outline mask: each registered plugin
+                // draws its selected items into the R8 mask.
+                self.dispatch_plugin_outline_mask(&mut pass, frame);
             }
 
             // Pass 2: fullscreen edge detection (reads mask, writes colour).
