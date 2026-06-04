@@ -20,8 +20,8 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    FrameData, LightKind, LightSource, LightingSettings, MeshId, PolylineItem, SceneRenderItem,
-    SpriteItem, SpriteSizeMode, ViewportRenderer, primitives,
+    FrameData, LightKind, LightSource, LightingSettings, MeshId, MeshInstanceItem, PolylineItem,
+    SceneRenderItem, SpriteBlend, SpriteItem, SpriteSizeMode, ViewportRenderer, primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -33,6 +33,15 @@ pub(crate) enum SpriteSubMode {
     Placed,
     Particles,
     Atlas,
+    /// Three columns of overlapping sprites under alpha-blend / additive /
+    /// premultiplied blend modes against a solid sphere backdrop.
+    Blend,
+    /// A flat sprite sheet slicing through the sphere, with `soft_particle_distance`
+    /// driving a smooth alpha fade at the intersection rather than a hard line.
+    Soft,
+    /// A swarm of small cubes orbiting like leaves, drawn through `MeshInstanceItem`
+    /// with additive blending and one indexed draw call per blend bucket.
+    MeshParticles,
 }
 
 pub(crate) struct Ring {
@@ -83,6 +92,12 @@ pub(crate) struct SpriteState {
     pub atlas_positions: Vec<[f32; 3]>,
     pub atlas_frame: u32,
     pub atlas_time: f32,
+
+    // Mesh-particle mode
+    pub cube_id: MeshId,
+    /// Time used to drive the orbital animation of mesh particles and the
+    /// horizontal sweep of the soft-fade sprite plane.
+    pub demo_time: f32,
 }
 
 impl Default for SpriteState {
@@ -124,6 +139,8 @@ impl Default for SpriteState {
             atlas_positions: Vec::new(),
             atlas_frame: 0,
             atlas_time: 0.0,
+            cube_id: MeshId::from_index(0),
+            demo_time: 0.0,
         }
     }
 }
@@ -249,6 +266,14 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         })
         .collect();
 
+    // Mesh particles: small unit cube reused at every instance.
+    let cube_mesh = primitives::cube(0.18);
+    let cube_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&app.device, &cube_mesh)
+        .expect("particle cube");
+
+    app.sprite_state.cube_id = cube_id;
     app.sprite_state.sphere_id = sphere_id;
     app.sprite_state.sprite_tex = sprite_tex;
     app.sprite_state.placed_positions = placed_positions;
@@ -372,6 +397,21 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
             SpriteSubMode::Atlas,
             "Atlas",
         );
+        ui.selectable_value(
+            &mut app.sprite_state.sub_mode,
+            SpriteSubMode::Blend,
+            "Blend",
+        );
+        ui.selectable_value(
+            &mut app.sprite_state.sub_mode,
+            SpriteSubMode::Soft,
+            "Soft",
+        );
+        ui.selectable_value(
+            &mut app.sprite_state.sub_mode,
+            SpriteSubMode::MeshParticles,
+            "MeshParticles",
+        );
     });
     ui.separator();
 
@@ -388,6 +428,21 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
         SpriteSubMode::Atlas => {
             ui.label("9 sprites in a 3x3 grid.");
             ui.label("Each samples a 4x4 atlas texture (16 cells), cycling frames as a flip-book.");
+        }
+        SpriteSubMode::Blend => {
+            ui.label("Three columns of overlapping sprites against a solid sphere.");
+            ui.label("Left: SpriteBlend::AlphaBlend (default). Middle: Additive. Right: Premultiplied.");
+            ui.label("Additive columns brighten where sprites overlap; alpha columns do not.");
+        }
+        SpriteSubMode::Soft => {
+            ui.label("A flat sprite sheet sweeps horizontally through the sphere.");
+            ui.label("`soft_particle_distance` ramps alpha to zero where the sprite meets opaque");
+            ui.label("geometry, replacing the hard intersection line with a smooth fade.");
+        }
+        SpriteSubMode::MeshParticles => {
+            ui.label("A swarm of cubes orbiting like leaves, drawn through `MeshInstanceItem`.");
+            ui.label("Each blend bucket renders as one indexed draw call, additive blending picked");
+            ui.label("here so overlapping cubes glow brighter at their intersections.");
         }
     }
 }
@@ -441,6 +496,9 @@ pub(crate) fn update_sprites(app: &mut App, dt: f32) {
             app.sprite_state.atlas_time += dt;
             let fps = 10.0_f32;
             app.sprite_state.atlas_frame = (app.sprite_state.atlas_time * fps) as u32 % 16;
+        }
+        SpriteSubMode::Soft | SpriteSubMode::MeshParticles => {
+            app.sprite_state.demo_time += dt;
         }
         _ => {}
     }
@@ -605,6 +663,73 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
             items
         }
 
+        SpriteSubMode::Blend => {
+            // Three columns of overlapping glow sprites against the sphere.
+            // Each column uses a different blend mode so the user can compare
+            // how the same geometry composites under each. World-space sized
+            // sprites are stacked vertically with tight spacing to force
+            // overlap, where the modes diverge most.
+            let column_x = [-3.5_f32, 0.0, 3.5];
+            let blends = [
+                SpriteBlend::AlphaBlend,
+                SpriteBlend::Additive,
+                SpriteBlend::Premultiplied,
+            ];
+            let mut items = Vec::with_capacity(3);
+            for (i, blend) in blends.iter().enumerate() {
+                let mut positions = Vec::with_capacity(8);
+                let mut colours = Vec::with_capacity(8);
+                for j in 0..8 {
+                    let z = -2.5 + j as f32 * 0.7;
+                    positions.push([column_x[i], 0.0, z]);
+                    // Tinted glow, slightly translucent so overlap matters.
+                    colours.push([1.0, 0.55, 0.2, 0.55]);
+                }
+                let mut item = SpriteItem::default();
+                item.texture_id = Some(app.sprite_state.glow_tex);
+                item.positions = positions;
+                item.colours = colours;
+                item.default_size = 1.6;
+                item.size_mode = SpriteSizeMode::WorldSpace;
+                item.blend = *blend;
+                item.depth_write = false;
+                items.push(item);
+            }
+            items
+        }
+
+        SpriteSubMode::Soft => {
+            // Lay a row of large glow sprites in a flat plane sweeping
+            // horizontally through the central sphere. With
+            // soft_particle_distance enabled, the alpha ramps to zero where
+            // the sprite plane meets the sphere instead of cutting a hard
+            // intersection line.
+            let t = app.sprite_state.demo_time;
+            let sweep_x = (t * 0.4).sin() * 2.5;
+            let mut positions = Vec::with_capacity(16);
+            let mut colours = Vec::with_capacity(16);
+            for i in 0..16 {
+                let z = -3.5 + i as f32 * 0.5;
+                positions.push([sweep_x, 0.0, z]);
+                colours.push([0.5, 0.8, 1.0, 0.9]);
+            }
+            let mut item = SpriteItem::default();
+            item.texture_id = Some(app.sprite_state.glow_tex);
+            item.positions = positions;
+            item.colours = colours;
+            item.default_size = 2.2;
+            item.size_mode = SpriteSizeMode::WorldSpace;
+            item.blend = SpriteBlend::AlphaBlend;
+            item.depth_write = false;
+            item.soft_particle_distance = Some(0.6);
+            vec![item]
+        }
+
+        SpriteSubMode::MeshParticles => {
+            // Mesh particles draw the cube instances; no sprite items here.
+            Vec::new()
+        }
+
         SpriteSubMode::Atlas => {
             let frame = app.sprite_state.atlas_frame;
             let col = frame % 4;
@@ -636,13 +761,65 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
-    if !app.sprite_state.built || app.sprite_state.sub_mode != SpriteSubMode::Placed {
+    if !app.sprite_state.built {
         return vec![];
     }
-    let mut item = SceneRenderItem::default();
-    item.mesh_id = app.sprite_state.sphere_id;
-    item.material.base_colour = [0.3, 0.45, 0.7];
-    item.material.specular = 0.2;
+    match app.sprite_state.sub_mode {
+        SpriteSubMode::Placed | SpriteSubMode::Blend | SpriteSubMode::Soft => {
+            // The sphere acts as both a backdrop (Placed, Blend) and the
+            // opaque geometry the soft-particle fade is measured against.
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = app.sprite_state.sphere_id;
+            item.material.base_colour = [0.3, 0.45, 0.7];
+            item.material.specular = 0.2;
+            vec![item]
+        }
+        _ => vec![],
+    }
+}
+
+/// Mesh-instance batches for the MeshParticles sub-mode.
+///
+/// Builds a single batch of 200 cubes orbiting two interleaved rings, tinted
+/// by a slow hue cycle. All instances share one mesh and one additive blend
+/// bucket, so the renderer issues exactly one indexed draw call for the batch.
+pub(crate) fn mesh_instance_items(app: &App) -> Vec<MeshInstanceItem> {
+    if !app.sprite_state.built || app.sprite_state.sub_mode != SpriteSubMode::MeshParticles {
+        return vec![];
+    }
+    let t = app.sprite_state.demo_time;
+    let count = 200;
+    let mut transforms = Vec::with_capacity(count);
+    let mut colours = Vec::with_capacity(count);
+    for i in 0..count {
+        let frac = i as f32 / count as f32;
+        let ring_axis = if i % 2 == 0 {
+            glam::Vec3::Y
+        } else {
+            glam::Vec3::Z
+        };
+        let (u, v) = ring_basis(ring_axis);
+        let phase = frac * std::f32::consts::TAU + t * 0.6 * ring_axis.dot(glam::Vec3::Y).signum();
+        let radius = 3.0 + (t * 0.4 + frac * 5.0).sin() * 0.4;
+        let pos = u * (phase.cos() * radius) + v * (phase.sin() * radius);
+        let yaw = t + frac * std::f32::consts::TAU;
+        let rot = glam::Mat4::from_rotation_y(yaw) * glam::Mat4::from_rotation_x(yaw * 0.7);
+        let model = glam::Mat4::from_translation(pos) * rot;
+        transforms.push(model.to_cols_array_2d());
+        let hue = (frac + t * 0.05) % 1.0;
+        let (r, g, b) = hsl_to_rgb(hue, 0.85, 0.55);
+        colours.push([
+            r as f32 / 255.0,
+            g as f32 / 255.0,
+            b as f32 / 255.0,
+            0.8,
+        ]);
+    }
+    let mut item = MeshInstanceItem::default();
+    item.mesh_id = app.sprite_state.cube_id.index() as u64;
+    item.transforms = transforms;
+    item.colours = colours;
+    item.blend = SpriteBlend::Additive;
     vec![item]
 }
 
@@ -680,4 +857,5 @@ pub(crate) fn submit_sprite_items(app: &App, fd: &mut FrameData) {
     }
     fd.scene.sprite_items.extend(sprite_items(app));
     fd.scene.polylines.extend(ring_polylines(app));
+    fd.scene.mesh_instances.extend(mesh_instance_items(app));
 }
