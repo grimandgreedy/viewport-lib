@@ -12,7 +12,8 @@
 //! The two dispatches run in separate wgpu compute passes so the automatic
 //! storage-buffer barrier between passes guarantees pass 2 sees pass 1 writes.
 
-use crate::resources::FrustumUniform;
+use crate::plugin_api::CullSubmission;
+use crate::resources::{BatchMeta, FrustumPlane, FrustumUniform};
 
 /// Bind group layout entry count for the cull compute pass (group 0).
 const CULL_BGL_ENTRY_COUNT: usize = 6;
@@ -29,6 +30,20 @@ pub(super) struct CullResources {
     pub(super) frustum_buf: wgpu::Buffer,
     /// Per-cascade frustum uniform buffers for shadow GPU culling.
     pub(super) cascade_frustum_bufs: [wgpu::Buffer; 4],
+    /// Scratch frustum uniform buffer used by the public `submit_cull`
+    /// service. Separate from the lib's own `frustum_buf` so plugin and
+    /// internal submissions cannot stomp on each other's uploads.
+    plugin_frustum_buf: wgpu::Buffer,
+    /// Per-cascade scratch frustum buffers used by `submit_cull_shadow`.
+    /// Separate slots so the same frame can submit main-pass + every
+    /// cascade without overwriting an in-flight upload.
+    plugin_cascade_frustum_bufs: [wgpu::Buffer; 4],
+    /// Scratch 1-entry batch metadata buffer for the plugin cull service.
+    /// Uploaded per submission.
+    plugin_meta_buf: wgpu::Buffer,
+    /// Scratch 1-entry atomic counter buffer for the plugin cull service.
+    /// Zeroed per submission.
+    plugin_counter_buf: wgpu::Buffer,
 }
 
 impl CullResources {
@@ -88,12 +103,266 @@ impl CullResources {
             })
         });
 
+        let plugin_frustum_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cull_plugin_frustum_buf"),
+            size: std::mem::size_of::<FrustumUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let plugin_cascade_frustum_bufs = std::array::from_fn(|i| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(&format!("cull_plugin_cascade_frustum_buf_{i}")),
+                size: std::mem::size_of::<FrustumUniform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        });
+        let plugin_meta_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cull_plugin_meta_buf"),
+            size: std::mem::size_of::<BatchMeta>() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let plugin_counter_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cull_plugin_counter_buf"),
+            size: 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         Self {
             cull_instances_pipeline,
             write_indirect_args_pipeline,
             bgl,
             frustum_buf,
             cascade_frustum_bufs,
+            plugin_frustum_buf,
+            plugin_cascade_frustum_bufs,
+            plugin_meta_buf,
+            plugin_counter_buf,
+        }
+    }
+
+    /// Dispatch a single-batch plugin cull submission.
+    ///
+    /// Uploads frustum + per-call batch meta, zeros the scratch counter,
+    /// then chains the two compute passes the same way the internal
+    /// `dispatch` does. Writes one `DrawIndexedIndirect` entry to
+    /// `sub.indirect_out`.
+    pub(super) fn dispatch_plugin(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frustum: &crate::camera::frustum::Frustum,
+        sub: &CullSubmission<'_>,
+    ) {
+        let frustum_uniform = FrustumUniform {
+            planes: std::array::from_fn(|i| FrustumPlane {
+                normal: frustum.planes[i].normal.to_array(),
+                distance: frustum.planes[i].d,
+            }),
+            instance_count: sub.instance_count,
+            batch_count: 1,
+            shadow_pass: if sub.shadow_pass { 1 } else { 0 },
+            _pad: 0,
+        };
+        queue.write_buffer(
+            &self.plugin_frustum_buf,
+            0,
+            bytemuck::cast_slice(std::slice::from_ref(&frustum_uniform)),
+        );
+
+        let meta = BatchMeta {
+            index_count: sub.index_count,
+            first_index: sub.first_index,
+            instance_offset: 0,
+            instance_count: sub.instance_count,
+            vis_offset: 0,
+            is_transparent: 0,
+            _pad: [0, 0],
+        };
+        queue.write_buffer(
+            &self.plugin_meta_buf,
+            0,
+            bytemuck::cast_slice(std::slice::from_ref(&meta)),
+        );
+        // Zero the atomic counter so this submission starts fresh.
+        queue.write_buffer(&self.plugin_counter_buf, 0, &[0u8; 4]);
+
+        // Seed the indirect entry with the static fields. The compute pass
+        // overwrites `instance_count` with the final visible count.
+        let seed: [u32; 5] = [
+            sub.index_count,
+            0,
+            sub.first_index,
+            sub.base_vertex as u32,
+            sub.first_instance,
+        ];
+        queue.write_buffer(sub.indirect_out, 0, bytemuck::cast_slice(&seed));
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("cull_plugin_bg"),
+            layout: &self.bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.plugin_frustum_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: sub.instance_aabbs.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.plugin_meta_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.plugin_counter_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: sub.visible_out.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: sub.indirect_out.as_entire_binding(),
+                },
+            ],
+        });
+
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("cull_plugin_instances_pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.cull_instances_pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            let groups = sub.instance_count.div_ceil(64);
+            pass.dispatch_workgroups(groups, 1, 1);
+        }
+
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("cull_plugin_indirect_args_pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.write_indirect_args_pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+    }
+
+    /// Dispatch a single-batch plugin cull submission against a shadow
+    /// cascade.
+    ///
+    /// Identical to [`Self::dispatch_plugin`] except that the frustum
+    /// uniform is uploaded to the per-cascade scratch slot and the
+    /// submission's `shadow_pass` flag is forced to `1` so the cull shader
+    /// honours `InstanceAabb::cast_shadows`.
+    pub(super) fn dispatch_plugin_shadow(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        cascade_idx: usize,
+        frustum: &crate::camera::frustum::Frustum,
+        sub: &CullSubmission<'_>,
+    ) {
+        let frustum_buf = &self.plugin_cascade_frustum_bufs[cascade_idx];
+        let frustum_uniform = FrustumUniform {
+            planes: std::array::from_fn(|i| FrustumPlane {
+                normal: frustum.planes[i].normal.to_array(),
+                distance: frustum.planes[i].d,
+            }),
+            instance_count: sub.instance_count,
+            batch_count: 1,
+            shadow_pass: 1,
+            _pad: 0,
+        };
+        queue.write_buffer(
+            frustum_buf,
+            0,
+            bytemuck::cast_slice(std::slice::from_ref(&frustum_uniform)),
+        );
+
+        let meta = BatchMeta {
+            index_count: sub.index_count,
+            first_index: sub.first_index,
+            instance_offset: 0,
+            instance_count: sub.instance_count,
+            vis_offset: 0,
+            is_transparent: 0,
+            _pad: [0, 0],
+        };
+        queue.write_buffer(
+            &self.plugin_meta_buf,
+            0,
+            bytemuck::cast_slice(std::slice::from_ref(&meta)),
+        );
+        queue.write_buffer(&self.plugin_counter_buf, 0, &[0u8; 4]);
+
+        let seed: [u32; 5] = [
+            sub.index_count,
+            0,
+            sub.first_index,
+            sub.base_vertex as u32,
+            sub.first_instance,
+        ];
+        queue.write_buffer(sub.indirect_out, 0, bytemuck::cast_slice(&seed));
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&format!("cull_plugin_shadow_bg_{cascade_idx}")),
+            layout: &self.bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: frustum_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: sub.instance_aabbs.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.plugin_meta_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.plugin_counter_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: sub.visible_out.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: sub.indirect_out.as_entire_binding(),
+                },
+            ],
+        });
+
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some(&format!("cull_plugin_shadow_instances_pass_{cascade_idx}")),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.cull_instances_pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(sub.instance_count.div_ceil(64), 1, 1);
+        }
+
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some(&format!(
+                    "cull_plugin_shadow_indirect_args_pass_{cascade_idx}"
+                )),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.write_indirect_args_pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
         }
     }
 

@@ -86,6 +86,85 @@ impl ViewportGpuResources {
     }
 
     // ------------------------------------------------------------------
+    // Phase 0.4 texture-id namespace exposure
+    // ------------------------------------------------------------------
+
+    /// Borrow the `TextureView` for a texture previously uploaded via
+    /// [`upload_texture`](Self::upload_texture) or
+    /// [`upload_normal_map`](Self::upload_normal_map).
+    ///
+    /// Returns `None` if `id` does not refer to a live texture (out of
+    /// range, or the texture was unloaded).
+    ///
+    /// **Lifetime contract.** The returned view is valid until the texture
+    /// is removed (currently no public removal API exists, so views are
+    /// effectively stable for the lifetime of `self`). Plugins that build a
+    /// bind group from this view must rebuild it after any operation that
+    /// could invalidate the texture (texture-store compaction, device
+    /// recreation). A safer pattern is to fetch the view each frame just
+    /// before building / rebuilding the bind group.
+    pub fn texture_view(&self, id: u64) -> Option<&wgpu::TextureView> {
+        self.textures.get(id as usize).map(|t| &t.view)
+    }
+
+    /// Borrow the sampler the texture was uploaded with.
+    ///
+    /// Most user textures are uploaded with a shared linear-repeat sampler;
+    /// prefer [`material_sampler`](Self::material_sampler) when you need
+    /// the canonical lib sampler rather than the per-texture instance.
+    pub fn texture_sampler(&self, id: u64) -> Option<&wgpu::Sampler> {
+        self.textures.get(id as usize).map(|t| &t.sampler)
+    }
+
+    /// Shared linear-repeat sampler used by the lib's material pipelines.
+    ///
+    /// Use this when building a plugin bind group that samples user
+    /// textures the same way `Material` does (linear filter, repeat wrap).
+    pub fn material_sampler(&self) -> &wgpu::Sampler {
+        &self.material_sampler
+    }
+
+    /// Shared linear-clamp sampler used by the lib for colormap LUTs.
+    ///
+    /// Use this when sampling 1D LUT-style data (colourmaps, transfer
+    /// functions) where the texture should not wrap.
+    pub fn lut_sampler(&self) -> &wgpu::Sampler {
+        &self.lut_sampler
+    }
+
+    /// Comparison sampler used for PCF shadow filtering.
+    ///
+    /// Plugins that sample the shadow atlas directly (rather than through
+    /// `viewport_sample_csm`) use this sampler when binding the atlas.
+    pub fn shadow_filter_sampler(&self) -> &wgpu::Sampler {
+        &self.shadow_sampler
+    }
+
+    /// Bind group layout for the GPU skinning palette.
+    ///
+    /// Plugins shipping skinned variants of their geometry add this
+    /// layout to their pipeline's `extra_bind_group_layouts` list at
+    /// group 2, then include
+    /// [`SHARED_SKIN_WGSL`](crate::plugin_api::shared_wgsl::SHARED_SKIN_WGSL)
+    /// in their vertex shader.
+    ///
+    /// The host (or the mesh-attach helper) uploads per-instance joint
+    /// palettes via [`set_skin_palette`](Self::set_skin_palette); plugins
+    /// do not manage palette uploads themselves.
+    pub fn skin_palette_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.skinning.bind_group_layout
+    }
+
+    /// Number of live user-uploaded textures.
+    ///
+    /// `id` values in `0..texture_count()` are addressable via
+    /// [`texture_view`](Self::texture_view), with the caveat that promoted
+    /// IDs from async uploads may sit at the high end.
+    pub fn texture_count(&self) -> usize {
+        self.textures.len()
+    }
+
+    // ------------------------------------------------------------------
     // Phase 0.3 pipeline builders
     // ------------------------------------------------------------------
 

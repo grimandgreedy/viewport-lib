@@ -710,6 +710,92 @@ impl ViewportRenderer {
         self.instanced_batches.len()
     }
 
+    /// Run the GPU-driven cull compute against a plugin-supplied instance
+    /// AABB buffer.
+    ///
+    /// Encodes two compute passes into `encoder`:
+    /// 1. one thread per instance, tests AABB against `frustum`, claims a
+    ///    visibility slot;
+    /// 2. one thread writes a `DrawIndexedIndirect` entry into
+    ///    `sub.indirect_out` with the final visible count.
+    ///
+    /// After the encoder is submitted, the plugin draws with
+    /// `pass.draw_indexed_indirect(sub.indirect_out, 0)` using
+    /// `sub.visible_out` as the per-instance lookup buffer.
+    ///
+    /// **Single-batch only.** Plugins with multiple meshes call this once
+    /// per mesh; each submission consumes its own scratch counter so
+    /// submissions are independent. Internal lib batches use a separate
+    /// path and do not collide.
+    ///
+    /// The cull pipeline is created lazily on the first call. Returns
+    /// without dispatching if the device does not support
+    /// `INDIRECT_FIRST_INSTANCE` (call
+    /// [`is_gpu_culling_supported`](Self::is_gpu_culling_supported)
+    /// first).
+    pub fn submit_cull(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        frustum: &crate::camera::frustum::Frustum,
+        sub: &crate::plugin_api::CullSubmission<'_>,
+    ) {
+        if !self.gpu_culling_supported {
+            return;
+        }
+        if self.cull_resources.is_none() {
+            self.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
+        }
+        let cull = self.cull_resources.as_ref().unwrap();
+        cull.dispatch_plugin(encoder, device, queue, frustum, sub);
+    }
+
+    /// Run the GPU cull compute against a plugin's instance buffer for
+    /// one shadow cascade.
+    ///
+    /// Same shape as [`submit_cull`](Self::submit_cull) but writes to a
+    /// per-cascade scratch frustum slot (so a single frame can submit
+    /// the main pass plus every cascade without overwriting an in-flight
+    /// upload), and forces the cull shader's `shadow_pass` flag so
+    /// `InstanceAabb::cast_shadows = 0` entries are skipped.
+    ///
+    /// Call once per cascade per plugin item type; the plugin then draws
+    /// into its cascade tile of the shadow atlas with
+    /// `pass.draw_indexed_indirect(sub.indirect_out, 0)`.
+    ///
+    /// `cascade_idx` must be in `0..4`; values outside that range panic
+    /// in debug builds and clamp to 3 in release.
+    pub fn submit_cull_shadow(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        cascade_idx: usize,
+        cascade_frustum: &crate::camera::frustum::Frustum,
+        sub: &crate::plugin_api::CullSubmission<'_>,
+    ) {
+        if !self.gpu_culling_supported {
+            return;
+        }
+        debug_assert!(cascade_idx < 4, "cascade_idx must be in 0..4");
+        let cascade_idx = cascade_idx.min(3);
+        if self.cull_resources.is_none() {
+            self.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
+        }
+        let cull = self.cull_resources.as_ref().unwrap();
+        cull.dispatch_plugin_shadow(encoder, device, queue, cascade_idx, cascade_frustum, sub);
+    }
+
+    /// True when the device supports the features GPU-driven culling needs.
+    ///
+    /// Plugins should gate `submit_cull` calls on this — if false, the lib
+    /// silently no-ops the submission and the plugin must fall back to
+    /// direct draws.
+    pub fn is_gpu_culling_supported(&self) -> bool {
+        self.gpu_culling_supported
+    }
+
     /// Returns per-frame shadow and lighting pipeline statistics for debug inspection.
     ///
     /// All fields reflect the most recently completed `prepare` call (one frame

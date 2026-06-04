@@ -22,9 +22,11 @@
 //!
 //! All accessors live on [`crate::resources::ViewportGpuResources`].
 
+pub mod cull;
 pub mod shared_wgsl;
 pub mod target_desc;
 
+pub use cull::{CullSubmission, InstanceAabb};
 pub use target_desc::{
     MaskTargetDesc, OIT_ACCUM_BLEND, OIT_REVEAL_BLEND, OitTargetDesc, OpaqueTargetDesc,
     PickTargetDesc, ShadowTargetDesc,
