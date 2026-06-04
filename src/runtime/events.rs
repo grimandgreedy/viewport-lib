@@ -40,7 +40,9 @@ pub struct RuntimeEventBus {
 impl RuntimeEventBus {
     /// Create an empty event bus.
     pub fn new() -> Self {
-        Self { map: HashMap::new() }
+        Self {
+            map: HashMap::new(),
+        }
     }
 
     /// Emit an event. Multiple calls accumulate; all are visible to later readers.
@@ -80,9 +82,7 @@ impl RuntimeEventBus {
 
     /// Number of events of type `T` emitted this frame.
     pub fn count<T: Send + 'static>(&self) -> usize {
-        self.map
-            .get(&TypeId::of::<T>())
-            .map_or(0, |v| v.len())
+        self.map.get(&TypeId::of::<T>()).map_or(0, |v| v.len())
     }
 
     /// Returns `true` if no events of any type have been emitted this frame.

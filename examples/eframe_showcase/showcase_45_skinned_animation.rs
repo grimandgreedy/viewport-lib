@@ -18,11 +18,11 @@
 
 use eframe::egui;
 use viewport_lib::{
-    AnimationClip, BuiltinMatcap, Channel, ClipPlayerPlugin, Interpolation, Joint,
-    Material, MatcapId, MeshId, MeshData, PickAccelerator, Pose, RuntimeFrameContext,
-    RuntimePlugin, RuntimeStepContext, Sampler, Skeleton, SkeletonPlugin, SkinnedActor,
+    AnimationClip, BuiltinMatcap, Channel, ClipPlayerPlugin, Interpolation, Joint, MatcapId,
+    Material, MeshData, MeshId, PickAccelerator, Pose, RuntimeFrameContext, RuntimePlugin,
+    RuntimeStepContext, Sampler, Skeleton, SkeletonPlugin, SkinWeights, SkinnedActor,
     SkinnedActorPart, SkinnedActorPlugin, SkinnedMeshUpdate, SkinnedPoseUpdate, SkinningPath,
-    SkinWeights, Track, TrackValues, ViewportRuntime,
+    Track, TrackValues, ViewportRuntime,
     runtime::plugin::phase,
     scene::{Scene, aabb::Aabb, material::BackfacePolicy},
     selection::Selection,
@@ -137,7 +137,11 @@ impl RuntimePlugin for PoseDriver {
     }
 
     fn step(&mut self, ctx: &mut RuntimeStepContext) {
-        let speed = ctx.resources.get::<BendSpeed>().map(|s| s.0).unwrap_or(self.default_speed);
+        let speed = ctx
+            .resources
+            .get::<BendSpeed>()
+            .map(|s| s.0)
+            .unwrap_or(self.default_speed);
         self.time += ctx.dt * speed;
         let angle = (self.time).sin() * std::f32::consts::FRAC_PI_4;
         // Joint 1's local transform must reproduce its bind-pose position
@@ -145,8 +149,9 @@ impl RuntimePlugin for PoseDriver {
         // Skipping the bind translation collapses the upper arm onto the lower
         // one, which is what made earlier versions of this showcase look wrong.
         let mut pose = Pose::identity(2);
-        pose.local_transforms[1] = glam::Affine3A::from_translation(glam::Vec3::new(0.0, 0.0, JOINT_Z))
-            * glam::Affine3A::from_rotation_x(angle);
+        pose.local_transforms[1] =
+            glam::Affine3A::from_translation(glam::Vec3::new(0.0, 0.0, JOINT_Z))
+                * glam::Affine3A::from_rotation_x(angle);
         ctx.resources.insert(pose);
     }
 }
@@ -155,11 +160,11 @@ impl RuntimePlugin for PoseDriver {
 // Mesh generation
 // ---------------------------------------------------------------------------
 
-const RINGS: usize = 64;     // rings along the arm length (dense enough for a smooth bend)
-const SIDES: usize = 20;     // vertices per ring
+const RINGS: usize = 64; // rings along the arm length (dense enough for a smooth bend)
+const SIDES: usize = 20; // vertices per ring
 const ARM_LENGTH: f32 = 4.0; // total arm length along Z
 const ARM_RADIUS: f32 = 0.35;
-const JOINT_Z: f32 = 2.0;    // world Z where the joint sits
+const JOINT_Z: f32 = 2.0; // world Z where the joint sits
 const BLEND_HALF_WIDTH: f32 = 0.75; // half-width of the joint's blend band along Z
 
 /// Build a ring-stack arm mesh. Returns (positions, normals, indices, skin_weights).
@@ -200,12 +205,19 @@ fn build_arm_mesh() -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>, SkinWeights) {
             let b = (base + (s + 1) % SIDES) as u32;
             let c = (next + (s + 1) % SIDES) as u32;
             let d = (next + s) as u32;
-            indices.push(a); indices.push(b); indices.push(d);
-            indices.push(b); indices.push(c); indices.push(d);
+            indices.push(a);
+            indices.push(b);
+            indices.push(d);
+            indices.push(b);
+            indices.push(c);
+            indices.push(d);
         }
     }
 
-    let skin_weights = SkinWeights { joint_indices, joint_weights };
+    let skin_weights = SkinWeights {
+        joint_indices,
+        joint_weights,
+    };
     (positions, normals, indices, skin_weights)
 }
 
@@ -341,8 +353,7 @@ pub(crate) struct Skin47State {
     /// Deformed positions captured this frame from CPU-path SkinnedMeshUpdates,
     /// keyed by `MeshId`. Drained into `mesh_lookup` on `RefreshPerFrame`
     /// picks, then cleared.
-    pub crowd_pick_deformed_positions:
-        std::collections::HashMap<MeshId, Vec<[f32; 3]>>,
+    pub crowd_pick_deformed_positions: std::collections::HashMap<MeshId, Vec<[f32; 3]>>,
     /// Most recent pick result: (clicked node id, actor index, strategy used).
     pub crowd_last_pick: Option<(viewport_lib::NodeId, u32, CrowdPickStrategy)>,
 
@@ -461,8 +472,7 @@ pub(crate) fn build_skin47_scene(app: &mut App, renderer: &mut viewport_lib::Vie
     // Force the appearance toggles to apply on the first frame, otherwise
     // the scene shows whatever material build_skin47_scene set and ignores
     // the sidebar defaults until the user toggles something.
-    app.skin_state.appearance_version =
-        app.skin_state.appearance_version.wrapping_add(1);
+    app.skin_state.appearance_version = app.skin_state.appearance_version.wrapping_add(1);
 
     app.skin_state.built = true;
 }
@@ -471,7 +481,10 @@ pub(crate) fn build_skin47_scene(app: &mut App, renderer: &mut viewport_lib::Vie
 /// demo. Removes whatever the previous demo added and inserts the new demo's
 /// meshes. Idempotent: calling with the same demo is a no-op.
 fn populate_scene_for_demo(state: &mut Skin47State) {
-    let arm_demos = matches!(state.demo, Skin47Demo::SineWaveArm | Skin47Demo::ClipDrivenArm);
+    let arm_demos = matches!(
+        state.demo,
+        Skin47Demo::SineWaveArm | Skin47Demo::ClipDrivenArm
+    );
     let gltf_demo = matches!(state.demo, Skin47Demo::GltfCharacter);
     let crowd_demo = matches!(state.demo, Skin47Demo::Crowd);
 
@@ -531,11 +544,10 @@ fn populate_scene_for_demo(state: &mut Skin47State) {
                 {
                     let mut gmat = Material::from_colour(part.colour);
                     gmat.backface_policy = BackfacePolicy::Tint(0.4);
-                    let node = state.scene.add(
-                        Some(*mid),
-                        actor_offset * part.scene_transform,
-                        gmat,
-                    );
+                    let node =
+                        state
+                            .scene
+                            .add(Some(*mid), actor_offset * part.scene_transform, gmat);
                     state.crowd_nodes.push(node);
                 }
             }
@@ -599,7 +611,10 @@ fn build_runtime_for_demo(
                 arm_skin_weights.clone(),
             )
             .with_path(path);
-            let pose_driver = PoseDriver { time: 0.0, default_speed: speed };
+            let pose_driver = PoseDriver {
+                time: 0.0,
+                default_speed: speed,
+            };
             ViewportRuntime::new()
                 .with_plugin(pose_driver)
                 .with_plugin(skeleton_plugin)
@@ -630,11 +645,9 @@ fn build_runtime_for_demo(
                 return ViewportRuntime::new();
             }
             let clip_idx = asset.active_clip.min(asset.clips.len().saturating_sub(1));
-            let player = ClipPlayerPlugin::new(
-                asset.clips[clip_idx].clone(),
-                asset.bind_pose.clone(),
-            )
-            .with_speed(speed);
+            let player =
+                ClipPlayerPlugin::new(asset.clips[clip_idx].clone(), asset.bind_pose.clone())
+                    .with_speed(speed);
 
             // Build one SkeletonPlugin per mesh part, all sharing the same
             // skeleton and reading the same Pose written by the player.
@@ -677,7 +690,8 @@ fn build_runtime_for_demo(
                 }
                 let clip_index = actor_idx % asset.clips.len();
                 let phase = if asset.clips[clip_index].duration > 0.0 {
-                    (actor_idx as f32 / crowd_count.max(1) as f32) * asset.clips[clip_index].duration
+                    (actor_idx as f32 / crowd_count.max(1) as f32)
+                        * asset.clips[clip_index].duration
                 } else {
                     0.0
                 };
@@ -689,10 +703,13 @@ fn build_runtime_for_demo(
                 );
             }
 
-            let plugin =
-                SkinnedActorPlugin::new(asset.skeleton.clone(), asset.bind_pose.clone(), asset.clips.clone())
-                    .with_actors(actors)
-                    .with_path(path);
+            let plugin = SkinnedActorPlugin::new(
+                asset.skeleton.clone(),
+                asset.bind_pose.clone(),
+                asset.clips.clone(),
+            )
+            .with_actors(actors)
+            .with_path(path);
             ViewportRuntime::new().with_plugin(plugin)
         }
     }
@@ -834,7 +851,11 @@ fn try_load_gltf_character(path: &std::path::Path) -> Option<GltfCharacterAsset>
     // Convert every clip targeting this skeleton.
     let mut clips = Vec::new();
     let mut clip_names = Vec::new();
-    for io_clip in scene.animations.iter().filter(|c| c.skeleton_index == skeleton_idx) {
+    for io_clip in scene
+        .animations
+        .iter()
+        .filter(|c| c.skeleton_index == skeleton_idx)
+    {
         let mut tracks = Vec::with_capacity(io_clip.tracks.len());
         for t in &io_clip.tracks {
             let interp = match t.sampler.interpolation {
@@ -1000,8 +1021,7 @@ pub(crate) fn update_skin47(
     let step_us = t0.elapsed().as_micros() as f32;
     // Exponential smoothing so the readout is steady enough to read.
     let alpha = 0.1_f32;
-    app.skin_state.last_step_us =
-        alpha * step_us + (1.0 - alpha) * app.skin_state.last_step_us;
+    app.skin_state.last_step_us = alpha * step_us + (1.0 - alpha) * app.skin_state.last_step_us;
 
     // Hand the right update channel through to build_frame_data.
     app.skin_state.pending_updates = output.skinned_mesh_updates;
@@ -1023,9 +1043,7 @@ pub(crate) fn update_skin47(
 
         let strategy_changed = app.skin_state.crowd_pick_strategy
             != app.skin_state.crowd_pick_strategy_active
-            || (app.skin_state.crowd_pick_padding
-                - app.skin_state.crowd_pick_padding_active)
-                .abs()
+            || (app.skin_state.crowd_pick_padding - app.skin_state.crowd_pick_padding_active).abs()
                 > f32::EPSILON;
         if strategy_changed {
             rebuild_crowd_pick_acc(&mut app.skin_state);
@@ -1129,7 +1147,9 @@ fn restamp_skin_instances(state: &mut Skin47State) {
         .max(1);
     for (i, node) in state.crowd_nodes.iter().enumerate() {
         let actor_idx = (i / parts_per_actor) as u32;
-        state.scene.set_skin_instance(*node, gpu.then_some(actor_idx));
+        state
+            .scene
+            .set_skin_instance(*node, gpu.then_some(actor_idx));
     }
 }
 
@@ -1191,7 +1211,9 @@ fn rebuild_crowd_pick_acc(state: &mut Skin47State) {
         }
     }
     let mesh_aabb_fn = |mid: MeshId| -> Option<Aabb> {
-        mesh_to_part.get(&mid).and_then(|&i| part_aabbs.get(i).copied())
+        mesh_to_part
+            .get(&mid)
+            .and_then(|&i| part_aabbs.get(i).copied())
     };
 
     let acc = match state.crowd_pick_strategy {
@@ -1257,10 +1279,18 @@ pub(crate) fn pick_crowd(
                 refreshed_ids.push(*mid);
                 p.clone()
             } else {
-                state.crowd_pick_bind_positions.get(mid).cloned().unwrap_or_default()
+                state
+                    .crowd_pick_bind_positions
+                    .get(mid)
+                    .cloned()
+                    .unwrap_or_default()
             }
         } else {
-            state.crowd_pick_bind_positions.get(mid).cloned().unwrap_or_default()
+            state
+                .crowd_pick_bind_positions
+                .get(mid)
+                .cloned()
+                .unwrap_or_default()
         };
         if positions.is_empty() || indices.is_empty() {
             continue;
@@ -1275,14 +1305,8 @@ pub(crate) fn pick_crowd(
     }
 
     let inv = camera.view_proj_matrix().inverse();
-    let (ray_origin, ray_dir) =
-        viewport_lib::picking::screen_to_ray(cursor, viewport_size, inv);
-    let hit = viewport_lib::bvh::pick_scene_accelerated_cpu(
-        ray_origin,
-        ray_dir,
-        acc,
-        &mesh_lookup,
-    );
+    let (ray_origin, ray_dir) = viewport_lib::picking::screen_to_ray(cursor, viewport_size, inv);
+    let hit = viewport_lib::bvh::pick_scene_accelerated_cpu(ray_origin, ray_dir, acc, &mesh_lookup);
 
     if let Some(hit) = hit {
         let node_id: viewport_lib::NodeId = hit.id;
@@ -1426,9 +1450,12 @@ pub(crate) fn apply_skin47_updates(app: &mut App, renderer: &mut viewport_lib::V
     // CPU path: blit deformed positions/normals back into the bind-pose
     // vertex buffer for every emitted mesh.
     for u in app.skin_state.pending_updates.drain(..) {
-        let _ = renderer
-            .resources_mut()
-            .write_mesh_positions_normals(&app.queue, u.mesh_id, &u.positions, &u.normals);
+        let _ = renderer.resources_mut().write_mesh_positions_normals(
+            &app.queue,
+            u.mesh_id,
+            &u.positions,
+            &u.normals,
+        );
     }
 
     // GPU path: lazily upload skin weights the first time we see a mesh on

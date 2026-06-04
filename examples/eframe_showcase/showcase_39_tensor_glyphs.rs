@@ -69,9 +69,17 @@ const GLYPH_COLOURMAPS: &[(BuiltinColourmap, &str)] = &[
 #[derive(Debug, Clone)]
 pub(crate) enum TgSelection {
     /// A tensor glyph instance. Stores the glyph index and its stress values.
-    Glyph { index: usize, sigma_xx: f32, tau_xy: f32 },
+    Glyph {
+        index: usize,
+        sigma_xx: f32,
+        tau_xy: f32,
+    },
     /// A beam mesh cell. Stores the cell index and its stress values.
-    Cell { index: usize, sigma_xx: f32, tau_xy: f32 },
+    Cell {
+        index: usize,
+        sigma_xx: f32,
+        tau_xy: f32,
+    },
 }
 
 pub(crate) struct TensorGlyphState {
@@ -195,8 +203,8 @@ fn stress_eigen(sigma_xx: f32, tau_xy: f32) -> ([f32; 3], [[f32; 3]; 3]) {
 /// Maximum glyph grid along each axis. At density=1.0 all GNX*GNY*GNZ glyphs
 /// are placed; the density slider subsamples this via a stride.
 const GNX: usize = 24; // along X (beam length)
-const GNY: usize = 8;  // along Z (beam depth, up-down)
-const GNZ: usize = 4;  // along Y (beam width)
+const GNY: usize = 8; // along Z (beam depth, up-down)
+const GNZ: usize = 4; // along Y (beam width)
 
 // ---------------------------------------------------------------------------
 // Vertex indexing for the hex mesh
@@ -352,8 +360,12 @@ pub(crate) fn submit_tensor_glyphs(app: &App, fd: &mut FrameData) {
 
 /// Submit the beam as a VolumeMeshItem (required for Cell sub-object picks).
 pub(crate) fn submit_beam_item(app: &App, fd: &mut FrameData) {
-    let Some(mesh_id) = app.tg_state.mesh_id else { return };
-    if app.tg_state.face_to_cell.is_empty() { return; }
+    let Some(mesh_id) = app.tg_state.mesh_id else {
+        return;
+    };
+    if app.tg_state.face_to_cell.is_empty() {
+        return;
+    }
     let mut item = VolumeMeshItem::new(mesh_id, app.tg_state.face_to_cell.clone());
     item.active_attribute = Some(AttributeRef {
         name: "von_mises".to_string(),
@@ -367,7 +379,9 @@ pub(crate) fn submit_beam_item(app: &App, fd: &mut FrameData) {
 
 /// Surface render item for the beam (visual display).
 pub(crate) fn beam_scene_items(app: &App) -> Vec<SceneRenderItem> {
-    let Some(mesh_id) = app.tg_state.mesh_id else { return vec![] };
+    let Some(mesh_id) = app.tg_state.mesh_id else {
+        return vec![];
+    };
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.active_attribute = Some(AttributeRef {
@@ -411,11 +425,19 @@ pub(crate) fn tg_handle_click(
                             continue;
                         }
                         if glyph_idx == idx {
-                            let cx = -BEAM_HALF_L + 2.0 * BEAM_HALF_L * (ix as f32 + 0.5) / GNX as f32;
-                            let cz_rel = -BEAM_HALF_H + 2.0 * BEAM_HALF_H * (iy as f32 + 0.5) / GNY as f32;
+                            let cx =
+                                -BEAM_HALF_L + 2.0 * BEAM_HALF_L * (ix as f32 + 0.5) / GNX as f32;
+                            let cz_rel =
+                                -BEAM_HALF_H + 2.0 * BEAM_HALF_H * (iy as f32 + 0.5) / GNY as f32;
                             let (sigma_xx, tau_xy) = beam_stress(cx, cz_rel);
-                            app.tg_state.selection = Some(TgSelection::Glyph { index: idx, sigma_xx, tau_xy });
-                            app.tg_state.sub_selection.select_one(PICK_TENSOR_GLYPHS, SubObjectRef::Instance(idx as u32));
+                            app.tg_state.selection = Some(TgSelection::Glyph {
+                                index: idx,
+                                sigma_xx,
+                                tau_xy,
+                            });
+                            app.tg_state
+                                .sub_selection
+                                .select_one(PICK_TENSOR_GLYPHS, SubObjectRef::Instance(idx as u32));
                             break 'outer;
                         }
                         glyph_idx += 1;
@@ -435,8 +457,14 @@ pub(crate) fn tg_handle_click(
             let cz_rel = -BEAM_HALF_H + 2.0 * BEAM_HALF_H * (iy as f32 + 0.5) / NY as f32;
             let _ = iz;
             let (sigma_xx, tau_xy) = beam_stress(cx, cz_rel);
-            app.tg_state.selection = Some(TgSelection::Cell { index: idx, sigma_xx, tau_xy });
-            app.tg_state.sub_selection.select_one(PICK_BEAM_MESH, SubObjectRef::Cell(cell_idx));
+            app.tg_state.selection = Some(TgSelection::Cell {
+                index: idx,
+                sigma_xx,
+                tau_xy,
+            });
+            app.tg_state
+                .sub_selection
+                .select_one(PICK_BEAM_MESH, SubObjectRef::Cell(cell_idx));
         }
     } else {
         app.tg_state.selection = None;
@@ -481,14 +509,22 @@ pub(crate) fn controls_tensor_glyphs(app: &mut App, ui: &mut egui::Ui) {
         None => {
             ui.label("Nothing selected.");
         }
-        Some(TgSelection::Glyph { index, sigma_xx, tau_xy }) => {
+        Some(TgSelection::Glyph {
+            index,
+            sigma_xx,
+            tau_xy,
+        }) => {
             ui.strong("Tensor glyph");
             ui.label(format!("Instance: {index}"));
             ui.label(format!("sigma_xx: {sigma_xx:.3}"));
             ui.label(format!("tau_xy:   {tau_xy:.3}"));
             ui.label(format!("von Mises: {:.3}", von_mises(*sigma_xx, *tau_xy)));
         }
-        Some(TgSelection::Cell { index, sigma_xx, tau_xy }) => {
+        Some(TgSelection::Cell {
+            index,
+            sigma_xx,
+            tau_xy,
+        }) => {
             ui.strong("Beam mesh cell");
             ui.label(format!("Cell: {index}"));
             ui.label(format!("sigma_xx: {sigma_xx:.3}"));

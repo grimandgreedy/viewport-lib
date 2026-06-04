@@ -28,8 +28,8 @@ use crate::App;
 use eframe::egui;
 use viewport_lib::{
     AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, CELL_SENTINEL, ClipObject,
-    ClipShape, ColourmapId, FrameData, LightingSettings, ProjectedTetId,
-    SceneRenderItem, TransparentVolumeMeshItem, ViewportRenderer, VolumeMeshData, VolumeMeshItem,
+    ClipShape, ColourmapId, FrameData, LightingSettings, ProjectedTetId, SceneRenderItem,
+    TransparentVolumeMeshItem, ViewportRenderer, VolumeMeshData, VolumeMeshItem,
 };
 
 // ---------------------------------------------------------------------------
@@ -348,7 +348,8 @@ fn build_hex_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
         .insert("longitude".to_string(), lon_scalars);
     data.cell_scalars
         .insert("radial".to_string(), radial_scalars);
-    data.cell_colours.insert("direct".to_string(), direct_colours);
+    data.cell_colours
+        .insert("direct".to_string(), direct_colours);
     data
 }
 
@@ -431,7 +432,8 @@ fn build_tet_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
         .insert("longitude".to_string(), lon_scalars);
     data.cell_scalars
         .insert("radial".to_string(), radial_scalars);
-    data.cell_colours.insert("direct".to_string(), direct_colours);
+    data.cell_colours
+        .insert("direct".to_string(), direct_colours);
     data
 }
 
@@ -532,7 +534,8 @@ fn build_tet_mesh_n(n: usize, positions: &[[f32; 3]]) -> VolumeMeshData {
         .insert("longitude".to_string(), lon_scalars);
     data.cell_scalars
         .insert("radial".to_string(), radial_scalars);
-    data.cell_colours.insert("direct".to_string(), direct_colours);
+    data.cell_colours
+        .insert("direct".to_string(), direct_colours);
     data
 }
 
@@ -619,7 +622,8 @@ fn build_pyramid_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
         .insert("longitude".to_string(), lon_scalars);
     data.cell_scalars
         .insert("radial".to_string(), radial_scalars);
-    data.cell_colours.insert("direct".to_string(), direct_colours);
+    data.cell_colours
+        .insert("direct".to_string(), direct_colours);
     data
 }
 
@@ -684,7 +688,8 @@ fn build_wedge_mesh(positions: &[[f32; 3]]) -> VolumeMeshData {
         .insert("longitude".to_string(), lon_scalars);
     data.cell_scalars
         .insert("radial".to_string(), radial_scalars);
-    data.cell_colours.insert("direct".to_string(), direct_colours);
+    data.cell_colours
+        .insert("direct".to_string(), direct_colours);
     data
 }
 
@@ -1115,29 +1120,23 @@ pub(crate) fn vm_collect_scene_items(
                 let clip_planes = [app.vm_clip_plane()];
                 match app.vm_state.clipped_item.as_ref() {
                     None => {
-                        if let Ok((id, f2c)) =
-                            renderer.resources_mut().upload_clipped_volume_mesh_data(
-                                &rs.device,
-                                &data,
-                                &clip_planes,
-                            )
+                        if let Ok((id, f2c)) = renderer
+                            .resources_mut()
+                            .upload_clipped_volume_mesh_data(&rs.device, &data, &clip_planes)
                         {
                             let mut item = viewport_lib::VolumeMeshItem::new(id, f2c);
-                            item.material.backface_policy =
-                                viewport_lib::BackfacePolicy::Identical;
+                            item.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
                             app.vm_state.clipped_item = Some(item);
                         }
                     }
                     Some(existing) => {
-                        if let Ok(f2c) =
-                            renderer.resources_mut().replace_clipped_volume_mesh_data(
-                                &rs.device,
-                                &rs.queue,
-                                existing.mesh_id,
-                                &data,
-                                &clip_planes,
-                            )
-                        {
+                        if let Ok(f2c) = renderer.resources_mut().replace_clipped_volume_mesh_data(
+                            &rs.device,
+                            &rs.queue,
+                            existing.mesh_id,
+                            &data,
+                            &clip_planes,
+                        ) {
                             if let Some(item) = app.vm_state.clipped_item.as_mut() {
                                 item.face_to_cell = f2c;
                             }

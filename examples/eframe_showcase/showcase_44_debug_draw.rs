@@ -15,12 +15,9 @@
 
 use eframe::egui;
 use viewport_lib::{
-    Aabb, DebugDraw, DebugLayer, DebugPrim, FixedTimestep, Material, MeshId,
-    PhysicsBody, PhysicsLitePlugin, RuntimeFrameContext, RuntimePlugin, RuntimeStepContext,
-    SceneRenderItem, ViewportRuntime,
-    runtime::plugin::phase,
-    scene::Scene,
-    selection::Selection,
+    Aabb, DebugDraw, DebugLayer, DebugPrim, FixedTimestep, Material, MeshId, PhysicsBody,
+    PhysicsLitePlugin, RuntimeFrameContext, RuntimePlugin, RuntimeStepContext, SceneRenderItem,
+    ViewportRuntime, runtime::plugin::phase, scene::Scene, selection::Selection,
 };
 
 use crate::App;
@@ -45,7 +42,11 @@ struct DebugOverlayPlugin {
 
 impl DebugOverlayPlugin {
     fn new(body_ids: Vec<u64>, body_radius: f32, bounds: Aabb) -> Self {
-        Self { body_ids, body_radius, bounds }
+        Self {
+            body_ids,
+            body_radius,
+            bounds,
+        }
     }
 }
 
@@ -87,12 +88,15 @@ impl RuntimePlugin for DebugOverlayPlugin {
 
         // Persistent bounding region AABB (overlay layer, always visible).
         if !dd.has_persistent(BOUNDS_AABB_ID) {
-            dd.add_persistent(BOUNDS_AABB_ID, DebugPrim::Aabb {
-                min: self.bounds.min,
-                max: self.bounds.max,
-                colour: [0.9, 0.75, 0.2, 0.6],
-                layer: DebugLayer::Overlay,
-            });
+            dd.add_persistent(
+                BOUNDS_AABB_ID,
+                DebugPrim::Aabb {
+                    min: self.bounds.min,
+                    max: self.bounds.max,
+                    colour: [0.9, 0.75, 0.2, 0.6],
+                    layer: DebugLayer::Overlay,
+                },
+            );
         }
     }
 }
@@ -118,8 +122,7 @@ impl Default for DbgDrawState {
             built: false,
             scene: Scene::new(),
             selection: Selection::new(),
-            runtime: ViewportRuntime::new()
-                .with_fixed_timestep(FixedTimestep::new(60.0)),
+            runtime: ViewportRuntime::new().with_fixed_timestep(FixedTimestep::new(60.0)),
             sphere_mesh: None,
             paused: false,
             dev_enabled: true,
@@ -167,8 +170,7 @@ pub(crate) fn build_dbg_draw_scene(app: &mut App, renderer: &mut viewport_lib::V
         [0.9, 0.7, 0.2],
     ];
 
-    let mut physics = PhysicsLitePlugin::new()
-        .with_gravity(glam::Vec3::new(0.0, 0.0, -9.81));
+    let mut physics = PhysicsLitePlugin::new().with_gravity(glam::Vec3::new(0.0, 0.0, -9.81));
 
     let mut node_ids = Vec::new();
     for (i, colour) in colours.iter().enumerate() {
@@ -195,7 +197,10 @@ pub(crate) fn build_dbg_draw_scene(app: &mut App, renderer: &mut viewport_lib::V
         .with_plugin(debug_plugin);
 
     // Pre-insert the DebugDraw resource so plugins can access it on the first step.
-    app.dbg_draw_state.runtime.resources_mut().insert(DebugDraw::new());
+    app.dbg_draw_state
+        .runtime
+        .resources_mut()
+        .insert(DebugDraw::new());
 
     app.dbg_draw_state.built = true;
 }
@@ -208,7 +213,12 @@ pub(crate) fn update_dbg_draw(app: &mut App, dt: f32) {
     let effective_dt = if app.dbg_draw_state.paused { 0.0 } else { dt };
 
     // Sync dev_enabled and clear transient draws before the step.
-    if let Some(dd) = app.dbg_draw_state.runtime.resources_mut().get_mut::<DebugDraw>() {
+    if let Some(dd) = app
+        .dbg_draw_state
+        .runtime
+        .resources_mut()
+        .get_mut::<DebugDraw>()
+    {
         dd.dev_enabled = app.dbg_draw_state.dev_enabled;
         dd.begin_frame();
     }
@@ -265,7 +275,11 @@ pub(crate) fn controls_dbg_draw(app: &mut App, ui: &mut egui::Ui) {
 
         ui.separator();
 
-        let pause_label = if app.dbg_draw_state.paused { "Resume" } else { "Pause" };
+        let pause_label = if app.dbg_draw_state.paused {
+            "Resume"
+        } else {
+            "Pause"
+        };
         if ui.button(pause_label).clicked() {
             app.dbg_draw_state.paused = !app.dbg_draw_state.paused;
         }
@@ -284,7 +298,10 @@ pub(crate) fn controls_dbg_draw(app: &mut App, ui: &mut egui::Ui) {
 
         ui.separator();
         ui.label("Frame stats:");
-        ui.label(format!("Contacts this step: {}", app.dbg_draw_state.contact_count));
+        ui.label(format!(
+            "Contacts this step: {}",
+            app.dbg_draw_state.contact_count
+        ));
         if let Some(dd) = app.dbg_draw_state.runtime.resources().get::<DebugDraw>() {
             ui.label(format!("Transient prims : {}", dd.transient_count()));
             ui.label(format!("Persistent prims: {}", dd.persistent_count()));

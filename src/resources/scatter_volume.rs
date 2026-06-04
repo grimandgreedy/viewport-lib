@@ -139,9 +139,10 @@ impl crate::resources::ViewportGpuResources {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: std::num::NonZeroU64::new(
-                            std::mem::size_of::<ScatterFrameUniformRaw>() as u64,
-                        ),
+                        min_binding_size: std::num::NonZeroU64::new(std::mem::size_of::<
+                            ScatterFrameUniformRaw,
+                        >()
+                            as u64),
                     },
                     count: None,
                 },
@@ -182,9 +183,10 @@ impl crate::resources::ViewportGpuResources {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: std::num::NonZeroU64::new(
-                            std::mem::size_of::<ScatterTemporalUniformRaw>() as u64,
-                        ),
+                        min_binding_size: std::num::NonZeroU64::new(std::mem::size_of::<
+                            ScatterTemporalUniformRaw,
+                        >()
+                            as u64),
                     },
                     count: None,
                 },
@@ -497,10 +499,7 @@ impl crate::resources::ViewportGpuResources {
         self.scatter_composite_sampler = Some(sampler);
     }
 
-    pub(crate) fn ensure_scatter_temporal_resolve_pipeline(
-        &mut self,
-        device: &wgpu::Device,
-    ) {
+    pub(crate) fn ensure_scatter_temporal_resolve_pipeline(&mut self, device: &wgpu::Device) {
         if self.scatter_temporal_resolve_pipeline.is_some() {
             return;
         }
@@ -625,7 +624,11 @@ impl crate::resources::ViewportGpuResources {
             }
         }
         if let Some(buf) = self.scatter_per_volume_buffer.as_ref() {
-            queue.write_buffer(buf, 0, &bytes[..(n as usize * stride as usize).max(stride as usize)]);
+            queue.write_buffer(
+                buf,
+                0,
+                &bytes[..(n as usize * stride as usize).max(stride as usize)],
+            );
         }
         n
     }
@@ -708,7 +711,11 @@ impl crate::resources::ViewportGpuResources {
         self.ensure_scatter_density_fallback(device, queue);
 
         let key = (lut_id, density_id);
-        if let Some((_, bg)) = self.scatter_per_volume_tex_cache.iter().find(|(k, _)| *k == key) {
+        if let Some((_, bg)) = self
+            .scatter_per_volume_tex_cache
+            .iter()
+            .find(|(k, _)| *k == key)
+        {
             return bg.clone();
         }
         let bgl = self.scatter_per_volume_tex_bgl.as_ref().unwrap();
@@ -825,7 +832,10 @@ impl crate::resources::ViewportGpuResources {
             self.write_scatter_temporal_uniform(device, queue, [[0.0; 4]; 4], 0.0, false);
         }
         let bgl = self.scatter_temporal_resolve_bgl.as_ref().unwrap();
-        let buf = self.scatter_temporal_resolve_uniform_buffer.as_ref().unwrap();
+        let buf = self
+            .scatter_temporal_resolve_uniform_buffer
+            .as_ref()
+            .unwrap();
         let bilinear = self.scatter_composite_sampler.as_ref().unwrap();
         let depth_sampler = self.scatter_depth_sampler.as_ref().unwrap();
         device.create_bind_group(&wgpu::BindGroupDescriptor {

@@ -312,8 +312,9 @@ impl App {
             hot_mat,
         );
 
-        self.svol_state.fire_ramp_id =
-            renderer.resources().builtin_colourmap_id(BuiltinColourmap::Inferno);
+        self.svol_state.fire_ramp_id = renderer
+            .resources()
+            .builtin_colourmap_id(BuiltinColourmap::Inferno);
 
         // Bake a 32^3 procedural density (a hollow spherical shell with
         // sinusoidal modulation) and upload it as a 3D R32Float texture.
@@ -329,17 +330,18 @@ impl App {
                     let fz = (z as f32 + 0.5) / n as f32 - 0.5;
                     let r = (fx * fx + fy * fy + fz * fz).sqrt();
                     let shell = (1.0 - (r * 4.0 - 1.6).abs()).max(0.0);
-                    let swirl = 0.5
-                        + 0.5
-                            * ((fx * 24.0 + fz * 16.0).sin()
-                                * (fy * 18.0 + fx * 12.0).sin());
+                    let swirl =
+                        0.5 + 0.5 * ((fx * 24.0 + fz * 16.0).sin() * (fy * 18.0 + fx * 12.0).sin());
                     data.push((shell * swirl).clamp(0.0, 1.0));
                 }
             }
         }
-        let tex_id = renderer
-            .resources_mut()
-            .upload_volume(&self.device, &self.queue, &data, [dim, dim, dim]);
+        let tex_id = renderer.resources_mut().upload_volume(
+            &self.device,
+            &self.queue,
+            &data,
+            [dim, dim, dim],
+        );
         self.svol_state.sphere_texture_id = Some(tex_id);
 
         self.svol_state.built = true;
@@ -406,12 +408,8 @@ impl App {
         }
         if s.fire_enabled {
             let center = [-4.0_f32, 0.0, 1.2];
-            let mut v = ScatterVolume::sphere_uniform(
-                center,
-                s.fire_radius,
-                s.fire_density,
-                s.fire_colour,
-            );
+            let mut v =
+                ScatterVolume::sphere_uniform(center, s.fire_radius, s.fire_density, s.fire_colour);
             if s.fire_use_ramp {
                 v.colour = ColourSource::Ramp(s.fire_ramp_id);
             }
@@ -503,7 +501,10 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
         SvolPreset::GodRays,
         SvolPreset::StressTest,
     ] {
-        if ui.selectable_label(current == preset, preset.label()).clicked() {
+        if ui
+            .selectable_label(current == preset, preset.label())
+            .clicked()
+        {
             pending = Some(preset);
         }
     }
@@ -559,7 +560,10 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
         .default_open(false)
         .show(ui, |ui| {
             ui.checkbox(&mut s.blue_noise_jitter, "Blue-noise jitter");
-            ui.checkbox(&mut s.fire_step_budget_override, "Override fire step budget");
+            ui.checkbox(
+                &mut s.fire_step_budget_override,
+                "Override fire step budget",
+            );
             if s.fire_step_budget_override {
                 ui.horizontal(|ui| {
                     ui.label("Fire steps");

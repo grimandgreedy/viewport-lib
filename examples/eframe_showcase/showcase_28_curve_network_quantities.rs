@@ -13,8 +13,9 @@
 use crate::App;
 use eframe::egui;
 use std::f32::consts::TAU;
-use viewport_lib::{BuiltinColourmap, ColourmapId, FrameData, LightingSettings, PolylineItem,
-    SceneRenderItem};
+use viewport_lib::{
+    BuiltinColourmap, ColourmapId, FrameData, LightingSettings, PolylineItem, SceneRenderItem,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CnqMode {
@@ -197,7 +198,5 @@ pub(crate) fn cnq_collect_scene_items(
 }
 
 pub(crate) fn submit_cnq_items(app: &App, fd: &mut FrameData) {
-    fd.scene
-        .polylines
-        .push(make_cnq_polyline_item(app));
+    fd.scene.polylines.push(make_cnq_polyline_item(app));
 }

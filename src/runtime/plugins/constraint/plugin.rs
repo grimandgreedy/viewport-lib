@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::interaction::selection::NodeId;
 use crate::runtime::context::RuntimeStepContext;
-use crate::runtime::plugin::{phase, RuntimePlugin};
+use crate::runtime::plugin::{RuntimePlugin, phase};
 
 /// A positional constraint applied to a scene node.
 #[derive(Debug, Clone)]

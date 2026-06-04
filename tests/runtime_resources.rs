@@ -4,15 +4,15 @@
 //! during its step, another reads it later in the same frame without any
 //! application-level wiring between them.
 
+use std::sync::{Arc, Mutex};
+use viewport_lib::camera::camera::Camera;
+use viewport_lib::interaction::input::ActionFrame;
+use viewport_lib::interaction::selection::Selection;
 use viewport_lib::runtime::{
     FixedTimestep, RuntimeFrameContext, RuntimePlugin, RuntimeStepContext, ViewportRuntime,
     plugin::phase,
 };
-use viewport_lib::camera::camera::Camera;
-use viewport_lib::interaction::input::ActionFrame;
-use viewport_lib::interaction::selection::Selection;
 use viewport_lib::scene::scene::Scene;
-use std::sync::{Arc, Mutex};
 
 fn make_frame(camera: &Camera, input: &ActionFrame) -> RuntimeFrameContext {
     let mut frame = RuntimeFrameContext::default();
@@ -46,7 +46,9 @@ struct PhysicsWriter {
 }
 
 impl RuntimePlugin for PhysicsWriter {
-    fn priority(&self) -> i32 { phase::SIMULATE }
+    fn priority(&self) -> i32 {
+        phase::SIMULATE
+    }
     fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
         ctx.resources.insert(PhysicsState {
             contact_count: self.contacts,
@@ -60,7 +62,9 @@ struct AudioReader {
 }
 
 impl RuntimePlugin for AudioReader {
-    fn priority(&self) -> i32 { phase::POST_SIM }
+    fn priority(&self) -> i32 {
+        phase::POST_SIM
+    }
     fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
         if let Some(state) = ctx.resources.get::<PhysicsState>() {
             if state.contact_count > 0 {
@@ -77,7 +81,9 @@ fn resource_written_by_simulate_readable_by_post_sim() {
     let triggered = Arc::new(Mutex::new(0u32));
     let mut runtime = ViewportRuntime::new()
         .with_plugin(PhysicsWriter { contacts: 3 })
-        .with_plugin(AudioReader { triggered: triggered.clone() });
+        .with_plugin(AudioReader {
+            triggered: triggered.clone(),
+        });
 
     step(&mut runtime);
 
@@ -86,8 +92,7 @@ fn resource_written_by_simulate_readable_by_post_sim() {
 
 #[test]
 fn resource_accessible_via_runtime_after_step() {
-    let mut runtime = ViewportRuntime::new()
-        .with_plugin(PhysicsWriter { contacts: 2 });
+    let mut runtime = ViewportRuntime::new().with_plugin(PhysicsWriter { contacts: 2 });
 
     step(&mut runtime);
 
@@ -98,8 +103,7 @@ fn resource_accessible_via_runtime_after_step() {
 
 #[test]
 fn resource_persists_across_frames() {
-    let mut runtime = ViewportRuntime::new()
-        .with_plugin(PhysicsWriter { contacts: 1 });
+    let mut runtime = ViewportRuntime::new().with_plugin(PhysicsWriter { contacts: 1 });
 
     step(&mut runtime);
     step(&mut runtime);
@@ -112,7 +116,9 @@ fn resource_not_triggered_when_zero_contacts() {
     let triggered = Arc::new(Mutex::new(0u32));
     let mut runtime = ViewportRuntime::new()
         .with_plugin(PhysicsWriter { contacts: 0 })
-        .with_plugin(AudioReader { triggered: triggered.clone() });
+        .with_plugin(AudioReader {
+            triggered: triggered.clone(),
+        });
 
     step(&mut runtime);
 
@@ -126,15 +132,16 @@ fn resource_prepopulated_from_outside_visible_to_plugins() {
         seen: Arc<Mutex<Option<u32>>>,
     }
     impl RuntimePlugin for ResourceReader {
-        fn priority(&self) -> i32 { phase::PREPARE }
+        fn priority(&self) -> i32 {
+            phase::PREPARE
+        }
         fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
             *self.seen.lock().unwrap() = ctx.resources.get::<u32>().copied();
         }
     }
 
     let seen = Arc::new(Mutex::new(None::<u32>));
-    let mut runtime = ViewportRuntime::new()
-        .with_plugin(ResourceReader { seen: seen.clone() });
+    let mut runtime = ViewportRuntime::new().with_plugin(ResourceReader { seen: seen.clone() });
     runtime.resources_mut().insert(42u32);
 
     step(&mut runtime);
@@ -162,7 +169,9 @@ fn fixed_timestep_resource_reflects_last_step() {
         count: u32,
     }
     impl RuntimePlugin for StepCounter {
-        fn priority(&self) -> i32 { phase::SIMULATE }
+        fn priority(&self) -> i32 {
+            phase::SIMULATE
+        }
         fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
             self.count += 1;
             ctx.resources.insert(self.count);

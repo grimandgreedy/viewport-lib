@@ -1,7 +1,7 @@
 //! Runtime plugin trait and phase ordering.
 
-use crate::interaction::selection::NodeId;
 use super::context::RuntimeStepContext;
+use crate::interaction::selection::NodeId;
 
 /// Named priority band constants for runtime plugins.
 ///
@@ -10,22 +10,22 @@ use super::context::RuntimeStepContext;
 /// specific point within a range.
 pub mod phase {
     /// First phase each frame. Update time-dependent state before any queries.
-    pub const PREPARE:    i32 = 100;
+    pub const PREPARE: i32 = 100;
     /// Ray-cast and object picking.
-    pub const PICK:       i32 = 200;
+    pub const PICK: i32 = 200;
     /// Selection state updates driven by pick results.
-    pub const SELECT:     i32 = 300;
+    pub const SELECT: i32 = 300;
     /// Transform manipulation from gizmo drag or keyboard input.
     pub const MANIPULATE: i32 = 400;
     /// Procedural or keyframe animation.
-    pub const ANIMATE:    i32 = 500;
+    pub const ANIMATE: i32 = 500;
     /// Physics or simulation. With a fixed timestep this runs once per
     /// accumulated step.
-    pub const SIMULATE:   i32 = 600;
+    pub const SIMULATE: i32 = 600;
     /// Runs after all Simulate iterations, before Writeback.
-    pub const POST_SIM:   i32 = 700;
+    pub const POST_SIM: i32 = 700;
     /// Flush accumulated transform ops to the scene.
-    pub const WRITEBACK:  i32 = 800;
+    pub const WRITEBACK: i32 = 800;
 }
 
 /// Named execution phase for a runtime plugin.
@@ -60,14 +60,14 @@ impl RuntimePhase {
     /// Convert this phase to its numeric priority value.
     pub fn to_priority(&self) -> i32 {
         match self {
-            RuntimePhase::Prepare      => phase::PREPARE,
-            RuntimePhase::Pick         => phase::PICK,
-            RuntimePhase::Select       => phase::SELECT,
-            RuntimePhase::Manipulate   => phase::MANIPULATE,
-            RuntimePhase::Animate      => phase::ANIMATE,
-            RuntimePhase::Simulate     => phase::SIMULATE,
+            RuntimePhase::Prepare => phase::PREPARE,
+            RuntimePhase::Pick => phase::PICK,
+            RuntimePhase::Select => phase::SELECT,
+            RuntimePhase::Manipulate => phase::MANIPULATE,
+            RuntimePhase::Animate => phase::ANIMATE,
+            RuntimePhase::Simulate => phase::SIMULATE,
             RuntimePhase::PostSimulate => phase::POST_SIM,
-            RuntimePhase::Writeback    => phase::WRITEBACK,
+            RuntimePhase::Writeback => phase::WRITEBACK,
         }
     }
 }

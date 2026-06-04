@@ -204,7 +204,10 @@ fn make_wave_grid_iso(cols: u32, rows: u32, size: f32) -> (MeshData, Vec<f32>) {
 pub(crate) fn iso_collect_scene_items(
     app: &mut App,
 ) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
-    let mut items = app.iso_state.scene.collect_render_items(&viewport_lib::selection::Selection::new());
+    let mut items = app
+        .iso_state
+        .scene
+        .collect_render_items(&viewport_lib::selection::Selection::new());
     if app.iso_state.show_surface_colour {
         for item in items.iter_mut() {
             item.active_attribute = Some(AttributeRef {
@@ -248,10 +251,7 @@ pub(crate) fn submit_iso_items(app: &App, fd: &mut FrameData) {
         .fold(f32::NEG_INFINITY, f32::max);
     let range = scalar_max - scalar_min;
     let isovalues: Vec<f32> = (0..app.iso_state.contour_count)
-        .map(|i| {
-            scalar_min
-                + range * (i as f32 + 1.0) / (app.iso_state.contour_count as f32 + 1.0)
-        })
+        .map(|i| scalar_min + range * (i as f32 + 1.0) / (app.iso_state.contour_count as f32 + 1.0))
         .collect();
     let mut iso_item = IsolineItem::default();
     iso_item.positions = app.iso_state.positions.clone();

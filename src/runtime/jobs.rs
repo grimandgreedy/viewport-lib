@@ -127,8 +127,13 @@ impl<T: Send + 'static> JobSlot<T> {
     /// failure, or cancellation from a background thread.
     pub fn new() -> (Self, JobSender<T>) {
         let state = Arc::new(Mutex::new(SlotState::Pending));
-        let slot = Self { state: state.clone() };
-        let sender = JobSender { state, consumed: false };
+        let slot = Self {
+            state: state.clone(),
+        };
+        let sender = JobSender {
+            state,
+            consumed: false,
+        };
         (slot, sender)
     }
 
@@ -143,13 +148,16 @@ impl<T: Send + 'static> JobSlot<T> {
             SlotState::Empty => JobPoll::Empty,
             SlotState::Pending => JobPoll::Pending,
             SlotState::Ready(_) => {
-                let SlotState::Ready(v) = std::mem::replace(&mut *guard, SlotState::Empty)
-                    else { unreachable!() };
+                let SlotState::Ready(v) = std::mem::replace(&mut *guard, SlotState::Empty) else {
+                    unreachable!()
+                };
                 JobPoll::Ready(v)
             }
             SlotState::Failed(_) => {
                 let SlotState::Failed(msg) = std::mem::replace(&mut *guard, SlotState::Empty)
-                    else { unreachable!() };
+                else {
+                    unreachable!()
+                };
                 JobPoll::Failed(msg)
             }
             SlotState::Cancelled => {

@@ -23,14 +23,13 @@ use std::thread;
 use std::time::Duration;
 
 use viewport_lib::{
-    runtime::{
-        JobPoll, JobSlot, RuntimeFrameContext, RuntimePlugin, RuntimeStepContext,
-        ViewportRuntime,
-        plugin::phase,
-    },
     camera::camera::Camera,
     interaction::input::ActionFrame,
     interaction::selection::Selection,
+    runtime::{
+        JobPoll, JobSlot, RuntimeFrameContext, RuntimePlugin, RuntimeStepContext, ViewportRuntime,
+        plugin::phase,
+    },
     scene::scene::Scene,
 };
 
@@ -89,8 +88,14 @@ impl RuntimePlugin for LoaderPlugin {
         match self.slot.take() {
             JobPoll::Ready(data) => {
                 let len = data.len();
-                println!("  [loader] integrated {len} bytes into resources on frame {}", self.frame);
-                ctx.resources.insert(LoadedAsset { data, loaded_on_frame: self.frame });
+                println!(
+                    "  [loader] integrated {len} bytes into resources on frame {}",
+                    self.frame
+                );
+                ctx.resources.insert(LoadedAsset {
+                    data,
+                    loaded_on_frame: self.frame,
+                });
             }
             JobPoll::Pending => {}
             JobPoll::Failed(msg) => {
@@ -123,8 +128,12 @@ impl RuntimePlugin for ReaderPlugin {
         self.frame += 1;
         match ctx.resources.get::<LoadedAsset>() {
             Some(asset) => {
-                println!("  [reader] frame {}: asset available ({} bytes, loaded on frame {})",
-                    self.frame, asset.data.len(), asset.loaded_on_frame);
+                println!(
+                    "  [reader] frame {}: asset available ({} bytes, loaded on frame {})",
+                    self.frame,
+                    asset.data.len(),
+                    asset.loaded_on_frame
+                );
             }
             None => {
                 println!("  [reader] frame {}: asset not yet available", self.frame);
@@ -192,10 +201,15 @@ fn main() {
     // --- Demo 3: failure path ------------------------------------------------
     println!("\n=== Demo 3: job failure ===");
     {
-        struct FailPlugin { slot: JobSlot<u32>, ran: bool }
+        struct FailPlugin {
+            slot: JobSlot<u32>,
+            ran: bool,
+        }
 
         impl RuntimePlugin for FailPlugin {
-            fn priority(&self) -> i32 { phase::PREPARE }
+            fn priority(&self) -> i32 {
+                phase::PREPARE
+            }
 
             fn submit(&mut self, _ctx: &RuntimeStepContext<'_>) {
                 if !self.ran {
@@ -217,8 +231,10 @@ fn main() {
             fn step(&mut self, _ctx: &mut RuntimeStepContext<'_>) {}
         }
 
-        let mut runtime = ViewportRuntime::new()
-            .with_plugin(FailPlugin { slot: JobSlot::empty(), ran: false });
+        let mut runtime = ViewportRuntime::new().with_plugin(FailPlugin {
+            slot: JobSlot::empty(),
+            ran: false,
+        });
 
         println!("frame 1:");
         step_runtime(&mut runtime, &camera, &input);
@@ -227,10 +243,15 @@ fn main() {
     // --- Demo 4: drop-cancellation -------------------------------------------
     println!("\n=== Demo 4: sender dropped without signaling (auto-cancel) ===");
     {
-        struct DropPlugin { slot: JobSlot<u32>, ran: bool }
+        struct DropPlugin {
+            slot: JobSlot<u32>,
+            ran: bool,
+        }
 
         impl RuntimePlugin for DropPlugin {
-            fn priority(&self) -> i32 { phase::PREPARE }
+            fn priority(&self) -> i32 {
+                phase::PREPARE
+            }
 
             fn submit(&mut self, _ctx: &RuntimeStepContext<'_>) {
                 if !self.ran {
@@ -244,7 +265,9 @@ fn main() {
 
             fn collect(&mut self, _ctx: &mut RuntimeStepContext<'_>) {
                 match self.slot.take() {
-                    JobPoll::Cancelled => println!("  [drop plugin] slot cancelled (sender dropped)"),
+                    JobPoll::Cancelled => {
+                        println!("  [drop plugin] slot cancelled (sender dropped)")
+                    }
                     _ => {}
                 }
             }
@@ -252,8 +275,10 @@ fn main() {
             fn step(&mut self, _ctx: &mut RuntimeStepContext<'_>) {}
         }
 
-        let mut runtime = ViewportRuntime::new()
-            .with_plugin(DropPlugin { slot: JobSlot::empty(), ran: false });
+        let mut runtime = ViewportRuntime::new().with_plugin(DropPlugin {
+            slot: JobSlot::empty(),
+            ran: false,
+        });
 
         println!("frame 1:");
         step_runtime(&mut runtime, &camera, &input);

@@ -783,14 +783,15 @@ impl ViewportRenderer {
                     ray_dir,
                 ) {
                     let world_pos = ray_origin + ray_dir * t_enter;
-                    let normal = (world_pos - match item.volume.shape {
-                        crate::scene::scatter_volume::ScatterShape::Box(b) => {
-                            (b.min + b.max) * 0.5
-                        }
-                        crate::scene::scatter_volume::ScatterShape::Sphere { center, .. } => {
-                            glam::Vec3::from(center)
-                        }
-                    })
+                    let normal = (world_pos
+                        - match item.volume.shape {
+                            crate::scene::scatter_volume::ScatterShape::Box(b) => {
+                                (b.min + b.max) * 0.5
+                            }
+                            crate::scene::scatter_volume::ScatterShape::Sphere {
+                                center, ..
+                            } => glam::Vec3::from(center),
+                        })
                     .try_normalize()
                     .unwrap_or(glam::Vec3::Z);
                     consider(
@@ -2244,12 +2245,20 @@ impl ViewportRenderer {
             let st_tube_iter = self
                 .pick_streamtube_items
                 .iter()
-                .map(|it| (it.settings.pick_id.0, it.positions.as_slice(), it.strip_lengths.as_slice()))
-                .chain(
-                    self.pick_tube_items
-                        .iter()
-                        .map(|it| (it.settings.pick_id.0, it.positions.as_slice(), it.strip_lengths.as_slice())),
-                );
+                .map(|it| {
+                    (
+                        it.settings.pick_id.0,
+                        it.positions.as_slice(),
+                        it.strip_lengths.as_slice(),
+                    )
+                })
+                .chain(self.pick_tube_items.iter().map(|it| {
+                    (
+                        it.settings.pick_id.0,
+                        it.positions.as_slice(),
+                        it.strip_lengths.as_slice(),
+                    )
+                }));
 
             for (id, positions, strip_lengths) in st_tube_iter {
                 if id == 0 || positions.is_empty() {
@@ -2367,9 +2376,10 @@ impl ViewportRenderer {
                             if in_rect(sx, sy) {
                                 item_hit = true;
                                 if wants_poly_node {
-                                    result
-                                        .elements
-                                        .push((item.settings.pick_id.0, SubObjectRef::Point(ni as u32)));
+                                    result.elements.push((
+                                        item.settings.pick_id.0,
+                                        SubObjectRef::Point(ni as u32),
+                                    ));
                                 } else if wants_strip {
                                     let s = strip_for_node(ni as u32, &item.strip_lengths);
                                     strips_hit.insert(s);
@@ -2426,9 +2436,10 @@ impl ViewportRenderer {
                             if hit {
                                 item_hit = true;
                                 if wants_segment {
-                                    result
-                                        .elements
-                                        .push((item.settings.pick_id.0, SubObjectRef::Segment(seg_idx)));
+                                    result.elements.push((
+                                        item.settings.pick_id.0,
+                                        SubObjectRef::Segment(seg_idx),
+                                    ));
                                 } else if wants_strip {
                                     let s = strip_for_segment(seg_idx, &item.strip_lengths);
                                     strips_hit.insert(s);
@@ -2444,7 +2455,9 @@ impl ViewportRenderer {
 
                 if wants_strip {
                     for s in strips_hit {
-                        result.elements.push((item.settings.pick_id.0, SubObjectRef::Strip(s)));
+                        result
+                            .elements
+                            .push((item.settings.pick_id.0, SubObjectRef::Strip(s)));
                     }
                 }
                 if wants_object && item_hit {

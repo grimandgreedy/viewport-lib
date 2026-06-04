@@ -19,15 +19,14 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    LightKind, LightSource, LightingSettings, Material, MeshId, SceneRenderItem,
-    ViewportRenderer,
+    LightKind, LightSource, LightingSettings, Material, MeshId, SceneRenderItem, ViewportRenderer,
     runtime::GpuPlugin,
 };
 
-#[path = "../plugins/wave_plugin.rs"]
-mod wave_plugin;
 #[path = "../plugins/buoy_plugin.rs"]
 mod buoy_plugin;
+#[path = "../plugins/wave_plugin.rs"]
+mod wave_plugin;
 
 use buoy_plugin::BuoyPlugin;
 use wave_plugin::WavePlugin;
@@ -171,15 +170,16 @@ impl App {
         // single MeshData. The mesh's vertex *attributes* (position, normal,
         // colour) are baked once; per-frame the position override buffer
         // produced by `BuoyPlugin` will replace the position attribute.
-        let base_sphere =
-            viewport_lib::primitives::sphere(BUOY_SPHERE_RADIUS, 12, 8);
+        let base_sphere = viewport_lib::primitives::sphere(BUOY_SPHERE_RADIUS, 12, 8);
         let verts_per_buoy = base_sphere.positions.len();
         let buoy_count = BUOY_GRID * BUOY_GRID;
 
         let mut buoys = viewport_lib::MeshData::default();
         buoys.positions.reserve(verts_per_buoy * buoy_count);
         buoys.normals.reserve(verts_per_buoy * buoy_count);
-        buoys.indices.reserve(base_sphere.indices.len() * buoy_count);
+        buoys
+            .indices
+            .reserve(base_sphere.indices.len() * buoy_count);
         for _ in 0..buoy_count {
             buoys.positions.extend_from_slice(&base_sphere.positions);
             buoys.normals.extend_from_slice(&base_sphere.normals);
@@ -359,8 +359,7 @@ fn sync_mode_to_renderer(app: &mut App, renderer: &mut ViewportRenderer) {
     let resources = renderer.resources_mut();
     if want_bound {
         if let Some(plugin) = app.wave_state.plugin.as_deref() {
-            let _ =
-                resources.set_position_override_buffer(plane_id, plugin.output_buffer());
+            let _ = resources.set_position_override_buffer(plane_id, plugin.output_buffer());
             let _ = resources.set_normal_override_buffer(plane_id, plugin.normal_buffer());
         }
     } else {

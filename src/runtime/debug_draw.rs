@@ -269,7 +269,12 @@ impl DebugDraw {
         layer: DebugLayer,
     ) -> &mut Self {
         if self.accept(layer) {
-            self.transient.push(DebugPrim::Line { start, end, colour, layer });
+            self.transient.push(DebugPrim::Line {
+                start,
+                end,
+                colour,
+                layer,
+            });
         }
         self
     }
@@ -277,12 +282,7 @@ impl DebugDraw {
     /// Submit a point marker for this frame.
     ///
     /// `radius` is in screen-space pixels.
-    pub fn point(
-        &mut self,
-        position: glam::Vec3,
-        radius: f32,
-        colour: [f32; 4],
-    ) -> &mut Self {
+    pub fn point(&mut self, position: glam::Vec3, radius: f32, colour: [f32; 4]) -> &mut Self {
         self.point_layer(position, radius, colour, DebugLayer::Dev)
     }
 
@@ -305,18 +305,18 @@ impl DebugDraw {
         layer: DebugLayer,
     ) -> &mut Self {
         if self.accept(layer) {
-            self.transient.push(DebugPrim::Point { position, radius, colour, layer });
+            self.transient.push(DebugPrim::Point {
+                position,
+                radius,
+                colour,
+                layer,
+            });
         }
         self
     }
 
     /// Submit an axis-aligned box wireframe for this frame.
-    pub fn aabb(
-        &mut self,
-        min: glam::Vec3,
-        max: glam::Vec3,
-        colour: [f32; 4],
-    ) -> &mut Self {
+    pub fn aabb(&mut self, min: glam::Vec3, max: glam::Vec3, colour: [f32; 4]) -> &mut Self {
         self.aabb_layer(min, max, colour, DebugLayer::Dev)
     }
 
@@ -339,7 +339,12 @@ impl DebugDraw {
         layer: DebugLayer,
     ) -> &mut Self {
         if self.accept(layer) {
-            self.transient.push(DebugPrim::Aabb { min, max, colour, layer });
+            self.transient.push(DebugPrim::Aabb {
+                min,
+                max,
+                colour,
+                layer,
+            });
         }
         self
     }
@@ -347,12 +352,7 @@ impl DebugDraw {
     /// Submit a sphere wireframe for this frame.
     ///
     /// The sphere is drawn as three great circles (XY, XZ, and YZ planes).
-    pub fn sphere(
-        &mut self,
-        center: glam::Vec3,
-        radius: f32,
-        colour: [f32; 4],
-    ) -> &mut Self {
+    pub fn sphere(&mut self, center: glam::Vec3, radius: f32, colour: [f32; 4]) -> &mut Self {
         self.sphere_layer(center, radius, colour, DebugLayer::Dev)
     }
 
@@ -375,7 +375,12 @@ impl DebugDraw {
         layer: DebugLayer,
     ) -> &mut Self {
         if self.accept(layer) {
-            self.transient.push(DebugPrim::Sphere { center, radius, colour, layer });
+            self.transient.push(DebugPrim::Sphere {
+                center,
+                radius,
+                colour,
+                layer,
+            });
         }
         self
     }
@@ -499,7 +504,9 @@ impl DebugDraw {
                 continue;
             }
             match prim {
-                DebugPrim::Line { start, end, colour, .. } => {
+                DebugPrim::Line {
+                    start, end, colour, ..
+                } => {
                     let key = colour_key(*colour);
                     let entry = groups.entry(key).or_default();
                     entry.0.push((*start).into());
@@ -508,7 +515,9 @@ impl DebugDraw {
                     entry.2.push(*colour);
                     entry.2.push(*colour);
                 }
-                DebugPrim::Aabb { min, max, colour, .. } => {
+                DebugPrim::Aabb {
+                    min, max, colour, ..
+                } => {
                     let key = colour_key(*colour);
                     let entry = groups.entry(key).or_default();
                     let (positions, strips, colours) = (&mut entry.0, &mut entry.1, &mut entry.2);
@@ -545,7 +554,12 @@ impl DebugDraw {
                     }
                     strips.extend_from_slice(strip_lens);
                 }
-                DebugPrim::Sphere { center, radius, colour, .. } => {
+                DebugPrim::Sphere {
+                    center,
+                    radius,
+                    colour,
+                    ..
+                } => {
                     let key = colour_key(*colour);
                     let entry = groups.entry(key).or_default();
                     let (positions, strips, colours) = (&mut entry.0, &mut entry.1, &mut entry.2);
@@ -556,9 +570,21 @@ impl DebugDraw {
                             let t = i as f32 / SEGS as f32 * std::f32::consts::TAU;
                             let (s, c) = (t.sin(), t.cos());
                             let p = match circle_axis {
-                                0 => glam::Vec3::new(c * *radius + center.x, s * *radius + center.y, center.z),
-                                1 => glam::Vec3::new(c * *radius + center.x, center.y, s * *radius + center.z),
-                                _ => glam::Vec3::new(center.x, c * *radius + center.y, s * *radius + center.z),
+                                0 => glam::Vec3::new(
+                                    c * *radius + center.x,
+                                    s * *radius + center.y,
+                                    center.z,
+                                ),
+                                1 => glam::Vec3::new(
+                                    c * *radius + center.x,
+                                    center.y,
+                                    s * *radius + center.z,
+                                ),
+                                _ => glam::Vec3::new(
+                                    center.x,
+                                    c * *radius + center.y,
+                                    s * *radius + center.z,
+                                ),
                             };
                             positions.push(p.into());
                             colours.push(*colour);
@@ -600,7 +626,13 @@ impl DebugDraw {
             if prim.layer() == DebugLayer::Dev && !self.dev_enabled {
                 continue;
             }
-            if let DebugPrim::Point { position, radius, colour, .. } = prim {
+            if let DebugPrim::Point {
+                position,
+                radius,
+                colour,
+                ..
+            } = prim
+            {
                 positions.push((*position).into());
                 colours.push(*colour);
                 radii.push(*radius);
@@ -633,7 +665,13 @@ impl DebugDraw {
             if prim.layer() == DebugLayer::Dev && !self.dev_enabled {
                 continue;
             }
-            if let DebugPrim::Label { position, text, colour, .. } = prim {
+            if let DebugPrim::Label {
+                position,
+                text,
+                colour,
+                ..
+            } = prim
+            {
                 out.push(LabelItem {
                     world_anchor: Some((*position).into()),
                     text: text.clone(),
@@ -669,8 +707,12 @@ fn colour_key(c: [f32; 4]) -> u32 {
 mod tests {
     use super::*;
 
-    fn red() -> [f32; 4] { [1.0, 0.0, 0.0, 1.0] }
-    fn green() -> [f32; 4] { [0.0, 1.0, 0.0, 1.0] }
+    fn red() -> [f32; 4] {
+        [1.0, 0.0, 0.0, 1.0]
+    }
+    fn green() -> [f32; 4] {
+        [0.0, 1.0, 0.0, 1.0]
+    }
 
     // ---- accumulation tests -----------------------------------------------
 
@@ -738,12 +780,15 @@ mod tests {
     #[test]
     fn test_persistent_survives_begin_frame() {
         let mut dd = DebugDraw::new();
-        dd.add_persistent(1, DebugPrim::Line {
-            start: glam::Vec3::ZERO,
-            end: glam::Vec3::X,
-            colour: red(),
-            layer: DebugLayer::Dev,
-        });
+        dd.add_persistent(
+            1,
+            DebugPrim::Line {
+                start: glam::Vec3::ZERO,
+                end: glam::Vec3::X,
+                colour: red(),
+                layer: DebugLayer::Dev,
+            },
+        );
         assert_eq!(dd.persistent_count(), 1);
 
         dd.begin_frame();
@@ -755,12 +800,15 @@ mod tests {
     #[test]
     fn test_persistent_removed_explicitly() {
         let mut dd = DebugDraw::new();
-        dd.add_persistent(42, DebugPrim::Sphere {
-            center: glam::Vec3::ZERO,
-            radius: 1.0,
-            colour: green(),
-            layer: DebugLayer::Dev,
-        });
+        dd.add_persistent(
+            42,
+            DebugPrim::Sphere {
+                center: glam::Vec3::ZERO,
+                radius: 1.0,
+                colour: green(),
+                layer: DebugLayer::Dev,
+            },
+        );
         assert!(dd.has_persistent(42));
 
         let removed = dd.remove_persistent(42);
@@ -779,20 +827,39 @@ mod tests {
     fn test_persistent_and_transient_both_in_prims() {
         let mut dd = DebugDraw::new();
         dd.line(glam::Vec3::ZERO, glam::Vec3::X, red());
-        dd.add_persistent(1, DebugPrim::Sphere {
-            center: glam::Vec3::ZERO,
-            radius: 1.0,
-            colour: green(),
-            layer: DebugLayer::Dev,
-        });
+        dd.add_persistent(
+            1,
+            DebugPrim::Sphere {
+                center: glam::Vec3::ZERO,
+                radius: 1.0,
+                colour: green(),
+                layer: DebugLayer::Dev,
+            },
+        );
         assert_eq!(dd.prims().count(), 2);
     }
 
     #[test]
     fn test_clear_persistent() {
         let mut dd = DebugDraw::new();
-        dd.add_persistent(1, DebugPrim::Point { position: glam::Vec3::ZERO, radius: 4.0, colour: red(), layer: DebugLayer::Dev });
-        dd.add_persistent(2, DebugPrim::Point { position: glam::Vec3::X, radius: 4.0, colour: green(), layer: DebugLayer::Dev });
+        dd.add_persistent(
+            1,
+            DebugPrim::Point {
+                position: glam::Vec3::ZERO,
+                radius: 4.0,
+                colour: red(),
+                layer: DebugLayer::Dev,
+            },
+        );
+        dd.add_persistent(
+            2,
+            DebugPrim::Point {
+                position: glam::Vec3::X,
+                radius: 4.0,
+                colour: green(),
+                layer: DebugLayer::Dev,
+            },
+        );
         dd.clear_persistent();
         assert_eq!(dd.persistent_count(), 0);
     }
@@ -839,12 +906,15 @@ mod tests {
     fn test_persistent_dev_skipped_in_rendering_when_dev_disabled() {
         let mut dd = DebugDraw::new();
         // Add a persistent dev-layer line when dev_enabled is true.
-        dd.add_persistent(1, DebugPrim::Line {
-            start: glam::Vec3::ZERO,
-            end: glam::Vec3::X,
-            colour: red(),
-            layer: DebugLayer::Dev,
-        });
+        dd.add_persistent(
+            1,
+            DebugPrim::Line {
+                start: glam::Vec3::ZERO,
+                end: glam::Vec3::X,
+                colour: red(),
+                layer: DebugLayer::Dev,
+            },
+        );
         // Now disable dev.
         dd.dev_enabled = false;
         // The persistent primitive is still stored but should not appear in to_polylines.

@@ -100,7 +100,13 @@ fn insert_recursive(cell: &mut OctCell, id: NodeId, aabb: &Aabb, depth: u32, pat
             cell.children[ci] = Some(Box::new(OctCell::new(cc, child_strict_half)));
         }
         path.push(ci as u8);
-        insert_recursive(cell.children[ci].as_mut().unwrap(), id, aabb, depth + 1, path);
+        insert_recursive(
+            cell.children[ci].as_mut().unwrap(),
+            id,
+            aabb,
+            depth + 1,
+            path,
+        );
     } else {
         // Store here: node is too large for any child, or max depth reached.
         cell.entries.push((id, *aabb));
@@ -333,7 +339,10 @@ mod tests {
         let mut out = Vec::new();
         let mut stats = CullStats::default();
         idx.collect_visible(&frustum, &mut out, &mut stats);
-        assert!(out.contains(&42), "node 42 should be visible before removal");
+        assert!(
+            out.contains(&42),
+            "node 42 should be visible before removal"
+        );
 
         idx.remove_entry(42);
         out.clear();
@@ -377,7 +386,10 @@ mod tests {
         out.clear();
         stats = CullStats::default();
         idx.collect_visible(&frustum, &mut out, &mut stats);
-        assert!(!out.contains(&1), "node should be culled after moving outside frustum");
+        assert!(
+            !out.contains(&1),
+            "node should be culled after moving outside frustum"
+        );
     }
 
     /// rebuild() must produce the same visible set as individual inserts.

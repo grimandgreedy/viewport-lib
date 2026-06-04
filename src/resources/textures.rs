@@ -256,8 +256,7 @@ impl ViewportGpuResources {
                 for row in 0..height as usize {
                     let src = row * raw_bpr as usize..(row + 1) * raw_bpr as usize;
                     let dst_start = row * aligned_bytes_per_row as usize;
-                    mapped[dst_start..dst_start + raw_bpr as usize]
-                        .copy_from_slice(&rgba[src]);
+                    mapped[dst_start..dst_start + raw_bpr as usize].copy_from_slice(&rgba[src]);
                 }
             }
         }
@@ -303,9 +302,7 @@ impl ViewportGpuResources {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(
-                        &self.fallback_normal_map_view,
-                    ),
+                    resource: wgpu::BindingResource::TextureView(&self.fallback_normal_map_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
@@ -366,7 +363,8 @@ impl ViewportGpuResources {
         // identified by pending_id, not position.
         let entry = self.pending_texture_uploads.swap_remove(pos);
         // Return the staging buffer to the pool; the GPU copy completed one frame ago.
-        self.staging_pool.release(entry.staging_buf, entry.pool_band);
+        self.staging_pool
+            .release(entry.staging_buf, entry.pool_band);
 
         let texture_id = self.textures.len() as u64;
         self.texture_allocated_bytes += entry.data_bytes;
@@ -857,7 +855,8 @@ impl ViewportGpuResources {
             queue,
             &crate::resources::colourmap_data::turbo_rgba(),
         );
-        let jet = self.upload_colourmap(device, queue, &crate::resources::colourmap_data::jet_rgba());
+        let jet =
+            self.upload_colourmap(device, queue, &crate::resources::colourmap_data::jet_rgba());
         let rdbu = self.upload_colourmap(
             device,
             queue,

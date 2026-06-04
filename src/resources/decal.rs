@@ -1,7 +1,7 @@
 //! Screen-space decal pipeline (D1 + D2 + D5).
 
-use crate::resources::{DualPipeline, ViewportGpuResources};
 use crate::resources::mesh_store::MeshId;
+use crate::resources::{DualPipeline, ViewportGpuResources};
 use wgpu::util::DeviceExt as _;
 
 // ---------------------------------------------------------------------------
@@ -12,31 +12,31 @@ use wgpu::util::DeviceExt as _;
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct DecalUniformRaw {
-    pub inv_transform: [[f32; 4]; 4],   // 64 bytes
-    pub blend_mode: u32,                 //  4
-    pub alpha: f32,                      //  4
-    pub normal_blend_strength: f32,      //  4
-    pub has_normal: u32,                 //  4
+    pub inv_transform: [[f32; 4]; 4], // 64 bytes
+    pub blend_mode: u32,              //  4
+    pub alpha: f32,                   //  4
+    pub normal_blend_strength: f32,   //  4
+    pub has_normal: u32,              //  4
     // D3
-    pub roughness: f32,                  //  4
-    pub metallic: f32,                   //  4
-    pub has_roughness_tex: u32,          //  4
-    pub has_metallic_tex: u32,           //  4
+    pub roughness: f32,         //  4
+    pub metallic: f32,          //  4
+    pub has_roughness_tex: u32, //  4
+    pub has_metallic_tex: u32,  //  4
     // D4 -- vec2 pairs, 8-byte aligned
-    pub uv_offset: [f32; 2],            //  8
-    pub uv_scale: [f32; 2],             //  8
+    pub uv_offset: [f32; 2], //  8
+    pub uv_scale: [f32; 2],  //  8
     // D6
-    pub emissive: f32,                   //  4
-    pub has_emissive_tex: u32,           //  4
+    pub emissive: f32,         //  4
+    pub has_emissive_tex: u32, //  4
     // D7
-    pub edge_fade: f32,                  //  4
-    pub _pad: u32,                       //  4  (alignment gap before D8)
+    pub edge_fade: f32, //  4
+    pub _pad: u32,      //  4  (alignment gap before D8)
     // D8
-    pub projection: u32,                 //  4  (0 = Planar, 1 = TriPlanar)
-    pub tri_blend_sharpness: f32,        //  4
-    pub _pad2: u32,                      //  4  (pad to 144-byte struct size)
-    pub _pad3: u32,                      //  4
-    // total: 144 bytes
+    pub projection: u32,          //  4  (0 = Planar, 1 = TriPlanar)
+    pub tri_blend_sharpness: f32, //  4
+    pub _pad2: u32,               //  4  (pad to 144-byte struct size)
+    pub _pad3: u32,               //  4
+                                  // total: 144 bytes
 }
 
 /// Per-draw GPU data for one [`DecalItem`](crate::renderer::DecalItem).
@@ -69,7 +69,9 @@ impl ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("decal_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/decal.wgsl")).into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/decal.wgsl")).into(),
+            ),
         });
 
         let tex2d_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
@@ -249,7 +251,7 @@ impl ViewportGpuResources {
         let inv_transform = model.inverse().to_cols_array_2d();
 
         let blend_mode_u32 = match item.blend_mode {
-            crate::renderer::DecalBlendMode::Replace  => 0u32,
+            crate::renderer::DecalBlendMode::Replace => 0u32,
             crate::renderer::DecalBlendMode::Multiply => 1u32,
             // Additive uses a separate pipeline; shader logic is identical to Replace.
             crate::renderer::DecalBlendMode::Additive => 0u32,
@@ -263,22 +265,26 @@ impl ViewportGpuResources {
             crate::renderer::DecalProjection::Cylindrical { facing } => {
                 let code = match facing {
                     crate::renderer::CylindricalFacing::Outward => 2u32,
-                    crate::renderer::CylindricalFacing::Inward  => 3u32,
+                    crate::renderer::CylindricalFacing::Inward => 3u32,
                 };
                 (code, 0.0f32)
             }
         };
 
-        let has_normal        = item.normal_texture_id.is_some()    as u32;
+        let has_normal = item.normal_texture_id.is_some() as u32;
         let has_roughness_tex = item.roughness_texture_id.is_some() as u32;
-        let has_metallic_tex  = item.metallic_texture_id.is_some()  as u32;
-        let has_emissive_tex  = item.emissive_texture_id.is_some()  as u32;
+        let has_metallic_tex = item.metallic_texture_id.is_some() as u32;
+        let has_emissive_tex = item.emissive_texture_id.is_some() as u32;
 
         let raw = DecalUniformRaw {
             inv_transform,
             blend_mode: blend_mode_u32,
             alpha: item.alpha,
-            normal_blend_strength: if has_normal != 0 { item.normal_blend_strength } else { 0.0 },
+            normal_blend_strength: if has_normal != 0 {
+                item.normal_blend_strength
+            } else {
+                0.0
+            },
             has_normal,
             roughness: item.roughness,
             metallic: item.metallic,
@@ -308,13 +314,15 @@ impl ViewportGpuResources {
                 .unwrap_or(&self.fallback_texture.view)
         };
 
-        let tex_view      = self.textures.get(item.texture_id as usize)
-                                .map(|t| &t.view)
-                                .unwrap_or(&self.fallback_texture.view);
-        let normal_view    = resolve_tex(item.normal_texture_id);
+        let tex_view = self
+            .textures
+            .get(item.texture_id as usize)
+            .map(|t| &t.view)
+            .unwrap_or(&self.fallback_texture.view);
+        let normal_view = resolve_tex(item.normal_texture_id);
         let roughness_view = resolve_tex(item.roughness_texture_id);
-        let metallic_view  = resolve_tex(item.metallic_texture_id);
-        let emissive_view  = resolve_tex(item.emissive_texture_id);
+        let metallic_view = resolve_tex(item.metallic_texture_id);
+        let emissive_view = resolve_tex(item.emissive_texture_id);
 
         let bgl = self
             .decal_item_bgl

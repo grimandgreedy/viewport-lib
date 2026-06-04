@@ -350,9 +350,27 @@ fn push_letter_x(
     colour: [f32; 4],
 ) {
     // Diagonal \: top-left to bottom-right
-    push_line_segment(verts, cx - hw, cy + hh, cx + hw, cy - hh, lw_x, lw_y, colour);
+    push_line_segment(
+        verts,
+        cx - hw,
+        cy + hh,
+        cx + hw,
+        cy - hh,
+        lw_x,
+        lw_y,
+        colour,
+    );
     // Diagonal /: bottom-left to top-right
-    push_line_segment(verts, cx - hw, cy - hh, cx + hw, cy + hh, lw_x, lw_y, colour);
+    push_line_segment(
+        verts,
+        cx - hw,
+        cy - hh,
+        cx + hw,
+        cy + hh,
+        lw_x,
+        lw_y,
+        colour,
+    );
 }
 
 /// Draw letter "Y": two strokes from top meeting at center, one vertical down.
@@ -386,11 +404,38 @@ fn push_letter_z(
     colour: [f32; 4],
 ) {
     // Top horizontal.
-    push_line_segment(verts, cx - hw, cy + hh, cx + hw, cy + hh, lw_x, lw_y, colour);
+    push_line_segment(
+        verts,
+        cx - hw,
+        cy + hh,
+        cx + hw,
+        cy + hh,
+        lw_x,
+        lw_y,
+        colour,
+    );
     // Diagonal: top-right to bottom-left.
-    push_line_segment(verts, cx + hw, cy + hh, cx - hw, cy - hh, lw_x, lw_y, colour);
+    push_line_segment(
+        verts,
+        cx + hw,
+        cy + hh,
+        cx - hw,
+        cy - hh,
+        lw_x,
+        lw_y,
+        colour,
+    );
     // Bottom horizontal.
-    push_line_segment(verts, cx - hw, cy - hh, cx + hw, cy - hh, lw_x, lw_y, colour);
+    push_line_segment(
+        verts,
+        cx - hw,
+        cy - hh,
+        cx + hw,
+        cy - hh,
+        lw_x,
+        lw_y,
+        colour,
+    );
 }
 
 /// Push a line segment as a thin quad (2 triangles, 6 vertices).

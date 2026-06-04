@@ -4,15 +4,15 @@
 //! per-frame clearing, and the chain pattern where one plugin reads events
 //! emitted by an earlier plugin and emits its own in response.
 
+use std::sync::{Arc, Mutex};
+use viewport_lib::camera::camera::Camera;
+use viewport_lib::interaction::input::ActionFrame;
+use viewport_lib::interaction::selection::Selection;
 use viewport_lib::runtime::{
     FixedTimestep, RuntimeFrameContext, RuntimePlugin, RuntimeStepContext, ViewportRuntime,
     plugin::phase,
 };
-use viewport_lib::camera::camera::Camera;
-use viewport_lib::interaction::input::ActionFrame;
-use viewport_lib::interaction::selection::Selection;
 use viewport_lib::scene::scene::Scene;
-use std::sync::{Arc, Mutex};
 
 fn make_frame(camera: &Camera, input: &ActionFrame) -> RuntimeFrameContext {
     let mut frame = RuntimeFrameContext::default();
@@ -34,23 +34,38 @@ fn step(runtime: &mut ViewportRuntime) -> viewport_lib::runtime::RuntimeOutput {
 // --- Event types -------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
-struct TriggerEntered { trigger_id: u32, actor_id: u32 }
+struct TriggerEntered {
+    trigger_id: u32,
+    actor_id: u32,
+}
 
 #[derive(Debug, PartialEq)]
-struct AudioCue { trigger_id: u32 }
+struct AudioCue {
+    trigger_id: u32,
+}
 
 #[derive(Debug)]
-struct FrameDiagnostics { #[allow(dead_code)] step_dt_ms: f32 }
+struct FrameDiagnostics {
+    #[allow(dead_code)]
+    step_dt_ms: f32,
+}
 
 // --- Plugins -----------------------------------------------------------------
 
-struct TriggerPlugin { fires: bool }
+struct TriggerPlugin {
+    fires: bool,
+}
 
 impl RuntimePlugin for TriggerPlugin {
-    fn priority(&self) -> i32 { phase::SIMULATE }
+    fn priority(&self) -> i32 {
+        phase::SIMULATE
+    }
     fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
         if self.fires {
-            ctx.output.events.emit(TriggerEntered { trigger_id: 1, actor_id: 42 });
+            ctx.output.events.emit(TriggerEntered {
+                trigger_id: 1,
+                actor_id: 42,
+            });
         }
     }
 }
@@ -59,9 +74,13 @@ impl RuntimePlugin for TriggerPlugin {
 struct AudioPlugin;
 
 impl RuntimePlugin for AudioPlugin {
-    fn priority(&self) -> i32 { phase::POST_SIM }
+    fn priority(&self) -> i32 {
+        phase::POST_SIM
+    }
     fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
-        let ids: Vec<u32> = ctx.output.events
+        let ids: Vec<u32> = ctx
+            .output
+            .events
             .read::<TriggerEntered>()
             .map(|e| e.trigger_id)
             .collect();
@@ -74,9 +93,13 @@ impl RuntimePlugin for AudioPlugin {
 struct DiagnosticsPlugin;
 
 impl RuntimePlugin for DiagnosticsPlugin {
-    fn priority(&self) -> i32 { phase::WRITEBACK }
+    fn priority(&self) -> i32 {
+        phase::WRITEBACK
+    }
     fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
-        ctx.output.events.emit(FrameDiagnostics { step_dt_ms: ctx.dt * 1000.0 });
+        ctx.output.events.emit(FrameDiagnostics {
+            step_dt_ms: ctx.dt * 1000.0,
+        });
     }
 }
 
@@ -87,7 +110,9 @@ struct EventCollector<T: Send + 'static> {
 }
 
 impl<T: Send + 'static + Clone> RuntimePlugin for EventCollector<T> {
-    fn priority(&self) -> i32 { self.priority }
+    fn priority(&self) -> i32 {
+        self.priority
+    }
     fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
         let items: Vec<T> = ctx.output.events.read::<T>().cloned().collect();
         self.log.lock().unwrap().extend(items);
@@ -98,8 +123,7 @@ impl<T: Send + 'static + Clone> RuntimePlugin for EventCollector<T> {
 
 #[test]
 fn events_visible_in_output_after_step() {
-    let mut runtime = ViewportRuntime::new()
-        .with_plugin(TriggerPlugin { fires: true });
+    let mut runtime = ViewportRuntime::new().with_plugin(TriggerPlugin { fires: true });
 
     let output = step(&mut runtime);
 
@@ -121,14 +145,16 @@ fn event_chain_across_plugins_same_frame() {
 
     assert_eq!(output.events.count::<TriggerEntered>(), 1);
     assert_eq!(output.events.count::<AudioCue>(), 1);
-    assert_eq!(output.events.read::<AudioCue>().next().unwrap().trigger_id, 1);
+    assert_eq!(
+        output.events.read::<AudioCue>().next().unwrap().trigger_id,
+        1
+    );
 }
 
 #[test]
 fn event_types_are_isolated() {
     // DiagnosticsPlugin only emits FrameDiagnostics; TriggerEntered must be absent.
-    let mut runtime = ViewportRuntime::new()
-        .with_plugin(DiagnosticsPlugin);
+    let mut runtime = ViewportRuntime::new().with_plugin(DiagnosticsPlugin);
 
     let output = step(&mut runtime);
 
@@ -150,8 +176,7 @@ fn no_trigger_means_no_audio_cue() {
 
 #[test]
 fn events_cleared_between_frames() {
-    let mut runtime = ViewportRuntime::new()
-        .with_plugin(TriggerPlugin { fires: true });
+    let mut runtime = ViewportRuntime::new().with_plugin(TriggerPlugin { fires: true });
 
     step(&mut runtime); // frame 1: emits 1 event
     let output2 = step(&mut runtime); // frame 2: also emits 1 event
@@ -162,8 +187,7 @@ fn events_cleared_between_frames() {
 
 #[test]
 fn drain_returns_events_and_clears_slot() {
-    let mut runtime = ViewportRuntime::new()
-        .with_plugin(TriggerPlugin { fires: true });
+    let mut runtime = ViewportRuntime::new().with_plugin(TriggerPlugin { fires: true });
 
     let mut output = step(&mut runtime);
 
@@ -176,11 +200,22 @@ fn drain_returns_events_and_clears_slot() {
 fn multiple_events_same_type_accumulate() {
     struct MultiEmitter;
     impl RuntimePlugin for MultiEmitter {
-        fn priority(&self) -> i32 { phase::SIMULATE }
+        fn priority(&self) -> i32 {
+            phase::SIMULATE
+        }
         fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
-            ctx.output.events.emit(TriggerEntered { trigger_id: 1, actor_id: 10 });
-            ctx.output.events.emit(TriggerEntered { trigger_id: 2, actor_id: 20 });
-            ctx.output.events.emit(TriggerEntered { trigger_id: 3, actor_id: 30 });
+            ctx.output.events.emit(TriggerEntered {
+                trigger_id: 1,
+                actor_id: 10,
+            });
+            ctx.output.events.emit(TriggerEntered {
+                trigger_id: 2,
+                actor_id: 20,
+            });
+            ctx.output.events.emit(TriggerEntered {
+                trigger_id: 3,
+                actor_id: 30,
+            });
         }
     }
 
@@ -188,7 +223,11 @@ fn multiple_events_same_type_accumulate() {
     let output = step(&mut runtime);
 
     assert_eq!(output.events.count::<TriggerEntered>(), 3);
-    let ids: Vec<u32> = output.events.read::<TriggerEntered>().map(|e| e.trigger_id).collect();
+    let ids: Vec<u32> = output
+        .events
+        .read::<TriggerEntered>()
+        .map(|e| e.trigger_id)
+        .collect();
     assert_eq!(ids, vec![1, 2, 3]);
 }
 

@@ -489,10 +489,12 @@ impl ApplicationHandler for App {
 
                 // Prepare: scene once (shared), then per-viewport GPU data and HDR intermediate texture.
                 let (scene_fx, _) = frames[0].effects.split();
-                let token = state
-                    .renderer
-                    .pass()
-                    .prepare_scene(&state.device, &state.queue, &frames[0], &scene_fx);
+                let token = state.renderer.pass().prepare_scene(
+                    &state.device,
+                    &state.queue,
+                    &frames[0],
+                    &scene_fx,
+                );
                 for (i, frame) in frames.iter().enumerate() {
                     state.renderer.pass().prepare_viewport(
                         &state.device,
@@ -520,9 +522,12 @@ impl ApplicationHandler for App {
 
                 // Blit each viewport's HDR result into its quadrant of the surface.
                 // No depth attachment: the blit pass is a fullscreen quad per slot.
-                let mut encoder = state.device.create_command_encoder(
-                    &wgpu::CommandEncoderDescriptor { label: Some("hdr_blit") },
-                );
+                let mut encoder =
+                    state
+                        .device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("hdr_blit"),
+                        });
                 {
                     let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("hdr_blit_pass"),
@@ -543,7 +548,10 @@ impl ApplicationHandler for App {
                         let (qx, qy, qw, qh) = quad_rect(quads[i], w, h);
                         rp.set_viewport(qx as f32, qy as f32, qw as f32, qh as f32, 0.0, 1.0);
                         rp.set_scissor_rect(qx, qy, qw, qh);
-                        state.renderer.pass_view().paint_hdr_blit_no_ds(&mut rp, frame);
+                        state
+                            .renderer
+                            .pass_view()
+                            .paint_hdr_blit_no_ds(&mut rp, frame);
                     }
                 }
                 state.queue.submit(std::iter::once(encoder.finish()));

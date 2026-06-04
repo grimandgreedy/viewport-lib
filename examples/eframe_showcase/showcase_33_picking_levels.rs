@@ -18,9 +18,9 @@ use std::collections::HashMap;
 
 use eframe::egui;
 use viewport_lib::{
-    ItemSettings, BuiltinColourmap, CellSelectionInfo, ColourmapId, FrameData,
-    GaussianSplatData, GaussianSplatId, GlyphItem, GlyphType, GpuImplicitItem, GpuImplicitOptions,
-    GpuMarchingCubesJob, GaussianSplatItem, ImageAnchor, ImplicitBlendMode, ImplicitPrimitive,
+    BuiltinColourmap, CellSelectionInfo, ColourmapId, FrameData, GaussianSplatData,
+    GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem, GpuImplicitOptions,
+    GpuMarchingCubesJob, ImageAnchor, ImplicitBlendMode, ImplicitPrimitive, ItemSettings,
     LightingSettings, Material, MeshId, NodeId, PickId, PickMask, PickRectResult, PointCloudItem,
     PolylineItem, PolylineSelectionInfo, ProjectedTetId, RibbonItem, SceneRenderItem,
     ScreenImageItem, ShDegree, SpriteItem, StreamtubeItem, SubObjectRef, SubSelectionRef,
@@ -606,7 +606,8 @@ impl App {
             }
         }
         let splat_data = make_pl_splat_data(&splat_positions);
-        let splat_id = renderer.upload_gaussian_splats(&self.device, &self.queue, &splat_data)
+        let splat_id = renderer
+            .upload_gaussian_splats(&self.device, &self.queue, &splat_data)
             .expect("example: splat data is validated at construction");
         self.pl_state.splat_positions = splat_positions;
         self.pl_state.splat_id = Some(splat_id);
@@ -1743,10 +1744,9 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         fd.scene.gaussian_splats.push(item);
     }
     // Hex cylinder: transparent volume mesh (pick_id=12).
-    if let (Some(tet_id), Some(tet_data)) = (
-        app.pl_state.tvm_tet_id,
-        app.pl_state.tvm_tet_data.as_ref(),
-    ) {
+    if let (Some(tet_id), Some(tet_data)) =
+        (app.pl_state.tvm_tet_id, app.pl_state.tvm_tet_data.as_ref())
+    {
         let mut tvm = TransparentVolumeMeshItem::new(tet_id);
         tvm.settings.pick_id = PickId(12);
         tvm.volume_mesh_data = Some(tet_data.clone());
@@ -1760,8 +1760,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
     // mask can return Cell sub_objects via face_to_cell.
     if let Some(mesh_id) = app.pl_state.tvm_mesh_id {
         if !app.pl_state.tvm_face_to_cell.is_empty() {
-            let mut item =
-                VolumeMeshItem::new(mesh_id, app.pl_state.tvm_face_to_cell.clone());
+            let mut item = VolumeMeshItem::new(mesh_id, app.pl_state.tvm_face_to_cell.clone());
             item.settings.pick_id = PickId(11);
             item.settings.unlit = false;
             fd.scene.volume_mesh_items.push(item);
@@ -1884,8 +1883,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
     if let Some(vol_id) = app.pl_state.volume_id {
         let mut vol = viewport_lib::VolumeItem::default();
         vol.volume_id = vol_id;
-        vol.model =
-            glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0)).to_cols_array_2d();
+        vol.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0)).to_cols_array_2d();
         vol.bbox_min = [0.0, 0.0, 0.0];
         vol.bbox_max = [4.0, 4.0, 4.0];
         vol.scalar_range = (0.0, 1.0);
@@ -2111,10 +2109,13 @@ pub(crate) fn pl_outline_selected(app: &App) -> bool {
     if !app.pl_state.selection.is_empty() {
         return true;
     }
-    app.pl_state.sub_selection.iter().any(|(id, sub)| match sub {
-        SubObjectRef::Instance(_) => matches!(*id, 31 | 32 | 33 | 34),
-        SubObjectRef::Point(_) => *id == 100,
-        SubObjectRef::Splat(_) => *id == 10,
-        _ => false,
-    })
+    app.pl_state
+        .sub_selection
+        .iter()
+        .any(|(id, sub)| match sub {
+            SubObjectRef::Instance(_) => matches!(*id, 31 | 32 | 33 | 34),
+            SubObjectRef::Point(_) => *id == 100,
+            SubObjectRef::Splat(_) => *id == 10,
+            _ => false,
+        })
 }

@@ -240,8 +240,10 @@ impl super::ViewportGpuResources {
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let id = self.overlay_textures.len() as u64;
-        self.overlay_textures
-            .push(OverlayShapeTextureEntry { _texture: texture, view });
+        self.overlay_textures.push(OverlayShapeTextureEntry {
+            _texture: texture,
+            view,
+        });
         OverlayTextureId(id)
     }
 
@@ -282,9 +284,7 @@ impl super::ViewportGpuResources {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: Some(
-                            std::num::NonZeroU64::new(16).unwrap(),
-                        ),
+                        min_binding_size: Some(std::num::NonZeroU64::new(16).unwrap()),
                     },
                     count: None,
                 },

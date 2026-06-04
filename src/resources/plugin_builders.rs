@@ -3,8 +3,8 @@
 //! See [`crate::plugin_api`] for the published types these methods return.
 
 use crate::plugin_api::{
-    MaskTargetDesc, OitTargetDesc, OpaqueTargetDesc, PickTargetDesc, SharedBindings,
-    ShadowTargetDesc,
+    MaskTargetDesc, OitTargetDesc, OpaqueTargetDesc, PickTargetDesc, ShadowTargetDesc,
+    SharedBindings,
     target_desc::{OIT_ACCUM_BLEND, OIT_REVEAL_BLEND},
 };
 use crate::resources::ViewportGpuResources;

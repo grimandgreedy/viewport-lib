@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use eframe::egui;
 use viewport_lib::{
-    Aabb, ItemSettings, FrameStats, Material, MeshId, PickAccelerator, SceneRenderItem,
+    Aabb, FrameStats, ItemSettings, Material, MeshId, PickAccelerator, SceneRenderItem,
     scene::Scene, selection::Selection,
 };
 

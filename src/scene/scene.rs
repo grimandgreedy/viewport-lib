@@ -9,13 +9,13 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::interaction::selection::{NodeId, Selection};
-use crate::{LightKind, LightSource};
 use crate::renderer::{PickId, SceneRenderItem};
 use crate::resources::mesh_store::MeshId;
 use crate::scene::aabb::Aabb;
 use crate::scene::material::Material;
 use crate::scene::spatial_index::SpatialIndex;
 use crate::scene::traits::ViewportObject;
+use crate::{LightKind, LightSource};
 
 /// Node count above which `collect_render_items_culled` uses the octree
 /// spatial index instead of the flat walk.
@@ -238,14 +238,27 @@ fn resolve_light_to_world(src: &LightSource, world: glam::Mat4) -> LightSource {
     let translation = world.col(3).truncate();
     let kind = match &src.kind {
         LightKind::Directional { direction } => {
-            let rotated = world.transform_vector3(glam::Vec3::from(*direction)).normalize();
-            LightKind::Directional { direction: rotated.into() }
+            let rotated = world
+                .transform_vector3(glam::Vec3::from(*direction))
+                .normalize();
+            LightKind::Directional {
+                direction: rotated.into(),
+            }
         }
-        LightKind::Point { range, .. } => {
-            LightKind::Point { position: translation.into(), range: *range }
-        }
-        LightKind::Spot { direction, range, inner_angle, outer_angle, .. } => {
-            let rotated = world.transform_vector3(glam::Vec3::from(*direction)).normalize();
+        LightKind::Point { range, .. } => LightKind::Point {
+            position: translation.into(),
+            range: *range,
+        },
+        LightKind::Spot {
+            direction,
+            range,
+            inner_angle,
+            outer_angle,
+            ..
+        } => {
+            let rotated = world
+                .transform_vector3(glam::Vec3::from(*direction))
+                .normalize();
             LightKind::Spot {
                 position: translation.into(),
                 direction: rotated.into(),
@@ -886,7 +899,11 @@ impl Scene {
             let locked = layer_locked.get(&node.layer).copied().unwrap_or(false);
             let mut item_settings = node.appearance;
             item_settings.pick_id = PickId(node.id);
-            item_settings.selected = if locked { false } else { selection.contains(node.id) };
+            item_settings.selected = if locked {
+                false
+            } else {
+                selection.contains(node.id)
+            };
             items.push(SceneRenderItem {
                 mesh_id,
                 model: node.world_transform.to_cols_array_2d(),
@@ -942,7 +959,8 @@ impl Scene {
 
             let t0 = std::time::Instant::now();
             let mut candidate_ids = Vec::new();
-            self.spatial.collect_visible(frustum, &mut candidate_ids, &mut stats);
+            self.spatial
+                .collect_visible(frustum, &mut candidate_ids, &mut stats);
             let traversal_ms = t0.elapsed().as_secs_f32() * 1000.0;
 
             for id in candidate_ids {
@@ -961,7 +979,11 @@ impl Scene {
                 let locked = layer_locked.get(&node.layer).copied().unwrap_or(false);
                 let mut item_settings = node.appearance;
                 item_settings.pick_id = PickId(node.id);
-                item_settings.selected = if locked { false } else { selection.contains(node.id) };
+                item_settings.selected = if locked {
+                    false
+                } else {
+                    selection.contains(node.id)
+                };
                 items.push(SceneRenderItem {
                     mesh_id,
                     model: node.world_transform.to_cols_array_2d(),
@@ -1014,7 +1036,11 @@ impl Scene {
                 stats.visible += 1;
                 let mut item_settings = node.appearance;
                 item_settings.pick_id = PickId(node.id);
-                item_settings.selected = if locked { false } else { selection.contains(node.id) };
+                item_settings.selected = if locked {
+                    false
+                } else {
+                    selection.contains(node.id)
+                };
                 items.push(SceneRenderItem {
                     mesh_id,
                     model: node.world_transform.to_cols_array_2d(),
@@ -1275,10 +1301,7 @@ impl Scene {
                             let col = frame % cols;
                             let row = frame / cols;
                             item.uv_scale = [1.0 / *cols as f32, 1.0 / *rows as f32];
-                            item.uv_offset = [
-                                col as f32 / *cols as f32,
-                                row as f32 / *rows as f32,
-                            ];
+                            item.uv_offset = [col as f32 / *cols as f32, row as f32 / *rows as f32];
                         }
                     }
                 }
@@ -1739,10 +1762,18 @@ mod tests {
         let (items, stats) =
             scene.collect_render_items_culled(&sel, &frustum, |_| Some(unit_aabb()));
 
-        assert_eq!(items.len(), 100, "expected 100 visible items, got {}", items.len());
+        assert_eq!(
+            items.len(),
+            100,
+            "expected 100 visible items, got {}",
+            items.len()
+        );
         assert_eq!(stats.visible, 100);
         let scene_stats = scene.scene_stats();
-        assert!(scene_stats.spatial_index_nodes > 0, "spatial index should be active");
+        assert!(
+            scene_stats.spatial_index_nodes > 0,
+            "spatial index should be active"
+        );
     }
 
     /// After moving nodes outside the frustum via set_local_transform, the
@@ -1760,8 +1791,7 @@ mod tests {
         }
 
         let sel = Selection::new();
-        let (items, _) =
-            scene.collect_render_items_culled(&sel, &frustum, |_| Some(unit_aabb()));
+        let (items, _) = scene.collect_render_items_culled(&sel, &frustum, |_| Some(unit_aabb()));
         assert_eq!(items.len(), 600, "all 600 should be visible initially");
 
         // Move the first 300 nodes behind the camera.
@@ -1770,8 +1800,7 @@ mod tests {
             scene.set_local_transform(id, behind);
         }
 
-        let (items2, _) =
-            scene.collect_render_items_culled(&sel, &frustum, |_| Some(unit_aabb()));
+        let (items2, _) = scene.collect_render_items_culled(&sel, &frustum, |_| Some(unit_aabb()));
         assert_eq!(
             items2.len(),
             300,
@@ -1792,8 +1821,7 @@ mod tests {
         }
 
         let sel = Selection::new();
-        let (items, _) =
-            scene.collect_render_items_culled(&sel, &frustum, |_| Some(unit_aabb()));
+        let (items, _) = scene.collect_render_items_culled(&sel, &frustum, |_| Some(unit_aabb()));
         assert_eq!(items.len(), 600);
 
         // Remove 150 nodes.
@@ -1801,8 +1829,7 @@ mod tests {
             scene.remove(id);
         }
 
-        let (items2, _) =
-            scene.collect_render_items_culled(&sel, &frustum, |_| Some(unit_aabb()));
+        let (items2, _) = scene.collect_render_items_culled(&sel, &frustum, |_| Some(unit_aabb()));
         assert_eq!(items2.len(), 450, "should have 450 after removing 150");
     }
 }

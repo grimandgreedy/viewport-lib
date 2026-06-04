@@ -1,12 +1,12 @@
 //! Integration tests for runtime camera command writeback.
 
 use viewport_lib::camera::camera::{Camera, CameraTarget};
+use viewport_lib::interaction::input::ActionFrame;
+use viewport_lib::interaction::selection::Selection;
 use viewport_lib::runtime::{
     CameraCommand, RuntimeFrameContext, RuntimeOutput, RuntimePlugin, RuntimeStepContext,
     ViewportRuntime, plugin::phase,
 };
-use viewport_lib::interaction::input::ActionFrame;
-use viewport_lib::interaction::selection::Selection;
 use viewport_lib::scene::scene::Scene;
 
 fn make_frame(camera: &Camera, input: &ActionFrame) -> RuntimeFrameContext {
@@ -30,34 +30,51 @@ fn step(runtime: &mut ViewportRuntime, camera: &Camera) -> RuntimeOutput {
 struct SetCenterPlugin(glam::Vec3);
 
 impl RuntimePlugin for SetCenterPlugin {
-    fn priority(&self) -> i32 { phase::ANIMATE }
+    fn priority(&self) -> i32 {
+        phase::ANIMATE
+    }
     fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
-        ctx.output.camera_commands.push(CameraCommand::SetCenter(self.0));
+        ctx.output
+            .camera_commands
+            .push(CameraCommand::SetCenter(self.0));
     }
 }
 
 struct OffsetCenterPlugin(glam::Vec3);
 
 impl RuntimePlugin for OffsetCenterPlugin {
-    fn priority(&self) -> i32 { phase::POST_SIM }
+    fn priority(&self) -> i32 {
+        phase::POST_SIM
+    }
     fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
-        ctx.output.camera_commands.push(CameraCommand::OffsetCenter(self.0));
+        ctx.output
+            .camera_commands
+            .push(CameraCommand::OffsetCenter(self.0));
     }
 }
 
 struct SetDistancePlugin(f32);
 
 impl RuntimePlugin for SetDistancePlugin {
-    fn priority(&self) -> i32 { phase::ANIMATE }
+    fn priority(&self) -> i32 {
+        phase::ANIMATE
+    }
     fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
-        ctx.output.camera_commands.push(CameraCommand::SetDistance(self.0));
+        ctx.output
+            .camera_commands
+            .push(CameraCommand::SetDistance(self.0));
     }
 }
 
-struct BlendPlugin { target: CameraTarget, weight: f32 }
+struct BlendPlugin {
+    target: CameraTarget,
+    weight: f32,
+}
 
 impl RuntimePlugin for BlendPlugin {
-    fn priority(&self) -> i32 { phase::ANIMATE }
+    fn priority(&self) -> i32 {
+        phase::ANIMATE
+    }
     fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
         ctx.output.camera_commands.push(CameraCommand::BlendToward {
             target: self.target,
@@ -70,8 +87,8 @@ impl RuntimePlugin for BlendPlugin {
 
 #[test]
 fn set_center_applies_to_camera() {
-    let mut runtime = ViewportRuntime::new()
-        .with_plugin(SetCenterPlugin(glam::Vec3::new(1.0, 2.0, 3.0)));
+    let mut runtime =
+        ViewportRuntime::new().with_plugin(SetCenterPlugin(glam::Vec3::new(1.0, 2.0, 3.0)));
     let camera = Camera::default();
     let output = step(&mut runtime, &camera);
 
@@ -85,8 +102,8 @@ fn offset_center_adds_to_current_position() {
     let mut camera = Camera::default();
     camera.center = glam::Vec3::new(5.0, 0.0, 0.0);
 
-    let mut runtime = ViewportRuntime::new()
-        .with_plugin(OffsetCenterPlugin(glam::Vec3::new(1.0, 0.0, 0.0)));
+    let mut runtime =
+        ViewportRuntime::new().with_plugin(OffsetCenterPlugin(glam::Vec3::new(1.0, 0.0, 0.0)));
     let output = step(&mut runtime, &camera);
 
     output.apply_camera_commands(&mut camera);
@@ -95,8 +112,7 @@ fn offset_center_adds_to_current_position() {
 
 #[test]
 fn set_distance_applies() {
-    let mut runtime = ViewportRuntime::new()
-        .with_plugin(SetDistancePlugin(10.0));
+    let mut runtime = ViewportRuntime::new().with_plugin(SetDistancePlugin(10.0));
     let camera = Camera::default();
     let output = step(&mut runtime, &camera);
 
@@ -112,8 +128,10 @@ fn blend_toward_interpolates() {
         distance: 20.0,
         orientation: glam::Quat::IDENTITY,
     };
-    let mut runtime = ViewportRuntime::new()
-        .with_plugin(BlendPlugin { target, weight: 0.5 });
+    let mut runtime = ViewportRuntime::new().with_plugin(BlendPlugin {
+        target,
+        weight: 0.5,
+    });
 
     let mut camera = Camera::default();
     camera.center = glam::Vec3::ZERO;
@@ -135,8 +153,10 @@ fn blend_at_weight_one_snaps_to_target() {
         distance: 5.0,
         orientation: glam::Quat::IDENTITY,
     };
-    let mut runtime = ViewportRuntime::new()
-        .with_plugin(BlendPlugin { target, weight: 1.0 });
+    let mut runtime = ViewportRuntime::new().with_plugin(BlendPlugin {
+        target,
+        weight: 1.0,
+    });
 
     let camera = Camera::default();
     let output = step(&mut runtime, &camera);
@@ -181,8 +201,7 @@ fn no_commands_leaves_camera_unchanged() {
 
 #[test]
 fn camera_commands_cleared_each_frame() {
-    let mut runtime = ViewportRuntime::new()
-        .with_plugin(SetCenterPlugin(glam::Vec3::ONE));
+    let mut runtime = ViewportRuntime::new().with_plugin(SetCenterPlugin(glam::Vec3::ONE));
     let camera = Camera::default();
     step(&mut runtime, &camera);
     let output2 = step(&mut runtime, &camera);
@@ -193,8 +212,7 @@ fn camera_commands_cleared_each_frame() {
 #[test]
 fn camera_follow_target_unaffected_by_commands() {
     // camera_follow_target and camera_commands are independent.
-    let mut runtime = ViewportRuntime::new()
-        .with_plugin(SetCenterPlugin(glam::Vec3::ONE));
+    let mut runtime = ViewportRuntime::new().with_plugin(SetCenterPlugin(glam::Vec3::ONE));
     let camera = Camera::default();
     let output = step(&mut runtime, &camera);
     assert!(output.camera_follow_target.is_none());
@@ -203,8 +221,7 @@ fn camera_follow_target_unaffected_by_commands() {
 
 #[test]
 fn existing_output_fields_unaffected() {
-    let mut runtime = ViewportRuntime::new()
-        .with_plugin(SetCenterPlugin(glam::Vec3::ZERO));
+    let mut runtime = ViewportRuntime::new().with_plugin(SetCenterPlugin(glam::Vec3::ZERO));
     let camera = Camera::default();
     let output = step(&mut runtime, &camera);
     assert!(output.contact_events.is_empty());
@@ -218,9 +235,13 @@ fn set_orientation_applies() {
     let q = glam::Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
     struct SetOrientationPlugin(glam::Quat);
     impl RuntimePlugin for SetOrientationPlugin {
-        fn priority(&self) -> i32 { phase::ANIMATE }
+        fn priority(&self) -> i32 {
+            phase::ANIMATE
+        }
         fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
-            ctx.output.camera_commands.push(CameraCommand::SetOrientation(self.0));
+            ctx.output
+                .camera_commands
+                .push(CameraCommand::SetOrientation(self.0));
         }
     }
 

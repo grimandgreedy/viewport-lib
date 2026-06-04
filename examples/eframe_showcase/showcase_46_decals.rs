@@ -9,9 +9,7 @@
 use eframe::egui;
 use viewport_lib::{
     BuiltinMatcap, CylindricalFacing, DecalAnimation, DecalBlendMode, DecalHandle, DecalItem,
-    DecalProjection, Material, MeshId, SceneRenderItem,
-    scene::Scene,
-    selection::Selection,
+    DecalProjection, Material, MeshId, SceneRenderItem, scene::Scene, selection::Selection,
 };
 
 use crate::App;
@@ -32,7 +30,7 @@ fn make_disc_texture(size: u32) -> Vec<u8> {
             let d = (dx * dx + dy * dy).sqrt();
             let alpha = ((r - d) / (r * 0.15)).clamp(0.0, 1.0);
             let idx = ((y * size + x) * 4) as usize;
-            buf[idx]     = 120;
+            buf[idx] = 120;
             buf[idx + 1] = 115;
             buf[idx + 2] = 110;
             buf[idx + 3] = (alpha * 220.0) as u8;
@@ -62,7 +60,7 @@ fn make_crater_normal_map(size: u32) -> Vec<u8> {
             let len = (nx * nx + ny * ny + nz * nz).sqrt().max(1e-6);
             let (nx, ny, nz) = (nx / len, ny / len, nz / len);
             let idx = ((y * size + x) * 4) as usize;
-            buf[idx]     = ((nx * 0.5 + 0.5) * 255.0) as u8;
+            buf[idx] = ((nx * 0.5 + 0.5) * 255.0) as u8;
             buf[idx + 1] = ((ny * 0.5 + 0.5) * 255.0) as u8;
             buf[idx + 2] = ((nz * 0.5 + 0.5) * 255.0) as u8;
             buf[idx + 3] = 255;
@@ -83,7 +81,7 @@ fn make_wet_texture(size: u32) -> Vec<u8> {
             let d = (dx * dx + dy * dy).sqrt();
             let alpha = ((r - d) / (r * 0.1)).clamp(0.0, 1.0);
             let idx = ((y * size + x) * 4) as usize;
-            buf[idx]     = 180;
+            buf[idx] = 180;
             buf[idx + 1] = 195;
             buf[idx + 2] = 210;
             buf[idx + 3] = (alpha * 200.0) as u8;
@@ -104,12 +102,12 @@ fn make_stripe_texture(size: u32) -> Vec<u8> {
             if near_edge {
                 buf[idx + 3] = 0;
             } else if t < 0.5 {
-                buf[idx]     = 10;
+                buf[idx] = 10;
                 buf[idx + 1] = 10;
                 buf[idx + 2] = 10;
                 buf[idx + 3] = 230;
             } else {
-                buf[idx]     = 245;
+                buf[idx] = 245;
                 buf[idx + 1] = 245;
                 buf[idx + 2] = 245;
                 buf[idx + 3] = 230;
@@ -136,7 +134,7 @@ fn make_footprint_texture(size: u32) -> Vec<u8> {
             let alpha = ((1.0 - d) / 0.08).clamp(0.0, 1.0);
             if alpha > 0.0 {
                 let idx = ((y * size + x) * 4) as usize;
-                buf[idx]     = 55;
+                buf[idx] = 55;
                 buf[idx + 1] = 32;
                 buf[idx + 2] = 12;
                 buf[idx + 3] = (alpha * 210.0) as u8;
@@ -171,7 +169,7 @@ fn make_blood_texture(size: u32) -> Vec<u8> {
             }
             if alpha > 0.0 {
                 let idx = ((y * size + x) * 4) as usize;
-                buf[idx]     = 175;
+                buf[idx] = 175;
                 buf[idx + 1] = 12;
                 buf[idx + 2] = 12;
                 buf[idx + 3] = (alpha * 230.0) as u8;
@@ -202,7 +200,7 @@ fn make_rune_texture(size: u32) -> Vec<u8> {
             let alpha = ((edge_w - rim_dist) / edge_w).clamp(0.0, 1.0);
             if alpha > 0.0 {
                 let idx = ((y * size + x) * 4) as usize;
-                buf[idx]     = 255;
+                buf[idx] = 255;
                 buf[idx + 1] = 200;
                 buf[idx + 2] = 80;
                 buf[idx + 3] = (alpha * 255.0) as u8;
@@ -230,7 +228,7 @@ fn make_spark_texture(size: u32) -> Vec<u8> {
                 let idx = ((y * size + x) * 4) as usize;
                 let g = (0.7 + 0.3 * radial).clamp(0.0, 1.0);
                 let b = (0.2 * radial).clamp(0.0, 1.0);
-                buf[idx]     = 255;
+                buf[idx] = 255;
                 buf[idx + 1] = (g * 255.0) as u8;
                 buf[idx + 2] = (b * 255.0) as u8;
                 buf[idx + 3] = (alpha * 255.0) as u8;
@@ -277,7 +275,7 @@ fn make_fire_texture(size: u32) -> Vec<u8> {
 
             let idx = ((y * size + x) * 4) as usize;
             // Color: white-yellow core at high intensity, deep orange-red at edges.
-            buf[idx]     = 255;
+            buf[idx] = 255;
             buf[idx + 1] = (core * core * 240.0).min(255.0) as u8;
             buf[idx + 2] = ((core - 0.6).max(0.0) / 0.4 * 180.0).min(255.0) as u8;
             buf[idx + 3] = (core * 255.0).min(255.0) as u8;
@@ -297,11 +295,11 @@ fn make_checker_texture(size: u32) -> Vec<u8> {
             let dark = (tx + ty) % 2 == 0;
             let idx = ((y * size + x) * 4) as usize;
             if dark {
-                buf[idx]     = 40;
+                buf[idx] = 40;
                 buf[idx + 1] = 40;
                 buf[idx + 2] = 140;
             } else {
-                buf[idx]     = 210;
+                buf[idx] = 210;
                 buf[idx + 1] = 200;
                 buf[idx + 2] = 230;
             }
@@ -324,20 +322,21 @@ fn make_label_texture(size: u32) -> Vec<u8> {
             let border = 0.12_f32;
             let in_border = ty < border || ty > 1.0 - border;
             // Chevron pattern in the middle band: diagonal stripes.
-            let chevron = ((tx * 8.0 + ty * 4.0).fract() > 0.5) != ((tx * 8.0 - ty * 4.0).fract() > 0.5);
+            let chevron =
+                ((tx * 8.0 + ty * 4.0).fract() > 0.5) != ((tx * 8.0 - ty * 4.0).fract() > 0.5);
             let idx = ((y * size + x) * 4) as usize;
             if in_border {
-                buf[idx]     = 255;
+                buf[idx] = 255;
                 buf[idx + 1] = 200;
                 buf[idx + 2] = 0;
                 buf[idx + 3] = 230;
             } else if chevron {
-                buf[idx]     = 30;
+                buf[idx] = 30;
                 buf[idx + 1] = 30;
                 buf[idx + 2] = 30;
                 buf[idx + 3] = 220;
             } else {
-                buf[idx]     = 220;
+                buf[idx] = 220;
                 buf[idx + 1] = 220;
                 buf[idx + 2] = 220;
                 buf[idx + 3] = 200;
@@ -358,20 +357,31 @@ fn decal_transform(hit: glam::Vec3, normal: glam::Vec3, size: f32, depth: f32) -
 
 /// Like `decal_transform` but rotates the UV frame by `yaw` radians around the surface normal.
 /// Useful for oriented decals such as footprints: yaw = PI/2 points the toe toward +Y on a Z-up ground.
-fn decal_transform_yaw(hit: glam::Vec3, normal: glam::Vec3, size: f32, depth: f32, yaw: f32) -> [[f32; 4]; 4] {
+fn decal_transform_yaw(
+    hit: glam::Vec3,
+    normal: glam::Vec3,
+    size: f32,
+    depth: f32,
+    yaw: f32,
+) -> [[f32; 4]; 4] {
     let n = normal.normalize();
-    let ref_up = if n.abs().abs_diff_eq(glam::Vec3::Y, 0.1) { glam::Vec3::Z } else { glam::Vec3::Y };
+    let ref_up = if n.abs().abs_diff_eq(glam::Vec3::Y, 0.1) {
+        glam::Vec3::Z
+    } else {
+        glam::Vec3::Y
+    };
     let t0 = ref_up.cross(n).normalize();
     let b0 = n.cross(t0).normalize();
     let (s, c) = yaw.sin_cos();
-    let tangent   = c * t0 + s * b0;
+    let tangent = c * t0 + s * b0;
     let bitangent = -s * t0 + c * b0;
     glam::Mat4::from_cols(
-        (tangent   * size).extend(0.0),
+        (tangent * size).extend(0.0),
         (bitangent * size).extend(0.0),
-        (n         * depth).extend(0.0),
+        (n * depth).extend(0.0),
         hit.extend(1.0),
-    ).to_cols_array_2d()
+    )
+    .to_cols_array_2d()
 }
 
 // ---------------------------------------------------------------------------
@@ -381,8 +391,8 @@ fn decal_transform_yaw(hit: glam::Vec3, normal: glam::Vec3, size: f32, depth: f3
 pub(crate) struct PlacedDecal {
     id: u64,
     label: String,
-    pub(crate) hit:       glam::Vec3,
-    pub(crate) normal:    glam::Vec3,
+    pub(crate) hit: glam::Vec3,
+    pub(crate) normal: glam::Vec3,
     pub(crate) on_column: bool,
 }
 
@@ -395,18 +405,18 @@ pub(crate) struct Decal46State {
     pub scene: Scene,
     pub selection: Selection,
 
-    pub wall_mesh:      Option<MeshId>,
-    pub ground_mesh:    Option<MeshId>,
-    pub wall_cpu_mesh:   Option<(Vec<[f32; 3]>, Vec<u32>)>,
+    pub wall_mesh: Option<MeshId>,
+    pub ground_mesh: Option<MeshId>,
+    pub wall_cpu_mesh: Option<(Vec<[f32; 3]>, Vec<u32>)>,
     pub ground_cpu_mesh: Option<(Vec<[f32; 3]>, Vec<u32>)>,
     pub column_cpu_mesh: Option<(Vec<[f32; 3]>, Vec<u32>)>,
 
-    pub albedo_tex:     Option<u64>,
-    pub normal_tex:     Option<u64>,
-    pub wet_tex:        Option<u64>,
-    pub stripe_tex:     Option<u64>,
-    pub footprint_tex:  Option<u64>,
-    pub blood_tex:      Option<u64>,
+    pub albedo_tex: Option<u64>,
+    pub normal_tex: Option<u64>,
+    pub wet_tex: Option<u64>,
+    pub stripe_tex: Option<u64>,
+    pub footprint_tex: Option<u64>,
+    pub blood_tex: Option<u64>,
 
     // D1/D2/D3: manually placed gunshot decals
     pub decals: Vec<PlacedDecal>,
@@ -434,9 +444,9 @@ pub(crate) struct Decal46State {
     pub show_obstacle: bool,
 
     // D6
-    pub rune_tex:   Option<u64>,
-    pub spark_tex:  Option<u64>,
-    pub show_rune:  bool,
+    pub rune_tex: Option<u64>,
+    pub spark_tex: Option<u64>,
+    pub show_rune: bool,
     pub rune_emissive: f32,
     pub show_spark: bool,
     pub spark_emissive: f32,
@@ -452,15 +462,15 @@ pub(crate) struct Decal46State {
     pub tri_blend_sharpness: f32,
 
     // D9
-    pub column_mesh:   Option<MeshId>,
-    pub column_node:   Option<viewport_lib::interaction::selection::NodeId>,
-    pub label_tex:     Option<u64>,
-    pub cyl_facing:    CylindricalFacing,
+    pub column_mesh: Option<MeshId>,
+    pub column_node: Option<viewport_lib::interaction::selection::NodeId>,
+    pub label_tex: Option<u64>,
+    pub cyl_facing: CylindricalFacing,
 
     // D10
-    pub fire_tex:       Option<u64>,
-    pub show_fire:      bool,
-    pub fire_alpha:     f32,
+    pub fire_tex: Option<u64>,
+    pub show_fire: bool,
+    pub fire_alpha: f32,
 }
 
 impl Default for Decal46State {
@@ -469,17 +479,17 @@ impl Default for Decal46State {
             built: false,
             scene: Scene::new(),
             selection: Selection::new(),
-            wall_mesh:       None,
-            ground_mesh:     None,
-            wall_cpu_mesh:   None,
+            wall_mesh: None,
+            ground_mesh: None,
+            wall_cpu_mesh: None,
             ground_cpu_mesh: None,
             column_cpu_mesh: None,
-            albedo_tex:    None,
-            normal_tex:    None,
-            wet_tex:       None,
-            stripe_tex:    None,
+            albedo_tex: None,
+            normal_tex: None,
+            wet_tex: None,
+            stripe_tex: None,
             footprint_tex: None,
-            blood_tex:     None,
+            blood_tex: None,
             decals: Vec::new(),
             next_id: 1,
             decal_size: 0.25,
@@ -497,25 +507,25 @@ impl Default for Decal46State {
             scroll_handle: None,
             wall_obstacle_node: None,
             show_obstacle: true,
-            rune_tex:       None,
-            spark_tex:      None,
-            show_rune:      true,
-            rune_emissive:  2.0,
-            show_spark:     true,
+            rune_tex: None,
+            spark_tex: None,
+            show_rune: true,
+            rune_emissive: 2.0,
+            show_spark: true,
             spark_emissive: 3.0,
-            edge_fade:      0.2,
+            edge_fade: 0.2,
             apply_edge_fade: false,
-            checker_tex:         None,
-            show_corner_decal:   true,
-            use_tri_planar:      true,
+            checker_tex: None,
+            show_corner_decal: true,
+            use_tri_planar: true,
             tri_blend_sharpness: 4.0,
-            column_mesh:         None,
-            column_node:         None,
-            label_tex:           None,
-            cyl_facing:          CylindricalFacing::Outward,
-            fire_tex:            None,
-            show_fire:           false,
-            fire_alpha:          0.6,
+            column_mesh: None,
+            column_node: None,
+            label_tex: None,
+            cyl_facing: CylindricalFacing::Outward,
+            fire_tex: None,
+            show_fire: false,
+            fire_alpha: 0.6,
         }
     }
 }
@@ -533,7 +543,13 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut viewport_lib::Vi
         .upload_texture(&app.device, &app.queue, 128, 128, &make_disc_texture(128))
         .expect("decal albedo upload");
     let normal_id = res
-        .upload_texture(&app.device, &app.queue, 128, 128, &make_crater_normal_map(128))
+        .upload_texture(
+            &app.device,
+            &app.queue,
+            128,
+            128,
+            &make_crater_normal_map(128),
+        )
         .expect("decal normal map upload");
     let wet_id = res
         .upload_texture(&app.device, &app.queue, 128, 128, &make_wet_texture(128))
@@ -542,7 +558,13 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut viewport_lib::Vi
         .upload_texture(&app.device, &app.queue, 64, 64, &make_stripe_texture(64))
         .expect("stripe texture upload");
     let footprint_id = res
-        .upload_texture(&app.device, &app.queue, 128, 128, &make_footprint_texture(128))
+        .upload_texture(
+            &app.device,
+            &app.queue,
+            128,
+            128,
+            &make_footprint_texture(128),
+        )
         .expect("footprint texture upload");
     let blood_id = res
         .upload_texture(&app.device, &app.queue, 128, 128, &make_blood_texture(128))
@@ -554,17 +576,23 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut viewport_lib::Vi
         .upload_texture(&app.device, &app.queue, 128, 128, &make_spark_texture(128))
         .expect("spark texture upload");
 
-    app.decal46_state.albedo_tex    = Some(albedo_id);
-    app.decal46_state.normal_tex    = Some(normal_id);
-    app.decal46_state.wet_tex       = Some(wet_id);
-    app.decal46_state.stripe_tex    = Some(stripe_id);
+    app.decal46_state.albedo_tex = Some(albedo_id);
+    app.decal46_state.normal_tex = Some(normal_id);
+    app.decal46_state.wet_tex = Some(wet_id);
+    app.decal46_state.stripe_tex = Some(stripe_id);
     app.decal46_state.footprint_tex = Some(footprint_id);
-    app.decal46_state.blood_tex     = Some(blood_id);
-    app.decal46_state.rune_tex      = Some(rune_id);
-    app.decal46_state.spark_tex     = Some(spark_id);
+    app.decal46_state.blood_tex = Some(blood_id);
+    app.decal46_state.rune_tex = Some(rune_id);
+    app.decal46_state.spark_tex = Some(spark_id);
 
     let checker_id = res
-        .upload_texture(&app.device, &app.queue, 128, 128, &make_checker_texture(128))
+        .upload_texture(
+            &app.device,
+            &app.queue,
+            128,
+            128,
+            &make_checker_texture(128),
+        )
         .expect("checker texture upload");
     app.decal46_state.checker_tex = Some(checker_id);
 
@@ -580,7 +608,8 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut viewport_lib::Vi
 
     // Vertical wall: 6 wide (X), 0.2 thick (Y), 4 tall (Z).
     let wall_data = viewport_lib::primitives::cuboid(6.0, 0.2, 4.0);
-    app.decal46_state.wall_cpu_mesh = Some((wall_data.positions.clone(), wall_data.indices.clone()));
+    app.decal46_state.wall_cpu_mesh =
+        Some((wall_data.positions.clone(), wall_data.indices.clone()));
     let wall_id = res
         .upload_mesh_data(&app.device, &wall_data)
         .expect("wall mesh upload");
@@ -588,7 +617,8 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut viewport_lib::Vi
 
     // Ground floor: 8 wide (X), 6 deep (Y), 0.2 thick (Z).
     let ground_data = viewport_lib::primitives::cuboid(8.0, 6.0, 0.2);
-    app.decal46_state.ground_cpu_mesh = Some((ground_data.positions.clone(), ground_data.indices.clone()));
+    app.decal46_state.ground_cpu_mesh =
+        Some((ground_data.positions.clone(), ground_data.indices.clone()));
     let ground_id = res
         .upload_mesh_data(&app.device, &ground_data)
         .expect("ground mesh upload");
@@ -598,7 +628,8 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut viewport_lib::Vi
     // radius=0.3, height=3.0, center at (2.5, 0.5, 1.5).
     res.ensure_matcaps_initialized(&app.device, &app.queue);
     let column_data = viewport_lib::primitives::cylinder(0.3, 3.0, 24);
-    app.decal46_state.column_cpu_mesh = Some((column_data.positions.clone(), column_data.indices.clone()));
+    app.decal46_state.column_cpu_mesh =
+        Some((column_data.positions.clone(), column_data.indices.clone()));
     let column_id = res
         .upload_mesh_data(&app.device, &column_data)
         .expect("column mesh upload");
@@ -630,7 +661,8 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut viewport_lib::Vi
     // D9: column standing on the ground, right side. Wax matcap with black base colour.
     let column_mat = {
         let mut m = Material::from_colour([0.0, 0.0, 0.0]);
-        m.shading_model = viewport_lib::ShadingModel::Matcap(res.builtin_matcap_id(BuiltinMatcap::Wax));
+        m.shading_model =
+            viewport_lib::ShadingModel::Matcap(res.builtin_matcap_id(BuiltinMatcap::Wax));
         m
     };
     let column_node = scene.add(
@@ -662,24 +694,34 @@ fn decal46_mesh_lookup(
     st: &Decal46State,
 ) -> std::collections::HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)> {
     let mut map = std::collections::HashMap::new();
-    if let (Some(id), Some(data)) = (st.wall_mesh,   &st.wall_cpu_mesh)   { map.insert(id.index() as u64, data.clone()); }
-    if let (Some(id), Some(data)) = (st.ground_mesh, &st.ground_cpu_mesh) { map.insert(id.index() as u64, data.clone()); }
-    if let (Some(id), Some(data)) = (st.column_mesh, &st.column_cpu_mesh) { map.insert(id.index() as u64, data.clone()); }
+    if let (Some(id), Some(data)) = (st.wall_mesh, &st.wall_cpu_mesh) {
+        map.insert(id.index() as u64, data.clone());
+    }
+    if let (Some(id), Some(data)) = (st.ground_mesh, &st.ground_cpu_mesh) {
+        map.insert(id.index() as u64, data.clone());
+    }
+    if let (Some(id), Some(data)) = (st.column_mesh, &st.column_cpu_mesh) {
+        map.insert(id.index() as u64, data.clone());
+    }
     map
 }
 
 /// Place a gunshot decal at the clicked viewport position using CPU ray-casting.
 pub(crate) fn decal46_place(app: &mut App, cursor: glam::Vec2, vp_size: glam::Vec2) {
-    if !app.decal46_state.built { return; }
+    if !app.decal46_state.built {
+        return;
+    }
     let vp_inv = app.camera.view_proj_matrix().inverse();
     let (ro, rd) = viewport_lib::picking::screen_to_ray(cursor, vp_size, vp_inv);
 
     let mesh_lookup = decal46_mesh_lookup(&app.decal46_state);
-    let Some(pick) = viewport_lib::picking::pick_scene_nodes_cpu(
-        ro, rd, &app.decal46_state.scene, &mesh_lookup,
-    ) else { return };
+    let Some(pick) =
+        viewport_lib::picking::pick_scene_nodes_cpu(ro, rd, &app.decal46_state.scene, &mesh_lookup)
+    else {
+        return;
+    };
 
-    let hit    = pick.world_pos;
+    let hit = pick.world_pos;
     let normal = pick.normal;
 
     // Detect whether the hit was on the column by comparing the picked node ID.
@@ -697,23 +739,36 @@ pub(crate) fn decal46_place(app: &mut App, cursor: glam::Vec2, vp_size: glam::Ve
             glam::Vec4::new(0.0, 0.65, 0.0, 0.0),
             glam::Vec4::new(0.0, 0.0, st.decal_depth, 0.0),
             glam::Vec4::new(2.5, 0.5, hit.z, 1.0),
-        ).to_cols_array_2d();
-        (t, DecalProjection::Cylindrical { facing: CylindricalFacing::Outward })
+        )
+        .to_cols_array_2d();
+        (
+            t,
+            DecalProjection::Cylindrical {
+                facing: CylindricalFacing::Outward,
+            },
+        )
     } else {
-        (decal_transform(hit, normal, st.decal_size, st.decal_depth), DecalProjection::Planar)
+        (
+            decal_transform(hit, normal, st.decal_size, st.decal_depth),
+            DecalProjection::Planar,
+        )
     };
 
     if st.fading_mode {
         let mut item = DecalItem::default();
-        item.transform             = transform;
-        item.texture_id            = tex;
-        item.blend_mode            = st.blend_mode;
-        item.alpha                 = st.alpha;
-        item.normal_texture_id     = if st.use_normal_map { st.normal_tex } else { None };
+        item.transform = transform;
+        item.texture_id = tex;
+        item.blend_mode = st.blend_mode;
+        item.alpha = st.alpha;
+        item.normal_texture_id = if st.use_normal_map {
+            st.normal_tex
+        } else {
+            None
+        };
         item.normal_blend_strength = st.normal_blend;
-        item.roughness             = st.decal_roughness;
-        item.metallic              = st.decal_metallic;
-        item.projection            = projection;
+        item.roughness = st.decal_roughness;
+        item.metallic = st.decal_metallic;
+        item.projection = projection;
         let lt = st.fade_lifetime;
         st.scene.add_decal_with_lifetime(item, lt, st.fade_out);
     } else {
@@ -734,7 +789,9 @@ pub(crate) fn decal46_place(app: &mut App, cursor: glam::Vec2, vp_size: glam::Ve
 // ---------------------------------------------------------------------------
 
 pub(crate) fn update_decal46(app: &mut App, dt: f32) {
-    if !app.decal46_state.built { return; }
+    if !app.decal46_state.built {
+        return;
+    }
 
     app.decal46_state.scene.update_decals(dt);
 
@@ -757,12 +814,13 @@ pub(crate) fn update_decal46(app: &mut App, dt: f32) {
                 glam::Vec4::new(0.0, 0.0, 0.67, 0.0),
                 glam::Vec4::new(0.0, 0.3, 0.0, 0.0),
                 glam::Vec4::new(0.0, 0.0, 3.67, 1.0),
-            ).to_cols_array_2d();
+            )
+            .to_cols_array_2d();
             let mut item = DecalItem::default();
-            item.transform  = transform;
+            item.transform = transform;
             item.texture_id = stripe;
-            item.alpha      = 0.85;
-            item.sort_key   = -10;
+            item.alpha = 0.85;
+            item.sort_key = -10;
             let handle = st.scene.add_decal_animated(
                 item,
                 DecalAnimation::UvScroll { vx: 0.15, vy: 0.0 },
@@ -791,19 +849,15 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut viewport_lib::FrameData) 
     if st.show_wet_patch {
         if let Some(wet) = st.wet_tex {
             // Ground: normal = +Z, placed at z = 0.
-            let transform = decal_transform(
-                glam::Vec3::new(-1.5, 3.0, 0.0),
-                glam::Vec3::Z,
-                1.5,
-                1.0,
-            );
+            let transform =
+                decal_transform(glam::Vec3::new(-1.5, 3.0, 0.0), glam::Vec3::Z, 1.5, 1.0);
             let mut item = DecalItem::default();
-            item.transform  = transform;
+            item.transform = transform;
             item.texture_id = wet;
-            item.roughness  = 0.05;
-            item.metallic   = 0.0;
-            item.alpha      = 0.85;
-            item.sort_key   = 10;
+            item.roughness = 0.05;
+            item.metallic = 0.0;
+            item.alpha = 0.85;
+            item.sort_key = 10;
             fd.scene.decals.push(item);
         }
     }
@@ -815,29 +869,29 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut viewport_lib::FrameData) 
         use std::f32::consts::PI;
         // (x, y, yaw_offset_from_PI_2)  -- right foot: x closer to 0; left: more negative x
         let steps: &[(f32, f32, f32)] = &[
-            (-1.85, 0.45,  0.04),   // R
-            (-2.40, 0.90, -0.05),   // L
-            (-1.90, 1.40,  0.06),   // R
-            (-2.45, 1.90, -0.04),   // L
-            (-1.95, 2.40,  0.03),   // R
-            (-2.50, 2.90, -0.06),   // L
-            (-2.00, 3.40,  0.05),   // R
-            (-2.55, 3.90, -0.03),   // L
-            (-2.05, 4.35,  0.04),   // R
-            (-2.60, 4.80, -0.05),   // L
-            (-2.10, 5.25,  0.03),   // R
-            (-2.65, 5.60, -0.04),   // L
+            (-1.85, 0.45, 0.04),  // R
+            (-2.40, 0.90, -0.05), // L
+            (-1.90, 1.40, 0.06),  // R
+            (-2.45, 1.90, -0.04), // L
+            (-1.95, 2.40, 0.03),  // R
+            (-2.50, 2.90, -0.06), // L
+            (-2.00, 3.40, 0.05),  // R
+            (-2.55, 3.90, -0.03), // L
+            (-2.05, 4.35, 0.04),  // R
+            (-2.60, 4.80, -0.05), // L
+            (-2.10, 5.25, 0.03),  // R
+            (-2.65, 5.60, -0.04), // L
         ];
         for &(x, y, yaw_delta) in steps {
             let pos = glam::Vec3::new(x, y, 0.0);
             let yaw = PI / 2.0 + yaw_delta;
             let transform = decal_transform_yaw(pos, glam::Vec3::Z, 0.35, 0.5, yaw);
             let mut item = DecalItem::default();
-            item.transform  = transform;
+            item.transform = transform;
             item.texture_id = fp;
-            item.roughness  = 0.9;
-            item.metallic   = 0.0;
-            item.alpha      = 0.88;
+            item.roughness = 0.9;
+            item.metallic = 0.0;
+            item.alpha = 0.88;
             fd.scene.decals.push(item);
         }
     }
@@ -852,11 +906,11 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut viewport_lib::FrameData) 
         for &(pos, size) in splatters {
             let transform = decal_transform(pos, glam::Vec3::Z, size, 0.5);
             let mut item = DecalItem::default();
-            item.transform  = transform;
+            item.transform = transform;
             item.texture_id = bl;
-            item.roughness  = 0.6;
-            item.metallic   = 0.0;
-            item.alpha      = 0.9;
+            item.roughness = 0.6;
+            item.metallic = 0.0;
+            item.alpha = 0.9;
             fd.scene.decals.push(item);
         }
     }
@@ -870,22 +924,39 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut viewport_lib::FrameData) 
                 glam::Vec4::new(0.0, 0.65, 0.0, 0.0),
                 glam::Vec4::new(0.0, 0.0, st.decal_depth, 0.0),
                 glam::Vec4::new(2.5, 0.5, placed.hit.z, 1.0),
-            ).to_cols_array_2d();
-            (t, DecalProjection::Cylindrical { facing: CylindricalFacing::Outward })
+            )
+            .to_cols_array_2d();
+            (
+                t,
+                DecalProjection::Cylindrical {
+                    facing: CylindricalFacing::Outward,
+                },
+            )
         } else {
-            (decal_transform(placed.hit, placed.normal, st.decal_size, st.decal_depth), DecalProjection::Planar)
+            (
+                decal_transform(placed.hit, placed.normal, st.decal_size, st.decal_depth),
+                DecalProjection::Planar,
+            )
         };
         let mut item = DecalItem::default();
-        item.transform             = transform;
-        item.texture_id            = tex;
-        item.blend_mode            = st.blend_mode;
-        item.alpha                 = st.alpha;
-        item.normal_texture_id     = if st.use_normal_map { st.normal_tex } else { None };
+        item.transform = transform;
+        item.texture_id = tex;
+        item.blend_mode = st.blend_mode;
+        item.alpha = st.alpha;
+        item.normal_texture_id = if st.use_normal_map {
+            st.normal_tex
+        } else {
+            None
+        };
         item.normal_blend_strength = st.normal_blend;
-        item.roughness             = st.decal_roughness;
-        item.metallic              = st.decal_metallic;
-        item.projection            = projection;
-        item.edge_fade             = if st.apply_edge_fade { st.edge_fade } else { 0.0 };
+        item.roughness = st.decal_roughness;
+        item.metallic = st.decal_metallic;
+        item.projection = projection;
+        item.edge_fade = if st.apply_edge_fade {
+            st.edge_fade
+        } else {
+            0.0
+        };
         fd.scene.decals.push(item);
     }
 
@@ -895,18 +966,14 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut viewport_lib::FrameData) 
     // D6: glowing rune on the wall, center-right.
     if st.show_rune {
         if let Some(rune) = st.rune_tex {
-            let transform = decal_transform(
-                glam::Vec3::new(1.5, 0.0, 2.0),
-                glam::Vec3::Y,
-                0.5,
-                1.0,
-            );
+            let transform =
+                decal_transform(glam::Vec3::new(1.5, 0.0, 2.0), glam::Vec3::Y, 0.5, 1.0);
             let mut item = DecalItem::default();
-            item.transform  = transform;
+            item.transform = transform;
             item.texture_id = rune;
-            item.alpha      = 1.0;
-            item.emissive   = st.rune_emissive;
-            item.edge_fade  = 0.1;
+            item.alpha = 1.0;
+            item.emissive = st.rune_emissive;
+            item.edge_fade = 0.1;
             fd.scene.decals.push(item);
         }
     }
@@ -918,19 +985,17 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut viewport_lib::FrameData) 
             // Place the decal centred on the corner junction (x=1, y=0, z=0),
             // oriented along +Y as projection axis so it faces the camera from the wall.
             // Scale it large enough (2.0) to cover both wall and floor across the corner.
-            let transform = decal_transform(
-                glam::Vec3::new(1.0, 0.0, 0.0),
-                glam::Vec3::Y,
-                2.0,
-                2.0,
-            );
+            let transform =
+                decal_transform(glam::Vec3::new(1.0, 0.0, 0.0), glam::Vec3::Y, 2.0, 2.0);
             let mut item = DecalItem::default();
-            item.transform  = transform;
+            item.transform = transform;
             item.texture_id = checker;
-            item.alpha      = 0.9;
-            item.edge_fade  = 0.05;
+            item.alpha = 0.9;
+            item.edge_fade = 0.05;
             item.projection = if st.use_tri_planar {
-                viewport_lib::DecalProjection::TriPlanar { blend_sharpness: st.tri_blend_sharpness }
+                viewport_lib::DecalProjection::TriPlanar {
+                    blend_sharpness: st.tri_blend_sharpness,
+                }
             } else {
                 viewport_lib::DecalProjection::Planar
             };
@@ -948,30 +1013,29 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut viewport_lib::FrameData) 
             glam::Vec4::new(0.0, 0.65, 0.0, 0.0),
             glam::Vec4::new(0.0, 0.0, 2.0, 0.0),
             glam::Vec4::new(2.5, 0.5, 1.5, 1.0),
-        ).to_cols_array_2d();
+        )
+        .to_cols_array_2d();
         let mut item = DecalItem::default();
-        item.transform  = transform;
+        item.transform = transform;
         item.texture_id = label;
-        item.alpha      = 0.95;
-        item.edge_fade  = 0.05;
-        item.projection = DecalProjection::Cylindrical { facing: st.cyl_facing };
+        item.alpha = 0.95;
+        item.edge_fade = 0.05;
+        item.projection = DecalProjection::Cylindrical {
+            facing: st.cyl_facing,
+        };
         fd.scene.decals.push(item);
     }
 
     // D6: spark-impact on the wall, alongside the rune.
     if st.show_spark {
         if let Some(spark) = st.spark_tex {
-            let transform = decal_transform(
-                glam::Vec3::new(2.2, 0.0, 2.0),
-                glam::Vec3::Y,
-                0.4,
-                1.0,
-            );
+            let transform =
+                decal_transform(glam::Vec3::new(2.2, 0.0, 2.0), glam::Vec3::Y, 0.4, 1.0);
             let mut item = DecalItem::default();
-            item.transform  = transform;
+            item.transform = transform;
             item.texture_id = spark;
-            item.alpha      = 1.0;
-            item.emissive   = st.spark_emissive;
+            item.alpha = 1.0;
+            item.emissive = st.spark_emissive;
             fd.scene.decals.push(item);
         }
     }
@@ -985,13 +1049,14 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut viewport_lib::FrameData) 
                 glam::Vec4::new(0.0, 0.0, 2.4, 0.0),
                 glam::Vec4::new(0.0, 0.4, 0.0, 0.0),
                 glam::Vec4::new(-1.5, 0.0, 1.2, 1.0),
-            ).to_cols_array_2d();
+            )
+            .to_cols_array_2d();
             let mut item = DecalItem::default();
-            item.transform  = transform;
+            item.transform = transform;
             item.texture_id = fire;
             item.blend_mode = DecalBlendMode::Additive;
-            item.alpha      = st.fire_alpha;
-            item.emissive   = 1.5;
+            item.alpha = st.fire_alpha;
+            item.emissive = 1.5;
             fd.scene.decals.push(item);
         }
     }
@@ -1014,8 +1079,7 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
         ui.label("Decal settings:");
         ui.add(egui::Slider::new(&mut app.decal46_state.decal_size, 0.05..=2.0).text("Size"));
         ui.add(
-            egui::Slider::new(&mut app.decal46_state.decal_depth, 0.3..=4.0)
-                .text("Proj. depth"),
+            egui::Slider::new(&mut app.decal46_state.decal_depth, 0.3..=4.0).text("Proj. depth"),
         );
         ui.add(egui::Slider::new(&mut app.decal46_state.alpha, 0.1..=1.0).text("Alpha"));
 
@@ -1023,13 +1087,22 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
         ui.label("Blend mode:");
         ui.horizontal(|ui| {
             let cur = app.decal46_state.blend_mode;
-            if ui.selectable_label(cur == DecalBlendMode::Replace,  "Replace").clicked()  {
+            if ui
+                .selectable_label(cur == DecalBlendMode::Replace, "Replace")
+                .clicked()
+            {
                 app.decal46_state.blend_mode = DecalBlendMode::Replace;
             }
-            if ui.selectable_label(cur == DecalBlendMode::Multiply, "Multiply").clicked() {
+            if ui
+                .selectable_label(cur == DecalBlendMode::Multiply, "Multiply")
+                .clicked()
+            {
                 app.decal46_state.blend_mode = DecalBlendMode::Multiply;
             }
-            if ui.selectable_label(cur == DecalBlendMode::Additive, "Additive").clicked() {
+            if ui
+                .selectable_label(cur == DecalBlendMode::Additive, "Additive")
+                .clicked()
+            {
                 app.decal46_state.blend_mode = DecalBlendMode::Additive;
             }
         });
@@ -1039,29 +1112,32 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
         ui.label("Normal map:");
         ui.checkbox(&mut app.decal46_state.use_normal_map, "Crater normal map");
         ui.add(
-            egui::Slider::new(&mut app.decal46_state.normal_blend, 0.0..=1.0)
-                .text("Normal blend"),
+            egui::Slider::new(&mut app.decal46_state.normal_blend, 0.0..=1.0).text("Normal blend"),
         );
 
         ui.add_space(6.0);
         ui.separator();
         ui.label("Roughness / metallic:");
         ui.add(
-            egui::Slider::new(&mut app.decal46_state.decal_roughness, 0.0..=1.0)
-                .text("Roughness"),
+            egui::Slider::new(&mut app.decal46_state.decal_roughness, 0.0..=1.0).text("Roughness"),
         );
         ui.add(
-            egui::Slider::new(&mut app.decal46_state.decal_metallic, 0.0..=1.0)
-                .text("Metallic"),
+            egui::Slider::new(&mut app.decal46_state.decal_metallic, 0.0..=1.0).text("Metallic"),
         );
         ui.add_space(4.0);
-        ui.checkbox(&mut app.decal46_state.show_wet_patch, "Show wet patch (ground left)");
+        ui.checkbox(
+            &mut app.decal46_state.show_wet_patch,
+            "Show wet patch (ground left)",
+        );
         ui.small("Wet patch: roughness 0.05, sort above footprints.");
 
         ui.add_space(6.0);
         ui.separator();
         ui.label("Lifetime / animation:");
-        ui.checkbox(&mut app.decal46_state.fading_mode, "Fading mode (auto-remove)");
+        ui.checkbox(
+            &mut app.decal46_state.fading_mode,
+            "Fading mode (auto-remove)",
+        );
         if app.decal46_state.fading_mode {
             ui.add(
                 egui::Slider::new(&mut app.decal46_state.fade_lifetime, 2.0..=20.0)
@@ -1095,7 +1171,9 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
         }
         let live_count = app.decal46_state.scene.collect_decal_items().len();
         if live_count > 0 {
-            ui.small(format!("{live_count} live (fading/animated) decals active."));
+            ui.small(format!(
+                "{live_count} live (fading/animated) decals active."
+            ));
         }
 
         ui.add_space(4.0);
@@ -1106,7 +1184,10 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
         ui.add_space(6.0);
         ui.separator();
         ui.label("Receiver masking:");
-        ui.checkbox(&mut app.decal46_state.show_obstacle, "Show non-receiver obstacles");
+        ui.checkbox(
+            &mut app.decal46_state.show_obstacle,
+            "Show non-receiver obstacles",
+        );
         ui.small("Orange boxes (wall + ground): receives_decals = false.");
 
         ui.add_space(6.0);
@@ -1115,14 +1196,20 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
         ui.small("Emissive adds self-illumination on top of the blend result.");
         ui.small("Values above 1.0 bloom under tone-mapping (post_process required).");
         ui.add_space(2.0);
-        ui.checkbox(&mut app.decal46_state.show_rune, "Glowing rune (wall right)");
+        ui.checkbox(
+            &mut app.decal46_state.show_rune,
+            "Glowing rune (wall right)",
+        );
         if app.decal46_state.show_rune {
             ui.add(
                 egui::Slider::new(&mut app.decal46_state.rune_emissive, 0.0..=8.0)
                     .text("Rune emissive"),
             );
         }
-        ui.checkbox(&mut app.decal46_state.show_spark, "Spark impact (ground right)");
+        ui.checkbox(
+            &mut app.decal46_state.show_spark,
+            "Spark impact (ground right)",
+        );
         if app.decal46_state.show_spark {
             ui.add(
                 egui::Slider::new(&mut app.decal46_state.spark_emissive, 0.0..=8.0)
@@ -1136,11 +1223,13 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
         ui.small("Edge fade smooths the rectangular boundary of the projection box.");
         ui.small("Toggle on placed gunshots to compare hard vs. soft edges.");
         ui.add_space(2.0);
-        ui.checkbox(&mut app.decal46_state.apply_edge_fade, "Apply edge fade to gunshots");
+        ui.checkbox(
+            &mut app.decal46_state.apply_edge_fade,
+            "Apply edge fade to gunshots",
+        );
         if app.decal46_state.apply_edge_fade {
             ui.add(
-                egui::Slider::new(&mut app.decal46_state.edge_fade, 0.0..=0.5)
-                    .text("Edge fade"),
+                egui::Slider::new(&mut app.decal46_state.edge_fade, 0.0..=0.5).text("Edge fade"),
             );
         }
 
@@ -1149,9 +1238,15 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
         ui.label("Tri-planar projection:");
         ui.small("Planar stretches across the wall/floor corner; tri-planar wraps cleanly.");
         ui.add_space(2.0);
-        ui.checkbox(&mut app.decal46_state.show_corner_decal, "Show corner decal (checkerboard)");
+        ui.checkbox(
+            &mut app.decal46_state.show_corner_decal,
+            "Show corner decal (checkerboard)",
+        );
         if app.decal46_state.show_corner_decal {
-            ui.checkbox(&mut app.decal46_state.use_tri_planar, "Tri-planar (off = planar)");
+            ui.checkbox(
+                &mut app.decal46_state.use_tri_planar,
+                "Tri-planar (off = planar)",
+            );
             if app.decal46_state.use_tri_planar {
                 ui.add(
                     egui::Slider::new(&mut app.decal46_state.tri_blend_sharpness, 1.0..=16.0)
@@ -1169,10 +1264,19 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
         ui.add_space(2.0);
         ui.horizontal(|ui| {
             let cur = app.decal46_state.cyl_facing;
-            if ui.selectable_label(cur == CylindricalFacing::Outward, "Outward (column exterior)").clicked() {
+            if ui
+                .selectable_label(
+                    cur == CylindricalFacing::Outward,
+                    "Outward (column exterior)",
+                )
+                .clicked()
+            {
                 app.decal46_state.cyl_facing = CylindricalFacing::Outward;
             }
-            if ui.selectable_label(cur == CylindricalFacing::Inward, "Inward (tube interior)").clicked() {
+            if ui
+                .selectable_label(cur == CylindricalFacing::Inward, "Inward (tube interior)")
+                .clicked()
+            {
                 app.decal46_state.cyl_facing = CylindricalFacing::Inward;
             }
         });
@@ -1183,11 +1287,13 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
         ui.small("Additive decals brighten the receiver instead of replacing its colour.");
         ui.small("Stack multiple additive decals to accumulate brightness.");
         ui.add_space(2.0);
-        ui.checkbox(&mut app.decal46_state.show_fire, "Fire overlay (wall left, additive)");
+        ui.checkbox(
+            &mut app.decal46_state.show_fire,
+            "Fire overlay (wall left, additive)",
+        );
         if app.decal46_state.show_fire {
             ui.add(
-                egui::Slider::new(&mut app.decal46_state.fire_alpha, 0.0..=1.0)
-                    .text("Fire alpha"),
+                egui::Slider::new(&mut app.decal46_state.fire_alpha, 0.0..=1.0).text("Fire alpha"),
             );
         }
 

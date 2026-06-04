@@ -44,8 +44,17 @@ fn main() -> eframe::Result {
             let mut renderer = ViewportRenderer::new(device, format);
 
             let (
-                m_ground, m_sphere, m_cube, m_torus,
-                m_ground2, m_clay, m_ceramic, m_metal, m_rough, m_cube2, m_percy,
+                m_ground,
+                m_sphere,
+                m_cube,
+                m_torus,
+                m_ground2,
+                m_clay,
+                m_ceramic,
+                m_metal,
+                m_rough,
+                m_cube2,
+                m_percy,
                 tex_percy,
             );
             {
@@ -91,10 +100,7 @@ fn main() -> eframe::Result {
 
                 let percy_aspect = PERCY_HEIGHT as f32 / PERCY_WIDTH as f32;
                 m_percy = res
-                    .upload_mesh_data(
-                        device,
-                        &primitives::plane(4.5, 4.5 * percy_aspect),
-                    )
+                    .upload_mesh_data(device, &primitives::plane(4.5, 4.5 * percy_aspect))
                     .expect("percy plane");
                 tex_percy = res
                     .upload_texture(device, queue, PERCY_WIDTH, PERCY_HEIGHT, PERCY_RGBA)
@@ -102,14 +108,27 @@ fn main() -> eframe::Result {
             }
 
             let matcap_clay = renderer.resources().builtin_matcap_id(BuiltinMatcap::Clay);
-            let matcap_ceramic = renderer.resources().builtin_matcap_id(BuiltinMatcap::Ceramic);
+            let matcap_ceramic = renderer
+                .resources()
+                .builtin_matcap_id(BuiltinMatcap::Ceramic);
 
             rs.renderer.write().callback_resources.insert(renderer);
 
             Ok(Box::new(App::new(
-                m_ground, m_sphere, m_cube, m_torus,
-                m_ground2, m_clay, m_ceramic, m_metal, m_rough, m_cube2,
-                m_percy, tex_percy, matcap_clay, matcap_ceramic,
+                m_ground,
+                m_sphere,
+                m_cube,
+                m_torus,
+                m_ground2,
+                m_clay,
+                m_ceramic,
+                m_metal,
+                m_rough,
+                m_cube2,
+                m_percy,
+                tex_percy,
+                matcap_clay,
+                matcap_ceramic,
             )))
         }),
     )
@@ -211,11 +230,20 @@ struct App {
 impl App {
     #[allow(clippy::too_many_arguments)]
     fn new(
-        m_ground: MeshId, m_sphere: MeshId, m_cube: MeshId, m_torus: MeshId,
-        m_ground2: MeshId, m_clay: MeshId, m_ceramic: MeshId,
-        m_metal: MeshId, m_rough: MeshId, m_cube2: MeshId,
-        m_percy: MeshId, tex_percy: u64,
-        matcap_clay: MatcapId, matcap_ceramic: MatcapId,
+        m_ground: MeshId,
+        m_sphere: MeshId,
+        m_cube: MeshId,
+        m_torus: MeshId,
+        m_ground2: MeshId,
+        m_clay: MeshId,
+        m_ceramic: MeshId,
+        m_metal: MeshId,
+        m_rough: MeshId,
+        m_cube2: MeshId,
+        m_percy: MeshId,
+        tex_percy: u64,
+        matcap_clay: MatcapId,
+        matcap_ceramic: MatcapId,
     ) -> Self {
         Self {
             camera: Camera {
@@ -226,9 +254,20 @@ impl App {
             cursor_viewport: None,
             cursor_prev: None,
             tab: Tab::Basic,
-            m_ground, m_sphere, m_cube, m_torus,
-            m_ground2, m_clay, m_ceramic, m_metal, m_rough, m_cube2,
-            m_percy, tex_percy, matcap_clay, matcap_ceramic,
+            m_ground,
+            m_sphere,
+            m_cube,
+            m_torus,
+            m_ground2,
+            m_clay,
+            m_ceramic,
+            m_metal,
+            m_rough,
+            m_cube2,
+            m_percy,
+            tex_percy,
+            matcap_clay,
+            matcap_ceramic,
             // Match showcase_27 defaults: a known-problematic setup useful for reproducing bugs.
             light_kind: 0,
             light_colour: [1.0, 0.97, 0.90],
@@ -340,13 +379,13 @@ impl App {
         // Ground platform: light warm sand. Cuboid with top surface at z=0.
         let mut ground = SceneRenderItem::default();
         ground.mesh_id = self.m_ground;
-        ground.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25))
-            .to_cols_array_2d();
+        ground.model =
+            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
         ground.material = Material::from_colour([0.88, 0.84, 0.76]);
         ground.material.roughness = 0.85;
         ground.material.backface_policy = BackfacePolicy::Cull;
         items.push(ground);
-        
+
         // Sphere: light sage green. Acne is easy to spot on light curved surfaces.
         let mut sphere = SceneRenderItem::default();
         sphere.mesh_id = self.m_sphere;
@@ -381,8 +420,8 @@ impl App {
         // Ground platform: neutral light grey, top surface at z=0.
         let mut ground = SceneRenderItem::default();
         ground.mesh_id = self.m_ground2;
-        ground.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25))
-            .to_cols_array_2d();
+        ground.model =
+            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
         ground.material = Material::from_colour([0.85, 0.85, 0.85]);
         ground.material.roughness = 0.85;
         items.push(ground);
@@ -548,8 +587,7 @@ impl eframe::App for App {
 
             let ppp = ui.ctx().pixels_per_point();
             let mut fd = FrameData::new(
-                CameraFrame::from_camera(&self.camera, [w, h])
-                    .with_pixels_per_point(ppp),
+                CameraFrame::from_camera(&self.camera, [w, h]).with_pixels_per_point(ppp),
                 SceneFrame::from_surface_items(items),
             );
             fd.effects.lighting = self.build_lighting();
@@ -580,19 +618,22 @@ impl eframe::App for App {
                 }
             }
 
-            ui.painter().add(eframe::egui_wgpu::Callback::new_paint_callback(
-                rect,
-                viewport_callback::ViewportCallback {
-                    frame: fd,
-                    instancing_status: self.instancing_status.clone(),
-                    pixel_read_req: self.pixel_read_req.clone(),
-                    pixel_read_res: self.pixel_read_res.clone(),
-                    shadow_stats: self.shadow_stats.clone(),
-                },
-            ));
+            ui.painter()
+                .add(eframe::egui_wgpu::Callback::new_paint_callback(
+                    rect,
+                    viewport_callback::ViewportCallback {
+                        frame: fd,
+                        instancing_status: self.instancing_status.clone(),
+                        pixel_read_req: self.pixel_read_req.clone(),
+                        pixel_read_res: self.pixel_read_res.clone(),
+                        shadow_stats: self.shadow_stats.clone(),
+                    },
+                ));
 
             // Status bar: show shader path and cascade count (data is one frame behind).
-            let (is_instanced, batch_count) = self.instancing_status.lock()
+            let (is_instanced, batch_count) = self
+                .instancing_status
+                .lock()
                 .map(|g| *g)
                 .unwrap_or((false, 0));
             let path_label = if is_instanced {
@@ -606,7 +647,7 @@ impl eframe::App for App {
                 egui::Align2::LEFT_BOTTOM,
                 &status_text,
                 egui::FontId::monospace(11.0),
-                egui::Color32::from_rgba_premultiplied(20,20,20, 200),
+                egui::Color32::from_rgba_premultiplied(20, 20, 20, 200),
             );
 
             if response.dragged() {
@@ -646,18 +687,14 @@ impl App {
                     1 => {
                         ui.label("Position:");
                         ui_vec3(ui, &mut self.point_position, 0.1);
-                        ui.add(
-                            egui::Slider::new(&mut self.point_range, 1.0..=100.0).text("Range"),
-                        );
+                        ui.add(egui::Slider::new(&mut self.point_range, 1.0..=100.0).text("Range"));
                     }
                     _ => {
                         ui.label("Position:");
                         ui_vec3(ui, &mut self.spot_position, 0.1);
                         ui.label("Direction:");
                         ui_vec3(ui, &mut self.spot_direction, 0.01);
-                        ui.add(
-                            egui::Slider::new(&mut self.spot_range, 1.0..=100.0).text("Range"),
-                        );
+                        ui.add(egui::Slider::new(&mut self.spot_range, 1.0..=100.0).text("Range"));
                         ui.add(
                             egui::Slider::new(&mut self.spot_inner_deg, 1.0..=89.0)
                                 .text("Inner angle"),
@@ -665,11 +702,8 @@ impl App {
                         // Keep outer >= inner
                         self.spot_outer_deg = self.spot_outer_deg.max(self.spot_inner_deg);
                         ui.add(
-                            egui::Slider::new(
-                                &mut self.spot_outer_deg,
-                                self.spot_inner_deg..=89.0,
-                            )
-                            .text("Outer angle"),
+                            egui::Slider::new(&mut self.spot_outer_deg, self.spot_inner_deg..=89.0)
+                                .text("Outer angle"),
                         );
                     }
                 }
@@ -679,9 +713,7 @@ impl App {
                     ui.label("Colour:");
                     ui.color_edit_button_rgb(&mut self.light_colour);
                 });
-                ui.add(
-                    egui::Slider::new(&mut self.light_intensity, 0.0..=1.0).text("Intensity"),
-                );
+                ui.add(egui::Slider::new(&mut self.light_intensity, 0.0..=1.0).text("Intensity"));
             });
 
         ui.add_space(4.0);
@@ -691,8 +723,7 @@ impl App {
             .default_open(true)
             .show(ui, |ui| {
                 ui.add(
-                    egui::Slider::new(&mut self.hemisphere_intensity, 0.0..=2.0)
-                        .text("Intensity"),
+                    egui::Slider::new(&mut self.hemisphere_intensity, 0.0..=2.0).text("Intensity"),
                 );
                 ui.horizontal(|ui| {
                     ui.label("Sky:   ");
@@ -726,7 +757,6 @@ impl App {
                     ui.radio_value(&mut self.shadow_cascade_count, 2, "2");
                     ui.radio_value(&mut self.shadow_cascade_count, 4, "4");
                 });
-
 
                 ui.add_space(4.0);
                 ui.label("Filter:");
@@ -770,10 +800,26 @@ impl App {
                         egui::ComboBox::from_id_salt("atlas_corner")
                             .selected_text(atlas_corner_label(self.atlas_viewer_corner))
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut self.atlas_viewer_corner, AtlasViewerCorner::TopLeft, "Top-left");
-                                ui.selectable_value(&mut self.atlas_viewer_corner, AtlasViewerCorner::TopRight, "Top-right");
-                                ui.selectable_value(&mut self.atlas_viewer_corner, AtlasViewerCorner::BottomLeft, "Bottom-left");
-                                ui.selectable_value(&mut self.atlas_viewer_corner, AtlasViewerCorner::BottomRight, "Bottom-right");
+                                ui.selectable_value(
+                                    &mut self.atlas_viewer_corner,
+                                    AtlasViewerCorner::TopLeft,
+                                    "Top-left",
+                                );
+                                ui.selectable_value(
+                                    &mut self.atlas_viewer_corner,
+                                    AtlasViewerCorner::TopRight,
+                                    "Top-right",
+                                );
+                                ui.selectable_value(
+                                    &mut self.atlas_viewer_corner,
+                                    AtlasViewerCorner::BottomLeft,
+                                    "Bottom-left",
+                                );
+                                ui.selectable_value(
+                                    &mut self.atlas_viewer_corner,
+                                    AtlasViewerCorner::BottomRight,
+                                    "Bottom-right",
+                                );
                             });
                     }
                 });
@@ -817,20 +863,37 @@ impl App {
                     ui.add_space(4.0);
                     ui.label("Mode:");
                     ui.horizontal(|ui| {
-                        if ui.radio(!self.debug_vis_splitscreen && self.debug_vis_mode_replace, "Replace").clicked() {
+                        if ui
+                            .radio(
+                                !self.debug_vis_splitscreen && self.debug_vis_mode_replace,
+                                "Replace",
+                            )
+                            .clicked()
+                        {
                             self.debug_vis_splitscreen = false;
                             self.debug_vis_mode_replace = true;
                         }
-                        if ui.radio(!self.debug_vis_splitscreen && !self.debug_vis_mode_replace, "Tint overlay").clicked() {
+                        if ui
+                            .radio(
+                                !self.debug_vis_splitscreen && !self.debug_vis_mode_replace,
+                                "Tint overlay",
+                            )
+                            .clicked()
+                        {
                             self.debug_vis_splitscreen = false;
                             self.debug_vis_mode_replace = false;
                         }
-                        if ui.radio(self.debug_vis_splitscreen, "Split screen").clicked() {
+                        if ui
+                            .radio(self.debug_vis_splitscreen, "Split screen")
+                            .clicked()
+                        {
                             self.debug_vis_splitscreen = true;
                         }
                     });
                     if self.debug_vis_splitscreen {
-                        ui.add(egui::Slider::new(&mut self.debug_vis_split_x, 0.0..=1.0).text("Split"));
+                        ui.add(
+                            egui::Slider::new(&mut self.debug_vis_split_x, 0.0..=1.0).text("Split"),
+                        );
                     }
                     ui.add_space(4.0);
                     ui.label("R channel:");
@@ -838,7 +901,11 @@ impl App {
                         .selected_text(debug_quantity_label(self.debug_vis_r))
                         .show_ui(ui, |ui| {
                             for &q in DebugQuantity::all_variants() {
-                                ui.selectable_value(&mut self.debug_vis_r, q, debug_quantity_label(q));
+                                ui.selectable_value(
+                                    &mut self.debug_vis_r,
+                                    q,
+                                    debug_quantity_label(q),
+                                );
                             }
                         });
                     ui.label("G channel:");
@@ -846,7 +913,11 @@ impl App {
                         .selected_text(debug_quantity_label(self.debug_vis_g))
                         .show_ui(ui, |ui| {
                             for &q in DebugQuantity::all_variants() {
-                                ui.selectable_value(&mut self.debug_vis_g, q, debug_quantity_label(q));
+                                ui.selectable_value(
+                                    &mut self.debug_vis_g,
+                                    q,
+                                    debug_quantity_label(q),
+                                );
                             }
                         });
                     ui.label("B channel:");
@@ -854,7 +925,11 @@ impl App {
                         .selected_text(debug_quantity_label(self.debug_vis_b))
                         .show_ui(ui, |ui| {
                             for &q in DebugQuantity::all_variants() {
-                                ui.selectable_value(&mut self.debug_vis_b, q, debug_quantity_label(q));
+                                ui.selectable_value(
+                                    &mut self.debug_vis_b,
+                                    q,
+                                    debug_quantity_label(q),
+                                );
                             }
                         });
                     ui.add_space(4.0);
@@ -886,15 +961,27 @@ impl App {
                     if let Some(vals) = self.last_picked_values {
                         ui.horizontal(|ui| {
                             ui.label("R");
-                            ui.label(format!("{} ({:.4})", debug_quantity_label(self.debug_vis_r), vals[0]));
+                            ui.label(format!(
+                                "{} ({:.4})",
+                                debug_quantity_label(self.debug_vis_r),
+                                vals[0]
+                            ));
                         });
                         ui.horizontal(|ui| {
                             ui.label("G");
-                            ui.label(format!("{} ({:.4})", debug_quantity_label(self.debug_vis_g), vals[1]));
+                            ui.label(format!(
+                                "{} ({:.4})",
+                                debug_quantity_label(self.debug_vis_g),
+                                vals[1]
+                            ));
                         });
                         ui.horizontal(|ui| {
                             ui.label("B");
-                            ui.label(format!("{} ({:.4})", debug_quantity_label(self.debug_vis_b), vals[2]));
+                            ui.label(format!(
+                                "{} ({:.4})",
+                                debug_quantity_label(self.debug_vis_b),
+                                vals[2]
+                            ));
                         });
                     } else {
                         ui.label("(reading...)");
@@ -921,14 +1008,24 @@ impl App {
                         .map(|v| format!("{:.1}", v))
                         .collect();
                     let splits_str = splits.join(" / ");
-                    ui.label(format!("Cascades: {}  splits: {}", s.cascade_count, splits_str));
+                    ui.label(format!(
+                        "Cascades: {}  splits: {}",
+                        s.cascade_count, splits_str
+                    ));
                     let extent_label = if self.shadow_extent_enabled {
                         format!("{:.1} m (override)", s.shadow_extent_world)
                     } else {
                         format!("{:.1} m (auto)", s.shadow_extent_world)
                     };
-                    ui.label(format!("Atlas:    {} px   Extent: {}", s.shadow_atlas_resolution, extent_label));
-                    let contact = if s.contact_shadow_active { "enabled" } else { "disabled" };
+                    ui.label(format!(
+                        "Atlas:    {} px   Extent: {}",
+                        s.shadow_atlas_resolution, extent_label
+                    ));
+                    let contact = if s.contact_shadow_active {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    };
                     ui.label(format!("Contact:  {}", contact));
                 } else {
                     ui.label("(no data yet)");
@@ -975,8 +1072,8 @@ impl App {
         self.camera.center = glam::Vec3::new(-4.0, 0.0, 0.6);
         self.camera.distance = 7.0;
         // Looking from the Y+ side, slightly above horizontal.
-        self.camera.orientation =
-            glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2) * glam::Quat::from_rotation_x(1.42);
+        self.camera.orientation = glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)
+            * glam::Quat::from_rotation_x(1.42);
         self.debug_vis_active = true;
         self.debug_vis_splitscreen = true;
         self.debug_vis_r = DebugQuantity::ShadowFactor;

@@ -70,7 +70,9 @@ impl ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("image_slice_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/image_slice.wgsl")).into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/image_slice.wgsl")).into(),
+            ),
         });
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

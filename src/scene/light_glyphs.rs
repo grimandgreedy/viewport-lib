@@ -11,9 +11,9 @@ use std::collections::HashMap;
 use crate::interaction::selection::Selection;
 use crate::renderer::PickId;
 use crate::renderer::{GlyphItem, GlyphType, PolylineItem, sphere_wireframe_polyline};
+use crate::scene::LayerId;
 use crate::scene::material::ItemSettings;
 use crate::scene::scene::Scene;
-use crate::scene::LayerId;
 use crate::{LightKind, LightSource};
 
 /// World-space half-size used for the on-screen light icon.
@@ -36,11 +36,8 @@ pub fn build_light_glyphs(
     scene: &Scene,
     selection: &Selection,
 ) -> (Vec<GlyphItem>, Vec<PolylineItem>) {
-    let layer_visible: HashMap<LayerId, bool> = scene
-        .layers()
-        .iter()
-        .map(|l| (l.id, l.visible))
-        .collect();
+    let layer_visible: HashMap<LayerId, bool> =
+        scene.layers().iter().map(|l| (l.id, l.visible)).collect();
 
     let mut glyphs: Vec<GlyphItem> = Vec::new();
     let mut polylines: Vec<PolylineItem> = Vec::new();
@@ -107,12 +104,7 @@ pub fn build_light_glyphs(
 
         if is_selected {
             let world_src = resolve_light_for_glyph(src, world);
-            let outline_colour = [
-                colour_rgba[0],
-                colour_rgba[1],
-                colour_rgba[2],
-                0.8,
-            ];
+            let outline_colour = [colour_rgba[0], colour_rgba[1], colour_rgba[2], 0.8];
             match world_src.kind {
                 LightKind::Point { position, range } => {
                     let mut pl = sphere_wireframe_polyline(position, range, 48, outline_colour);

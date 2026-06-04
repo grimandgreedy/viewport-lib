@@ -1,11 +1,11 @@
 //! SkeletonPlugin: drives CPU linear blend skinning from a runtime Pose.
 
-use crate::resources::mesh_store::MeshId;
+use super::skeleton::{JointMatrices, Pose, Skeleton, apply_skin};
 use crate::resources::SkinWeights;
+use crate::resources::mesh_store::MeshId;
 use crate::runtime::context::RuntimeStepContext;
 use crate::runtime::output::{SkinnedMeshUpdate, SkinnedPoseUpdate};
 use crate::runtime::plugin::{RuntimePlugin, phase};
-use super::skeleton::{JointMatrices, Pose, Skeleton, apply_skin};
 
 /// Which deformation path a skinning plugin should emit each frame.
 ///
@@ -108,7 +108,9 @@ impl RuntimePlugin for SkeletonPlugin {
     }
 
     fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
-        let Some(pose) = ctx.resources.get::<Pose>() else { return };
+        let Some(pose) = ctx.resources.get::<Pose>() else {
+            return;
+        };
         let matrices = JointMatrices::compute(&self.skeleton, pose);
         match self.path {
             SkinningPath::Cpu => {

@@ -3,7 +3,7 @@
 use crate::interaction::selection::NodeId;
 use crate::runtime::context::RuntimeStepContext;
 use crate::runtime::output::ContactEvent;
-use crate::runtime::plugin::{phase, RuntimePlugin};
+use crate::runtime::plugin::{RuntimePlugin, phase};
 use crate::scene::aabb::Aabb;
 
 /// A single physics body managed by [`PhysicsLitePlugin`].
@@ -196,8 +196,7 @@ impl RuntimePlugin for PhysicsLitePlugin {
                 }
             }
 
-            let new_t =
-                glam::Affine3A::from_scale_rotation_translation(scale, rotation, pos);
+            let new_t = glam::Affine3A::from_scale_rotation_translation(scale, rotation, pos);
             ctx.writeback.set(body.node_id, new_t);
         }
     }

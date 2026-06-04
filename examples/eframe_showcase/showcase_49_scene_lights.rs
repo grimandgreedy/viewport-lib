@@ -15,8 +15,8 @@ use crate::App;
 use crate::geometry::make_box_with_uvs;
 use eframe::egui;
 use viewport_lib::{
-    LightKind, LightSource, LightingSettings, Material,
-    SceneRenderItem, Selection, ViewportRenderer,
+    LightKind, LightSource, LightingSettings, Material, SceneRenderItem, Selection,
+    ViewportRenderer,
     scene::{Scene, build_light_glyphs},
 };
 
@@ -60,7 +60,10 @@ pub(crate) struct SlState {
 fn default_lights() -> [LightSource; 3] {
     let point = {
         let mut s = LightSource::default();
-        s.kind = LightKind::Point { position: [5.0, 0.0, 3.0], range: 14.0 };
+        s.kind = LightKind::Point {
+            position: [5.0, 0.0, 3.0],
+            range: 14.0,
+        };
         s.colour = [1.0, 0.6, 0.2];
         s.intensity = 5.0;
         s
@@ -80,7 +83,9 @@ fn default_lights() -> [LightSource; 3] {
     };
     let dir = {
         let mut s = LightSource::default();
-        s.kind = LightKind::Directional { direction: [0.3, 0.2, 1.0] };
+        s.kind = LightKind::Directional {
+            direction: [0.3, 0.2, 1.0],
+        };
         s.colour = [1.0, 1.0, 0.9];
         s.intensity = 0.4;
         s
@@ -162,7 +167,11 @@ impl App {
             "Ground",
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.05)),
-            { let mut m = Material::from_colour([0.28, 0.28, 0.3]); m.roughness = 0.95; m },
+            {
+                let mut m = Material::from_colour([0.28, 0.28, 0.3]);
+                m.roughness = 0.95;
+                m
+            },
         );
 
         let sphere_mesh = viewport_lib::primitives::sphere(0.7, 32, 16);
@@ -178,7 +187,11 @@ impl App {
                     &format!("Sphere {row}{col}"),
                     Some(sphere_id),
                     glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.7)),
-                    { let mut m = Material::from_colour([0.88, 0.88, 0.9]); m.roughness = 0.3; m },
+                    {
+                        let mut m = Material::from_colour([0.88, 0.88, 0.9]);
+                        m.roughness = 0.3;
+                        m
+                    },
                 );
             }
         }
@@ -201,7 +214,11 @@ impl App {
             "Ground",
             Some(ground_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.1)),
-            { let mut m = Material::from_colour([0.10, 0.10, 0.11]); m.roughness = 0.95; m },
+            {
+                let mut m = Material::from_colour([0.10, 0.10, 0.11]);
+                m.roughness = 0.95;
+                m
+            },
         );
 
         // A scattered grid of small white pillars to catch the light from
@@ -219,7 +236,11 @@ impl App {
                     &format!("Pillar {row}{col}"),
                     Some(pillar_id),
                     glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.8)),
-                    { let mut m = Material::from_colour([0.85, 0.85, 0.9]); m.roughness = 0.6; m },
+                    {
+                        let mut m = Material::from_colour([0.85, 0.85, 0.9]);
+                        m.roughness = 0.6;
+                        m
+                    },
                 );
             }
         }
@@ -241,7 +262,9 @@ fn rebuild_stress_lights(state: &mut SlState) {
     // One always-on directional fill so the scene isn't pitch black when
     // every point light gets dropped by the importance fallback.
     let mut dir = LightSource::default();
-    dir.kind = LightKind::Directional { direction: [0.25, 0.3, 1.0] };
+    dir.kind = LightKind::Directional {
+        direction: [0.25, 0.3, 1.0],
+    };
     dir.colour = [0.6, 0.7, 0.9];
     dir.intensity = 0.15;
     dir.importance = 10.0; // Always survive the cap.
@@ -267,8 +290,7 @@ fn rebuild_stress_lights(state: &mut SlState) {
         // is hit. Falloff slider lets the user lerp between flat and
         // strongly-prioritised distributions.
         let dist_from_origin = (x * x + y * y).sqrt() / extent;
-        let importance =
-            (1.0 - state.stress_importance_falloff * dist_from_origin).max(0.05);
+        let importance = (1.0 - state.stress_importance_falloff * dist_from_origin).max(0.05);
 
         let mut src = LightSource::default();
         src.kind = LightKind::Point {
@@ -314,7 +336,10 @@ fn submit_basics(app: &mut App, fd: &mut viewport_lib::FrameData) {
         app.sl_state.light_ids[0],
         glam::Mat4::from_translation(glam::Vec3::new(px, py, 3.0)),
     );
-    if let LightKind::Point { ref mut position, .. } = app.sl_state.lights[0].kind {
+    if let LightKind::Point {
+        ref mut position, ..
+    } = app.sl_state.lights[0].kind
+    {
         *position = [px, py, 3.0];
     }
 
@@ -324,7 +349,10 @@ fn submit_basics(app: &mut App, fd: &mut viewport_lib::FrameData) {
         app.sl_state.light_ids[1],
         glam::Mat4::from_translation(glam::Vec3::new(sx, sy, 6.0)),
     );
-    if let LightKind::Spot { ref mut position, .. } = app.sl_state.lights[1].kind {
+    if let LightKind::Spot {
+        ref mut position, ..
+    } = app.sl_state.lights[1].kind
+    {
         *position = [sx, sy, 6.0];
     }
 
@@ -354,17 +382,19 @@ fn submit_stress(app: &mut App, fd: &mut viewport_lib::FrameData) {
     let bob_amp = 0.6;
     let bob_freq = 0.8;
     for (idx, src) in app.sl_state.stress_sources.iter_mut().enumerate().skip(1) {
-        if let LightKind::Point { ref mut position, .. } = src.kind {
+        if let LightKind::Point {
+            ref mut position, ..
+        } = src.kind
+        {
             let base_z = (position[2] - bob_amp).max(0.3);
             position[2] = base_z + bob_amp * (t * bob_freq + idx as f32 * 0.3).sin().abs();
             app.sl_state.scene.set_local_transform(
                 app.sl_state.stress_light_ids[idx],
                 glam::Mat4::from_translation(glam::Vec3::from(*position)),
             );
-            app.sl_state.scene.set_light(
-                app.sl_state.stress_light_ids[idx],
-                Some(src.clone()),
-            );
+            app.sl_state
+                .scene
+                .set_light(app.sl_state.stress_light_ids[idx], Some(src.clone()));
         }
     }
 
@@ -381,9 +411,7 @@ fn submit_stress(app: &mut App, fd: &mut viewport_lib::FrameData) {
 // Scene item collection
 // ---------------------------------------------------------------------------
 
-pub(crate) fn sl_collect(
-    app: &mut App,
-) -> (Vec<SceneRenderItem>, LightingSettings, u64) {
+pub(crate) fn sl_collect(app: &mut App) -> (Vec<SceneRenderItem>, LightingSettings, u64) {
     let items = app.sl_state.scene.collect_render_items(&Selection::new());
     let mut l = LightingSettings::default();
     l.lights = vec![];
@@ -442,10 +470,16 @@ fn controls_basics(app: &mut App, ui: &mut egui::Ui) {
 
     ui.checkbox(&mut app.sl_state.animate, "Animate lights");
     ui.checkbox(&mut app.sl_state.show_glyphs, "Show position glyphs");
-    ui.add(egui::Slider::new(&mut app.sl_state.hemi_intensity, 0.0..=1.0).text("Hemisphere ambient"));
+    ui.add(
+        egui::Slider::new(&mut app.sl_state.hemi_intensity, 0.0..=1.0).text("Hemisphere ambient"),
+    );
     ui.separator();
 
-    let names = ["Point (warm, orbits)", "Spot (cool, orbits)", "Directional (fill)"];
+    let names = [
+        "Point (warm, orbits)",
+        "Spot (cool, orbits)",
+        "Directional (fill)",
+    ];
     for i in 0..3 {
         egui::CollapsingHeader::new(names[i])
             .id_salt(i + 200)
@@ -461,23 +495,54 @@ fn controls_basics(app: &mut App, ui: &mut egui::Ui) {
                     LightKind::Point { range, .. } => {
                         ui.add(egui::Slider::new(range, 1.0..=40.0).text("Range"));
                     }
-                    LightKind::Spot { range, inner_angle, outer_angle, .. } => {
+                    LightKind::Spot {
+                        range,
+                        inner_angle,
+                        outer_angle,
+                        ..
+                    } => {
                         ui.add(egui::Slider::new(range, 1.0..=40.0).text("Range"));
                         let mut id = inner_angle.to_degrees();
                         let mut od = outer_angle.to_degrees();
-                        if ui.add(egui::Slider::new(&mut id, 1.0..=44.0).suffix("deg").text("Inner")).changed() {
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut id, 1.0..=44.0)
+                                    .suffix("deg")
+                                    .text("Inner"),
+                            )
+                            .changed()
+                        {
                             *inner_angle = id.to_radians();
                         }
-                        if ui.add(egui::Slider::new(&mut od, 2.0..=89.0).suffix("deg").text("Outer")).changed() {
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut od, 2.0..=89.0)
+                                    .suffix("deg")
+                                    .text("Outer"),
+                            )
+                            .changed()
+                        {
                             *outer_angle = od.to_radians();
                         }
                     }
                     LightKind::Directional { direction } => {
                         ui.horizontal(|ui| {
                             ui.label("Direction:");
-                            ui.add(egui::DragValue::new(&mut direction[0]).speed(0.02).prefix("X "));
-                            ui.add(egui::DragValue::new(&mut direction[1]).speed(0.02).prefix("Y "));
-                            ui.add(egui::DragValue::new(&mut direction[2]).speed(0.02).prefix("Z "));
+                            ui.add(
+                                egui::DragValue::new(&mut direction[0])
+                                    .speed(0.02)
+                                    .prefix("X "),
+                            );
+                            ui.add(
+                                egui::DragValue::new(&mut direction[1])
+                                    .speed(0.02)
+                                    .prefix("Y "),
+                            );
+                            ui.add(
+                                egui::DragValue::new(&mut direction[2])
+                                    .speed(0.02)
+                                    .prefix("Z "),
+                            );
                         });
                     }
                     _ => {}
@@ -500,14 +565,20 @@ fn controls_stress(app: &mut App, ui: &mut egui::Ui) {
     });
     ui.horizontal(|ui| {
         ui.label("Per-light range:");
-        let resp = ui.add(egui::Slider::new(&mut app.sl_state.stress_radius, 1.0..=12.0));
+        let resp = ui.add(egui::Slider::new(
+            &mut app.sl_state.stress_radius,
+            1.0..=12.0,
+        ));
         if resp.changed() {
             dirty = true;
         }
     });
     ui.horizontal(|ui| {
         ui.label("Per-light intensity:");
-        let resp = ui.add(egui::Slider::new(&mut app.sl_state.stress_intensity, 0.5..=15.0));
+        let resp = ui.add(egui::Slider::new(
+            &mut app.sl_state.stress_intensity,
+            0.5..=15.0,
+        ));
         if resp.changed() {
             dirty = true;
         }
@@ -524,7 +595,11 @@ fn controls_stress(app: &mut App, ui: &mut egui::Ui) {
     });
     ui.horizontal(|ui| {
         if ui.button("Reseed").clicked() {
-            app.sl_state.stress_seed = app.sl_state.stress_seed.wrapping_mul(2_654_435_761).wrapping_add(1);
+            app.sl_state.stress_seed = app
+                .sl_state
+                .stress_seed
+                .wrapping_mul(2_654_435_761)
+                .wrapping_add(1);
             dirty = true;
         }
         ui.checkbox(&mut app.sl_state.stress_animate, "Animate");

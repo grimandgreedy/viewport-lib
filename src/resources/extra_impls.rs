@@ -670,7 +670,9 @@ impl ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("compute_filter_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/compute_filter.wgsl")).into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/compute_filter.wgsl")).into(),
+            ),
         });
 
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -685,7 +687,6 @@ impl ViewportGpuResources {
         self.compute_filter_bgl = Some(bgl);
         self.compute_filter_pipeline = Some(pipeline);
     }
-
 
     /// Dispatch GPU compute filters for all items in the list.
     ///
@@ -1023,7 +1024,9 @@ impl ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("pick_id_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/pick_id.wgsl")).into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/pick_id.wgsl")).into(),
+            ),
         });
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

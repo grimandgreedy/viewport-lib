@@ -209,7 +209,10 @@ pub(crate) fn controls_overlay(app: &mut App, ui: &mut egui::Ui) {
         app.ovl_state.bg_colour[2] = rgb[2];
     }
     ui.label("Background opacity:");
-    ui.add(egui::Slider::new(&mut app.ovl_state.bg_colour[3], 0.0..=1.0));
+    ui.add(egui::Slider::new(
+        &mut app.ovl_state.bg_colour[3],
+        0.0..=1.0,
+    ));
 
     ui.separator();
     ui.checkbox(&mut app.ovl_state.show_ruler, "Show ruler");
@@ -228,13 +231,13 @@ pub(crate) fn controls_overlay(app: &mut App, ui: &mut egui::Ui) {
 
     ui.separator();
     ui.label("Backdrop blur:");
-    ui.add(
-        egui::Slider::new(&mut app.ovl_state.backdrop_blur_radius, 0.0..=40.0)
-            .text("radius"),
-    );
+    ui.add(egui::Slider::new(&mut app.ovl_state.backdrop_blur_radius, 0.0..=40.0).text("radius"));
 
     ui.separator();
-    ui.checkbox(&mut app.ovl_state.show_tex_shapes, "Show texture-masked shapes");
+    ui.checkbox(
+        &mut app.ovl_state.show_tex_shapes,
+        "Show texture-masked shapes",
+    );
     if app.ovl_state.tex_id.is_none() {
         ui.label(egui::RichText::new("(texture not yet uploaded)").weak());
     }
@@ -272,7 +275,12 @@ pub(crate) fn build_ovl_cloud() -> (Vec<[f32; 3]>, Vec<f32>) {
 
 pub(crate) fn build_overlay_frame(
     app: &App,
-) -> (Vec<OverlayShapeItem>, Vec<LabelItem>, ScalarBarItem, Option<RulerItem>) {
+) -> (
+    Vec<OverlayShapeItem>,
+    Vec<LabelItem>,
+    ScalarBarItem,
+    Option<RulerItem>,
+) {
     let colourmap_id = ColourmapId(app.ovl_state.colourmap as usize);
 
     let bar = ScalarBarItem {
@@ -343,49 +351,79 @@ pub(crate) fn build_overlay_frame(
 
         let mut items: Vec<(f32, f32, OverlayShape, [f32; 4], [f32; 4])> = vec![
             // Rounded rect
-            (120.0, 70.0,
-             OverlayShape::Rect { corner_radius: cr },
-             [0.12, 0.12, 0.18, 0.85],
-             [0.8, 0.8, 0.8, 0.9]),
+            (
+                120.0,
+                70.0,
+                OverlayShape::Rect { corner_radius: cr },
+                [0.12, 0.12, 0.18, 0.85],
+                [0.8, 0.8, 0.8, 0.9],
+            ),
             // Per-corner radii rect
-            (120.0, 70.0,
-             OverlayShape::RoundedRect { radii: [cr, 0.0, cr, 0.0] },
-             [0.05, 0.15, 0.25, 0.85],
-             [0.3, 0.7, 1.0, 0.9]),
+            (
+                120.0,
+                70.0,
+                OverlayShape::RoundedRect {
+                    radii: [cr, 0.0, cr, 0.0],
+                },
+                [0.05, 0.15, 0.25, 0.85],
+                [0.3, 0.7, 1.0, 0.9],
+            ),
             // Circle
-            (70.0, 70.0,
-             OverlayShape::Circle,
-             [0.2, 0.5, 0.15, 0.85],
-             [0.4, 1.0, 0.3, 0.9]),
+            (
+                70.0,
+                70.0,
+                OverlayShape::Circle,
+                [0.2, 0.5, 0.15, 0.85],
+                [0.4, 1.0, 0.3, 0.9],
+            ),
             // Ellipse
-            (120.0, 60.0,
-             OverlayShape::Ellipse,
-             [0.3, 0.1, 0.3, 0.85],
-             [0.8, 0.4, 1.0, 0.9]),
+            (
+                120.0,
+                60.0,
+                OverlayShape::Ellipse,
+                [0.3, 0.1, 0.3, 0.85],
+                [0.8, 0.4, 1.0, 0.9],
+            ),
             // Capsule
-            (120.0, 40.0,
-             OverlayShape::Capsule,
-             [0.3, 0.2, 0.05, 0.85],
-             [1.0, 0.8, 0.3, 0.9]),
+            (
+                120.0,
+                40.0,
+                OverlayShape::Capsule,
+                [0.3, 0.2, 0.05, 0.85],
+                [1.0, 0.8, 0.3, 0.9],
+            ),
             // Ring
-            (70.0, 70.0,
-             OverlayShape::Ring { inner_radius_frac: 0.65 },
-             [0.15, 0.35, 0.5, 0.85],
-             [0.3, 0.8, 1.0, 0.9]),
+            (
+                70.0,
+                70.0,
+                OverlayShape::Ring {
+                    inner_radius_frac: 0.65,
+                },
+                [0.15, 0.35, 0.5, 0.85],
+                [0.3, 0.8, 1.0, 0.9],
+            ),
             // Arc (270-degree sweep)
-            (70.0, 70.0,
-             OverlayShape::Arc {
-                 inner_radius_frac: 0.6,
-                 start_angle: 0.0,
-                 end_angle: std::f32::consts::PI * 1.5,
-             },
-             [0.5, 0.2, 0.1, 0.85],
-             [1.0, 0.5, 0.2, 0.9]),
+            (
+                70.0,
+                70.0,
+                OverlayShape::Arc {
+                    inner_radius_frac: 0.6,
+                    start_angle: 0.0,
+                    end_angle: std::f32::consts::PI * 1.5,
+                },
+                [0.5, 0.2, 0.1, 0.85],
+                [1.0, 0.5, 0.2, 0.9],
+            ),
             // Triangle (pointing up)
-            (60.0, 60.0,
-             OverlayShape::Triangle { direction: TriangleDirection::Up },
-             [0.4, 0.4, 0.1, 0.85],
-             [1.0, 1.0, 0.3, 0.9]),
+            (
+                60.0,
+                60.0,
+                OverlayShape::Triangle {
+                    direction: TriangleDirection::Up,
+                },
+                [0.4, 0.4, 0.1, 0.85],
+                [1.0, 1.0, 0.3, 0.9],
+            ),
         ];
 
         for (w, h, shape, colour, border_colour) in items.drain(..) {
@@ -459,7 +497,7 @@ pub(crate) fn build_overlay_frame(
                 shape: OverlayShape::Rect { corner_radius: cr },
                 fill: OverlayFill::LinearGradient {
                     start_colour: [0.05, 0.15, 0.55, 0.9],
-                    end_colour:   [0.05, 0.65, 0.65, 0.9],
+                    end_colour: [0.05, 0.65, 0.65, 0.9],
                     angle: 0.0,
                 },
                 border_colour: [0.3, 0.7, 1.0, 0.8],
@@ -472,10 +510,12 @@ pub(crate) fn build_overlay_frame(
             shapes.push(OverlayShapeItem {
                 position: [x3, y3_mid - row3_h * 0.5],
                 size: [120.0, row3_h],
-                shape: OverlayShape::RoundedRect { radii: [cr, 0.0, cr, 0.0] },
+                shape: OverlayShape::RoundedRect {
+                    radii: [cr, 0.0, cr, 0.0],
+                },
                 fill: OverlayFill::LinearGradient {
                     start_colour: [0.5, 0.05, 0.15, 0.9],
-                    end_colour:   [1.0, 0.6, 0.1, 0.9],
+                    end_colour: [1.0, 0.6, 0.1, 0.9],
                     angle: PI / 4.0,
                 },
                 border_colour: [1.0, 0.5, 0.2, 0.8],
@@ -491,7 +531,7 @@ pub(crate) fn build_overlay_frame(
                 shape: OverlayShape::Circle,
                 fill: OverlayFill::LinearGradient {
                     start_colour: [0.05, 0.35, 0.05, 0.9],
-                    end_colour:   [0.5, 1.0, 0.3, 0.9],
+                    end_colour: [0.5, 1.0, 0.3, 0.9],
                     angle: PI / 2.0,
                 },
                 border_colour: [0.4, 1.0, 0.3, 0.8],
@@ -507,7 +547,7 @@ pub(crate) fn build_overlay_frame(
                 shape: OverlayShape::Ellipse,
                 fill: OverlayFill::LinearGradient {
                     start_colour: [0.35, 0.05, 0.55, 0.9],
-                    end_colour:   [0.9, 0.3, 0.6, 0.9],
+                    end_colour: [0.9, 0.3, 0.6, 0.9],
                     angle: 0.0,
                 },
                 border_colour: [0.8, 0.4, 1.0, 0.8],
@@ -523,7 +563,7 @@ pub(crate) fn build_overlay_frame(
                 shape: OverlayShape::Capsule,
                 fill: OverlayFill::LinearGradient {
                     start_colour: [0.15, 0.15, 0.15, 0.9],
-                    end_colour:   [0.85, 0.85, 0.85, 0.9],
+                    end_colour: [0.85, 0.85, 0.85, 0.9],
                     angle: 0.0,
                 },
                 border_colour: [0.6, 0.6, 0.6, 0.8],
@@ -536,10 +576,12 @@ pub(crate) fn build_overlay_frame(
             shapes.push(OverlayShapeItem {
                 position: [x3, y3_mid - row3_h * 0.5],
                 size: [row3_h, row3_h],
-                shape: OverlayShape::Ring { inner_radius_frac: 0.65 },
+                shape: OverlayShape::Ring {
+                    inner_radius_frac: 0.65,
+                },
                 fill: OverlayFill::LinearGradient {
                     start_colour: [0.1, 0.3, 0.6, 0.9],
-                    end_colour:   [0.7, 0.9, 1.0, 0.9],
+                    end_colour: [0.7, 0.9, 1.0, 0.9],
                     angle: -PI / 4.0,
                 },
                 border_colour: [0.3, 0.7, 1.0, 0.8],
@@ -552,10 +594,12 @@ pub(crate) fn build_overlay_frame(
             shapes.push(OverlayShapeItem {
                 position: [x3, y3_mid - row3_h * 0.5],
                 size: [60.0, row3_h],
-                shape: OverlayShape::Triangle { direction: TriangleDirection::Up },
+                shape: OverlayShape::Triangle {
+                    direction: TriangleDirection::Up,
+                },
                 fill: OverlayFill::LinearGradient {
                     start_colour: [0.7, 0.15, 0.05, 0.9],
-                    end_colour:   [1.0, 0.9, 0.1, 0.9],
+                    end_colour: [1.0, 0.9, 0.1, 0.9],
                     angle: PI / 2.0,
                 },
                 border_colour: [1.0, 0.6, 0.2, 0.8],
@@ -638,7 +682,9 @@ pub(crate) fn build_overlay_frame(
             shapes.push(OverlayShapeItem {
                 position: [x4, y4_mid - row4_h * 0.5],
                 size: [60.0, row4_h],
-                shape: OverlayShape::Triangle { direction: TriangleDirection::Up },
+                shape: OverlayShape::Triangle {
+                    direction: TriangleDirection::Up,
+                },
                 fill: OverlayFill::Solid([0.05, 0.25, 0.1, 0.95]),
                 border_colour: [0.3, 1.0, 0.4, 0.9],
                 border_width: bw,
@@ -655,7 +701,8 @@ pub(crate) fn build_overlay_frame(
         // ---------------------------------------------------------------------------
         {
             let row5_h = 70.0_f32;
-            let y5_mid = 20.0 + row_h + 24.0 + 90.0 + 24.0 + 70.0 + 24.0 + 70.0 + 24.0 + row5_h * 0.5;
+            let y5_mid =
+                20.0 + row_h + 24.0 + 90.0 + 24.0 + 70.0 + 24.0 + 70.0 + 24.0 + row5_h * 0.5;
             let mut x5 = 20.0_f32;
 
             // Inset border (default).
@@ -738,15 +785,28 @@ pub(crate) fn build_overlay_frame(
         // ---------------------------------------------------------------------------
         {
             let row6_h = 70.0_f32;
-            let y6_mid = 20.0 + row_h + 24.0 + 90.0 + 24.0 + 70.0 + 24.0 + 70.0
-                + 24.0 + 70.0 + 24.0 + row6_h * 0.5;
+            let y6_mid = 20.0
+                + row_h
+                + 24.0
+                + 90.0
+                + 24.0
+                + 70.0
+                + 24.0
+                + 70.0
+                + 24.0
+                + 70.0
+                + 24.0
+                + row6_h * 0.5;
             let mut x6 = 20.0_f32;
 
             // Diagonal line (round cap).
             shapes.push(OverlayShapeItem {
                 position: [x6, y6_mid - row6_h * 0.5],
                 size: [100.0, row6_h],
-                shape: OverlayShape::Line { thickness: 6.0, cap: LineCap::Round },
+                shape: OverlayShape::Line {
+                    thickness: 6.0,
+                    cap: LineCap::Round,
+                },
                 fill: OverlayFill::Solid([0.2, 0.7, 1.0, 0.9]),
                 border_colour: [0.5, 0.9, 1.0, 0.9],
                 border_width: bw,
@@ -758,7 +818,10 @@ pub(crate) fn build_overlay_frame(
             shapes.push(OverlayShapeItem {
                 position: [x6, y6_mid - 2.0],
                 size: [120.0, 4.0],
-                shape: OverlayShape::Line { thickness: 4.0, cap: LineCap::Square },
+                shape: OverlayShape::Line {
+                    thickness: 4.0,
+                    cap: LineCap::Square,
+                },
                 fill: OverlayFill::Solid([1.0, 0.6, 0.2, 0.9]),
                 border_colour: [1.0, 0.8, 0.4, 0.9],
                 border_width: 0.0,
@@ -770,7 +833,10 @@ pub(crate) fn build_overlay_frame(
             shapes.push(OverlayShapeItem {
                 position: [x6, y6_mid - row6_h * 0.5],
                 size: [row6_h, row6_h],
-                shape: OverlayShape::Star { points: 5, inner_radius_frac: 0.45 },
+                shape: OverlayShape::Star {
+                    points: 5,
+                    inner_radius_frac: 0.45,
+                },
                 fill: OverlayFill::Solid([1.0, 0.85, 0.1, 0.9]),
                 border_colour: [1.0, 1.0, 0.5, 0.9],
                 border_width: bw,
@@ -782,7 +848,10 @@ pub(crate) fn build_overlay_frame(
             shapes.push(OverlayShapeItem {
                 position: [x6, y6_mid - row6_h * 0.5],
                 size: [row6_h, row6_h],
-                shape: OverlayShape::Star { points: 6, inner_radius_frac: 0.5 },
+                shape: OverlayShape::Star {
+                    points: 6,
+                    inner_radius_frac: 0.5,
+                },
                 fill: OverlayFill::Solid([0.9, 0.3, 0.9, 0.9]),
                 border_colour: [1.0, 0.6, 1.0, 0.9],
                 border_width: bw,
@@ -818,7 +887,9 @@ pub(crate) fn build_overlay_frame(
             shapes.push(OverlayShapeItem {
                 position: [x6, y6_mid - row6_h * 0.5],
                 size: [row6_h, row6_h],
-                shape: OverlayShape::Cross { arm_width_frac: 0.35 },
+                shape: OverlayShape::Cross {
+                    arm_width_frac: 0.35,
+                },
                 fill: OverlayFill::Solid([0.9, 0.2, 0.2, 0.9]),
                 border_colour: [1.0, 0.5, 0.5, 0.9],
                 border_width: bw,
@@ -830,7 +901,9 @@ pub(crate) fn build_overlay_frame(
             shapes.push(OverlayShapeItem {
                 position: [x6, y6_mid - row6_h * 0.5],
                 size: [row6_h, row6_h],
-                shape: OverlayShape::Cross { arm_width_frac: 0.2 },
+                shape: OverlayShape::Cross {
+                    arm_width_frac: 0.2,
+                },
                 fill: OverlayFill::LinearGradient {
                     start_colour: [1.0, 0.3, 0.1, 0.9],
                     end_colour: [0.1, 0.3, 1.0, 0.9],

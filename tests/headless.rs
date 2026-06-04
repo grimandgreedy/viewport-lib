@@ -367,13 +367,12 @@ fn position_override_takes_effect_through_render_path() {
 
     let mut blue_item = SceneRenderItem::default();
     blue_item.mesh_id = blue_id;
-    blue_item.model = glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0))
-        .to_cols_array_2d();
+    blue_item.model =
+        glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0)).to_cols_array_2d();
     blue_item.material = Material::from_colour([0.0, 0.0, 1.0]);
 
-    frame.scene.surfaces = SurfaceSubmission::Flat(
-        vec![red_item.clone(), blue_item.clone()].into(),
-    );
+    frame.scene.surfaces =
+        SurfaceSubmission::Flat(vec![red_item.clone(), blue_item.clone()].into());
 
     // ---- Render 1: no override. The red plane should be visible. ----
     let baseline = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
@@ -395,9 +394,7 @@ fn position_override_takes_effect_through_render_path() {
     // disappears regardless of whether instancing is active. If the bug
     // returns, the red plane stays put because the instanced shader ignores
     // the override.
-    let displaced: Vec<f32> = (0..4)
-        .flat_map(|_| [0.0_f32, 0.0, -1000.0])
-        .collect();
+    let displaced: Vec<f32> = (0..4).flat_map(|_| [0.0_f32, 0.0, -1000.0]).collect();
     let override_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("test_position_override"),
         size: (displaced.len() * std::mem::size_of::<f32>()) as u64,

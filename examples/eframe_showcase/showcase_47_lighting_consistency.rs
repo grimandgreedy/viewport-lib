@@ -28,7 +28,8 @@ use viewport_lib::{
     GlyphType, GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
     ItemSettings, LightSource, LightingSettings, Material, MeshId, PointCloudItem, PolylineItem,
     ProjectedTetId, RibbonItem, SceneRenderItem, ShDegree, StreamtubeItem, TensorGlyphItem,
-    TransparentVolumeMeshItem, TubeItem, ViewportRenderer, VolumeId, VolumeItem, VolumeSurfaceSliceItem,
+    TransparentVolumeMeshItem, TubeItem, ViewportRenderer, VolumeId, VolumeItem,
+    VolumeSurfaceSliceItem,
 };
 
 use crate::App;
@@ -162,11 +163,8 @@ impl App {
             for i in 0..7 {
                 let t = i as f32 / 6.0;
                 let theta = t * std::f32::consts::TAU;
-                sd.positions.push([
-                    0.7 * theta.cos(),
-                    (t - 0.5) * 0.6,
-                    0.7 * theta.sin(),
-                ]);
+                sd.positions
+                    .push([0.7 * theta.cos(), (t - 0.5) * 0.6, 0.7 * theta.sin()]);
                 sd.scales.push([0.22, 0.22, 0.22]);
                 sd.rotations.push([0.0, 0.0, 0.0, 1.0]);
                 sd.opacities.push(0.9);
@@ -174,9 +172,10 @@ impl App {
                 sd.sh_coefficients
                     .extend_from_slice(&[0.5 + 0.4 * t, 0.7 - 0.4 * t, 0.95]);
             }
-            if let Ok(sid) = renderer
-                .resources_mut()
-                .upload_gaussian_splats(&self.device, &self.queue, &sd)
+            if let Ok(sid) =
+                renderer
+                    .resources_mut()
+                    .upload_gaussian_splats(&self.device, &self.queue, &sd)
             {
                 self.lc_state.splat_id = Some(sid);
             }
@@ -197,9 +196,10 @@ impl App {
                     }
                 }
             }
-            let vid = renderer
-                .resources_mut()
-                .upload_volume(&self.device, &self.queue, &data, dims);
+            let vid =
+                renderer
+                    .resources_mut()
+                    .upload_volume(&self.device, &self.queue, &data, dims);
             self.lc_state.volume_id = Some(vid);
             self.lc_state.volume_scalar_range = (-0.4, 0.7);
         }
@@ -220,7 +220,7 @@ impl App {
         // TVM carries no model matrix, so the tet is uploaded at its grid-cell
         // world position (row 2, col 2) by translating the vertices here.
         {
-            use viewport_lib::resources::volume_mesh::{VolumeMeshData, CELL_SENTINEL};
+            use viewport_lib::resources::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
             let p = cell(2, 2);
             let mut data = VolumeMeshData::default();
             data.positions = vec![
@@ -229,9 +229,17 @@ impl App {
                 [p.x, p.y + 0.9, p.z - 0.9],
                 [p.x, p.y, p.z + 0.9],
             ];
-            data.cells = vec![[0, 1, 2, 3, CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL, CELL_SENTINEL]];
-            data.cell_scalars
-                .insert("scalar".to_string(), vec![0.6]);
+            data.cells = vec![[
+                0,
+                1,
+                2,
+                3,
+                CELL_SENTINEL,
+                CELL_SENTINEL,
+                CELL_SENTINEL,
+                CELL_SENTINEL,
+            ]];
+            data.cell_scalars.insert("scalar".to_string(), vec![0.6]);
             renderer
                 .resources_mut()
                 .ensure_colourmaps_initialized(&self.device, &self.queue);
@@ -300,7 +308,10 @@ pub(crate) fn controls_lc(app: &mut App, ui: &mut egui::Ui) {
     ui.weak("Every flag below is applied to every item type each frame.");
     ui.weak("Where the type has no support, the flag is accepted-but-no-op.");
     ui.checkbox(&mut s.bcast_hidden, "hidden  (every item disappears)");
-    ui.checkbox(&mut s.bcast_unlit, "unlit  (skip lighting where applicable)");
+    ui.checkbox(
+        &mut s.bcast_unlit,
+        "unlit  (skip lighting where applicable)",
+    );
     ui.add(egui::Slider::new(&mut s.bcast_opacity, 0.0..=1.0).text("opacity"));
     ui.checkbox(&mut s.bcast_wireframe, "wireframe (where supported)");
     ui.checkbox(
@@ -445,8 +456,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
             let r = 0.7;
             g.positions
                 .push([p.x + r * theta.cos(), p.y, p.z + r * theta.sin()]);
-            g.vectors
-                .push([-theta.sin() * 0.6, 0.0, theta.cos() * 0.6]);
+            g.vectors.push([-theta.sin() * 0.6, 0.0, theta.cos() * 0.6]);
         }
         g.use_default_colour = true;
         g.default_colour = [0.95, 0.7, 0.3, 1.0];
@@ -463,11 +473,8 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
             let dx = (i as f32 - 1.0) * 0.7;
             tg.positions.push([p.x + dx, p.y, p.z]);
             tg.eigenvalues.push([0.55, 0.35, 0.20]);
-            tg.eigenvectors.push([
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0],
-            ]);
+            tg.eigenvectors
+                .push([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
         }
         broadcast(s, &mut tg.settings);
         fd.scene.tensor_glyphs.push(tg);

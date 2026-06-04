@@ -43,7 +43,9 @@ impl ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("polyline_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/polyline.wgsl")).into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/polyline.wgsl")).into(),
+            ),
         });
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -296,20 +298,20 @@ impl ViewportGpuResources {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct SegInstance {
-            pos_a: [f32; 3],       // offset   0
-            pos_b: [f32; 3],       // offset  12
-            prev_pos: [f32; 3],    // offset  24
-            next_pos: [f32; 3],    // offset  36
-            scalar_a: f32,         // offset  48
-            scalar_b: f32,         // offset  52
-            has_prev: u32,         // offset  56
-            has_next: u32,         // offset  60
+            pos_a: [f32; 3],        // offset   0
+            pos_b: [f32; 3],        // offset  12
+            prev_pos: [f32; 3],     // offset  24
+            next_pos: [f32; 3],     // offset  36
+            scalar_a: f32,          // offset  48
+            scalar_b: f32,          // offset  52
+            has_prev: u32,          // offset  56
+            has_next: u32,          // offset  60
             colour_a: [f32; 4],     // offset  64
             colour_b: [f32; 4],     // offset  80
-            radius_a: f32,         // offset  96
-            radius_b: f32,         // offset 100
+            radius_a: f32,          // offset  96
+            radius_b: f32,          // offset 100
             use_direct_colour: u32, // offset 104
-            _pad: u32,             // offset 108
+            _pad: u32,              // offset 108
         }
 
         // Determine which colour/scalar/radius source to use per segment.
@@ -421,7 +423,9 @@ impl ViewportGpuResources {
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("polyline_vertex_buf"),
             size: seg_bytes.len().max(112) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::VERTEX
+                | wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         if !seg_bytes.is_empty() {
@@ -452,13 +456,13 @@ impl ViewportGpuResources {
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct PolylineUniform {
             default_colour: [f32; 4], // offset  0
-            line_width: f32,         // offset 16
-            scalar_min: f32,         // offset 20
-            scalar_max: f32,         // offset 24
-            has_scalar: u32,         // offset 28
-            viewport_width: f32,     // offset 32
-            viewport_height: f32,    // offset 36
-            _pad: [f32; 2],          // offset 40  (total 48 bytes)
+            line_width: f32,          // offset 16
+            scalar_min: f32,          // offset 20
+            scalar_max: f32,          // offset 24
+            has_scalar: u32,          // offset 28
+            viewport_width: f32,      // offset 32
+            viewport_height: f32,     // offset 36
+            _pad: [f32; 2],           // offset 40  (total 48 bytes)
         }
         let uniform_data = PolylineUniform {
             default_colour: item.default_colour,
@@ -549,7 +553,9 @@ impl ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("polyline_no_clip_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/polyline.wgsl")).into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/polyline.wgsl")).into(),
+            ),
         });
 
         let pl_bgl = self
@@ -715,19 +721,71 @@ impl ViewportGpuResources {
             array_stride: 112,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &[
-                wgpu::VertexAttribute { offset: 0,   shader_location: 0,  format: wgpu::VertexFormat::Float32x3 },
-                wgpu::VertexAttribute { offset: 12,  shader_location: 1,  format: wgpu::VertexFormat::Float32x3 },
-                wgpu::VertexAttribute { offset: 24,  shader_location: 2,  format: wgpu::VertexFormat::Float32x3 },
-                wgpu::VertexAttribute { offset: 36,  shader_location: 3,  format: wgpu::VertexFormat::Float32x3 },
-                wgpu::VertexAttribute { offset: 48,  shader_location: 4,  format: wgpu::VertexFormat::Float32   },
-                wgpu::VertexAttribute { offset: 52,  shader_location: 5,  format: wgpu::VertexFormat::Float32   },
-                wgpu::VertexAttribute { offset: 56,  shader_location: 6,  format: wgpu::VertexFormat::Uint32    },
-                wgpu::VertexAttribute { offset: 60,  shader_location: 7,  format: wgpu::VertexFormat::Uint32    },
-                wgpu::VertexAttribute { offset: 64,  shader_location: 8,  format: wgpu::VertexFormat::Float32x4 },
-                wgpu::VertexAttribute { offset: 80,  shader_location: 9,  format: wgpu::VertexFormat::Float32x4 },
-                wgpu::VertexAttribute { offset: 96,  shader_location: 10, format: wgpu::VertexFormat::Float32   },
-                wgpu::VertexAttribute { offset: 100, shader_location: 11, format: wgpu::VertexFormat::Float32   },
-                wgpu::VertexAttribute { offset: 104, shader_location: 12, format: wgpu::VertexFormat::Uint32    },
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: 12,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: 24,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: 36,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: 48,
+                    shader_location: 4,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                wgpu::VertexAttribute {
+                    offset: 52,
+                    shader_location: 5,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                wgpu::VertexAttribute {
+                    offset: 56,
+                    shader_location: 6,
+                    format: wgpu::VertexFormat::Uint32,
+                },
+                wgpu::VertexAttribute {
+                    offset: 60,
+                    shader_location: 7,
+                    format: wgpu::VertexFormat::Uint32,
+                },
+                wgpu::VertexAttribute {
+                    offset: 64,
+                    shader_location: 8,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: 80,
+                    shader_location: 9,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: 96,
+                    shader_location: 10,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                wgpu::VertexAttribute {
+                    offset: 100,
+                    shader_location: 11,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                wgpu::VertexAttribute {
+                    offset: 104,
+                    shader_location: 12,
+                    format: wgpu::VertexFormat::Uint32,
+                },
             ],
         };
 

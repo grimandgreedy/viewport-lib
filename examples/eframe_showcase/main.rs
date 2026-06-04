@@ -2,12 +2,12 @@
 
 use eframe::egui;
 use viewport_lib::{
-    Action, AttributeKind, AttributeRef, BackfacePolicy, ButtonState, Camera,
-    CameraAnimator, CameraFrame, ClipObject, ColourmapId, FrameData, GizmoAxis, GizmoInfo,
-    GizmoMode, GroundPlane, GroundPlaneMode, LightKind, LightSource, LightingSettings,
-    ManipResult, ManipulationContext, MeshData, MeshId, OrbitCameraController, PickId,
-    PointCloudItem, PostProcessSettings, RenderCamera, RuntimeMode, SceneFrame, SceneRenderItem,
-    ScrollUnits, Selection, ShadowFilter, ViewportContext, ViewportEvent, ViewportRenderer,
+    Action, AttributeKind, AttributeRef, BackfacePolicy, ButtonState, Camera, CameraAnimator,
+    CameraFrame, ClipObject, ColourmapId, FrameData, GizmoAxis, GizmoInfo, GizmoMode, GroundPlane,
+    GroundPlaneMode, LightKind, LightSource, LightingSettings, ManipResult, ManipulationContext,
+    MeshData, MeshId, OrbitCameraController, PickId, PointCloudItem, PostProcessSettings,
+    RenderCamera, RuntimeMode, SceneFrame, SceneRenderItem, ScrollUnits, Selection, ShadowFilter,
+    ViewportContext, ViewportEvent, ViewportRenderer,
     gizmo::{self, compute_gizmo_scale},
     scene::Scene,
 };
@@ -771,8 +771,7 @@ impl eframe::App for App {
                                 pressed,
                                 repeat,
                                 ..
-                            } if self.mode == ShowcaseMode::Interaction =>
-                            {
+                            } if self.mode == ShowcaseMode::Interaction => {
                                 if let Some(kc) = shared::egui_key_to_keycode(*key) {
                                     self.controller.push_event(ViewportEvent::Key {
                                         key: kc,
@@ -1401,7 +1400,9 @@ impl eframe::App for App {
                 if self.mode == ShowcaseMode::SceneRuntime && self.rt_state.built {
                     let dt = ctx.input(|i| i.stable_dt.min(0.25));
                     showcase_43_scene_runtime::update_rt_demo(self, dt);
-                    if !self.rt_state.paused || self.rt_state.demo == showcase_43_scene_runtime::RuntimeDemo::Orbit {
+                    if !self.rt_state.paused
+                        || self.rt_state.demo == showcase_43_scene_runtime::RuntimeDemo::Orbit
+                    {
                         ctx.request_repaint();
                     }
                 }
@@ -1514,7 +1515,9 @@ impl App {
             };
             match next {
                 Some(i) => {
-                    let t = showcase_27_camera_framing::frustum_view_target(&self.aux_state.frustums[i]);
+                    let t = showcase_27_camera_framing::frustum_view_target(
+                        &self.aux_state.frustums[i],
+                    );
                     self.cam_animator.fly_to(
                         &self.camera,
                         t.center,
@@ -1947,19 +1950,18 @@ impl App {
                 self.ovl_state.cloud_built = true;
                 let (tw, th, tdata) = showcase_35_overlay::build_demo_texture();
                 self.ovl_state.tex_id = Some(
-                    renderer.resources_mut().upload_overlay_texture(
-                        &rs.device, &rs.queue, tw, th, &tdata,
-                    ),
+                    renderer
+                        .resources_mut()
+                        .upload_overlay_texture(&rs.device, &rs.queue, tw, th, &tdata),
                 );
-                self.ovl_state.carlgauss_tex_id = Some(
-                    renderer.resources_mut().upload_overlay_texture(
+                self.ovl_state.carlgauss_tex_id =
+                    Some(renderer.resources_mut().upload_overlay_texture(
                         &rs.device,
                         &rs.queue,
                         showcase_35_overlay::CARLGAUSS_WIDTH,
                         showcase_35_overlay::CARLGAUSS_HEIGHT,
                         showcase_35_overlay::CARLGAUSS_RGBA,
-                    ),
-                );
+                    ));
                 self.camera = Camera {
                     center: glam::Vec3::new(0.0, 1.57, 0.0),
                     distance: 9.0,
@@ -2183,30 +2185,18 @@ impl App {
             ShowcaseMode::GaussianSplats => {
                 showcase_42_gaussian_splats::controls_gaussian_splats(self, ui)
             }
-            ShowcaseMode::SceneRuntime => {
-                showcase_43_scene_runtime::controls_rt_demo(self, ui)
-            }
-            ShowcaseMode::DebugDraw => {
-                showcase_44_debug_draw::controls_dbg_draw(self, ui)
-            }
+            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::controls_rt_demo(self, ui),
+            ShowcaseMode::DebugDraw => showcase_44_debug_draw::controls_dbg_draw(self, ui),
             ShowcaseMode::SkinnedAnimation => {
                 showcase_45_skinned_animation::controls_skin47(self, ui)
             }
-            ShowcaseMode::Decals => {
-                showcase_46_decals::controls_decal46(self, ui)
-            }
+            ShowcaseMode::Decals => showcase_46_decals::controls_decal46(self, ui),
             ShowcaseMode::LightingConsistency => {
                 showcase_47_lighting_consistency::controls_lc(self, ui)
             }
-            ShowcaseMode::ScatterVolumes => {
-                showcase_48_scatter_volumes::controls_svol(self, ui)
-            }
-            ShowcaseMode::SceneLights => {
-                showcase_49_scene_lights::controls_sl(self, ui)
-            }
-            ShowcaseMode::GpuWave => {
-                showcase_50_gpu_wave::controls_wave(self, ui)
-            }
+            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::controls_svol(self, ui),
+            ShowcaseMode::SceneLights => showcase_49_scene_lights::controls_sl(self, ui),
+            ShowcaseMode::GpuWave => showcase_50_gpu_wave::controls_wave(self, ui),
         }
     }
 }
@@ -2498,8 +2488,7 @@ impl App {
                 unreachable!("MultiViewport is handled before build_frame_data")
             }
             ShowcaseMode::Isolines => {
-                let (items, lighting, sg, ss) =
-                    showcase_14_isolines::iso_collect_scene_items(self);
+                let (items, lighting, sg, ss) = showcase_14_isolines::iso_collect_scene_items(self);
                 (items, Some(BG_COLOUR), lighting, sg, ss)
             }
 
@@ -2516,8 +2505,7 @@ impl App {
             }
 
             ShowcaseMode::Volume => {
-                let (items, lighting, sg, ss) =
-                    showcase_17_volume::vol_collect_scene_items(self);
+                let (items, lighting, sg, ss) = showcase_17_volume::vol_collect_scene_items(self);
                 (items, Some(BG_COLOUR), lighting, sg, ss)
             }
 
@@ -2603,7 +2591,10 @@ impl App {
                     .scene
                     .collect_render_items(&Selection::new());
                 let plane_node = self.texture_state.plane_node;
-                if let Some(item) = items.iter_mut().find(|i| i.settings.pick_id == PickId(plane_node)) {
+                if let Some(item) = items
+                    .iter_mut()
+                    .find(|i| i.settings.pick_id == PickId(plane_node))
+                {
                     item.material.backface_policy = BackfacePolicy::Identical;
                 }
                 let sg = self.texture_state.scene.version();
@@ -3005,7 +2996,10 @@ impl App {
             }
 
             ShowcaseMode::ScatterVolumes => {
-                let items = self.svol_state.scene.collect_render_items(&Selection::new());
+                let items = self
+                    .svol_state
+                    .scene
+                    .collect_render_items(&Selection::new());
                 let sg = self.svol_state.scene.version();
                 let dir = self.svol_state.sun_dir;
                 let mut sun = LightSource::default();
@@ -3152,8 +3146,7 @@ impl App {
                 && showcase_33_picking_levels::pl_outline_selected(self))
             || (self.mode == ShowcaseMode::SkinnedAnimation
                 && !self.skin_state.selection.is_empty())
-            || (self.mode == ShowcaseMode::LightingConsistency
-                && self.lc_state.bcast_selected);
+            || (self.mode == ShowcaseMode::LightingConsistency && self.lc_state.bcast_selected);
         if scene_graph_outline {
             fd.interaction.outline_width_px = scene_graph_outline_width;
         }
@@ -3237,7 +3230,6 @@ impl App {
             }
         }
 
-
         // Curve network quantities (Showcase 28) : submitted every frame.
         if self.mode == ShowcaseMode::CurveNetworkQuantities {
             showcase_28_curve_network_quantities::submit_cnq_items(self, &mut fd);
@@ -3258,7 +3250,9 @@ impl App {
         // Auxiliary frustums and screen images (Showcase 27) : submitted every frame.
         if self.mode == ShowcaseMode::Auxiliary && self.aux_state.built {
             for f in &self.aux_state.frustums {
-                fd.scene.polylines.push(showcase_27_camera_framing::frustum_to_polyline(f));
+                fd.scene
+                    .polylines
+                    .push(showcase_27_camera_framing::frustum_to_polyline(f));
             }
             self.aux_push_screen_images(&mut fd);
         }
@@ -3447,11 +3441,12 @@ impl App {
         // must be active (post_process.enabled = true).
         if self.mode == ShowcaseMode::SurfaceLIC && self.lic_state.built {
             showcase_38_surface_lic::submit_lic_items(self, &mut fd);
-            let has_lic = if let viewport_lib::SurfaceSubmission::Flat(ref items) = fd.scene.surfaces {
-                items.iter().any(|i| i.lic.is_some())
-            } else {
-                false
-            };
+            let has_lic =
+                if let viewport_lib::SurfaceSubmission::Flat(ref items) = fd.scene.surfaces {
+                    items.iter().any(|i| i.lic.is_some())
+                } else {
+                    false
+                };
             if has_lic {
                 fd.effects.post_process.enabled = true;
             }

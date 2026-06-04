@@ -34,8 +34,8 @@ use viewport_lib::{
     Action, BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, Gizmo, GizmoAxis,
     GizmoInfo, GizmoMode, GizmoSpace, KeyCode, LightingSettings, ManipResult, ManipulationContext,
     ManipulationController, Material, MeshId, Modifiers, MouseButton, OrbitCameraController,
-    Projection, SceneFrame, SceneRenderItem, ScrollUnits, Selection,
-    ViewportContext, ViewportEvent, ViewportId, ViewportRenderer, gizmo::compute_gizmo_scale,
+    Projection, SceneFrame, SceneRenderItem, ScrollUnits, Selection, ViewportContext,
+    ViewportEvent, ViewportId, ViewportRenderer, gizmo::compute_gizmo_scale,
     gizmo_center_for_pivot, picking::screen_to_ray, primitives,
 };
 
@@ -135,7 +135,11 @@ impl SceneObject {
     }
 
     fn position(&self) -> glam::Vec3 {
-        glam::Vec3::new(self.model.w_axis.x, self.model.w_axis.y, self.model.w_axis.z)
+        glam::Vec3::new(
+            self.model.w_axis.x,
+            self.model.w_axis.y,
+            self.model.w_axis.z,
+        )
     }
 
     fn rotation(&self) -> glam::Quat {
@@ -167,12 +171,7 @@ struct App {
 }
 
 impl App {
-    fn new(
-        vp_ids: [ViewportId; 4],
-        m_sphere: MeshId,
-        m_cube: MeshId,
-        m_torus: MeshId,
-    ) -> Self {
+    fn new(vp_ids: [ViewportId; 4], m_sphere: MeshId, m_cube: MeshId, m_torus: MeshId) -> Self {
         use std::f32::consts::FRAC_PI_2;
         let cameras = [
             // Perspective (TL)
@@ -202,7 +201,8 @@ impl App {
             Camera {
                 center: glam::Vec3::ZERO,
                 distance: 10.0,
-                orientation: glam::Quat::from_rotation_z(-FRAC_PI_2) * glam::Quat::from_rotation_x(FRAC_PI_2),
+                orientation: glam::Quat::from_rotation_z(-FRAC_PI_2)
+                    * glam::Quat::from_rotation_x(FRAC_PI_2),
                 projection: Projection::Orthographic,
                 ..Camera::default()
             },
@@ -211,8 +211,8 @@ impl App {
         Self {
             objects: vec![
                 SceneObject::new(m_sphere, [-2.5, 0.0, 0.0], [0.9, 0.5, 0.2], 0.65),
-                SceneObject::new(m_cube,   [ 0.0, 0.0, 0.0], [0.4, 0.6, 0.9], 0.87),
-                SceneObject::new(m_torus,  [ 2.5, 0.0, 0.0], [0.3, 0.8, 0.4], 0.70),
+                SceneObject::new(m_cube, [0.0, 0.0, 0.0], [0.4, 0.6, 0.9], 0.87),
+                SceneObject::new(m_torus, [2.5, 0.0, 0.0], [0.3, 0.8, 0.4], 0.70),
             ],
             snapshots: HashMap::new(),
             selection: Selection::new(),
@@ -256,7 +256,9 @@ impl App {
     }
 
     fn apply_delta(&mut self, delta: viewport_lib::TransformDelta) {
-        let Some(center) = self.gizmo_center else { return };
+        let Some(center) = self.gizmo_center else {
+            return;
+        };
 
         let has_pos_override = delta.position_override.iter().any(|v| v.is_some());
         let has_scale_override = delta.scale_override.iter().any(|v| v.is_some());
@@ -484,12 +486,9 @@ impl eframe::App for App {
                     let far = vp_inv.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
                     let ray_origin = cam.eye_position();
                     let ray_dir = (far - ray_origin).normalize_or_zero();
-                    self.gizmo.hovered_axis = self.gizmo.hit_test(
-                        ray_origin,
-                        ray_dir,
-                        center,
-                        self.gizmo_scales[hq],
-                    );
+                    self.gizmo.hovered_axis =
+                        self.gizmo
+                            .hit_test(ray_origin, ray_dir, center, self.gizmo_scales[hq]);
                 } else {
                     self.gizmo.hovered_axis = GizmoAxis::None;
                 }
@@ -573,11 +572,10 @@ impl eframe::App for App {
             }
 
             // Update gizmo center and per-viewport gizmo scales.
-            self.gizmo_center = gizmo_center_for_pivot(
-                &self.gizmo.pivot_mode,
-                &self.selection,
-                |id| self.position_of(id),
-            );
+            self.gizmo_center =
+                gizmo_center_for_pivot(&self.gizmo.pivot_mode, &self.selection, |id| {
+                    self.position_of(id)
+                });
             for i in 0..4 {
                 if let Some(center) = self.gizmo_center {
                     let qr = quads[i];
@@ -691,7 +689,10 @@ impl eframe::App for App {
             painter.rect_stroke(
                 quads[hq].shrink(0.5),
                 0.0,
-                egui::Stroke::new(1.5, egui::Color32::from_rgba_unmultiplied(180, 180, 255, 60)),
+                egui::Stroke::new(
+                    1.5,
+                    egui::Color32::from_rgba_unmultiplied(180, 180, 255, 60),
+                ),
                 egui::StrokeKind::Middle,
             );
 
@@ -703,9 +704,27 @@ impl eframe::App for App {
                     viewport_lib::ManipulationKind::Scale => "Scale",
                 };
                 let axis = match ms.axis {
-                    Some(GizmoAxis::X) => if ms.exclude_axis { " (YZ)" } else { " (X)" },
-                    Some(GizmoAxis::Y) => if ms.exclude_axis { " (XZ)" } else { " (Y)" },
-                    Some(GizmoAxis::Z) => if ms.exclude_axis { " (XY)" } else { " (Z)" },
+                    Some(GizmoAxis::X) => {
+                        if ms.exclude_axis {
+                            " (YZ)"
+                        } else {
+                            " (X)"
+                        }
+                    }
+                    Some(GizmoAxis::Y) => {
+                        if ms.exclude_axis {
+                            " (XZ)"
+                        } else {
+                            " (Y)"
+                        }
+                    }
+                    Some(GizmoAxis::Z) => {
+                        if ms.exclude_axis {
+                            " (XY)"
+                        } else {
+                            " (Z)"
+                        }
+                    }
                     _ => "",
                 };
                 let text = if let Some(ref num) = ms.numeric_display {
@@ -716,10 +735,7 @@ impl eframe::App for App {
                 let aqr = quads[hq];
                 let font = egui::FontId::proportional(13.0);
                 let galley = painter.layout_no_wrap(text, font, egui::Color32::WHITE);
-                let pos = egui::pos2(
-                    aqr.center().x - galley.size().x * 0.5,
-                    aqr.max.y - 28.0,
-                );
+                let pos = egui::pos2(aqr.center().x - galley.size().x * 0.5, aqr.max.y - 28.0);
                 let bg = egui::Rect::from_min_size(
                     pos - egui::vec2(6.0, 3.0),
                     galley.size() + egui::vec2(12.0, 6.0),

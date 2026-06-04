@@ -303,7 +303,11 @@ mod tests {
     ) -> (wgpu::Texture, wgpu::TextureView) {
         let tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("post_paint_test_target"),
-            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -362,8 +366,15 @@ mod tests {
         };
 
         let bufs = runtime.pre_prepare(&device, &queue, &ctx);
-        assert!(bufs.is_empty(), "empty plugin returns should concatenate cleanly");
-        assert_eq!(*log.lock().unwrap(), vec![100, 200], "ascending priority order");
+        assert!(
+            bufs.is_empty(),
+            "empty plugin returns should concatenate cleanly"
+        );
+        assert_eq!(
+            *log.lock().unwrap(),
+            vec![100, 200],
+            "ascending priority order"
+        );
         assert_eq!(*init_a.lock().unwrap(), 1);
         assert_eq!(*init_b.lock().unwrap(), 1);
 
@@ -420,10 +431,11 @@ mod tests {
         let recreated = Arc::new(Mutex::new(0));
         let init_count = Arc::new(Mutex::new(0));
 
-        let mut runtime = crate::runtime::ViewportRuntime::new().with_gpu_plugin(DeviceLossRecorder {
-            recreated: recreated.clone(),
-            init_count: init_count.clone(),
-        });
+        let mut runtime =
+            crate::runtime::ViewportRuntime::new().with_gpu_plugin(DeviceLossRecorder {
+                recreated: recreated.clone(),
+                init_count: init_count.clone(),
+            });
 
         let camera = Camera::default();
         let ctx = GpuFrameContext {
@@ -486,8 +498,14 @@ mod tests {
             frame_index: 0,
             viewport_id: Some(vp_a),
         };
-        let ctx_b = GpuFrameContext { viewport_id: Some(vp_b), ..ctx_a };
-        let ctx_none = GpuFrameContext { viewport_id: None, ..ctx_a };
+        let ctx_b = GpuFrameContext {
+            viewport_id: Some(vp_b),
+            ..ctx_a
+        };
+        let ctx_none = GpuFrameContext {
+            viewport_id: None,
+            ..ctx_a
+        };
 
         let _ = runtime.pre_prepare(&device, &queue, &ctx_a);
         let _ = runtime.pre_prepare(&device, &queue, &ctx_b);

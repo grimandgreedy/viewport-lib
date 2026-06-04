@@ -222,7 +222,7 @@ impl App {
             {
                 let mut item = SceneRenderItem::default();
                 item.mesh_id = self.unlit_box_id;
-    
+
                 item.settings.unlit = true;
                 item.material.base_colour = COLOUR_CYAN;
                 item.model = glam::Mat4::from_translation(glam::Vec3::new(8.0, 5.0, -2.5))
@@ -249,7 +249,6 @@ impl eframe::App for App {
                 if ui.add(egui::Slider::new(&mut cc, 1..=4)).changed() {
                     self.lighting.shadow_cascade_count = cc as u32;
                 }
-
 
                 ui.label("Shadow bias");
                 ui.add(
@@ -294,11 +293,8 @@ impl eframe::App for App {
                 ui.separator();
                 ui.label("Cascade splits (world depth)");
                 let shadow_far = (self.camera.distance * 3.0).max(10.0).min(eff_far);
-                let splits = cascade_splits(
-                    eff_near,
-                    shadow_far,
-                    self.lighting.shadow_cascade_count,
-                );
+                let splits =
+                    cascade_splits(eff_near, shadow_far, self.lighting.shadow_cascade_count);
                 let mut prev = eff_near;
                 for (i, &s) in splits.iter().enumerate() {
                     ui.label(format!("  [{}] {:.2} .. {:.2}", i, prev, s));
@@ -311,11 +307,8 @@ impl eframe::App for App {
                     eprintln!("=== CASCADE STATE ===");
                     eprintln!("  camera distance: {:.2}", dist);
                     eprintln!("  near: {:.4}  shadow_far: {:.2}", eff_near, shadow_far);
-                    let splits = cascade_splits(
-                        eff_near,
-                        shadow_far,
-                        self.lighting.shadow_cascade_count,
-                    );
+                    let splits =
+                        cascade_splits(eff_near, shadow_far, self.lighting.shadow_cascade_count);
                     for (i, &s) in splits.iter().enumerate() {
                         let lo = if i == 0 { eff_near } else { splits[i - 1] };
                         eprintln!("  cascade[{}]: {:.3} .. {:.3}", i, lo, s);

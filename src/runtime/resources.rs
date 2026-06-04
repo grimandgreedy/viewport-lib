@@ -41,7 +41,9 @@ pub struct RuntimeResources {
 impl RuntimeResources {
     /// Create an empty resource registry.
     pub fn new() -> Self {
-        Self { map: HashMap::new() }
+        Self {
+            map: HashMap::new(),
+        }
     }
 
     /// Insert a resource, replacing any existing value of the same type.

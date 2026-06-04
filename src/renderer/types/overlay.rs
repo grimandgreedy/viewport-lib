@@ -814,7 +814,9 @@ fn sd_rounded_box(p: [f32; 2], b: [f32; 2], r: [f32; 4]) -> f32 {
     let qx = (p[0].abs() - b[0] + chosen).max(0.0);
     let qy = (p[1].abs() - b[1] + chosen).max(0.0);
     let outer = (qx * qx + qy * qy).sqrt();
-    let inner = (p[0].abs() - b[0] + chosen).max(p[1].abs() - b[1] + chosen).min(0.0);
+    let inner = (p[0].abs() - b[0] + chosen)
+        .max(p[1].abs() - b[1] + chosen)
+        .min(0.0);
     inner + outer - chosen
 }
 
@@ -844,7 +846,11 @@ fn sd_ellipse(p: [f32; 2], ab: [f32; 2]) -> f32 {
         let w = [ei[0] * (v[0] + u[0]), ei[1] * (v[1] + u[1])];
         let wc = [w[0].clamp(0.0, 1.0), w[1].clamp(0.0, 1.0)];
         let wlen = (wc[0] * wc[0] + wc[1] * wc[1]).sqrt();
-        t = if wlen > 0.0 { [wc[0] / wlen, wc[1] / wlen] } else { t };
+        t = if wlen > 0.0 {
+            [wc[0] / wlen, wc[1] / wlen]
+        } else {
+            t
+        };
     }
     let nearest = [t[0] * ab[0], t[1] * ab[1]];
     let dx = pa[0] - nearest[0];
@@ -922,8 +928,7 @@ fn sd_line(p: [f32; 2], hs: [f32; 2], radius: f32, square: bool) -> f32 {
         let perp = -p[0] * dy + p[1] * dx;
         let qx = along.abs() - seg_len;
         let qy = perp.abs() - radius;
-        (qx.max(0.0) * qx.max(0.0) + qy.max(0.0) * qy.max(0.0)).sqrt()
-            + qx.max(qy).min(0.0)
+        (qx.max(0.0) * qx.max(0.0) + qy.max(0.0) * qy.max(0.0)).sqrt() + qx.max(qy).min(0.0)
     } else {
         // Capsule: segment from A=(-hs.x,-hs.y) to B=(hs.x,hs.y).
         let bax = 2.0 * hs[0];
@@ -980,7 +985,11 @@ fn sd_ngon(p: [f32; 2], r: f32, n: f32) -> f32 {
 
     let dx = q[0] - he;
     let dy = (q[1] - hv).max(0.0);
-    if dy > 0.0 { (dx * dx + dy * dy).sqrt() } else { dx }
+    if dy > 0.0 {
+        (dx * dx + dy * dy).sqrt()
+    } else {
+        dx
+    }
 }
 
 fn sd_cross(p: [f32; 2], hs: [f32; 2], arm_frac: f32) -> f32 {
@@ -988,8 +997,7 @@ fn sd_cross(p: [f32; 2], hs: [f32; 2], arm_frac: f32) -> f32 {
     let box_sdf = |p: [f32; 2], b: [f32; 2]| -> f32 {
         let qx = p[0].abs() - b[0];
         let qy = p[1].abs() - b[1];
-        (qx.max(0.0) * qx.max(0.0) + qy.max(0.0) * qy.max(0.0)).sqrt()
-            + qx.max(qy).min(0.0)
+        (qx.max(0.0) * qx.max(0.0) + qy.max(0.0) * qy.max(0.0)).sqrt() + qx.max(qy).min(0.0)
     };
     let d_h = box_sdf(p, [hs[0], arm_w]);
     let d_v = box_sdf(p, [arm_w, hs[1]]);
@@ -1068,7 +1076,10 @@ impl OverlayShapeItem {
             OverlayShape::Line { thickness, cap } => {
                 sd_line(p, hs, thickness * 0.5, cap == LineCap::Square)
             }
-            OverlayShape::Star { points, inner_radius_frac } => {
+            OverlayShape::Star {
+                points,
+                inner_radius_frac,
+            } => {
                 let r = hw.min(hh);
                 sd_star(p, r, points as f32, inner_radius_frac.clamp(0.0, 1.0))
             }
@@ -1106,21 +1117,39 @@ mod tests {
 
     #[test]
     fn rect_centre_is_inside() {
-        let s = shape_at(100.0, 100.0, 80.0, 60.0, OverlayShape::Rect { corner_radius: 0.0 });
+        let s = shape_at(
+            100.0,
+            100.0,
+            80.0,
+            60.0,
+            OverlayShape::Rect { corner_radius: 0.0 },
+        );
         assert!(s.contains([140.0, 130.0])); // centre
         assert!(s.distance([140.0, 130.0]) < 0.0);
     }
 
     #[test]
     fn rect_outside() {
-        let s = shape_at(100.0, 100.0, 80.0, 60.0, OverlayShape::Rect { corner_radius: 0.0 });
+        let s = shape_at(
+            100.0,
+            100.0,
+            80.0,
+            60.0,
+            OverlayShape::Rect { corner_radius: 0.0 },
+        );
         assert!(!s.contains([50.0, 130.0])); // left of shape
         assert!(!s.contains([200.0, 130.0])); // right of shape
     }
 
     #[test]
     fn rect_edge_distance() {
-        let s = shape_at(0.0, 0.0, 100.0, 100.0, OverlayShape::Rect { corner_radius: 0.0 });
+        let s = shape_at(
+            0.0,
+            0.0,
+            100.0,
+            100.0,
+            OverlayShape::Rect { corner_radius: 0.0 },
+        );
         // Centre is at (50, 50), half-size 50x50. Point on the right edge:
         let d = s.distance([100.0, 50.0]);
         assert!(d.abs() < 0.01, "edge distance should be ~0, got {d}");
@@ -1128,7 +1157,15 @@ mod tests {
 
     #[test]
     fn rounded_rect_corner_is_outside() {
-        let s = shape_at(0.0, 0.0, 100.0, 100.0, OverlayShape::Rect { corner_radius: 20.0 });
+        let s = shape_at(
+            0.0,
+            0.0,
+            100.0,
+            100.0,
+            OverlayShape::Rect {
+                corner_radius: 20.0,
+            },
+        );
         // The very corner pixel should be outside the rounded shape.
         assert!(!s.contains([1.0, 1.0]));
         // But interior should still be inside.
@@ -1161,7 +1198,15 @@ mod tests {
 
     #[test]
     fn ring_hole_is_outside() {
-        let s = shape_at(0.0, 0.0, 100.0, 100.0, OverlayShape::Ring { inner_radius_frac: 0.7 });
+        let s = shape_at(
+            0.0,
+            0.0,
+            100.0,
+            100.0,
+            OverlayShape::Ring {
+                inner_radius_frac: 0.7,
+            },
+        );
         // Centre of the ring (the hole) should be outside.
         assert!(!s.contains([50.0, 50.0]));
         // Point in the wall area should be inside.
@@ -1171,7 +1216,10 @@ mod tests {
     #[test]
     fn arc_inside_sweep() {
         let s = shape_at(
-            0.0, 0.0, 100.0, 100.0,
+            0.0,
+            0.0,
+            100.0,
+            100.0,
             OverlayShape::Arc {
                 inner_radius_frac: 0.6,
                 start_angle: 0.0,
@@ -1187,9 +1235,15 @@ mod tests {
 
     #[test]
     fn triangle_centre_inside() {
-        let s = shape_at(0.0, 0.0, 60.0, 60.0, OverlayShape::Triangle {
-            direction: TriangleDirection::Up,
-        });
+        let s = shape_at(
+            0.0,
+            0.0,
+            60.0,
+            60.0,
+            OverlayShape::Triangle {
+                direction: TriangleDirection::Up,
+            },
+        );
         assert!(s.contains([30.0, 35.0])); // slightly below centre
         assert!(!s.contains([1.0, 1.0])); // top-left corner
     }
@@ -1202,9 +1256,18 @@ mod tests {
             TriangleDirection::Left,
             TriangleDirection::Right,
         ] {
-            let s = shape_at(0.0, 0.0, 60.0, 60.0, OverlayShape::Triangle { direction: dir });
+            let s = shape_at(
+                0.0,
+                0.0,
+                60.0,
+                60.0,
+                OverlayShape::Triangle { direction: dir },
+            );
             // Centre-ish should always be inside.
-            assert!(s.contains([30.0, 30.0]), "centre should be inside for {dir:?}");
+            assert!(
+                s.contains([30.0, 30.0]),
+                "centre should be inside for {dir:?}"
+            );
         }
     }
 
@@ -1212,17 +1275,26 @@ mod tests {
     fn distance_is_negative_inside_positive_outside() {
         let s = shape_at(0.0, 0.0, 100.0, 100.0, OverlayShape::Circle);
         assert!(s.distance([50.0, 50.0]) < 0.0, "centre should be negative");
-        assert!(s.distance([0.0, 0.0]) > 0.0, "far corner should be positive");
+        assert!(
+            s.distance([0.0, 0.0]) > 0.0,
+            "far corner should be positive"
+        );
     }
 
     #[test]
     fn line_round_contains() {
         // 100x4 horizontal line: segment from (-50,-2) to (50,2) in local space,
         // thickness=4 => cap radius 2. Centre (50,2) should be inside.
-        let s = shape_at(0.0, 0.0, 100.0, 4.0, OverlayShape::Line {
-            thickness: 4.0,
-            cap: LineCap::Round,
-        });
+        let s = shape_at(
+            0.0,
+            0.0,
+            100.0,
+            4.0,
+            OverlayShape::Line {
+                thickness: 4.0,
+                cap: LineCap::Round,
+            },
+        );
         assert!(s.contains([50.0, 2.0])); // centre
         assert!(!s.contains([50.0, 10.0])); // well above
     }
@@ -1230,10 +1302,16 @@ mod tests {
     #[test]
     fn line_round_endpoint_is_on_boundary() {
         // Square bounding box: segment from (-30,-30) to (30,30), radius=5.
-        let s = shape_at(0.0, 0.0, 60.0, 60.0, OverlayShape::Line {
-            thickness: 10.0,
-            cap: LineCap::Round,
-        });
+        let s = shape_at(
+            0.0,
+            0.0,
+            60.0,
+            60.0,
+            OverlayShape::Line {
+                thickness: 10.0,
+                cap: LineCap::Round,
+            },
+        );
         // Centre is on the segment, distance = -5 (inside).
         assert!(s.contains([30.0, 30.0]));
     }
@@ -1242,20 +1320,32 @@ mod tests {
     fn line_square_cap_flat_end() {
         // Horizontal line, square cap. Points just past the endpoint (in the
         // cap direction) are outside since square caps don't extend.
-        let s = shape_at(0.0, 0.0, 100.0, 4.0, OverlayShape::Line {
-            thickness: 4.0,
-            cap: LineCap::Square,
-        });
+        let s = shape_at(
+            0.0,
+            0.0,
+            100.0,
+            4.0,
+            OverlayShape::Line {
+                thickness: 4.0,
+                cap: LineCap::Square,
+            },
+        );
         assert!(s.contains([50.0, 2.0])); // centre
         assert!(!s.contains([50.0, 10.0])); // well above
     }
 
     #[test]
     fn star_centre_inside() {
-        let s = shape_at(0.0, 0.0, 100.0, 100.0, OverlayShape::Star {
-            points: 5,
-            inner_radius_frac: 0.45,
-        });
+        let s = shape_at(
+            0.0,
+            0.0,
+            100.0,
+            100.0,
+            OverlayShape::Star {
+                points: 5,
+                inner_radius_frac: 0.45,
+            },
+        );
         assert!(s.contains([50.0, 50.0])); // centre
         assert!(!s.contains([1.0, 1.0])); // corner far outside
     }
@@ -1265,18 +1355,33 @@ mod tests {
         // 5-pointed star in 100x100 box: outer radius = 50.
         // The SDF places tips at multiples of 2*pi/n starting from angle 0 (right).
         // The rightmost tip is at local (50, 0) = screen (100, 50).
-        let s = shape_at(0.0, 0.0, 100.0, 100.0, OverlayShape::Star {
-            points: 5,
-            inner_radius_frac: 0.45,
-        });
+        let s = shape_at(
+            0.0,
+            0.0,
+            100.0,
+            100.0,
+            OverlayShape::Star {
+                points: 5,
+                inner_radius_frac: 0.45,
+            },
+        );
         // Rightmost tip at screen (100, 50). Distance should be ~0.
         let d = s.distance([100.0, 50.0]);
-        assert!(d.abs() < 1.0, "outer tip distance should be near 0, got {d}");
+        assert!(
+            d.abs() < 1.0,
+            "outer tip distance should be near 0, got {d}"
+        );
     }
 
     #[test]
     fn regular_polygon_centre_inside() {
-        let s = shape_at(0.0, 0.0, 100.0, 100.0, OverlayShape::RegularPolygon { sides: 6 });
+        let s = shape_at(
+            0.0,
+            0.0,
+            100.0,
+            100.0,
+            OverlayShape::RegularPolygon { sides: 6 },
+        );
         assert!(s.contains([50.0, 50.0])); // centre
         assert!(!s.contains([1.0, 1.0])); // corner
     }
@@ -1285,7 +1390,13 @@ mod tests {
     fn regular_polygon_vertex_on_boundary() {
         // Hexagon in 100x100 box: circumradius 50. A vertex is at (50, 0)
         // in screen space (top of hexagon, angle = 0 before offset).
-        let s = shape_at(0.0, 0.0, 100.0, 100.0, OverlayShape::RegularPolygon { sides: 6 });
+        let s = shape_at(
+            0.0,
+            0.0,
+            100.0,
+            100.0,
+            OverlayShape::RegularPolygon { sides: 6 },
+        );
         // For n=6, the vertex is at (r, 0) before the pi/n rotation offset.
         // After shifting by pi/6 the vertex that was at angle 0 is now at angle -pi/6.
         // The topmost point is at angle -pi/2 => (0, -50) => screen (50, 0).
@@ -1297,7 +1408,15 @@ mod tests {
     #[test]
     fn cross_arms_inside_body_outside() {
         // 100x100 cross with arm_width_frac=0.3 => arm half-width = 15px.
-        let s = shape_at(0.0, 0.0, 100.0, 100.0, OverlayShape::Cross { arm_width_frac: 0.3 });
+        let s = shape_at(
+            0.0,
+            0.0,
+            100.0,
+            100.0,
+            OverlayShape::Cross {
+                arm_width_frac: 0.3,
+            },
+        );
         assert!(s.contains([50.0, 50.0])); // centre
         // Along the horizontal arm, near the edge of the bounding box.
         assert!(s.contains([95.0, 50.0]));
@@ -1307,7 +1426,15 @@ mod tests {
 
     #[test]
     fn cross_centre_distance_negative() {
-        let s = shape_at(0.0, 0.0, 100.0, 100.0, OverlayShape::Cross { arm_width_frac: 0.4 });
+        let s = shape_at(
+            0.0,
+            0.0,
+            100.0,
+            100.0,
+            OverlayShape::Cross {
+                arm_width_frac: 0.4,
+            },
+        );
         assert!(s.distance([50.0, 50.0]) < 0.0);
         assert!(s.distance([0.0, 0.0]) > 0.0);
     }

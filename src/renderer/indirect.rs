@@ -58,7 +58,9 @@ impl CullResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("cull_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/cull.wgsl")).into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/cull.wgsl")).into(),
+            ),
         });
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

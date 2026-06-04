@@ -58,7 +58,9 @@ impl ViewportGpuResources {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("glyph_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/glyph.wgsl")).into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/glyph.wgsl")).into(),
+            ),
         });
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -192,8 +194,7 @@ impl ViewportGpuResources {
 
             let vbuf: &'static wgpu::Buffer = unsafe { &*(&mesh.vertex_buffer as *const _) };
             let ibuf: &'static wgpu::Buffer = unsafe { &*(&mesh.index_buffer as *const _) };
-            let eibuf: &'static wgpu::Buffer =
-                unsafe { &*(&mesh.edge_index_buffer as *const _) };
+            let eibuf: &'static wgpu::Buffer = unsafe { &*(&mesh.edge_index_buffer as *const _) };
             (vbuf, ibuf, mesh.index_count, eibuf, mesh.edge_index_count)
         };
 
@@ -406,8 +407,7 @@ impl ViewportGpuResources {
         ibuf.unmap();
 
         let edge_indices = crate::resources::extra_impls::generate_edge_indices(&indices);
-        let edge_buf_size =
-            (std::mem::size_of::<u32>() * edge_indices.len().max(2)) as u64;
+        let edge_buf_size = (std::mem::size_of::<u32>() * edge_indices.len().max(2)) as u64;
         let edge_ibuf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("glyph_mesh_edge_ibuf"),
             size: edge_buf_size,
@@ -624,8 +624,7 @@ impl ViewportGpuResources {
                 .expect("sphere mesh should be present after ensure_glyph_mesh");
             let vbuf: &'static wgpu::Buffer = unsafe { &*(&mesh.vertex_buffer as *const _) };
             let ibuf: &'static wgpu::Buffer = unsafe { &*(&mesh.index_buffer as *const _) };
-            let eibuf: &'static wgpu::Buffer =
-                unsafe { &*(&mesh.edge_index_buffer as *const _) };
+            let eibuf: &'static wgpu::Buffer = unsafe { &*(&mesh.edge_index_buffer as *const _) };
             (vbuf, ibuf, mesh.index_count, eibuf, mesh.edge_index_count)
         };
 

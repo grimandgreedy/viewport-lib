@@ -2,7 +2,7 @@
 
 use crate::interaction::selection::NodeId;
 use crate::runtime::context::RuntimeStepContext;
-use crate::runtime::plugin::{phase, RuntimePlugin};
+use crate::runtime::plugin::{RuntimePlugin, phase};
 
 /// A single keyframe: a time value and the transform at that time.
 #[derive(Debug, Clone)]
@@ -60,7 +60,11 @@ impl AnimationTrack {
         let b = &self.keyframes[idx + 1];
 
         let span = b.time - a.time;
-        let t = if span > 1e-6 { (time - a.time) / span } else { 0.0 };
+        let t = if span > 1e-6 {
+            (time - a.time) / span
+        } else {
+            0.0
+        };
 
         let (sa, ra, ta) = a.transform.to_scale_rotation_translation();
         let (sb, rb, tb) = b.transform.to_scale_rotation_translation();

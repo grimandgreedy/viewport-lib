@@ -306,11 +306,9 @@ impl GpuScatterVolume {
                 [b.min.x, b.min.y, b.min.z, 0.0],
                 [b.max.x, b.max.y, b.max.z, 0.0],
             ),
-            ScatterShape::Sphere { center, radius } => (
-                1u32,
-                [center[0], center[1], center[2], radius],
-                [0.0; 4],
-            ),
+            ScatterShape::Sphere { center, radius } => {
+                (1u32, [center[0], center[1], center[2], radius], [0.0; 4])
+            }
         };
         let anisotropy = volume.anisotropy.clamp(-0.95, 0.95);
         let centre = match volume.shape {
@@ -327,11 +325,9 @@ impl GpuScatterVolume {
                 [centre[0], centre[1], centre[2], lo],
                 [hi, 0.0, 0.0, 0.0],
             ),
-            DensityRemap::ExpFalloff { center, falloff } => (
-                2u32,
-                [center[0], center[1], center[2], falloff],
-                [0.0; 4],
-            ),
+            DensityRemap::ExpFalloff { center, falloff } => {
+                (2u32, [center[0], center[1], center[2], falloff], [0.0; 4])
+            }
         };
         let (emission_kind, emission_strength, emission_param) = match volume.emission {
             Emission::None => (0u32, 0.0, 0.0),
@@ -407,9 +403,21 @@ pub fn ray_intersect(
 
 fn ray_box(b: &Aabb, o: glam::Vec3, d: glam::Vec3) -> Option<(f32, f32)> {
     let inv = glam::Vec3::new(
-        if d.x.abs() > 1e-8 { 1.0 / d.x } else { f32::INFINITY },
-        if d.y.abs() > 1e-8 { 1.0 / d.y } else { f32::INFINITY },
-        if d.z.abs() > 1e-8 { 1.0 / d.z } else { f32::INFINITY },
+        if d.x.abs() > 1e-8 {
+            1.0 / d.x
+        } else {
+            f32::INFINITY
+        },
+        if d.y.abs() > 1e-8 {
+            1.0 / d.y
+        } else {
+            f32::INFINITY
+        },
+        if d.z.abs() > 1e-8 {
+            1.0 / d.z
+        } else {
+            f32::INFINITY
+        },
     );
     let t0 = (b.min - o) * inv;
     let t1 = (b.max - o) * inv;

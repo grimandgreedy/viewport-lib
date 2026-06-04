@@ -153,9 +153,10 @@ impl App {
 
         // ---- Mesh 2: FaceColour attribute (direct RGBA, no colourmap) ----
         let mut mesh2 = viewport_lib::primitives::sphere(2.0, 48, 24);
-        mesh2
-            .attributes
-            .insert("colour".to_string(), AttributeData::FaceColour(face_colours));
+        mesh2.attributes.insert(
+            "colour".to_string(),
+            AttributeData::FaceColour(face_colours),
+        );
         let idx2 = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &mesh2)

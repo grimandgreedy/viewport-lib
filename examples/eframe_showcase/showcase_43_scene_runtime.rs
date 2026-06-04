@@ -15,13 +15,9 @@
 
 use eframe::egui;
 use viewport_lib::{
-    Aabb, AnimationPlugin, AnimationTrack, CameraFollow, FixedTimestep, Keyframe,
-    Material, MeshId, PhysicsBody, PhysicsLitePlugin,
-    RuntimeFrameContext, RuntimePlugin, RuntimeStepContext, SceneRenderItem,
-    ViewportRuntime,
-    camera::Camera,
-    runtime::plugin::phase,
-    scene::Scene,
+    Aabb, AnimationPlugin, AnimationTrack, CameraFollow, FixedTimestep, Keyframe, Material, MeshId,
+    PhysicsBody, PhysicsLitePlugin, RuntimeFrameContext, RuntimePlugin, RuntimeStepContext,
+    SceneRenderItem, ViewportRuntime, camera::Camera, runtime::plugin::phase, scene::Scene,
     selection::Selection,
 };
 
@@ -115,8 +111,7 @@ impl Default for RtDemoState {
             built: false,
             scene: Scene::new(),
             selection: Selection::new(),
-            runtime: ViewportRuntime::new()
-                .with_fixed_timestep(FixedTimestep::new(60.0)),
+            runtime: ViewportRuntime::new().with_fixed_timestep(FixedTimestep::new(60.0)),
             mesh_id: None,
             sim_fps: 45.0,
             interpolate: true,
@@ -139,7 +134,9 @@ impl Default for RtDemoState {
 fn populate_orbit(app: &mut App) {
     app.rt_state.scene = Scene::new();
     app.rt_state.sim_fps = 45.0;
-    let Some(mesh_id) = app.rt_state.mesh_id else { return };
+    let Some(mesh_id) = app.rt_state.mesh_id else {
+        return;
+    };
     let colours: [[f32; 3]; 5] = [
         [0.9, 0.35, 0.3],
         [0.3, 0.75, 0.9],
@@ -148,9 +145,11 @@ fn populate_orbit(app: &mut App) {
         [0.75, 0.4, 0.9],
     ];
     for colour in &colours {
-        app.rt_state
-            .scene
-            .add(Some(mesh_id), glam::Mat4::IDENTITY, Material::from_colour(*colour));
+        app.rt_state.scene.add(
+            Some(mesh_id),
+            glam::Mat4::IDENTITY,
+            Material::from_colour(*colour),
+        );
     }
     app.rt_state.runtime = ViewportRuntime::new()
         .with_fixed_timestep(FixedTimestep::new(app.rt_state.sim_fps))
@@ -166,7 +165,9 @@ fn populate_simulation(app: &mut App) {
     app.rt_state.physics_node_ids.clear();
     app.rt_state.anim_node_id = None;
 
-    let Some(mesh_id) = app.rt_state.mesh_id else { return };
+    let Some(mesh_id) = app.rt_state.mesh_id else {
+        return;
+    };
     let scene = &mut app.rt_state.scene;
 
     let body_colours: [[f32; 3]; 5] = [
@@ -195,8 +196,7 @@ fn populate_simulation(app: &mut App) {
         max: glam::Vec3::new(4.5, 4.5, 9.0),
     };
 
-    let mut physics = PhysicsLitePlugin::new()
-        .with_gravity(glam::Vec3::new(0.0, 0.0, -9.81));
+    let mut physics = PhysicsLitePlugin::new().with_gravity(glam::Vec3::new(0.0, 0.0, -9.81));
 
     let mut node_ids = Vec::new();
     for (i, colour) in body_colours.iter().enumerate() {
@@ -368,7 +368,11 @@ pub(crate) fn rt_demo_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
                 Some(n) => (n.material().clone(), n.world_transform()),
                 None => continue,
             };
-            let model = if let Some(t) = app.rt_state.runtime.snapshots().interpolated(node_id, alpha)
+            let model = if let Some(t) = app
+                .rt_state
+                .runtime
+                .snapshots()
+                .interpolated(node_id, alpha)
             {
                 glam::Mat4::from(t)
             } else {
@@ -401,7 +405,10 @@ pub(crate) fn controls_rt_demo(app: &mut App, ui: &mut egui::Ui) {
                     RuntimeDemo::Orbit => "Orbit",
                     RuntimeDemo::Simulation => "Simulation",
                 };
-                if ui.selectable_label(app.rt_state.demo == demo, label).clicked() {
+                if ui
+                    .selectable_label(app.rt_state.demo == demo, label)
+                    .clicked()
+                {
                     app.rt_state.demo = demo;
                 }
             }
@@ -444,7 +451,10 @@ fn controls_orbit(app: &mut App, ui: &mut egui::Ui) {
 
     ui.separator();
     ui.label("Runtime state:");
-    ui.label(format!("Step index : {}", app.rt_state.runtime.step_index()));
+    ui.label(format!(
+        "Step index : {}",
+        app.rt_state.runtime.step_index()
+    ));
     ui.label(format!("Alpha      : {:.3}", app.rt_state.runtime.alpha()));
     ui.add_space(4.0);
 
@@ -476,7 +486,11 @@ fn controls_simulation(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(4.0);
 
     ui.horizontal(|ui| {
-        let pause_label = if app.rt_state.paused { "Resume" } else { "Pause" };
+        let pause_label = if app.rt_state.paused {
+            "Resume"
+        } else {
+            "Pause"
+        };
         if ui.button(pause_label).clicked() {
             app.rt_state.paused = !app.rt_state.paused;
         }
@@ -536,7 +550,10 @@ fn controls_simulation(app: &mut App, ui: &mut egui::Ui) {
 
     ui.separator();
     ui.label("Runtime state:");
-    ui.label(format!("Step index : {}", app.rt_state.runtime.step_index()));
+    ui.label(format!(
+        "Step index : {}",
+        app.rt_state.runtime.step_index()
+    ));
     ui.label(format!("Alpha      : {:.3}", app.rt_state.runtime.alpha()));
     if app.rt_state.paused {
         ui.label("Paused");

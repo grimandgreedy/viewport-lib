@@ -30,7 +30,10 @@ impl eframe::egui_wgpu::CallbackTrait for ViewportCallback {
 
             let cmds = renderer.pass().prepare(device, queue, &self.frame);
             if let Ok(mut status) = self.instancing_status.lock() {
-                *status = (renderer.is_using_instanced_path(), renderer.instanced_batch_count());
+                *status = (
+                    renderer.is_using_instanced_path(),
+                    renderer.instanced_batch_count(),
+                );
             }
             if let Ok(mut stats) = self.shadow_stats.lock() {
                 *stats = Some(renderer.shadow_debug_stats());
