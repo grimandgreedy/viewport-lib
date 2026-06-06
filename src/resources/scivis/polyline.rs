@@ -455,16 +455,18 @@ impl ViewportGpuResources {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct PolylineUniform {
-            default_colour: [f32; 4], // offset  0
-            line_width: f32,          // offset 16
-            scalar_min: f32,          // offset 20
-            scalar_max: f32,          // offset 24
-            has_scalar: u32,          // offset 28
-            viewport_width: f32,      // offset 32
-            viewport_height: f32,     // offset 36
-            _pad: [f32; 2],           // offset 40  (total 48 bytes)
+            model: [[f32; 4]; 4],     // offset  0
+            default_colour: [f32; 4], // offset 64
+            line_width: f32,          // offset 80
+            scalar_min: f32,          // offset 84
+            scalar_max: f32,          // offset 88
+            has_scalar: u32,          // offset 92
+            viewport_width: f32,      // offset 96
+            viewport_height: f32,     // offset 100
+            _pad: [f32; 2],           // offset 104 (total 112 bytes)
         }
         let uniform_data = PolylineUniform {
+            model: item.model,
             default_colour: item.default_colour,
             line_width: item.line_width,
             scalar_min,
@@ -830,5 +832,39 @@ impl ViewportGpuResources {
                 cache: None,
             },
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::renderer::PolylineItem;
+
+    #[test]
+    fn default_model_is_identity() {
+        let item = PolylineItem::default();
+        let expected = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        assert_eq!(item.model, expected);
+    }
+
+    #[test]
+    fn non_identity_model_is_carried_on_item() {
+        // A translation of (3, 4, 5) in the last column. Round-trips through
+        // the public field so consumers can set it before upload.
+        let m = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [3.0, 4.0, 5.0, 1.0],
+        ];
+        let item = PolylineItem {
+            model: m,
+            ..PolylineItem::default()
+        };
+        assert_eq!(item.model[3], [3.0, 4.0, 5.0, 1.0]);
     }
 }

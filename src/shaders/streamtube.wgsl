@@ -25,6 +25,7 @@ struct ClipPlanes {
 };
 
 struct StreamtubeUniform {
+    model:             mat4x4<f32>,
     colour:            vec4<f32>,
     radius:           f32,
     use_vertex_colour: u32,
@@ -112,10 +113,14 @@ struct VertexOut {
 @vertex
 fn vs_main(in: VertexIn) -> VertexOut {
     var out: VertexOut;
-    // World-space positions and normals are baked into the mesh by the CPU generator.
-    out.clip_pos  = camera.view_proj * vec4<f32>(in.position, 1.0);
-    out.world_pos = in.position;
-    out.world_nrm = normalize(in.normal);
+    // The CPU generator produces vertices in the consumer's input space.
+    // The per-item model matrix maps that into world space; identity (the
+    // default) leaves positions where the consumer put them.
+    let world = (tube.model * vec4<f32>(in.position, 1.0)).xyz;
+    let nrm   = (tube.model * vec4<f32>(in.normal, 0.0)).xyz;
+    out.clip_pos  = camera.view_proj * vec4<f32>(world, 1.0);
+    out.world_pos = world;
+    out.world_nrm = normalize(nrm);
     out.vert_col  = in.colour;
     return out;
 }

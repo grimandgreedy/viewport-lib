@@ -44,17 +44,18 @@ struct ClipPlanes {
     viewport_height: f32,
 };
 
-// Polyline per-item uniform : 48 bytes.
+// Polyline per-item uniform : 112 bytes.
 struct PolylineUniform {
-    default_colour:   vec4<f32>,  // offset  0 : 16 bytes
-    line_width:      f32,        // offset 16 :  4 bytes (screen pixels)
-    scalar_min:      f32,        // offset 20 :  4 bytes
-    scalar_max:      f32,        // offset 24 :  4 bytes
-    has_scalar:      u32,        // offset 28 :  4 bytes
-    viewport_width:  f32,        // offset 32 :  4 bytes
-    viewport_height: f32,        // offset 36 :  4 bytes
-    _pad:            vec2<f32>,  // offset 40 :  8 bytes
-};                               // total 48 bytes
+    model:           mat4x4<f32>, // offset  0 : 64 bytes
+    default_colour:   vec4<f32>,  // offset 64 : 16 bytes
+    line_width:      f32,        // offset 80 :  4 bytes (screen pixels)
+    scalar_min:      f32,        // offset 84 :  4 bytes
+    scalar_max:      f32,        // offset 88 :  4 bytes
+    has_scalar:      u32,        // offset 92 :  4 bytes
+    viewport_width:  f32,        // offset 96 :  4 bytes
+    viewport_height: f32,        // offset 100 :  4 bytes
+    _pad:            vec2<f32>,  // offset 104 :  8 bytes
+};                               // total 112 bytes
 
 struct ClipVolumeEntry {
     volume_type: u32,
@@ -138,10 +139,17 @@ struct VertexOut {
     @location(1)       world_pos: vec3<f32>,
 };
 
-// Project a world-space point to screen pixels.
+// Apply the per-item model matrix to a position in the consumer's input space.
+// Identity (the default) leaves the position untouched.
+fn apply_model(p: vec3<f32>) -> vec3<f32> {
+    return (pl_uniform.model * vec4<f32>(p, 1.0)).xyz;
+}
+
+// Project a position to screen pixels after applying the model matrix.
 // Returns vec2 in pixel coordinates (origin at viewport center).
 fn to_screen(p: vec3<f32>) -> vec2<f32> {
-    let clip = camera.view_proj * vec4<f32>(p, 1.0);
+    let world = apply_model(p);
+    let clip = camera.view_proj * vec4<f32>(world, 1.0);
     let w = max(clip.w, 0.0001f);
     let ndc = clip.xy / w;
     return ndc * vec2<f32>(pl_uniform.viewport_width * 0.5f,
@@ -219,8 +227,11 @@ fn vs_main(
     // Select the extrusion for this corner's endpoint.
     let extrusion = select(extrusion_a, extrusion_b, use_b);
 
-    // Base clip-space position.
-    var clip_pos = camera.view_proj * vec4<f32>(pos, 1.0f);
+    // Base clip-space position. Apply the per-item model matrix so positions
+    // supplied in the consumer's input space land in world space before the
+    // camera transform; identity leaves them untouched.
+    let world_pos = apply_model(pos);
+    var clip_pos = camera.view_proj * vec4<f32>(world_pos, 1.0f);
 
     // Per-vertex radius: interpolate between endpoint radii (baked from node_radii or line_width).
     let radius = select(seg.radius_a, seg.radius_b, use_b);
@@ -235,7 +246,7 @@ fn vs_main(
 
     var out: VertexOut;
     out.clip_pos  = clip_pos;
-    out.world_pos = pos;
+    out.world_pos = world_pos;
 
     // Colour priority: direct RGBA > scalar LUT > default_colour.
     if seg.use_direct_colour != 0u {

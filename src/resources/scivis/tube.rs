@@ -430,10 +430,11 @@ impl ViewportGpuResources {
         }
         let edge_index_count = edge_indices.len() as u32;
 
-        // Uniform buffer: colour + radius + use_vertex_colour + unlit + opacity + wireframe.
+        // Uniform buffer: model + colour + radius + use_vertex_colour + unlit + opacity + wireframe.
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct StreamtubeUniform {
+            model: [[f32; 4]; 4],
             colour: [f32; 4],
             radius: f32,
             use_vertex_colour: u32,
@@ -443,6 +444,7 @@ impl ViewportGpuResources {
             _pad: [f32; 3],
         }
         let uniform_data = StreamtubeUniform {
+            model: item.model,
             colour: item.colour,
             radius,
             use_vertex_colour: 0,
@@ -731,6 +733,7 @@ impl ViewportGpuResources {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct TubeUniform {
+            model: [[f32; 4]; 4],
             colour: [f32; 4],
             radius: f32,
             use_vertex_colour: u32,
@@ -740,6 +743,7 @@ impl ViewportGpuResources {
             _pad: [f32; 3],
         }
         let uniform_data = TubeUniform {
+            model: item.model,
             colour: item.colour,
             radius: item.radius.max(f32::EPSILON),
             use_vertex_colour,
@@ -994,6 +998,7 @@ impl ViewportGpuResources {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct RibbonUniform {
+            model: [[f32; 4]; 4],
             colour: [f32; 4],
             radius: f32,
             use_vertex_colour: u32,
@@ -1003,6 +1008,7 @@ impl ViewportGpuResources {
             _pad: [f32; 3],
         }
         let uniform_data = RibbonUniform {
+            model: item.model,
             colour: item.colour,
             radius: item.width * 0.5,
             use_vertex_colour,
@@ -1042,5 +1048,65 @@ impl ViewportGpuResources {
             uniform_bind_group,
             _uniform_buf: uniform_buf,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::renderer::{RibbonItem, StreamtubeItem, TubeItem};
+
+    const IDENTITY: [[f32; 4]; 4] = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ];
+
+    #[test]
+    fn streamtube_default_model_is_identity() {
+        assert_eq!(StreamtubeItem::default().model, IDENTITY);
+    }
+
+    #[test]
+    fn tube_default_model_is_identity() {
+        assert_eq!(TubeItem::default().model, IDENTITY);
+    }
+
+    #[test]
+    fn ribbon_default_model_is_identity() {
+        assert_eq!(RibbonItem::default().model, IDENTITY);
+    }
+
+    #[test]
+    fn streamtube_carries_non_identity_model() {
+        let mut m = IDENTITY;
+        m[3] = [1.0, 2.0, 3.0, 1.0];
+        let item = StreamtubeItem {
+            model: m,
+            ..StreamtubeItem::default()
+        };
+        assert_eq!(item.model[3], [1.0, 2.0, 3.0, 1.0]);
+    }
+
+    #[test]
+    fn tube_carries_non_identity_model() {
+        let mut m = IDENTITY;
+        m[3] = [1.0, 2.0, 3.0, 1.0];
+        let item = TubeItem {
+            model: m,
+            ..TubeItem::default()
+        };
+        assert_eq!(item.model[3], [1.0, 2.0, 3.0, 1.0]);
+    }
+
+    #[test]
+    fn ribbon_carries_non_identity_model() {
+        let mut m = IDENTITY;
+        m[3] = [1.0, 2.0, 3.0, 1.0];
+        let item = RibbonItem {
+            model: m,
+            ..RibbonItem::default()
+        };
+        assert_eq!(item.model[3], [1.0, 2.0, 3.0, 1.0]);
     }
 }

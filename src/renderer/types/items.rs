@@ -1,6 +1,15 @@
 use crate::resources::ColourmapId;
 use crate::scene::material::{ItemSettings, Material};
 
+/// 4x4 identity matrix used as the default `model` for items that support a
+/// per-frame transform. Column-major to match wgpu and glam conventions.
+const IDENTITY_MAT4: [[f32; 4]; 4] = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0],
+];
+
 // ---------------------------------------------------------------------------
 // Per-frame data types
 // ---------------------------------------------------------------------------
@@ -561,6 +570,11 @@ pub struct PolylineItem {
     pub edge_vectors: Vec<[f32; 3]>,
     /// Scale applied to generated arrow glyphs from `node_vectors`/`edge_vectors`.
     pub vector_scale: f32,
+    /// Per-frame model matrix applied to `positions` in the vertex shader.
+    /// Identity (the default) renders `positions` as world-space coordinates,
+    /// preserving the historical behaviour. Set this to a translation, rotation,
+    /// or scale to move a pre-uploaded polyline without rebuilding its vertex data.
+    pub model: [[f32; 4]; 4],
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
 }
@@ -582,6 +596,7 @@ impl Default for PolylineItem {
             node_vectors: Vec::new(),
             edge_vectors: Vec::new(),
             vector_scale: 1.0,
+            model: IDENTITY_MAT4,
             settings: ItemSettings::default(),
         }
     }
@@ -688,6 +703,11 @@ pub struct StreamtubeItem {
     pub radius: f32,
     /// RGBA colour for all tube segments in this item.  Default: opaque white.
     pub colour: [f32; 4],
+    /// Per-frame model matrix applied to `positions` in the vertex shader.
+    /// Identity (the default) renders the tube at the world-space coordinates
+    /// passed in `positions`. Set this to move a pre-uploaded streamtube without
+    /// rebuilding its mesh.
+    pub model: [[f32; 4]; 4],
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
 }
@@ -699,6 +719,7 @@ impl Default for StreamtubeItem {
             strip_lengths: Vec::new(),
             radius: 0.05,
             colour: [1.0, 1.0, 1.0, 1.0],
+            model: IDENTITY_MAT4,
             settings: ItemSettings::default(),
         }
     }
@@ -736,6 +757,11 @@ pub struct TubeItem {
     pub colourmap_id: Option<crate::resources::ColourmapId>,
     /// Flat RGBA colour used when `scalars` is empty.  Default: opaque white.
     pub colour: [f32; 4],
+    /// Per-frame model matrix applied to `positions` in the vertex shader.
+    /// Identity (the default) renders the tube at the world-space coordinates
+    /// passed in `positions`. Set this to move a pre-uploaded tube without
+    /// rebuilding its mesh.
+    pub model: [[f32; 4]; 4],
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
 }
@@ -752,6 +778,7 @@ impl Default for TubeItem {
             scalar_range: None,
             colourmap_id: None,
             colour: [1.0, 1.0, 1.0, 1.0],
+            model: IDENTITY_MAT4,
             settings: ItemSettings::default(),
         }
     }
@@ -789,6 +816,11 @@ pub struct RibbonItem {
     pub colourmap_id: Option<crate::resources::ColourmapId>,
     /// Flat RGBA colour used when `scalars` is empty. Default: opaque white.
     pub colour: [f32; 4],
+    /// Per-frame model matrix applied to `positions` in the vertex shader.
+    /// Identity (the default) renders the ribbon at the world-space coordinates
+    /// passed in `positions`. Set this to move a pre-uploaded ribbon without
+    /// rebuilding its mesh.
+    pub model: [[f32; 4]; 4],
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
 }
@@ -805,6 +837,7 @@ impl Default for RibbonItem {
             scalar_range: None,
             colourmap_id: None,
             colour: [1.0, 1.0, 1.0, 1.0],
+            model: IDENTITY_MAT4,
             settings: ItemSettings::default(),
         }
     }

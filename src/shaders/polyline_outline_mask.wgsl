@@ -14,6 +14,7 @@ struct Camera {
 };
 
 struct PolylineUniform {
+    model:           mat4x4<f32>,
     default_colour:   vec4<f32>,
     line_width:      f32,
     scalar_min:      f32,
@@ -43,8 +44,13 @@ struct SegmentIn {
     @location(12) use_direct_colour: u32,
 };
 
+fn apply_model(p: vec3<f32>) -> vec3<f32> {
+    return (pl_uniform.model * vec4<f32>(p, 1.0)).xyz;
+}
+
 fn to_screen(p: vec3<f32>) -> vec2<f32> {
-    let clip = camera.view_proj * vec4<f32>(p, 1.0);
+    let world = apply_model(p);
+    let clip = camera.view_proj * vec4<f32>(world, 1.0);
     let w = max(clip.w, 0.0001f);
     let ndc = clip.xy / w;
     return ndc * vec2<f32>(pl_uniform.viewport_width * 0.5f,
@@ -99,7 +105,8 @@ fn vs_main(
     }
 
     let extrusion = select(extrusion_a, extrusion_b, use_b);
-    var clip_pos = camera.view_proj * vec4<f32>(pos, 1.0f);
+    let world = apply_model(pos);
+    var clip_pos = camera.view_proj * vec4<f32>(world, 1.0f);
     let radius = select(seg.radius_a, seg.radius_b, use_b);
 
     let half_w = radius * 0.5f;

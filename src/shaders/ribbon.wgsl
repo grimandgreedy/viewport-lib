@@ -24,6 +24,7 @@ struct ClipPlanes {
 };
 
 struct StreamtubeUniform {
+    model:             mat4x4<f32>,
     colour:            vec4<f32>,
     radius:           f32,
     use_vertex_colour: u32,
@@ -109,9 +110,11 @@ struct VertexOut {
 @vertex
 fn vs_main(in: VertexIn) -> VertexOut {
     var out: VertexOut;
-    out.clip_pos  = camera.view_proj * vec4<f32>(in.position, 1.0);
-    out.world_pos = in.position;
-    out.world_nrm = normalize(in.normal);
+    let world = (tube.model * vec4<f32>(in.position, 1.0)).xyz;
+    let nrm   = (tube.model * vec4<f32>(in.normal, 0.0)).xyz;
+    out.clip_pos  = camera.view_proj * vec4<f32>(world, 1.0);
+    out.world_pos = world;
+    out.world_nrm = normalize(nrm);
     out.vert_col  = in.colour;
     return out;
 }
