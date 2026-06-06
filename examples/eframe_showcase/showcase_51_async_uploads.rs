@@ -1,0 +1,736 @@
+//! Showcase 51: Async asset streaming
+//!
+//! Demonstrates the upload-job system. Press one of the asset buttons to
+//! kick off a load. In Async mode the call returns immediately and the
+//! orbit camera keeps moving while the worker runs; in Sync mode the call
+//! blocks the calling thread and the camera visibly stutters.
+//!
+//! Each asset shows up in the scene once its job lands:
+//!
+//! - Env-map: HDR irradiance + prefilter + BRDF LUT, lights the scene.
+//! - Mesh: a small textured sphere appears to the right.
+//! - Texture: a checkered cube appears further right.
+//! - Skin weights: a sphere on the left is marked skinnable.
+//!
+//! Other asset buttons (volume, sprite set, gaussian splat, overlay
+//! texture) are greyed out and land in J5.
+
+use std::time::Instant;
+
+use eframe::egui;
+use viewport_lib::{
+    JobId, LightKind, LightSource, LightingSettings, Material, MeshData, MeshId, SceneRenderItem,
+    SkinWeights, UploadStatus, ViewportRenderer,
+};
+
+use crate::App;
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+/// Per-asset lifecycle. Drives both the button enable state and the
+/// in-flight progress panel.
+///
+/// `InFlight` carries the launch instant so the controls panel can show a
+/// live elapsed clock. `Loaded` and `Failed` carry the final wall-clock
+/// duration in milliseconds so the user can compare sync vs async runs at
+/// a glance.
+#[derive(Clone)]
+pub(crate) enum AssetState {
+    Idle,
+    InFlight {
+        job: JobId,
+        progress: f32,
+        started: Instant,
+    },
+    Loaded {
+        duration_ms: u64,
+    },
+    Failed {
+        reason: String,
+        duration_ms: u64,
+    },
+}
+
+pub(crate) struct AsyncUploadsState {
+    /// When true, button clicks call the synchronous upload path. Useful
+    /// for showing the difference in frame pacing.
+    pub use_sync: bool,
+    /// Base mesh uploaded synchronously on first build so the viewport is
+    /// never empty.
+    pub base_mesh_id: Option<MeshId>,
+    /// Mesh created on the fly to host async skin weights.
+    pub skin_target_mesh_id: Option<MeshId>,
+    /// Vertex count of the skin target mesh, captured at upload time so the
+    /// skin button does not need to peek at private renderer state.
+    pub skin_target_vertex_count: usize,
+
+    pub env_state: AssetState,
+    pub mesh_state: AssetState,
+    pub texture_state: AssetState,
+    pub skin_state: AssetState,
+
+    pub loaded_mesh_id: Option<MeshId>,
+    pub loaded_texture_id: Option<u64>,
+    pub skin_installed: bool,
+    pub built: bool,
+}
+
+impl Default for AsyncUploadsState {
+    fn default() -> Self {
+        Self {
+            use_sync: false,
+            base_mesh_id: None,
+            skin_target_mesh_id: None,
+            skin_target_vertex_count: 0,
+            env_state: AssetState::Idle,
+            mesh_state: AssetState::Idle,
+            texture_state: AssetState::Idle,
+            skin_state: AssetState::Idle,
+            loaded_mesh_id: None,
+            loaded_texture_id: None,
+            skin_installed: false,
+            built: false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scene build
+// ---------------------------------------------------------------------------
+
+impl App {
+    pub(crate) fn build_async_uploads_scene(&mut self, renderer: &mut ViewportRenderer) {
+        let plane_mesh = viewport_lib::primitives::sphere(0.7, 24, 18);
+        self.async_uploads_state.base_mesh_id = Some(
+            renderer
+                .resources_mut()
+                .upload_mesh_data(&self.device, &plane_mesh)
+                .expect("base mesh"),
+        );
+        // A second sphere serves as the target for async skin weights.
+        let skin_mesh = viewport_lib::primitives::sphere(0.5, 16, 12);
+        self.async_uploads_state.skin_target_vertex_count = skin_mesh.positions.len();
+        self.async_uploads_state.skin_target_mesh_id = Some(
+            renderer
+                .resources_mut()
+                .upload_mesh_data(&self.device, &skin_mesh)
+                .expect("skin target mesh"),
+        );
+
+        self.async_uploads_state.env_state = AssetState::Idle;
+        self.async_uploads_state.mesh_state = AssetState::Idle;
+        self.async_uploads_state.texture_state = AssetState::Idle;
+        self.async_uploads_state.skin_state = AssetState::Idle;
+        self.async_uploads_state.loaded_mesh_id = None;
+        self.async_uploads_state.loaded_texture_id = None;
+        self.async_uploads_state.skin_installed = false;
+        self.async_uploads_state.built = true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame update: advance the per-asset state machines
+// ---------------------------------------------------------------------------
+
+impl App {
+    pub(crate) fn async_uploads_update(&mut self, renderer: &mut ViewportRenderer) {
+        // Env map: status only, no typed result to take.
+        let env_just_loaded = advance_status_only(
+            &mut self.async_uploads_state.env_state,
+            renderer,
+        );
+
+        // Mesh: when Ready, take the MeshId.
+        if let AssetState::InFlight { job, started, .. } =
+            self.async_uploads_state.mesh_state.clone()
+        {
+            match renderer.upload_status(job) {
+                UploadStatus::Ready => match renderer.upload_result_mesh(job) {
+                    Ok(mesh_id) => {
+                        self.async_uploads_state.loaded_mesh_id = Some(mesh_id);
+                        self.async_uploads_state.mesh_state = AssetState::Loaded {
+                            duration_ms: started.elapsed().as_millis() as u64,
+                        };
+                    }
+                    Err(e) => {
+                        self.async_uploads_state.mesh_state = AssetState::Failed {
+                            reason: format!("{e}"),
+                            duration_ms: started.elapsed().as_millis() as u64,
+                        };
+                    }
+                },
+                UploadStatus::Failed(e) => {
+                    self.async_uploads_state.mesh_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+                UploadStatus::Pending { progress } => {
+                    self.async_uploads_state.mesh_state = AssetState::InFlight {
+                        job,
+                        progress,
+                        started,
+                    };
+                }
+                UploadStatus::Unknown => {
+                    self.async_uploads_state.mesh_state = AssetState::Idle;
+                }
+            }
+        }
+
+        // Texture: when Ready, take the texture id.
+        if let AssetState::InFlight { job, started, .. } =
+            self.async_uploads_state.texture_state.clone()
+        {
+            match renderer.upload_status(job) {
+                UploadStatus::Ready => match renderer.upload_result_texture(job) {
+                    Ok(tex_id) => {
+                        self.async_uploads_state.loaded_texture_id = Some(tex_id);
+                        self.async_uploads_state.texture_state = AssetState::Loaded {
+                            duration_ms: started.elapsed().as_millis() as u64,
+                        };
+                    }
+                    Err(e) => {
+                        self.async_uploads_state.texture_state = AssetState::Failed {
+                            reason: format!("{e}"),
+                            duration_ms: started.elapsed().as_millis() as u64,
+                        };
+                    }
+                },
+                UploadStatus::Failed(e) => {
+                    self.async_uploads_state.texture_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+                UploadStatus::Pending { progress } => {
+                    self.async_uploads_state.texture_state = AssetState::InFlight {
+                        job,
+                        progress,
+                        started,
+                    };
+                }
+                UploadStatus::Unknown => {
+                    self.async_uploads_state.texture_state = AssetState::Idle;
+                }
+            }
+        }
+
+        // Skin: status only, but also flip the installed flag when Ready.
+        let skin_just_loaded = advance_status_only(
+            &mut self.async_uploads_state.skin_state,
+            renderer,
+        );
+        if skin_just_loaded {
+            self.async_uploads_state.skin_installed = true;
+        }
+
+        // The env map's IBL textures are stored on the renderer once the
+        // apply step runs. Rebuild the camera bind groups on the exact
+        // frame the job transitioned to Loaded so the shaders pick them
+        // up.
+        if env_just_loaded {
+            renderer.rebuild_camera_bind_groups(&self.device);
+        }
+    }
+}
+
+/// Advance an asset that has no typed result to take. Returns `true` if
+/// the state just transitioned from `InFlight` to `Loaded` so callers can
+/// run a one-shot side effect (rebuilding bind groups, flipping a flag,
+/// etc.) on the matching frame.
+fn advance_status_only(state: &mut AssetState, renderer: &mut ViewportRenderer) -> bool {
+    let AssetState::InFlight { job, started, .. } = state.clone() else {
+        return false;
+    };
+    match renderer.upload_status(job) {
+        UploadStatus::Ready => {
+            *state = AssetState::Loaded {
+                duration_ms: started.elapsed().as_millis() as u64,
+            };
+            true
+        }
+        UploadStatus::Failed(e) => {
+            *state = AssetState::Failed {
+                reason: format!("{e}"),
+                duration_ms: started.elapsed().as_millis() as u64,
+            };
+            false
+        }
+        UploadStatus::Pending { progress } => {
+            *state = AssetState::InFlight {
+                job,
+                progress,
+                started,
+            };
+            false
+        }
+        UploadStatus::Unknown => {
+            *state = AssetState::Idle;
+            false
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scene items
+// ---------------------------------------------------------------------------
+
+impl App {
+    pub(crate) fn async_uploads_scene_items(&self) -> Vec<SceneRenderItem> {
+        let mut items = Vec::new();
+        let state = &self.async_uploads_state;
+
+        if let Some(id) = state.base_mesh_id {
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = id;
+            item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+            item.material = Material::flat([0.7, 0.7, 0.7]);
+            items.push(item);
+        }
+
+        if let Some(id) = state.loaded_mesh_id {
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = id;
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0))
+                .to_cols_array_2d();
+            item.material = Material::flat([0.4, 0.8, 0.4]);
+            items.push(item);
+        }
+
+        if let (Some(mesh_id), Some(tex_id)) = (state.base_mesh_id, state.loaded_texture_id) {
+            let mut material = Material::flat([1.0, 1.0, 1.0]);
+            material.texture_id = Some(tex_id);
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = mesh_id;
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0))
+                .to_cols_array_2d();
+            item.material = material;
+            items.push(item);
+        }
+
+        if let Some(id) = state.skin_target_mesh_id {
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = id;
+            item.model = glam::Mat4::from_translation(glam::Vec3::new(-2.0, 0.0, 0.0))
+                .to_cols_array_2d();
+            let colour = if state.skin_installed {
+                [0.9, 0.4, 0.9]
+            } else {
+                [0.4, 0.4, 0.4]
+            };
+            item.material = Material::flat(colour);
+            items.push(item);
+        }
+
+        items
+    }
+
+    pub(crate) fn async_uploads_lighting(&self) -> LightingSettings {
+        let mut lighting = LightingSettings::default();
+        let mut sun = LightSource::default();
+        sun.kind = LightKind::Directional {
+            direction: [-0.4, -0.6, -0.7],
+        };
+        lighting.lights = vec![sun];
+        lighting.hemisphere_intensity = 0.35;
+        lighting.sky_colour = [0.85, 0.9, 1.0];
+        lighting.ground_colour = [0.3, 0.3, 0.32];
+        // When the env-map has landed, drop hemisphere a bit so the IBL
+        // contribution is visible.
+        if matches!(self.async_uploads_state.env_state, AssetState::Loaded { .. }) {
+            lighting.hemisphere_intensity = 0.1;
+        }
+        lighting
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Demo asset data
+// ---------------------------------------------------------------------------
+
+fn solid_env_pixels(width: u32, height: u32) -> Vec<f32> {
+    // Smooth vertical gradient from warm to cool, plus a hot spot near the
+    // top to show that IBL picked up the new sky.
+    let mut out = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        let v = y as f32 / height.max(1) as f32;
+        let r = 1.6 * (1.0 - v) + 0.4 * v;
+        let g = 1.2 * (1.0 - v) + 0.6 * v;
+        let b = 0.4 * (1.0 - v) + 1.8 * v;
+        for _ in 0..width {
+            out.extend_from_slice(&[r, g, b, 1.0]);
+        }
+    }
+    out
+}
+
+fn checker_rgba(width: u32, height: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity((width * height * 4) as usize);
+    let cell = (width / 8).max(1);
+    for y in 0..height {
+        for x in 0..width {
+            let on = ((x / cell) + (y / cell)) % 2 == 0;
+            if on {
+                out.extend_from_slice(&[240, 200, 80, 255]);
+            } else {
+                out.extend_from_slice(&[40, 50, 70, 255]);
+            }
+        }
+    }
+    out
+}
+
+fn demo_mesh() -> MeshData {
+    // A small icosphere keeps the upload work nontrivial without freezing
+    // the showcase if the user picks Sync mode.
+    viewport_lib::primitives::icosphere(0.6, 3)
+}
+
+fn unit_skin_weights(vertex_count: usize) -> SkinWeights {
+    SkinWeights {
+        joint_indices: vec![[0u8; 4]; vertex_count],
+        joint_weights: vec![[1.0, 0.0, 0.0, 0.0]; vertex_count],
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Asset launch helpers (Sync vs Async)
+// ---------------------------------------------------------------------------
+
+impl App {
+    fn launch_env_map(&mut self, renderer: &mut ViewportRenderer) {
+        let pixels = solid_env_pixels(32, 16);
+        let started = Instant::now();
+        if self.async_uploads_state.use_sync {
+            match renderer.upload_environment_map(&self.device, &self.queue, &pixels, 32, 16) {
+                Ok(()) => {
+                    self.async_uploads_state.env_state = AssetState::Loaded {
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+                Err(e) => {
+                    self.async_uploads_state.env_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+            }
+            renderer.rebuild_camera_bind_groups(&self.device);
+        } else {
+            match renderer.begin_upload_environment_map(&self.device, &self.queue, pixels, 32, 16) {
+                Ok(job) => {
+                    self.async_uploads_state.env_state = AssetState::InFlight {
+                        job,
+                        progress: 0.0,
+                        started,
+                    };
+                }
+                Err(e) => {
+                    self.async_uploads_state.env_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+            }
+        }
+    }
+
+    fn launch_mesh(&mut self, renderer: &mut ViewportRenderer) {
+        let data = demo_mesh();
+        let started = Instant::now();
+        if self.async_uploads_state.use_sync {
+            match renderer.resources_mut().upload_mesh_data(&self.device, &data) {
+                Ok(mesh_id) => {
+                    self.async_uploads_state.loaded_mesh_id = Some(mesh_id);
+                    self.async_uploads_state.mesh_state = AssetState::Loaded {
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+                Err(e) => {
+                    self.async_uploads_state.mesh_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+            }
+        } else {
+            match renderer.begin_upload_mesh_data(&self.device, data) {
+                Ok(job) => {
+                    self.async_uploads_state.mesh_state = AssetState::InFlight {
+                        job,
+                        progress: 0.0,
+                        started,
+                    };
+                }
+                Err(e) => {
+                    self.async_uploads_state.mesh_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+            }
+        }
+    }
+
+    fn launch_texture(&mut self, renderer: &mut ViewportRenderer) {
+        let rgba = checker_rgba(256, 256);
+        let started = Instant::now();
+        if self.async_uploads_state.use_sync {
+            match renderer
+                .resources_mut()
+                .upload_texture(&self.device, &self.queue, 256, 256, &rgba)
+            {
+                Ok(tex_id) => {
+                    self.async_uploads_state.loaded_texture_id = Some(tex_id);
+                    self.async_uploads_state.texture_state = AssetState::Loaded {
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+                Err(e) => {
+                    self.async_uploads_state.texture_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+            }
+        } else {
+            match renderer.begin_upload_texture(&self.device, &self.queue, 256, 256, rgba) {
+                Ok(job) => {
+                    self.async_uploads_state.texture_state = AssetState::InFlight {
+                        job,
+                        progress: 0.0,
+                        started,
+                    };
+                }
+                Err(e) => {
+                    self.async_uploads_state.texture_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+            }
+        }
+    }
+
+    fn launch_skin(&mut self, renderer: &mut ViewportRenderer) {
+        let Some(mesh_id) = self.async_uploads_state.skin_target_mesh_id else {
+            return;
+        };
+        let vertex_count = self.async_uploads_state.skin_target_vertex_count;
+        if vertex_count == 0 {
+            return;
+        }
+        let weights = unit_skin_weights(vertex_count);
+        let started = Instant::now();
+        if self.async_uploads_state.use_sync {
+            renderer
+                .resources_mut()
+                .set_skin_weights(&self.device, mesh_id, &weights);
+            self.async_uploads_state.skin_installed = true;
+            self.async_uploads_state.skin_state = AssetState::Loaded {
+                duration_ms: started.elapsed().as_millis() as u64,
+            };
+        } else {
+            let job = renderer
+                .resources_mut()
+                .begin_upload_skin_weights(&self.device, mesh_id, weights);
+            self.async_uploads_state.skin_state = AssetState::InFlight {
+                job,
+                progress: 0.0,
+                started,
+            };
+        }
+    }
+
+    fn launch_all(&mut self, renderer: &mut ViewportRenderer) {
+        self.launch_env_map(renderer);
+        self.launch_mesh(renderer);
+        self.launch_texture(renderer);
+        self.launch_skin(renderer);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_async_uploads(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    frame: &eframe::Frame,
+) {
+    ui.heading("Upload mode");
+    let mut new_mode = app.async_uploads_state.use_sync;
+    ui.horizontal(|ui| {
+        if ui
+            .radio(!app.async_uploads_state.use_sync, "Async (begin_upload_*)")
+            .clicked()
+        {
+            new_mode = false;
+        }
+        if ui
+            .radio(app.async_uploads_state.use_sync, "Sync (blocking)")
+            .clicked()
+        {
+            new_mode = true;
+        }
+    });
+    // Switching modes clears the per-asset state so timings from the
+    // previous run do not bleed into the new one. The uploaded textures
+    // and meshes on the renderer side stay alive; the showcase just
+    // forgets about them and ignores them going forward.
+    if new_mode != app.async_uploads_state.use_sync {
+        app.async_uploads_state.use_sync = new_mode;
+        app.async_uploads_state.env_state = AssetState::Idle;
+        app.async_uploads_state.mesh_state = AssetState::Idle;
+        app.async_uploads_state.texture_state = AssetState::Idle;
+        app.async_uploads_state.skin_state = AssetState::Idle;
+        app.async_uploads_state.loaded_mesh_id = None;
+        app.async_uploads_state.loaded_texture_id = None;
+        app.async_uploads_state.skin_installed = false;
+    }
+    ui.label(if app.async_uploads_state.use_sync {
+        "Sync calls block this frame. Watch the orbit camera stutter."
+    } else {
+        "Async calls return immediately. Orbit stays smooth while workers run."
+    });
+    ui.add_space(6.0);
+    ui.separator();
+
+    // Pending count at a glance.
+    let rs = frame.wgpu_render_state().expect("wgpu");
+    let pending = {
+        let guard = rs.renderer.read();
+        let r = guard
+            .callback_resources
+            .get::<ViewportRenderer>()
+            .expect("renderer");
+        r.resources().uploads_pending()
+    };
+    ui.label(format!("In flight: {pending}"));
+    ui.add_space(4.0);
+
+    let mut clicked_env = false;
+    let mut clicked_mesh = false;
+    let mut clicked_texture = false;
+    let mut clicked_skin = false;
+    let mut clicked_all = false;
+
+    ui.heading("Assets");
+    egui::Grid::new("asset_grid")
+        .num_columns(3)
+        .spacing([12.0, 6.0])
+        .show(ui, |ui| {
+            asset_row(
+                ui,
+                "Env map (HDR)",
+                &app.async_uploads_state.env_state,
+                &mut clicked_env,
+            );
+            asset_row(
+                ui,
+                "Mesh (icosphere)",
+                &app.async_uploads_state.mesh_state,
+                &mut clicked_mesh,
+            );
+            asset_row(
+                ui,
+                "Texture (256x256)",
+                &app.async_uploads_state.texture_state,
+                &mut clicked_texture,
+            );
+            asset_row(
+                ui,
+                "Skin weights",
+                &app.async_uploads_state.skin_state,
+                &mut clicked_skin,
+            );
+        });
+
+    ui.add_space(6.0);
+    if ui
+        .button("Load a level (fire all four)")
+        .clicked()
+    {
+        clicked_all = true;
+    }
+
+    ui.add_space(6.0);
+    ui.separator();
+    ui.heading("J5 (greyed out, lands later)");
+    ui.add_enabled_ui(false, |ui| {
+        let _ = ui.button("Volume");
+        let _ = ui.button("Gaussian splats");
+        let _ = ui.button("Sprite set");
+        let _ = ui.button("Overlay texture");
+    });
+
+    if !(clicked_env || clicked_mesh || clicked_texture || clicked_skin || clicked_all) {
+        return;
+    }
+
+    let mut guard = rs.renderer.write();
+    let renderer = guard
+        .callback_resources
+        .get_mut::<ViewportRenderer>()
+        .expect("renderer");
+
+    if clicked_env {
+        app.launch_env_map(renderer);
+    }
+    if clicked_mesh {
+        app.launch_mesh(renderer);
+    }
+    if clicked_texture {
+        app.launch_texture(renderer);
+    }
+    if clicked_skin {
+        app.launch_skin(renderer);
+    }
+    if clicked_all {
+        app.launch_all(renderer);
+    }
+}
+
+fn asset_row(ui: &mut egui::Ui, name: &str, state: &AssetState, clicked: &mut bool) {
+    ui.label(name);
+    if ui.button("Load").clicked() {
+        *clicked = true;
+    }
+    match state {
+        AssetState::Idle => {
+            ui.label(egui::RichText::new("idle").weak());
+        }
+        AssetState::InFlight {
+            progress, started, ..
+        } => {
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::ProgressBar::new(*progress)
+                        .show_percentage()
+                        .desired_width(120.0),
+                );
+                ui.label(format!("{} ms", started.elapsed().as_millis()));
+            });
+        }
+        AssetState::Loaded { duration_ms } => {
+            ui.label(
+                egui::RichText::new(format!("ready in {duration_ms} ms"))
+                    .color(egui::Color32::from_rgb(120, 220, 120)),
+            );
+        }
+        AssetState::Failed {
+            reason,
+            duration_ms,
+        } => {
+            ui.label(
+                egui::RichText::new(format!("failed after {duration_ms} ms: {reason}"))
+                    .color(egui::Color32::from_rgb(220, 110, 110)),
+            );
+        }
+    }
+    ui.end_row();
+}

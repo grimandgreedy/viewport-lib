@@ -2679,6 +2679,7 @@ impl ViewportGpuResources {
             jobs: std::sync::Mutex::new(crate::resources::upload_jobs::JobRunner::new()),
             job_mesh_results: std::sync::Mutex::new(std::collections::HashMap::new()),
             job_texture_results: std::sync::Mutex::new(std::collections::HashMap::new()),
+            plugin_job_results: std::sync::Mutex::new(std::collections::HashMap::new()),
             texture_allocated_bytes: 0,
             matcap_textures: Vec::new(),
             matcap_views: Vec::new(),

@@ -78,8 +78,11 @@ pub trait PluginItemCollection: Any + Send + Sync {
 
 /// Information forwarded to a plugin's per-frame `prepare`.
 ///
-/// Read-only camera + viewport state plus a frame counter. Plugins read
-/// these to decide what to upload this frame; they do not modify them.
+/// Read-only camera + viewport state, a frame counter, and a handle to
+/// the upload-job runner. Plugins use the runner the same way built-in
+/// uploads do: submit CPU work that returns a typed value, poll the
+/// returned `JobId` next frame, and take the result when the status
+/// reports `Ready`. See [`crate::resources::Jobs`] for the surface.
 pub struct ItemFrameContext<'a> {
     /// Active render-camera snapshot for this viewport: view + projection
     /// matrices, eye position, near/far. Use
@@ -91,6 +94,11 @@ pub struct ItemFrameContext<'a> {
     pub viewport_index: usize,
     /// Monotonically increasing frame counter assigned by the lib.
     pub frame_index: u64,
+    /// Handle to the upload-job runner. Plugins call
+    /// `ctx.jobs.submit_cpu(...)` to spawn background work and
+    /// `ctx.jobs.take::<T>(id)` to retrieve the result once the matching
+    /// `status` returns `Ready`.
+    pub jobs: crate::resources::Jobs<'a>,
 }
 
 /// Information forwarded to a plugin's `paint`.

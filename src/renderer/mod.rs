@@ -841,15 +841,18 @@ impl ViewportRenderer {
             return Vec::new();
         }
         self.plugin_frame_index = self.plugin_frame_index.wrapping_add(1);
-        let ctx = crate::plugin_api::ItemFrameContext {
-            camera: &frame.camera.render_camera,
-            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
-            viewport_index: frame.camera.viewport_index,
-            frame_index: self.plugin_frame_index,
-        };
         let mut bufs: Vec<wgpu::CommandBuffer> = Vec::new();
         for (name, plugin) in self.item_type_plugins.iter_mut() {
             if let Some(items) = frame.scene.plugin_items.get(*name) {
+                // Constructed per plugin because `Jobs` borrows `&resources`
+                // and the borrow only needs to live for this iteration.
+                let ctx = crate::plugin_api::ItemFrameContext {
+                    camera: &frame.camera.render_camera,
+                    viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+                    viewport_index: frame.camera.viewport_index,
+                    frame_index: self.plugin_frame_index,
+                    jobs: crate::resources::Jobs::new(&self.resources),
+                };
                 bufs.extend(plugin.prepare(device, queue, &ctx, items.as_ref()));
             }
         }
@@ -954,14 +957,15 @@ impl ViewportRenderer {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
             return;
         }
-        let ctx = crate::plugin_api::ItemFrameContext {
-            camera: &frame.camera.render_camera,
-            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
-            viewport_index: frame.camera.viewport_index,
-            frame_index: self.plugin_frame_index,
-        };
         for (name, plugin) in self.item_type_plugins.iter_mut() {
             if let Some(items) = frame.scene.plugin_items.get(*name) {
+                let ctx = crate::plugin_api::ItemFrameContext {
+                    camera: &frame.camera.render_camera,
+                    viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+                    viewport_index: frame.camera.viewport_index,
+                    frame_index: self.plugin_frame_index,
+                    jobs: crate::resources::Jobs::new(&self.resources),
+                };
                 plugin.cull(frustum, &ctx, items.as_ref());
             }
         }
@@ -1144,6 +1148,33 @@ impl ViewportRenderer {
         Ok(())
     }
 
+    /// Current state of an in-flight upload job.
+    pub fn upload_status(
+        &self,
+        id: crate::resources::JobId,
+    ) -> crate::resources::UploadStatus {
+        self.resources.upload_status(id)
+    }
+
+    /// Count of upload jobs still in flight.
+    pub fn uploads_pending(&self) -> usize {
+        self.resources.uploads_pending()
+    }
+
+    /// True when no upload jobs are in flight.
+    pub fn all_uploads_complete(&self) -> bool {
+        self.resources.all_uploads_complete()
+    }
+
+    /// Register a callback to fire when an upload job finishes. See
+    /// [`ViewportGpuResources::on_upload_complete`] for the semantics.
+    pub fn on_upload_complete<F>(&mut self, id: crate::resources::JobId, cb: F)
+    where
+        F: FnOnce(&crate::resources::UploadStatus) + Send + 'static,
+    {
+        self.resources.on_upload_complete(id, cb);
+    }
+
     /// Start an asynchronous albedo texture upload. See
     /// [`ViewportGpuResources::begin_upload_texture`] for the semantics.
     pub fn begin_upload_texture(
@@ -1249,10 +1280,14 @@ impl ViewportRenderer {
         )
     }
 
-    /// Rebuild the primary + per-viewport camera bind groups.
+    /// Rebuild the primary and per-viewport camera bind groups.
     ///
-    /// Call after IBL textures are uploaded so shaders see the new environment.
-    fn rebuild_camera_bind_groups(&mut self, device: &wgpu::Device) {
+    /// Call after IBL textures are uploaded so the shaders see the new
+    /// environment. The synchronous `upload_environment_map` does this
+    /// internally; consumers driving the async path through
+    /// `begin_upload_environment_map` should call this themselves once the
+    /// matching job reports `Ready`.
+    pub fn rebuild_camera_bind_groups(&mut self, device: &wgpu::Device) {
         self.resources.camera_bind_group = self.resources.create_camera_bind_group(
             device,
             &self.resources.camera_uniform_buf,

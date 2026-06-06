@@ -2538,6 +2538,16 @@ pub struct ViewportGpuResources {
     pub(crate) job_texture_results: std::sync::Mutex<
         std::collections::HashMap<super::upload_jobs::JobId, super::upload_jobs::ResultSlot<u64>>,
     >,
+    /// Boxed result slots for jobs submitted through the plugin facade.
+    /// Filled by the apply closure of `Jobs::submit_cpu` with a
+    /// `Box<dyn Any + Send>`; drained by `Jobs::take<T>` once the value
+    /// downcasts cleanly.
+    pub(crate) plugin_job_results: std::sync::Mutex<
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<Box<dyn std::any::Any + Send>>,
+        >,
+    >,
     /// Bytes allocated on the GPU for user-uploaded textures.
     /// Incremented by `upload_texture`, `upload_normal_map`, and the async
     /// upload paths once a texture's apply step lands.

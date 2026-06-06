@@ -9,6 +9,7 @@
 //! No upload entry points use the runner yet. Real submitters will land
 //! alongside the async variants of each existing `upload_*` method.
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
@@ -582,6 +583,112 @@ impl super::ViewportGpuResources {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Plugin-facing facade
+// ---------------------------------------------------------------------------
+
+/// Result slot type used by the plugin facade. Values are boxed because the
+/// runner has no compile-time knowledge of the closure's return type.
+type PluginResultSlot = ResultSlot<Box<dyn Any + Send>>;
+
+/// Plugin-facing handle to the upload-job runner. Exposed to
+/// `ItemTypePlugin::prepare` via `ItemFrameContext::jobs`.
+///
+/// Plugins use it the same way built-in uploads do, but with a typed
+/// generic return: submit a CPU job that produces a value of type `T`,
+/// poll the returned `JobId` next frame, and `take::<T>()` the result
+/// once the status is `Ready`.
+///
+/// The handle is `Copy`-like in spirit (it just holds a reference); both
+/// `submit_cpu` and the readers use `&self` so the plugin does not need to
+/// thread mutability through its own state.
+pub struct Jobs<'a> {
+    resources: &'a super::ViewportGpuResources,
+}
+
+impl<'a> Jobs<'a> {
+    pub(crate) fn new(resources: &'a super::ViewportGpuResources) -> Self {
+        Self { resources }
+    }
+
+    /// Schedule a CPU job whose result is delivered through `take<T>`.
+    ///
+    /// `work` runs on a background worker. The closure must own its
+    /// inputs because the `&Device` and `&Queue` references passed to
+    /// `ItemTypePlugin::prepare` are not `'static`. Panics inside `work`
+    /// surface as `UploadStatus::Failed(JobWorkerLost)`.
+    pub fn submit_cpu<T, F>(&self, work: F) -> JobId
+    where
+        T: Send + 'static,
+        F: FnOnce() -> T + Send + 'static,
+    {
+        let slot: PluginResultSlot = ResultSlot::new();
+        let slot_for_apply = slot.clone();
+
+        let id = {
+            let mut runner = self
+                .resources
+                .jobs
+                .lock()
+                .expect("upload job runner poisoned");
+            runner.submit_cpu(move |_progress| {
+                let value: T = work();
+                let boxed: Box<dyn Any + Send> = Box::new(value);
+                Ok(JobProduct::with_apply(Box::new(
+                    move |_resources: &mut super::ViewportGpuResources| {
+                        slot_for_apply.set(boxed);
+                    },
+                )))
+            })
+        };
+
+        self.resources
+            .plugin_job_results
+            .lock()
+            .expect("plugin job result map poisoned")
+            .insert(id, slot);
+        id
+    }
+
+    /// Current state of a submitted plugin job. Same shape as the
+    /// `upload_status` reported by built-in uploads.
+    pub fn status(&self, id: JobId) -> UploadStatus {
+        self.resources.upload_status(id)
+    }
+
+    /// Try to take the typed result produced by a completed job.
+    ///
+    /// Returns `None` while the job is still in flight, when the id has
+    /// already been taken, when it never existed, or when `T` does not
+    /// match the type stored by the worker (plugin author error). On a
+    /// successful take, the slot is removed.
+    pub fn take<T: Any + Send + 'static>(&self, id: JobId) -> Option<T> {
+        let mut map = self
+            .resources
+            .plugin_job_results
+            .lock()
+            .expect("plugin job result map poisoned");
+        let slot = map.get(&id)?.clone();
+        let boxed = slot.take()?;
+        match boxed.downcast::<T>() {
+            Ok(value) => {
+                map.remove(&id);
+                Some(*value)
+            }
+            Err(_boxed_back) => {
+                // Type mismatch. Re-insert the box by recreating the
+                // slot with the same value so the plugin can retry with
+                // the right type or just leak the slot in this dropped
+                // state. To keep things simple here, we drop on
+                // mismatch -- plugins should not be calling take with
+                // the wrong type.
+                map.remove(&id);
+                None
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -823,6 +930,115 @@ mod tests {
             }
             panic!("GPU-gated job did not reach Ready");
         });
+    }
+
+    // -----------------------------------------------------------------
+    // Plugin-facing facade
+    // -----------------------------------------------------------------
+
+    fn make_resources_for_jobs() -> Option<(wgpu::Device, wgpu::Queue, super::super::ViewportGpuResources)> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()?;
+        let resources = super::super::ViewportGpuResources::new(
+            &device,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            1,
+        );
+        Some((device, queue, resources))
+    }
+
+    fn drive_resources<F: FnMut(&super::super::ViewportGpuResources) -> bool>(
+        resources: &mut super::super::ViewportGpuResources,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mut predicate: F,
+    ) {
+        for _ in 0..200 {
+            resources.process_uploads(device, queue);
+            if predicate(resources) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn plugin_jobs_round_trip_typed_result() {
+        let Some((device, queue, mut resources)) = make_resources_for_jobs() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let id = {
+            let jobs = super::Jobs::new(&resources);
+            jobs.submit_cpu(|| 41_u32 + 1)
+        };
+
+        // Before the worker completes, take is None.
+        assert!(super::Jobs::new(&resources).take::<u32>(id).is_none());
+
+        drive_resources(&mut resources, &device, &queue, |r| {
+            matches!(r.upload_status(id), UploadStatus::Ready)
+        });
+
+        let jobs = super::Jobs::new(&resources);
+        assert_eq!(jobs.take::<u32>(id), Some(42));
+        // Second take returns None (already drained).
+        assert_eq!(jobs.take::<u32>(id), None);
+    }
+
+    #[test]
+    fn plugin_jobs_panic_surfaces_as_failed() {
+        let Some((device, queue, mut resources)) = make_resources_for_jobs() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let id = {
+            let jobs = super::Jobs::new(&resources);
+            jobs.submit_cpu(|| -> u32 { panic!("plugin worker exploded") })
+        };
+
+        drive_resources(&mut resources, &device, &queue, |r| {
+            !matches!(r.upload_status(id), UploadStatus::Pending { .. })
+        });
+
+        match resources.upload_status(id) {
+            UploadStatus::Failed(ViewportError::JobWorkerLost { reason }) => {
+                assert_eq!(reason, "worker panicked");
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+        // Failed jobs leave the slot intact but with no value; take returns None.
+        assert!(super::Jobs::new(&resources).take::<u32>(id).is_none());
+    }
+
+    #[test]
+    fn plugin_jobs_wrong_type_returns_none() {
+        let Some((device, queue, mut resources)) = make_resources_for_jobs() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let id = {
+            let jobs = super::Jobs::new(&resources);
+            jobs.submit_cpu(|| 7_i64)
+        };
+
+        drive_resources(&mut resources, &device, &queue, |r| {
+            matches!(r.upload_status(id), UploadStatus::Ready)
+        });
+
+        let jobs = super::Jobs::new(&resources);
+        // Asking for a different type drops the box silently.
+        assert!(jobs.take::<u32>(id).is_none());
+        // After the type mismatch the slot is gone, so subsequent takes
+        // continue to return None even with the correct type.
+        assert!(jobs.take::<i64>(id).is_none());
     }
 
     /// Creates a headless wgpu device + queue for the duration of `f`.

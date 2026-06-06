@@ -80,7 +80,7 @@ pub use self::types::{
     PointCloudGpuData, PolylineGpuData, ProjectedTetId, ScreenImageGpuData, SingleLightUniform,
     SkinWeights, TextureMemoryStats, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
 };
-pub use self::upload_jobs::{JobId, ProgressHandle, ResultSlot, UploadStatus};
+pub use self::upload_jobs::{JobId, Jobs, ProgressHandle, ResultSlot, UploadStatus};
 #[allow(deprecated)]
 pub use self::volume_mesh::{
     CELL_SENTINEL, TET_SENTINEL, VolumeMeshData, extract_clipped_volume_faces,

@@ -68,6 +68,7 @@ mod showcase_47_lighting_consistency;
 mod showcase_48_scatter_volumes;
 mod showcase_49_scene_lights;
 mod showcase_50_gpu_wave;
+mod showcase_51_async_uploads;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -219,6 +220,7 @@ fn main() -> eframe::Result {
                 svol_state: showcase_48_scatter_volumes::SvolState::default(),
                 sl_state: showcase_49_scene_lights::SlState::default(),
                 wave_state: showcase_50_gpu_wave::WaveState::default(),
+                async_uploads_state: showcase_51_async_uploads::AsyncUploadsState::default(),
             }))
         }),
     )
@@ -282,6 +284,7 @@ enum ShowcaseMode {
     ScatterVolumes,
     SceneLights,
     GpuWave,
+    AsyncUploads,
 }
 
 impl ShowcaseMode {
@@ -337,6 +340,7 @@ impl ShowcaseMode {
             Self::ScatterVolumes => "48: Scatter Volumes",
             Self::SceneLights => "49: Scene Lights",
             Self::GpuWave => "50: GPU Wave (compute plugin)",
+            Self::AsyncUploads => "51: Async Asset Streaming",
         }
     }
 }
@@ -511,6 +515,9 @@ pub(crate) struct App {
 
     // --- Showcase 50 ---
     pub(crate) wave_state: showcase_50_gpu_wave::WaveState,
+
+    // --- Showcase 51 ---
+    pub(crate) async_uploads_state: showcase_51_async_uploads::AsyncUploadsState,
 }
 
 // ---------------------------------------------------------------------------
@@ -694,6 +701,7 @@ impl eframe::App for App {
                     ShowcaseMode::ScatterVolumes,
                     ShowcaseMode::SceneLights,
                     ShowcaseMode::GpuWave,
+                    ShowcaseMode::AsyncUploads,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1434,6 +1442,23 @@ impl eframe::App for App {
                 {
                     ctx.request_repaint();
                 }
+
+                // ----- Async uploads (51): advance per-asset state machines
+                // from upload_status, and keep repainting so the orbit camera
+                // animates even while no input is happening.
+                if self.mode == ShowcaseMode::AsyncUploads
+                    && self.async_uploads_state.built
+                {
+                    let rs = frame.wgpu_render_state().expect("wgpu");
+                    let mut guard = rs.renderer.write();
+                    let renderer = guard
+                        .callback_resources
+                        .get_mut::<ViewportRenderer>()
+                        .expect("renderer");
+                    self.async_uploads_update(renderer);
+                    drop(guard);
+                    ctx.request_repaint();
+                }
             });
     }
 }
@@ -1444,7 +1469,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 50] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 51] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1495,6 +1520,7 @@ impl App {
             ShowcaseMode::ScatterVolumes,
             ShowcaseMode::SceneLights,
             ShowcaseMode::GpuWave,
+            ShowcaseMode::AsyncUploads,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1629,6 +1655,7 @@ impl App {
             ShowcaseMode::ScatterVolumes => !self.svol_state.built,
             ShowcaseMode::SceneLights => !self.sl_state.built,
             ShowcaseMode::GpuWave => !self.wave_state.built,
+            ShowcaseMode::AsyncUploads => !self.async_uploads_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -2085,6 +2112,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::AsyncUploads => {
+                self.build_async_uploads_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 9.0,
+                    orientation: glam::Quat::from_rotation_z(0.4)
+                        * glam::Quat::from_rotation_x(1.0),
+                    ..Camera::default()
+                };
+            }
             ShowcaseMode::GpuWave => {
                 self.build_wave_scene(renderer);
                 self.camera = Camera {
@@ -2197,6 +2234,9 @@ impl App {
             ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::controls_svol(self, ui),
             ShowcaseMode::SceneLights => showcase_49_scene_lights::controls_sl(self, ui),
             ShowcaseMode::GpuWave => showcase_50_gpu_wave::controls_wave(self, ui),
+            ShowcaseMode::AsyncUploads => {
+                showcase_51_async_uploads::controls_async_uploads(self, ui, frame)
+            }
         }
     }
 }
@@ -3025,6 +3065,12 @@ impl App {
 
             ShowcaseMode::GpuWave => {
                 let (items, lighting) = showcase_50_gpu_wave::wave_collect(self);
+                (items, Some(BG_COLOUR), lighting, 0, 0)
+            }
+
+            ShowcaseMode::AsyncUploads => {
+                let items = self.async_uploads_scene_items();
+                let lighting = self.async_uploads_lighting();
                 (items, Some(BG_COLOUR), lighting, 0, 0)
             }
         };

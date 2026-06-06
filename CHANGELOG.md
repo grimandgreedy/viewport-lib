@@ -20,6 +20,20 @@ Texture uploads consolidate on the same shape. `begin_upload_texture` and `begin
 
 The earlier async-texture path is removed. `upload_texture_async`, `PendingTextureId`, `is_upload_ready`, `promote_texture`, and the internal `submit_pending_texture_uploads` drain are gone, along with the bespoke staging-buffer pool that backed them. Use `begin_upload_texture` + `upload_result_texture` instead. See `docs/migration-guides/upload-job-system.md`.
 
+### Plugin-facing job API
+
+`ItemTypePlugin` implementations can now submit background work through the same runner the built-in uploads use. `ItemFrameContext` gains a `jobs: Jobs<'a>` field with three methods: `submit_cpu<T, F>(work) -> JobId` schedules a CPU job that returns a value of type `T`; `status(JobId) -> UploadStatus` polls; `take<T: 'static>(JobId) -> Option<T>` retrieves the typed result once `Ready`. Results are stored as `Box<dyn Any + Send>` internally; `take` downcasts and returns `None` on a type mismatch.
+
+The plugin trait surface itself is unchanged: `init_gpu` stays synchronous, and `prepare` still takes `&ItemFrameContext`. The runner's drain runs before plugin `prepare` each frame, so a job submitted in frame N is consumable in frame N+1.
+
+A worked example lives at `viewport-lib-terrain/examples/eframe_plugin_jobs.rs`: a small `HeightStatsPlugin` that synthesises a 1024x1024 heightmap on a worker, polls the job from its `prepare`, and takes the typed result.
+
+### Showcase 51: async asset streaming
+
+A new showcase in `eframe-showcase` demonstrates the upload-job system end to end. A sync vs async toggle drives the same asset buttons; in async mode the orbit camera keeps moving while the env-map, mesh, texture, or skin-weights load on background workers. Per-asset progress bars and an in-flight count read from the same public API a consumer would use (`upload_status`, `uploads_pending`). Volume / gaussian-splat / sprite / overlay-texture buttons appear greyed out and land in a later phase.
+
+`ViewportRenderer::rebuild_camera_bind_groups` is now public so consumers driving `begin_upload_environment_map` can rebuild bind groups themselves once the job lands. The sync entry still does this internally. `upload_status`, `uploads_pending`, `all_uploads_complete`, and `on_upload_complete` also forward through `ViewportRenderer` for convenience.
+
 ### Item-type plugins
 
 Plugins can ship a new kind of scene item without forking the lib. The set of renderable categories used to be fixed; new ones now register through an `ItemTypePlugin` trait and submit their per-frame data via `SceneFrame::submit_plugin_items`. The lib handles picking, selection outline, frustum cull, clip volumes, shadow casting, and OIT transparency for plugin items the same way it handles built-ins. Plugin shaders include published WGSL helpers for lighting, transparency, and clipping so they stay in sync with the rest of the renderer.
