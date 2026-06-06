@@ -97,10 +97,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         up_dot,
     );
 
-    // Accumulate all light types.
+    // Accumulate all light types. Iterate the cluster's light list when the
+    // build pass is active, or the full active-light array under the small-N
+    // fallback : see `scene_lighting.wgsl`.
     var diffuse  = vec3<f32>(0.0);
     var specular = vec3<f32>(0.0);
-    for (var i: u32 = 0u; i < lights.count; i++) {
+    let range = cluster_light_range(in.world_pos, lights.count);
+    for (var j: u32 = 0u; j < range.count; j = j + 1u) {
+        let i = cluster_light_global(range, j);
         let light = lights_storage[i];
         var L: vec3<f32>;
         var light_rgb: vec3<f32>;

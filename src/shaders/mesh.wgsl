@@ -771,7 +771,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         let F0 = mix(vec3<f32>(0.04), base_colour, metallic);
 
         var Lo = vec3<f32>(0.0);
-        for (var i = 0u; i < lights_uniform.count; i++) {
+        let pbr_range = cluster_light_range(in.world_pos, lights_uniform.count);
+        for (var j: u32 = 0u; j < pbr_range.count; j = j + 1u) {
+            let i = cluster_light_global(pbr_range, j);
             let l = lights_storage[i];
             var L: vec3<f32>;
             var radiance: vec3<f32>;
@@ -848,7 +850,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         // Multi-light Blinn-Phong path
         var total_colour_contrib = vec3<f32>(0.0);
 
-        for (var i = 0u; i < lights_uniform.count; i++) {
+        let bp_range = cluster_light_range(in.world_pos, lights_uniform.count);
+        for (var j: u32 = 0u; j < bp_range.count; j = j + 1u) {
+            let i = cluster_light_global(bp_range, j);
             let l = lights_storage[i];
 
             var light_dir: vec3<f32>;

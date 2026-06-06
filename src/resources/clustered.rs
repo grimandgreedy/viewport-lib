@@ -51,6 +51,9 @@ pub struct ClusterGridUniform {
     /// (tan_half_fov_x, tan_half_fov_y, _pad, _pad). Used by the build pass
     /// to compute per-cluster view-space AABBs from screen-tile NDC bounds.
     pub proj_scale: [f32; 4],
+    /// World-to-view matrix. Lets the fragment shader compute a view-space
+    /// position without growing each consumer's per-shader `Camera` struct.
+    pub view: [[f32; 4]; 4],
 }
 
 impl Default for ClusterGridUniform {
@@ -60,6 +63,7 @@ impl Default for ClusterGridUniform {
             depth: [0.1, 1000.0, (1000.0_f32 / 0.1_f32).ln(), 0.0],
             screen: [1.0, 1.0, 1.0, 0.0],
             proj_scale: [1.0, 1.0, 0.0, 0.0],
+            view: glam::Mat4::IDENTITY.to_cols_array_2d(),
         }
     }
 }

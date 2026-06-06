@@ -644,16 +644,23 @@ impl ViewportRenderer {
             let far = frame.camera.render_camera.far.max(near + 0.01);
 
             let active_count = lights_packed.len() as u32;
+            // Skip the cluster build entirely for scenes with only a handful
+            // of lights : straight per-fragment iteration is cheaper than the
+            // lookup-table indirection at that scale.
+            let use_clusters = active_count
+                > crate::resources::clustered::SMALL_N_THRESHOLD;
+            let fallback_flag = if use_clusters { 0.0 } else { 1.0 };
             let grid_uniform = ClusterGridUniform {
                 dimensions: [CLUSTER_X_TILES, CLUSTER_Y_TILES, CLUSTER_Z_SLICES, CLUSTER_COUNT],
                 depth: [near, far, (far / near).ln(), active_count as f32],
                 screen: [
                     frame.camera.render_camera.aspect.max(0.01),
                     1.0,
-                    0.0,
+                    fallback_flag,
                     0.0,
                 ],
                 proj_scale: [tan_half_fov_x, tan_half_fov_y, 0.0, 0.0],
+                view: view_mat.to_cols_array_2d(),
             };
             resources
                 .clustered
@@ -707,9 +714,12 @@ impl ViewportRenderer {
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("cluster_frame_encoder"),
             });
+            // Pass 0 when below threshold so dispatch_frame runs the clear
+            // (keeping the buffers in a defined state) but skips the build.
+            let build_count = if use_clusters { active_count } else { 0 };
             resources
                 .clustered
-                .dispatch_frame(&mut encoder, active_count);
+                .dispatch_frame(&mut encoder, build_count);
             queue.submit(std::iter::once(encoder.finish()));
         }
 
