@@ -59,6 +59,46 @@ impl Frustum {
         Self { planes }
     }
 
+    /// Test whether a sphere should be culled.
+    ///
+    /// Returns `true` if the sphere is fully outside at least one plane. The
+    /// test is conservative: spheres straddling a plane are kept. The CPU
+    /// light cull uses this to drop point and spot lights whose entire range
+    /// is off-screen before they reach the GPU cluster build.
+    pub fn cull_sphere(&self, center: glam::Vec3, radius: f32) -> bool {
+        for plane in &self.planes {
+            if plane.normal.dot(center) + plane.d < -radius {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Test whether a (right-circular) cone should be culled.
+    ///
+    /// The cone has its apex at `apex`, points along the unit vector `axis`,
+    /// has an outer half-angle of `half_angle` radians, and reaches `range`
+    /// units along the axis. The test is the standard "cone vs plane" check
+    /// from Akine-Moller et al. : project the apex onto the plane normal and
+    /// add the cone's spread at the far end.
+    ///
+    /// Conservative: cones partially inside the frustum are kept.
+    pub fn cull_cone(&self, apex: glam::Vec3, axis: glam::Vec3, half_angle: f32, range: f32) -> bool {
+        let sin_a = half_angle.sin();
+        let cos_a = half_angle.cos();
+        // Far cap radius and centre.
+        let far_centre = apex + axis * range * cos_a;
+        let far_radius = range * sin_a;
+        for plane in &self.planes {
+            let apex_dist = plane.normal.dot(apex) + plane.d;
+            let far_dist = plane.normal.dot(far_centre) + plane.d - far_radius;
+            if apex_dist < 0.0 && far_dist < 0.0 {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Test whether an AABB should be culled (is fully outside the frustum).
     ///
     /// Returns `true` if the AABB is entirely outside at least one plane
@@ -172,6 +212,44 @@ mod tests {
             max: glam::Vec3::new(-999.0, 0.5, 0.5),
         };
         assert!(frustum.cull_aabb(&aabb), "box far left should be culled");
+    }
+
+    #[test]
+    fn test_cull_sphere_in_view() {
+        let frustum = Frustum::from_view_proj(&test_camera_vp());
+        assert!(!frustum.cull_sphere(glam::Vec3::ZERO, 0.5));
+    }
+
+    #[test]
+    fn test_cull_sphere_behind_camera() {
+        let frustum = Frustum::from_view_proj(&test_camera_vp());
+        // Camera at z=5 looking toward origin (-Z view). Sphere at z=100 is
+        // far behind the camera.
+        assert!(frustum.cull_sphere(glam::Vec3::new(0.0, 0.0, 100.0), 0.5));
+    }
+
+    #[test]
+    fn test_cull_sphere_large_radius_keeps() {
+        let frustum = Frustum::from_view_proj(&test_camera_vp());
+        // Sphere centre is behind the camera but radius reaches into view.
+        assert!(!frustum.cull_sphere(glam::Vec3::new(0.0, 0.0, 100.0), 200.0));
+    }
+
+    #[test]
+    fn test_cull_cone_pointing_into_view() {
+        let frustum = Frustum::from_view_proj(&test_camera_vp());
+        // Apex inside the frustum at the origin, axis pointing further into
+        // the scene. Should be kept.
+        let axis = -glam::Vec3::Z;
+        assert!(!frustum.cull_cone(glam::Vec3::ZERO, axis, 0.4, 5.0));
+    }
+
+    #[test]
+    fn test_cull_cone_off_to_the_side() {
+        let frustum = Frustum::from_view_proj(&test_camera_vp());
+        // Cone planted far to the right, axis pointing further right.
+        let axis = glam::Vec3::X;
+        assert!(frustum.cull_cone(glam::Vec3::new(1000.0, 0.0, 0.0), axis, 0.1, 1.0));
     }
 
     #[test]

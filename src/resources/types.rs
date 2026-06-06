@@ -2384,6 +2384,10 @@ pub struct ViewportGpuResources {
     /// light list to this cap each frame, ranking surplus lights by
     /// `LightSource::importance * proximity_weight`.
     pub light_storage_buf: wgpu::Buffer,
+    /// Clustered-shading state: cluster grid, global light index list, and the
+    /// per-frame cluster build pipeline. Bindings 14/15/16 of the camera bind
+    /// group expose this state to every lit pipeline.
+    pub clustered: crate::resources::clustered::ClusteredResources,
     /// Bind group (group 0) binding camera, light, clip-plane, and shadow uniforms.
     pub camera_bind_group: wgpu::BindGroup,
     /// Bind group layout for group 0 (shared by all scene pipelines).

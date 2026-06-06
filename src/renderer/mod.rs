@@ -481,6 +481,9 @@ pub struct ViewportRenderer {
     /// Cascade splits from the last tracing log emission. Sentinel [f32::MAX; 4] forces
     /// a log on the first frame.
     last_logged_cascade_splits: [f32; 4],
+    /// Lights dropped by the CPU frustum cull on the most recent frame.
+    /// Surfaced through the cluster debug overlay when enabled.
+    pub(crate) last_frustum_culled_lights: u32,
 }
 
 impl ViewportRenderer {
@@ -606,6 +609,7 @@ impl ViewportRenderer {
             last_shadow_atlas_resolution: 4096,
             last_contact_shadow_active: false,
             last_logged_cascade_splits: [f32::MAX; 4],
+            last_frustum_culled_lights: 0,
         }
     }
 

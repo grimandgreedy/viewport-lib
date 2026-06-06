@@ -304,12 +304,53 @@ impl ViewportRenderer {
             &frame.scene.scatter_volumes,
             &resources.colourmaps_cpu,
         );
-        let raw_lights: Vec<&LightSource> = lighting
+        let raw_lights_unculled: Vec<&LightSource> = lighting
             .lights
             .iter()
             .chain(frame.scene.lights.iter())
             .chain(virtual_scatter_lights.iter())
             .collect();
+
+        // CPU per-frame frustum cull. Sphere-vs-frustum for point lights,
+        // cone-vs-frustum for spot lights, trivial-true for directional.
+        // Dropping off-screen lights here keeps the cluster build pass and
+        // the per-fragment iteration both bounded by what is actually visible.
+        // Directional lights always survive : they affect every fragment.
+        let cull_frustum =
+            crate::camera::frustum::Frustum::from_view_proj(&frame.camera.render_camera.view_proj());
+        let mut frustum_culled = 0u32;
+        let raw_lights: Vec<&LightSource> = raw_lights_unculled
+            .into_iter()
+            .filter(|l| match l.kind {
+                LightKind::Directional { .. } => true,
+                LightKind::Point { position, range } => {
+                    let keep = !cull_frustum.cull_sphere(glam::Vec3::from(position), range);
+                    if !keep {
+                        frustum_culled += 1;
+                    }
+                    keep
+                }
+                LightKind::Spot {
+                    position,
+                    direction,
+                    range,
+                    outer_angle,
+                    ..
+                } => {
+                    let axis = glam::Vec3::from(direction).normalize_or_zero();
+                    if axis.length_squared() < 1e-8 {
+                        return true;
+                    }
+                    let keep =
+                        !cull_frustum.cull_cone(glam::Vec3::from(position), axis, outer_angle, range);
+                    if !keep {
+                        frustum_culled += 1;
+                    }
+                    keep
+                }
+            })
+            .collect();
+        self.last_frustum_culled_lights = frustum_culled;
 
         // Apply the per-frame cap. When over the cap, keep the first directional
         // light at slot 0 (the cascaded-shadow caster) and rank the rest by
@@ -577,6 +618,99 @@ impl ViewportRenderer {
                 0,
                 bytemuck::cast_slice(&lights_packed),
             );
+        }
+
+        // Clustered shading : transform the survivors to view space, upload
+        // the active-light array, refresh the cluster grid uniform, then
+        // dispatch clear + build. Lit fragment shaders read the resulting
+        // per-cluster light index ranges from bindings 14 / 15 / 16 of the
+        // camera bind group.
+        {
+            use crate::resources::clustered::{
+                ActiveLightView, CLUSTER_X_TILES, CLUSTER_Y_TILES, CLUSTER_Z_SLICES,
+                CLUSTER_COUNT, ClusterGridUniform,
+            };
+
+            let view_mat = frame.camera.render_camera.view;
+            // Perspective parameters : derive tan(half_fov) from the proj
+            // matrix diagonal (proj[0][0] = 1/tan(half_fov_x), with the wgpu
+            // RH perspective matrices used here).
+            let proj = frame.camera.render_camera.projection;
+            let p00 = proj.col(0).x.max(1e-6);
+            let p11 = proj.col(1).y.max(1e-6);
+            let tan_half_fov_x = 1.0 / p00;
+            let tan_half_fov_y = 1.0 / p11;
+            let near = frame.camera.render_camera.near.max(0.01);
+            let far = frame.camera.render_camera.far.max(near + 0.01);
+
+            let active_count = lights_packed.len() as u32;
+            let grid_uniform = ClusterGridUniform {
+                dimensions: [CLUSTER_X_TILES, CLUSTER_Y_TILES, CLUSTER_Z_SLICES, CLUSTER_COUNT],
+                depth: [near, far, (far / near).ln(), active_count as f32],
+                screen: [
+                    frame.camera.render_camera.aspect.max(0.01),
+                    1.0,
+                    0.0,
+                    0.0,
+                ],
+                proj_scale: [tan_half_fov_x, tan_half_fov_y, 0.0, 0.0],
+            };
+            resources
+                .clustered
+                .write_grid_uniform(queue, &grid_uniform);
+
+            // Build the view-space ActiveLight array. Order matches
+            // `lights_packed` / `light_storage_buf` so light_indices[j] from
+            // the build pass is a valid index into lights_storage too.
+            let active_lights: Vec<ActiveLightView> = combined_lights
+                .iter()
+                .map(|l| {
+                    let (view_pos, range, light_type, view_dir, cos_outer) = match l.kind {
+                        LightKind::Directional { direction } => {
+                            let world_dir = glam::Vec3::from(direction).normalize_or_zero();
+                            let view_dir = view_mat
+                                .transform_vector3(world_dir)
+                                .normalize_or_zero();
+                            (glam::Vec3::ZERO, f32::INFINITY, 0u32, view_dir, 1.0)
+                        }
+                        LightKind::Point { position, range } => {
+                            let view_pos = view_mat
+                                .transform_point3(glam::Vec3::from(position));
+                            (view_pos, range, 1u32, glam::Vec3::ZERO, 1.0)
+                        }
+                        LightKind::Spot {
+                            position,
+                            direction,
+                            range,
+                            outer_angle,
+                            ..
+                        } => {
+                            let view_pos = view_mat
+                                .transform_point3(glam::Vec3::from(position));
+                            let view_dir = view_mat
+                                .transform_vector3(glam::Vec3::from(direction))
+                                .normalize_or_zero();
+                            (view_pos, range, 2u32, view_dir, outer_angle.cos())
+                        }
+                    };
+                    ActiveLightView {
+                        view_pos_range: [view_pos.x, view_pos.y, view_pos.z, range],
+                        type_pad: [light_type, 0, 0, 0],
+                        spot_data: [view_dir.x, view_dir.y, view_dir.z, cos_outer],
+                    }
+                })
+                .collect();
+            resources
+                .clustered
+                .write_active_lights(queue, &active_lights);
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("cluster_frame_encoder"),
+            });
+            resources
+                .clustered
+                .dispatch_frame(&mut encoder, active_count);
+            queue.submit(std::iter::once(encoder.finish()));
         }
 
         // Upload all cascade matrices to the shadow uniform buffer before the shadow pass.

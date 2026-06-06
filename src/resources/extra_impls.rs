@@ -560,6 +560,18 @@ impl ViewportGpuResources {
                     binding: 13,
                     resource: self.light_storage_buf.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: self.clustered.grid_uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 15,
+                    resource: self.clustered.cluster_grid_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 16,
+                    resource: self.clustered.light_index_buf.as_entire_binding(),
+                },
             ],
         })
     }

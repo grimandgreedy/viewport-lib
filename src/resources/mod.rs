@@ -4,6 +4,8 @@ pub mod colourmap_data;
 pub(crate) mod decal;
 /// Dynamic resolution intermediate render target.
 pub(crate) mod dyn_res;
+/// Clustered-shading GPU resources (cluster grid + light index list + clear pass).
+pub mod clustered;
 /// IBL precomputation and environment map upload.
 pub mod environment;
 /// GPU compute path for IBL precomputation (selected at runtime when supported).

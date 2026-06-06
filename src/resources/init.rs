@@ -174,6 +174,42 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
+                // Binding 14: clustered-shading grid uniform (dimensions,
+                // near/far, screen size, fallback flag).
+                wgpu::BindGroupLayoutEntry {
+                    binding: 14,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Binding 15: cluster cell storage (offset + count per cell),
+                // read-only in the fragment stage.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 15,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Binding 16: global cluster light index list, read-only in
+                // the fragment stage.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 16,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -761,6 +797,7 @@ impl ViewportGpuResources {
             mapped_at_creation: false,
         });
 
+        let clustered = crate::resources::clustered::ClusteredResources::new(device);
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("camera_bind_group"),
             layout: &camera_bgl,
@@ -821,6 +858,18 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 13,
                     resource: light_storage_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: clustered.grid_uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 15,
+                    resource: clustered.cluster_grid_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 16,
+                    resource: clustered.light_index_buf.as_entire_binding(),
                 },
             ],
         });
@@ -2619,6 +2668,7 @@ impl ViewportGpuResources {
             camera_uniform_buf,
             light_uniform_buf,
             light_storage_buf,
+            clustered,
             camera_bind_group,
             camera_bind_group_layout: camera_bgl,
             object_bind_group_layout: object_bgl,
