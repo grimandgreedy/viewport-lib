@@ -184,6 +184,7 @@ pub struct SkinWeights {
 }
 
 /// Raw mesh data for upload to the GPU. Framework-agnostic representation.
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct MeshData {
     /// Vertex positions in local space.
@@ -2650,6 +2651,15 @@ pub struct ViewportGpuResources {
     /// callbacks are `Send` but not `Sync`, and several host frameworks
     /// require this struct to be `Sync`.
     pub(crate) jobs: std::sync::Mutex<super::upload_jobs::JobRunner>,
+    /// Typed result slots for async mesh uploads, keyed by job id. The
+    /// apply closure of `begin_upload_mesh_data` fills the matching slot;
+    /// `upload_result_mesh` drains it.
+    pub(crate) job_mesh_results: std::sync::Mutex<
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<crate::resources::mesh_store::MeshId>,
+        >,
+    >,
     /// In-flight async texture uploads not yet promoted to the live texture list.
     pub(crate) pending_texture_uploads: Vec<PendingUploadEntry>,
     /// Counter for assigning unique PendingTextureId values.

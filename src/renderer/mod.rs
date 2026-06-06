@@ -1144,6 +1144,41 @@ impl ViewportRenderer {
         Ok(())
     }
 
+    /// Start an asynchronous mesh upload.
+    ///
+    /// Returns a `JobId` immediately. The CPU prep (tangent computation,
+    /// vertex repack, normal-line build) runs on a worker thread; GPU
+    /// buffer creation and store insertion run on the main thread during
+    /// the next `process_uploads` call after the worker finishes. Once the
+    /// status is `Ready`, take the produced `MeshId` with
+    /// `upload_result_mesh`.
+    ///
+    /// Ownership of `data` transfers into the worker; clone at the call
+    /// site if you need to retain it.
+    ///
+    /// # Errors
+    ///
+    /// Same validation errors as `upload_mesh_data` (empty mesh, length
+    /// mismatch, invalid vertex index), all reported before the job is
+    /// submitted.
+    pub fn begin_upload_mesh_data(
+        &mut self,
+        device: &wgpu::Device,
+        data: crate::resources::MeshData,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        self.resources.begin_upload_mesh_data(device, data)
+    }
+
+    /// Take the `MeshId` produced by a completed `begin_upload_mesh_data`
+    /// job. See [`ViewportGpuResources::upload_result_mesh`] for the error
+    /// semantics.
+    pub fn upload_result_mesh(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
+        self.resources.upload_result_mesh(id)
+    }
+
     /// Start an asynchronous environment-map upload.
     ///
     /// Returns immediately with a `JobId`. The caller drives the upload-job

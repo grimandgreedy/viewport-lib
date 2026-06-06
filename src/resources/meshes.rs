@@ -1,6 +1,25 @@
 use super::*;
 use rayon::prelude::*;
 
+/// CPU-prepared vertex stream and ancillary buffers needed to finish a mesh
+/// upload on the main thread.
+///
+/// Produced by `ViewportGpuResources::prep_mesh_data` and consumed by
+/// `ViewportGpuResources::assemble_mesh_data`. Sits between the worker
+/// thread and the apply step of `begin_upload_mesh_data`.
+pub(crate) struct MeshPrep {
+    /// Interleaved GPU vertex stream (position + normal + uv + tangent +
+    /// colour) ready for upload as `Vec<Vertex>`.
+    pub vertices: Vec<Vertex>,
+    /// Per-vertex normal-line visualisation segments. Two vertices per
+    /// source vertex.
+    pub normal_line_verts: Vec<Vertex>,
+    /// Tangents computed from positions, normals, UVs, and indices when the
+    /// source `MeshData` did not carry its own tangents. `None` means the
+    /// source tangents (if any) should be used directly.
+    pub computed_tangents: Option<Vec<[f32; 4]>>,
+}
+
 impl ViewportGpuResources {
     /// Create a GpuMesh from vertex/index slices and register it into the resource list.
     ///
@@ -74,7 +93,19 @@ impl ViewportGpuResources {
         data: &MeshData,
     ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
         Self::validate_mesh_data(data)?;
+        let prep = Self::prep_mesh_data(data);
+        Ok(self.assemble_mesh_data(device, data, prep))
+    }
 
+    /// CPU-side preparation that converts a `MeshData` into the vertex
+    /// stream, normal-line visualization vertices, and any tangents the
+    /// shader needs.
+    ///
+    /// Split out so it can run on a worker thread for
+    /// `begin_upload_mesh_data`. Returns owned buffers; the caller hands
+    /// them to `assemble_mesh_data` on the main thread to finish the
+    /// upload.
+    pub(crate) fn prep_mesh_data(data: &MeshData) -> MeshPrep {
         let computed_tangents: Option<Vec<[f32; 4]>> = if data.tangents.is_none() {
             data.uvs.as_ref().map(|uvs| {
                 Self::compute_tangents(&data.positions, &data.normals, uvs, &data.indices)
@@ -111,6 +142,29 @@ impl ViewportGpuResources {
             .collect();
 
         let normal_line_verts = Self::build_normal_lines(data);
+
+        MeshPrep {
+            vertices,
+            normal_line_verts,
+            computed_tangents,
+        }
+    }
+
+    /// Main-thread half of `upload_mesh_data`: takes the prep buffers,
+    /// creates GPU buffers and bind groups, inserts the mesh into the
+    /// store, and returns the new id.
+    pub(crate) fn assemble_mesh_data(
+        &mut self,
+        device: &wgpu::Device,
+        data: &MeshData,
+        prep: MeshPrep,
+    ) -> crate::resources::mesh_store::MeshId {
+        let MeshPrep {
+            vertices,
+            normal_line_verts,
+            computed_tangents,
+        } = prep;
+        let tangent_slice = data.tangents.as_deref().or(computed_tangents.as_deref());
 
         let mut mesh = Self::create_mesh_with_normals(
             device,
@@ -161,7 +215,89 @@ impl ViewportGpuResources {
             indices = data.indices.len(),
             "mesh uploaded"
         );
+        id
+    }
+
+    /// Start an asynchronous mesh upload.
+    ///
+    /// Returns immediately with a `JobId`. The CPU prep (tangent
+    /// computation, vertex repack, normal-line build) runs on a worker
+    /// thread; GPU buffer creation and store insertion run on the main
+    /// thread during the next `process_uploads` call after the worker
+    /// finishes. Once the status is `Ready`, call `upload_result_mesh` to
+    /// take the resulting `MeshId`.
+    ///
+    /// Ownership of `data` transfers into the worker. To upload a mesh
+    /// without giving up ownership, clone the `MeshData` at the call site.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same validation errors as `upload_mesh_data` (empty
+    /// mesh, length mismatch, invalid vertex index) before any job is
+    /// submitted.
+    pub fn begin_upload_mesh_data(
+        &mut self,
+        device: &wgpu::Device,
+        data: MeshData,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        Self::validate_mesh_data(&data)?;
+
+        let slot = crate::resources::ResultSlot::<crate::resources::mesh_store::MeshId>::new();
+        let slot_for_apply = slot.clone();
+        let device_for_apply = device.clone();
+
+        let id = {
+            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+            runner.submit_cpu(move |progress| {
+                progress.set(0.1);
+                let prep = ViewportGpuResources::prep_mesh_data(&data);
+                progress.set(0.95);
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
+                    Box::new(move |resources: &mut ViewportGpuResources| {
+                        let mesh_id =
+                            resources.assemble_mesh_data(&device_for_apply, &data, prep);
+                        slot_for_apply.set(mesh_id);
+                    }),
+                ))
+            })
+        };
+
+        self.job_mesh_results
+            .lock()
+            .expect("mesh result map poisoned")
+            .insert(id, slot);
         Ok(id)
+    }
+
+    /// Take the `MeshId` produced by a completed `begin_upload_mesh_data`
+    /// job.
+    ///
+    /// Returns `JobNotReady` while the upload is still in flight, and
+    /// `JobResultMissing` for ids that have already been taken, were
+    /// issued by a different upload type, or never existed.
+    pub fn upload_result_mesh(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
+        let mut map = self
+            .job_mesh_results
+            .lock()
+            .expect("mesh result map poisoned");
+        let slot = match map.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                });
+            }
+        };
+        match slot.take() {
+            Some(mesh_id) => {
+                map.remove(&id);
+                Ok(mesh_id)
+            }
+            None => Err(crate::error::ViewportError::JobNotReady),
+        }
     }
 
     /// Upload a `MeshData` and retain CPU positions and indices for picking.
@@ -2095,6 +2231,135 @@ mod override_tests {
         assert!(matches!(
             err,
             Err(crate::error::ViewportError::MeshIndexOutOfBounds { .. })
+        ));
+    }
+}
+
+#[cfg(test)]
+mod async_upload_tests {
+    use crate::ViewportGpuResources;
+    use crate::geometry::primitives;
+    use crate::resources::UploadStatus;
+
+    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+    }
+
+    fn drive_until_ready(
+        resources: &mut ViewportGpuResources,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: crate::resources::JobId,
+    ) {
+        for _ in 0..200 {
+            resources.process_uploads(device, queue);
+            match resources.upload_status(id) {
+                UploadStatus::Ready => return,
+                UploadStatus::Failed(e) => panic!("upload failed: {e:?}"),
+                UploadStatus::Pending { .. } => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                UploadStatus::Unknown => panic!("job id disappeared"),
+            }
+        }
+        panic!("mesh upload did not complete in time");
+    }
+
+    #[test]
+    fn invalid_mesh_data_errors_synchronously() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let empty = crate::resources::MeshData::default();
+        let err = resources
+            .begin_upload_mesh_data(&device, empty)
+            .expect_err("empty mesh should be rejected");
+        assert!(matches!(err, crate::error::ViewportError::EmptyMesh { .. }));
+        assert_eq!(resources.uploads_pending(), 0);
+    }
+
+    #[test]
+    fn begin_upload_completes_and_yields_mesh_id() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let plane = primitives::grid_plane(1.0, 1.0, 8, 8);
+        let id = resources
+            .begin_upload_mesh_data(&device, plane.clone())
+            .unwrap();
+        assert_eq!(resources.uploads_pending(), 1);
+
+        // Result should not be available until the worker finishes.
+        let err = resources.upload_result_mesh(id).unwrap_err();
+        assert!(matches!(err, crate::error::ViewportError::JobNotReady));
+
+        drive_until_ready(&mut resources, &device, &queue, id);
+
+        let mesh_id = resources.upload_result_mesh(id).expect("ready result");
+        assert!(resources.mesh_store.get(mesh_id).is_some());
+
+        // Second take of the same id should now report missing.
+        let err = resources.upload_result_mesh(id).unwrap_err();
+        assert!(matches!(
+            err,
+            crate::error::ViewportError::JobResultMissing { .. }
+        ));
+    }
+
+    #[test]
+    fn sync_upload_still_works_alongside_async() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let plane = primitives::grid_plane(1.0, 1.0, 4, 4);
+        let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();
+        assert!(resources.mesh_store.get(mesh_id).is_some());
+    }
+
+    #[test]
+    fn unknown_job_id_returns_missing() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        // Submit an env-map job so we have a live JobId of the wrong type.
+        let pixels = vec![0.5f32; 8 * 4 * 4];
+        let other_id = crate::resources::environment::begin_upload_environment_map(
+            &mut resources,
+            &device,
+            &try_make_device().unwrap().1,
+            pixels,
+            8,
+            4,
+        )
+        .unwrap();
+
+        let err = resources.upload_result_mesh(other_id).unwrap_err();
+        assert!(matches!(
+            err,
+            crate::error::ViewportError::JobResultMissing { .. }
         ));
     }
 }

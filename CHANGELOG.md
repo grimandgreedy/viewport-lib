@@ -6,7 +6,11 @@
 
 Long-running uploads can run on a background thread without freezing the viewport. The renderer owns a job runner that workers report to via a channel; the main thread drains completions once per frame from inside the prepare path. Each job carries an optional GPU submission to gate on and an optional apply step that mutates renderer state once the worker (and any GPU work) has finished. Callers query progress via a per-job `UploadStatus` or attach a completion callback.
 
-Public types: `JobId`, `UploadStatus`, `ProgressHandle`. New methods on `ViewportGpuResources`: `process_uploads`, `upload_status`, `uploads_pending`, `all_uploads_complete`, `on_upload_complete`. The runner is wired into `prepare_scene` alongside the existing pending-texture drain so completion is observable on the next frame.
+Public types: `JobId`, `UploadStatus`, `ProgressHandle`, `ResultSlot`. New methods on `ViewportGpuResources`: `process_uploads`, `upload_status`, `uploads_pending`, `all_uploads_complete`, `on_upload_complete`. The runner is wired into `prepare_scene` alongside the existing pending-texture drain so completion is observable on the next frame.
+
+Environment-map upload is the first consumer. `ViewportRenderer::begin_upload_environment_map` returns a `JobId` immediately; the synchronous `upload_environment_map` keeps its signature and is now a thin wrapper that submits a job and waits for `Ready`. The CPU path runs irradiance convolution, GGX prefilter, and BRDF LUT generation on a worker, queues writes, and submits a flush to gate completion. The GPU compute path no longer blocks on `device.poll`; `ibl_compute::compute_ibl` returns the submission index and the runner gates on it. The BRDF LUT is still computed once and reused across env-map swaps.
+
+Mesh uploads gain the same shape. `ViewportRenderer::begin_upload_mesh_data` returns a `JobId`; tangent computation, vertex repack, and normal-line generation run on a worker thread. The main-thread apply step creates buffers and bind groups, inserts the mesh into the store, and publishes the new `MeshId` into a typed result slot. The consumer takes the id with `upload_result_mesh(JobId)`, which returns `JobNotReady` while the worker is still running and `JobResultMissing` for ids that have been taken, were never issued, or belong to a different upload type. The synchronous `upload_mesh_data` keeps its signature and is unchanged for callers who do not need async behaviour.
 
 ### Item-type plugins
 

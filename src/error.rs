@@ -102,6 +102,20 @@ pub enum ViewportError {
         /// Short description of how the worker was lost.
         reason: &'static str,
     },
+
+    /// `upload_result_*` was called before the corresponding job reached the
+    /// `Ready` state. Poll `upload_status` and retry on the next frame.
+    #[error("upload job is not yet ready to take its result")]
+    JobNotReady,
+
+    /// `upload_result_*` was called with a `JobId` that does not belong to
+    /// the matching upload type, has already been taken, or was never
+    /// issued.
+    #[error("upload job has no result available: {reason}")]
+    JobResultMissing {
+        /// Short description of why the result is unavailable.
+        reason: &'static str,
+    },
 }
 
 /// Convenience alias for `Result<T, ViewportError>`.

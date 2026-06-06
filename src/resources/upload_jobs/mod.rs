@@ -76,6 +76,52 @@ impl ProgressHandle {
 /// built textures, buffers, and bind groups into `ViewportGpuResources`.
 pub type ApplyFn = Box<dyn FnOnce(&mut super::ViewportGpuResources) + Send>;
 
+/// Per-job result holder shared between a worker's apply closure and the
+/// matching `upload_result_*` accessor.
+///
+/// `ResultSlot<T>` is constructed at submit time on the main thread, cloned
+/// into the apply closure, and used to publish the upload's typed result.
+/// The accessor calls `take` to claim the value once the job reaches
+/// `Ready`.
+pub struct ResultSlot<T> {
+    inner: Arc<std::sync::Mutex<Option<T>>>,
+}
+
+impl<T> Clone for ResultSlot<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+impl<T> ResultSlot<T> {
+    /// Build an empty slot. The apply closure fills it; the accessor takes.
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+
+    /// Store the result. Called from the apply closure on the main thread.
+    pub fn set(&self, value: T) {
+        let mut guard = self.inner.lock().expect("result slot poisoned");
+        *guard = Some(value);
+    }
+
+    /// Take the stored result if one is present, leaving the slot empty.
+    pub fn take(&self) -> Option<T> {
+        let mut guard = self.inner.lock().expect("result slot poisoned");
+        guard.take()
+    }
+}
+
+impl<T> Default for ResultSlot<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// What the worker hands back to the runner. Bundles whatever GPU
 /// completion the runner should wait on with whatever main-thread mutation
 /// the apply step needs to perform.
@@ -544,17 +590,35 @@ mod tests {
 
     use super::*;
 
+    /// Drive the runner until `predicate` is true or the deadline expires.
+    /// Necessary because parallel-running test threads contend for the
+    /// rayon pool, so a single sleep + process cycle is not enough.
+    fn drain_until<F>(
+        runner: &mut JobRunner,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        max_iterations: usize,
+        mut predicate: F,
+    ) where
+        F: FnMut(&JobRunner) -> bool,
+    {
+        for _ in 0..max_iterations {
+            let _ = runner.process(device, queue);
+            if predicate(runner) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     #[test]
     fn cpu_job_reports_ready_after_drain() {
         let mut runner = JobRunner::new();
         let id = runner.submit_cpu(|_p| Ok(JobProduct::empty()));
 
-        // Allow the worker to finish before we drain.
-        std::thread::sleep(Duration::from_millis(20));
-
         assert_eq!(runner.pending(), 1);
         with_test_gpu(|device, queue| {
-            runner.process(device, queue);
+            drain_until(&mut runner, device, queue, 200, |r| r.all_complete());
         });
 
         assert!(matches!(runner.status(id), UploadStatus::Ready));
@@ -606,9 +670,8 @@ mod tests {
             })
         });
 
-        std::thread::sleep(Duration::from_millis(20));
         with_test_gpu(|device, queue| {
-            let _ = runner.process(device, queue);
+            drain_until(&mut runner, device, queue, 200, |r| r.all_complete());
         });
 
         match runner.status(id) {
@@ -624,9 +687,8 @@ mod tests {
         let mut runner = JobRunner::new();
         let id = runner.submit_cpu(|_| panic!("worker exploded"));
 
-        std::thread::sleep(Duration::from_millis(20));
         with_test_gpu(|device, queue| {
-            let _ = runner.process(device, queue);
+            drain_until(&mut runner, device, queue, 200, |r| r.all_complete());
         });
 
         match runner.status(id) {
@@ -648,16 +710,21 @@ mod tests {
             *seen_clone.lock().unwrap() = Some(matches!(status, UploadStatus::Ready));
         });
 
-        std::thread::sleep(Duration::from_millis(20));
         with_test_gpu(|device, queue| {
             // process() returns Completion entries so the caller can run
             // apply + callback after dropping any external lock. The
             // integration on ViewportGpuResources does this automatically;
             // the test drives it by hand.
-            for c in runner.process(device, queue) {
-                if let Some(cb) = c.callback {
-                    cb(&c.status);
+            for _ in 0..200 {
+                for c in runner.process(device, queue) {
+                    if let Some(cb) = c.callback {
+                        cb(&c.status);
+                    }
                 }
+                if matches!(runner.status(id), UploadStatus::Ready) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(5));
             }
         });
 
@@ -685,21 +752,30 @@ mod tests {
         }
         assert_eq!(runner.pending(), 256);
 
-        // Drain until everything finishes.
+        // Observe each id transitioning to a terminal state. The retention
+        // window only spans one drain cycle, so we cannot query every id
+        // after the loop -- we have to collect the observation as we go.
+        let mut seen_ready = std::collections::HashSet::new();
         with_test_gpu(|device, queue| {
-            for _ in 0..50 {
-                std::thread::sleep(Duration::from_millis(10));
-                runner.process(device, queue);
-                if runner.all_complete() {
+            for _ in 0..400 {
+                let _ = runner.process(device, queue);
+                for id in &ids {
+                    if seen_ready.contains(id) {
+                        continue;
+                    }
+                    if let UploadStatus::Ready = runner.status(*id) {
+                        seen_ready.insert(*id);
+                    }
+                }
+                if seen_ready.len() == ids.len() {
                     break;
                 }
+                std::thread::sleep(Duration::from_millis(5));
             }
         });
 
-        assert!(runner.all_complete(), "stragglers: {}", runner.pending());
-        for id in ids {
-            assert!(matches!(runner.status(id), UploadStatus::Ready));
-        }
+        assert_eq!(seen_ready.len(), ids.len(), "stragglers: {}", runner.pending());
+        assert!(runner.all_complete());
     }
 
     #[test]
