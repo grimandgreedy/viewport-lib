@@ -57,5 +57,8 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var colour = textureSample(img, img_sampler, in.uv);
     colour.a *= u.alpha;
-    return colour;
+    // Pipeline uses PREMULTIPLIED_ALPHA_BLENDING; hand it premultiplied RGB so
+    // the u.alpha uniform modulates the visible colour and soft-edge PNGs
+    // blend correctly under filtering.
+    return vec4<f32>(colour.rgb * colour.a, colour.a);
 }

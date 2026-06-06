@@ -69,6 +69,10 @@ fn fs_main(in: VertexOutput) -> FragOutput {
     // Sample colour from the RGBA image.
     var colour = textureSample(img, img_sampler, in.uv);
     colour.a *= u.alpha;
+    // Pipeline uses PREMULTIPLIED_ALPHA_BLENDING; hand it premultiplied RGB so
+    // the u.alpha uniform modulates the visible colour and soft-edge PNGs
+    // blend correctly under filtering.
+    colour = vec4<f32>(colour.rgb * colour.a, colour.a);
 
     // Load depth from the R32Float depth image using nearest-pixel lookup so
     // depth values are not blended across pixel boundaries.
