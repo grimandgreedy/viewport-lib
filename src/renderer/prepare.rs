@@ -1523,6 +1523,40 @@ impl ViewportRenderer {
             }
         }
 
+        // Pre-uploaded sprite set references.
+        if !frame.scene.sprite_set_refs.is_empty() {
+            resources.ensure_sprite_pipelines(device);
+            for ref_item in &frame.scene.sprite_set_refs {
+                if ref_item.settings.hidden {
+                    continue;
+                }
+                let entry = match resources.sprite_set_store.get(ref_item.id) {
+                    Some(e) => e.clone(),
+                    None => continue,
+                };
+                let mut gd = entry;
+                gd.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
+                self.sprite_gpu_data.push(gd);
+            }
+        }
+
+        // Pre-uploaded sprite instance set references.
+        if !frame.scene.sprite_instance_set_refs.is_empty() {
+            resources.ensure_sprite_pipelines(device);
+            for ref_item in &frame.scene.sprite_instance_set_refs {
+                if ref_item.settings.hidden {
+                    continue;
+                }
+                let entry = match resources.sprite_instance_set_store.get(ref_item.id) {
+                    Some(e) => e.clone(),
+                    None => continue,
+                };
+                let mut gd = entry;
+                gd.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
+                self.sprite_gpu_data.push(gd);
+            }
+        }
+
         // ------------------------------------------------------------------
         // Mesh-instance batches (mesh-based particles).
         // ------------------------------------------------------------------

@@ -2696,6 +2696,22 @@ impl ViewportGpuResources {
             job_tensor_glyph_set_results: std::sync::Mutex::new(std::collections::HashMap::new()),
             job_volume_results: std::sync::Mutex::new(std::collections::HashMap::new()),
             job_volume_mc_results: std::sync::Mutex::new(std::collections::HashMap::new()),
+            job_volume_mesh_results: std::sync::Mutex::new(std::collections::HashMap::new()),
+            job_clipped_volume_mesh_results: std::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            ),
+            job_sparse_volume_grid_results: std::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            ),
+            job_projected_tet_results: std::sync::Mutex::new(std::collections::HashMap::new()),
+            job_gaussian_splat_results: std::sync::Mutex::new(std::collections::HashMap::new()),
+            job_overlay_texture_results: std::sync::Mutex::new(std::collections::HashMap::new()),
+            job_sprite_set_results: std::sync::Mutex::new(std::collections::HashMap::new()),
+            job_sprite_instance_set_results: std::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            ),
+            sprite_set_store: crate::resources::SpriteSetStore::new(),
+            sprite_instance_set_store: crate::resources::SpriteInstanceSetStore::new(),
             texture_allocated_bytes: 0,
             matcap_textures: Vec::new(),
             matcap_views: Vec::new(),

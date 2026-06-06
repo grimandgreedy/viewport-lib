@@ -379,6 +379,10 @@ pub struct SceneFrame {
     pub volume_surface_slices: Vec<VolumeSurfaceSliceItem>,
     /// Billboard sprite items to render this frame.
     pub sprite_items: Vec<SpriteItem>,
+    /// References to pre-uploaded sprite sets (static billboards).
+    pub sprite_set_refs: Vec<SpriteSetRefItem>,
+    /// References to pre-uploaded sprite instance sets (entity sprites).
+    pub sprite_instance_set_refs: Vec<SpriteInstanceSetRefItem>,
     /// Mesh-instance batches to render this frame (mesh-based particles).
     pub mesh_instances: Vec<MeshInstanceItem>,
     /// Gaussian splat items to render this frame.
@@ -456,6 +460,8 @@ impl Default for SceneFrame {
             ribbon_refs: Vec::new(),
             volume_surface_slices: Vec::new(),
             sprite_items: Vec::new(),
+            sprite_set_refs: Vec::new(),
+            sprite_instance_set_refs: Vec::new(),
             mesh_instances: Vec::new(),
             gaussian_splats: Vec::new(),
             decals: Vec::new(),

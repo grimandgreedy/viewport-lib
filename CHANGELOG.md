@@ -29,6 +29,36 @@ Texture uploads consolidate on the same shape. `begin_upload_texture` and `begin
 
 The earlier async-texture path is removed. `upload_texture_async`, `PendingTextureId`, `is_upload_ready`, `promote_texture`, and the internal `submit_pending_texture_uploads` drain are gone, along with the bespoke staging-buffer pool that backed them. Use `begin_upload_texture` + `upload_result_texture` instead. See `docs/migration-guides/upload-job-system.md`.
 
+#### Async one-shot uploads
+
+`begin_upload_gaussian_splats(device, queue, GaussianSplatData) -> ViewportResult<JobId>` and `upload_result_gaussian_splats(JobId) -> ViewportResult<GaussianSplatId>` move the vec4-padding for positions / scales / rotations plus all storage-buffer creation and writes (positions, scales, rotations, opacities, SH coefficients) onto the worker thread. Validation (empty list, mismatched per-attribute lengths) runs synchronously and returns `InvalidGaussianSplatData` before any job is submitted.
+
+`begin_upload_overlay_texture(device, queue, width, height, Vec<u8>) -> ViewportResult<JobId>` and `upload_result_overlay_texture(JobId) -> ViewportResult<OverlayTextureId>` do the same for `upload_overlay_texture`: texture creation and `queue.write_texture` run on the worker; the apply step inserts the `OverlayShapeTextureEntry` into the store. `InvalidTextureData` is returned synchronously when `rgba_data.len() != width * height * 4`.
+
+Sync `upload_gaussian_splats` and `upload_overlay_texture` keep their signatures.
+
+#### Pre-uploaded sprite types
+
+Sprite uploads gain a pre-upload + ref-item workflow for the two non-particle use cases. The per-frame `SpriteItem` particle path is unchanged.
+
+- `SpriteSetId` backs static billboards (foliage, signage, light flares). `upload_sprite_set` / `drop_sprite_set` / `replace_sprite_set` / `begin_upload_sprite_set` / `upload_result_sprite_set` mirror the C1 curve pattern. Submit a `SpriteSetRefItem` on `SceneFrame::sprite_set_refs` each frame.
+- `SpriteInstanceSetId` backs entity sprites (NPCs, item drops, damage numbers). Same method shape with `_sprite_instance_set` suffixes; `SceneFrame::sprite_instance_set_refs` holds the per-frame refs. The current implementation pre-bakes both the definition and the instance transforms; full per-frame instance transform override against a stable definition is a planned follow-up.
+
+`ViewportRenderer` gains forwarders for both new id types and for the gaussian splat / overlay texture async pairs.
+
+Showcase 51 lights up four new buttons (Gaussian splats, Overlay texture, Sprite set, Sprite instances); the J5 greyed-out section is now empty. "Load a level" fires all sixteen assets.
+
+#### Async volume mesh uploads
+
+The four volume-mesh upload variants gain async entry points that move boundary extraction and vertex prep off the main thread:
+
+- `begin_upload_volume_mesh_data(device, VolumeMeshData) -> JobId` and `upload_result_volume_mesh(JobId) -> ViewportResult<(MeshId, Vec<u32>)>`. Worker runs `extract_boundary_faces` and `prep_mesh_data`; the apply step calls `assemble_mesh_data` and surfaces the face-to-cell map.
+- `begin_upload_clipped_volume_mesh_data(device, VolumeMeshData, Vec<[f32; 4]>) -> JobId` and `upload_result_clipped_volume_mesh(JobId) -> ViewportResult<(MeshId, Vec<u32>)>`. Same shape but the worker runs `extract_clipped_volume_faces` with the supplied clip planes.
+- `begin_upload_sparse_volume_grid_data(device, SparseVolumeGridData) -> JobId` and `upload_result_sparse_volume_grid(JobId) -> ViewportResult<MeshId>`. Worker runs `extract_sparse_boundary` and `prep_mesh_data`.
+- `begin_upload_projected_tet_mesh(device, VolumeMeshData, String, ColourmapId) -> JobId` and `upload_result_projected_tet_mesh(JobId) -> ViewportResult<(ProjectedTetId, f32, f32)>`. Slab decomposition and the per-chunk tet storage buffers run on the worker on a cloned `Device`; the apply step builds bind groups against the renderer's `pt_bind_group_layout` and the colourmap LUT, then inserts the mesh.
+
+Synchronous `upload_volume_mesh_data`, `upload_clipped_volume_mesh_data`, `upload_sparse_volume_grid_data`, and `upload_projected_tet_mesh` keep their signatures.
+
 #### Async volume uploads
 
 `begin_upload_volume(&Device, &Queue, Vec<f32>, [u32; 3]) -> ViewportResult<JobId>` and `upload_result_volume(JobId) -> ViewportResult<VolumeId>` move the 3D-texture creation and `queue.write_texture` for `upload_volume` onto the worker thread. The synchronous `upload_volume` keeps its signature.

@@ -6,7 +6,8 @@
 //! instead of resubmitting the geometry every frame.
 
 use crate::resources::{
-    GlyphGpuData, PointCloudGpuData, PolylineGpuData, StreamtubeGpuData, TensorGlyphGpuData,
+    GlyphGpuData, PointCloudGpuData, PolylineGpuData, SpriteGpuData, StreamtubeGpuData,
+    TensorGlyphGpuData,
 };
 
 macro_rules! curve_store {
@@ -130,4 +131,22 @@ curve_store!(
     TensorGlyphSetId,
     TensorGlyphSetStore,
     TensorGlyphGpuData
+);
+
+curve_store!(
+    /// Handle to a pre-uploaded sprite set produced by
+    /// [`ViewportGpuResources::upload_sprite_set`](crate::resources::ViewportGpuResources::upload_sprite_set).
+    /// Backs static billboards such as foliage, signage, and light flares.
+    SpriteSetId,
+    SpriteSetStore,
+    SpriteGpuData
+);
+
+curve_store!(
+    /// Handle to a pre-uploaded sprite instance set produced by
+    /// [`ViewportGpuResources::upload_sprite_instance_set`](crate::resources::ViewportGpuResources::upload_sprite_instance_set).
+    /// Backs entity sprites such as NPCs, item drops, and damage numbers.
+    SpriteInstanceSetId,
+    SpriteInstanceSetStore,
+    SpriteGpuData
 );

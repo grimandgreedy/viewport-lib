@@ -19,12 +19,13 @@ use std::time::Instant;
 
 use eframe::egui;
 use viewport_lib::{
-    ColourmapId, GlyphItem, GlyphSetId, GlyphSetRefItem, JobId, LightKind, LightSource,
-    LightingSettings, Material, MeshData, MeshId, PointCloudId, PointCloudItem, PointCloudRefItem,
-    PolylineId, PolylineItem, PolylineRefItem, RibbonId, RibbonItem, RibbonRefItem,
-    SceneRenderItem, SkinWeights, StreamtubeId, StreamtubeItem, StreamtubeRefItem,
-    TensorGlyphItem, TensorGlyphSetId, TensorGlyphSetRefItem, TubeId, TubeItem, TubeRefItem,
-    UploadStatus, ViewportRenderer, VolumeId, VolumeItem,
+    ColourmapId, GaussianSplatData, GaussianSplatId, GlyphItem, GlyphSetId, GlyphSetRefItem,
+    JobId, LightKind, LightSource, LightingSettings, Material, MeshData, MeshId, OverlayTextureId,
+    PointCloudId, PointCloudItem, PointCloudRefItem, PolylineId, PolylineItem, PolylineRefItem,
+    RibbonId, RibbonItem, RibbonRefItem, SceneRenderItem, SkinWeights, SpriteInstanceSetId,
+    SpriteItem, SpriteSetId, StreamtubeId, StreamtubeItem, StreamtubeRefItem, TensorGlyphItem,
+    TensorGlyphSetId, TensorGlyphSetRefItem, TubeId, TubeItem, TubeRefItem, UploadStatus,
+    ViewportRenderer, VolumeId, VolumeItem,
 };
 
 use crate::App;
@@ -82,6 +83,10 @@ pub(crate) struct AsyncUploadsState {
     pub glyph_set_state: AssetState,
     pub tensor_glyph_set_state: AssetState,
     pub volume_state: AssetState,
+    pub gaussian_splat_state: AssetState,
+    pub overlay_texture_state: AssetState,
+    pub sprite_set_state: AssetState,
+    pub sprite_instance_set_state: AssetState,
 
     pub loaded_mesh_id: Option<MeshId>,
     pub loaded_texture_id: Option<u64>,
@@ -93,6 +98,10 @@ pub(crate) struct AsyncUploadsState {
     pub loaded_glyph_set_id: Option<GlyphSetId>,
     pub loaded_tensor_glyph_set_id: Option<TensorGlyphSetId>,
     pub loaded_volume_id: Option<VolumeId>,
+    pub loaded_gaussian_splat_id: Option<GaussianSplatId>,
+    pub loaded_overlay_texture_id: Option<OverlayTextureId>,
+    pub loaded_sprite_set_id: Option<SpriteSetId>,
+    pub loaded_sprite_instance_set_id: Option<SpriteInstanceSetId>,
     pub skin_installed: bool,
     pub built: bool,
 
@@ -124,6 +133,10 @@ impl Default for AsyncUploadsState {
             glyph_set_state: AssetState::Idle,
             tensor_glyph_set_state: AssetState::Idle,
             volume_state: AssetState::Idle,
+            gaussian_splat_state: AssetState::Idle,
+            overlay_texture_state: AssetState::Idle,
+            sprite_set_state: AssetState::Idle,
+            sprite_instance_set_state: AssetState::Idle,
             loaded_mesh_id: None,
             loaded_texture_id: None,
             loaded_polyline_id: None,
@@ -134,6 +147,10 @@ impl Default for AsyncUploadsState {
             loaded_glyph_set_id: None,
             loaded_tensor_glyph_set_id: None,
             loaded_volume_id: None,
+            loaded_gaussian_splat_id: None,
+            loaded_overlay_texture_id: None,
+            loaded_sprite_set_id: None,
+            loaded_sprite_instance_set_id: None,
             skin_installed: false,
             built: false,
             load_all_started: None,
@@ -177,6 +194,10 @@ impl App {
         self.async_uploads_state.glyph_set_state = AssetState::Idle;
         self.async_uploads_state.tensor_glyph_set_state = AssetState::Idle;
         self.async_uploads_state.volume_state = AssetState::Idle;
+        self.async_uploads_state.gaussian_splat_state = AssetState::Idle;
+        self.async_uploads_state.overlay_texture_state = AssetState::Idle;
+        self.async_uploads_state.sprite_set_state = AssetState::Idle;
+        self.async_uploads_state.sprite_instance_set_state = AssetState::Idle;
         self.async_uploads_state.loaded_mesh_id = None;
         self.async_uploads_state.loaded_texture_id = None;
         self.async_uploads_state.loaded_polyline_id = None;
@@ -187,6 +208,10 @@ impl App {
         self.async_uploads_state.loaded_glyph_set_id = None;
         self.async_uploads_state.loaded_tensor_glyph_set_id = None;
         self.async_uploads_state.loaded_volume_id = None;
+        self.async_uploads_state.loaded_gaussian_splat_id = None;
+        self.async_uploads_state.loaded_overlay_texture_id = None;
+        self.async_uploads_state.loaded_sprite_set_id = None;
+        self.async_uploads_state.loaded_sprite_instance_set_id = None;
         self.async_uploads_state.skin_installed = false;
         self.async_uploads_state.built = true;
     }
@@ -636,6 +661,175 @@ impl App {
             }
         }
 
+        // Gaussian splats: when Ready, take the GaussianSplatId.
+        if let AssetState::InFlight { job, started, .. } =
+            self.async_uploads_state.gaussian_splat_state.clone()
+        {
+            match renderer.upload_status(job) {
+                UploadStatus::Ready => match renderer.upload_result_gaussian_splats(job) {
+                    Ok(id) => {
+                        let duration_ms = take_job_duration_ms(renderer, job, &started);
+                        self.async_uploads_state.loaded_gaussian_splat_id = Some(id);
+                        self.async_uploads_state.gaussian_splat_state =
+                            AssetState::Loaded { duration_ms };
+                    }
+                    Err(e) => {
+                        let duration_ms = take_job_duration_ms(renderer, job, &started);
+                        self.async_uploads_state.gaussian_splat_state = AssetState::Failed {
+                            reason: format!("{e}"),
+                            duration_ms,
+                        };
+                    }
+                },
+                UploadStatus::Failed(e) => {
+                    let duration_ms = take_job_duration_ms(renderer, job, &started);
+                    self.async_uploads_state.gaussian_splat_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms,
+                    };
+                }
+                UploadStatus::Pending { progress } => {
+                    self.async_uploads_state.gaussian_splat_state = AssetState::InFlight {
+                        job,
+                        progress,
+                        started,
+                    };
+                }
+                UploadStatus::Unknown => {
+                    renderer.drop_job_duration(job);
+                    self.async_uploads_state.gaussian_splat_state = AssetState::Idle;
+                }
+            }
+        }
+
+        // Overlay texture: when Ready, take the OverlayTextureId.
+        if let AssetState::InFlight { job, started, .. } =
+            self.async_uploads_state.overlay_texture_state.clone()
+        {
+            match renderer.upload_status(job) {
+                UploadStatus::Ready => match renderer.upload_result_overlay_texture(job) {
+                    Ok(id) => {
+                        let duration_ms = take_job_duration_ms(renderer, job, &started);
+                        self.async_uploads_state.loaded_overlay_texture_id = Some(id);
+                        self.async_uploads_state.overlay_texture_state =
+                            AssetState::Loaded { duration_ms };
+                    }
+                    Err(e) => {
+                        let duration_ms = take_job_duration_ms(renderer, job, &started);
+                        self.async_uploads_state.overlay_texture_state = AssetState::Failed {
+                            reason: format!("{e}"),
+                            duration_ms,
+                        };
+                    }
+                },
+                UploadStatus::Failed(e) => {
+                    let duration_ms = take_job_duration_ms(renderer, job, &started);
+                    self.async_uploads_state.overlay_texture_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms,
+                    };
+                }
+                UploadStatus::Pending { progress } => {
+                    self.async_uploads_state.overlay_texture_state = AssetState::InFlight {
+                        job,
+                        progress,
+                        started,
+                    };
+                }
+                UploadStatus::Unknown => {
+                    renderer.drop_job_duration(job);
+                    self.async_uploads_state.overlay_texture_state = AssetState::Idle;
+                }
+            }
+        }
+
+        // Sprite set: when Ready, take the SpriteSetId.
+        if let AssetState::InFlight { job, started, .. } =
+            self.async_uploads_state.sprite_set_state.clone()
+        {
+            match renderer.upload_status(job) {
+                UploadStatus::Ready => match renderer.resources_mut().upload_result_sprite_set(job)
+                {
+                    Ok(id) => {
+                        let duration_ms = take_job_duration_ms(renderer, job, &started);
+                        self.async_uploads_state.loaded_sprite_set_id = Some(id);
+                        self.async_uploads_state.sprite_set_state =
+                            AssetState::Loaded { duration_ms };
+                    }
+                    Err(e) => {
+                        let duration_ms = take_job_duration_ms(renderer, job, &started);
+                        self.async_uploads_state.sprite_set_state = AssetState::Failed {
+                            reason: format!("{e}"),
+                            duration_ms,
+                        };
+                    }
+                },
+                UploadStatus::Failed(e) => {
+                    let duration_ms = take_job_duration_ms(renderer, job, &started);
+                    self.async_uploads_state.sprite_set_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms,
+                    };
+                }
+                UploadStatus::Pending { progress } => {
+                    self.async_uploads_state.sprite_set_state = AssetState::InFlight {
+                        job,
+                        progress,
+                        started,
+                    };
+                }
+                UploadStatus::Unknown => {
+                    renderer.drop_job_duration(job);
+                    self.async_uploads_state.sprite_set_state = AssetState::Idle;
+                }
+            }
+        }
+
+        // Sprite instance set: when Ready, take the SpriteInstanceSetId.
+        if let AssetState::InFlight { job, started, .. } =
+            self.async_uploads_state.sprite_instance_set_state.clone()
+        {
+            match renderer.upload_status(job) {
+                UploadStatus::Ready => match renderer
+                    .resources_mut()
+                    .upload_result_sprite_instance_set(job)
+                {
+                    Ok(id) => {
+                        let duration_ms = take_job_duration_ms(renderer, job, &started);
+                        self.async_uploads_state.loaded_sprite_instance_set_id = Some(id);
+                        self.async_uploads_state.sprite_instance_set_state =
+                            AssetState::Loaded { duration_ms };
+                    }
+                    Err(e) => {
+                        let duration_ms = take_job_duration_ms(renderer, job, &started);
+                        self.async_uploads_state.sprite_instance_set_state =
+                            AssetState::Failed {
+                                reason: format!("{e}"),
+                                duration_ms,
+                            };
+                    }
+                },
+                UploadStatus::Failed(e) => {
+                    let duration_ms = take_job_duration_ms(renderer, job, &started);
+                    self.async_uploads_state.sprite_instance_set_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms,
+                    };
+                }
+                UploadStatus::Pending { progress } => {
+                    self.async_uploads_state.sprite_instance_set_state = AssetState::InFlight {
+                        job,
+                        progress,
+                        started,
+                    };
+                }
+                UploadStatus::Unknown => {
+                    renderer.drop_job_duration(job);
+                    self.async_uploads_state.sprite_instance_set_state = AssetState::Idle;
+                }
+            }
+        }
+
         // Once a "Load a level" run has every asset in a terminal state,
         // stamp the total wall-clock duration so the controls panel can
         // show it next frame.
@@ -666,6 +860,10 @@ fn all_assets_terminal(state: &AsyncUploadsState) -> bool {
         && is_terminal(&state.glyph_set_state)
         && is_terminal(&state.tensor_glyph_set_state)
         && is_terminal(&state.volume_state)
+        && is_terminal(&state.gaussian_splat_state)
+        && is_terminal(&state.overlay_texture_state)
+        && is_terminal(&state.sprite_set_state)
+        && is_terminal(&state.sprite_instance_set_state)
 }
 
 /// Advance an asset that has no typed result to take. Returns `true` if
@@ -942,6 +1140,70 @@ fn demo_glyph_set() -> GlyphItem {
     item.scale_by_magnitude = false;
     item.default_colour = [0.9, 0.7, 0.3, 1.0];
     item.use_default_colour = true;
+    item
+}
+
+fn demo_gaussian_splats() -> GaussianSplatData {
+    let n = 256;
+    let mut positions = Vec::with_capacity(n);
+    let scales = vec![[0.05_f32, 0.05, 0.05]; n];
+    let rotations = vec![[0.0_f32, 0.0, 0.0, 1.0]; n];
+    let opacities = vec![0.7_f32; n];
+    for i in 0..n {
+        let theta = (i as f32) / (n as f32) * std::f32::consts::TAU * 4.0;
+        let r = 0.4 + (i as f32) / (n as f32) * 0.8;
+        positions.push([r * theta.cos(), (i as f32) / (n as f32) * 1.5 - 0.75, r * theta.sin()]);
+    }
+    let mut data = GaussianSplatData::default();
+    data.positions = positions;
+    data.scales = scales;
+    data.rotations = rotations;
+    data.opacities = opacities;
+    data
+}
+
+fn demo_overlay_texture() -> (Vec<u8>, u32, u32) {
+    let w = 128u32;
+    let h = 128u32;
+    let mut data = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let dx = x as f32 - w as f32 * 0.5;
+            let dy = y as f32 - h as f32 * 0.5;
+            let r = (dx * dx + dy * dy).sqrt();
+            let v = ((1.0 - r / (w as f32 * 0.5)).clamp(0.0, 1.0) * 255.0) as u8;
+            data.extend_from_slice(&[v, v / 2, 255 - v, 255]);
+        }
+    }
+    (data, w, h)
+}
+
+fn demo_sprite_set() -> SpriteItem {
+    let mut item = SpriteItem::default();
+    let n = 24;
+    let r = 1.0_f32;
+    let mut positions = Vec::with_capacity(n);
+    for i in 0..n {
+        let theta = (i as f32) / (n as f32) * std::f32::consts::TAU;
+        positions.push([r * theta.cos(), 0.0, r * theta.sin()]);
+    }
+    item.positions = positions;
+    item.default_size = 16.0;
+    item.default_colour = [0.95, 0.7, 0.4, 1.0];
+    item
+}
+
+fn demo_sprite_instance_set() -> SpriteItem {
+    let mut item = SpriteItem::default();
+    let n = 16;
+    let mut positions = Vec::with_capacity(n);
+    for i in 0..n {
+        let x = (i as f32 - n as f32 * 0.5) * 0.3;
+        positions.push([x, 0.5, 0.0]);
+    }
+    item.positions = positions;
+    item.default_size = 12.0;
+    item.default_colour = [0.5, 0.85, 0.95, 1.0];
     item
 }
 
@@ -1335,6 +1597,128 @@ impl App {
         }
     }
 
+    fn launch_gaussian_splats(&mut self, renderer: &mut ViewportRenderer) {
+        let data = demo_gaussian_splats();
+        let started = Instant::now();
+        if self.async_uploads_state.use_sync {
+            match renderer
+                .resources_mut()
+                .upload_gaussian_splats(&self.device, &self.queue, &data)
+            {
+                Ok(id) => {
+                    self.async_uploads_state.loaded_gaussian_splat_id = Some(id);
+                    self.async_uploads_state.gaussian_splat_state = AssetState::Loaded {
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+                Err(e) => {
+                    self.async_uploads_state.gaussian_splat_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+            }
+        } else {
+            match renderer.begin_upload_gaussian_splats(&self.device, &self.queue, data) {
+                Ok(job) => {
+                    self.async_uploads_state.gaussian_splat_state = AssetState::InFlight {
+                        job,
+                        progress: 0.0,
+                        started,
+                    };
+                }
+                Err(e) => {
+                    self.async_uploads_state.gaussian_splat_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+            }
+        }
+    }
+
+    fn launch_overlay_texture(&mut self, renderer: &mut ViewportRenderer) {
+        let (data, w, h) = demo_overlay_texture();
+        let started = Instant::now();
+        if self.async_uploads_state.use_sync {
+            let id = renderer
+                .resources_mut()
+                .upload_overlay_texture(&self.device, &self.queue, w, h, &data);
+            self.async_uploads_state.loaded_overlay_texture_id = Some(id);
+            self.async_uploads_state.overlay_texture_state = AssetState::Loaded {
+                duration_ms: started.elapsed().as_millis() as u64,
+            };
+        } else {
+            match renderer
+                .begin_upload_overlay_texture(&self.device, &self.queue, w, h, data)
+            {
+                Ok(job) => {
+                    self.async_uploads_state.overlay_texture_state = AssetState::InFlight {
+                        job,
+                        progress: 0.0,
+                        started,
+                    };
+                }
+                Err(e) => {
+                    self.async_uploads_state.overlay_texture_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+            }
+        }
+    }
+
+    fn launch_sprite_set(&mut self, renderer: &mut ViewportRenderer) {
+        let item = demo_sprite_set();
+        let started = Instant::now();
+        if self.async_uploads_state.use_sync {
+            let id = renderer
+                .resources_mut()
+                .upload_sprite_set(&self.device, &self.queue, &item);
+            self.async_uploads_state.loaded_sprite_set_id = Some(id);
+            self.async_uploads_state.sprite_set_state = AssetState::Loaded {
+                duration_ms: started.elapsed().as_millis() as u64,
+            };
+        } else {
+            let job = renderer.resources_mut().begin_upload_sprite_set(
+                &self.device,
+                &self.queue,
+                item,
+            );
+            self.async_uploads_state.sprite_set_state = AssetState::InFlight {
+                job,
+                progress: 0.0,
+                started,
+            };
+        }
+    }
+
+    fn launch_sprite_instance_set(&mut self, renderer: &mut ViewportRenderer) {
+        let item = demo_sprite_instance_set();
+        let started = Instant::now();
+        if self.async_uploads_state.use_sync {
+            let id = renderer.resources_mut().upload_sprite_instance_set(
+                &self.device,
+                &self.queue,
+                &item,
+            );
+            self.async_uploads_state.loaded_sprite_instance_set_id = Some(id);
+            self.async_uploads_state.sprite_instance_set_state = AssetState::Loaded {
+                duration_ms: started.elapsed().as_millis() as u64,
+            };
+        } else {
+            let job = renderer
+                .resources_mut()
+                .begin_upload_sprite_instance_set(&self.device, &self.queue, item);
+            self.async_uploads_state.sprite_instance_set_state = AssetState::InFlight {
+                job,
+                progress: 0.0,
+                started,
+            };
+        }
+    }
+
     fn launch_all(&mut self, renderer: &mut ViewportRenderer) {
         self.async_uploads_state.load_all_started = Some(Instant::now());
         self.async_uploads_state.load_all_duration_ms = None;
@@ -1350,6 +1734,10 @@ impl App {
         self.launch_glyph_set(renderer);
         self.launch_tensor_glyph_set(renderer);
         self.launch_volume(renderer);
+        self.launch_gaussian_splats(renderer);
+        self.launch_overlay_texture(renderer);
+        self.launch_sprite_set(renderer);
+        self.launch_sprite_instance_set(renderer);
     }
 }
 
@@ -1459,6 +1847,10 @@ pub(crate) fn controls_async_uploads(
         app.async_uploads_state.glyph_set_state = AssetState::Idle;
         app.async_uploads_state.tensor_glyph_set_state = AssetState::Idle;
         app.async_uploads_state.volume_state = AssetState::Idle;
+        app.async_uploads_state.gaussian_splat_state = AssetState::Idle;
+        app.async_uploads_state.overlay_texture_state = AssetState::Idle;
+        app.async_uploads_state.sprite_set_state = AssetState::Idle;
+        app.async_uploads_state.sprite_instance_set_state = AssetState::Idle;
         app.async_uploads_state.loaded_mesh_id = None;
         app.async_uploads_state.loaded_texture_id = None;
         app.async_uploads_state.loaded_polyline_id = None;
@@ -1469,6 +1861,10 @@ pub(crate) fn controls_async_uploads(
         app.async_uploads_state.loaded_glyph_set_id = None;
         app.async_uploads_state.loaded_tensor_glyph_set_id = None;
         app.async_uploads_state.loaded_volume_id = None;
+        app.async_uploads_state.loaded_gaussian_splat_id = None;
+        app.async_uploads_state.loaded_overlay_texture_id = None;
+        app.async_uploads_state.loaded_sprite_set_id = None;
+        app.async_uploads_state.loaded_sprite_instance_set_id = None;
         app.async_uploads_state.skin_installed = false;
         app.async_uploads_state.load_all_started = None;
         app.async_uploads_state.load_all_duration_ms = None;
@@ -1506,6 +1902,10 @@ pub(crate) fn controls_async_uploads(
     let mut clicked_glyph_set = false;
     let mut clicked_tensor_glyph_set = false;
     let mut clicked_volume = false;
+    let mut clicked_gaussian_splats = false;
+    let mut clicked_overlay_texture = false;
+    let mut clicked_sprite_set = false;
+    let mut clicked_sprite_instance_set = false;
     let mut clicked_all = false;
 
     ui.heading("Assets");
@@ -1585,10 +1985,34 @@ pub(crate) fn controls_async_uploads(
                 &app.async_uploads_state.volume_state,
                 &mut clicked_volume,
             );
+            asset_row(
+                ui,
+                "Gaussian splats",
+                &app.async_uploads_state.gaussian_splat_state,
+                &mut clicked_gaussian_splats,
+            );
+            asset_row(
+                ui,
+                "Overlay texture",
+                &app.async_uploads_state.overlay_texture_state,
+                &mut clicked_overlay_texture,
+            );
+            asset_row(
+                ui,
+                "Sprite set",
+                &app.async_uploads_state.sprite_set_state,
+                &mut clicked_sprite_set,
+            );
+            asset_row(
+                ui,
+                "Sprite instances",
+                &app.async_uploads_state.sprite_instance_set_state,
+                &mut clicked_sprite_instance_set,
+            );
         });
 
     ui.add_space(6.0);
-    if ui.button("Load a level (fire all twelve)").clicked() {
+    if ui.button("Load a level (fire all sixteen)").clicked() {
         clicked_all = true;
     }
     // Total wall-clock for the most recent "fire all" run. While the run
@@ -1606,12 +2030,7 @@ pub(crate) fn controls_async_uploads(
 
     ui.add_space(6.0);
     ui.separator();
-    ui.heading("J5 (greyed out, lands later)");
-    ui.add_enabled_ui(false, |ui| {
-        let _ = ui.button("Gaussian splats");
-        let _ = ui.button("Sprite set");
-        let _ = ui.button("Overlay texture");
-    });
+    // J5 is done — all formerly greyed-out buttons are now live above.
 
     if !(clicked_env
         || clicked_mesh
@@ -1625,6 +2044,10 @@ pub(crate) fn controls_async_uploads(
         || clicked_glyph_set
         || clicked_tensor_glyph_set
         || clicked_volume
+        || clicked_gaussian_splats
+        || clicked_overlay_texture
+        || clicked_sprite_set
+        || clicked_sprite_instance_set
         || clicked_all)
     {
         return;
@@ -1671,6 +2094,18 @@ pub(crate) fn controls_async_uploads(
     }
     if clicked_volume {
         app.launch_volume(renderer);
+    }
+    if clicked_gaussian_splats {
+        app.launch_gaussian_splats(renderer);
+    }
+    if clicked_overlay_texture {
+        app.launch_overlay_texture(renderer);
+    }
+    if clicked_sprite_set {
+        app.launch_sprite_set(renderer);
+    }
+    if clicked_sprite_instance_set {
+        app.launch_sprite_instance_set(renderer);
     }
     if clicked_all {
         app.launch_all(renderer);

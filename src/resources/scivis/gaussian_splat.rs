@@ -513,6 +513,191 @@ impl ViewportGpuResources {
         self.gaussian_splat_store.remove(id.0);
     }
 
+    /// Start an asynchronous Gaussian splat upload.
+    ///
+    /// Returns a [`JobId`](crate::resources::JobId) immediately. Vec4
+    /// padding for positions / scales / rotations and storage buffer
+    /// creation + writes all run on a worker thread on a cloned `Device`
+    /// and `Queue`. The apply step inserts the prepared `GaussianSplatGpuSet`
+    /// into the store and surfaces the resulting [`GaussianSplatId`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::InvalidGaussianSplatData`] before any job
+    /// is submitted when `data.positions` is empty or the per-attribute
+    /// vectors disagree in length.
+    pub fn begin_upload_gaussian_splats(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        data: crate::renderer::GaussianSplatData,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        if data.positions.is_empty() {
+            return Err(crate::error::ViewportError::InvalidGaussianSplatData {
+                reason: "empty splat list",
+            });
+        }
+        let n = data.positions.len();
+        if data.scales.len() != n || data.rotations.len() != n || data.opacities.len() != n {
+            return Err(crate::error::ViewportError::InvalidGaussianSplatData {
+                reason: "mismatched buffer lengths",
+            });
+        }
+
+        let slot = crate::resources::ResultSlot::<crate::renderer::GaussianSplatId>::new();
+        let slot_for_apply = slot.clone();
+        let device_for_worker = device.clone();
+        let queue_for_worker = queue.clone();
+
+        let id = {
+            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+            runner.submit_cpu(move |progress| {
+                progress.set(0.1);
+                let count = data.positions.len() as u32;
+
+                let pos_data: Vec<[f32; 4]> = data
+                    .positions
+                    .iter()
+                    .map(|p| [p[0], p[1], p[2], 1.0])
+                    .collect();
+                let scale_data: Vec<[f32; 4]> = data
+                    .scales
+                    .iter()
+                    .map(|s| [s[0], s[1], s[2], 0.0])
+                    .collect();
+                let rotation_data: Vec<[f32; 4]> = data
+                    .rotations
+                    .iter()
+                    .map(|r| [r[0], r[1], r[2], r[3]])
+                    .collect();
+
+                progress.set(0.3);
+
+                let buf_size_pos =
+                    (pos_data.len() * std::mem::size_of::<[f32; 4]>()).max(16) as u64;
+                let buf_size_scale =
+                    (scale_data.len() * std::mem::size_of::<[f32; 4]>()).max(16) as u64;
+                let buf_size_rot =
+                    (rotation_data.len() * std::mem::size_of::<[f32; 4]>()).max(16) as u64;
+                let buf_size_opa = (data.opacities.len() * 4).max(4) as u64;
+                let sh_bytes = data.sh_coefficients.len() * 4;
+                let buf_size_sh = sh_bytes.max(4) as u64;
+
+                let position_buf = device_for_worker.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("splat_position_buf"),
+                    size: buf_size_pos,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue_for_worker.write_buffer(&position_buf, 0, bytemuck::cast_slice(&pos_data));
+
+                let scale_buf = device_for_worker.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("splat_scale_buf"),
+                    size: buf_size_scale,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue_for_worker.write_buffer(&scale_buf, 0, bytemuck::cast_slice(&scale_data));
+
+                let rotation_buf = device_for_worker.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("splat_rotation_buf"),
+                    size: buf_size_rot,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue_for_worker.write_buffer(
+                    &rotation_buf,
+                    0,
+                    bytemuck::cast_slice(&rotation_data),
+                );
+
+                let opacity_buf = device_for_worker.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("splat_opacity_buf"),
+                    size: buf_size_opa,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue_for_worker.write_buffer(
+                    &opacity_buf,
+                    0,
+                    bytemuck::cast_slice(&data.opacities),
+                );
+
+                let sh_buf = device_for_worker.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("splat_sh_buf"),
+                    size: buf_size_sh,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                if !data.sh_coefficients.is_empty() {
+                    queue_for_worker.write_buffer(
+                        &sh_buf,
+                        0,
+                        bytemuck::cast_slice(&data.sh_coefficients),
+                    );
+                }
+
+                let cpu_positions = data.positions.clone();
+                let cpu_scales = data.scales.clone();
+                let sh_degree = data.sh_degree;
+
+                progress.set(0.95);
+
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(Box::new(
+                    move |resources: &mut ViewportGpuResources| {
+                        let gpu_set = GaussianSplatGpuSet {
+                            position_buf,
+                            scale_buf,
+                            rotation_buf,
+                            opacity_buf,
+                            sh_buf,
+                            sh_degree,
+                            count,
+                            viewport_sort: Vec::new(),
+                            cpu_positions,
+                            cpu_scales,
+                        };
+                        let store_index = resources.gaussian_splat_store.insert(gpu_set);
+                        slot_for_apply.set(crate::renderer::GaussianSplatId(store_index));
+                    },
+                )))
+            })
+        };
+
+        self.job_gaussian_splat_results
+            .lock()
+            .expect("gaussian splat result map poisoned")
+            .insert(id, slot);
+        Ok(id)
+    }
+
+    /// Take the [`GaussianSplatId`](crate::renderer::GaussianSplatId) produced by a
+    /// completed [`begin_upload_gaussian_splats`](Self::begin_upload_gaussian_splats) job.
+    pub fn upload_result_gaussian_splats(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::renderer::GaussianSplatId> {
+        let mut map = self
+            .job_gaussian_splat_results
+            .lock()
+            .expect("gaussian splat result map poisoned");
+        let slot = match map.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                });
+            }
+        };
+        match slot.take() {
+            Some(splat_id) => {
+                map.remove(&id);
+                Ok(splat_id)
+            }
+            None => Err(crate::error::ViewportError::JobNotReady),
+        }
+    }
+
     /// Ensure per-viewport sort buffers exist for (store_index, viewport_index).
     ///
     /// Also creates the render bind group for the render pipeline (group 1).
@@ -889,5 +1074,75 @@ impl ViewportGpuResources {
                 vp_sort_mut.last_eye = eye;
             }
         }
+    }
+}
+
+
+#[cfg(test)]
+mod async_tests {
+    use crate::ViewportGpuResources;
+    use crate::renderer::GaussianSplatData;
+    use crate::resources::UploadStatus;
+
+    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+    }
+
+    fn sample_splats(n: usize) -> GaussianSplatData {
+        let mut data = GaussianSplatData::default();
+        data.positions = (0..n).map(|i| [i as f32, 0.0, 0.0]).collect();
+        data.scales = vec![[0.1, 0.1, 0.1]; n];
+        data.rotations = vec![[0.0, 0.0, 0.0, 1.0]; n];
+        data.opacities = vec![0.5; n];
+        data
+    }
+
+    #[test]
+    fn begin_upload_gaussian_splats_validates() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let err = resources
+            .begin_upload_gaussian_splats(&device, &queue, GaussianSplatData::default())
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            crate::error::ViewportError::InvalidGaussianSplatData { .. }
+        ));
+    }
+
+    #[test]
+    fn begin_upload_gaussian_splats_drains_to_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let job = resources
+            .begin_upload_gaussian_splats(&device, &queue, sample_splats(8))
+            .expect("job submitted");
+        for _ in 0..200 {
+            resources.process_uploads(&device, &queue);
+            match resources.upload_status(job) {
+                UploadStatus::Ready => break,
+                UploadStatus::Failed(e) => panic!("upload failed: {e:?}"),
+                UploadStatus::Pending { .. } => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                UploadStatus::Unknown => panic!("job id disappeared"),
+            }
+        }
+        let _id = resources.upload_result_gaussian_splats(job).expect("ready");
     }
 }

@@ -247,6 +247,128 @@ impl super::ViewportGpuResources {
         OverlayTextureId(id)
     }
 
+    /// Start an asynchronous overlay texture upload.
+    ///
+    /// Returns a [`JobId`](crate::resources::JobId) immediately. Texture
+    /// creation and `queue.write_texture` run on a worker thread on cloned
+    /// `Device` and `Queue` handles; the apply step inserts the prepared
+    /// `OverlayShapeTextureEntry` into the store. Take the resulting
+    /// [`OverlayTextureId`] via
+    /// [`upload_result_overlay_texture`](Self::upload_result_overlay_texture).
+    ///
+    /// Ownership of `rgba_data` transfers into the worker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
+    /// before submission when `rgba_data.len() != width * height * 4`.
+    pub fn begin_upload_overlay_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+        rgba_data: Vec<u8>,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        let expected = (width * height * 4) as usize;
+        if rgba_data.len() != expected {
+            return Err(crate::error::ViewportError::InvalidTextureData {
+                expected,
+                actual: rgba_data.len(),
+            });
+        }
+
+        let slot = crate::resources::ResultSlot::<OverlayTextureId>::new();
+        let slot_for_apply = slot.clone();
+        let device_for_worker = device.clone();
+        let queue_for_worker = queue.clone();
+
+        let id = {
+            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+            runner.submit_cpu(move |progress| {
+                progress.set(0.1);
+                let texture = device_for_worker.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("overlay_shape_tex"),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                queue_for_worker.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &rgba_data,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(width * 4),
+                        rows_per_image: Some(height),
+                    },
+                    wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                progress.set(0.95);
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(Box::new(
+                    move |resources: &mut super::ViewportGpuResources| {
+                        let id = resources.overlay_textures.len() as u64;
+                        resources.overlay_textures.push(OverlayShapeTextureEntry {
+                            _texture: texture,
+                            view,
+                        });
+                        slot_for_apply.set(OverlayTextureId(id));
+                    },
+                )))
+            })
+        };
+
+        self.job_overlay_texture_results
+            .lock()
+            .expect("overlay texture result map poisoned")
+            .insert(id, slot);
+        Ok(id)
+    }
+
+    /// Take the [`OverlayTextureId`] produced by a completed
+    /// [`begin_upload_overlay_texture`](Self::begin_upload_overlay_texture) job.
+    pub fn upload_result_overlay_texture(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<OverlayTextureId> {
+        let mut map = self
+            .job_overlay_texture_results
+            .lock()
+            .expect("overlay texture result map poisoned");
+        let slot = match map.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                });
+            }
+        };
+        match slot.take() {
+            Some(tid) => {
+                map.remove(&id);
+                Ok(tid)
+            }
+            None => Err(crate::error::ViewportError::JobNotReady),
+        }
+    }
+
     /// Lazily create the separable Gaussian blur pipeline used to blur the
     /// scene texture for `backdrop_blur` overlay shapes.
     ///

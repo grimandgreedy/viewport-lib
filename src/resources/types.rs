@@ -1762,6 +1762,7 @@ pub struct MeshInstanceGpuData {
 }
 
 /// Per-frame GPU data for one sprite batch item, created in `prepare()`.
+#[derive(Clone)]
 pub struct SpriteGpuData {
     /// Position vertex buffer: one `vec3` per sprite, instance-stepped.
     pub(crate) vertex_buffer: wgpu::Buffer,
@@ -2632,6 +2633,75 @@ pub struct ViewportGpuResources {
             super::upload_jobs::ResultSlot<super::VolumeGpuId>,
         >,
     >,
+    /// Typed result slots for async volume-mesh uploads. Holds the mesh id
+    /// plus the face-to-cell map produced by boundary extraction.
+    pub(crate) job_volume_mesh_results: std::sync::Mutex<
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<(
+                super::mesh_store::MeshId,
+                Vec<u32>,
+            )>,
+        >,
+    >,
+    /// Typed result slots for async clipped-volume-mesh uploads.
+    pub(crate) job_clipped_volume_mesh_results: std::sync::Mutex<
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<(
+                super::mesh_store::MeshId,
+                Vec<u32>,
+            )>,
+        >,
+    >,
+    /// Typed result slots for async sparse-volume-grid uploads.
+    pub(crate) job_sparse_volume_grid_results: std::sync::Mutex<
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<super::mesh_store::MeshId>,
+        >,
+    >,
+    /// Typed result slots for async projected-tet-mesh uploads. Holds the
+    /// projected tet id plus the scalar range packed into the GPU uniform.
+    pub(crate) job_projected_tet_results: std::sync::Mutex<
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<(super::ProjectedTetId, f32, f32)>,
+        >,
+    >,
+    /// Typed result slots for async gaussian splat uploads, keyed by job id.
+    pub(crate) job_gaussian_splat_results: std::sync::Mutex<
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<crate::renderer::GaussianSplatId>,
+        >,
+    >,
+    /// Typed result slots for async overlay texture uploads, keyed by job id.
+    pub(crate) job_overlay_texture_results: std::sync::Mutex<
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<crate::renderer::OverlayTextureId>,
+        >,
+    >,
+    /// Typed result slots for async sprite set uploads, keyed by job id.
+    pub(crate) job_sprite_set_results: std::sync::Mutex<
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<super::SpriteSetId>,
+        >,
+    >,
+    /// Typed result slots for async sprite instance set uploads, keyed by
+    /// job id.
+    pub(crate) job_sprite_instance_set_results: std::sync::Mutex<
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<super::SpriteInstanceSetId>,
+        >,
+    >,
+    /// Pre-uploaded sprite set storage.
+    pub(crate) sprite_set_store: super::SpriteSetStore,
+    /// Pre-uploaded sprite instance set storage.
+    pub(crate) sprite_instance_set_store: super::SpriteInstanceSetStore,
     /// Bytes allocated on the GPU for user-uploaded textures.
     /// Incremented by `upload_texture`, `upload_normal_map`, and the async
     /// upload paths once a texture's apply step lands.

@@ -860,6 +860,230 @@ impl ViewportGpuResources {
         self.upload_mesh_data(device, &mesh_data)
     }
 
+    /// Start an asynchronous volume mesh upload.
+    ///
+    /// Returns a [`JobId`](crate::resources::JobId) immediately. Boundary
+    /// extraction (`extract_boundary_faces`) and vertex prep
+    /// (`prep_mesh_data`) run on a worker thread; the apply step creates
+    /// GPU buffers and inserts the mesh. Take the resulting `(MeshId,
+    /// face_to_cell)` pair via
+    /// [`upload_result_volume_mesh`](Self::upload_result_volume_mesh).
+    ///
+    /// Ownership of `data` transfers into the worker.
+    pub fn begin_upload_volume_mesh_data(
+        &mut self,
+        device: &wgpu::Device,
+        data: crate::resources::volume_mesh::VolumeMeshData,
+    ) -> crate::resources::JobId {
+        let slot = crate::resources::ResultSlot::<(
+            crate::resources::mesh_store::MeshId,
+            Vec<u32>,
+        )>::new();
+        let slot_for_apply = slot.clone();
+        let device_for_apply = device.clone();
+
+        let id = {
+            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+            runner.submit_cpu(move |progress| {
+                progress.set(0.1);
+                let (mesh_data, face_to_cell) =
+                    crate::resources::volume_mesh::extract_boundary_faces(&data);
+                progress.set(0.5);
+                ViewportGpuResources::validate_mesh_data(&mesh_data)?;
+                let prep = ViewportGpuResources::prep_mesh_data(&mesh_data);
+                progress.set(0.95);
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
+                    Box::new(move |resources: &mut ViewportGpuResources| {
+                        let mesh_id = resources.assemble_mesh_data(
+                            &device_for_apply,
+                            &mesh_data,
+                            prep,
+                        );
+                        slot_for_apply.set((mesh_id, face_to_cell));
+                    }),
+                ))
+            })
+        };
+
+        self.job_volume_mesh_results
+            .lock()
+            .expect("volume mesh result map poisoned")
+            .insert(id, slot);
+        id
+    }
+
+    /// Take the `(MeshId, face_to_cell)` pair produced by a completed
+    /// [`begin_upload_volume_mesh_data`](Self::begin_upload_volume_mesh_data) job.
+    pub fn upload_result_volume_mesh(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<(crate::resources::mesh_store::MeshId, Vec<u32>)> {
+        let mut map = self
+            .job_volume_mesh_results
+            .lock()
+            .expect("volume mesh result map poisoned");
+        let slot = match map.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                });
+            }
+        };
+        match slot.take() {
+            Some(pair) => {
+                map.remove(&id);
+                Ok(pair)
+            }
+            None => Err(crate::error::ViewportError::JobNotReady),
+        }
+    }
+
+    /// Start an asynchronous clipped volume mesh upload. See
+    /// [`upload_clipped_volume_mesh_data`](Self::upload_clipped_volume_mesh_data)
+    /// for the sync analog and the semantics of `clip_planes`.
+    pub fn begin_upload_clipped_volume_mesh_data(
+        &mut self,
+        device: &wgpu::Device,
+        data: crate::resources::volume_mesh::VolumeMeshData,
+        clip_planes: Vec<[f32; 4]>,
+    ) -> crate::resources::JobId {
+        let slot = crate::resources::ResultSlot::<(
+            crate::resources::mesh_store::MeshId,
+            Vec<u32>,
+        )>::new();
+        let slot_for_apply = slot.clone();
+        let device_for_apply = device.clone();
+
+        let id = {
+            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+            runner.submit_cpu(move |progress| {
+                progress.set(0.1);
+                let (mesh_data, face_to_cell) =
+                    crate::resources::volume_mesh::extract_clipped_volume_faces(
+                        &data,
+                        &clip_planes,
+                    );
+                progress.set(0.5);
+                ViewportGpuResources::validate_mesh_data(&mesh_data)?;
+                let prep = ViewportGpuResources::prep_mesh_data(&mesh_data);
+                progress.set(0.95);
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
+                    Box::new(move |resources: &mut ViewportGpuResources| {
+                        let mesh_id = resources.assemble_mesh_data(
+                            &device_for_apply,
+                            &mesh_data,
+                            prep,
+                        );
+                        slot_for_apply.set((mesh_id, face_to_cell));
+                    }),
+                ))
+            })
+        };
+
+        self.job_clipped_volume_mesh_results
+            .lock()
+            .expect("clipped volume mesh result map poisoned")
+            .insert(id, slot);
+        id
+    }
+
+    /// Take the `(MeshId, face_to_cell)` pair produced by a completed
+    /// [`begin_upload_clipped_volume_mesh_data`](Self::begin_upload_clipped_volume_mesh_data)
+    /// job.
+    pub fn upload_result_clipped_volume_mesh(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<(crate::resources::mesh_store::MeshId, Vec<u32>)> {
+        let mut map = self
+            .job_clipped_volume_mesh_results
+            .lock()
+            .expect("clipped volume mesh result map poisoned");
+        let slot = match map.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                });
+            }
+        };
+        match slot.take() {
+            Some(pair) => {
+                map.remove(&id);
+                Ok(pair)
+            }
+            None => Err(crate::error::ViewportError::JobNotReady),
+        }
+    }
+
+    /// Start an asynchronous sparse voxel grid upload.
+    pub fn begin_upload_sparse_volume_grid_data(
+        &mut self,
+        device: &wgpu::Device,
+        data: crate::resources::sparse_volume::SparseVolumeGridData,
+    ) -> crate::resources::JobId {
+        let slot = crate::resources::ResultSlot::<crate::resources::mesh_store::MeshId>::new();
+        let slot_for_apply = slot.clone();
+        let device_for_apply = device.clone();
+
+        let id = {
+            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+            runner.submit_cpu(move |progress| {
+                progress.set(0.1);
+                let mesh_data =
+                    crate::resources::sparse_volume::extract_sparse_boundary(&data);
+                progress.set(0.5);
+                ViewportGpuResources::validate_mesh_data(&mesh_data)?;
+                let prep = ViewportGpuResources::prep_mesh_data(&mesh_data);
+                progress.set(0.95);
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
+                    Box::new(move |resources: &mut ViewportGpuResources| {
+                        let mesh_id = resources.assemble_mesh_data(
+                            &device_for_apply,
+                            &mesh_data,
+                            prep,
+                        );
+                        slot_for_apply.set(mesh_id);
+                    }),
+                ))
+            })
+        };
+
+        self.job_sparse_volume_grid_results
+            .lock()
+            .expect("sparse volume grid result map poisoned")
+            .insert(id, slot);
+        id
+    }
+
+    /// Take the [`MeshId`](crate::resources::mesh_store::MeshId) produced by a completed
+    /// [`begin_upload_sparse_volume_grid_data`](Self::begin_upload_sparse_volume_grid_data)
+    /// job.
+    pub fn upload_result_sparse_volume_grid(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
+        let mut map = self
+            .job_sparse_volume_grid_results
+            .lock()
+            .expect("sparse volume grid result map poisoned");
+        let slot = match map.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                });
+            }
+        };
+        match slot.take() {
+            Some(mesh_id) => {
+                map.remove(&id);
+                Ok(mesh_id)
+            }
+            None => Err(crate::error::ViewportError::JobNotReady),
+        }
+    }
+
     /// Upload per-vertex, per-cell, per-face scalar, and per-face colour attributes to GPU buffers.
     ///
     /// Returns `(attribute_buffers, attribute_ranges, face_vertex_buffer, face_attribute_buffers,
@@ -1964,6 +2188,138 @@ impl ViewportGpuResources {
         Ok((id, scalar_range.0, scalar_range.1))
     }
 
+    /// Start an asynchronous projected-tet mesh upload.
+    ///
+    /// Slab decomposition (`decompose_into_chunks`) and the per-chunk tet
+    /// storage buffers are built on a worker thread on a cloned `Device`.
+    /// The apply step constructs the per-chunk bind groups against the
+    /// renderer's existing `pt_bind_group_layout` and colourmap LUT, then
+    /// inserts the mesh. Returns the [`JobId`](crate::resources::JobId);
+    /// take the `(ProjectedTetId, scalar_min, scalar_max)` triple via
+    /// [`upload_result_projected_tet_mesh`](Self::upload_result_projected_tet_mesh).
+    pub fn begin_upload_projected_tet_mesh(
+        &mut self,
+        device: &wgpu::Device,
+        data: crate::resources::volume_mesh::VolumeMeshData,
+        scalar_attribute: String,
+        colourmap_id: ColourmapId,
+    ) -> crate::resources::JobId {
+        // Pipeline layout must exist when the apply step builds bind groups.
+        self.ensure_pt_bind_group_layout(device);
+
+        let slot = crate::resources::ResultSlot::<(ProjectedTetId, f32, f32)>::new();
+        let slot_for_apply = slot.clone();
+        let device_for_worker = device.clone();
+        let device_for_apply = device.clone();
+
+        let id = {
+            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+            runner.submit_cpu(move |progress| {
+                progress.set(0.1);
+                let (pending, scalar_range, uniform_buffer) =
+                    ViewportGpuResources::decompose_into_chunks(
+                        &device_for_worker,
+                        &data,
+                        &scalar_attribute,
+                    );
+                progress.set(0.95);
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
+                    Box::new(move |resources: &mut ViewportGpuResources| {
+                        let chunks = {
+                            let bgl = resources
+                                .pt_bind_group_layout
+                                .as_ref()
+                                .expect("pt_bind_group_layout must exist");
+                            let lut_view = resources
+                                .colourmap_views
+                                .get(colourmap_id.0)
+                                .unwrap_or(&resources.fallback_lut_view);
+                            let lut_sampler = &resources.material_sampler;
+                            pending
+                                .into_iter()
+                                .map(|(tet_buffer, tet_count)| {
+                                    let bind_group = device_for_apply.create_bind_group(
+                                        &wgpu::BindGroupDescriptor {
+                                            label: Some("pt_bind_group"),
+                                            layout: bgl,
+                                            entries: &[
+                                                wgpu::BindGroupEntry {
+                                                    binding: 0,
+                                                    resource: uniform_buffer.as_entire_binding(),
+                                                },
+                                                wgpu::BindGroupEntry {
+                                                    binding: 1,
+                                                    resource: tet_buffer.as_entire_binding(),
+                                                },
+                                                wgpu::BindGroupEntry {
+                                                    binding: 2,
+                                                    resource: wgpu::BindingResource::TextureView(
+                                                        lut_view,
+                                                    ),
+                                                },
+                                                wgpu::BindGroupEntry {
+                                                    binding: 3,
+                                                    resource: wgpu::BindingResource::Sampler(
+                                                        lut_sampler,
+                                                    ),
+                                                },
+                                            ],
+                                        },
+                                    );
+                                    crate::resources::types::ProjectedTetChunk {
+                                        tet_buffer,
+                                        tet_count,
+                                        bind_group,
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                        };
+                        let pid = ProjectedTetId(resources.projected_tet_store.len());
+                        resources.projected_tet_store.push(GpuProjectedTetMesh {
+                            chunks,
+                            uniform_buffer,
+                            scalar_range,
+                        });
+                        slot_for_apply.set((pid, scalar_range.0, scalar_range.1));
+                    }),
+                ))
+            })
+        };
+
+        self.job_projected_tet_results
+            .lock()
+            .expect("projected tet result map poisoned")
+            .insert(id, slot);
+        id
+    }
+
+    /// Take the `(ProjectedTetId, scalar_min, scalar_max)` triple produced by a
+    /// completed [`begin_upload_projected_tet_mesh`](Self::begin_upload_projected_tet_mesh) job.
+    pub fn upload_result_projected_tet_mesh(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<(ProjectedTetId, f32, f32)> {
+        let mut map = self
+            .job_projected_tet_results
+            .lock()
+            .expect("projected tet result map poisoned");
+        let slot = match map.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                });
+            }
+        };
+        match slot.take() {
+            Some(triple) => {
+                map.remove(&id);
+                Ok(triple)
+            }
+            None => Err(crate::error::ViewportError::JobNotReady),
+        }
+    }
+
     /// Replace the tet buffer and colourmap for an existing projected-tet mesh in-place.
     ///
     /// Rebuilds the tet buffer with the new scalar attribute and recreates the bind
@@ -2361,5 +2717,168 @@ mod async_upload_tests {
             err,
             crate::error::ViewportError::JobResultMissing { .. }
         ));
+    }
+}
+
+
+#[cfg(test)]
+mod c4_volume_mesh_tests {
+    use crate::ViewportGpuResources;
+    use crate::resources::{CELL_SENTINEL, ColourmapId, SparseVolumeGridData, UploadStatus};
+    use crate::resources::volume_mesh::VolumeMeshData;
+
+    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+    }
+
+    fn drive_until_ready(
+        resources: &mut ViewportGpuResources,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: crate::resources::JobId,
+        label: &str,
+    ) {
+        for _ in 0..200 {
+            resources.process_uploads(device, queue);
+            match resources.upload_status(id) {
+                UploadStatus::Ready => return,
+                UploadStatus::Failed(e) => panic!("{label} upload failed: {e:?}"),
+                UploadStatus::Pending { .. } => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                UploadStatus::Unknown => panic!("{label} job id disappeared"),
+            }
+        }
+        panic!("{label} upload did not complete in time");
+    }
+
+    fn single_tet_volume() -> VolumeMeshData {
+        let mut v = VolumeMeshData::default();
+        v.positions = vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.5, 1.0, 0.0],
+            [0.5, 0.5, 1.0],
+        ];
+        v.cells = vec![[
+            0,
+            1,
+            2,
+            3,
+            CELL_SENTINEL,
+            CELL_SENTINEL,
+            CELL_SENTINEL,
+            CELL_SENTINEL,
+        ]];
+        v.cell_scalars.insert("density".into(), vec![0.5]);
+        v
+    }
+
+    fn single_cell_sparse() -> SparseVolumeGridData {
+        let mut g = SparseVolumeGridData::default();
+        g.active_cells = vec![[0, 0, 0]];
+        g.cell_size = 1.0;
+        g.origin = [0.0, 0.0, 0.0];
+        g
+    }
+
+    #[test]
+    fn begin_upload_volume_mesh_drains_to_pair() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let job = resources.begin_upload_volume_mesh_data(&device, single_tet_volume());
+        drive_until_ready(&mut resources, &device, &queue, job, "volume_mesh");
+        let (mesh_id, face_to_cell) = resources.upload_result_volume_mesh(job).expect("ready");
+        assert!(resources.mesh_store.get(mesh_id).is_some());
+        assert!(!face_to_cell.is_empty());
+        let err = resources.upload_result_volume_mesh(job).unwrap_err();
+        assert!(matches!(
+            err,
+            crate::error::ViewportError::JobResultMissing { .. }
+        ));
+    }
+
+    #[test]
+    fn begin_upload_clipped_volume_mesh_drains_to_pair() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        // Empty clip planes: equivalent to plain volume mesh extraction.
+        let job = resources.begin_upload_clipped_volume_mesh_data(
+            &device,
+            single_tet_volume(),
+            Vec::new(),
+        );
+        drive_until_ready(&mut resources, &device, &queue, job, "clipped_volume_mesh");
+        let (mesh_id, face_to_cell) =
+            resources.upload_result_clipped_volume_mesh(job).expect("ready");
+        assert!(resources.mesh_store.get(mesh_id).is_some());
+        assert!(!face_to_cell.is_empty());
+    }
+
+    #[test]
+    fn begin_upload_sparse_volume_grid_drains_to_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let job = resources.begin_upload_sparse_volume_grid_data(&device, single_cell_sparse());
+        drive_until_ready(&mut resources, &device, &queue, job, "sparse_volume_grid");
+        let mesh_id = resources.upload_result_sparse_volume_grid(job).expect("ready");
+        assert!(resources.mesh_store.get(mesh_id).is_some());
+    }
+
+    #[test]
+    fn begin_upload_projected_tet_mesh_drains_to_triple() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let job = resources.begin_upload_projected_tet_mesh(
+            &device,
+            single_tet_volume(),
+            "density".into(),
+            ColourmapId(0),
+        );
+        drive_until_ready(&mut resources, &device, &queue, job, "projected_tet_mesh");
+        let (_id, smin, smax) =
+            resources.upload_result_projected_tet_mesh(job).expect("ready");
+        assert!(smin <= smax);
+    }
+
+    #[test]
+    fn sync_paths_still_work() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let vol = single_tet_volume();
+        let (_id, _ftc) = resources.upload_volume_mesh_data(&device, &vol).expect("sync ok");
+        let (_id2, _ftc2) = resources
+            .upload_clipped_volume_mesh_data(&device, &vol, &[])
+            .expect("clipped sync ok");
+        let _grid_id = resources
+            .upload_sparse_volume_grid_data(&device, &single_cell_sparse())
+            .expect("sparse sync ok");
     }
 }

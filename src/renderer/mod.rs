@@ -35,8 +35,9 @@ pub use self::types::{
     PolylineItem, PolylineRefItem, PostProcessSettings, RenderCamera, RibbonItem, RibbonRefItem,
     RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, ScatterQuality,
     ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem,
-    ShDegree, ShadowFilter, SliceAxis, SpriteBlend, SpriteItem, SpriteSizeMode, StreamtubeItem,
-    StreamtubeRefItem, SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, ToneMapping,
+    ShDegree, ShadowFilter, SliceAxis, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem,
+    SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem, SurfaceLICConfig,
+    SurfaceSubmission, TensorGlyphItem, ToneMapping,
     TransparentVolumeMeshItem, TriangleDirection, TubeItem, TubeRefItem,
     ViewportEffects, ViewportFrame, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
     aabb_wireframe_polyline, sphere_wireframe_polyline,
@@ -1217,6 +1218,134 @@ impl ViewportRenderer {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::VolumeGpuId> {
         self.resources.upload_result_volume_mc(id)
+    }
+
+    /// Start an asynchronous volume mesh upload. See
+    /// [`ViewportGpuResources::begin_upload_volume_mesh_data`].
+    pub fn begin_upload_volume_mesh_data(
+        &mut self,
+        device: &wgpu::Device,
+        data: crate::resources::volume_mesh::VolumeMeshData,
+    ) -> crate::resources::JobId {
+        self.resources.begin_upload_volume_mesh_data(device, data)
+    }
+
+    /// Take the `(MeshId, face_to_cell)` pair produced by a completed
+    /// [`begin_upload_volume_mesh_data`](Self::begin_upload_volume_mesh_data) job.
+    pub fn upload_result_volume_mesh(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<(crate::resources::mesh_store::MeshId, Vec<u32>)> {
+        self.resources.upload_result_volume_mesh(id)
+    }
+
+    /// Start an asynchronous clipped volume mesh upload. See
+    /// [`ViewportGpuResources::begin_upload_clipped_volume_mesh_data`].
+    pub fn begin_upload_clipped_volume_mesh_data(
+        &mut self,
+        device: &wgpu::Device,
+        data: crate::resources::volume_mesh::VolumeMeshData,
+        clip_planes: Vec<[f32; 4]>,
+    ) -> crate::resources::JobId {
+        self.resources
+            .begin_upload_clipped_volume_mesh_data(device, data, clip_planes)
+    }
+
+    /// Take the `(MeshId, face_to_cell)` pair produced by a completed
+    /// [`begin_upload_clipped_volume_mesh_data`](Self::begin_upload_clipped_volume_mesh_data)
+    /// job.
+    pub fn upload_result_clipped_volume_mesh(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<(crate::resources::mesh_store::MeshId, Vec<u32>)> {
+        self.resources.upload_result_clipped_volume_mesh(id)
+    }
+
+    /// Start an asynchronous sparse voxel grid upload. See
+    /// [`ViewportGpuResources::begin_upload_sparse_volume_grid_data`].
+    pub fn begin_upload_sparse_volume_grid_data(
+        &mut self,
+        device: &wgpu::Device,
+        data: crate::resources::SparseVolumeGridData,
+    ) -> crate::resources::JobId {
+        self.resources
+            .begin_upload_sparse_volume_grid_data(device, data)
+    }
+
+    /// Take the [`MeshId`](crate::resources::mesh_store::MeshId) produced by a completed
+    /// [`begin_upload_sparse_volume_grid_data`](Self::begin_upload_sparse_volume_grid_data)
+    /// job.
+    pub fn upload_result_sparse_volume_grid(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
+        self.resources.upload_result_sparse_volume_grid(id)
+    }
+
+    /// Start an asynchronous projected-tet mesh upload. See
+    /// [`ViewportGpuResources::begin_upload_projected_tet_mesh`].
+    pub fn begin_upload_projected_tet_mesh(
+        &mut self,
+        device: &wgpu::Device,
+        data: crate::resources::volume_mesh::VolumeMeshData,
+        scalar_attribute: String,
+        colourmap_id: crate::resources::ColourmapId,
+    ) -> crate::resources::JobId {
+        self.resources
+            .begin_upload_projected_tet_mesh(device, data, scalar_attribute, colourmap_id)
+    }
+
+    /// Take the `(ProjectedTetId, scalar_min, scalar_max)` triple produced by a
+    /// completed [`begin_upload_projected_tet_mesh`](Self::begin_upload_projected_tet_mesh) job.
+    pub fn upload_result_projected_tet_mesh(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<(crate::resources::ProjectedTetId, f32, f32)> {
+        self.resources.upload_result_projected_tet_mesh(id)
+    }
+
+    /// Start an asynchronous Gaussian splat upload. See
+    /// [`ViewportGpuResources::begin_upload_gaussian_splats`].
+    pub fn begin_upload_gaussian_splats(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        data: crate::renderer::GaussianSplatData,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        self.resources
+            .begin_upload_gaussian_splats(device, queue, data)
+    }
+
+    /// Take the [`GaussianSplatId`](crate::renderer::GaussianSplatId) produced by a
+    /// completed [`begin_upload_gaussian_splats`](Self::begin_upload_gaussian_splats) job.
+    pub fn upload_result_gaussian_splats(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::renderer::GaussianSplatId> {
+        self.resources.upload_result_gaussian_splats(id)
+    }
+
+    /// Start an asynchronous overlay texture upload. See
+    /// [`ViewportGpuResources::begin_upload_overlay_texture`].
+    pub fn begin_upload_overlay_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+        rgba_data: Vec<u8>,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        self.resources
+            .begin_upload_overlay_texture(device, queue, width, height, rgba_data)
+    }
+
+    /// Take the [`OverlayTextureId`](crate::renderer::OverlayTextureId) produced by a
+    /// completed [`begin_upload_overlay_texture`](Self::begin_upload_overlay_texture) job.
+    pub fn upload_result_overlay_texture(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::renderer::OverlayTextureId> {
+        self.resources.upload_result_overlay_texture(id)
     }
 
     /// True when no upload jobs are in flight.

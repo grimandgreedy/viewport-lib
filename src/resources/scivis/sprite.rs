@@ -522,4 +522,211 @@ impl ViewportGpuResources {
             },
         ));
     }
+
+    /// Pre-upload a static sprite set and return a typed handle.
+    ///
+    /// Use this for sprites whose positions, sizes, and colours never
+    /// change between frames: foliage, signage, light flares. Submit a
+    /// [`SpriteSetRefItem`](crate::renderer::SpriteSetRefItem) on
+    /// `SceneFrame::sprite_set_refs` each frame to draw the set.
+    pub fn upload_sprite_set(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: &crate::renderer::SpriteItem,
+    ) -> crate::resources::SpriteSetId {
+        self.ensure_sprite_pipelines(device);
+        let gpu = self.upload_sprite(device, queue, item);
+        self.sprite_set_store.insert(gpu)
+    }
+
+    /// Remove a pre-uploaded sprite set.
+    pub fn drop_sprite_set(&mut self, id: crate::resources::SpriteSetId) -> bool {
+        self.sprite_set_store.remove(id)
+    }
+
+    /// Replace the contents of a pre-uploaded sprite set, keeping the same id.
+    pub fn replace_sprite_set(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: crate::resources::SpriteSetId,
+        item: &crate::renderer::SpriteItem,
+    ) -> bool {
+        if !self.sprite_set_store.contains(id) {
+            return false;
+        }
+        self.ensure_sprite_pipelines(device);
+        let gpu = self.upload_sprite(device, queue, item);
+        self.sprite_set_store.replace(id, gpu)
+    }
+
+    /// Start an asynchronous sprite set upload.
+    pub fn begin_upload_sprite_set(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: crate::renderer::SpriteItem,
+    ) -> crate::resources::JobId {
+        let slot = crate::resources::ResultSlot::<crate::resources::SpriteSetId>::new();
+        let slot_for_apply = slot.clone();
+        let device_for_apply = device.clone();
+        let queue_for_apply = queue.clone();
+        let id = {
+            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+            runner.submit_cpu(move |progress| {
+                progress.set(0.9);
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(Box::new(
+                    move |resources: &mut ViewportGpuResources| {
+                        let sid = resources.upload_sprite_set(
+                            &device_for_apply,
+                            &queue_for_apply,
+                            &item,
+                        );
+                        slot_for_apply.set(sid);
+                    },
+                )))
+            })
+        };
+        self.job_sprite_set_results
+            .lock()
+            .expect("sprite set result map poisoned")
+            .insert(id, slot);
+        id
+    }
+
+    /// Take the [`SpriteSetId`] produced by a completed
+    /// [`begin_upload_sprite_set`](Self::begin_upload_sprite_set) job.
+    pub fn upload_result_sprite_set(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::SpriteSetId> {
+        let mut map = self
+            .job_sprite_set_results
+            .lock()
+            .expect("sprite set result map poisoned");
+        let slot = match map.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                });
+            }
+        };
+        match slot.take() {
+            Some(sid) => {
+                map.remove(&id);
+                Ok(sid)
+            }
+            None => Err(crate::error::ViewportError::JobNotReady),
+        }
+    }
+
+    /// Pre-upload a sprite instance set and return a typed handle.
+    ///
+    /// Use this for sprites whose definition (texture, blend, size mode)
+    /// is stable but whose instance transforms change every frame: NPCs,
+    /// item drops, damage numbers. Submit a
+    /// [`SpriteInstanceSetRefItem`](crate::renderer::SpriteInstanceSetRefItem)
+    /// on `SceneFrame::sprite_instance_set_refs` each frame.
+    ///
+    /// The current implementation pre-bakes both the definition and the
+    /// instance transforms; full per-frame instance transform override
+    /// against a stable definition is a planned follow-up.
+    pub fn upload_sprite_instance_set(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: &crate::renderer::SpriteItem,
+    ) -> crate::resources::SpriteInstanceSetId {
+        self.ensure_sprite_pipelines(device);
+        let gpu = self.upload_sprite(device, queue, item);
+        self.sprite_instance_set_store.insert(gpu)
+    }
+
+    /// Remove a pre-uploaded sprite instance set.
+    pub fn drop_sprite_instance_set(
+        &mut self,
+        id: crate::resources::SpriteInstanceSetId,
+    ) -> bool {
+        self.sprite_instance_set_store.remove(id)
+    }
+
+    /// Replace the contents of a pre-uploaded sprite instance set, keeping
+    /// the same id.
+    pub fn replace_sprite_instance_set(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: crate::resources::SpriteInstanceSetId,
+        item: &crate::renderer::SpriteItem,
+    ) -> bool {
+        if !self.sprite_instance_set_store.contains(id) {
+            return false;
+        }
+        self.ensure_sprite_pipelines(device);
+        let gpu = self.upload_sprite(device, queue, item);
+        self.sprite_instance_set_store.replace(id, gpu)
+    }
+
+    /// Start an asynchronous sprite instance set upload.
+    pub fn begin_upload_sprite_instance_set(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: crate::renderer::SpriteItem,
+    ) -> crate::resources::JobId {
+        let slot = crate::resources::ResultSlot::<crate::resources::SpriteInstanceSetId>::new();
+        let slot_for_apply = slot.clone();
+        let device_for_apply = device.clone();
+        let queue_for_apply = queue.clone();
+        let id = {
+            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+            runner.submit_cpu(move |progress| {
+                progress.set(0.9);
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(Box::new(
+                    move |resources: &mut ViewportGpuResources| {
+                        let sid = resources.upload_sprite_instance_set(
+                            &device_for_apply,
+                            &queue_for_apply,
+                            &item,
+                        );
+                        slot_for_apply.set(sid);
+                    },
+                )))
+            })
+        };
+        self.job_sprite_instance_set_results
+            .lock()
+            .expect("sprite instance set result map poisoned")
+            .insert(id, slot);
+        id
+    }
+
+    /// Take the [`SpriteInstanceSetId`] produced by a completed
+    /// [`begin_upload_sprite_instance_set`](Self::begin_upload_sprite_instance_set) job.
+    pub fn upload_result_sprite_instance_set(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::SpriteInstanceSetId> {
+        let mut map = self
+            .job_sprite_instance_set_results
+            .lock()
+            .expect("sprite instance set result map poisoned");
+        let slot = match map.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                });
+            }
+        };
+        match slot.take() {
+            Some(sid) => {
+                map.remove(&id);
+                Ok(sid)
+            }
+            None => Err(crate::error::ViewportError::JobNotReady),
+        }
+    }
 }

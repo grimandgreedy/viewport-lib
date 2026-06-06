@@ -1032,6 +1032,59 @@ impl TensorGlyphSetRefItem {
     }
 }
 
+/// Per-frame reference to a pre-uploaded sprite set (static billboards).
+///
+/// The sprite set's positions, texture, sizes, and colours are baked at
+/// upload time. The ref item lets the renderer redraw the same set every
+/// frame with no per-frame upload cost.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct SpriteSetRefItem {
+    /// Handle to GPU buffers produced by
+    /// [`ViewportGpuResources::upload_sprite_set`](crate::resources::ViewportGpuResources::upload_sprite_set)
+    /// or `begin_upload_sprite_set`.
+    pub id: crate::resources::SpriteSetId,
+    /// Per-item render settings (visibility, wireframe, selection).
+    pub settings: ItemSettings,
+}
+
+impl SpriteSetRefItem {
+    /// Visible reference at the upload-time transform.
+    pub fn new(id: crate::resources::SpriteSetId) -> Self {
+        Self {
+            id,
+            settings: ItemSettings::default(),
+        }
+    }
+}
+
+/// Per-frame reference to a pre-uploaded sprite instance set (entity sprites).
+///
+/// The sprite definition (texture, blend, size mode, default size) is baked
+/// at upload time. The current implementation uses the same upload-time
+/// instance transforms as `SpriteSetRefItem`; full per-frame instance
+/// transform override against the stable definition is a planned follow-up.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct SpriteInstanceSetRefItem {
+    /// Handle to GPU buffers produced by
+    /// [`ViewportGpuResources::upload_sprite_instance_set`](crate::resources::ViewportGpuResources::upload_sprite_instance_set)
+    /// or `begin_upload_sprite_instance_set`.
+    pub id: crate::resources::SpriteInstanceSetId,
+    /// Per-item render settings.
+    pub settings: ItemSettings,
+}
+
+impl SpriteInstanceSetRefItem {
+    /// Visible reference at the upload-time transform.
+    pub fn new(id: crate::resources::SpriteInstanceSetId) -> Self {
+        Self {
+            id,
+            settings: ItemSettings::default(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 2D Image Slice representation
 // ---------------------------------------------------------------------------

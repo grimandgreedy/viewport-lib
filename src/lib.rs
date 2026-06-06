@@ -213,7 +213,8 @@ pub use renderer::{
     RenderCamera, RibbonItem, RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem,
     ScalarBarOrientation,
     ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
-    ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpriteBlend, SpriteItem, SpriteSizeMode,
+    ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpriteBlend, SpriteInstanceSetRefItem,
+    SpriteItem, SpriteSetRefItem, SpriteSizeMode,
     StreamtubeItem, StreamtubeRefItem, SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem,
     TensorGlyphSetRefItem, ToneMapping, TransparentVolumeMeshItem, TriangleDirection, TubeItem,
     TubeRefItem,
@@ -233,7 +234,8 @@ pub use resources::colourmap_data::{
 };
 pub use resources::mesh_store::MeshId;
 pub use resources::{
-    GlyphSetId, PointCloudId, PolylineId, RibbonId, StreamtubeId, TensorGlyphSetId, TubeId,
+    GlyphSetId, PointCloudId, PolylineId, RibbonId, SpriteInstanceSetId, SpriteSetId, StreamtubeId,
+    TensorGlyphSetId, TubeId,
 };
 pub use resources::sparse_volume::SparseVolumeGridData;
 pub use resources::volume_mesh::{CELL_SENTINEL, VolumeMeshData, extract_clipped_volume_faces};
