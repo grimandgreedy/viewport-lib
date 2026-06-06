@@ -661,6 +661,137 @@ impl super::ViewportGpuResources {
         let mut runner = self.jobs.lock().expect("upload job runner poisoned");
         runner.on_complete(id, cb);
     }
+
+    /// Block the calling thread, driving `process_uploads` until `id` reaches
+    /// a terminal state.
+    ///
+    /// Returns `Ok(())` when the job's worker (and any GPU submission it
+    /// queued) completes successfully. Returns the worker error when the job
+    /// fails. Used internally by the synchronous `upload_*` entries to wrap
+    /// their `begin_upload_*` counterparts in a single round-trip; consumers
+    /// who want to wait on a specific async upload can call it directly.
+    ///
+    /// The loop sleeps for a short interval between polls so it does not pin
+    /// a CPU core while the worker is running. It does not call back into the
+    /// caller's event loop; if you have other work to interleave, drive
+    /// `process_uploads` yourself instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::JobResultMissing`](crate::error::ViewportError::JobResultMissing)
+    /// if `id` has already been reaped or was never issued, and the worker's
+    /// error verbatim when the job ends in `Failed`.
+    pub fn drain_until(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: JobId,
+    ) -> crate::error::ViewportResult<()> {
+        loop {
+            self.process_uploads(device, queue);
+            match self.upload_status(id) {
+                UploadStatus::Ready => return Ok(()),
+                UploadStatus::Failed(e) => return Err(e),
+                UploadStatus::Pending { .. } => {
+                    std::thread::sleep(Duration::from_micros(200));
+                }
+                UploadStatus::Unknown => {
+                    return Err(crate::error::ViewportError::JobResultMissing {
+                        reason: "drain target was already reaped",
+                    });
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Optional `future` feature: a thin Future wrapper around a JobId.
+// ---------------------------------------------------------------------------
+
+/// Future returned by [`ViewportGpuResources::upload_handle`].
+///
+/// Polling drives the wrapped job to completion using the standard
+/// `process_uploads` machinery; the consumer's main loop must keep calling
+/// `process_uploads` so the runner can deliver completion callbacks. Once
+/// the future resolves, take the typed result with the matching
+/// `upload_result_*` accessor.
+#[cfg(feature = "future")]
+pub struct JobHandle {
+    id: JobId,
+    state: Arc<std::sync::Mutex<JobHandleState>>,
+}
+
+#[cfg(feature = "future")]
+struct JobHandleState {
+    done: Option<crate::error::ViewportResult<()>>,
+    waker: Option<std::task::Waker>,
+}
+
+#[cfg(feature = "future")]
+impl JobHandle {
+    /// Id of the wrapped job. Pass it to `upload_result_*` after the future
+    /// resolves.
+    pub fn id(&self) -> JobId {
+        self.id
+    }
+}
+
+#[cfg(feature = "future")]
+impl std::future::Future for JobHandle {
+    type Output = crate::error::ViewportResult<()>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let mut guard = self.state.lock().expect("job handle poisoned");
+        if let Some(result) = guard.done.take() {
+            return std::task::Poll::Ready(result);
+        }
+        guard.waker = Some(cx.waker().clone());
+        std::task::Poll::Pending
+    }
+}
+
+#[cfg(feature = "future")]
+impl super::ViewportGpuResources {
+    /// Wrap a `JobId` in a future that resolves when the job completes.
+    ///
+    /// The future is driven by completion callbacks fired during
+    /// `process_uploads`, so the consumer's main loop must keep calling
+    /// `process_uploads` for the future to make progress. The resolved
+    /// value is `Ok(())` on success and the worker error on failure; the
+    /// caller takes the typed result through the matching
+    /// `upload_result_*` accessor after `.await` returns.
+    pub fn upload_handle(&mut self, id: JobId) -> JobHandle {
+        let state = Arc::new(std::sync::Mutex::new(JobHandleState {
+            done: None,
+            waker: None,
+        }));
+        let state_for_cb = state.clone();
+        self.on_upload_complete(id, move |status| {
+            let result = match status {
+                UploadStatus::Ready => Ok(()),
+                UploadStatus::Failed(e) => Err(e.clone()),
+                UploadStatus::Pending { .. } => {
+                    // Callbacks only fire on terminal transitions; this
+                    // arm is unreachable but we report it cleanly rather
+                    // than panic if a future runner change relaxes that.
+                    Err(crate::error::ViewportError::JobNotReady)
+                }
+                UploadStatus::Unknown => Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "job vanished before completion callback fired",
+                }),
+            };
+            let mut guard = state_for_cb.lock().expect("job handle poisoned");
+            guard.done = Some(result);
+            if let Some(waker) = guard.waker.take() {
+                waker.wake();
+            }
+        });
+        JobHandle { id, state }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1121,6 +1252,57 @@ mod tests {
         assert!(jobs.take::<i64>(id).is_none());
     }
 
+    // -----------------------------------------------------------------
+    // Optional `future` feature
+    // -----------------------------------------------------------------
+
+    /// Smoke test the `JobHandle` future under a non-tokio executor.
+    ///
+    /// Drives the upload runner from a helper thread so the polled future
+    /// can observe completion through its registered callback. Uses
+    /// `pollster::block_on` because the crate stays runtime-free; the same
+    /// future works unchanged under tokio.
+    #[cfg(feature = "future")]
+    #[test]
+    fn job_handle_resolves_via_future() {
+        let Some((device, queue, mut resources)) = make_resources_for_jobs() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+
+        // Submit a CPU job so we have an id to await.
+        let id = {
+            let jobs = super::Jobs::new(&resources);
+            jobs.submit_cpu(|| 7_u32)
+        };
+        let handle = resources.upload_handle(id);
+
+        // Drive `process_uploads` from a worker thread while the main
+        // thread blocks on the future. The two threads share the resources
+        // through a `Mutex` so the worker can call `process_uploads(&mut)`.
+        let shared = Arc::new(std::sync::Mutex::new((resources, device, queue)));
+        let driver_handle = {
+            let shared = shared.clone();
+            std::thread::spawn(move || {
+                for _ in 0..400 {
+                    {
+                        let mut g = shared.lock().unwrap();
+                        let (resources, device, queue) = &mut *g;
+                        resources.process_uploads(device, queue);
+                        if resources.all_uploads_complete() {
+                            return;
+                        }
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            })
+        };
+
+        let result = pollster::block_on(handle);
+        assert!(matches!(result, Ok(())));
+        driver_handle.join().ok();
+    }
+
     /// Creates a headless wgpu device + queue for the duration of `f`.
     ///
     /// Skips the test (via early return) if no adapter is available. CI
@@ -1156,3 +1338,4 @@ mod tests {
         f(&device, &queue);
     }
 }
+

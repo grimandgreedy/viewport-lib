@@ -89,6 +89,8 @@ pub(crate) use self::scivis::curve_store::{
     SpriteSetStore, StreamtubeStore, TensorGlyphSetStore, TubeStore,
 };
 pub use self::upload_jobs::{JobId, Jobs, ProgressHandle, ResultSlot, UploadStatus};
+#[cfg(feature = "future")]
+pub use self::upload_jobs::JobHandle;
 #[allow(deprecated)]
 pub use self::volume_mesh::{
     CELL_SENTINEL, TET_SENTINEL, VolumeMeshData, extract_clipped_volume_faces,

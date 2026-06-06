@@ -17,92 +17,16 @@ impl ViewportGpuResources {
         height: u32,
         rgba_data: &[u8],
     ) -> crate::error::ViewportResult<u64> {
-        let expected = (width * height * 4) as usize;
-        if rgba_data.len() != expected {
-            return Err(crate::error::ViewportError::InvalidTextureData {
-                expected,
-                actual: rgba_data.len(),
-            });
-        }
-
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("user_texture"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            rgba_data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(width * 4),
-                rows_per_image: Some(height),
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("user_texture_sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("user_texture_bg"),
-            layout: &self.texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&self.fallback_normal_map_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&self.fallback_ao_map_view),
-                },
-            ],
-        });
-
-        let id = self.textures.len() as u64;
-        self.texture_allocated_bytes += (width * height * 4) as u64;
-        self.textures.push(GpuTexture {
-            texture,
-            view,
-            sampler,
-            bind_group,
-        });
-        tracing::debug!(texture_id = id, width, height, "texture uploaded");
-        Ok(id)
+        // Sync wrapper around the async path: build the job, drive it to
+        // completion on the calling thread, and take the typed result. The
+        // worker performs the same texture creation, sampler setup, and
+        // bind-group build that the apply closure runs from
+        // `process_uploads`. The data is copied into an owned `Vec` for the
+        // worker thread; small textures absorb this trivially, large
+        // textures pay one extra memcpy.
+        let id = self.begin_upload_texture(device, queue, width, height, rgba_data.to_vec())?;
+        self.drain_until(device, queue, id)?;
+        self.upload_result_texture(id)
     }
 
     /// Upload an RGBA texture as a normal map and return its texture ID.
@@ -117,92 +41,10 @@ impl ViewportGpuResources {
         height: u32,
         rgba_data: &[u8],
     ) -> crate::error::ViewportResult<u64> {
-        let expected = (width * height * 4) as usize;
-        if rgba_data.len() != expected {
-            return Err(crate::error::ViewportError::InvalidTextureData {
-                expected,
-                actual: rgba_data.len(),
-            });
-        }
-
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("normal_map_texture"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            rgba_data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(width * 4),
-                rows_per_image: Some(height),
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("normal_map_sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("normal_map_bg"),
-            layout: &self.texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&self.fallback_texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&self.fallback_ao_map_view),
-                },
-            ],
-        });
-
-        let id = self.textures.len() as u64;
-        self.texture_allocated_bytes += (width * height * 4) as u64;
-        self.textures.push(GpuTexture {
-            texture,
-            view,
-            sampler,
-            bind_group,
-        });
-        tracing::debug!(texture_id = id, width, height, "normal map uploaded");
-        Ok(id)
+        // Sync wrapper; see `upload_texture` for the worker / apply layout.
+        let id = self.begin_upload_normal_map(device, queue, width, height, rgba_data.to_vec())?;
+        self.drain_until(device, queue, id)?;
+        self.upload_result_texture(id)
     }
 
     // -----------------------------------------------------------------------
