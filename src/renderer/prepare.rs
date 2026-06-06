@@ -32,6 +32,11 @@ impl ViewportRenderer {
         // and advance ready state for uploads submitted on the previous frame.
         self.resources.submit_pending_texture_uploads(device, queue);
 
+        // Drain the upload-job runner. Worker results received since the last
+        // frame are observed, GPU submissions are polled for completion, and
+        // any registered completion callbacks fire on this thread.
+        self.resources.process_uploads(device, queue);
+
         // GPU compute filtering.
         // Dispatch before the render pass. Completely skipped when list is empty (zero overhead).
         if !scene_fx.compute_filter_items.is_empty() {

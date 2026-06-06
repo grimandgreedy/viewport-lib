@@ -1,7 +1,7 @@
 //! Error types for the viewport library.
 
 /// Errors that can occur during mesh upload and manipulation.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 #[non_exhaustive]
 pub enum ViewportError {
     /// Mesh data has empty positions or indices.
@@ -92,6 +92,14 @@ pub enum ViewportError {
     #[error("invalid gaussian splat data: {reason}")]
     InvalidGaussianSplatData {
         /// Short description of what is wrong.
+        reason: &'static str,
+    },
+
+    /// A background upload worker panicked or dropped its channel before
+    /// sending a result.
+    #[error("upload worker did not complete: {reason}")]
+    JobWorkerLost {
+        /// Short description of how the worker was lost.
         reason: &'static str,
     },
 }

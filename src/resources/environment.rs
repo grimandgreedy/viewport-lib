@@ -1,9 +1,9 @@
 //! CPU-side IBL precomputation and environment map upload.
 //!
 //! Produces:
-//! - **Irradiance map** (64×32 equirect) : diffuse hemisphere integral.
-//! - **Prefiltered specular map** (128×64 equirect, 5 mip levels) : split-sum approximation.
-//! - **BRDF integration LUT** (128×128) : Schlick-GGX split-sum second integral.
+//! - **Irradiance map** (64x32 equirect) : diffuse hemisphere integral.
+//! - **Prefiltered specular map** (128x64 equirect, 5 mip levels) : split-sum approximation.
+//! - **BRDF integration LUT** (128x128) : Schlick-GGX split-sum second integral.
 //!
 //! All textures are Rgba16Float for HDR correctness.
 //!
@@ -15,20 +15,21 @@
 use rayon::prelude::*;
 use std::f32::consts::PI;
 
+use super::upload_jobs::{ApplyFn, JobId, JobProduct, ProgressHandle, UploadStatus};
+
 // -------------------------------------------------------------------------
 // Public upload API
 // -------------------------------------------------------------------------
 
 /// Upload an equirectangular HDR environment map and precompute IBL textures.
 ///
-/// `pixels` is row-major RGBA f32 (4 floats per pixel), `width`×`height`.
-/// After this call, the camera bind groups must be rebuilt so shaders see the
-/// new textures : call `rebuild_camera_bind_groups` on the renderer.
+/// `pixels` is row-major RGBA f32 (4 floats per pixel), `width`x`height`.
+/// After this call, the camera bind groups must be rebuilt so shaders see
+/// the new textures: call `rebuild_camera_bind_groups` on the renderer.
 ///
-/// **Performance:** This performs heavy CPU-side precomputation (irradiance
-/// convolution, GGX specular prefilter, BRDF LUT). Call during asset loading
-/// or on a background thread, not on the hot render path. The BRDF LUT is
-/// scene-independent and could be cached across different environment maps.
+/// This entry point blocks the calling thread until the upload finishes.
+/// `begin_upload_environment_map` returns immediately and reports completion
+/// through the upload-job runner.
 pub fn upload_environment_map(
     resources: &mut super::ViewportGpuResources,
     device: &wgpu::Device,
@@ -37,6 +38,49 @@ pub fn upload_environment_map(
     width: u32,
     height: u32,
 ) -> crate::error::ViewportResult<()> {
+    let id = begin_upload_environment_map(
+        resources,
+        device,
+        queue,
+        pixels.to_vec(),
+        width,
+        height,
+    )?;
+    loop {
+        resources.process_uploads(device, queue);
+        match resources.upload_status(id) {
+            UploadStatus::Ready => return Ok(()),
+            UploadStatus::Failed(e) => return Err(e),
+            UploadStatus::Pending { .. } => {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            UploadStatus::Unknown => {
+                // The id was just issued and the only consumer of it is
+                // this loop. Reaching Unknown means the runner reaped a
+                // completed job between the previous Ready check and the
+                // next status query, which the runner does not do.
+                unreachable!("just-submitted job id disappeared");
+            }
+        }
+    }
+}
+
+/// Start an asynchronous environment-map upload.
+///
+/// Returns the `JobId` of the submitted upload. The caller is expected to
+/// drive `process_uploads` from the renderer's prepare path each frame; once
+/// the returned id reports `Ready`, the IBL textures are live and the
+/// caller's next call to `rebuild_camera_bind_groups` will pick them up.
+///
+/// Ownership of `pixels` transfers into the background worker.
+pub fn begin_upload_environment_map(
+    resources: &mut super::ViewportGpuResources,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    pixels: Vec<f32>,
+    width: u32,
+    height: u32,
+) -> crate::error::ViewportResult<JobId> {
     let expected = (width as usize) * (height as usize) * 4;
     if pixels.len() != expected {
         return Err(crate::error::ViewportError::InvalidTextureData {
@@ -45,60 +89,71 @@ pub fn upload_environment_map(
         });
     }
 
-    // GPU compute path when the adapter exposes Rgba16Float storage-write support
-    // (gated on TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES). CPU path is the
-    // fallback for older adapters and WebGL2 backends.
-    if super::ibl_compute::compute_supported(device) {
-        upload_environment_map_gpu(resources, device, queue, pixels, width, height);
+    let compute_supported = super::ibl_compute::compute_supported(device);
+    let needs_brdf = resources.ibl_brdf_lut_texture.is_none();
+
+    let mut runner = resources
+        .jobs
+        .lock()
+        .expect("upload job runner poisoned");
+    let id = if compute_supported {
+        runner.submit_with_gpu(device, queue, move |dev, q, progress| {
+            progress.set(0.1);
+            let result = super::ibl_compute::compute_ibl(
+                dev, q, &pixels, width, height, needs_brdf,
+            );
+            progress.set(1.0);
+            Ok(JobProduct::with_gpu_and_apply(
+                result.submission.clone(),
+                apply_gpu_result(result),
+            ))
+        })
     } else {
-        upload_environment_map_cpu(resources, device, queue, pixels, width, height);
-    }
-    Ok(())
+        runner.submit_with_gpu(device, queue, move |dev, q, progress| {
+            run_cpu_path(dev, q, &pixels, width, height, needs_brdf, progress)
+        })
+    };
+    Ok(id)
 }
 
-fn upload_environment_map_gpu(
-    resources: &mut super::ViewportGpuResources,
+fn apply_gpu_result(result: super::ibl_compute::IblComputeResult) -> ApplyFn {
+    Box::new(move |resources: &mut super::ViewportGpuResources| {
+        resources.ibl_irradiance_view = Some(result.irradiance_view);
+        resources.ibl_prefiltered_view = Some(result.prefilter_view);
+        resources.ibl_skybox_view = Some(result.skybox_view);
+        resources.ibl_irradiance_texture = Some(result.irradiance_texture);
+        resources.ibl_prefiltered_texture = Some(result.prefilter_texture);
+        resources.ibl_skybox_texture = Some(result.skybox_texture);
+        if let (Some(brdf_tex), Some(brdf_view)) = (result.brdf_texture, result.brdf_view) {
+            resources.ibl_brdf_lut_view = Some(brdf_view);
+            resources.ibl_brdf_lut_texture = Some(brdf_tex);
+        }
+    })
+}
+
+/// CPU IBL path executed on a worker thread.
+///
+/// Builds the irradiance, prefilter, and (optionally) BRDF LUT data on the
+/// CPU, creates GPU textures, queues their writes, and submits a
+/// flush so the runner has a `SubmissionIndex` to gate on.
+fn run_cpu_path(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     pixels: &[f32],
     width: u32,
     height: u32,
-) {
-    let compute_brdf = resources.ibl_brdf_lut_texture.is_none();
-    let result = super::ibl_compute::compute_ibl(
-        device,
-        queue,
-        pixels,
-        width,
-        height,
-        compute_brdf,
-    );
+    needs_brdf: bool,
+    progress: &ProgressHandle,
+) -> crate::error::ViewportResult<JobProduct> {
+    progress.set(0.05);
 
-    resources.ibl_irradiance_view = Some(result.irradiance_view);
-    resources.ibl_prefiltered_view = Some(result.prefilter_view);
-    resources.ibl_skybox_view = Some(result.skybox_view);
-    resources.ibl_irradiance_texture = Some(result.irradiance_texture);
-    resources.ibl_prefiltered_texture = Some(result.prefilter_texture);
-    resources.ibl_skybox_texture = Some(result.skybox_texture);
-    if let (Some(brdf_tex), Some(brdf_view)) = (result.brdf_texture, result.brdf_view) {
-        resources.ibl_brdf_lut_view = Some(brdf_view);
-        resources.ibl_brdf_lut_texture = Some(brdf_tex);
-    }
-}
-
-fn upload_environment_map_cpu(
-    resources: &mut super::ViewportGpuResources,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    pixels: &[f32],
-    width: u32,
-    height: u32,
-) {
-    // 1. Upload full-res skybox texture.
+    // 1. Full-resolution skybox.
     let skybox_tex = upload_rgba16f(device, queue, pixels, width, height, "ibl_skybox");
     let skybox_view = skybox_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-    // 2. Generate irradiance map (diffuse).
+    progress.set(0.15);
+
+    // 2. Irradiance map.
     let irr_w = 64u32;
     let irr_h = 32u32;
     let irradiance_data = convolve_irradiance(pixels, width, height, irr_w, irr_h);
@@ -112,24 +167,25 @@ fn upload_environment_map_cpu(
     );
     let irr_view = irr_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-    // 3. Generate prefiltered specular map (5 roughness levels).
+    progress.set(0.55);
+
+    // 3. Prefiltered specular map.
     let spec_w = 128u32;
     let spec_h = 64u32;
     let mip_levels = 5u32;
-    let (spec_data_mips, spec_tex) = prefilter_specular(
+    let (_spec_data_mips, spec_tex) = prefilter_specular(
         device, queue, pixels, width, height, spec_w, spec_h, mip_levels,
     );
-    let _ = spec_data_mips; // CPU data no longer needed
     let spec_view = spec_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-    // 4. Generate BRDF integration LUT (idempotent: scene-independent, cached after first call).
-    //
-    // The LUT depends only on (roughness, N.V) and never changes between environment maps.
-    // Skip the ~16.7M Hammersley samples on every subsequent call by reusing the cached texture.
-    if resources.ibl_brdf_lut_texture.is_none() {
+    progress.set(0.9);
+
+    // 4. BRDF integration LUT, only when no cached LUT exists. The LUT is
+    // scene-independent so it is generated once and reused across env maps.
+    let (brdf_tex, brdf_view) = if needs_brdf {
         let brdf_size = 128u32;
         let brdf_data = generate_brdf_lut(brdf_size);
-        let brdf_tex = upload_rgba16f(
+        let tex = upload_rgba16f(
             device,
             queue,
             &brdf_data,
@@ -137,18 +193,35 @@ fn upload_environment_map_cpu(
             brdf_size,
             "ibl_brdf_lut",
         );
-        let brdf_view = brdf_tex.create_view(&wgpu::TextureViewDescriptor::default());
-        resources.ibl_brdf_lut_view = Some(brdf_view);
-        resources.ibl_brdf_lut_texture = Some(brdf_tex);
-    }
+        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        (Some(tex), Some(view))
+    } else {
+        (None, None)
+    };
 
-    // 5. Store on resources.
-    resources.ibl_irradiance_view = Some(irr_view);
-    resources.ibl_prefiltered_view = Some(spec_view);
-    resources.ibl_skybox_view = Some(skybox_view);
-    resources.ibl_irradiance_texture = Some(irr_tex);
-    resources.ibl_prefiltered_texture = Some(spec_tex);
-    resources.ibl_skybox_texture = Some(skybox_tex);
+    // 5. Flush so the runner has a submission to gate on. Implicit writes
+    // queued above are folded into this submit by wgpu.
+    let encoder =
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("ibl_flush") });
+    let submission = queue.submit(std::iter::once(encoder.finish()));
+
+    progress.set(1.0);
+
+    Ok(JobProduct::with_gpu_and_apply(
+        submission,
+        Box::new(move |resources: &mut super::ViewportGpuResources| {
+            resources.ibl_irradiance_view = Some(irr_view);
+            resources.ibl_prefiltered_view = Some(spec_view);
+            resources.ibl_skybox_view = Some(skybox_view);
+            resources.ibl_irradiance_texture = Some(irr_tex);
+            resources.ibl_prefiltered_texture = Some(spec_tex);
+            resources.ibl_skybox_texture = Some(skybox_tex);
+            if let (Some(tex), Some(view)) = (brdf_tex, brdf_view) {
+                resources.ibl_brdf_lut_view = Some(view);
+                resources.ibl_brdf_lut_texture = Some(tex);
+            }
+        }),
+    ))
 }
 
 // -------------------------------------------------------------------------
@@ -191,7 +264,7 @@ pub(crate) fn upload_rgba16f(
         bytemuck::cast_slice(&half_data),
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(width * 8), // 4 × f16 = 8 bytes per pixel
+            bytes_per_row: Some(width * 8), // 4 x f16 = 8 bytes per pixel
             rows_per_image: Some(height),
         },
         wgpu::Extent3d {
@@ -230,7 +303,7 @@ fn sample_equirect(pixels: &[f32], width: u32, height: u32, dir: [f32; 3]) -> [f
 // -------------------------------------------------------------------------
 
 fn convolve_irradiance(src: &[f32], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<f32> {
-    let sample_delta = 0.05f32; // ~40 phi steps × ~20 theta steps = 800 samples
+    let sample_delta = 0.05f32; // ~40 phi steps x ~20 theta steps = 800 samples
     let mut out = vec![0.0f32; (dst_w * dst_h * 4) as usize];
 
     // Per-row parallelism. Each row writes a disjoint slice of `out`, so
@@ -567,4 +640,142 @@ fn normalize(v: [f32; 3]) -> [f32; 3] {
 #[inline]
 fn f32_to_f16(value: f32) -> u16 {
     half::f16::from_f32(value).to_bits()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::resources::ViewportGpuResources;
+
+    fn make_solid_env(width: u32, height: u32, rgb: [f32; 3]) -> Vec<f32> {
+        let mut v = Vec::with_capacity((width as usize) * (height as usize) * 4);
+        for _ in 0..(width * height) {
+            v.push(rgb[0]);
+            v.push(rgb[1]);
+            v.push(rgb[2]);
+            v.push(1.0);
+        }
+        v
+    }
+
+    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+    }
+
+    fn make_resources(device: &wgpu::Device) -> ViewportGpuResources {
+        ViewportGpuResources::new(device, wgpu::TextureFormat::Rgba8UnormSrgb, 1)
+    }
+
+    #[test]
+    fn invalid_size_returns_error_synchronously() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources = make_resources(&device);
+
+        // 2x2 image requires 16 floats. Pass 12 and confirm the error fires
+        // before any job is submitted.
+        let pixels = vec![0.0f32; 12];
+        let err = begin_upload_environment_map(&mut resources, &device, &queue, pixels, 2, 2)
+            .expect_err("invalid size should error");
+        match err {
+            crate::error::ViewportError::InvalidTextureData { expected, actual } => {
+                assert_eq!(expected, 16);
+                assert_eq!(actual, 12);
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+        assert_eq!(resources.uploads_pending(), 0);
+    }
+
+    #[test]
+    fn begin_upload_completes_and_populates_ibl() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources = make_resources(&device);
+        assert!(resources.ibl_irradiance_view.is_none());
+
+        let pixels = make_solid_env(8, 4, [0.5, 0.6, 0.7]);
+        let id =
+            begin_upload_environment_map(&mut resources, &device, &queue, pixels, 8, 4).unwrap();
+        assert_eq!(resources.uploads_pending(), 1);
+
+        // Drive the runner until the job lands. The CPU path takes around
+        // 100 ms on this test image, so 100 iterations of 20 ms is plenty.
+        let mut iterations = 0;
+        loop {
+            resources.process_uploads(&device, &queue);
+            match resources.upload_status(id) {
+                crate::resources::UploadStatus::Ready => break,
+                crate::resources::UploadStatus::Failed(e) => panic!("upload failed: {e:?}"),
+                crate::resources::UploadStatus::Pending { .. } => {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                crate::resources::UploadStatus::Unknown => {
+                    panic!("job id disappeared before completion")
+                }
+            }
+            iterations += 1;
+            if iterations > 100 {
+                panic!("env-map upload did not complete in time");
+            }
+        }
+
+        assert!(resources.ibl_irradiance_view.is_some());
+        assert!(resources.ibl_prefiltered_view.is_some());
+        assert!(resources.ibl_skybox_view.is_some());
+        assert!(resources.ibl_brdf_lut_view.is_some());
+        assert_eq!(resources.uploads_pending(), 0);
+    }
+
+    #[test]
+    fn sync_upload_blocks_until_ready() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources = make_resources(&device);
+
+        let pixels = make_solid_env(8, 4, [0.2, 0.4, 0.8]);
+        upload_environment_map(&mut resources, &device, &queue, &pixels, 8, 4).unwrap();
+
+        assert!(resources.ibl_irradiance_view.is_some());
+        assert!(resources.ibl_prefiltered_view.is_some());
+        assert!(resources.ibl_skybox_view.is_some());
+        // BRDF LUT is scene-independent and computed on first upload.
+        assert!(resources.ibl_brdf_lut_view.is_some());
+        assert!(resources.all_uploads_complete());
+    }
+
+    #[test]
+    fn second_upload_replaces_skybox_but_keeps_brdf() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources = make_resources(&device);
+
+        let pixels_a = make_solid_env(8, 4, [0.5, 0.5, 0.5]);
+        upload_environment_map(&mut resources, &device, &queue, &pixels_a, 8, 4).unwrap();
+        assert!(resources.ibl_brdf_lut_texture.is_some());
+
+        // Second upload completes without falling over and leaves the BRDF
+        // LUT present. The internal `needs_brdf` flag decides whether the
+        // worker rebuilds the LUT or reuses the cached one; either way the
+        // resulting state is "BRDF available".
+        let pixels_b = make_solid_env(8, 4, [0.1, 0.9, 0.4]);
+        upload_environment_map(&mut resources, &device, &queue, &pixels_b, 8, 4).unwrap();
+        assert!(resources.ibl_brdf_lut_texture.is_some());
+        assert!(resources.ibl_skybox_view.is_some());
+    }
 }

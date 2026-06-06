@@ -2,6 +2,12 @@
 
 ## [Unreleased Changes]
 
+### Async upload jobs
+
+Long-running uploads can run on a background thread without freezing the viewport. The renderer owns a job runner that workers report to via a channel; the main thread drains completions once per frame from inside the prepare path. Each job carries an optional GPU submission to gate on and an optional apply step that mutates renderer state once the worker (and any GPU work) has finished. Callers query progress via a per-job `UploadStatus` or attach a completion callback.
+
+Public types: `JobId`, `UploadStatus`, `ProgressHandle`. New methods on `ViewportGpuResources`: `process_uploads`, `upload_status`, `uploads_pending`, `all_uploads_complete`, `on_upload_complete`. The runner is wired into `prepare_scene` alongside the existing pending-texture drain so completion is observable on the next frame.
+
 ### Item-type plugins
 
 Plugins can ship a new kind of scene item without forking the lib. The set of renderable categories used to be fixed; new ones now register through an `ItemTypePlugin` trait and submit their per-frame data via `SceneFrame::submit_plugin_items`. The lib handles picking, selection outline, frustum cull, clip volumes, shadow casting, and OIT transparency for plugin items the same way it handles built-ins. Plugin shaders include published WGSL helpers for lighting, transparency, and clipping so they stay in sync with the rest of the renderer.

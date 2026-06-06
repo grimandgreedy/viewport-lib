@@ -1144,6 +1144,38 @@ impl ViewportRenderer {
         Ok(())
     }
 
+    /// Start an asynchronous environment-map upload.
+    ///
+    /// Returns immediately with a `JobId`. The caller drives the upload-job
+    /// runner from the renderer's prepare path each frame; once the job
+    /// reports `Ready`, the IBL textures are live on the renderer and a
+    /// subsequent call to `rebuild_camera_bind_groups` makes them visible
+    /// to shaders.
+    ///
+    /// Ownership of `pixels` transfers into the background worker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
+    /// if `pixels.len() != width * height * 4`.
+    pub fn begin_upload_environment_map(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        pixels: Vec<f32>,
+        width: u32,
+        height: u32,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        crate::resources::environment::begin_upload_environment_map(
+            &mut self.resources,
+            device,
+            queue,
+            pixels,
+            width,
+            height,
+        )
+    }
+
     /// Rebuild the primary + per-viewport camera bind groups.
     ///
     /// Call after IBL textures are uploaded so shaders see the new environment.

@@ -2676,6 +2676,7 @@ impl ViewportGpuResources {
             lut_sampler,
             material_bind_groups: std::collections::HashMap::new(),
             textures: Vec::new(),
+            jobs: std::sync::Mutex::new(crate::resources::upload_jobs::JobRunner::new()),
             pending_texture_uploads: Vec::new(),
             next_pending_texture_id: 0,
             texture_allocated_bytes: 0,

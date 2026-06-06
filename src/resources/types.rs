@@ -2644,6 +2644,12 @@ pub struct ViewportGpuResources {
     pub(crate) material_bind_groups: std::collections::HashMap<(u64, u64, u64), wgpu::BindGroup>,
     /// User-uploaded textures, indexed by `texture_id` in Material.
     pub textures: Vec<GpuTexture>,
+    /// Background runner used by async upload entry points. Drained once per
+    /// frame during `prepare_scene` so completion is visible to the caller.
+    /// Wrapped in a mutex because mpsc receivers and boxed `FnOnce`
+    /// callbacks are `Send` but not `Sync`, and several host frameworks
+    /// require this struct to be `Sync`.
+    pub(crate) jobs: std::sync::Mutex<super::upload_jobs::JobRunner>,
     /// In-flight async texture uploads not yet promoted to the live texture list.
     pub(crate) pending_texture_uploads: Vec<PendingUploadEntry>,
     /// Counter for assigning unique PendingTextureId values.

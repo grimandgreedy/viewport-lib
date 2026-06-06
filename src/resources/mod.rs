@@ -36,6 +36,8 @@ mod skin;
 pub mod sparse_volume;
 mod textures;
 mod types;
+/// Background runner for long-running uploads.
+pub mod upload_jobs;
 /// Unstructured volume mesh topology processing (tet / hex boundary extraction).
 pub mod volume_mesh;
 mod volumes;
@@ -80,6 +82,7 @@ pub use self::types::{
     SingleLightUniform, SkinWeights, TextureMemoryStats, Vertex, ViewportGpuResources,
     VolumeGpuData, VolumeId,
 };
+pub use self::upload_jobs::{JobId, ProgressHandle, UploadStatus};
 #[allow(deprecated)]
 pub use self::volume_mesh::{
     CELL_SENTINEL, TET_SENTINEL, VolumeMeshData, extract_clipped_volume_faces,

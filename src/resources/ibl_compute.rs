@@ -281,6 +281,9 @@ pub(crate) struct IblComputeResult {
     /// Generated only if requested (skipped when a cached LUT already exists).
     pub brdf_texture: Option<wgpu::Texture>,
     pub brdf_view: Option<wgpu::TextureView>,
+    /// Submission index for the queue submit that ran the compute passes.
+    /// Callers gate downstream work on this submission completing.
+    pub submission: wgpu::SubmissionIndex,
 }
 
 /// Run the full IBL precomputation on the GPU.
@@ -475,14 +478,11 @@ pub(crate) fn compute_ibl(
         (None, None)
     };
 
-    queue.submit(std::iter::once(encoder.finish()));
+    let submission = queue.submit(std::iter::once(encoder.finish()));
 
-    // Preserve the synchronous semantics of upload_environment_map by waiting
-    // for the compute work to finish before returning.
-    let _ = device.poll(wgpu::PollType::Wait {
-        submission_index: None,
-        timeout: Some(std::time::Duration::from_secs(5)),
-    });
+    // Callers gate on the returned submission index instead of blocking
+    // here. The synchronous `upload_environment_map` wrapper drains the
+    // upload-job runner until the matching job reports Ready.
 
     IblComputeResult {
         skybox_texture,
@@ -493,5 +493,6 @@ pub(crate) fn compute_ibl(
         prefilter_view,
         brdf_texture,
         brdf_view,
+        submission,
     }
 }
