@@ -591,6 +591,11 @@ macro_rules! emit_draw_calls {
                 render_pass.draw(0..slot.axes_vertex_count, 0..1);
             }
         }
+
+        if frame.viewport.show_light_clusters {
+            render_pass.set_bind_group(0, camera_bg, &[]);
+            resources.clustered.draw_overlay(render_pass);
+        }
     }};
 }
 

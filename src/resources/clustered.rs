@@ -131,6 +131,8 @@ pub struct ClusteredResources {
     build_bind_group: wgpu::BindGroup,
     /// Compute pipeline that intersects each cluster with the active lights.
     build_pipeline: wgpu::ComputePipeline,
+    /// Render pipeline that draws each cluster as a colour-coded wireframe box.
+    overlay_pipeline: wgpu::RenderPipeline,
     /// Uniform buffer for the clear pass parameters (constants for now).
     #[allow(dead_code)]
     clear_params_buf: wgpu::Buffer,
@@ -138,8 +140,13 @@ pub struct ClusteredResources {
 
 impl ClusteredResources {
     /// Allocate the cluster grid uniform, the cluster-cell storage, the global
-    /// light index list, and the no-op clear compute pipeline.
-    pub fn new(device: &wgpu::Device) -> Self {
+    /// light index list, and the build / clear / overlay pipelines.
+    pub fn new(
+        device: &wgpu::Device,
+        camera_bgl: &wgpu::BindGroupLayout,
+        target_format: wgpu::TextureFormat,
+        sample_count: u32,
+    ) -> Self {
         let grid_uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("cluster_grid_uniform_buf"),
             contents: bytemuck::cast_slice(&[ClusterGridUniform::default()]),
@@ -308,6 +315,64 @@ impl ClusteredResources {
             cache: None,
         });
 
+        // Debug overlay : draws each cluster as a wireframe box, colour-coded
+        // by light count. Bound to the camera bind group so it sees the
+        // cluster grid uniform and the cluster cells at bindings 14 and 15.
+        let overlay_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("cluster_overlay_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/cluster_overlay.wgsl")).into(),
+            ),
+        });
+        let overlay_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("cluster_overlay_pipeline_layout"),
+            bind_group_layouts: &[camera_bgl],
+            push_constant_ranges: &[],
+        });
+        let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("cluster_overlay_pipeline"),
+            layout: Some(&overlay_layout),
+            vertex: wgpu::VertexState {
+                module: &overlay_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &overlay_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::LineList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
         Self {
             grid_uniform_buf,
             cluster_grid_buf,
@@ -318,8 +383,18 @@ impl ClusteredResources {
             clear_pipeline,
             build_bind_group,
             build_pipeline,
+            overlay_pipeline,
             clear_params_buf,
         }
+    }
+
+    /// Bind the overlay pipeline into `render_pass` and draw the cluster
+    /// wireframes. Caller must have already bound the camera bind group at
+    /// group 0; this method only sets the pipeline and issues the draw.
+    pub fn draw_overlay(&self, render_pass: &mut wgpu::RenderPass<'_>) {
+        render_pass.set_pipeline(&self.overlay_pipeline);
+        // 24 vertices per cluster (12 edges), one instance per cluster cell.
+        render_pass.draw(0..24, 0..CLUSTER_COUNT);
     }
 
     /// Update the per-frame `ClusterGridUniform` (screen size, near/far, fallback mode).

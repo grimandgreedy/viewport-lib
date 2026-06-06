@@ -604,6 +604,11 @@ pub struct ViewportFrame {
     pub grid_colour: Option<[f32; 3]>,
     /// Whether to draw the axes orientation indicator overlay. Default: true.
     pub show_axes_indicator: bool,
+    /// Draw the clustered-shading grid as a wireframe overlay, with each
+    /// cluster cell colour-coded by the number of lights assigned to it.
+    /// Useful for diagnosing light density and tuning the grid dimensions.
+    /// Default: false.
+    pub show_light_clusters: bool,
 }
 
 impl Default for ViewportFrame {
@@ -617,6 +622,7 @@ impl Default for ViewportFrame {
             grid_z: 0.0,
             grid_colour: None,
             show_axes_indicator: true,
+            show_light_clusters: false,
         }
     }
 }

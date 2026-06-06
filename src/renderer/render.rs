@@ -3805,6 +3805,35 @@ impl ViewportRenderer {
             }
         }
 
+        if frame.viewport.show_light_clusters {
+            let slot = &self.viewport_slots[vp_idx];
+            let slot_hdr = slot.hdr.as_ref().unwrap();
+            let mut overlay_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("hdr_cluster_overlay_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: output_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &slot_hdr.output_depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Discard,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            overlay_pass.set_bind_group(0, &slot.camera_bind_group, &[]);
+            self.resources.clustered.draw_overlay(&mut overlay_pass);
+        }
+
         // Overlay shapes, rects, labels, scalar bars, rulers, and overlay images (HDR path): drawn last.
         let has_overlay = self.overlay_shape_gpu_data.is_some()
             || self.overlay_rect_gpu_data.is_some()
